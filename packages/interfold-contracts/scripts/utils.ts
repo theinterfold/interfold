@@ -183,6 +183,11 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "small",
 );
 
+export const INSECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-64",
+  "large",
+);
+
 export const INSECURE_LBFV_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "minimum",
@@ -211,6 +216,11 @@ export const SECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
 export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "small",
+);
+
+export const SECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "large",
 );
 
 export const SECURE_16384_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
@@ -242,12 +252,14 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   INSECURE_MINIMUM_BFV_CONFIG,
   INSECURE_MICRO_BFV_CONFIG,
   INSECURE_SMALL_BFV_CONFIG,
+  INSECURE_LARGE_BFV_CONFIG,
   INSECURE_LBFV_MINIMUM_BFV_CONFIG,
   INSECURE_LBFV_MICRO_BFV_CONFIG,
   INSECURE_LBFV_SMALL_BFV_CONFIG,
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
+  SECURE_LARGE_BFV_CONFIG,
   SECURE_16384_MINIMUM_BFV_CONFIG,
   SECURE_16384_MICRO_BFV_CONFIG,
   SECURE_16384_SMALL_BFV_CONFIG,
@@ -262,18 +274,19 @@ export const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
 
 /**
  * The l-BFV pair for local V2 artifacts: the active pair when it is l-BFV, otherwise the insecure
- * l-BFV pair of the same committee (trBFV pairs have no V2 aggregator).
+ * l-BFV pair of the same committee (trBFV pairs have no V2 aggregator). The large committee is
+ * trBFV-only, so it falls back to the insecure l-BFV minimum pair.
  */
 export const ACTIVE_LBFV_CONFIG: ActiveBfvConfig = isLbfvParamSet(
   ACTIVE_BFV_CONFIG.paramSet,
 )
   ? ACTIVE_BFV_CONFIG
-  : TESTNET_BFV_CONFIGS.find(
+  : (TESTNET_BFV_CONFIGS.find(
       (config) =>
         isLbfvParamSet(config.paramSet) &&
         config.preset === "insecure" &&
         config.committee === ACTIVE_BFV_COMMITTEE,
-    )!;
+    ) ?? INSECURE_LBFV_MINIMUM_BFV_CONFIG);
 
 export const BFV_DKG_H = ACTIVE_BFV_CONFIG.h;
 export const BFV_THRESHOLD_T = ACTIVE_BFV_CONFIG.t;
@@ -585,9 +598,9 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     root
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c4ab_fold/c4ab_fold.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c4ab_fold_chunked/c4ab_fold_chunked.vk_hash`,
         )
-      : local("recursive_aggregation", "c4ab_fold"),
+      : local("recursive_aggregation", "c4ab_fold_chunked"),
     root
       ? path.join(
           root,

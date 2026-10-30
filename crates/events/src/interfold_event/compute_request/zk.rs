@@ -53,7 +53,7 @@ pub enum ZkRequest {
     NodesFoldStep(NodesFoldStepRequest),
     /// Cross-node DKG aggregator (NodesFold + C5 + DkgAggregator).
     DkgAggregation(DkgAggregationRequest),
-    /// Phase-7 decryption aggregator (C6Fold + C7 + DecryptionAggregator).
+    /// Phase-7 decryption aggregator (C6 Chonk root + C7 + DecryptionAggregator).
     DecryptionAggregation(DecryptionAggregationRequest),
     /// Generate one row proof for an l-BFV public-key share.
     LbfvPkGeneration(LbfvPkGenerationProofRequest),
@@ -461,12 +461,12 @@ pub struct NodeDkgFoldRequest {
 /// Single step of the streaming cross-node nodes_fold accumulation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodesFoldStepRequest {
-    /// The `node_fold` proof for this slot.
-    pub inner_proof: Proof,
+    /// The `node_fold` proofs this step folds, at most `nodes_fold`'s leaf count.
+    pub inner_proofs: Vec<Proof>,
     /// The prior accumulator proof, or `None` for the first step.
     pub prior_accumulator: Option<Proof>,
-    /// Slot index for this honest party (position in ascending `party_id` order).
-    pub slot_index: u32,
+    /// Slot index of each proof (its party's position in ascending `party_id` order).
+    pub slot_indices: Vec<u32>,
     /// Total honest-party count H.
     pub total_slots: usize,
     /// E3 identifier used for job namespacing.

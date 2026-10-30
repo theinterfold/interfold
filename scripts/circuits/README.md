@@ -85,13 +85,14 @@ pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --l
 
 ### Committee sizes
 
-Three sizes are supported, mirroring `e3_committee::CiphernodesCommitteeSize`:
+Four sizes are supported, mirroring `e3_committee::CiphernodesCommitteeSize`:
 
 | Committee           | N (parties) | T (threshold) | H (honest) |
 | ------------------- | ----------- | ------------- | ---------- |
 | `minimum` (default) | 3           | 1             | 2          |
 | `micro`             | 9           | 4             | 5          |
 | `small`             | 19          | 9             | 14         |
+| `large`             | 45          | 22            | 34         |
 
 [`build-pairs.json`](build-pairs.json) owns permitted pairs. Both Rust and TypeScript read it.
 Wildcards preserve manifest order; unsupported explicit pairs fail before tools or writes. The
@@ -118,7 +119,8 @@ the generator would produce.
 - `--preset <name>` - Parameter preset: `insecure-64` (degree 64, trBFV only), `insecure` (degree
   128, default), `insecure-lbfv` (the same artifact archive), `secure-8192`, `secure-16384`, or
   `all`. Secure-16384 supports minimum, micro, and small; its build excludes trBFV-only circuits.
-- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
+- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`, `large` (trBFV
+  presets `insecure-64` and `secure-8192` only)
 - `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)

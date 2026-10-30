@@ -25,9 +25,9 @@ use ark_ff::{BigInteger, PrimeField, Zero};
 use common::{
     active_bin_preset, compiled_circuit_artifacts_available, extract_field, extract_field_from_end,
     find_bb, recursive_circuit_artifacts_available, require_minimum_circuits,
-    require_minimum_circuits_for_preset, setup_compiled_circuit, setup_compiled_circuit_for_preset,
-    setup_recursive_aggregation_fold_circuit, setup_recursive_aggregation_fold_circuit_for_preset,
-    setup_test_prover,
+    require_minimum_circuits_for_preset, setup_chunked_dkg_circuits, setup_compiled_circuit,
+    setup_compiled_circuit_for_preset, setup_recursive_aggregation_fold_circuit,
+    setup_recursive_aggregation_fold_circuit_for_preset, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::Proof;
@@ -369,7 +369,7 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "share_decryption").await;
+    setup_chunked_dkg_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::for_preset(preset).ok()?;

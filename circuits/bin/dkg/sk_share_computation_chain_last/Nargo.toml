@@ -1,0 +1,7 @@
+[package]
+name = "sk_share_computation_chain_last"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

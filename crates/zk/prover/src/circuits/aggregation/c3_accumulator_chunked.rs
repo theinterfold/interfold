@@ -8,7 +8,7 @@
 //! [`CircuitName::C3FoldKernelChunked`], whose proof carries that leaf's row and starts the chain
 //! (see `circuits/bin/recursive_aggregation/c3_fold_kernel_chunked`). Each later step verifies one
 //! more inner proof and the accumulator: the kernel proof on the first step, a `c3_fold_chunked`
-//! proof after that. The trBFV path folds with [`super::c3_accumulator`].
+//! proof after that. The trBFV path proves C3 over Chonk ([`super::c3_chonk`]).
 //!
 //! Ciphernodes integrate via [`generate_sequential_c3_fold_chunked`] only: they supply the full
 //! list of C3 inner proofs and slot indices; per-step folding is not exposed outside this crate.
@@ -30,7 +30,7 @@ fn c3_fold_public_input_field_count(total_slots: usize) -> usize {
     6 + 3 * total_slots
 }
 
-/// Public-signal layout of `c3_fold`: 6-field prefix, then 3-field-wide per-slot tail.
+/// Public-signal layout of `c3_fold_chunked`: 6-field prefix, then 3-field-wide per-slot tail.
 const C3_FOLD_PREFIX_LEN: usize = 6;
 const C3_FOLD_SLOT_WIDTH: usize = 3;
 
@@ -267,7 +267,7 @@ fn generate_c3_fold_step_with_vks(
 }
 
 /// Folds `inner_proofs` in order, one inner C3 proof per step — the integration surface for
-/// ciphernodes (batch in, single `C3Fold` proof out).
+/// ciphernodes (batch in, single `C3FoldChunked` proof out).
 ///
 /// `slot_indices[i]` is the `(party * L_THRESHOLD + modulus)` slot for `inner_proofs[i]`.
 /// `total_slots` must equal `N_PARTIES * L_THRESHOLD` and determines the accumulator size.

@@ -79,11 +79,17 @@ export const CIRCUIT_COMMITTEES = {
   MINIMUM: 'minimum',
   MICRO: 'micro',
   SMALL: 'small',
+  LARGE: 'large',
 } as const
 
 export type CircuitCommittee = (typeof CIRCUIT_COMMITTEES)[keyof typeof CIRCUIT_COMMITTEES]
 
-export const ALL_COMMITTEES: CircuitCommittee[] = [CIRCUIT_COMMITTEES.MINIMUM, CIRCUIT_COMMITTEES.MICRO, CIRCUIT_COMMITTEES.SMALL]
+export const ALL_COMMITTEES: CircuitCommittee[] = [
+  CIRCUIT_COMMITTEES.MINIMUM,
+  CIRCUIT_COMMITTEES.MICRO,
+  CIRCUIT_COMMITTEES.SMALL,
+  CIRCUIT_COMMITTEES.LARGE,
+]
 
 /**
  * Committee dimensions from the shared binding, used to deploy matching verifier layouts.
@@ -98,6 +104,7 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
   [CIRCUIT_COMMITTEES.MINIMUM]: { n: COMMITTEES.minimum.n, t: COMMITTEES.minimum.t, h: COMMITTEES.minimum.h },
   [CIRCUIT_COMMITTEES.MICRO]: { n: COMMITTEES.micro.n, t: COMMITTEES.micro.t, h: COMMITTEES.micro.h },
   [CIRCUIT_COMMITTEES.SMALL]: { n: COMMITTEES.small.n, t: COMMITTEES.small.t, h: COMMITTEES.small.h },
+  [CIRCUIT_COMMITTEES.LARGE]: { n: COMMITTEES.large.n, t: COMMITTEES.large.t, h: COMMITTEES.large.h },
 }
 
 /** Build policy shared with the Rust circuit builder. Manifest order defines build order. */

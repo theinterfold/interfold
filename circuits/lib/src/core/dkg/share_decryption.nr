@@ -6,10 +6,9 @@
 
 use crate::math::commitments::{
     compute_aggregated_shares_commitment, compute_aggregated_shares_commitment_from_carriers,
-    compute_sc_party_share_root_from_carriers, compute_sc_party_share_root_from_reversed,
+    compute_sc_party_share_root_from_carriers,
     compute_share_encryption_commitment_from_message_checked,
 };
-use crate::math::helpers::{assert_in_range, pack};
 use crate::math::modulo::U128::centered_mod_bounded;
 use crate::math::packed_sum::reduce_packed_sum;
 use crate::math::polynomial::Polynomial;
@@ -57,88 +56,6 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
         ShareDecryption { expected_commitments, decrypted_shares }
     }
 
-    /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
-    ///
-    /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
-    /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
-    ///
-    /// Opens with the checked packing helper: asserting each digit fits its slot makes the opening
-    /// unique, so the witness must be the share C2 committed and already bounded to `[0, q_j)`. That
-    /// transferred bound is what `normalize_aggregated` relies on to cap its carry at `H`; the
-    /// aggregate itself needs no bound of its own.
-    /// Since commitments are binding, any substitution or tampering, claiming a different
-    /// decrypted value or using the wrong secret key, will cause this assertion to fail.
-    ///
-    /// The opening is supplied by the caller: given the reversed
-    /// share of one sender for one limb, return its commitment. It must open **injectively**
-    /// (checked packing): nothing else in C4 bounds the decrypted shares. The l-BFV path opens
-    /// chunk roots (`share_decryption_chunked`).
-    fn verify_commitments_with<Env>(self, open: fn[Env](u32, Polynomial<N>) -> Field) {
-        for party_idx in 0..H {
-            for mod_idx in 0..L {
-                // Reverse the share polynomial to match the commitment format used by C2's
-                // commit_to_party_shares, which stores coefficients highest-degree-first.
-                let share = self.decrypted_shares[party_idx][mod_idx];
-                let mut reversed_coeffs: [Field; N] = [0; N];
-                for i in 0..N {
-                    reversed_coeffs[N - 1 - i] = share.coefficients[i];
-                }
-                assert(
-                    open(mod_idx, Polynomial::new(reversed_coeffs))
-                        == self.expected_commitments[party_idx][mod_idx],
-                    "Commitment mismatch",
-                );
-            }
-        }
-    }
-
-    /// [`Self::verify_commitments_with`] with `open` given each share in its decrypted
-    /// (lowest-degree-first) order, so an opening that can read the share reversed in place does not
-    /// make the circuit build a reversed copy. The l-BFV path opens chunk roots this way
-    /// (`compute_sc_party_share_root_from_reversed`). `open` must still open injectively.
-    fn verify_commitments_in_place_with<Env>(self, open: fn[Env](u32, Polynomial<N>) -> Field) {
-        for party_idx in 0..H {
-            for mod_idx in 0..L {
-                assert(
-                    open(mod_idx, self.decrypted_shares[party_idx][mod_idx])
-                        == self.expected_commitments[party_idx][mod_idx],
-                    "Commitment mismatch",
-                );
-            }
-        }
-    }
-
-    /// Aggregates all verified shares by summing coefficient-wise across honest parties.
-    ///
-    /// For each CRT modulus and each coefficient position, computes:
-    ///   aggregated[mod_idx][coeff] = sum(decrypted_shares[party_idx][mod_idx][coeff])
-    ///                                  for party_idx in 0..H
-    ///
-    /// No modular reduction is applied here: each share coefficient equals the value C2 committed,
-    /// which C2 bounded to [0, q_l), so the sum stays under `H * q_l` and fits in the circuit field.
-    /// `normalize_aggregated` reduces it to the centered window before committing.
-    ///
-    /// This reflects the threshold key construction: sk = sum(sk_i) for i in H.
-    /// Each ciphernode now holds a share of this sum, used during threshold decryption in P4.
-    fn compute_aggregated_shares(self) -> [Polynomial<N>; L] {
-        let mut sum: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
-
-        for mod_idx in 0..L {
-            let mut coeffs = [0 as Field; N];
-            for coeff_idx in 0..N {
-                let mut total = 0 as Field;
-                for party_idx in 0..H {
-                    total =
-                        total + self.decrypted_shares[party_idx][mod_idx].coefficients[coeff_idx];
-                }
-                coeffs[coeff_idx] = total;
-            }
-            sum[mod_idx] = Polynomial::new(coeffs);
-        }
-
-        sum
-    }
-
     /// Executes the share decryption and aggregation circuit.
     ///
     /// Returns a commitment to the aggregated shares:
@@ -151,55 +68,74 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
-        self.execute_with(moduli, |_mod_idx, share| {
-            compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(share)
-        })
-    }
-
-    /// [`Self::execute`] with the share opening supplied by the caller; see
-    /// [`Self::verify_commitments_with`] for what it must guarantee.
-    pub fn execute_with<Env>(
-        self,
-        moduli: [Field; L],
-        open: fn[Env](u32, Polynomial<N>) -> Field,
-    ) -> Field {
-        // Step 1: Verify decrypted shares match expected C2 commitments, opened injectively.
-        self.verify_commitments_with(open);
-        self.aggregate_and_commit(moduli)
-    }
-
-    /// [`Self::execute_with`] with `open` given each share unreversed; see
-    /// [`Self::verify_commitments_in_place_with`].
-    pub fn execute_in_place_with<Env>(
-        self,
-        moduli: [Field; L],
-        open: fn[Env](u32, Polynomial<N>) -> Field,
-    ) -> Field {
-        self.verify_commitments_in_place_with(open);
-        self.aggregate_and_commit(moduli)
-    }
-
-    /// Steps 2-4 of [`Self::execute_with`], after the shares are opened.
-    fn aggregate_and_commit(self, moduli: [Field; L]) -> Field {
-        // Step 2: Sum shares coefficient-wise per CRT limb.
-        let aggregated = self.compute_aggregated_shares();
-
-        // The carry `normalize_aggregated` divides out is at most H; see AGGREGATION_BIT_CARRY.
-        assert(H < 256, "committee exceeds the aggregation carry bound");
-        // `BIT_MSG` is the share width, so it covers `q` and can serve as the canonical range
-        // width below. Both are compile-time constants, so this folds away rather than costing
-        // gates -- it turns that agreement into something the build checks instead of assumes.
+        let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
         for mod_idx in 0..L {
-            (moduli[mod_idx] - 1).assert_max_bit_size::<BIT_MSG>();
+            let mut commitments = [0; H];
+            let mut shares = [Polynomial::new([0; N]); H];
+            for party_idx in 0..H {
+                commitments[party_idx] = self.expected_commitments[party_idx][mod_idx];
+                shares[party_idx] = self.decrypted_shares[party_idx][mod_idx];
+            }
+            normalized[mod_idx] =
+                aggregate_limb::<N, H, BIT_MSG>(commitments, shares, moduli[mod_idx]);
         }
 
-        // Step 3: Normalize to match C6's representation: reverse and centre-reduce mod q.
-        let normalized =
-            normalize_aggregated::<N, L, BIT_MSG, AGGREGATION_BIT_CARRY>(aggregated, moduli);
-
-        // Step 4: Publish commitment to the aggregate (C6 input).
+        // Publish commitment to the aggregate (C6 input).
         compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
     }
+}
+
+/// C4's statement for one CRT limb with modulus `q`: every honest party's decrypted share opens its
+/// C2 commitment, and the shares' sum, reversed and centered as C6 hashes it, is returned.
+///
+/// **Openings.** Each share is reversed to C2's highest-degree-first order and opened with the
+/// checked packing helper. Asserting each digit fits its slot makes the opening unique, so the
+/// witness must be the share C2 committed and already bounded to `[0, q)`. Any substitution, a
+/// different decrypted value or the wrong secret key, fails the commitment check.
+///
+/// **Sum.** No reduction is applied while summing: each coefficient is the value C2 bounded to
+/// `[0, q)`, so the sum stays under `H * q` and fits the field. This is the threshold key
+/// construction, `sk = sum(sk_i)` over the honest parties.
+///
+/// **Normalization.** [`normalize_aggregated`]'s reduction relies on that transferred bound to cap
+/// its carry at `H`; the aggregate needs no bound of its own.
+pub fn aggregate_limb<let N: u32, let H: u32, let BIT_MSG: u32>(
+    expected_commitments: [Field; H],
+    decrypted_shares: [Polynomial<N>; H],
+    q: Field,
+) -> Polynomial<N> {
+    for party_idx in 0..H {
+        let share = decrypted_shares[party_idx];
+        let mut reversed_coeffs: [Field; N] = [0; N];
+        for i in 0..N {
+            reversed_coeffs[N - 1 - i] = share.coefficients[i];
+        }
+        assert(
+            compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(Polynomial::new(
+                reversed_coeffs,
+            ))
+                == expected_commitments[party_idx],
+            "Commitment mismatch",
+        );
+    }
+
+    let mut sum = [0 as Field; N];
+    for coeff_idx in 0..N {
+        let mut total = 0 as Field;
+        for party_idx in 0..H {
+            total = total + decrypted_shares[party_idx].coefficients[coeff_idx];
+        }
+        sum[coeff_idx] = total;
+    }
+
+    // The carry `normalize_aggregated` divides out is at most H; see AGGREGATION_BIT_CARRY.
+    assert(H < 256, "committee exceeds the aggregation carry bound");
+    // `BIT_MSG` is the share width, so it covers `q` and can serve as the canonical range width
+    // below. Both are compile-time constants, so this folds away rather than costing gates -- it
+    // turns that agreement into something the build checks instead of assumes.
+    (q - 1).assert_max_bit_size::<BIT_MSG>();
+
+    normalize_aggregated::<N, 1, BIT_MSG, AGGREGATION_BIT_CARRY>([Polynomial::new(sum)], [q])[0]
 }
 
 /// Normalize aggregated share polynomials to match C6's Rust witness representation.
@@ -350,6 +286,42 @@ fn test_normalize_aggregated_matches_previous_formula() {
     }
 }
 
+use crate::math::commitments::compute_sc_party_share_root_from_reversed;
+use crate::math::helpers::pack;
+
+/// The unpacked l-BFV C4 the packed tests compare against: open each sender's chunk root from its
+/// coefficients, then sum, normalize and commit as [`aggregate_limb`] does.
+fn unpacked_chunk_root_decryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32>(
+    expected_commitments: [[Field; L]; H],
+    decrypted_shares: [[Polynomial<N>; L]; H],
+    recipient_party_idx: u32,
+    moduli: [Field; L],
+) -> Field {
+    let mut aggregated: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
+    for mod_idx in 0..L {
+        let mut sum = [0; N];
+        for sender in 0..H {
+            let share = decrypted_shares[sender][mod_idx];
+            assert(
+                compute_sc_party_share_root_from_reversed::<N, 2, 4, BIT_MSG>(
+                    recipient_party_idx,
+                    mod_idx,
+                    share,
+                )
+                    == expected_commitments[sender][mod_idx],
+                "Commitment mismatch",
+            );
+            for i in 0..N {
+                sum[i] += share.coefficients[i];
+            }
+        }
+        aggregated[mod_idx] = Polynomial::new(sum);
+    }
+    let normalized =
+        normalize_aggregated::<N, L, BIT_MSG, AGGREGATION_BIT_CARRY>(aggregated, moduli);
+    compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
+}
+
 /// Packs each sender's reversed share the way C2 does (4 slots per carrier) for the packed tests.
 fn packed_test_inputs<let BIT: u32>() -> ([[Field; 2]; 3], [[[Field; 2]; 2]; 3], [[Polynomial<8>; 2]; 3]) {
     // Three senders, two limbs (q = 101, 97), degree 8; every coefficient a canonical residue, with
@@ -389,12 +361,8 @@ fn packed_test_inputs<let BIT: u32>() -> ([[Field; 2]; 3], [[[Field; 2]; 2]; 3],
 #[test]
 fn test_packed_share_decryption_matches_the_unpacked_opening() {
     let (expected, carriers, shares) = packed_test_inputs::<51>();
-    let unpacked = ShareDecryption::<8, 2, 3, 51, 50>::new(expected, shares).execute_in_place_with(
-        [101, 97],
-        |mod_idx, share| {
-            compute_sc_party_share_root_from_reversed::<8, 2, 4, 51>(1, mod_idx, share)
-        },
-    );
+    let unpacked =
+        unpacked_chunk_root_decryption::<8, 2, 3, 51, 50>(expected, shares, 1, [101, 97]);
     let packed = packed_share_decryption::<8, 2, 3, 2, 4, 51, 50>(expected, carriers, 1, [101, 97]);
     assert(packed == unpacked);
 }
@@ -417,12 +385,8 @@ fn test_packed_share_decryption_rejects_the_wrong_recipient() {
 fn test_packed_share_decryption_matches_at_the_insecure_layout() {
     // 56-bit shares round to 56-bit nibbles: 60-bit slots, still four per carrier, 4-bit carries.
     let (expected, carriers, shares) = packed_test_inputs::<56>();
-    let unpacked = ShareDecryption::<8, 2, 3, 56, 55>::new(expected, shares).execute_in_place_with(
-        [101, 97],
-        |mod_idx, share| {
-            compute_sc_party_share_root_from_reversed::<8, 2, 4, 56>(1, mod_idx, share)
-        },
-    );
+    let unpacked =
+        unpacked_chunk_root_decryption::<8, 2, 3, 56, 55>(expected, shares, 1, [101, 97]);
     let packed = packed_share_decryption::<8, 2, 3, 2, 4, 56, 55>(expected, carriers, 1, [101, 97]);
     assert(packed == unpacked);
 }

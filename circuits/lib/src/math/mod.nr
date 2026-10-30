@@ -11,4 +11,8 @@ pub mod modulo;
 pub mod packed_sum;
 pub mod commitments;
 pub mod recursive_vk;
+pub mod c3_fold;
+pub mod c6_fold;
+pub mod nodes_fold;
+pub mod chonk;
 pub mod committee_hash;

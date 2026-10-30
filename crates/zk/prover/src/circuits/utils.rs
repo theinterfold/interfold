@@ -195,6 +195,11 @@ fn json_value_to_input_value(v: &serde_json::Value) -> Result<InputValue, ZkErro
             map.insert("coefficients".into(), InputValue::Vec(fields));
             return Ok(InputValue::Struct(map));
         }
+        let fields = obj
+            .iter()
+            .map(|(name, value)| Ok((name.clone(), json_value_to_input_value(value)?)))
+            .collect::<Result<BTreeMap<_, _>, ZkError>>()?;
+        return Ok(InputValue::Struct(fields));
     }
     Err(ZkError::SerializationError(
         "unexpected json structure".into(),

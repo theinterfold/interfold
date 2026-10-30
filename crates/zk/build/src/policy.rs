@@ -28,16 +28,20 @@ const LBFV: &[&str] = &[
     "c3_fold_chunked",
     "c3_fold_kernel_chunked",
     "c3ab_fold_chunked",
+    "c4ab_fold_chunked",
     "node_fold_chunked",
 ];
 
 const SHARED: &[&str] = &[
     "dkg/pk",
     "threshold/share_decryption",
-    "recursive_aggregation/c6_fold",
-    "recursive_aggregation/c6_fold_kernel",
+    "chonk/c6_chonk_app",
+    "chonk/c6_chonk_init_kernel",
+    "chonk/c6_chonk_tail_kernel",
+    "chonk/c6_chonk_hiding_kernel",
+    "recursive_aggregation/c6_chonk_tube",
+    "recursive_aggregation/c6_chonk_root",
     "recursive_aggregation/decryption_aggregator",
-    "recursive_aggregation/c4ab_fold",
     "recursive_aggregation/nodes_fold_kernel",
     "recursive_aggregation/dkg_aggregator",
     "threshold/ct0_chunk_main",

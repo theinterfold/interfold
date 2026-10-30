@@ -208,19 +208,24 @@ fn c2b_to_c4b_variant() {
     assert!(!link.check_consistency(&source_values, &c4_wrong, 0, 0));
 }
 
-/// The trBFV single C2 proof has one prefix field (`expected_secret_commitment`) and no trailing
-/// batch VK hash, so its last share commitment must not be dropped.
+/// The chunk key-tree hash a trBFV final C2 proof exposes last.
+const KEY_TREE: u8 = 0xEE;
+
+/// The trBFV final C2 proof has one prefix field (`expected_secret_commitment`) and ends with the
+/// hash of its chunk keys, so every share commitment, the last included, is extracted and that hash
+/// is not.
 #[test]
-fn trbfv_extraction_keeps_the_last_share_commitment() {
+fn trbfv_extraction_keeps_every_share_commitment_and_skips_the_key_tree() {
     let link = C2aToC4aShareCommitmentLink {
         l: 2,
         source_prefix_fields: 1,
-        source_suffix_fields: 0,
+        source_suffix_fields: 1,
     };
     let mut c2 = make_field(0xFF).to_vec(); // expected_secret_commitment
     for value in 1u8..=6 {
         c2.extend_from_slice(&make_field(value));
     }
+    c2.extend_from_slice(&make_field(KEY_TREE));
     let values = link.extract_source_values(&c2);
     assert_eq!(values, (1u8..=6).map(make_field).collect::<Vec<_>>());
 }

@@ -52,7 +52,7 @@ fn packing_layout(bit: u32) -> (u32, u32) {
 /// A vector of field elements containing the packed coefficients.
 /// The number of field elements is `ceil(poly.coefficients().len() / group)` where `group` is
 /// determined by the packing layout.
-fn packer(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
+pub(crate) fn packer(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
     packer_fixed_width(polynomial, bit).unwrap_or_else(|| packer_bigint(polynomial, bit))
 }
 

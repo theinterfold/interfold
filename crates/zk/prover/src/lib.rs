@@ -7,6 +7,7 @@
 mod actor_system;
 mod actors;
 mod backend;
+mod chonk;
 mod circuits;
 mod config;
 mod dkg_attestation_bundle;
@@ -33,16 +34,17 @@ pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_terminal_validation::{
     validate_c2_terminal_proof, C2TerminalAnchors,
 };
-pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
 pub use circuits::aggregation::c3_accumulator_chunked::generate_sequential_c3_fold_chunked;
-pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
+pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
+pub use circuits::aggregation::c6_chonk::generate_c6_chonk_root;
 pub use circuits::aggregation::node_dkg_fold::{
     prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_node_dkg_fold,
     DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming, NodeDkgFoldInput,
     NodeDkgFoldProveResult,
 };
 pub use circuits::aggregation::nodes_fold_accumulator::{
-    generate_nodes_fold_step, generate_sequential_nodes_fold,
+    generate_nodes_fold_step, generate_sequential_nodes_fold, nodes_fold_step_len,
+    NODES_FOLD_LEAVES,
 };
 pub use circuits::aggregation::v2::{
     prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step,

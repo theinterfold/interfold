@@ -21,8 +21,8 @@ use e3_event_system::EventSystem;
 use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
-    ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
+    ComputeResponseKind, ConfigurationUpdated, CorrelationId, DkgFoldAttestationContextEstablished,
+    E3Requested, E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
     PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, Unsubscribe,
     VerificationKind, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
@@ -273,6 +273,11 @@ fn uses_dist_preset_artifacts(preset_subdir: &str, committee_str: &str) -> bool 
 
 fn uses_lbfv_artifacts(preset_subdir: &str) -> bool {
     matches!(preset_subdir, "insecure" | "secure-16384")
+}
+
+/// Whether the archive holds the trBFV DKG circuits (`policy::has_trbfv` in `e3-zk-build`).
+fn uses_trbfv_artifacts(preset_subdir: &str) -> bool {
+    preset_subdir != "secure-16384"
 }
 
 /// Preset stamp path — under the new layout each `{preset}/{committee}` dir has its own stamp.
@@ -576,22 +581,9 @@ async fn setup_test_zk_backend(
             let threshold_share_decryption_target = circuit_target("threshold", "share_decryption");
             let threshold_decrypted_shares_aggregation_target =
                 circuit_target("threshold", "decrypted_shares_aggregation");
-            let c3_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c3_fold")
-                .join("target");
-            let c3_fold_kernel_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c3_fold_kernel")
-                .join("target");
-            let c6_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c6_fold")
-                .join("target");
-            let c6_fold_kernel_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c6_fold_kernel")
-                .join("target");
+            // The trBFV chunk, limb and Chonk circuits share their workspaces' target directories.
+            let dkg_target = circuits_build_root.join("dkg").join("target");
+            let chonk_target = circuits_build_root.join("chonk").join("target");
             let c2_chunk_batch_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("c2_chunk_batch")
@@ -709,7 +701,7 @@ async fn setup_test_zk_backend(
                     src_dir.join("vk_hash")
                 };
                 copy_file(vk_hash_src, dst_dir.join(format!("{name}.vk_hash"))).await?;
-                if matches!(name, "nodes_fold" | "c6_fold") {
+                if name == "nodes_fold" {
                     copy_file(
                         src_dir.join(format!("{name}.vk_tree_hash")),
                         dst_dir.join(format!("{name}.vk_tree_hash")),
@@ -760,6 +752,19 @@ async fn setup_test_zk_backend(
                 ".vk_noir_hash",
             )
             .await?;
+            // trBFV C2: the final proofs over the chunk chains staged under default/ below.
+            if uses_trbfv_artifacts(preset_subdir) {
+                for name in ["sk_share_computation", "e_sm_share_computation"] {
+                    copy_circuit(
+                        &circuit_target("dkg", name),
+                        &rv.join("dkg").join(name),
+                        name,
+                        ".vk_noir",
+                        ".vk_noir_hash",
+                    )
+                    .await?;
+                }
+            }
             // C3 (share_encryption)
             copy_circuit(
                 &dkg_share_encryption_target,
@@ -839,38 +844,95 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            copy_circuit(
-                &c3_fold_target,
-                &dv.join("recursive_aggregation/c3_fold"),
-                "c3_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
+            // The trBFV path proves C2 and C4 as chains and C3 over Chonk, under the default variant.
+            if uses_trbfv_artifacts(preset_subdir) {
+                for name in [
+                    "sk_share_computation_chain",
+                    "sk_share_computation_chain_last",
+                    "e_sm_share_computation_chain",
+                    "e_sm_share_computation_chain_last",
+                    "share_decryption_limb_0",
+                    "share_decryption_limb_1",
+                    "share_decryption_limb_2",
+                ] {
+                    copy_circuit(
+                        &dkg_target,
+                        &dv.join("dkg").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+                for name in [
+                    "c3_chonk_app",
+                    "c3_chonk_init_kernel",
+                    "c3_chonk_tail_kernel",
+                    "c3_chonk_hiding_kernel",
+                ] {
+                    copy_circuit(
+                        &chonk_target,
+                        &dv.join("chonk").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+                for name in ["c2ab_fold", "c3_chonk_tube", "c3_chonk_accumulate"] {
+                    copy_circuit(
+                        &circuits_build_root
+                            .join("recursive_aggregation")
+                            .join(name)
+                            .join("target"),
+                        &dv.join("recursive_aggregation").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+            }
+            // Both paths decrypt through the C6 Chonk stack, which shares the `chonk` workspace
+            // target.
+            for name in [
+                "c6_chonk_app",
+                "c6_chonk_init_kernel",
+                "c6_chonk_tail_kernel",
+                "c6_chonk_hiding_kernel",
+            ] {
+                copy_circuit(
+                    &chonk_target,
+                    &dv.join("chonk").join(name),
+                    name,
+                    ".vk_recursive",
+                    ".vk_recursive_hash",
+                )
+                .await?;
+            }
+            for name in ["c6_chonk_tube", "c6_chonk_root"] {
+                copy_circuit(
+                    &circuits_build_root
+                        .join("recursive_aggregation")
+                        .join(name)
+                        .join("target"),
+                    &dv.join("recursive_aggregation").join(name),
+                    name,
+                    ".vk_recursive",
+                    ".vk_recursive_hash",
+                )
+                .await?;
+            }
+            // The C6 tree anchor keeps its `c6_fold` path after the fold circuit's removal.
+            let c6_anchor = dv.join("recursive_aggregation/c6_fold");
+            tokio::fs::create_dir_all(&c6_anchor).await?;
+            tokio::fs::copy(
+                circuits_build_root
+                    .join("recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash"),
+                c6_anchor.join("c6_fold.vk_tree_hash"),
             )
-            .await?;
-            copy_circuit(
-                &c3_fold_kernel_target,
-                &dv.join("recursive_aggregation/c3_fold_kernel"),
-                "c3_fold_kernel",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c6_fold_target,
-                &dv.join("recursive_aggregation/c6_fold"),
-                "c6_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c6_fold_kernel_target,
-                &dv.join("recursive_aggregation/c6_fold_kernel"),
-                "c6_fold_kernel",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
+            .await
+            .context("copy the C6 VK-tree anchor")?;
             copy_circuit(
                 &c2_chunk_batch_target,
                 &dv.join("recursive_aggregation/c2_chunk_batch"),
@@ -986,6 +1048,13 @@ async fn setup_test_zk_backend(
                         "lbfv_aggregation_fold_kernel",
                     ),
                     (&dkg_aggregator_v2_target, "dkg_aggregator_v2"),
+                    (
+                        &circuits_build_root
+                            .join("recursive_aggregation")
+                            .join("c4ab_fold_chunked")
+                            .join("target"),
+                        "c4ab_fold_chunked",
+                    ),
                 ] {
                     copy_circuit(
                         target,
@@ -1490,6 +1559,22 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("LbfvPublicKeyAggregated")
         }
         _ => None,
+    }
+}
+
+/// Whether a compute request belongs to the public-key phase: node folds, DKG aggregation, and
+/// share-proof checks of anything but C6 decryption shares.
+fn is_key_phase_request(request: &ComputeRequestKind) -> bool {
+    match request {
+        ComputeRequestKind::Zk(
+            ZkRequest::NodeDkgFold { .. } | ZkRequest::DkgAggregation { .. },
+        ) => true,
+        ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(request)) => request
+            .party_proofs
+            .iter()
+            .flat_map(|party| &party.signed_proofs)
+            .any(|signed| signed.payload.proof_type != ProofType::C6ThresholdShareDecryption),
+        _ => false,
     }
 }
 
@@ -2696,6 +2781,41 @@ async fn test_trbfv_actor() -> Result<()> {
             publisher_keyshares >= committee_h,
             "publishing party saw {publisher_keyshares} keyshares; expected at least H={committee_h}"
         );
+        // Repeated work is tolerated, a second publication is not: a demoted and a promoted
+        // aggregator both publishing the key is the failure a failover must not produce.
+        let published = observed
+            .iter()
+            .filter(|&&event| event == publication_event_name)
+            .count();
+        assert_eq!(
+            published, 1,
+            "public-key flow after failover: {publication_event_name} published {published} times across the role holders"
+        );
+        for &node_index in &pubkey_aggregator_nodes {
+            let holder_events = project_history(&nodes.get_history(node_index).await?, |data| {
+                publickey_aggregator_marker(data, &e3_id)
+            });
+            let keyshare_count = holder_events
+                .iter()
+                .filter(|&&event| event == "KeyshareCreated")
+                .count();
+            assert!(
+                (committee_h..=threshold_n).contains(&keyshare_count),
+                "Role holder {node_index} received {keyshare_count} keyshares; expected at least H={committee_h} and at most N={threshold_n}"
+            );
+            assert_eq!(
+                holder_events.first().copied(),
+                Some("CommitteeFinalized"),
+                "Role holder {node_index}: first event must be CommitteeFinalized"
+            );
+            if holder_events.contains(&publication_event_name) {
+                assert_eq!(
+                    holder_events.last().copied(),
+                    Some(publication_event_name),
+                    "Role holder {node_index}: publishing the key must end its public-key flow"
+                );
+            }
+        }
     }
     if is_lbfv {
         // In place of C1: every selected party's l-BFV public-key generation proofs passed
@@ -3146,10 +3266,41 @@ async fn test_trbfv_actor() -> Result<()> {
     );
     println!("[bench-progress] PlaintextAggregated observed on node {plaintext_aggregator_index}");
 
-    let active_aggregator_plaintext_events =
-        project_history(&active_aggregator_history[plaintext_start..], |data| {
-            plaintext_aggregator_marker(data, &e3_id)
-        });
+    // After a public-key failover, the parties that held the aggregator role can start or finish
+    // key-phase work (node folds, DKG aggregation, share-proof checks) after the ciphertext is
+    // published. That work is not part of the plaintext flow, so leave out the compute requests and
+    // responses that belong to a key-phase request.
+    let key_phase_work: HashSet<CorrelationId> = if pubkey_failover {
+        active_aggregator_history
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ComputeRequest(request)
+                    if request.e3_id == e3_id && is_key_phase_request(&request.request) =>
+                {
+                    Some(request.correlation_id)
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let active_aggregator_plaintext_events = project_history(
+        &active_aggregator_history[plaintext_start..],
+        |data| match data {
+            InterfoldEventData::ComputeRequest(request)
+                if key_phase_work.contains(&request.correlation_id) =>
+            {
+                None
+            }
+            InterfoldEventData::ComputeResponse(response)
+                if key_phase_work.contains(&response.correlation_id) =>
+            {
+                None
+            }
+            _ => plaintext_aggregator_marker(data, &e3_id),
+        },
+    );
 
     // C6 head layout:
     //   CiphertextOutputPublished, DecryptionshareCreated × K, ShareVerificationDispatched,

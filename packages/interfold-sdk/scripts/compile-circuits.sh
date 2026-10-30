@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Compile and stage each threshold user-data encryption preset for the SDK.
+# Compile and stage the threshold user-data encryption circuits for the SDK.
 # Default committee is minimum (matches DEFAULT_E3_CONFIG.committeeSize = CommitteeSize.Minimum).
+# l-BFV keys use the chunked proof tree staged per preset under circuits/dist. trBFV keys use the
+# single `user_data_encryption` circuit, compiled last so circuits/bin/threshold/target holds it. It
+# needs no verification key: the SDK returns the proof, and nothing it does verifies it inside
+# another circuit.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -80,3 +84,14 @@ if (degree !== expectedDegree) {
 }
 NODE
 done
+
+# The SDK's trBFV presets are INSECURE_THRESHOLD_64 (on-chain set 0, the `insecure-64` circuit
+# preset) and SECURE_THRESHOLD_8192; the default proves at degree 64.
+pnpm -C "${REPO_ROOT}" build:circuits \
+  --preset insecure-64 \
+  --committee "${COMMITTEE}" \
+  --group threshold \
+  --circuit user_data_encryption \
+  --skip-vk \
+  --skip-checksums \
+  --no-clean-targets

@@ -27,6 +27,10 @@ async `spawn(task_name, timed_logs, operation)` waits for admission and returns 
 result (or `TaskPoolError`). Timed logs describe elapsed work; they are not hard preemption of
 executing Rayon closures.
 
+C3 share-encryption proofs are light jobs: a node proves them as one batch of small proofs, so at
+most four run at once, each on a quarter of the pool's threads (`HARDWARE_CONCURRENCY` for bb), in
+the admission that one full job would take. Every other job takes a full slot and every thread.
+
 The pool types are re-exported here for existing callers; `e3-task-pool` owns their implementation.
 Prover-specific memory budgets remain in this runtime, not in the generic executor.
 

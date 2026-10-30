@@ -62,12 +62,14 @@ test('deployment routes retain chain policy and order while projecting owner met
       ['insecure-64', 'minimum'],
       ['insecure-64', 'micro'],
       ['insecure-64', 'small'],
+      ['insecure-64', 'large'],
       ['insecure', 'minimum'],
       ['insecure', 'micro'],
       ['insecure', 'small'],
       ['secure-8192', 'minimum'],
       ['secure-8192', 'micro'],
       ['secure-8192', 'small'],
+      ['secure-8192', 'large'],
       ['secure-16384', 'minimum'],
       ['secure-16384', 'micro'],
       ['secure-16384', 'small'],
@@ -320,6 +322,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
           (module) => `circuits/lib/src/configs/committee/${committee}/${module}.nr`,
         ),
       ),
+      ...['mod', 'parity_insecure_64', 'parity_secure_8192'].map((module) => `circuits/lib/src/configs/committee/large/${module}.nr`),
       ...['insecure_64', 'insecure', 'secure_8192', 'secure_16384'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
     ]
     for (const file of files) {
@@ -352,7 +355,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
     writeFileSync(binding, JSON.stringify(stale))
     assert.throws(check)
     writeFileSync(binding, source)
-    for (const committee of ['minimum', 'micro', 'small']) {
+    for (const committee of ['minimum', 'micro', 'small', 'large']) {
       const changed = JSON.parse(source)
       changed.committees.find((record) => record.name === committee).h += 1
       writeFileSync(binding, JSON.stringify(changed))

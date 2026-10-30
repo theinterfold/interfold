@@ -205,7 +205,7 @@
         {
           "name": "per-job witness and proof files in the bb work dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/prover.rs@291@let job_dir = self"
+          "ref": "crates/zk/prover/src/prover.rs@336@let job_dir = self"
         },
         {
           "name": "node-fold inner proofs and fold metadata in Repositories",
@@ -232,7 +232,7 @@
         {
           "name": "ZkProver",
           "what": "runs bb prove and bb verify as subprocesses with a wall-clock cap",
-          "ref": "crates/zk/prover/src/prover.rs@143@pub struct ZkProver"
+          "ref": "crates/zk/prover/src/prover.rs@154@pub struct ZkProver"
         },
         {
           "name": "Provable",
@@ -290,7 +290,7 @@
         },
         {
           "why": "the exact bb prove arguments",
-          "ref": "crates/zk/prover/src/prover.rs@313@let mut args = vec!["
+          "ref": "crates/zk/prover/src/prover.rs@358@let mut args = vec!["
         },
         {
           "why": "protocol request adaptation, witness decryption and prover execution without actor scheduling",
@@ -387,7 +387,7 @@
         {
           "pattern": "enum-match",
           "note": "CircuitName maps static identities to artifact names without runtime dependencies.",
-          "ref": "crates/zk/config/src/circuit.rs@104@CircuitName::PkBfv => \"pk\","
+          "ref": "crates/zk/config/src/circuit.rs@143@CircuitName::PkBfv => \"pk\","
         }
       ],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe", "e3-parity-matrix"],
@@ -444,13 +444,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@201@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@240@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@391@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@446@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],

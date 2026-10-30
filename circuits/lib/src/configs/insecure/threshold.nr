@@ -564,6 +564,7 @@ pub global USER_DATA_ENCRYPTION_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> 
 );
 pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
     QIS,
+    CRP,
     USER_DATA_ENCRYPTION_E1_BOUND,
     USER_DATA_ENCRYPTION_U_BOUND,
     USER_DATA_ENCRYPTION_CT1_R_BOUNDS,

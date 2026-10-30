@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Result};
 use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
 use e3_zk_witness::threshold::user_data_encryption::{
-    encrypt_and_prepare, UserDataEncryptionCircuitData,
+    encrypt_and_prepare, public_key_on_protocol_crs, UserDataEncryptionCircuitData,
 };
 use e3_zk_witness::threshold::user_data_encryption_chunked::Inputs as ChunkedUserDataEncryptionInputs;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
@@ -233,10 +233,7 @@ pub fn generate_public_key(
     let mut rng = rng();
     let sk = SecretKey::random(&params, &mut rng);
     // On the protocol CRS, as committee keys are: user-data encryption proofs need that `a`.
-    use fhe::mbfv::{Aggregate as _, PublicKeyShare};
-    let crp = e3_fhe_params::create_deterministic_crp_from_default_seed(&params);
-    let pk = PublicKeyShare::new(&sk, crp, &mut rng)
-        .and_then(|share| PublicKey::from_shares(vec![share]))
+    let pk = public_key_on_protocol_crs(&params, &sk, &mut rng)
         .map_err(|e| anyhow!("Failed to build public key: {e}"))?;
 
     Ok(pk.to_bytes())
@@ -361,7 +358,6 @@ pub fn compute_ct_commitment_with_params(
 mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet};
-    use e3_zk_samples::threshold::user_data_encryption::public_key_on_protocol_crs;
     use fhe_traits::FheDecoder;
 
     use super::*;

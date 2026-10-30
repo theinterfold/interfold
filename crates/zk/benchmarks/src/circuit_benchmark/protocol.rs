@@ -171,7 +171,7 @@ pub(crate) fn configuration(
     let stored_committee = if let Some(name) = cfg["committee"].as_str() {
         Some(name.parse::<CiphernodesCommitteeSize>()?)
     } else {
-        ["minimum", "micro", "small"]
+        ["minimum", "micro", "small", "large"]
             .into_iter()
             .map(|name| name.parse::<CiphernodesCommitteeSize>().unwrap())
             .find(|committee| {

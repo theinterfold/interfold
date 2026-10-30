@@ -19,15 +19,19 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         .is_err());
     assert_eq!(
         config
-            .select("secure", &["threshold/user_data_encryption".into(),])
+            .select("secure", &["threshold/user_data_encryption".into()])
             .unwrap(),
         [Case::Ude]
     );
+    // The legs are proven inside one circuit; there is no standalone leg to select.
+    assert!(config
+        .select("secure", &["threshold/user_data_encryption_ct0".into()])
+        .is_err());
 }
 
 #[test]
 fn unmeasured_and_failed_stages_are_distinct_and_calldata_uses_actual_bytes() {
-    let mut record = Record::new(Case::Ct1, "secure", e3_zk_config::CircuitVariant::Recursive);
+    let mut record = Record::new(Case::Ude, "secure", e3_zk_config::CircuitVariant::Recursive);
     let before = serde_json::to_value(&record).unwrap();
     assert!(before["execution"]["time_seconds"].is_null());
     assert!(before["proof_size_bytes"].is_null());
@@ -112,19 +116,20 @@ fn failed_external_command_preserves_logs_and_is_not_a_successful_measurement() 
 }
 
 #[test]
-fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper() {
+fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_legs() {
     let mut current = Record::new(
-        Case::Ct0,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
     current.proof_generation.time_seconds = Some(0.0);
     current.proof_generation.success = Some(true);
     current.proof_bytes(&[1, 2, 3], &[0; 32]);
-    let historical = serde_json::json!({"circuit_name":"user_data_encryption_ct1","circuit_path":"circuits/bin/threshold/user_data_encryption_ct1","execution":{"success":true,"time_seconds":2.0},"proof_generation":{"success":true,"time_seconds":7.5,"proof_size_bytes":11},"verification":{"success":true,"time_seconds":0.125,"public_inputs_size_bytes":32}});
+    let historical_leg = |leg: &str, prove: f64, proof: u64| serde_json::json!({"circuit_name":format!("user_data_encryption_{leg}"),"circuit_path":format!("circuits/bin/threshold/user_data_encryption_{leg}"),"execution":{"success":true,"time_seconds":2.0},"proof_generation":{"success":true,"time_seconds":prove,"proof_size_bytes":proof},"verification":{"success":true,"time_seconds":0.125,"public_inputs_size_bytes":32}});
     let leaves = vec![
         report::parse_leaf(serde_json::to_value(current).unwrap()).unwrap(),
-        report::parse_leaf(historical).unwrap(),
+        report::parse_leaf(historical_leg("ct0", 1.5, 3)).unwrap(),
+        report::parse_leaf(historical_leg("ct1", 7.5, 11)).unwrap(),
     ];
     let data = report::Data {
         leaves,
@@ -135,8 +140,9 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper
     };
     let rendered = report::render(&data).unwrap();
     assert!(rendered.contains("production_bb_adapter_wall") && rendered.contains("isolated_nargo"));
-    assert!(rendered.contains("proof bytes: 14") && rendered.contains("prove time: 7.500000"));
-    assert!(rendered.contains("| Π_user | N/A | N/A | 123 | N/A | N/A |"));
+    assert!(rendered.contains("proof bytes: 14") && rendered.contains("prove time: 9.000000"));
+    // Π_user takes the one-circuit UDE leaf's sizes, never a historical leg's.
+    assert!(rendered.contains("| Π_user | 3 | 32 | 123 |"));
     assert_eq!(
         rendered
             .matches("| ude | production_encryption_and_preparation_wall | 0.250000 | true |")
@@ -148,7 +154,7 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper
 #[test]
 fn report_excludes_failed_schema_two_phase_durations() {
     let mut failed = Record::new(
-        Case::Ct0,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
@@ -165,7 +171,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
     }
     failed.error = Some("phase failed".into());
     let mut successful = Record::new(
-        Case::Ct1,
+        Case::Named(e3_zk_config::CircuitName::PkGeneration),
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
@@ -184,9 +190,8 @@ fn report_excludes_failed_schema_two_phase_durations() {
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();
-    assert!(rendered.contains("| threshold/user_data_encryption_ct0 | external_bb_prove_wall | N/A | N/A | N/A | N/A | N/A | N/A | failed |"));
-    assert!(rendered.contains("prove time: N/A s; verify time: N/A s."));
-    assert!(rendered.contains("| threshold/user_data_encryption_ct1 | external_bb_prove_wall | N/A | N/A | N/A | N/A | 0.000000 | 1.000000 | verified |"));
+    assert!(rendered.contains("| threshold/user_data_encryption | external_bb_prove_wall | N/A | N/A | N/A | N/A | N/A | N/A | failed |"));
+    assert!(rendered.contains("| threshold/pk_generation | production_bb_adapter_wall | N/A | N/A | N/A | N/A | 0.000000 | 1.000000 | verified |"));
 }
 
 #[test]
@@ -195,7 +200,7 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
     let saved = temp.path().join("saved");
     fs::create_dir_all(saved.join("raw")).unwrap();
     let record = Record::new(
-        Case::Ct1,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );

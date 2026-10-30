@@ -32,6 +32,10 @@ pub struct Configs {
     /// The smudging bound split the l-BFV C2b leaves check; `None` on the trBFV path, where C1
     /// bounds the smudging noise.
     pub e_sm_split: Option<crate::threshold::pk_generation::ESmSplit>,
+    /// C2a's chunks.
+    pub sk_chunks: ChunkLayout,
+    /// C2b's chunks.
+    pub e_sm_chunks: ChunkLayout,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -55,6 +59,9 @@ impl Configs {
         } else {
             None
         };
+        let degree = threshold_params.degree();
+        let sk_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
+        let e_sm_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -67,9 +74,54 @@ impl Configs {
 
             bits,
             e_sm_split,
+            sk_chunks,
+            e_sm_chunks,
         })
     }
 }
+/// How chunked C2 splits the degree: `n_chunks - 1` chunks of `chunk_size` coefficients, then
+/// one of `last_chunk_size`. The final C2 circuit verifies every chunk.
+///
+/// A chunk other than the last holds whole share carriers and whole sponge blocks (rate 3), so
+/// `chunk_size` is a multiple of three packing groups and every chunk starts each sponge on a block
+/// boundary.
+///
+/// The target keeps every chunk inside 2^22 at 45 parties with as few chunks as possible, which
+/// costs less proving than more, smaller chunks. At degree 8192 both C2a and C2b take six chunks
+/// of 1368: C2a's largest is 3.97M gates and C2b's, which also hashes every secret limb, 4.05M.
+/// Five C2a chunks would be 4.78M.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChunkLayout {
+    pub chunk_size: usize,
+    pub last_chunk_size: usize,
+    pub n_chunks: usize,
+}
+
+impl ChunkLayout {
+    pub const TARGET_CHUNKS: usize = 6;
+    const MIN_CHUNKS: usize = 2;
+
+    pub fn new(degree: usize, bit_share: u32, target_chunks: usize) -> Result<Self, ConfigError> {
+        let nibble_bits = bit_share.div_ceil(4) * 4;
+        let group = (254 / (nibble_bits + 4)) as usize;
+        let target = (degree / 16).clamp(Self::MIN_CHUNKS, target_chunks);
+        let block = 3 * group;
+        let chunk_size = degree.div_ceil(target).div_ceil(block) * block;
+        let n_chunks = degree.div_ceil(chunk_size);
+        let last_chunk_size = degree - (n_chunks - 1) * chunk_size;
+        if n_chunks < 2 {
+            return Err(ConfigError::Other(format!(
+                "degree {degree} gives one C2 chunk; the chain needs a last chunk after full ones"
+            )));
+        }
+        Ok(ChunkLayout {
+            chunk_size,
+            last_chunk_size,
+            n_chunks,
+        })
+    }
+}
+
 impl Bits {
     fn new(threshold_params: &Arc<BfvParameters>) -> Self {
         let bit_share = compute_native_crt_coeff_bit(threshold_params.moduli());
@@ -142,6 +194,19 @@ pub global {}_E_SM_BIT_SECRET: u32 = {};
 // verify_shares - configs
 pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
+
+/************************************
+-------------------------------------
+share_computation chunks (chunked C2a and C2b)
+-------------------------------------
+************************************/
+
+pub global {}_SK_CHUNK_SIZE: u32 = {};
+pub global {}_SK_LAST_CHUNK_SIZE: u32 = {};
+pub global {}_SK_N_CHUNKS: u32 = {};
+pub global {}_E_SM_CHUNK_SIZE: u32 = {};
+pub global {}_E_SM_LAST_CHUNK_SIZE: u32 = {};
+pub global {}_E_SM_N_CHUNKS: u32 = {};
 "#,
             config_name,
             configs.params.degree(),
@@ -156,6 +221,18 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
             prefix,
             bits.bit_e_sm_secret,
             prefix,
+            prefix,
+            self.sk_chunks.chunk_size,
+            prefix,
+            self.sk_chunks.last_chunk_size,
+            prefix,
+            self.sk_chunks.n_chunks,
+            prefix,
+            self.e_sm_chunks.chunk_size,
+            prefix,
+            self.e_sm_chunks.last_chunk_size,
+            prefix,
+            self.e_sm_chunks.n_chunks,
         );
 
         Ok(configs)
@@ -171,5 +248,30 @@ impl Configs {
             .build_pair()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
         Self::new(preset, &threshold_params, committee)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChunkLayout;
+
+    #[test]
+    fn chunk_layouts_cover_the_degree_with_whole_carriers() {
+        // 60-bit shares pack three per carrier.
+        for (degree, target, chunk_size, last_chunk_size, n_chunks) in [
+            (8192, ChunkLayout::TARGET_CHUNKS, 1368, 1352, 6),
+            (64, ChunkLayout::TARGET_CHUNKS, 18, 10, 4),
+        ] {
+            let layout = ChunkLayout::new(degree, 60, target).unwrap();
+            assert_eq!(
+                (layout.chunk_size, layout.last_chunk_size, layout.n_chunks),
+                (chunk_size, last_chunk_size, n_chunks)
+            );
+            assert_eq!(layout.chunk_size % 9, 0);
+            assert_eq!(
+                (layout.n_chunks - 1) * layout.chunk_size + layout.last_chunk_size,
+                degree
+            );
+        }
     }
 }

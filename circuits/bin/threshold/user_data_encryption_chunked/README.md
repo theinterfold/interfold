@@ -1,4 +1,4 @@
-# `user_data_encryption` — P3 (wrapper)
+# `user_data_encryption_chunked` — P3 (l-BFV wrapper)
 
 Re-verifies **ct0** and **ct1** proofs, asserts identical **`u_commitment`**, and outputs aggregated
 pk / ciphertext / k1 commitments for downstream use.

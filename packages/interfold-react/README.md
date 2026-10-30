@@ -41,7 +41,7 @@ function MyComponent() {
       ciphernodeRegistry: '0x...',
       feeToken: '0x...',
     },
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
   })
 
   // Listen to events

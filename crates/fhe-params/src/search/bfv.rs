@@ -1239,6 +1239,7 @@ mod tests {
         // n = 20, k = 1000, z = 3 additions, then depth 3, λ = 50. No q at d = 8192 is both
         // correct and under the 128-bit limit, so the search moves to d = 16384.
         let mut config = preset_config(crate::presets::BfvPreset::SecureThreshold8192);
+        config.n = 20;
         config.k = 1000;
         config.z = 3;
         config.lambda = 50;
@@ -1265,6 +1266,9 @@ mod tests {
         // d = 128, n = 19, k = 100, z = 3 additions, then depth 3, λ = 2.
         let mut config = preset_config(crate::presets::BfvPreset::InsecureThreshold64);
         config.d = Some(128);
+        config.insecure = true;
+        config.min_prime_bits = 12;
+        config.n = 19;
         config.k = 100;
         config.z = 3;
         config.mult_depth = 3;

@@ -382,13 +382,26 @@ fn sanitize_paths(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The `write_vk` target of a Chonk stack circuit, which takes `--scheme chonk` in place of `-t`.
+const CHONK_TARGET: &str = "chonk";
+
 pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static str)> {
+    if circuit.group == "chonk" {
+        return vec![("default", CHONK_TARGET, "vk_recursive")];
+    }
     if circuit.group == "recursive_aggregation"
         && !matches!(
             circuit.name.as_str(),
             "sk_c2_chunk_finalize" | "esm_c2_chunk_finalize"
         )
     {
+        // The tube and accumulate proofs carry an IPA claim that `c3ab_fold` closes.
+        if matches!(
+            circuit.name.as_str(),
+            "c3_chonk_tube" | "c3_chonk_accumulate" | "c6_chonk_tube"
+        ) {
+            return vec![("default", "noir-rollup-no-zk", "vk_recursive")];
+        }
         let mut values = vec![("default", "noir-recursive-no-zk", "vk_recursive")];
         if matches!(
             circuit.name.as_str(),
@@ -430,12 +443,30 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             continue;
         }
         let job = tempfile::tempdir_in(target)?;
-        run(Command::new("bb")
+        let mut write_vk = Command::new("bb");
+        write_vk
             .args(["write_vk", "-b"])
             .arg(&compiled)
             .arg("-o")
-            .arg(job.path())
-            .args(["-t", verifier_target]))?;
+            .arg(job.path());
+        if verifier_target == CHONK_TARGET {
+            // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding
+            // kernel ends the stack; its key is the stack's Chonk key.
+            let kind = if circuit.name.ends_with("_app") {
+                "app"
+            } else if circuit.name.ends_with("_hiding_kernel") {
+                "hiding"
+            } else {
+                "kernel"
+            };
+            write_vk.args(["--scheme", "chonk", "--circuit_kind", kind]);
+        } else {
+            write_vk.args(["-t", verifier_target]);
+        }
+        run(&mut write_vk)?;
+        if verifier_target == CHONK_TARGET {
+            write_chonk_vk_hash(job.path())?;
+        }
         for (file, suffix) in [
             ("vk", extension.to_string()),
             ("vk_hash", format!("{extension}_hash")),
@@ -483,6 +514,23 @@ fn recursive_vk_json(target: &Path, package: &str) -> Result<()> {
             "vkAsFields": fields, "vkHash": format!("0x{}", hex::encode(fs::read(hash)?))
         }),
     )
+}
+
+/// `write_vk --scheme chonk` writes no hash. The kernels pin each key by Barretenberg's
+/// Poseidon2 hash of its fields, so the builder writes that hash beside the key.
+fn write_chonk_vk_hash(job: &Path) -> Result<()> {
+    use ark_ff::{BigInteger, PrimeField};
+    let key = fs::read(job.join("vk"))?;
+    if key.len() % 32 != 0 {
+        bail!("Chonk verification key is not a whole number of fields");
+    }
+    let fields: Vec<_> = key
+        .chunks(32)
+        .map(ark_bn254::Fr::from_be_bytes_mod_order)
+        .collect();
+    let hash = e3_safe::bb_poseidon2_hash(&fields);
+    fs::write(job.join("vk_hash"), hash.into_bigint().to_bytes_be())?;
+    Ok(())
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
@@ -1003,7 +1051,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 35);
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 30
+        // seeded anchor keys the build does not write.
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 48);
         let hash =
             identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))

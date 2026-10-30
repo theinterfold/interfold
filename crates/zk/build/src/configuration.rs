@@ -460,6 +460,8 @@ pub fn parity_files(
 ) -> Result<Vec<(PathBuf, String)>> {
     let values = committee.values();
     let mut out = Vec::new();
+    // Every preset gets a matrix, even on a committee it does not serve: the Noir library compiles
+    // all preset modules, and each `dkg.nr` re-exports its matrix from `committee::active`.
     for preset in super::ARTIFACT_PRESETS {
         let material = params.get(preset);
         let suffix = tier(preset);
@@ -474,6 +476,9 @@ pub fn parity_files(
             PathBuf::from(format!("{committee}/parity_{suffix}.nr")),
             content,
         ));
+    }
+    if !super::committee_has_smudging(committee) {
+        return Ok(out);
     }
     // Only the residue width: the smudging bound itself exceeds the field at secure-16384, and the
     // circuits read it from the preset configuration (C1's bound or the C2b split).
@@ -492,6 +497,37 @@ pub fn parity_files(
     }
     out.push((PathBuf::from(format!("{committee}/smudging.nr")), smudging));
     Ok(out)
+}
+
+/// `committee::active` for `committee`: it re-exports the parity matrices and smudging widths that
+/// the committee has.
+fn active_committee_source(committee: CiphernodesCommitteeSize) -> String {
+    // Sorted, as `nargo fmt` orders the imports.
+    let mut tiers: Vec<_> = super::ARTIFACT_PRESETS
+        .iter()
+        .map(|preset| tier(*preset))
+        .collect();
+    tiers.sort_unstable();
+    let mut exports = String::new();
+    for tier in &tiers {
+        exports.push_str(&format!(
+            "pub use crate::configs::committee::@committee@::parity_{tier}::PARITY_MATRIX as PARITY_MATRIX_{};\n",
+            tier.to_uppercase()
+        ));
+    }
+    if super::committee_has_smudging(committee) {
+        let names: Vec<_> = tiers
+            .iter()
+            .map(|tier| format!("{}_E_SM_BIT", tier.to_uppercase()))
+            .collect();
+        exports.push_str(&format!(
+            "pub use crate::configs::committee::@committee@::smudging::{{\n    {},\n}};\n",
+            names.join(", ")
+        ));
+    }
+    include_str!("../templates/committee_active.nr.in")
+        .replace("@exports@", &exports)
+        .replace("@committee@", &committee.to_string())
 }
 
 /// Pending generated selection files. Preparation reads sources but does not publish them.
@@ -565,8 +601,7 @@ pub fn prepare_selection(
         ),
         (
             root.join("circuits/lib/src/configs/committee/active.nr"),
-            include_str!("../templates/committee_active.nr.in")
-                .replace("@committee@", &committee.to_string()),
+            active_committee_source(committee),
         ),
     ];
     updates.extend(bindings::noir_sources(root));

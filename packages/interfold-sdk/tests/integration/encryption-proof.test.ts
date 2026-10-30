@@ -87,7 +87,7 @@ describe('real encryption proof under a trBFV key', () => {
   let k1Commitment: bigint
 
   beforeAll(async () => {
-    proved = await proveOneInput(sdkFor('INSECURE_THRESHOLD'), 'INSECURE_THRESHOLD')
+    proved = await proveOneInput(sdkFor('INSECURE_THRESHOLD_64'), 'INSECURE_THRESHOLD_64')
     verificationKey = await new UltraHonkBackend(trbfvCircuit.bytecode, api!).getVerificationKey(options)
     // The circuit returns `k1_commitment` itself; that it is ct0's commitment of `k1` is checked by
     // the Noir test `both_legs_over_one_u_are_accepted`. Execute the circuit here, so the assertion

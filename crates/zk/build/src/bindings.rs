@@ -56,13 +56,16 @@ pub fn noir_sources(root: &Path) -> Vec<(PathBuf, String)> {
     let dimensions = CircuitDimensions::current();
     let protocol = format!("{HEADER}\n{GENERATED}\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = {};\npub global MESSAGE_COEFF_BYTE_LEN: u32 = {};\npub global FIELD_BYTE_LEN: u32 = {};\npub global PLAINTEXT_BYTE_LEN: u32 = {};\n", dimensions.message_coeffs_count, dimensions.message_coeff_byte_len, dimensions.field_byte_len, dimensions.plaintext_byte_len);
     let mut sources = vec![(root.join(NOIR_PATH), protocol)];
-    // One parity matrix per artifact preset plus the shared smudging widths; see `parity_files`.
-    let mut modules: String = crate::ARTIFACT_PRESETS
-        .iter()
-        .map(|preset| format!("pub mod parity_{};\n", crate::tier(*preset)))
-        .collect();
-    modules.push_str("pub mod smudging;\n");
     for committee in CiphernodesCommitteeSize::ALL {
+        // One parity matrix per preset, plus the shared smudging widths where the committee has
+        // them; see `parity_files`.
+        let mut modules: String = crate::ARTIFACT_PRESETS
+            .iter()
+            .map(|preset| format!("pub mod parity_{};\n", crate::tier(*preset)))
+            .collect();
+        if crate::committee_has_smudging(committee) {
+            modules.push_str("pub mod smudging;\n");
+        }
         let values = committee.values();
         sources.push((
             root.join(format!("circuits/lib/src/configs/committee/{committee}/mod.nr")),

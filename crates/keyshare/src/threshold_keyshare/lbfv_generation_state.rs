@@ -1047,7 +1047,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0x1966e419a16e22a63c88975bda660978b753db2bf0cf27ed11c2cd097f2336f8"
+            "0x2d7ec428893001e184d553f76d4ea88a52fbf52e2c0af84c56ac5454fa593428"
                 .parse::<B256>()
                 .unwrap()
         );

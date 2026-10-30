@@ -13,8 +13,9 @@
 //! The signed C2 proof's public signals depend on the protocol path:
 //! - l-BFV: the chunk finalizer (`SkC2ChunkFinalize` / `ESmC2ChunkFinalize`): field 0 the chunk
 //!   VK hash, field 1 the secret root, then the share commitments, then the batch VK hash.
-//! - trBFV: the single C2 proof (`SkShareComputation` / `ESmShareComputation`): field 0 the
-//!   `expected_secret_commitment` public input, then the share commitments.
+//! - trBFV: the final C2 proof (`SkShareComputation` / `ESmShareComputation`): field 0 the
+//!   `expected_secret_commitment` public input, then the share commitments, then the hash of its
+//!   chunk keys.
 //!
 //! Source is C3 (the claimant — it declares what commitment it encrypts).
 //! Target is C2 (the provider — it produced the actual share commitments).
@@ -112,9 +113,7 @@ fn extract_message_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
 }
 
 /// Check whether `source_values[0]` (from a C3 proof) appears in the share commitment section of
-/// a C2 proof's public signals: fields `2..len-1` for the l-BFV chunk finalizer (skipping the chunk
-/// VK hash, the secret root and the trailing batch VK hash), fields `1..` for the trBFV single
-/// proof (skipping `expected_secret_commitment`).
+/// a C2 proof's public signals ([`super::c2_share_commitments`]).
 ///
 /// Barretenberg's `noir-recursive` variant sometimes doubles the signal
 /// buffer (448 = 2×224 bytes for a 7-field circuit).  We detect and
@@ -129,11 +128,7 @@ fn commitment_in_c2_outputs(
     }
     let expected = &source_values[0];
     let signals = deduplicate(target_public_signals);
-    let (skip_front, skip_back) = if chunked { (2, 1) } else { (1, 0) };
-    if signals.len() < (skip_front + skip_back + 1) * FIELD_BYTE_LEN {
-        return false;
-    }
-    signals[skip_front * FIELD_BYTE_LEN..signals.len() - skip_back * FIELD_BYTE_LEN]
+    super::c2_share_commitments(signals, chunked)
         .chunks(FIELD_BYTE_LEN)
         .any(|chunk| chunk == expected.as_slice())
 }
@@ -181,12 +176,16 @@ mod tests {
         v
     }
 
-    /// trBFV C2 signals: [expected_secret_commitment] + N share commitments.
+    /// The chunk key-tree hash a trBFV final C2 proof exposes last.
+    const KEY_TREE: u8 = 0xEE;
+
+    /// trBFV final C2 signals: [expected_secret_commitment] + N share commitments + [key_tree].
     fn trbfv_c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = make_field(0xFF).to_vec();
+        let mut v = make_field(0xFF).to_vec(); // expected_secret_commitment
         for c in commitments {
             v.extend_from_slice(c);
         }
+        v.extend_from_slice(&make_field(KEY_TREE));
         v
     }
 
@@ -246,6 +245,14 @@ mod tests {
         let batch_vk = make_field(0xFD);
         let c2 = c2_signals(&[make_field(1)]);
         assert!(!link.check_signals(&[batch_vk], &c2));
+    }
+
+    #[test]
+    fn trbfv_consistency_ignores_the_trailing_key_tree() {
+        // Only the key-tree hash matches the claimed commitment, which is not a share.
+        let link = C3aToC2aShareEncryptionLink { chunked: false };
+        let c2 = trbfv_c2_signals(&[make_field(1), make_field(2)]);
+        assert!(!link.check_signals(&[make_field(KEY_TREE)], &c2));
     }
 
     #[test]

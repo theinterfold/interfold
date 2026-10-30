@@ -29,7 +29,7 @@
         {
           "name": "Pk",
           "what": "holds pk0 and pk1, one polynomial per CRT modulus each; execute() returns the commitment",
-          "ref": "circuits/lib/src/core/dkg/pk.nr@16@pub struct Pk<"
+          "ref": "circuits/lib/src/core/dkg/pk.nr@22@pub struct Pk<"
         },
         {
           "name": "Polynomial",
@@ -44,11 +44,11 @@
         },
         {
           "why": "Pk::execute, the whole circuit body",
-          "ref": "circuits/lib/src/core/dkg/pk.nr@37@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/dkg/pk.nr@44@pub fn execute(self, qis: [Field; L]) -> Field"
         },
         {
           "why": "the commitment: hashes pk0 then pk1 under the DS_PK domain separator",
-          "ref": "circuits/lib/src/math/commitments.nr@190@pub fn compute_dkg_pk_commitment"
+          "ref": "circuits/lib/src/math/commitments.nr@218@pub fn compute_dkg_pk_commitment"
         }
       ],
       "rust_patterns": [],
@@ -111,7 +111,7 @@
         {
           "name": "PkGeneration",
           "what": "the C1 statement: secret witnesses plus the public common reference polynomial",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@67@pub struct PkGeneration<"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@69@pub struct PkGeneration<"
         },
         {
           "name": "Configs",
@@ -126,11 +126,11 @@
         },
         {
           "why": "PkGeneration::execute: range checks, CRT consistency, commitments, then the evaluation check",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@149@pub fn execute(self) -> (Field, Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@151@pub fn execute(self) -> (Field, Field, Field)"
         },
         {
           "why": "the key equation, checked at the Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@279@Public key equation 1 failed"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@282@Public key equation 1 failed"
         }
       ],
       "rust_patterns": [],
@@ -154,17 +154,17 @@
         {
           "name": "public: expected_secret_commitment",
           "by": "SecretKeyShareComputation::execute",
-          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@16@expected_secret_commitment: pub Field"
+          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@27@expected_secret_commitment: pub Field"
         },
         {
           "name": "private: sk_secret",
           "by": "SecretKeyShareComputation::execute",
-          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@17@sk_secret: Polynomial<N>"
+          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@28@sk_secret: Polynomial<N>"
         },
         {
-          "name": "private: y",
+          "name": "private: chunk_proofs",
           "by": "SecretKeyShareComputation::execute",
-          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@18@y: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; N]"
+          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@33@chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_SK_N_CHUNKS]"
         }
       ],
       "emits": [],
@@ -184,19 +184,19 @@
       "read_first": [
         {
           "why": "entry point: main takes sk and the share grid y, and returns per-party commitments",
-          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@15@fn main("
+          "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@26@fn main("
         },
         {
           "why": "execute: secret commitment, consistency, range, parity, then commit to shares",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@95@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@85@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
         },
         {
           "why": "the share-at-zero check: y at point 0 equals the secret coefficient",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@154@assert(self.y[coeff_idx][mod_idx][0] == secret_coeff)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@138@assert(self.y[coeff_idx][mod_idx][0] == secret_coeff)"
         },
         {
-          "why": "the parity check: the parity matrix times the shares is zero modulo each prime",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@309@ModU64::new(q_j as u64).assert_zero_mod(sum)"
+          "why": "the parity check: each window of T + 2 shares, weighted by alternating binomial coefficients, is zero modulo each prime",
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@347@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
         }
       ],
       "rust_patterns": [],
@@ -220,17 +220,17 @@
         {
           "name": "public: expected_secret_commitment",
           "by": "SmudgingNoiseShareComputation::execute",
-          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@16@expected_secret_commitment: pub Field"
+          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@25@expected_secret_commitment: pub Field"
         },
         {
           "name": "private: e_sm_secret",
           "by": "SmudgingNoiseShareComputation::execute",
-          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@17@e_sm_secret: [Polynomial<N>; L_THRESHOLD]"
+          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@26@e_sm_secret: [Polynomial<N>; L_THRESHOLD]"
         },
         {
-          "name": "private: y",
+          "name": "private: chunk_proofs",
           "by": "SmudgingNoiseShareComputation::execute",
-          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@18@y: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; N]"
+          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@31@chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_E_SM_N_CHUNKS]"
         }
       ],
       "emits": [],
@@ -239,21 +239,21 @@
         {
           "name": "SmudgingNoiseShareComputation",
           "what": "the C2b statement: the same shape as C2a, with the centered noise as the secret",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@65@pub struct SmudgingNoiseShareComputation<"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@60@pub struct SmudgingNoiseShareComputation<"
         }
       ],
       "read_first": [
         {
           "why": "entry point: main takes the noise polynomials and the share grid",
-          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@15@fn main("
+          "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@24@fn main("
         },
         {
           "why": "execute: the same body shape as C2a",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@172@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@155@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
         },
         {
           "why": "the noise commitment check, after centering each modulus",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@217@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@263@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
         }
       ],
       "rust_patterns": [],
@@ -346,7 +346,7 @@
         {
           "name": "ShareEncryption",
           "what": "the C3 statement: keys, ciphertext, noise and reduction quotients as witnesses",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@110@pub struct ShareEncryption<"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@111@pub struct ShareEncryption<"
         },
         {
           "name": "Configs",
@@ -361,15 +361,15 @@
         },
         {
           "why": "execute: key and message commitment checks, range bounds, then the encryption identity",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@409@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@432@pub fn execute(self) -> Field"
         },
         {
           "why": "the binding of the encrypted message to the C2 share commitment",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@207@compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@209@compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)"
         },
         {
           "why": "the BFV encryption identity, checked at a Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@507@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@527@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
         }
       ],
       "rust_patterns": [],
@@ -393,12 +393,12 @@
         {
           "name": "public: expected_commitments",
           "by": "ShareDecryption::execute",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@15@expected_commitments: pub [[Field; L_THRESHOLD]; H]"
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@21@expected_commitments: pub [[Field; L_THRESHOLD]; H]"
         },
         {
-          "name": "private: decrypted_shares",
+          "name": "private: limb_proofs",
           "by": "ShareDecryption::execute",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@16@decrypted_shares: [[Polynomial<N>; L_THRESHOLD]; H]"
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@24@limb_proofs: [UltraHonkProof; L_THRESHOLD]"
         }
       ],
       "emits": [],
@@ -413,19 +413,19 @@
       "read_first": [
         {
           "why": "entry point: main takes the C2 commitments and the H decrypted shares and returns the aggregate commitment",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@14@fn main("
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@20@fn main("
         },
         {
           "why": "execute: check each share, sum, normalize, then commit",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@130@pub fn execute(self, moduli: [Field; L]) -> Field"
+          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@67@pub fn execute(self, moduli: [Field; L]) -> Field"
         },
         {
           "why": "the per-share check against its C2 commitment",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@78@compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>("
+          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@111@compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>("
         },
         {
           "why": "the output commitment that C6 later opens",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@151@compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)"
+          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@81@compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)"
         }
       ],
       "rust_patterns": [],
@@ -483,15 +483,15 @@
         },
         {
           "why": "execute: range checks, per-party commitment checks, per-basis sum, then commit",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@160@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@161@pub fn execute(self) -> Field"
         },
         {
           "why": "the modular sum check per CRT basis, with a bounded quotient",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@153@mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>("
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@154@mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>("
         },
         {
           "why": "binds each party contribution to its C1 commitment",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@112@compute_threshold_pk_commitment_checked::<N, L, BIT_PK>(self.pk0[i])"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@113@compute_threshold_pk_commitment_checked::<N, L, BIT_PK>(self.pk0[i])"
         }
       ],
       "rust_patterns": [],
@@ -510,72 +510,39 @@
       "kind": "circuit",
       "path": "circuits/bin/threshold/user_data_encryption",
       "one_line": "Proves a user's two-leg BFV ciphertext is valid under the aggregated committee key, with one shared randomness u.",
+      "explain": "One circuit proves both legs of a user's BFV encryption under the aggregated key from C5: the ct0 leg ties pk0, its ciphertext, the scaled message k1 and u, and the ct1 leg ties the circuit-constant CRS pk1, its ciphertext and the same u. Both legs read one u witness: ct0 bounds u to {-1, 0, 1} and commits it, and ct1 takes that commitment into its transcript through execute_with_u_commitment. It returns pk_commitment, ct_commitment and k1_commitment as its only public inputs. The data provider generates the proof, and the E3 program checks it when the input is published.",
+      "analogy": "Two sealed halves made at one bench from the same hidden random number, so one inspection covers both seals.",
       "actors": [],
       "consumes": [
         {
-          "name": "private: ct0_verification_key",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@12@ct0_verification_key: UltraHonkVerificationKey"
-        },
-        {
-          "name": "private: ct0_proof",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@13@ct0_proof: UltraHonkProof"
-        },
-        {
-          "name": "private: ct0_public_inputs",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@14@ct0_public_inputs: [Field; 4]"
-        },
-        {
-          "name": "public: ct0_key_hash",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@15@ct0_key_hash: pub Field"
-        },
-        {
-          "name": "private: ct1_verification_key",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@17@ct1_verification_key: UltraHonkVerificationKey"
-        },
-        {
-          "name": "private: ct1_proof",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@18@ct1_proof: UltraHonkProof"
-        },
-        {
-          "name": "private: ct1_public_inputs",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@19@ct1_public_inputs: [Field; 3]"
-        },
-        {
-          "name": "public: ct1_key_hash",
-          "by": "verify_honk_proof_non_zk",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@20@ct1_key_hash: pub Field"
-        },
-        {
-          "name": "private: pk0is (ct0 leg)",
+          "name": "private: pk0is",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@16@pk0is: [Polynomial<N>; L]"
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@25@pk0is: [Polynomial<N>; L]"
         },
         {
-          "name": "private: ct0is (ct0 leg)",
+          "name": "private: ct0is",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@17@ct0is: [Polynomial<N>; L]"
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@26@ct0is: [Polynomial<N>; L]"
         },
         {
-          "name": "private: k1 (ct0 leg)",
+          "name": "private: ct1is",
+          "by": "UserDataEncryptionCt1::execute_with_u_commitment",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@27@ct1is: [Polynomial<N>; L]"
+        },
+        {
+          "name": "private: u (both legs)",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@20@k1: Polynomial<N>"
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@28@u: Polynomial<N>"
         },
         {
-          "name": "private: pk1is (ct1 leg)",
-          "by": "UserDataEncryptionCt1::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption_ct1/src/main.nr@15@pk1is: [Polynomial<N>; L]"
+          "name": "private: k1",
+          "by": "UserDataEncryptionCt0::execute",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@31@k1: Polynomial<N>"
         },
         {
-          "name": "private: ct1is (ct1 leg)",
-          "by": "UserDataEncryptionCt1::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption_ct1/src/main.nr@16@ct1is: [Polynomial<N>; L]"
+          "name": "private: r, r_ct1 (reduction quotients)",
+          "by": "both legs",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@34@r_ct1: [Polynomial<N>; L]"
         }
       ],
       "emits": [],
@@ -584,35 +551,35 @@
         {
           "name": "UserDataEncryptionCt0",
           "what": "the ct0 leg statement: pk0, ciphertext, k1, u and the reduction quotient",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@55@pub struct UserDataEncryptionCt0<"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@57@pub struct UserDataEncryptionCt0<"
         },
         {
           "name": "UserDataEncryptionCt1",
-          "what": "the ct1 leg statement: pk1, ciphertext, u and the reduction quotient",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@39@pub struct UserDataEncryptionCt1<"
+          "what": "the ct1 leg statement: the CRS pk1, ciphertext, u and the reduction quotient",
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@41@pub struct UserDataEncryptionCt1<"
         }
       ],
       "read_first": [
         {
-          "why": "entry point: the wrapper that verifies both leg proofs",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@10@fn main("
-        },
-        {
-          "why": "the shared-randomness check between the two legs",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@36@assert(ct0_public_inputs[3] == ct1_public_inputs[2]);"
+          "why": "entry point: runs the ct0 leg, then the ct1 leg over the same u",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@24@fn main("
         },
         {
           "why": "the ct0 leg body: range bounds, commitments, then the ciphertext identity",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@164@pub fn execute(self) -> (Field, Field, Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@191@pub fn execute(self) -> (Field, Field, Field, Field)"
         },
         {
-          "why": "the ct1 leg body",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@139@pub fn execute(self) -> (Field, Field, Field)"
+          "why": "the ct1 leg in the merged circuit: takes ct0's u commitment instead of committing u again",
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@202@pub(crate) fn execute_with_u_commitment(self, u_commitment: Field) -> (Field, Field)"
+        },
+        {
+          "why": "the three public outputs",
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption.nr@37@(pk_commitment, ct_commitment, k1_commitment)"
         }
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "lib ct0 module has 1 #[test] and ct1 has 2 (lib/src/core/threshold/). Run nargo test in circuits/lib. The wrapper has none.",
+      "tests": "lib ct0 module has 1 #[test] and ct1 has 4, two of them for execute_with_u_commitment (lib/src/core/threshold/). Run nargo test in circuits/lib. This package has none.",
       "unverified": [
         "The generator (data provider) and the E3 program's publishInput check come from docs/architecture/encrypted-computation.md; no Solidity source was read."
       ]
@@ -718,7 +685,7 @@
         },
         {
           "why": "the decryption-share identity, checked at the Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/threshold/share_decryption.nr@314@fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field)"
+          "ref": "circuits/lib/src/core/threshold/share_decryption.nr@316@fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field)"
         }
       ],
       "rust_patterns": [],
@@ -810,142 +777,142 @@
         {
           "name": "private: nodes_fold_vk",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@52@nodes_fold_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@53@nodes_fold_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: nodes_fold_proof",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@53@nodes_fold_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@54@nodes_fold_proof: UltraHonkProof"
         },
         {
           "name": "private: nodes_fold_public",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@54@nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@55@nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN]"
         },
         {
           "name": "private: nodes_fold_vk_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@55@nodes_fold_vk_hash: Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@56@nodes_fold_vk_hash: Field"
         },
         {
           "name": "private: c5_vk",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@56@c5_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@57@c5_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: c5_proof",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@57@c5_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@58@c5_proof: UltraHonkProof"
         },
         {
           "name": "private: c5_public",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@58@c5_public: [Field; H + 1]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@59@c5_public: [Field; H + 1]"
         },
         {
           "name": "public: nodes_fold_key_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@59@nodes_fold_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@60@nodes_fold_key_hash: pub Field"
         },
         {
           "name": "public: c5_key_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@60@c5_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@61@c5_key_hash: pub Field"
         },
         {
           "name": "public: party_ids",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@61@party_ids: pub [Field; H]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@62@party_ids: pub [Field; H]"
         },
         {
           "name": "private: committee_members",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@62@committee_members: [Field; N_PARTIES]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@63@committee_members: [Field; N_PARTIES]"
         },
         {
           "name": "public: committee_hash_hi",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@63@committee_hash_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@64@committee_hash_hi: pub Field"
         },
         {
           "name": "public: committee_hash_lo",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@64@committee_hash_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@65@committee_hash_lo: pub Field"
         },
         {
-          "name": "private: c6_fold_vk",
+          "name": "private: c6_root_vk",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@69@c6_fold_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@65@c6_root_vk: UltraHonkVerificationKey"
         },
         {
-          "name": "private: c6_fold_proof",
+          "name": "private: c6_root_proof",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@70@c6_fold_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@66@c6_root_proof: UltraHonkProof"
         },
         {
-          "name": "private: c6_fold_public",
+          "name": "private: c6_root_public",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@71@c6_fold_public: [Field; C6_FOLD_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@67@c6_root_public: [Field; C6_ROOT_PUBLIC_LEN]"
         },
         {
-          "name": "private: c6_fold_vk_hash",
+          "name": "private: c6_root_vk_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_fold_vk_hash: Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@68@c6_root_vk_hash: Field"
         },
         {
           "name": "private: c7_vk",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@73@c7_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@69@c7_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: c7_proof",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@74@c7_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@70@c7_proof: UltraHonkProof"
         },
         {
           "name": "private: c7_public",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@75@c7_public: [Field; C7_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@71@c7_public: [Field; C7_PUBLIC_LEN]"
         },
         {
           "name": "public: c6_fold_key_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@76@c6_fold_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_fold_key_hash: pub Field"
         },
         {
           "name": "public: c7_key_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@77@c7_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@73@c7_key_hash: pub Field"
         },
         {
           "name": "private: committee_members",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@78@committee_members: [Field; N_PARTIES]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@74@committee_members: [Field; N_PARTIES]"
         },
         {
           "name": "public: committee_hash_hi",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@79@committee_hash_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@75@committee_hash_hi: pub Field"
         },
         {
           "name": "public: committee_hash_lo",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@80@committee_hash_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@76@committee_hash_lo: pub Field"
         },
         {
           "name": "public: domain_hi",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@81@domain_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@77@domain_hi: pub Field"
         },
         {
           "name": "public: domain_lo",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@82@domain_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@78@domain_lo: pub Field"
         },
         {
           "name": "public: ciphertext_commitment",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@83@ciphertext_commitment: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@79@ciphertext_commitment: pub Field"
         }
       ],
       "emits": [],
@@ -965,19 +932,19 @@
       "read_first": [
         {
           "why": "dkg_aggregator entry point: the committee-key proof the contract verifies",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@51@fn main("
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@52@fn main("
         },
         {
           "why": "dkg_aggregator folds the C5 proof in-circuit",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);"
         },
         {
           "why": "decryption_aggregator entry point: the plaintext proof the contract verifies",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@68@fn main("
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@64@fn main("
         },
         {
-          "why": "decryption_aggregator checks the C6 fold proof and the C7 proof in-circuit",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@89@verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_vk_hash);"
+          "why": "decryption_aggregator checks the C6 Chonk root proof and the C7 proof in-circuit",
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@85@verify_honk_proof_non_zk(c6_root_vk, c6_root_proof, c6_root_public, c6_root_vk_hash);"
         },
         {
           "why": "node_fold entry point: one member's C0 to C4 proofs and their same-party links",
@@ -1007,19 +974,19 @@
       "read_first": [
         {
           "why": "entry point: main takes no inputs and runs the verification functions in order",
-          "ref": "circuits/bin/config/src/main.nr@88@fn main() {"
+          "ref": "circuits/bin/config/src/main.nr@89@fn main() {"
         },
         {
           "why": "the CRT product check against the secure DKG preset",
-          "ref": "circuits/bin/config/src/main.nr@128@assert(product == DKG_Q_MOD_T"
+          "ref": "circuits/bin/config/src/main.nr@129@assert(product == DKG_Q_MOD_T"
         },
         {
           "why": "the parity matrix check: the parity matrix times the generator is zero modulo each prime",
-          "ref": "circuits/bin/config/src/main.nr@179@Parity matrix verification failed"
+          "ref": "circuits/bin/config/src/main.nr@180@Parity matrix verification failed"
         },
         {
           "why": "the cross-preset check that the DKG and threshold configs agree on N",
-          "ref": "circuits/bin/config/src/main.nr@603@assert(DKG_N == THRESHOLD_N"
+          "ref": "circuits/bin/config/src/main.nr@613@assert(DKG_N == THRESHOLD_N"
         }
       ],
       "rust_patterns": [],
@@ -1063,11 +1030,11 @@
         },
         {
           "why": "the commitment wrapper that every commitment goes through",
-          "ref": "circuits/lib/src/math/commitments.nr@122@pub fn compute_commitment("
+          "ref": "circuits/lib/src/math/commitments.nr@150@pub fn compute_commitment("
         },
         {
           "why": "the negacyclic evaluation kernel used by the BFV identity checks",
-          "ref": "circuits/lib/src/math/polynomial.nr@254@pub fn negacyclic_kernel<"
+          "ref": "circuits/lib/src/math/polynomial.nr@299@pub fn negacyclic_kernel<"
         }
       ],
       "rust_patterns": [],

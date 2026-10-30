@@ -187,7 +187,11 @@ pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
 pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("agg_commitment")];
 
 /// C4 — DKG share decryption.
-pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment")];
+/// The final C4 circuit also returns the hash of its limb keys after the aggregate commitment.
+pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment"), f("key_tree")];
+
+/// C4 on the l-BFV path: the chunked circuit returns only the aggregate commitment.
+pub const DKG_SHARE_DECRYPTION_CHUNKED_OUTPUTS: &[OutputField] = &[f("commitment")];
 
 /// C5 — Public key aggregation.
 pub const PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("commitment")];

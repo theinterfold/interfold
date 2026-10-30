@@ -6,31 +6,35 @@
 
 //! Circuit input data, witness preparation, and canonical Noir encoding.
 
-use crate::encoding::fhe_poly_to_crt_centered;
+use crate::encoding::{fhe_poly_first_limb_centered, fhe_poly_to_crt_centered};
 use crate::negacyclic::negacyclic_mul_exact;
 use crate::EncryptionIntermediates;
 use crate::WitnessError;
+use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::utils::compute_modulus_bit;
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial::CrtPolynomialError;
 use e3_polynomial::Polynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::field::get_zkp_modulus;
+use e3_zk_config::threshold::pk_generation::crp::deterministic_crp_crt_polynomial;
 use e3_zk_config::threshold::user_data_encryption::Configs;
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;
 use fhe::bfv::Encoding;
 use fhe::bfv::Plaintext;
 use fhe::bfv::PublicKey;
+use fhe::bfv::SecretKey;
+use fhe::mbfv::{Aggregate as _, PublicKeyShare};
 use fhe_math::zq::Modulus;
 use fhe_traits::FheDecoder;
-use itertools::izip;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
-use rayon::prelude::*;
-
+use rand::{CryptoRng, RngCore};
+use rayon::prelude::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::Arc;
 
 pub struct UserDataEncryptionCircuitData {
     pub public_key: PublicKey,
@@ -86,8 +90,8 @@ impl Inputs {
             )?;
         }
 
-        let pk = data.public_key.clone();
-        let pt = data.plaintext.clone();
+        let pk = &data.public_key;
+        let pt = &data.plaintext;
 
         // Context and plaintext modulus (use same ctx for e0 reconstruction and loop).
         let ctx = threshold_params.context_at_level(0)?;
@@ -103,7 +107,7 @@ impl Inputs {
             .to_u64()
             .ok_or_else(|| WitnessError::Other("Failed to convert q_mod_t to u64".into()))?; // [q]_t
 
-        // Reconstruct e0 coefficients mod Q (CRT) for e0_quotient computation.
+        // Reconstruct e0 coefficients mod Q; the reduced ct0 identity reads the lifted `e0`.
         let e0_power = intermediates.error_0().to_power_basis();
         let mut e0_mod_q = Polynomial::from_fhe_polynomial(&e0_power);
 
@@ -112,6 +116,11 @@ impl Inputs {
 
         // Reconstruct k1 from plaintext polynomial.
         let mut k1_u64 = Vec::<u64>::try_decode(&pt, Encoding::poly())?; // m
+        if k1_u64.len() != threshold_params.degree() {
+            return Err(WitnessError::Other(
+                "plaintext does not have the configured polynomial degree".into(),
+            ));
+        }
 
         Modulus::new(t)
             .map_err(|e| WitnessError::Fhe(fhe::Error::from(e)))?
@@ -122,42 +131,19 @@ impl Inputs {
         k1.reverse();
 
         // Reconstruct u and e1 as polynomials (only the first limb is needed)
-        let mut u = CrtPolynomial::from_fhe_polynomial(intermediates.randomness())
-            .limb(0)
-            .clone();
-        let mut e1 = CrtPolynomial::from_fhe_polynomial(intermediates.error_1())
-            .limb(0)
-            .clone();
+        let u = fhe_poly_first_limb_centered(intermediates.randomness(), moduli[0]);
+        let e1 = fhe_poly_first_limb_centered(intermediates.error_1(), moduli[0]);
 
-        u.center(&BigInt::from(moduli[0]));
-        u.reverse();
-
-        e1.center(&BigInt::from(moduli[0]));
-        e1.reverse();
-
-        let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct[0]);
-        let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
-        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
-        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
-
-        ct0.reverse();
-        ct1.reverse();
-        pk0.reverse();
-        pk1.reverse();
-
-        ct0.center(moduli)?;
-        ct1.center(moduli)?;
-
-        pk0.center(moduli)?;
-        pk1.center(moduli)?;
+        let ct0 = fhe_poly_to_crt_centered(&ct[0], moduli)?;
+        let ct1 = fhe_poly_to_crt_centered(&ct[1], moduli)?;
+        let pk0 = fhe_poly_to_crt_centered(&pk.c[0], moduli)?;
+        let pk1 = fhe_poly_to_crt_centered(&pk.c[1], moduli)?;
 
         // ct1 hard-codes the protocol CRS as `pk1`, as C5 does, so only keys built on it can be
         // proven. Committee keys always are; reject anything else here rather than in the prover.
-        if pk1
-            != e3_zk_config::threshold::pk_generation::crp::deterministic_crp_crt_polynomial(
-                &threshold_params,
-            )?
-        {
+        let crs = deterministic_crp_crt_polynomial(threshold_params)
+            .map_err(|e| WitnessError::Other(e.to_string()))?;
+        if pk1 != crs {
             return Err(WitnessError::Other(
                 "user-data encryption proofs need a public key whose second component is the \
                  protocol CRS (committee keys, or keys built with the default-seed CRP)"
@@ -171,49 +157,46 @@ impl Inputs {
         let CrtPolynomial { limbs: pk1_limbs } = pk1;
 
         // Perform the main computation logic
-        let mut results: Vec<_> = izip!(
+        let results: Vec<_> = (
             ctx.moduli_operators(),
             ct0_limbs,
             ct1_limbs,
             pk0_limbs,
             pk1_limbs,
         )
-        .enumerate()
-        .par_bridge()
-        .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i))| {
-            let qi_bigint = BigInt::from(**qi);
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i))| {
+                let qi_bigint = BigInt::from(**qi);
 
-            // k0qi = -t^{-1} mod qi
-            let k0qi = BigInt::from(k0is[i]);
+                // k0qi = -t^{-1} mod qi
+                let k0qi = BigInt::from(k0is[i]);
 
-            // ki = k1 * k0qi
-            let ki = k1.scalar_mul(&k0qi);
+                // ki = k1 * k0qi
+                let ki = k1.scalar_mul(&k0qi);
 
-            // The circuit checks one degree-N identity per leg, reduced modulo X^N + 1, over the
-            // integers and with the lifted `e0`:
-            //   ct0i = (pk0i * u mod X^N + 1) + e0 + k0qi * k1 + qi * ct0_r
-            //   ct1i = (pk1i * u mod X^N + 1) + e1            + qi * ct1_r
-            // so each quotient is the leg's residual divided by qi. The reduced products are exact
-            // integer products, taken by NTT in O(N log N).
-            let pk0_u = negacyclic_mul_exact(&pk0i, &u, n as usize);
-            let pk1_u = negacyclic_mul_exact(&pk1i, &u, n as usize);
+                // The circuit checks one degree-N identity per leg, reduced modulo X^N + 1, over the
+                // integers and with the lifted `e0`:
+                //   ct0i = (pk0i * u mod X^N + 1) + e0 + k0qi * k1 + qi * ct0_r
+                //   ct1i = (pk1i * u mod X^N + 1) + e1            + qi * ct1_r
+                // so each quotient is the leg's residual divided by qi. The reduced products are exact
+                // integer products, taken by NTT in O(N log N).
+                let pk0_u = negacyclic_mul_exact(&pk0i, &u, n as usize);
+                let pk1_u = negacyclic_mul_exact(&pk1i, &u, n as usize);
 
-            // Exact division rejects any coefficient that is not a multiple of qi, so a successful
-            // division proves an integer quotient closes the reduced equation, and a wrong product
-            // surfaces as a divisibility failure.
-            let ct0_r = ct0i
-                .sub(&pk0_u)
-                .sub(&e0_mod_q)
-                .sub(&ki)
-                .div_exact(&qi_bigint)?;
+                // Exact division rejects any coefficient that is not a multiple of qi, so a successful
+                // division proves an integer quotient closes the reduced equation, and a wrong product
+                // surfaces as a divisibility failure.
+                let ct0_r = ct0i
+                    .sub(&pk0_u)
+                    .sub(&e0_mod_q)
+                    .sub(&ki)
+                    .div_exact(&qi_bigint)?;
+                let ct1_r = ct1i.sub(&pk1_u).sub(&e1).div_exact(&qi_bigint)?;
 
-            let ct1_r = ct1i.sub(&pk1_u).sub(&e1).div_exact(&qi_bigint)?;
-
-            Ok::<_, WitnessError>((i, k0qi, ct0i, ct1i, pk0i, pk1i, ct0_r, ct1_r))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-        results.sort_by_key(|(i, ..)| *i);
+                Ok((ct0i, ct1i, pk0i, pk1i, ct0_r, ct1_r))
+            })
+            .collect::<Result<Vec<_>, WitnessError>>()?;
 
         let mut pk0is = Vec::with_capacity(results.len());
         let mut pk1is = Vec::with_capacity(results.len());
@@ -222,7 +205,7 @@ impl Inputs {
         let mut ct0_r = Vec::with_capacity(results.len());
         let mut ct1_r = Vec::with_capacity(results.len());
 
-        for (_, _, ct0i, ct1i, pk0i, pk1i, ct0_ri, ct1_ri) in results {
+        for (ct0i, ct1i, pk0i, pk1i, ct0_ri, ct1_ri) in results {
             pk0is.push(pk0i);
             pk1is.push(pk1i);
             ct0is.push(ct0i);
@@ -256,13 +239,13 @@ impl Inputs {
         })
     }
 
-    // ct1 fixes pk1 to the protocol CRS, so it is not part of the witness ABI.
+    // Used as input for Nargo execution. Coefficients are JSON numbers when they fit in i64, else strings.
     pub fn to_json(&self) -> serde_json::Value {
         use crate::encoding::crt_polynomial_to_toml_json;
         use crate::encoding::polynomial_to_toml_json;
 
         // ct0 and ct1 share one Prover.toml, so each reduction quotient needs its own key. Both feed
-        // a circuit field named `r`.
+        // a circuit field named `r`. `pk1is` is not an input: ct1 hard-codes the CRS it must equal.
         serde_json::json!({
             "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
             "ct0is": crt_polynomial_to_toml_json(&self.ct0is),
@@ -275,6 +258,21 @@ impl Inputs {
             "r_ct1": crt_polynomial_to_toml_json(&self.ct1_r),
         })
     }
+}
+
+/// A BFV public key built on the protocol CRS: `(-a * s + e, a)` with `a` the default-seed CRP,
+/// the shape every committee key has.
+///
+/// ct1 hard-codes that `a` as `pk1`, as C5 does, so user-data encryption proofs can only be made
+/// for keys like this one. Key generators for tests, demos and local runs use it instead of
+/// `PublicKey::new`, whose `a` is random.
+pub fn public_key_on_protocol_crs<R: RngCore + CryptoRng>(
+    params: &Arc<BfvParameters>,
+    secret_key: &SecretKey,
+    rng: &mut R,
+) -> Result<PublicKey, fhe::Error> {
+    let crp = create_deterministic_crp_from_default_seed(params);
+    PublicKey::from_shares(vec![PublicKeyShare::new(secret_key, crp, rng)?])
 }
 
 /// Encrypt once and prepare the witness from those exact encryption intermediates.

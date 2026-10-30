@@ -17,7 +17,9 @@
 // those checkpoints from source timestamps.
 // Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
 // Schema 8 authenticates complete DKG share and C4 bundles before slot admission.
-pub const SCHEMA_VERSION: u32 = 8;
+// Schema 9 stores a `NodesFoldStep` compute request with several node proofs and slots, and the
+// Large committee's events.
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,10 +86,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v8() {
-        assert_eq!(SCHEMA_VERSION, 8);
+    fn current_schema_is_v9() {
+        assert_eq!(SCHEMA_VERSION, 9);
         assert!(matches!(
-            decide_schema_version(Some(7), SCHEMA_VERSION, true),
+            decide_schema_version(Some(8), SCHEMA_VERSION, true),
             SchemaVersionDecision::Halt(_)
         ));
     }

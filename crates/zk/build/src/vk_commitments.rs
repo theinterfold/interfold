@@ -14,8 +14,6 @@ const LEAVES: &[&str] = &[
     "threshold/pk_aggregation",
     "threshold/decrypted_shares_aggregation",
     "threshold/user_data_encryption",
-    "threshold/user_data_encryption_ct0",
-    "threshold/user_data_encryption_ct1",
 ];
 // The l-BFV path proves C7 with the wide aggregation circuit and has no nodes-fold tree.
 const LBFV_LEAVES: &[&str] = &["threshold/decrypted_shares_aggregation_wide"];
@@ -296,7 +294,8 @@ mod tests {
         let pair = seed(root, &output);
         let stamp = fs::read(pair.join(".build-stamp.json")).unwrap();
         let catalogue = collect_pair(&output, "insecure-64", "minimum").unwrap();
-        assert_eq!(catalogue.commitments.len(), 7);
+        // Three leaves (C5, C7, user-data encryption) and the two recursive tree anchors.
+        assert_eq!(catalogue.commitments.len(), 5);
         assert_eq!(fs::read(pair.join(".build-stamp.json")).unwrap(), stamp);
         write_pair(&pair, &catalogue).unwrap();
         let before = crate::tests::snapshot(root);

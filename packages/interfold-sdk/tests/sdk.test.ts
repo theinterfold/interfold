@@ -28,7 +28,7 @@ describe('crypto configuration IDs', () => {
 
 let publicKey: Uint8Array
 beforeAll(async () => {
-  publicKey = await generatePublicKey('INSECURE_THRESHOLD')
+  publicKey = await generatePublicKey('INSECURE_THRESHOLD_64')
 })
 
 describe('encryptNumber', () => {
@@ -43,19 +43,19 @@ describe('encryptNumber', () => {
       },
       rpcUrl: '',
       privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
-      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
+      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
     })
 
     it('should encrypt a number without crashing in a node environent', async () => {
       const value = await sdk.encryptNumber(10n, publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(5_398)
+      expect(value.length).to.equal(1_316)
       // TODO: test the encryption is correct
     })
     it('should encrypt a vector of numbers without crashing in a node environent', async () => {
       const value = await sdk.encryptVector(new BigUint64Array([1n, 2n]), publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(5_398)
+      expect(value.length).to.equal(1_316)
     })
 
     it('should validate a committee public key against its on-chain commitment', async () => {
@@ -80,15 +80,15 @@ describe('encryptNumber', () => {
 
   describe('standalone encryption (no blockchain setup)', () => {
     it('should encrypt a number using standalone functions', async () => {
-      const ct = await standaloneEncryptNumber(10n, publicKey, 'INSECURE_THRESHOLD')
+      const ct = await standaloneEncryptNumber(10n, publicKey, 'INSECURE_THRESHOLD_64')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(5_398)
+      expect(ct.length).to.equal(1_316)
     })
 
     it('should encrypt a vector using standalone functions', async () => {
-      const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), publicKey, 'INSECURE_THRESHOLD')
+      const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), publicKey, 'INSECURE_THRESHOLD_64')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(5_398)
+      expect(ct.length).to.equal(1_316)
     })
   })
 })

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Shared helpers for the sequential `c3_fold` / `c6_fold` / `nodes_fold` accumulators and
+//! Shared helpers for the sequential `c3_fold_chunked` / `nodes_fold` accumulators and
 //! the single-shot `node_dkg_fold` builder.
 
 use crate::circuits::utils::bytes_to_field_strings;
@@ -32,7 +32,8 @@ pub mod field_keys {
     pub const D_COMMITMENT: &str = "d_commitment";
 }
 
-/// Vector of `field_count` zero-encoded 32-byte hex field strings for the genesis accumulator.
+/// Vector of `field_count` zero-encoded 32-byte hex field strings, for a kernel's accumulator inputs,
+/// which the kernel does not verify.
 pub fn zero_field_hex_strings(field_count: usize) -> Result<Vec<String>, ZkError> {
     let bytes = vec![0u8; field_count * 32];
     bytes_to_field_strings(&bytes)
@@ -82,27 +83,16 @@ pub fn extract_single_field(
     Ok(fields.into_iter().next().expect("len == 1 verified above"))
 }
 
-/// Parse and validate fold-accumulator public-signal field strings against
-/// `(prefix_len, slot_width)`. Returns the flattened field-string vector.
-///
-/// Use this when the accumulator has a per-slot tail of fixed `slot_width` (e.g. `c3_fold`,
-/// `c6_fold`). For accumulators whose tail layout is determined at runtime by the inner proof
-/// shape (e.g. `nodes_fold`, where each slot stores a whole `node_fold` statement), use
-/// [`parse_acc_public_field_strings_flat`] and perform the per-slot length check at the call site.
+/// Parses fold-accumulator public signals as field strings, checking the circuit and that the tail
+/// after `prefix_len` is whole slots of `slot_width` (`c3_fold_chunked`).
 pub fn parse_acc_public_field_strings(
     proof: &Proof,
     expected_circuit: CircuitName,
     prefix_len: usize,
     slot_width: usize,
 ) -> Result<Vec<String>, ZkError> {
-    if proof.circuit != expected_circuit {
-        return Err(ZkError::InvalidInput(format!(
-            "expected {expected_circuit} proof, got {}",
-            proof.circuit
-        )));
-    }
-    let v = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if v.len() < prefix_len || !(v.len() - prefix_len).is_multiple_of(slot_width) {
+    let v = parse_acc_public_field_strings_flat(proof, expected_circuit, prefix_len)?;
+    if !(v.len() - prefix_len).is_multiple_of(slot_width) {
         return Err(ZkError::InvalidInput(format!(
             "unexpected {expected_circuit} public signal field count: {} (prefix={prefix_len}, slot_width={slot_width})",
             v.len()
@@ -111,10 +101,10 @@ pub fn parse_acc_public_field_strings(
     Ok(v)
 }
 
-/// Same as [`parse_acc_public_field_strings`] but only validates the prefix length
-/// (no slot-width modulo check). Intended for accumulators whose per-slot width is determined
-/// at runtime from the inner proof shape; the caller is responsible for verifying the total
-/// length against the expected `prefix_len + slots * <runtime_slot_width>`.
+/// Parses an accumulator proof's public signals as field strings, checking its circuit and that
+/// they hold at least the prefix. The per-slot width (`nodes_fold` stores a whole `node_fold`
+/// statement per slot) is known only at runtime, so the caller checks the total length against
+/// `prefix_len + slots * <runtime_slot_width>`.
 pub fn parse_acc_public_field_strings_flat(
     proof: &Proof,
     expected_circuit: CircuitName,

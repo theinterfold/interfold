@@ -801,6 +801,30 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "CommitteeSizeNotConfigured")
         .withArgs(unconfiguredCommitteeSize);
     });
+    it("admits the large committee only on trBFV parameter sets", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await interfold.setParamSet(3, BFV_PARAMS_SECURE_16384);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow,
+      });
+      const largeParams = {
+        ...request,
+        committeeSize: 3,
+        inputWindow: await freshInputWindow(),
+      };
+      // The pair check passes on insecure-64, so the quote reaches the threshold configuration.
+      await expect(interfold.getE3Quote.staticCall(largeParams))
+        .to.be.revertedWithCustomError(interfold, "CommitteeSizeNotConfigured")
+        .withArgs(3);
+      await expect(
+        interfold.getE3Quote.staticCall({
+          ...largeParams,
+          paramSet: 3,
+          expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
+        }),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+    });
     it("reverts if total duration is greater than maxDuration", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
 

@@ -98,9 +98,9 @@ function makeCompleteMatrix(): string {
 test('checksums command covers exactly the staged circuit configurations', () => {
   const dir = makeCompleteMatrix()
   try {
-    rmSync(join(dir, 'secure-16384'), { recursive: true })
-    for (const preset of ['insecure', 'secure-8192']) {
-      for (const committee of ['micro', 'small']) rmSync(join(dir, preset, committee), { recursive: true })
+    const staged = new Set(['insecure/minimum', 'secure-8192/minimum'])
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      if (!staged.has(`${preset}/${committee}`)) rmSync(join(dir, preset, committee), { recursive: true })
     }
     execFileSync('pnpm', ['tsx', 'scripts/circuits/artifacts.ts', 'checksums', '--dir', dir])
     const manifest = JSON.parse(readFileSync(join(dir, 'checksums.json'), 'utf8'))

@@ -23,6 +23,21 @@ pub mod lbfv_share_transport;
 use e3_fhe_params::BfvPreset;
 pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 
+/// The share-commitment section of a C2 proof's public signals. The trBFV final C2 proof leads
+/// with `expected_secret_commitment` and ends with the hash of its chunk keys; the l-BFV chunk
+/// finalizer (`chunked`) leads with its chunk VK hash and secret root and ends with its batch VK
+/// hash. Empty when the signals cannot hold a share.
+pub(crate) fn c2_share_commitments(public_signals: &[u8], chunked: bool) -> &[u8] {
+    let field = e3_zk_config::FIELD_BYTE_LEN;
+    let (front, back) = if chunked { (2, 1) } else { (1, 1) };
+    if public_signals.len() < (front + back + 1) * field
+        || !public_signals.len().is_multiple_of(field)
+    {
+        return &[];
+    }
+    &public_signals[front * field..public_signals.len() - back * field]
+}
+
 /// Returns the default set of commitment links to register.
 ///
 /// C4→C6 links verify that C4's aggregated share commitment matches C6's
@@ -41,9 +56,9 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
     let l = preset.metadata().num_moduli;
     let lbfv = e3_fhe_params::is_lbfv_path(preset);
     // C2's public signals around its share commitments: the l-BFV chunk finalizer has a child VK
-    // hash and the secret root before them and the batch VK hash after; the trBFV single C2 proof
-    // has only its `expected_secret_commitment` before them.
-    let (c2_prefix_fields, c2_suffix_fields) = if lbfv { (2, 1) } else { (1, 0) };
+    // hash and the secret root before them and the batch VK hash after; the trBFV final C2 proof
+    // has its `expected_secret_commitment` before them and the hash of its chunk keys after.
+    let (c2_prefix_fields, c2_suffix_fields) = if lbfv { (2, 1) } else { (1, 1) };
     let mut links: Vec<Box<dyn CommitmentLink>> = vec![
         Box::new(c0_to_c3::C3aToC0PkCommitmentLink),
         Box::new(c0_to_c3::C3bToC0PkCommitmentLink),
@@ -77,8 +92,8 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
             source_suffix_fields: c2_suffix_fields,
         }),
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
-        Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
-        Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),
+        Box::new(c4a_to_c6::C4aToC6SkCommitmentLink { chunked: lbfv }),
+        Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink { chunked: lbfv }),
     ];
     links.extend(shared);
     links

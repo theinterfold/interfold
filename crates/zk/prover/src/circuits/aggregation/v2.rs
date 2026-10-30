@@ -871,7 +871,7 @@ fn legacy_vk_binding(
         CircuitName::PkBfv,
         CircuitName::C2abChunkFold,
         CircuitName::C3abFoldChunked,
-        CircuitName::C4abFold,
+        CircuitName::C4abFoldChunked,
         CircuitName::SkC2ChunkFinalize,
         CircuitName::ESmC2ChunkFinalize,
         CircuitName::C2ChunkBatch,

@@ -1011,13 +1011,14 @@ fn handle_nodes_fold_step_proof(
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let first_slot = req.slot_indices.first().copied().unwrap_or_default();
     let accumulator_proof = generate_nodes_fold_step(
         prover,
-        &req.inner_proof,
+        &req.inner_proofs,
+        &req.slot_indices,
         req.prior_accumulator.as_ref(),
-        req.slot_index,
         req.total_slots,
-        &format!("{}-nodesfold-step-{}", req.e3_id, req.slot_index),
+        &format!("{}-nodesfold-step-{first_slot}", req.e3_id),
         artifacts_dir.as_str(),
     )
     .map_err(|e| {
@@ -1826,6 +1827,9 @@ fn handle_dkg_share_decryption_proof(
 }
 
 /// ZK-verify a share proof (inner recursive circuits).
+///
+/// A C2 or C4 proof is the final circuit of a chunk chain: it verifies its chunk proofs against
+/// keys it only exposes, so the exposed key tree must match this node's chunk circuits.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
     proof: &Proof,
@@ -1833,7 +1837,17 @@ fn zk_verify_share_proof_bundle(
     party_id: u64,
     artifacts_dir: &str,
 ) -> Result<bool, ZkError> {
-    prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)
+    if !prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)? {
+        return Ok(false);
+    }
+    if crate::circuits::aggregation::chain_keys::chunk_circuits(proof.circuit).is_some() {
+        return crate::circuits::aggregation::chain_keys::check_key_tree(
+            prover,
+            proof,
+            artifacts_dir,
+        );
+    }
+    Ok(true)
 }
 
 fn handle_verify_share_proofs(
@@ -1992,7 +2006,7 @@ fn handle_verify_share_decryption_proofs(
             }
 
             let proof = &signed_proof.payload.proof;
-            match prover.verify_proof(proof, &e3_id_str, sender, &artifacts_dir) {
+            match zk_verify_share_proof_bundle(prover, proof, &e3_id_str, sender, &artifacts_dir) {
                 Ok(true) => {}
                 Ok(false) => {
                     info!(

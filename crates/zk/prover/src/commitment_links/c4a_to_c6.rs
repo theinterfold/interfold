@@ -6,7 +6,9 @@
 
 //! C4a (SK share decryption) → C6 (ThresholdShareDecryption) sk_commitment link.
 //!
-//! C4a outputs a single `commitment` field (the sk_commitment).
+//! C4a returns its `commitment` (the sk_commitment), then its limb-key tree, after its public
+//! `expected_commitments`.
+//! The l-BFV chunked C4 returns only its commitment.
 //! C6 takes `expected_sk_commitment` as a public input.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
@@ -14,7 +16,10 @@ use e3_events::ProofType;
 use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
-pub struct C4aToC6SkCommitmentLink;
+pub struct C4aToC6SkCommitmentLink {
+    /// Whether C4 is the l-BFV chunked circuit, which returns only its commitment.
+    pub chunked: bool,
+}
 
 impl CommitmentLink for C4aToC6SkCommitmentLink {
     fn name(&self) -> &'static str {
@@ -34,7 +39,12 @@ impl CommitmentLink for C4aToC6SkCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        let layout = CircuitName::DkgShareDecryption.output_layout();
+        let c4 = if self.chunked {
+            CircuitName::DkgShareDecryptionChunked
+        } else {
+            CircuitName::DkgShareDecryption
+        };
+        let layout = c4.output_layout();
         let Some(bytes) = layout.extract_field(public_signals, "commitment") else {
             return vec![];
         };
@@ -66,17 +76,26 @@ mod tests {
 
     #[test]
     fn extract_commitment_from_c4a() {
-        let link = C4aToC6SkCommitmentLink;
-        // C4 has no public inputs, just one output: commitment
-        let signals = make_field(42);
+        let link = C4aToC6SkCommitmentLink { chunked: false };
+        // C4's public inputs (the expected share commitments) come first; its outputs are the
+        // commitment, then its limb-key tree.
+        let signals = [make_field(7), make_field(42), make_field(1)].concat();
         let values = link.extract_source_values(&signals);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], make_field(42));
     }
 
     #[test]
+    fn extract_commitment_from_chunked_c4a() {
+        let link = C4aToC6SkCommitmentLink { chunked: true };
+        // The l-BFV chunked C4 returns only its commitment, after its public inputs.
+        let signals = [make_field(7), make_field(42)].concat();
+        assert_eq!(link.extract_source_values(&signals), vec![make_field(42)]);
+    }
+
+    #[test]
     fn consistency_passes_when_sk_matches() {
-        let link = C4aToC6SkCommitmentLink;
+        let link = C4aToC6SkCommitmentLink { chunked: false };
         let sk_commitment = make_field(42);
         let source_values = vec![sk_commitment];
 
@@ -91,7 +110,7 @@ mod tests {
 
     #[test]
     fn consistency_fails_when_sk_differs() {
-        let link = C4aToC6SkCommitmentLink;
+        let link = C4aToC6SkCommitmentLink { chunked: false };
         let source_values = vec![make_field(42)];
 
         let mut c6_signals = Vec::new();
@@ -104,7 +123,7 @@ mod tests {
 
     #[test]
     fn short_signals() {
-        let link = C4aToC6SkCommitmentLink;
+        let link = C4aToC6SkCommitmentLink { chunked: false };
         assert!(link.extract_source_values(&[0u8; 10]).is_empty());
         // 3 * FIELD_BYTE_LEN = C6 input layout (sk, e_sm, ct_commitment).
         assert!(!link.check_signals(&[], &[0u8; 3 * FIELD_BYTE_LEN]));

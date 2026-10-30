@@ -17,6 +17,7 @@ circuits/
 │       ├── core/threshold/    # Shared logic: C1, C5, P3, C6, C7
 │       └── math/              # Polynomials, SAFE, commitments, modular arithmetic
 ├── bin/
+│   ├── chonk/                 # trBFV C3 and C6 Chonk stacks (app and kernel circuits)
 │   ├── config/                # Deployment-time consistency checks on presets
 │   ├── dkg/                   # DKG packages and C2 proof pipeline
 │   ├── threshold/             # TrBFV, user encryption, threshold decryption
@@ -44,21 +45,28 @@ how phases, commitments, and circuit IDs line up end to end, read
 [Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
 [`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
-**C2** uses chunk proofs and recursive aggregation: `sk_share_computation_chunk` (**C2a**) and
-`esm_share_computation_chunk` (**C2b**) prove the Shamir-share computation one coefficient chunk at
-a time. `c2_chunk_batch` groups chunk proofs, and the type-bound finalizer circuits reconstruct the
-root commitments used by the remaining fold pipeline. Gossip and threshold signing use one terminal
-C2 proof per type.
+**C2** runs over chunk proofs on both paths. On the trBFV path, `sk_share_computation_chain` /
+`e_sm_share_computation_chain` (and their `_last` circuits) prove the Shamir-share computation one
+coefficient chunk at a time, and `sk_share_computation` (**C2a**) / `e_sm_share_computation`
+(**C2b**) verify the chain and open C1's secret. On the l-BFV path, `sk_share_computation_chunk`
+(**C2a**) and `esm_share_computation_chunk` (**C2b**) prove one chunk each, `c2_chunk_batch` groups
+chunk proofs, and the type-bound finalizer circuits reconstruct the root commitments used by the
+remaining fold pipeline. Gossip and threshold signing use one terminal C2 proof per type.
 
 ### DKG (`bin/dkg/`)
 
-| Path                          | ID  | `CircuitName`              | Role                                                  |
-| ----------------------------- | --- | -------------------------- | ----------------------------------------------------- |
-| `pk`                          | C0  | `PkBfv`                    | Commit to individual BFV public key                   |
-| `sk_share_computation_chunk`  | C2a | `SkShareComputationChunk`  | Secret-key track Shamir-share coefficient chunk (`y`) |
-| `esm_share_computation_chunk` | C2b | `ESmShareComputationChunk` | Smudging-noise track coefficient chunk (`y`)          |
-| `share_encryption`            | C3  | `ShareEncryption`          | BFV encryption of shares under recipient keys         |
-| `share_decryption`            | C4  | `DkgShareDecryption`       | Decrypt shares; aggregate; commitments for P4         |
+| Path                                            | ID  | `CircuitName`                            | Role                                                   |
+| ----------------------------------------------- | --- | ---------------------------------------- | ------------------------------------------------------ |
+| `pk`                                            | C0  | `PkBfv`                                  | Commit to individual BFV public key                    |
+| `sk_share_computation`                          | C2a | `SkShareComputation`                     | trBFV: verifies the secret-key chunk chain             |
+| `e_sm_share_computation`                        | C2b | `ESmShareComputation`                    | trBFV: verifies the smudging-noise chunk chain         |
+| `sk_share_computation_chain`, `_chain_last`     | C2a | `SkShareComputationChain`, `…ChainLast`  | trBFV: secret-key Shamir-share coefficient chunk       |
+| `e_sm_share_computation_chain`, `_chain_last`   | C2b | `ESmShareComputationChain`, `…ChainLast` | trBFV: smudging-noise Shamir-share coefficient chunk   |
+| `sk_share_computation_chunk`                    | C2a | `SkShareComputationChunk`                | l-BFV: secret-key Shamir-share coefficient chunk (`y`) |
+| `esm_share_computation_chunk`                   | C2b | `ESmShareComputationChunk`               | l-BFV: smudging-noise coefficient chunk (`y`)          |
+| `share_encryption`                              | C3  | `ShareEncryption`                        | BFV encryption of shares under recipient keys          |
+| `share_decryption`                              | C4  | `DkgShareDecryption`                     | Decrypt shares; aggregate; commitments for P4          |
+| `share_decryption_limb_0`, `_limb_1`, `_limb_2` | C4  | `DkgShareDecryptionLimb0` … `Limb2`      | trBFV: C4 for one CRT limb                             |
 
 ### Threshold (`bin/threshold/`)
 

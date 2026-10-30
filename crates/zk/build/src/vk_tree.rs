@@ -29,18 +29,47 @@ pub fn validate_field(bytes: &[u8]) -> Result<Fr> {
 
 pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
     let fold = |name| load(root, "default", "recursive_aggregation", name);
+    // Each final C2 exposes the hash of its two chunk keys; `c2ab_fold` hashes it next to that
+    // C2's key.
+    let c2_chain = |full, last| -> Result<Fr> {
+        Ok(compute_vk_hash(vec![
+            load(root, "default", "dkg", full)?,
+            load(root, "default", "dkg", last)?,
+        ]))
+    };
     let c2 = compute_vk_hash(vec![
         load(root, "recursive", "dkg", "sk_share_computation")?,
+        c2_chain(
+            "sk_share_computation_chain",
+            "sk_share_computation_chain_last",
+        )?,
         load(root, "recursive", "dkg", "e_sm_share_computation")?,
+        c2_chain(
+            "e_sm_share_computation_chain",
+            "e_sm_share_computation_chain_last",
+        )?,
     ]);
+    // `c3ab_fold` hashes each chain's seven key hashes in the order its proof exposes them.
+    let chonk = |name| load(root, "default", "chonk", name);
     let c3_chain = compute_vk_hash(vec![
-        fold("c3_fold")?,
-        fold("c3_fold_kernel")?,
+        fold("c3_chonk_accumulate")?,
+        fold("c3_chonk_tube")?,
+        chonk("c3_chonk_hiding_kernel")?,
         load(root, "recursive", "dkg", "share_encryption")?,
+        chonk("c3_chonk_app")?,
+        chonk("c3_chonk_init_kernel")?,
+        chonk("c3_chonk_tail_kernel")?,
     ]);
     let c3 = compute_vk_hash(vec![c3_chain, c3_chain]);
+    // Each final C4 exposes the hash of its three limb keys; `c4ab_fold` hashes it next to the C4
+    // key, for C4a and C4b alike.
     let c4_key = load(root, "recursive", "dkg", "share_decryption")?;
-    let c4 = compute_vk_hash(vec![c4_key, c4_key]);
+    let c4_chain = compute_vk_hash(vec![
+        load(root, "default", "dkg", "share_decryption_limb_0")?,
+        load(root, "default", "dkg", "share_decryption_limb_1")?,
+        load(root, "default", "dkg", "share_decryption_limb_2")?,
+    ]);
+    let c4 = compute_vk_hash(vec![c4_key, c4_chain, c4_key, c4_chain]);
     let node = compute_vk_hash(vec![
         load(root, "recursive", "dkg", "pk")?,
         load(root, "recursive", "threshold", "pk_generation")?,
@@ -70,10 +99,22 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
 }
 
 pub fn decryption_hash(root: &Path) -> Result<[u8; 32]> {
+    let fold = |name| load(root, "default", "recursive_aggregation", name);
+    let chonk = |name| load(root, "default", "chonk", name);
+    // The decryption aggregator binds the root key next to the hash of the C6 stack's key list, in
+    // the order the tube exposes it (its own key twice, then Chonk, C6, app, init and tail).
+    let c6_tube = fold("c6_chonk_tube")?;
     let hash = compute_vk_hash(vec![
-        load(root, "default", "recursive_aggregation", "c6_fold")?,
-        load(root, "default", "recursive_aggregation", "c6_fold_kernel")?,
-        load(root, "recursive", "threshold", "share_decryption")?,
+        fold("c6_chonk_root")?,
+        compute_vk_hash(vec![
+            c6_tube,
+            c6_tube,
+            chonk("c6_chonk_hiding_kernel")?,
+            load(root, "recursive", "threshold", "share_decryption")?,
+            chonk("c6_chonk_app")?,
+            chonk("c6_chonk_init_kernel")?,
+            chonk("c6_chonk_tail_kernel")?,
+        ]),
     ]);
     let repr = hash.into_bigint().to_bytes_be();
     let mut bytes = [0; 32];

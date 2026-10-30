@@ -16,6 +16,13 @@ fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for preset in crate::BUILD_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let mut request = request();
             request.preset = PresetSelection::Single(preset);
             request.committee = CommitteeSelection::Single(committee);
@@ -260,7 +267,8 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
                 r.committee = CommitteeSelection::All;
                 r
             },
-            2,
+            // minimum, small, and large; micro was removed above.
+            3,
         ),
         (
             {
@@ -309,6 +317,13 @@ fn dry_run_lists_selections_without_tools_or_writes() {
         Group::Threshold,
         Group::Dkg,
         Group::Dkg,
+        Group::RecursiveAggregation,
+    ]);
+    assert!(!dry.groups.is_complete());
+    dry.groups = GroupSelection::Selected(vec![
+        Group::Threshold,
+        Group::Dkg,
+        Group::Chonk,
         Group::RecursiveAggregation,
     ]);
     assert!(dry.groups.is_complete());
@@ -695,8 +710,8 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
     for (preset, expected_hash, expected_id) in [
         (
             BfvPreset::InsecureThreshold64,
-            "aff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
-            "92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+            "2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844",
+            "5d12098e317ec9918b099e134da06000a91d7c2bff731cc37c630b8b671a724b",
         ),
         (
             BfvPreset::InsecureThreshold,
@@ -705,8 +720,8 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
         ),
         (
             BfvPreset::SecureThreshold8192,
-            "1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
-            "a174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+            "4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3",
+            "ceded5557de51373b24a54e2cc2ea5b08818f0f5abdc3f87851136941d33260b",
         ),
         (
             BfvPreset::SecureThreshold16384,
@@ -820,6 +835,9 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         // One parity matrix per artifact preset plus the shared smudging widths.
         assert_eq!(parity.len(), crate::ARTIFACT_PRESETS.len() + 1);
     }
+    // `large` has a parity matrix per preset, so the library compiles, but no smudging widths.
+    let large = configuration::parity_files(CiphernodesCommitteeSize::Large, &params).unwrap();
+    assert_eq!(large.len(), crate::ARTIFACT_PRESETS.len());
     let material = params.get(BfvPreset::InsecureThreshold);
     let bounds = configuration::bound_updates(
         root,
@@ -895,6 +913,13 @@ fn complete_preset_generation_preserves_each_existing_pair_statement() {
     let params = configuration::OperationParams::both().unwrap();
     for preset in crate::BUILD_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let original =
                 configuration::bound_updates(&root, preset, committee, params.get(preset)).unwrap();
             for (path, full) in
@@ -1081,6 +1106,13 @@ fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
     for preset in crate::BUILD_PRESETS {
         for name in COMMITTEES {
             let committee = name.parse().unwrap();
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let material = params.get(preset);
             for (path, updated) in
                 configuration::bound_updates(&root, preset, committee, material).unwrap()
@@ -1226,8 +1258,8 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
 const VK_PATHS: &[(&str, &str, &str)] = &[
     ("recursive", "dkg", "sk_share_computation"),
     ("recursive", "dkg", "e_sm_share_computation"),
-    ("default", "recursive_aggregation", "c3_fold"),
-    ("default", "recursive_aggregation", "c3_fold_kernel"),
+    ("default", "recursive_aggregation", "c3_chonk_accumulate"),
+    ("default", "recursive_aggregation", "c3_chonk_tube"),
     ("recursive", "dkg", "share_encryption"),
     ("recursive", "dkg", "share_decryption"),
     ("recursive", "dkg", "pk"),
@@ -1238,9 +1270,24 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "nodes_fold"),
     ("default", "recursive_aggregation", "nodes_fold_kernel"),
     ("default", "recursive_aggregation", "node_fold"),
-    ("default", "recursive_aggregation", "c6_fold"),
-    ("default", "recursive_aggregation", "c6_fold_kernel"),
+    ("default", "recursive_aggregation", "c6_chonk_root"),
+    ("default", "recursive_aggregation", "c6_chonk_tube"),
     ("recursive", "threshold", "share_decryption"),
+    ("default", "dkg", "sk_share_computation_chain"),
+    ("default", "dkg", "sk_share_computation_chain_last"),
+    ("default", "dkg", "e_sm_share_computation_chain"),
+    ("default", "dkg", "e_sm_share_computation_chain_last"),
+    ("default", "dkg", "share_decryption_limb_0"),
+    ("default", "dkg", "share_decryption_limb_1"),
+    ("default", "dkg", "share_decryption_limb_2"),
+    ("default", "chonk", "c3_chonk_hiding_kernel"),
+    ("default", "chonk", "c3_chonk_app"),
+    ("default", "chonk", "c3_chonk_init_kernel"),
+    ("default", "chonk", "c3_chonk_tail_kernel"),
+    ("default", "chonk", "c6_chonk_hiding_kernel"),
+    ("default", "chonk", "c6_chonk_app"),
+    ("default", "chonk", "c6_chonk_init_kernel"),
+    ("default", "chonk", "c6_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1266,8 +1313,15 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     for (i, key) in keys.iter().enumerate() {
         write(root, &key_path(i), field_bytes(*key));
     }
-    let c2 = compute_vk_hash(vec![keys[0], keys[1]]);
-    let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
+    let c2 = compute_vk_hash(vec![
+        keys[0],
+        compute_vk_hash(vec![keys[17], keys[18]]),
+        keys[1],
+        compute_vk_hash(vec![keys[19], keys[20]]),
+    ]);
+    let c3_chain = compute_vk_hash(vec![
+        keys[2], keys[3], keys[24], keys[4], keys[25], keys[26], keys[27],
+    ]);
     let node = compute_vk_hash(vec![
         keys[6],
         keys[7],
@@ -1276,7 +1330,10 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[9],
         compute_vk_hash(vec![c3_chain, c3_chain]),
         keys[10],
-        compute_vk_hash(vec![keys[5], keys[5]]),
+        {
+            let limbs = compute_vk_hash(vec![keys[21], keys[22], keys[23]]);
+            compute_vk_hash(vec![keys[5], limbs, keys[5], limbs])
+        },
     ]);
     let expected = [
         (
@@ -1285,23 +1342,22 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         ),
         (
             "c6_fold",
-            field_bytes(compute_vk_hash(vec![keys[14], keys[15], keys[16]])),
+            field_bytes(compute_vk_hash(vec![
+                keys[14],
+                compute_vk_hash(vec![
+                    keys[15], keys[15], keys[28], keys[16], keys[29], keys[30], keys[31],
+                ]),
+            ])),
         ),
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
+        // Keys 14..=16 and 28.. are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i) || i >= 28);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
-        assert_ne!(
-            changed[usize::from(i >= 14)].1,
-            expected[usize::from(i >= 14)].1,
-            "{}",
-            key_path(i)
-        );
-        assert_eq!(
-            changed[usize::from(i < 14)].1,
-            expected[usize::from(i < 14)].1
-        );
+        assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));
+        assert_eq!(changed[1 - c6].1, expected[1 - c6].1);
         write(root, &key_path(i), field_bytes(*key));
     }
     write(root, &key_path(0), [0xff; 32]);

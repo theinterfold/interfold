@@ -50,11 +50,12 @@ if [ -n "$unlisted" ]; then
   exit 1
 fi
 
-# select_preset PRESET: point the default config at one preset (insecure, secure_8192, secure_16384).
+# select_preset PRESET: point the default config at one preset (insecure_64, insecure, secure_8192,
+# secure_16384).
 select_preset() {
   sed -E \
-    -e "s/preset: (insecure|secure-8192|secure-16384)/preset: ${1//_/-}/g" \
-    -e "s/super::(insecure|secure_8192|secure_16384)::/super::$1::/g" \
+    -e "s/preset: (insecure-64|insecure|secure-8192|secure-16384)$/preset: ${1//_/-}/g" \
+    -e "s/super::(insecure_64|insecure|secure_8192|secure_16384)::/super::$1::/g" \
     "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
 }
 
@@ -82,7 +83,7 @@ for committee in minimum micro small; do
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  for preset in insecure secure_8192; do
+  for preset in insecure_64 secure_8192; do
     select_preset "$preset"
     echo "Testing DKG aggregation for ${preset//_/-}/$committee"
     # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same

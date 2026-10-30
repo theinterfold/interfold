@@ -14,38 +14,38 @@
         {
           "name": "Shared semaphore, Rayon pool and cancellation groups",
           "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         }
       ],
       "key_types": [
         {
           "name": "TaskPool",
           "what": "Cloneable shared CPU admission budget",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         },
         {
           "name": "TaskPoolError",
           "what": "Admission, channel, cancellation and panic outcomes",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
+          "ref": "crates/task-pool/src/lib.rs@39@pub enum TaskPoolError {"
         }
       ],
       "read_first": [
-        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {" },
+        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {" },
         {
           "why": "Admission, queued cancellation and worker execution",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+          "ref": "crates/task-pool/src/lib.rs@169@async fn spawn_inner<OP, T: Debug + Send + 'static>("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "arc-shared",
           "note": "Clones retain the same cancellation map",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
+          "ref": "crates/task-pool/src/lib.rs@35@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
         },
         {
           "pattern": "tokio-select",
           "note": "Admission waits for a permit or cancellation",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
+          "ref": "crates/task-pool/src/lib.rs@152@tokio::select! {"
         }
       ],
       "depends_on": [],
@@ -71,18 +71,18 @@
         {
           "name": "BfvParamSet",
           "what": "one preset's degree, plaintext modulus and moduli, ready to build BFV parameters",
-          "ref": "crates/fhe-params/src/presets.rs@249@pub struct BfvParamSet {"
+          "ref": "crates/fhe-params/src/presets.rs@262@pub struct BfvParamSet {"
         },
         {
           "name": "PresetError",
           "what": "error type: unknown preset, missing threshold or DKG pair, or an insecure lambda",
-          "ref": "crates/fhe-params/src/presets.rs@206@pub enum PresetError {"
+          "ref": "crates/fhe-params/src/presets.rs@217@pub enum PresetError {"
         }
       ],
       "read_first": [
         {
           "why": "crate entry: the public re-exports of presets, builders and CRP helpers",
-          "ref": "crates/fhe-params/src/lib.rs@25@pub use presets::{"
+          "ref": "crates/fhe-params/src/lib.rs@32@pub use presets::{"
         },
         {
           "why": "the preset enum and the default preset constant",
@@ -90,7 +90,7 @@
         },
         {
           "why": "the insecure 64 constants: degree, moduli and party count per threshold or DKG set",
-          "ref": "crates/fhe-params/src/constants.rs@13@pub mod insecure {"
+          "ref": "crates/fhe-params/src/constants.rs@19@pub mod insecure_64 {"
         },
         {
           "why": "turns a preset into its threshold and DKG BFV parameter pair",
@@ -101,17 +101,17 @@
         {
           "pattern": "enum-match",
           "note": "metadata() maps each preset to its degree, modulus count, party count and security tier",
-          "ref": "crates/fhe-params/src/presets.rs@387@pub fn metadata(&self) -> PresetMetadata"
+          "ref": "crates/fhe-params/src/presets.rs@400@pub fn metadata(&self) -> PresetMetadata"
         },
         {
           "pattern": "thiserror-enum",
           "note": "PresetError derives Debug and the thiserror Error impl through the ThisError alias",
-          "ref": "crates/fhe-params/src/presets.rs@205@#[derive(ThisError, Debug)]"
+          "ref": "crates/fhe-params/src/presets.rs@216@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "impl-from",
           "note": "a preset converts into its BfvParamSet with From",
-          "ref": "crates/fhe-params/src/presets.rs@497@impl From<BfvPreset> for BfvParamSet {"
+          "ref": "crates/fhe-params/src/presets.rs@536@impl From<BfvPreset> for BfvParamSet {"
         },
         {
           "pattern": "builder-pattern",
@@ -467,7 +467,7 @@
         },
         {
           "why": "compute_tag: the IO pattern and domain separator folded into one field element",
-          "ref": "crates/safe/src/lib.rs@266@pub fn compute_tag<const L: usize>"
+          "ref": "crates/safe/src/lib.rs@349@pub fn compute_tag<const L: usize>"
         }
       ],
       "rust_patterns": [
@@ -479,12 +479,12 @@
         {
           "pattern": "iterator-chain",
           "note": "compute_tag walks the IO pattern with iter().take(L)",
-          "ref": "crates/safe/src/lib.rs@274@for item in io_pattern.iter().take(L) {"
+          "ref": "crates/safe/src/lib.rs@357@for item in io_pattern.iter().take(L) {"
         },
         {
           "pattern": "unit-test",
           "note": "tests sit in a cfg(test) module in the same file",
-          "ref": "crates/safe/src/lib.rs@388@#[test]"
+          "ref": "crates/safe/src/lib.rs@457@#[test]"
         }
       ],
       "depends_on": [],
@@ -609,7 +609,7 @@
       "read_first": [
         {
           "why": "crate entry: module list and re-exports, including the BytesSerde derive",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@25@pub use e3_utils_derive::BytesSerde;"
         },
         {
           "why": "ArcBytes, the shared byte buffer",
@@ -683,7 +683,7 @@
         },
         {
           "why": "where e3-utils re-exports the derive for other crates",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@25@pub use e3_utils_derive::BytesSerde;"
         }
       ],
       "rust_patterns": [
@@ -769,7 +769,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3060@struct StoredEvents("
+          "ref": "crates/tests/tests/integration.rs@3253@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -806,11 +806,11 @@
       "read_first": [
         {
           "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/tests/tests/integration.rs@1329@async fn test_trbfv_actor()"
+          "ref": "crates/tests/tests/integration.rs@1421@async fn test_trbfv_actor()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/tests/tests/integration.rs@1615@.simulate_libp2p()"
+          "ref": "crates/tests/tests/integration.rs@1707@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
@@ -825,17 +825,17 @@
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/tests/tests/integration.rs@1327@#[actix::test]"
+          "ref": "crates/tests/tests/integration.rs@1419@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/tests/tests/integration.rs@1507@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/tests/tests/integration.rs@1599@let mut nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3062@impl actix::Actor for StoredEvents {"
+          "ref": "crates/tests/tests/integration.rs@3255@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",

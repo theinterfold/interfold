@@ -9,7 +9,7 @@ use e3_zk_config::field::get_zkp_modulus;
 use e3_zk_config::threshold::user_data_encryption::Configs;
 use e3_zk_witness::threshold::user_data_encryption::{
     bfv_ciphertext_to_greco, bfv_public_key_to_greco, compute_ciphertext_commitment,
-    encrypt_and_prepare, Inputs,
+    encrypt_and_prepare, Inputs, UserDataEncryptionCircuitData,
 };
 use e3_zk_witness::WitnessError;
 use fhe::bfv::{Ciphertext, Encoding};
@@ -53,6 +53,30 @@ fn insecure_e0_bound_matches_error1_sampler() {
     assert_eq!(bounds.e0_bound, BigUint::from(389120u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
     assert_eq!(bits.e0_bit, 19);
+
+    let config = Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+    assert_eq!(config.bounds.e0_bound, BigUint::from(460800u32));
+    assert_eq!(config.bounds.e1_bound, BigUint::from(20u32));
+    assert_eq!(config.bits.e0_bit, 19);
+}
+
+/// ct1 hard-codes the CRS, so a key with a random `a` cannot be proven; say so up front.
+#[test]
+fn keys_off_the_protocol_crs_are_rejected() {
+    use fhe_traits::FheEncoder;
+
+    let config = Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    let mut rng = rand::rng();
+    let secret_key = fhe::bfv::SecretKey::random(&config.params, &mut rng);
+    let sample = UserDataEncryptionCircuitData {
+        public_key: fhe::bfv::PublicKey::new(&secret_key, &mut rng),
+        plaintext: fhe::bfv::Plaintext::try_encode(&[1u64], Encoding::poly(), &config.params)
+            .unwrap(),
+    };
+
+    let error = encrypt_and_prepare(&config, &sample).unwrap_err();
+    assert!(error.to_string().contains("protocol CRS"), "{error}");
 }
 
 #[test]

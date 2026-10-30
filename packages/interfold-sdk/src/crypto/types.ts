@@ -15,17 +15,17 @@ export interface BfvParams {
 }
 
 /**
- * `INSECURE_THRESHOLD` and `INSECURE_THRESHOLD_LBFV` share their parameters; they name the trBFV and
- * l-BFV paths (on-chain parameter sets 0 and 4).
+ * On-chain parameter sets: `INSECURE_THRESHOLD_64` (0, trBFV), `SECURE_THRESHOLD_8192` (2, trBFV),
+ * `SECURE_THRESHOLD_16384` (3, l-BFV) and `INSECURE_THRESHOLD_LBFV` (4, l-BFV, degree 128).
  */
 export type ThresholdBfvParamsPresetName =
-  | 'INSECURE_THRESHOLD'
+  | 'INSECURE_THRESHOLD_64'
   | 'INSECURE_THRESHOLD_LBFV'
   | 'SECURE_THRESHOLD_8192'
   | 'SECURE_THRESHOLD_16384'
 
 export const ThresholdBfvParamsPresetNames = [
-  'INSECURE_THRESHOLD',
+  'INSECURE_THRESHOLD_64',
   'INSECURE_THRESHOLD_LBFV',
   'SECURE_THRESHOLD_8192',
   'SECURE_THRESHOLD_16384',

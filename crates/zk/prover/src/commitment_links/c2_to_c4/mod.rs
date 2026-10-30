@@ -178,7 +178,7 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
 
 /// Extract all share commitments between the explicit C2 prefix and suffix: on the l-BFV path
 /// the chunk finalizer's child VK hash and secret root, then its trailing batch VK hash; on the
-/// trBFV path the single proof's `expected_secret_commitment` and no suffix.
+/// trBFV path the final proof's `expected_secret_commitment`, then the hash of its chunk keys.
 fn extract_share_commitments(
     public_signals: &[u8],
     source_prefix_fields: usize,

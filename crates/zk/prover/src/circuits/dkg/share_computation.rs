@@ -26,8 +26,8 @@ pub struct ShareComputationCircuit;
 
 pub use crate::circuits::aggregation::c2_chunk_config::{c2_chunk_size, DEFAULT_C2_CHUNK_SIZE};
 
-/// The trBFV path's single-proof C2: one `sk_share_computation` or `e_sm_share_computation`
-/// proof per dealer. The l-BFV path proves C2 in chunks instead
+/// The trBFV path's C2: one final `sk_share_computation` or `e_sm_share_computation` proof per
+/// dealer, over its chunk chain. The l-BFV path proves C2 in root-committed chunks instead
 /// ([`prove_chunked_share_computation`]).
 impl Provable for ShareComputationCircuit {
     fn build_inputs(
@@ -35,9 +35,31 @@ impl Provable for ShareComputationCircuit {
         config: &Self::Config,
         input: &Self::Input,
     ) -> Result<noirc_abi::InputMap, ZkError> {
-        let inputs = Inputs::compute(config, input)
-            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
-        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+        let _ = (config, input);
+        Err(ZkError::InputsGenerationFailed(
+            "C2 is proven as a chunk chain; its final inputs need the batch proofs".into(),
+        ))
+    }
+
+    /// Proves the chunk chain, its batches and the final C2 proof (see
+    /// [`crate::circuits::aggregation::c2_chain`]).
+    fn prove_with_variant(
+        &self,
+        prover: &crate::ZkProver,
+        config: &Self::Config,
+        input: &Self::Input,
+        e3_id: &str,
+        variant: e3_events::CircuitVariant,
+        artifacts_dir: &str,
+    ) -> Result<e3_events::Proof, ZkError> {
+        crate::circuits::aggregation::c2_chain::prove_share_computation_chain(
+            prover,
+            config,
+            input,
+            e3_id,
+            variant,
+            artifacts_dir,
+        )
     }
 
     type Config = e3_zk_config::dkg::share_computation::Configs;

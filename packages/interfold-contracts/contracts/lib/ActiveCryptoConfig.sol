@@ -59,6 +59,12 @@ library ActiveCryptoConfig {
     uint32 internal constant SMALL_H = BfvProtocol.SMALL_H;
     uint32 internal constant SMALL_N = BfvProtocol.SMALL_N;
 
+    uint8 internal constant LARGE_COMMITTEE_SIZE =
+        BfvProtocol.LARGE_COMMITTEE_SIZE;
+    uint32 internal constant LARGE_T = BfvProtocol.LARGE_T;
+    uint32 internal constant LARGE_H = BfvProtocol.LARGE_H;
+    uint32 internal constant LARGE_N = BfvProtocol.LARGE_N;
+
     // Production default. The public MAX_COMMITTEE_SIZE constant reads N.
     bytes32 internal constant CONFIG_ID = SECURE_CONFIG_ID;
     uint8 internal constant PARAM_SET = SECURE_PARAM_SET;
@@ -117,7 +123,8 @@ library ActiveCryptoConfig {
         return
             committeeSize == MINIMUM_COMMITTEE_SIZE ||
             committeeSize == MICRO_COMMITTEE_SIZE ||
-            committeeSize == SMALL_COMMITTEE_SIZE;
+            committeeSize == SMALL_COMMITTEE_SIZE ||
+            committeeSize == LARGE_COMMITTEE_SIZE;
     }
 
     function validateParamSetCommittee(
@@ -125,24 +132,19 @@ library ActiveCryptoConfig {
         uint8 committeeSize
     ) internal pure {
         // Pair policy mirrors scripts/circuits/build-pairs.json.
+        // The large committee exists only on the trBFV parameter sets.
+        if (paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET) {
+            if (
+                committeeSize == MINIMUM_COMMITTEE_SIZE ||
+                committeeSize == MICRO_COMMITTEE_SIZE ||
+                committeeSize == SMALL_COMMITTEE_SIZE ||
+                committeeSize == LARGE_COMMITTEE_SIZE
+            ) return;
+        }
         if (
-            paramSet == INSECURE_PARAM_SET ||
-            paramSet == INSECURE_LBFV_PARAM_SET
+            paramSet == INSECURE_LBFV_PARAM_SET ||
+            paramSet == SECURE_16384_PARAM_SET
         ) {
-            if (
-                committeeSize == MINIMUM_COMMITTEE_SIZE ||
-                committeeSize == MICRO_COMMITTEE_SIZE ||
-                committeeSize == SMALL_COMMITTEE_SIZE
-            ) return;
-        }
-        if (paramSet == SECURE_PARAM_SET) {
-            if (
-                committeeSize == MINIMUM_COMMITTEE_SIZE ||
-                committeeSize == MICRO_COMMITTEE_SIZE ||
-                committeeSize == SMALL_COMMITTEE_SIZE
-            ) return;
-        }
-        if (paramSet == SECURE_16384_PARAM_SET) {
             if (
                 committeeSize == MINIMUM_COMMITTEE_SIZE ||
                 committeeSize == MICRO_COMMITTEE_SIZE ||
@@ -163,6 +165,9 @@ library ActiveCryptoConfig {
         }
         if (committeeSize == SMALL_COMMITTEE_SIZE) {
             return (SMALL_T, SMALL_H, SMALL_N);
+        }
+        if (committeeSize == LARGE_COMMITTEE_SIZE) {
+            return (LARGE_T, LARGE_H, LARGE_N);
         }
         revert IInterfold.UnsupportedCryptoConfig();
     }

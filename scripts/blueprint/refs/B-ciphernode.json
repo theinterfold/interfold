@@ -83,9 +83,9 @@
     "id": "B7",
     "supported": true,
     "refs": [
-      "crates/request/src/routing/handlers.rs@185@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
-      "crates/request/src/routing/handlers.rs@202@extension.on_event(context, &msg);",
-      "crates/request/src/routing/actor.rs@73@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
+      "crates/request/src/routing/handlers.rs@183@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
+      "crates/request/src/routing/handlers.rs@200@extension.on_event(context, &msg);",
+      "crates/request/src/routing/actor.rs@72@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
       "crates/keyshare/src/ext.rs@119@ThresholdKeyshare::new(ThresholdKeyshareParams {"
     ],
     "line_text": [
@@ -160,9 +160,9 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/multithread/src/multithread.rs@526@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      "crates/multithread/src/multithread.rs@856@fn handle_compute_request(",
-      "crates/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+      "crates/multithread/src/multithread.rs@565@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
+      "crates/multithread/src/multithread.rs@903@fn handle_compute_request(",
+      "crates/multithread/src/multithread.rs@713@bus.publish(value, ctx)?;"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
@@ -192,10 +192,10 @@
     "id": "B16",
     "supported": true,
     "refs": [
-      "crates/events/src/eventbus.rs@425@impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {",
-      "crates/events/src/eventbus.rs@432@.push(msg.listener);",
-      "crates/events/src/eventbus.rs@188@if let Some(specific) = self.listeners.get_mut(event_type) {",
-      "crates/events/src/eventbus.rs@308@fanout(event, event_type, listeners).await"
+      "crates/events/src/eventbus.rs@421@impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {",
+      "crates/events/src/eventbus.rs@428@.push(msg.listener);",
+      "crates/events/src/eventbus.rs@184@if let Some(specific) = self.listeners.get_mut(event_type) {",
+      "crates/events/src/eventbus.rs@304@fanout(event, event_type, listeners).await"
     ],
     "line_text": [
       "impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {",
@@ -236,7 +236,7 @@
       "crates/data/src/persistable.rs@184@.try_send(msg)",
       "crates/data/src/sled_store.rs@64@fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
       "crates/data/src/sled_db.rs@38@.insert(msg.key(), msg.value().to_vec())",
-      "crates/request/src/routing/handlers.rs@219@.write_with_context(&context.snapshot()?, &event_context)?;"
+      "crates/request/src/routing/handlers.rs@217@.write_with_context(&context.snapshot()?, &event_context)?;"
     ],
     "line_text": [
       "self.store.write(value)",

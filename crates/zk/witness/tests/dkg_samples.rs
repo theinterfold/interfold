@@ -314,3 +314,137 @@ mod share_encryption {
         assert!(error.to_string().contains("level zero"));
     }
 }
+
+mod share_computation_chain {
+    use ark_ff::{BigInteger, PrimeField};
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
+    use e3_polynomial::Polynomial;
+    use e3_zk_config::dkg::share_computation::Configs;
+    use e3_zk_config::DkgInputType;
+    use e3_zk_witness::commitments::compute_share_encryption_commitment_from_message;
+    use e3_zk_witness::dkg::share_computation::Inputs;
+    use e3_zk_witness::dkg::share_computation_chain::Chain;
+    use num_bigint::{BigInt, BigUint};
+
+    /// The chain's commitments are the unchunked C2 commitments, and its chunks cover the degree.
+    #[test]
+    fn chain_outputs_equal_the_unchunked_share_commitments() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+        let degree = config.params.degree();
+        let num_moduli = config.params.moduli().len();
+        let n_parties = config.committee.values().n;
+        for input_type in [DkgInputType::SecretKey, DkgInputType::SmudgingNoise] {
+            let sample =
+                e3_zk_samples::dkg::share_computation::generate(&config, preset, input_type)
+                    .unwrap();
+            let inputs = Inputs::compute(&config, &sample).unwrap();
+            let chain = Chain::compute(&config, &inputs).unwrap();
+
+            let layout = match input_type {
+                DkgInputType::SecretKey => &config.sk_chunks,
+                DkgInputType::SmudgingNoise => &config.e_sm_chunks,
+            };
+            assert_eq!(chain.chunks.len(), layout.n_chunks);
+            assert_eq!(chain.chunks[0].h_in, chain.start_hash);
+            assert!(chain.chunks.last().unwrap().is_last);
+            assert_eq!(
+                chain.chunks.iter().map(|c| c.y_chunk.len()).sum::<usize>(),
+                degree
+            );
+            for party_idx in 0..n_parties {
+                for mod_idx in 0..num_moduli {
+                    let mut message: Vec<BigInt> = inputs
+                        .y
+                        .iter()
+                        .map(|row| row[mod_idx][party_idx + 1].clone())
+                        .collect();
+                    message.reverse();
+                    let expected = compute_share_encryption_commitment_from_message(
+                        &Polynomial::new(message),
+                        config.bits.bit_share,
+                    );
+                    let got = chain.outputs[1 + party_idx * num_moduli + mod_idx];
+                    let got =
+                        BigInt::from(BigUint::from_bytes_le(&got.into_bigint().to_bytes_le()));
+                    assert_eq!(
+                        got, expected,
+                        "{input_type:?} party {party_idx} limb {mod_idx}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+mod share_decryption_chain {
+    use ark_ff::{BigInteger, PrimeField};
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
+    use e3_polynomial::{CrtPolynomial, Polynomial};
+    use e3_zk_config::dkg::share_decryption::Configs;
+    use e3_zk_config::DkgInputType;
+    use e3_zk_witness::commitments::compute_aggregated_shares_commitment;
+    use e3_zk_witness::dkg::share_decryption::Inputs;
+    use e3_zk_witness::dkg::share_decryption_chain::LimbChain;
+    use num_bigint::{BigInt, BigUint};
+    use num_traits::Signed;
+
+    /// The limb chain ends on the aggregate commitment of the normalized limbs, as one absorb.
+    #[test]
+    fn limb_chain_aggregate_equals_the_unchunked_commitment() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let committee = CiphernodesCommitteeSize::Micro.values();
+        let config = Configs::for_preset(preset).unwrap();
+        for input_type in [DkgInputType::SecretKey, DkgInputType::SmudgingNoise] {
+            let sample = e3_zk_samples::dkg::share_decryption::generate(
+                &config,
+                preset,
+                committee.clone(),
+                input_type,
+            )
+            .unwrap();
+            let inputs = Inputs::compute(&config, &sample).unwrap();
+            let chain = LimbChain::compute(&config, &inputs).unwrap();
+            assert_eq!(chain.limbs.len(), config.threshold_params.moduli().len());
+            assert_eq!(chain.limbs[0].h_in, chain.start_hash);
+
+            let degree = config.threshold_params.degree();
+            let limbs: Vec<Polynomial> = config
+                .threshold_params
+                .moduli()
+                .iter()
+                .enumerate()
+                .map(|(limb, &q)| {
+                    let q = BigInt::from(q);
+                    let mut coeffs: Vec<BigInt> = (0..degree)
+                        .map(|i| {
+                            let sum: BigInt =
+                                inputs.decrypted_shares.iter().map(|p| &p[limb][i]).sum();
+                            let mut r = sum % &q;
+                            if r.is_negative() {
+                                r += &q;
+                            }
+                            if r > (&q - 1) / 2 {
+                                r - &q
+                            } else {
+                                r
+                            }
+                        })
+                        .collect();
+                    coeffs.reverse();
+                    Polynomial::new(coeffs)
+                })
+                .collect();
+            let expected = compute_aggregated_shares_commitment(
+                &CrtPolynomial::new(limbs),
+                config.bits.agg_bit,
+            );
+            let got = BigInt::from(BigUint::from_bytes_le(
+                &chain.aggregate.into_bigint().to_bytes_le(),
+            ));
+            assert_eq!(got, expected, "{input_type:?}");
+        }
+    }
+}

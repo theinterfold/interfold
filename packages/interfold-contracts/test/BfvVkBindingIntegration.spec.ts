@@ -166,10 +166,12 @@ const loadFoldedArtifacts = (): FoldedArtifacts | null =>
   resolveFoldedArtifacts();
 
 const hasCompiledVkArtifacts = (): boolean =>
-  hasActiveCircuitSelection("insecure", "minimum") &&
-  Object.values(getBfvPkSubCircuitVkHashPaths()).every((p) =>
-    fs.existsSync(p),
-  ) &&
+  // The trBFV checks run on its on-chain insecure pair; `insecure` is the l-BFV parameter set.
+  hasActiveCircuitSelection("insecure-64", "minimum") &&
+  // The C2 chunk keys are l-BFV only; the V2 checks below require them.
+  Object.entries(getBfvPkSubCircuitVkHashPaths())
+    .filter(([name]) => name !== "skC2Chunk" && name !== "esmC2Chunk")
+    .every(([, p]) => fs.existsSync(p)) &&
   Object.values(getBfvDecryptionSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   );
@@ -236,6 +238,7 @@ describe("BfvVkBindingIntegration", function () {
     );
   });
 
+  // The trBFV fixture is proved at insecure-64, whose verifiers sit below the canonical l-BFV pair.
   const deployHonkAndBfv = async () => {
     const { mockCiphernodeRegistry } = await ignition.deploy(
       MockCiphernodeRegistryModule,
@@ -243,33 +246,33 @@ describe("BfvVkBindingIntegration", function () {
     const registryAddr = await mockCiphernodeRegistry.getAddress();
 
     const libFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
+      "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:ZKTranscriptLib",
     );
     const zkTranscriptLib = await libFactory.deploy();
     await zkTranscriptLib.waitForDeployment();
     const zkTranscriptLibAddress = await zkTranscriptLib.getAddress();
 
     const dkgRelationsLibFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+      "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:RelationsLib",
     );
     const dkgRelationsLib = await dkgRelationsLibFactory.deploy();
     await dkgRelationsLib.waitForDeployment();
     const dkgRelationsLibAddress = await dkgRelationsLib.getAddress();
 
     const decRelationsLibFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib",
+      "contracts/verifiers/bfv/honk/insecure-64/minimum/DecryptionAggregatorVerifier.sol:RelationsLib",
     );
     const decRelationsLib = await decRelationsLibFactory.deploy();
     await decRelationsLib.waitForDeployment();
     const decRelationsLibAddress = await decRelationsLib.getAddress();
 
     const dkgAggFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+      "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
       {
         libraries: {
-          "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
+          "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:ZKTranscriptLib":
             zkTranscriptLibAddress,
-          "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+          "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:RelationsLib":
             dkgRelationsLibAddress,
         },
       },
@@ -278,12 +281,12 @@ describe("BfvVkBindingIntegration", function () {
     await dkgAgg.waitForDeployment();
 
     const decAggFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+      "contracts/verifiers/bfv/honk/insecure-64/minimum/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
       {
         libraries: {
-          "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:ZKTranscriptLib":
+          "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DecryptionAggregatorVerifier.sol:ZKTranscriptLib":
             zkTranscriptLibAddress,
-          "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib":
+          "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DecryptionAggregatorVerifier.sol:RelationsLib":
             decRelationsLibAddress,
         },
       },
@@ -516,13 +519,6 @@ describe("BfvVkBindingIntegration", function () {
       const expectedC5KeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().c5,
       );
-      const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().skC2Chunk,
-      );
-      const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-      );
-      const expectedVkBinding = readExpectedVkBinding();
       const expectedC6FoldKeyHash = readVkRecursiveHash(
         getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
       );
@@ -536,16 +532,16 @@ describe("BfvVkBindingIntegration", function () {
       // hashes and the V2 binding.
       const v2Layout = v2DkgLayout(dkgPublicInputs);
       if (v2Layout !== null) {
-        expectedVkBinding.forEach((expected, index) => {
+        readExpectedVkBinding().forEach((expected, index) => {
           expect(
             dkgPublicInputs[v2Layout.legacyVkBindingStart + index],
           ).to.equal(expected);
         });
         expect(dkgPublicInputs[v2Layout.skC2ChunkKeyHash]).to.equal(
-          expectedSkC2ChunkKeyHash,
+          readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
         );
         expect(dkgPublicInputs[v2Layout.esmC2ChunkKeyHash]).to.equal(
-          expectedESmC2ChunkKeyHash,
+          readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
         );
         getBfvV2VkBindingHashPaths().forEach((filePath, index) => {
           expect(dkgPublicInputs[v2Layout.v2VkBindingStart + index]).to.equal(
@@ -666,7 +662,7 @@ describe("BfvVkBindingIntegration", function () {
       const immediateC6Hash = readVkRecursiveHash(
         path.join(
           repoRoot,
-          "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
+          "circuits/bin/recursive_aggregation/c6_chonk_root/target/c6_chonk_root.vk_recursive_hash",
         ),
       );
       expect(immediateNodesHash).not.to.equal(expectedNodesFoldKeyHash);
@@ -772,24 +768,24 @@ describe("BfvVkBindingIntegration", function () {
       );
 
       const libFactory = await ethers.getContractFactory(
-        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
+        "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:ZKTranscriptLib",
       );
       const zkTranscriptLib = await libFactory.deploy();
       await zkTranscriptLib.waitForDeployment();
       const relationsLibFactory = await ethers.getContractFactory(
-        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+        "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:RelationsLib",
       );
       const relationsLib = await relationsLibFactory.deploy();
       await relationsLib.waitForDeployment();
 
       const dkgAgg = await (
         await ethers.getContractFactory(
-          "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+          "contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
           {
             libraries: {
-              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
+              "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:ZKTranscriptLib":
                 await zkTranscriptLib.getAddress(),
-              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+              "project/contracts/verifiers/bfv/honk/insecure-64/minimum/DkgAggregatorVerifier.sol:RelationsLib":
                 await relationsLib.getAddress(),
             },
           },
