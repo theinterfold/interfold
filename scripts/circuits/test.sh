@@ -66,6 +66,8 @@ done
 for preset in insecure secure_16384; do
   select_preset "$preset"
   echo "Testing the l-BFV packages for ${preset//_/-}"
+  # The committed selector carries no l-BFV rows, so the library checks them here.
+  (cd "$REPO_ROOT/circuits/lib" && nargo test row_commitments_match_the_rows)
   for package in "${LBFV_PACKAGES[@]}"; do
     (cd "$REPO_ROOT/circuits/bin/$package" && nargo test)
   done

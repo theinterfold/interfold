@@ -116,12 +116,14 @@ pub fn packed_lbfv_pk_aggregation<let N: u32, let H: u32, let L: u32, let BIT_PK
 
 #[test]
 fn test_generated_crs_row_commitments_match_the_rows() {
+    // A preset without l-BFV rows declares zero commitments; its l-BFV circuits are never built.
+    let has_rows = LBFV_CRS_ROW_COMMITMENTS[0] != 0;
     for row in 0..GADGET_DIM {
         let expected = compute_multiple_polynomial_commitment::<N, L, PK_AGGREGATION_BIT_PK>(
             LBFV_CRS_GADGET_ROWS[row],
             DS_PK_AGGREGATION,
         );
-        assert(LBFV_CRS_ROW_COMMITMENTS[row] == expected);
+        assert(!has_rows | (LBFV_CRS_ROW_COMMITMENTS[row] == expected));
     }
 }
 

@@ -471,9 +471,10 @@ fn sign_vote(
 
 /// Encode attestation evidence for `proposeSlash()`.
 ///
-/// Format: `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
-/// uint256 issuedAt, uint256 deadline, bytes[] signatures)`. Voters are sorted
-/// ascending by address.
+/// Format: `abi.encode(uint256 proofType, uint256 proofInstance, address[] voters,
+/// bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`,
+/// with instance 0, the single-row proof types' only instance. Voters are sorted ascending by
+/// address.
 fn encode_attestation_evidence(
     proof_type: u8,
     mut votes: Vec<(Address, FixedBytes<32>, Bytes)>,
@@ -491,6 +492,7 @@ fn encode_attestation_evidence(
     // outer offset word that breaks `abi.decode(proof, (uint256))` in `proposeSlash`.
     (
         U256::from(proof_type),
+        U256::ZERO,
         voters,
         data_hashes,
         evidence,
@@ -1208,6 +1210,7 @@ async fn test_onchain_invalid_vote_signature_reverts() {
     // Build evidence claiming the vote is from victim_signer but signed by impersonator
     let evidence: Bytes = (
         U256::from(proof_type),
+        U256::ZERO,
         vec![victim_signer.address()],
         vec![data_hash],
         raw_evidence,
@@ -1333,6 +1336,7 @@ async fn test_onchain_duplicate_voter_reverts() {
     // which would deduplicate — construct manually to have same address appear twice)
     let evidence: Bytes = (
         U256::from(proof_type),
+        U256::ZERO,
         vec![voter, voter],
         vec![data_hash, data_hash],
         raw_evidence,

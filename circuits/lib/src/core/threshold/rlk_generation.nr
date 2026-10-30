@@ -362,11 +362,13 @@ fn test_rlk_row_rejects_a_different_urs_row() {
 /// row proof would reject the public `d1`.
 #[test]
 fn test_generated_urs_row_commitments_match_the_rows() {
+    // A preset without l-BFV rows declares zero commitments; its l-BFV circuits are never built.
+    let has_rows = LBFV_URS_ROW_COMMITMENTS[0] != 0;
     for row in 0..GADGET_DIM {
         let expected = compute_multiple_polynomial_commitment::<N_DEFAULT, L_DEFAULT, PK_AGGREGATION_BIT_PK>(
             LBFV_URS_GADGET_ROWS[row],
             DS_PK_AGGREGATION,
         );
-        assert(LBFV_URS_ROW_COMMITMENTS[row] == expected);
+        assert(!has_rows | (LBFV_URS_ROW_COMMITMENTS[row] == expected));
     }
 }
