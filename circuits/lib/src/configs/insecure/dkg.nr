@@ -57,6 +57,19 @@ pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> 
 
 /************************************
 -------------------------------------
+share_computation chunks (chunked C2a and C2b)
+-------------------------------------
+************************************/
+
+pub global SHARE_COMPUTATION_SK_CHUNK_SIZE: u32 = 21;
+pub global SHARE_COMPUTATION_SK_LAST_CHUNK_SIZE: u32 = 1;
+pub global SHARE_COMPUTATION_SK_N_CHUNKS: u32 = 4;
+pub global SHARE_COMPUTATION_E_SM_CHUNK_SIZE: u32 = 21;
+pub global SHARE_COMPUTATION_E_SM_LAST_CHUNK_SIZE: u32 = 1;
+pub global SHARE_COMPUTATION_E_SM_N_CHUNKS: u32 = 4;
+
+/************************************
+-------------------------------------
 share_encryption_sk (CIRCUIT 3a)
 share_encryption_e_sm (CIRCUIT 3b)
 -------------------------------------

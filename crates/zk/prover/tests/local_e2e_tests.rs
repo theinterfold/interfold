@@ -24,7 +24,7 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use common::{
     extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
-    setup_compiled_circuit, setup_test_prover,
+    setup_chunked_dkg_circuits, setup_compiled_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::Proof;
@@ -197,8 +197,7 @@ async fn setup_share_computation_sk_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_chunked_dkg_circuits(&backend).await;
 
     let config = e3_zk_config::dkg::share_computation::Configs::for_preset(
         preset,
@@ -235,8 +234,7 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_chunked_dkg_circuits(&backend).await;
 
     let config = e3_zk_config::dkg::share_computation::Configs::for_preset(
         preset,
@@ -345,7 +343,7 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "share_decryption").await;
+    setup_chunked_dkg_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::for_preset(preset).ok()?;

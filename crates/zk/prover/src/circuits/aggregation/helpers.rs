@@ -83,39 +83,10 @@ pub fn extract_single_field(
     Ok(fields.into_iter().next().expect("len == 1 verified above"))
 }
 
-/// Parse and validate fold-accumulator public-signal field strings against
-/// `(prefix_len, slot_width)`. Returns the flattened field-string vector.
-///
-/// Use this when the accumulator has a per-slot tail of fixed `slot_width` (e.g. `c3_fold`,
-/// `c6_fold`). For accumulators whose tail layout is determined at runtime by the inner proof
-/// shape (e.g. `nodes_fold`, where each slot stores a whole `node_fold` statement), use
-/// [`parse_acc_public_field_strings_flat`] and perform the per-slot length check at the call site.
-pub fn parse_acc_public_field_strings(
-    proof: &Proof,
-    expected_circuit: CircuitName,
-    prefix_len: usize,
-    slot_width: usize,
-) -> Result<Vec<String>, ZkError> {
-    if proof.circuit != expected_circuit {
-        return Err(ZkError::InvalidInput(format!(
-            "expected {expected_circuit} proof, got {}",
-            proof.circuit
-        )));
-    }
-    let v = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if v.len() < prefix_len || !(v.len() - prefix_len).is_multiple_of(slot_width) {
-        return Err(ZkError::InvalidInput(format!(
-            "unexpected {expected_circuit} public signal field count: {} (prefix={prefix_len}, slot_width={slot_width})",
-            v.len()
-        )));
-    }
-    Ok(v)
-}
-
-/// Same as [`parse_acc_public_field_strings`] but only validates the prefix length
-/// (no slot-width modulo check). Intended for accumulators whose per-slot width is determined
-/// at runtime from the inner proof shape; the caller is responsible for verifying the total
-/// length against the expected `prefix_len + slots * <runtime_slot_width>`.
+/// Parses an accumulator proof's public signals as field strings, checking its circuit and that
+/// they hold at least the prefix. The per-slot width (`nodes_fold` stores a whole `node_fold`
+/// statement per slot) is known only at runtime, so the caller checks the total length against
+/// `prefix_len + slots * <runtime_slot_width>`.
 pub fn parse_acc_public_field_strings_flat(
     proof: &Proof,
     expected_circuit: CircuitName,
@@ -135,38 +106,4 @@ pub fn parse_acc_public_field_strings_flat(
         )));
     }
     Ok(v)
-}
-
-/// Sequential fold driver: applies `step(inner, prior_acc, slot_index)` per inner proof,
-/// threading each step's output as the next step's accumulator.
-///
-/// The first step returns the chain's kernel proof, so a fold proof needs at least two inner
-/// proofs; with one, the chain would end on the kernel.
-pub fn sequential_fold<F>(
-    label: &str,
-    inner_proofs: &[Proof],
-    slot_indices: &[u32],
-    mut step: F,
-) -> Result<Proof, ZkError>
-where
-    F: FnMut(&Proof, Option<&Proof>, u32) -> Result<Proof, ZkError>,
-{
-    if inner_proofs.len() < 2 {
-        return Err(ZkError::InvalidInput(format!(
-            "{label}: need at least two inner proofs, got {}",
-            inner_proofs.len()
-        )));
-    }
-    if inner_proofs.len() != slot_indices.len() {
-        return Err(ZkError::InvalidInput(format!(
-            "{label}: inner_proofs and slot_indices length mismatch ({} vs {})",
-            inner_proofs.len(),
-            slot_indices.len()
-        )));
-    }
-    let mut acc: Option<Proof> = None;
-    for (i, inner) in inner_proofs.iter().enumerate() {
-        acc = Some(step(inner, acc.as_ref(), slot_indices[i])?);
-    }
-    Ok(acc.expect("loop body executed at least once on non-empty input"))
 }

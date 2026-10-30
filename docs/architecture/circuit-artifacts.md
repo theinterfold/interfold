@@ -12,8 +12,9 @@ Owners: [Rust circuit builder](../../crates/zk/build/),
 Use `pnpm build:circuits --committee <name> [--preset <preset>]` and `pnpm check:committee`. Do not
 hand-edit generated default/active selectors, parity matrices, C1/C2 bounds, generated TS/Solidity
 constants, verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts.
-Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
-preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
+Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`, large
+`(45,22,34)`. Every preset/committee pair has its own H-shaped PK and T-shaped decryption
+public-input layout.
 
 `pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,
 and deployment selections/routes. Binding, SDK, contract, and EVM-helper tests compare consumer
@@ -122,9 +123,10 @@ it.
 ## Verifier and deployment compatibility
 
 Complete pair builds generate `nodes_fold.vk_tree_hash`/`c6_fold.vk_tree_hash` from all recursive
-keys. Subset builds, skip-VK, or any circuit failure remove **both** pair/bin anchors to prevent
-stale pins. Cache markers and release validation require both; hydration copies them. Final wrappers
-pin these tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
+keys. The C6 anchor keeps the retired `c6_fold` path, although C6 now runs over Chonk. Subset
+builds, skip-VK, or any circuit failure remove **both** pair/bin anchors to prevent stale pins.
+Cache markers and release validation require both; hydration copies them. Final wrappers pin these
+tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
 
 Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable routers dispatch by
 public-input length and VK anchors. Selecting an already installed matching pair needs no

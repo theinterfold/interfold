@@ -158,6 +158,11 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "small",
 );
 
+export const INSECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-64",
+  "large",
+);
+
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "minimum",
@@ -171,6 +176,11 @@ export const SECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
 export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "small",
+);
+
+export const SECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "large",
 );
 
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
@@ -187,9 +197,11 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   INSECURE_MINIMUM_BFV_CONFIG,
   INSECURE_MICRO_BFV_CONFIG,
   INSECURE_SMALL_BFV_CONFIG,
+  INSECURE_LARGE_BFV_CONFIG,
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
+  SECURE_LARGE_BFV_CONFIG,
 ] as const;
 
 /** Local artifact selection, independent of the production/testnet admission defaults. */

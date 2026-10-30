@@ -72,19 +72,18 @@ pub enum CircuitName {
     ThresholdShareDecryption,
     /// Decrypted shares aggregation proof (C7).
     DecryptedSharesAggregation,
-    /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
+    /// Retired sequential C3 fold; C3 runs over Chonk. Kept so stored encodings keep their indices.
     C3Fold,
-    /// First step of a [`CircuitName::C3Fold`] chain: proves the first leaf and starts the accumulator
-    /// (same ABI; it verifies no accumulator).
+    /// Retired `c3_fold` kernel. Kept so stored encodings keep their indices.
     C3FoldKernel,
-    /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
+    /// Retired sequential C6 fold; C6 runs over Chonk, and the C6 tree anchor keeps this name's
+    /// artifact path. Kept so stored encodings keep their indices.
     C6Fold,
-    /// First step of a [`CircuitName::C6Fold`] chain: proves the first leaf and starts the accumulator
-    /// (same ABI; it verifies no accumulator).
+    /// Retired `c6_fold` kernel. Kept so stored encodings keep their indices.
     C6FoldKernel,
     /// Ad-hoc recursive aggregation: C2a + C2b.
     C2abFold,
-    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
+    /// Ad-hoc: final sk C3 Chonk accumulator + final e_sm C3 Chonk accumulator.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
     C4abFold,
@@ -92,13 +91,51 @@ pub enum CircuitName {
     NodeFold,
     /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
     NodesFold,
-    /// First step of a [`CircuitName::NodesFold`] chain: proves the first node proof and starts the
+    /// First step of a [`CircuitName::NodesFold`] chain: proves the first node proofs and starts the
     /// accumulator (same ABI; it verifies no accumulator).
     NodesFoldKernel,
     /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
+    /// Chunked C2a: a chunk other than the last (non-ZK, verified by the final C2 circuit).
+    SkShareComputationChain,
+    /// Chunked C2a: the last chunk.
+    SkShareComputationChainLast,
+    /// Chunked C2b: a chunk other than the last.
+    ESmShareComputationChain,
+    /// Chunked C2b: the last chunk.
+    ESmShareComputationChainLast,
+    /// Chunked C4: CRT limb 0 (non-ZK, verified by the final C4 circuit).
+    DkgShareDecryptionLimb0,
+    /// Chunked C4: CRT limb 1.
+    DkgShareDecryptionLimb1,
+    /// Chunked C4: CRT limb 2.
+    DkgShareDecryptionLimb2,
+    /// C3 Chonk stack app: verifies a batch of C3 proofs and writes their rows.
+    C3ChonkApp,
+    /// C3 Chonk stack kernel that verifies the app.
+    C3ChonkInitKernel,
+    /// C3 Chonk stack kernel that verifies the init kernel.
+    C3ChonkTailKernel,
+    /// C3 Chonk stack kernel that verifies the tail kernel and ends the stack.
+    C3ChonkHidingKernel,
+    /// Rollup proof of one C3 Chonk stack's Chonk proof.
+    C3ChonkTube,
+    /// Rollup proof merging a C3 Chonk accumulator or tube with a tube.
+    C3ChonkAccumulate,
+    /// C6 Chonk stack app: verifies a decryption's `T + 1` C6 proofs and writes their columns.
+    C6ChonkApp,
+    /// C6 Chonk stack kernel that verifies the app.
+    C6ChonkInitKernel,
+    /// C6 Chonk stack kernel that verifies the init kernel.
+    C6ChonkTailKernel,
+    /// C6 Chonk stack kernel that verifies the tail kernel and ends the stack.
+    C6ChonkHidingKernel,
+    /// Rollup proof of the C6 Chonk stack's Chonk proof.
+    C6ChonkTube,
+    /// Closes the C6 tube's IPA claim; the decryption aggregator verifies it.
+    C6ChonkRoot,
 }
 
 impl CircuitName {
@@ -125,6 +162,25 @@ impl CircuitName {
             CircuitName::NodesFoldKernel => "nodes_fold_kernel",
             CircuitName::DkgAggregator => "dkg_aggregator",
             CircuitName::DecryptionAggregator => "decryption_aggregator",
+            CircuitName::SkShareComputationChain => "sk_share_computation_chain",
+            CircuitName::SkShareComputationChainLast => "sk_share_computation_chain_last",
+            CircuitName::ESmShareComputationChain => "e_sm_share_computation_chain",
+            CircuitName::ESmShareComputationChainLast => "e_sm_share_computation_chain_last",
+            CircuitName::DkgShareDecryptionLimb0 => "share_decryption_limb_0",
+            CircuitName::DkgShareDecryptionLimb1 => "share_decryption_limb_1",
+            CircuitName::DkgShareDecryptionLimb2 => "share_decryption_limb_2",
+            CircuitName::C3ChonkApp => "c3_chonk_app",
+            CircuitName::C3ChonkInitKernel => "c3_chonk_init_kernel",
+            CircuitName::C3ChonkTailKernel => "c3_chonk_tail_kernel",
+            CircuitName::C3ChonkHidingKernel => "c3_chonk_hiding_kernel",
+            CircuitName::C3ChonkTube => "c3_chonk_tube",
+            CircuitName::C3ChonkAccumulate => "c3_chonk_accumulate",
+            CircuitName::C6ChonkApp => "c6_chonk_app",
+            CircuitName::C6ChonkInitKernel => "c6_chonk_init_kernel",
+            CircuitName::C6ChonkTailKernel => "c6_chonk_tail_kernel",
+            CircuitName::C6ChonkHidingKernel => "c6_chonk_hiding_kernel",
+            CircuitName::C6ChonkTube => "c6_chonk_tube",
+            CircuitName::C6ChonkRoot => "c6_chonk_root",
         }
     }
 
@@ -133,12 +189,27 @@ impl CircuitName {
             CircuitName::PkBfv => "dkg",
             CircuitName::SkShareComputation => "dkg",
             CircuitName::ESmShareComputation => "dkg",
+            CircuitName::SkShareComputationChain
+            | CircuitName::SkShareComputationChainLast
+            | CircuitName::ESmShareComputationChain
+            | CircuitName::ESmShareComputationChainLast
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2 => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
             CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkInitKernel
+            | CircuitName::C3ChonkTailKernel
+            | CircuitName::C3ChonkHidingKernel
+            | CircuitName::C6ChonkApp
+            | CircuitName::C6ChonkInitKernel
+            | CircuitName::C6ChonkTailKernel
+            | CircuitName::C6ChonkHidingKernel => "chonk",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C6Fold
@@ -150,7 +221,11 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => "recursive_aggregation",
+            | CircuitName::DecryptionAggregator
+            | CircuitName::C3ChonkTube
+            | CircuitName::C3ChonkAccumulate
+            | CircuitName::C6ChonkTube
+            | CircuitName::C6ChonkRoot => "recursive_aggregation",
         }
     }
 
@@ -158,6 +233,8 @@ impl CircuitName {
         format!("{}/{}", self.group(), self.as_str())
     }
 
+    /// Public input layout for this circuit.
+    ///
     /// Public output (return value) layout for this circuit.
     pub fn output_layout(&self) -> CircuitOutputLayout {
         match self {
@@ -194,7 +271,26 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => CircuitOutputLayout::None,
+            | CircuitName::DecryptionAggregator
+            | CircuitName::SkShareComputationChain
+            | CircuitName::SkShareComputationChainLast
+            | CircuitName::ESmShareComputationChain
+            | CircuitName::ESmShareComputationChainLast
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2
+            | CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkInitKernel
+            | CircuitName::C3ChonkTailKernel
+            | CircuitName::C3ChonkHidingKernel
+            | CircuitName::C3ChonkTube
+            | CircuitName::C3ChonkAccumulate
+            | CircuitName::C6ChonkApp
+            | CircuitName::C6ChonkInitKernel
+            | CircuitName::C6ChonkTailKernel
+            | CircuitName::C6ChonkHidingKernel
+            | CircuitName::C6ChonkTube
+            | CircuitName::C6ChonkRoot => CircuitOutputLayout::None,
         }
     }
 

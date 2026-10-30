@@ -39,9 +39,10 @@ use crate::node_fold_witness;
 use e3_committee::{CiphernodesCommittee, CiphernodesCommitteeSize};
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+use e3_task_pool::{TaskPool, TaskTimeouts};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
-    generate_sequential_c6_fold, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
+    generate_c6_chonk_root, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
     FoldProveStepTiming, NodeDkgFoldInput, Provable, ShareEncryptionCircuit,
     ThresholdShareDecryptionCircuit, ZkBackend, ZkProver,
 };
@@ -138,11 +139,7 @@ pub fn prover(backend: &ZkBackend) -> ZkProver {
 
 /// Root of the compiled circuit artifacts: `{workspace}/circuits/bin/`.
 fn circuits_build_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("circuits")
-        .join("bin")
+    e3_zk_prover::test_utils::workspace_root().join("circuits/bin")
 }
 
 /// The `preset` field of `circuits/bin/.active-preset.json` (for example `"secure-8192"`).
@@ -260,15 +257,20 @@ async fn stage_leaf(preset_dir: &Path, circuit: CircuitName) {
     .await;
 }
 
-/// A `recursive_aggregation` fold circuit: `default` gets the noir-recursive-no-zk VK (and the
-/// VK-tree anchor for `nodes_fold` / `c6_fold`), `evm` the EVM VK when the build emits one (as
+/// A `recursive_aggregation` or `chonk` circuit: `default` gets the noir-recursive-no-zk VK (and the
+/// VK-tree anchor for `nodes_fold`), `evm` the EVM VK when the build emits one (as
 /// `setup_recursive_aggregation_fold_circuit` does).
 async fn stage_fold(preset_dir: &Path, circuit: CircuitName) {
     let name = circuit.as_str();
-    let target = circuits_build_root()
-        .join(circuit.group())
-        .join(name)
-        .join("target");
+    // The Chonk stack circuits share their workspace's target directory.
+    let target = if circuit.group() == "chonk" {
+        circuits_build_root().join("chonk").join("target")
+    } else {
+        circuits_build_root()
+            .join(circuit.group())
+            .join(name)
+            .join("target")
+    };
     let file = |ext: &str| target.join(format!("{name}.{ext}"));
     let json = file("json");
     let vk_recursive = file("vk_recursive");
@@ -287,7 +289,7 @@ async fn stage_fold(preset_dir: &Path, circuit: CircuitName) {
         &file("vk_recursive_hash"),
     )
     .await;
-    if matches!(circuit, CircuitName::NodesFold | CircuitName::C6Fold) {
+    if circuit == CircuitName::NodesFold {
         copy(
             &file("vk_tree_hash"),
             &default_dir.join(format!("{name}.vk_tree_hash")),
@@ -363,6 +365,12 @@ impl Phases {
         println!("PHASE {name} {seconds:.1}s");
         self.rows.push((name.to_owned(), seconds));
         value
+    }
+
+    /// Records a phase timed by the caller, for async work `run` cannot wrap.
+    pub fn record(&mut self, name: &str, seconds: f64) {
+        println!("PHASE {name} {seconds:.1}s");
+        self.rows.push((name.to_owned(), seconds));
     }
 
     pub fn finish(&self) {
@@ -503,6 +511,86 @@ pub fn prove_c3_set(
     (proofs, slots)
 }
 
+/// Both secrets' C3 proofs submitted at once to a [`TaskPool`] sized like a node's
+/// (`pool_threads` workers, `jobs` full slots), each C3 a light job with a quarter of the units and
+/// threads, as `e3-multithread` admits it. Returns each set's proofs and slots in slot order.
+#[allow(clippy::too_many_arguments)]
+pub async fn prove_c3_sets_pooled(
+    prover: &ZkProver,
+    preset: BfvPreset,
+    committee: &CiphernodesCommittee,
+    sets: [(&ShareComputationInputs, DkgInputType, &str); 2],
+    dkg_pk: &PublicKey,
+    artifacts_dir: &str,
+    pool_threads: usize,
+    jobs: usize,
+) -> Vec<(Vec<Proof>, Vec<u32>)> {
+    let pool = TaskPool::new(pool_threads, jobs);
+    let units = (pool.capacity_units() / 4).max(1);
+    let light = prover.with_bb_threads((pool_threads / 4).max(1));
+    note(&format!(
+        "C3 through a TaskPool of {pool_threads} threads and {jobs} slots: {units} of {} units and {} bb threads per proof",
+        pool.capacity_units(),
+        (pool_threads / 4).max(1)
+    ));
+    let config =
+        e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).expect("C3 configuration");
+    let slots_per_party = preset.metadata().num_moduli;
+    let total_slots = committee.n * slots_per_party;
+    let mut batches = Vec::new();
+    for (share_inputs, input_type, tag) in sets {
+        let mut proofs = Vec::new();
+        let mut slots = Vec::new();
+        for slot in 0..total_slots {
+            if slot / slots_per_party == PARTY_ID {
+                continue;
+            }
+            let data = node_fold_witness::share_encryption_for_slot(
+                preset,
+                dkg_pk,
+                share_inputs,
+                slot,
+                input_type,
+            )
+            .expect("C3 witness data");
+            let (pool, light, config, dir) = (
+                pool.clone(),
+                light.clone(),
+                config.clone(),
+                artifacts_dir.to_owned(),
+            );
+            let job = format!("measure-{tag}-{slot}");
+            proofs.push(async move {
+                pool.spawn_in_group_weighted(
+                    "measure-c3".to_owned(),
+                    job.clone(),
+                    TaskTimeouts::new(Vec::new()),
+                    units,
+                    move || ShareEncryptionCircuit.prove(&light, &config, &data, &job, &dir),
+                )
+                .await
+            });
+            slots.push(slot as u32);
+        }
+        batches.push((proofs, slots));
+    }
+    let mut out = Vec::new();
+    let (first, second) = (batches.remove(0), batches.remove(0));
+    let (a, b) = futures_util::future::join(
+        futures_util::future::join_all(first.0),
+        futures_util::future::join_all(second.0),
+    )
+    .await;
+    for (results, slots) in [(a, first.1), (b, second.1)] {
+        let proofs = results
+            .into_iter()
+            .map(|r| r.expect("task pool").expect("C3 proof"))
+            .collect();
+        out.push((proofs, slots));
+    }
+    out
+}
+
 /// C4 input rows in honest-party order; `None` marks the recipient's own slot.
 pub type HonestCiphertexts = Vec<Option<Vec<Ciphertext>>>;
 
@@ -612,7 +700,7 @@ pub fn c4_data(
 pub fn prove_node_fold(prover: &ZkProver, input: &NodeDkgFoldInput, artifacts_dir: &str) -> Proof {
     note(
         "node_dkg_fold runs c2ab || c3a chain || c3b chain concurrently (rayon::join, as in production); \
-         its per-proof times are the BB lines (c3_fold_kernel*, c3_fold*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
+         its per-proof times are the BB lines (c3_chonk_tube*, c3_chonk_accumulate*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
     );
     let result = measure("node_dkg_fold", || {
         prove_node_dkg_fold(prover, input, "measure-node-fold", artifacts_dir)
@@ -677,14 +765,14 @@ pub fn run_decryption(
         }));
     }
     let slot_indices: Vec<u32> = (0..slots as u32).collect();
-    aggregator.run("c6_fold", || {
-        measure("c6_fold_chain", || {
-            generate_sequential_c6_fold(
+    aggregator.run("c6_chonk", || {
+        measure("c6_chonk_root", || {
+            generate_c6_chonk_root(
                 prover,
                 &inner,
                 &slot_indices,
                 slots,
-                "measure-c6-fold",
+                "measure-c6-chonk",
                 artifacts_dir,
             )
         })

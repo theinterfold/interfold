@@ -152,6 +152,108 @@ pub async fn setup_compiled_circuit_for_committee(
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
 /// copied into `insecure-64/evm/...` for [`CircuitVariant::Evm`] proving.
+/// Sets up both C2 circuits with the four chunk circuits they are proven through, and C4 with its
+/// three limb circuits.
+#[allow(dead_code)]
+pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
+    for circuit in [
+        CircuitName::SkShareComputation,
+        CircuitName::ESmShareComputation,
+        CircuitName::SkShareComputationChain,
+        CircuitName::SkShareComputationChainLast,
+        CircuitName::ESmShareComputationChain,
+        CircuitName::ESmShareComputationChainLast,
+        CircuitName::DkgShareDecryption,
+        CircuitName::DkgShareDecryptionLimb0,
+        CircuitName::DkgShareDecryptionLimb1,
+        CircuitName::DkgShareDecryptionLimb2,
+    ] {
+        setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
+    }
+}
+
+/// Installs the C3 Chonk circuits: the four stack circuits from the `chonk` workspace, then the
+/// tube and accumulate rollups.
+#[allow(dead_code)]
+pub async fn setup_c3_chonk_circuits(backend: &ZkBackend) {
+    setup_chonk_stack(
+        backend,
+        [
+            CircuitName::C3ChonkApp,
+            CircuitName::C3ChonkInitKernel,
+            CircuitName::C3ChonkTailKernel,
+            CircuitName::C3ChonkHidingKernel,
+        ],
+    )
+    .await;
+    for circuit in [CircuitName::C3ChonkTube, CircuitName::C3ChonkAccumulate] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+}
+
+/// Installs the C6 Chonk circuits: the four stack circuits, then the tube and root.
+#[allow(dead_code)]
+pub async fn setup_c6_chonk_circuits(backend: &ZkBackend) {
+    setup_chonk_stack(
+        backend,
+        [
+            CircuitName::C6ChonkApp,
+            CircuitName::C6ChonkInitKernel,
+            CircuitName::C6ChonkTailKernel,
+            CircuitName::C6ChonkHidingKernel,
+        ],
+    )
+    .await;
+    for circuit in [CircuitName::C6ChonkTube, CircuitName::C6ChonkRoot] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+    // The C6 tree anchor keeps the retired `c6_fold` artifact path.
+    let anchor = backend
+        .circuits_dir
+        .join("insecure-64")
+        .join("minimum")
+        .join("default")
+        .join(CircuitName::C6Fold.dir_path());
+    fs::create_dir_all(&anchor).await.unwrap();
+    fs::copy(
+        circuits_build_root().join("recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash"),
+        anchor.join("c6_fold.vk_tree_hash"),
+    )
+    .await
+    .expect("C6 VK-tree anchor; run pnpm build:circuits");
+}
+
+/// Installs four stack circuits from the `chonk` workspace's shared target directory.
+async fn setup_chonk_stack(backend: &ZkBackend, stack: [CircuitName; 4]) {
+    let target_dir = circuits_build_root().join("chonk").join("target");
+    for circuit in stack {
+        let pkg = circuit.as_str();
+        let default_dir = backend
+            .circuits_dir
+            .join("insecure-64")
+            .join("minimum")
+            .join("default")
+            .join(circuit.group())
+            .join(pkg);
+        fs::create_dir_all(&default_dir).await.unwrap();
+        for (from, to) in [
+            ("json", "json"),
+            ("vk_recursive", "vk"),
+            ("vk_recursive_hash", "vk_hash"),
+        ] {
+            let source = target_dir.join(format!("{pkg}.{from}"));
+            fs::copy(&source, default_dir.join(format!("{pkg}.{to}")))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: {e} (run `pnpm build:circuits --group chonk`)",
+                        source.display()
+                    )
+                });
+        }
+    }
+}
+
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {
     let pkg = circuit.as_str();
     let target_dir = circuits_build_root()
@@ -194,7 +296,7 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         .unwrap();
     }
 
-    if matches!(circuit, CircuitName::NodesFold | CircuitName::C6Fold) {
+    if circuit == CircuitName::NodesFold {
         fs::copy(
             target_dir.join(format!("{pkg}.vk_tree_hash")),
             default_dir.join(format!("{pkg}.vk_tree_hash")),

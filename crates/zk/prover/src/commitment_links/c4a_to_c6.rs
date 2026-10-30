@@ -6,7 +6,8 @@
 
 //! C4a (SK share decryption) → C6 (ThresholdShareDecryption) sk_commitment link.
 //!
-//! C4a outputs a single `commitment` field (the sk_commitment).
+//! C4a returns its `commitment` (the sk_commitment), then its limb-key tree, after its public
+//! `expected_commitments`.
 //! C6 takes `expected_sk_commitment` as a public input.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
@@ -67,8 +68,9 @@ mod tests {
     #[test]
     fn extract_commitment_from_c4a() {
         let link = C4aToC6SkCommitmentLink;
-        // C4 has no public inputs, just one output: commitment
-        let signals = make_field(42);
+        // C4's public inputs (the expected share commitments) come first; its outputs are the
+        // commitment, then its limb-key tree.
+        let signals = [make_field(7), make_field(42), make_field(1)].concat();
         let values = link.extract_source_values(&signals);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], make_field(42));

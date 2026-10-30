@@ -7,7 +7,7 @@
 use crate::traits::Provable;
 use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
-use e3_zk_witness::dkg::share_computation::{Inputs, ShareComputationCircuitData};
+use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
 
 use crate::ZkError;
 
@@ -20,9 +20,31 @@ impl Provable for ShareComputationCircuit {
         config: &Self::Config,
         input: &Self::Input,
     ) -> Result<noirc_abi::InputMap, ZkError> {
-        let inputs = Inputs::compute(config, input)
-            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
-        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+        let _ = (config, input);
+        Err(ZkError::InputsGenerationFailed(
+            "C2 is proven as a chunk chain; its final inputs need the batch proofs".into(),
+        ))
+    }
+
+    /// Proves the chunk chain, its batches and the final C2 proof (see
+    /// [`crate::circuits::aggregation::c2_chain`]).
+    fn prove_with_variant(
+        &self,
+        prover: &crate::ZkProver,
+        config: &Self::Config,
+        input: &Self::Input,
+        e3_id: &str,
+        variant: e3_events::CircuitVariant,
+        artifacts_dir: &str,
+    ) -> Result<e3_events::Proof, ZkError> {
+        crate::circuits::aggregation::c2_chain::prove_share_computation_chain(
+            prover,
+            config,
+            input,
+            e3_id,
+            variant,
+            artifacts_dir,
+        )
     }
 
     type Config = e3_zk_config::dkg::share_computation::Configs;

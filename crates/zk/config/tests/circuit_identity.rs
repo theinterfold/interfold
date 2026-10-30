@@ -4,14 +4,15 @@ use e3_zk_config::{CircuitName, CircuitVariant};
 
 #[test]
 fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
-    // Frozen from the e3-events definitions at 26023af50, including the shared C4/C6 basename.
+    // Frozen from the e3-events definitions at 26023af50, including the shared C4/C6 basename. The
+    // chunked C4 also outputs its key tree; the chunk and Chonk circuits are appended after it.
     for (index, (name, path, inputs, outputs)) in [
         ("PkBfv", "dkg/pk", 0, Some(1)),
         ("PkGeneration", "threshold/pk_generation", 0, Some(3)),
         ("SkShareComputation", "dkg/sk_share_computation", 0, None),
         ("ESmShareComputation", "dkg/e_sm_share_computation", 0, None),
         ("ShareEncryption", "dkg/share_encryption", 2, Some(1)),
-        ("DkgShareDecryption", "dkg/share_decryption", 0, Some(1)),
+        ("DkgShareDecryption", "dkg/share_decryption", 0, Some(2)),
         ("PkAggregation", "threshold/pk_aggregation", 0, Some(1)),
         (
             "ThresholdShareDecryption",
@@ -59,6 +60,110 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
         (
             "DecryptionAggregator",
             "recursive_aggregation/decryption_aggregator",
+            0,
+            Some(0),
+        ),
+        (
+            "SkShareComputationChain",
+            "dkg/sk_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "SkShareComputationChainLast",
+            "dkg/sk_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChain",
+            "dkg/e_sm_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChainLast",
+            "dkg/e_sm_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
+        (
+            "DkgShareDecryptionLimb0",
+            "dkg/share_decryption_limb_0",
+            0,
+            Some(0),
+        ),
+        (
+            "DkgShareDecryptionLimb1",
+            "dkg/share_decryption_limb_1",
+            0,
+            Some(0),
+        ),
+        (
+            "DkgShareDecryptionLimb2",
+            "dkg/share_decryption_limb_2",
+            0,
+            Some(0),
+        ),
+        ("C3ChonkApp", "chonk/c3_chonk_app", 0, Some(0)),
+        (
+            "C3ChonkInitKernel",
+            "chonk/c3_chonk_init_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkTailKernel",
+            "chonk/c3_chonk_tail_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkHidingKernel",
+            "chonk/c3_chonk_hiding_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkTube",
+            "recursive_aggregation/c3_chonk_tube",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkAccumulate",
+            "recursive_aggregation/c3_chonk_accumulate",
+            0,
+            Some(0),
+        ),
+        ("C6ChonkApp", "chonk/c6_chonk_app", 0, Some(0)),
+        (
+            "C6ChonkInitKernel",
+            "chonk/c6_chonk_init_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C6ChonkTailKernel",
+            "chonk/c6_chonk_tail_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C6ChonkHidingKernel",
+            "chonk/c6_chonk_hiding_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C6ChonkTube",
+            "recursive_aggregation/c6_chonk_tube",
+            0,
+            Some(0),
+        ),
+        (
+            "C6ChonkRoot",
+            "recursive_aggregation/c6_chonk_root",
             0,
             Some(0),
         ),

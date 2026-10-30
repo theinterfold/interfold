@@ -37,17 +37,17 @@ flowchart LR
 
 ## core
 
-| Module                                       | Circuits  | Role                                                                                                                             |
-| -------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `dkg/pk`                                     | C0        | Individual pk commitment                                                                                                         |
-| `dkg/share_computation.nr`                   | C2a / C2b | Unified SK/ESM share computation; secret commitment consistency, range checks, and Reed–Solomon parity; `execute()` entry points |
-| `dkg/share_encryption`                       | C3        | Encrypt share under recipient pk                                                                                                 |
-| `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                            |
-| `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                               |
-| `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                              |
-| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs; `bin/threshold/user_data_encryption` runs both                                                             |
-| `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                       |
-| `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                  |
+| Module                                       | Circuits  | Role                                                                                                                                     |
+| -------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `dkg/pk`                                     | C0        | Individual pk commitment                                                                                                                 |
+| `dkg/share_computation.nr`                   | C2a / C2b | Unified SK/ESM share computation; secret commitment consistency, range checks, and degree-T finite differences; `execute()` entry points |
+| `dkg/share_encryption`                       | C3        | Encrypt share under recipient pk                                                                                                         |
+| `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                                    |
+| `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                                       |
+| `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                                      |
+| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs; `bin/threshold/user_data_encryption` runs both                                                                     |
+| `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                               |
+| `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                          |
 
 ## configs
 

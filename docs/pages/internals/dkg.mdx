@@ -109,17 +109,17 @@ make this proof.
 The packages under `circuits/bin/recursive_aggregation/` fold the inner proofs into two on-chain
 proofs.
 
-| Package                           | `CircuitName`                  | Role                                                                                   |
-| --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b.                                                                     |
-| `c3_fold`, `c3_fold_kernel`       | `C3Fold`, `C3FoldKernel`       | Folds the C3 proofs of one branch in sequence. The kernel makes the first accumulator. |
-| `c3ab_fold`                       | `C3abFold`                     | Folds the final secret key and smudging noise C3 folds.                                |
-| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b.                                                                     |
-| `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                  |
-| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence.                                            |
-| `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                |
-| `c6_fold`, `c6_fold_kernel`       | `C6Fold`, `C6FoldKernel`       | Folds the T + 1 C6 proofs of one ciphertext.                                           |
-| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_fold` and C7. Its EVM proof goes to `publishPlaintextOutput`.             |
+| Package                           | `CircuitName`                  | Role                                                                                    |
+| --------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------- |
+| `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b.                                                                      |
+| `c3_chonk_*`                      | `C3Chonk*`                     | Verifies one branch's C3 proofs in Chonk stacks of 24, then tubes and accumulates them. |
+| `c3ab_fold`                       | `C3abFold`                     | Closes the secret key and smudging noise C3 chains.                                     |
+| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b.                                                                      |
+| `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                   |
+| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence, three per step.                             |
+| `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                 |
+| `c6_chonk_*`                      | `C6Chonk*`                     | Verifies the T + 1 C6 proofs of one ciphertext in one Chonk stack and closes it.        |
+| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_chonk_root` and C7. Its EVM proof goes to `publishPlaintextOutput`.        |
 
 ### Proof count per E3
 
@@ -260,9 +260,10 @@ the secret coefficient. Each circuit checks four properties:
 1. The secret hashes to `expected_secret_commitment` from C1.
 2. The first entry of each share vector equals the secret coefficient.
 3. Every share is in $[0, q_j)$.
-4. The shares lie on a polynomial of degree at most T. The Reed-Solomon parity check is
-   $H_j \cdot y_{i,j}^{\top} \equiv 0 \pmod{q_j}$, with a parity matrix of size
-   $(N - T) \times (N + 1)$.
+4. The shares lie on a polynomial of degree at most T. The evaluation points are consecutive, so
+   each of the $N - T$ windows of $T + 2$ consecutive values must have a $(T + 1)$-th finite
+   difference $\equiv 0 \pmod{q_j}$. These windows span the same space as the Reed-Solomon parity
+   rows.
 
 C2 outputs one commitment for each (party, modulus) pair, an $N \times L$ grid. C3 and C4 consume
 this grid.
@@ -541,11 +542,11 @@ the DKG and one for the decryption. Production nodes always aggregate. The EVM w
 single ciphertext output only. It refuses to publish an E3 result that has more than one decrypted
 output.
 
-| `ZkRequest`             | Made by            | Output                                                                 |
-| ----------------------- | ------------------ | ---------------------------------------------------------------------- |
-| `NodeDkgFold`           | Each roster member | A `NodeFold` proof. The node then signs a fold attestation.            |
-| `DkgAggregation`        | Active aggregator  | `NodesFold`, C5, and the `DkgAggregator` EVM proof                     |
-| `DecryptionAggregation` | Active aggregator  | `C6Fold`, C7, and the `DecryptionAggregator` EVM proof for each output |
+| `ZkRequest`             | Made by            | Output                                                                          |
+| ----------------------- | ------------------ | ------------------------------------------------------------------------------- |
+| `NodeDkgFold`           | Each roster member | A `NodeFold` proof. The node then signs a fold attestation.                     |
+| `DkgAggregation`        | Active aggregator  | `NodesFold`, C5, and the `DkgAggregator` EVM proof                              |
+| `DecryptionAggregation` | Active aggregator  | The C6 Chonk root, C7, and the `DecryptionAggregator` EVM proof for each output |
 
 ### Committee hash
 
@@ -685,7 +686,7 @@ public inputs:
 
 | Index           | Value                                                |
 | --------------- | ---------------------------------------------------- |
-| 0, 1            | `c6_fold` and C7 VK hashes                           |
+| 0, 1            | C6 tree and C7 VK hashes                             |
 | 2, 3            | `committee_hash_hi`, `committee_hash_lo`             |
 | 4, 5            | `domain_hi`, `domain_lo`                             |
 | 6               | `ciphertext_commitment`                              |

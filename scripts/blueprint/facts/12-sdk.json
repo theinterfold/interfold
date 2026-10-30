@@ -53,12 +53,12 @@
         {
           "name": "E3RequestParams",
           "what": "committee size, input window, E3 program, param set, compute and custom params, fee cap",
-          "ref": "packages/interfold-sdk/src/contracts/types.ts@57@export interface E3RequestParams extends RequestParams"
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@58@export interface E3RequestParams extends RequestParams"
         },
         {
           "name": "E3Stage",
           "what": "None, Requested, CommitteeFinalized, KeyPublished, CiphertextReady, Complete, Failed",
-          "ref": "packages/interfold-sdk/src/contracts/types.ts@76@export enum E3Stage"
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@77@export enum E3Stage"
         },
         {
           "name": "BfvParams",
@@ -68,7 +68,7 @@
         {
           "name": "CiphertextOutputReference",
           "what": "proof-backed reference to the aggregate ciphertext on the data-availability layer",
-          "ref": "packages/interfold-sdk/src/contracts/types.ts@69@export interface CiphertextOutputReference"
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@70@export interface CiphertextOutputReference"
         }
       ],
       "read_first": [

@@ -267,7 +267,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
             if matches!(options.preset, PresetSelection::All) {
                 1
             } else {
-                2
+                3
             }
         );
         options.validate(temp.path()).unwrap();
@@ -302,6 +302,13 @@ fn dry_run_lists_selections_without_tools_or_writes() {
         Group::Threshold,
         Group::Dkg,
         Group::Dkg,
+        Group::RecursiveAggregation,
+    ]);
+    assert!(!dry.groups.is_complete());
+    dry.groups = GroupSelection::Selected(vec![
+        Group::Threshold,
+        Group::Dkg,
+        Group::Chonk,
         Group::RecursiveAggregation,
     ]);
     assert!(dry.groups.is_complete());
@@ -1114,8 +1121,8 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
 const VK_PATHS: &[(&str, &str, &str)] = &[
     ("recursive", "dkg", "sk_share_computation"),
     ("recursive", "dkg", "e_sm_share_computation"),
-    ("default", "recursive_aggregation", "c3_fold"),
-    ("default", "recursive_aggregation", "c3_fold_kernel"),
+    ("default", "recursive_aggregation", "c3_chonk_accumulate"),
+    ("default", "recursive_aggregation", "c3_chonk_tube"),
     ("recursive", "dkg", "share_encryption"),
     ("recursive", "dkg", "share_decryption"),
     ("recursive", "dkg", "pk"),
@@ -1126,9 +1133,24 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "nodes_fold"),
     ("default", "recursive_aggregation", "nodes_fold_kernel"),
     ("default", "recursive_aggregation", "node_fold"),
-    ("default", "recursive_aggregation", "c6_fold"),
-    ("default", "recursive_aggregation", "c6_fold_kernel"),
+    ("default", "recursive_aggregation", "c6_chonk_root"),
+    ("default", "recursive_aggregation", "c6_chonk_tube"),
     ("recursive", "threshold", "share_decryption"),
+    ("default", "dkg", "sk_share_computation_chain"),
+    ("default", "dkg", "sk_share_computation_chain_last"),
+    ("default", "dkg", "e_sm_share_computation_chain"),
+    ("default", "dkg", "e_sm_share_computation_chain_last"),
+    ("default", "dkg", "share_decryption_limb_0"),
+    ("default", "dkg", "share_decryption_limb_1"),
+    ("default", "dkg", "share_decryption_limb_2"),
+    ("default", "chonk", "c3_chonk_hiding_kernel"),
+    ("default", "chonk", "c3_chonk_app"),
+    ("default", "chonk", "c3_chonk_init_kernel"),
+    ("default", "chonk", "c3_chonk_tail_kernel"),
+    ("default", "chonk", "c6_chonk_hiding_kernel"),
+    ("default", "chonk", "c6_chonk_app"),
+    ("default", "chonk", "c6_chonk_init_kernel"),
+    ("default", "chonk", "c6_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1154,8 +1176,15 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     for (i, key) in keys.iter().enumerate() {
         write(root, &key_path(i), field_bytes(*key));
     }
-    let c2 = compute_vk_hash(vec![keys[0], keys[1]]);
-    let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
+    let c2 = compute_vk_hash(vec![
+        keys[0],
+        compute_vk_hash(vec![keys[17], keys[18]]),
+        keys[1],
+        compute_vk_hash(vec![keys[19], keys[20]]),
+    ]);
+    let c3_chain = compute_vk_hash(vec![
+        keys[2], keys[3], keys[24], keys[4], keys[25], keys[26], keys[27],
+    ]);
     let node = compute_vk_hash(vec![
         keys[6],
         keys[7],
@@ -1164,7 +1193,10 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[9],
         compute_vk_hash(vec![c3_chain, c3_chain]),
         keys[10],
-        compute_vk_hash(vec![keys[5], keys[5]]),
+        {
+            let limbs = compute_vk_hash(vec![keys[21], keys[22], keys[23]]);
+            compute_vk_hash(vec![keys[5], limbs, keys[5], limbs])
+        },
     ]);
     let expected = [
         (
@@ -1173,23 +1205,22 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         ),
         (
             "c6_fold",
-            field_bytes(compute_vk_hash(vec![keys[14], keys[15], keys[16]])),
+            field_bytes(compute_vk_hash(vec![
+                keys[14],
+                compute_vk_hash(vec![
+                    keys[15], keys[15], keys[28], keys[16], keys[29], keys[30], keys[31],
+                ]),
+            ])),
         ),
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
+        // Keys 14..=16 and 28.. are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i) || i >= 28);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
-        assert_ne!(
-            changed[usize::from(i >= 14)].1,
-            expected[usize::from(i >= 14)].1,
-            "{}",
-            key_path(i)
-        );
-        assert_eq!(
-            changed[usize::from(i < 14)].1,
-            expected[usize::from(i < 14)].1
-        );
+        assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));
+        assert_eq!(changed[1 - c6].1, expected[1 - c6].1);
         write(root, &key_path(i), field_bytes(*key));
     }
     write(root, &key_path(0), [0xff; 32]);

@@ -83,7 +83,7 @@ test('checksums command covers exactly the staged circuit configurations', () =>
   const dir = makeCompleteMatrix()
   try {
     for (const preset of ['insecure-64', 'secure-8192']) {
-      for (const committee of ['micro', 'small']) rmSync(join(dir, preset, committee), { recursive: true })
+      for (const committee of ['micro', 'small', 'large']) rmSync(join(dir, preset, committee), { recursive: true })
     }
     execFileSync('pnpm', ['tsx', 'scripts/circuits/artifacts.ts', 'checksums', '--dir', dir])
     const manifest = JSON.parse(readFileSync(join(dir, 'checksums.json'), 'utf8'))

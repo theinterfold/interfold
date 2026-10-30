@@ -24,7 +24,7 @@ use std::{
     str::FromStr,
 };
 
-const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
+const COMMITTEES: &[&str] = &["minimum", "micro", "small", "large"];
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
     let path = root.join("scripts/circuits/build-pairs.json");
@@ -162,6 +162,7 @@ impl FromStr for CommitteeSelection {
 pub enum Group {
     Dkg,
     Threshold,
+    Chonk,
     RecursiveAggregation,
 }
 
@@ -170,6 +171,7 @@ impl Group {
         match self {
             Self::Dkg => "dkg",
             Self::Threshold => "threshold",
+            Self::Chonk => "chonk",
             Self::RecursiveAggregation => "recursive_aggregation",
         }
     }
@@ -181,9 +183,10 @@ impl FromStr for Group {
         match value {
             "dkg" => Ok(Self::Dkg),
             "threshold" => Ok(Self::Threshold),
+            "chonk" => Ok(Self::Chonk),
             "recursive_aggregation" => Ok(Self::RecursiveAggregation),
             other => Err(format!(
-                "unknown circuit group {other}; expected dkg, threshold, or recursive_aggregation"
+                "unknown circuit group {other}; expected dkg, threshold, chonk, or recursive_aggregation"
             )),
         }
     }
@@ -206,13 +209,18 @@ impl GroupSelection {
     }
     /// Whether the selection covers every circuit group.
     pub fn is_complete(&self) -> bool {
-        let all = [Group::Dkg, Group::Threshold, Group::RecursiveAggregation];
+        let all = [
+            Group::Dkg,
+            Group::Threshold,
+            Group::Chonk,
+            Group::RecursiveAggregation,
+        ];
         let groups = self.groups();
         all.iter().all(|group| groups.contains(&group.as_str()))
     }
     pub fn groups(&self) -> Vec<&'static str> {
         match self {
-            Self::All => vec!["dkg", "threshold", "recursive_aggregation"],
+            Self::All => vec!["dkg", "threshold", "chonk", "recursive_aggregation"],
             Self::Selected(groups) => {
                 let mut selected = Vec::new();
                 for group in groups {
