@@ -611,9 +611,9 @@ function compareMetadata(
 
   for (const [name, oldMembers] of Object.entries(previous.enums)) {
     const newMembers = current.enums[name];
+    // Appending keeps every stored value's meaning; rolling back past it is a rollout decision.
     if (
       !newMembers ||
-      oldMembers.length !== newMembers.length ||
       oldMembers.some((member, index) => member !== newMembers[index])
     ) {
       errors.push(`${contract}: persisted enum ${name} member order changed.`);
