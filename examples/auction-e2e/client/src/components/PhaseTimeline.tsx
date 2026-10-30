@@ -6,57 +6,73 @@
 
 import React from 'react'
 import { CheckCircleIcon, XCircleIcon } from '@phosphor-icons/react'
-import { FailureReason } from '@interfold/sdk'
-import { type AuctionPhase, type AuctionState, PHASE_ORDER, formatDateTime, maskCount, masksComplete } from '@/utils/auction'
+import {
+  type AuctionPhase,
+  type AuctionState,
+  FAILURE_TEXT,
+  PHASE_LABELS,
+  PHASE_ORDER,
+  STEP_TITLES,
+  formatDateTime,
+  maskCount,
+  masksComplete,
+} from '@/utils/auction'
+import { KEY_GENERATION_HINT } from '@/utils/estimates'
 import Spinner from './Spinner'
 
-const FAILURE_TEXT: Partial<Record<FailureReason, string>> = {
-  [FailureReason.CommitteeFormationTimeout]: 'The committee did not form in time.',
-  [FailureReason.InsufficientCommitteeMembers]: 'Too few ciphernodes joined the committee.',
-  [FailureReason.DKGTimeout]: 'The committee did not finish generating its key in time.',
-  [FailureReason.DKGInvalidShares]: 'The committee key generation produced invalid shares.',
-  [FailureReason.NoInputsReceived]: 'No bids were received before the window closed.',
-  [FailureReason.ComputeTimeout]: 'The computation did not finish in time.',
-  [FailureReason.ComputeProviderExpired]: 'The compute provider expired.',
-  [FailureReason.ComputeProviderFailed]: 'The compute provider failed.',
-  [FailureReason.RequesterCancelled]: 'The creator cancelled the auction.',
-  [FailureReason.DecryptionTimeout]: 'The committee did not decrypt the result in time.',
-  [FailureReason.DecryptionInvalidShares]: 'The decryption produced invalid shares.',
-  [FailureReason.VerificationFailed]: 'The result failed verification.',
+interface StepCopy {
+  /** What the step does, shown while it is the current step or still to come. */
+  body: (auction: AuctionState, phase: AuctionPhase, now: bigint) => string
+  /** What the step did, shown once it is over. */
+  done: (auction: AuctionState) => string
 }
 
-const STEP_COPY: Record<(typeof PHASE_ORDER)[number], { title: string; body: (auction: AuctionState) => string }> = {
+/** How old the key request is, in whole minutes, while the key is still awaited. Empty text when it is not known or not useful. */
+function requestAge(auction: AuctionState, phase: AuctionPhase, now: bigint): string {
+  if (phase !== 'awaiting-key') return ''
+  const minutes = Number((now - auction.requestedAt) / 60n)
+  return minutes >= 1 ? ` The request is ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} old.` : ''
+}
+
+const STEP_COPY: Record<(typeof PHASE_ORDER)[number], StepCopy> = {
   'awaiting-key': {
-    title: 'Committee key',
-    body: () => 'The ciphernode committee generates the key that bids are encrypted to. This takes several minutes.',
+    body: (auction, phase, now) =>
+      `The ciphernode committee generates the key that bids are encrypted to. This takes ${KEY_GENERATION_HINT}.${requestAge(auction, phase, now)}`,
+    done: () => 'The committee published the key that bids are encrypted to.',
   },
   bidding: {
-    title: 'Bidding open',
     body: (auction) =>
       masksComplete(auction)
         ? `Bids are accepted until ${formatDateTime(auction.inputWindow[1])}.`
         : `Bids open when every mask provider has sent its mask (${maskCount(auction)}/${auction.providers.length} so far) and close at ${formatDateTime(auction.inputWindow[1])}.`,
+    done: (auction) => `Bids were accepted until ${formatDateTime(auction.inputWindow[1])}.`,
   },
   computing: {
-    title: 'Computing',
     body: () => 'The program compares the encrypted bids without decrypting any of them.',
+    done: () => 'The program compared the encrypted bids without decrypting them.',
   },
   decrypting: {
-    title: 'Decrypting',
     body: () => 'The committee decrypts one ciphertext: the outcome, nothing else.',
+    done: () => 'The committee decrypted the outcome and nothing else.',
   },
   complete: {
-    title: 'Result',
-    body: () => 'The winner and the price are public.',
+    body: () => 'The winner and the price become public.',
+    done: () => 'The winner and the price are public.',
   },
 }
 
-/** The stages an auction passes through, with the current one marked. */
-const PhaseTimeline: React.FC<{ phase: AuctionPhase; auction: AuctionState }> = ({ phase, auction }) => {
+/**
+ * The stages an auction passes through, with the current one marked. Titles come from `STEP_TITLES`.
+ * Only the current phase label is announced to a screen reader. The text of the steps changes each minute and stays silent.
+ */
+const PhaseTimeline: React.FC<{ phase: AuctionPhase; auction: AuctionState; now: bigint }> = ({ phase, auction, now }) => {
   const current = PHASE_ORDER.findIndex((step) => step === phase)
 
   return (
     <div className='space-y-5'>
+      <p className='sr-only' role='status'>
+        {PHASE_LABELS[phase]}
+      </p>
       <ol className='steps'>
         {PHASE_ORDER.map((step, index) => {
           const done = phase !== 'failed' && (index < current || phase === 'complete')
@@ -67,8 +83,8 @@ const PhaseTimeline: React.FC<{ phase: AuctionPhase; auction: AuctionState }> = 
             <li key={step} className={`step ${state}`}>
               <span className='pin'>{done ? <CheckCircleIcon size={16} weight='fill' /> : active ? <Spinner size={12} /> : index + 1}</span>
               <div>
-                <p className={`font-semibold ${state === 'todo' ? '' : 'text-ink'}`}>{copy.title}</p>
-                {(active || state === 'todo') && <p className='text-sm'>{copy.body(auction)}</p>}
+                <p className={`font-semibold ${state === 'todo' ? '' : 'text-ink'}`}>{STEP_TITLES[step]}</p>
+                <p className='text-sm'>{done ? copy.done(auction) : copy.body(auction, phase, now)}</p>
               </div>
             </li>
           )
@@ -79,7 +95,7 @@ const PhaseTimeline: React.FC<{ phase: AuctionPhase; auction: AuctionState }> = 
           <XCircleIcon size={20} weight='fill' className='mt-0.5 shrink-0' />
           <p>
             <strong className='font-semibold'>The auction failed.</strong>{' '}
-            {auction.failureReason !== null && (FAILURE_TEXT[auction.failureReason] ?? FailureReason[auction.failureReason])}
+            {auction.failureReason !== null && FAILURE_TEXT[auction.failureReason]}
           </p>
         </div>
       )}

@@ -6,18 +6,8 @@
 
 import { computeCiphertextCommitment } from '@interfold/sdk'
 import { type Address, bytesToHex, hexToBytes, zeroAddress, type Hex } from 'viem'
-import {
-  type AuctionType,
-  MASK_VERSION,
-  MIN_BIDDERS,
-  PRESET,
-  type SubmittedBid,
-  type SubmittedMask,
-  auctionConfigInput,
-  checkMasks,
-  isProviderType,
-  selectBids,
-} from '@interfold/auction'
+import { AuctionType, MASK_VERSION, MIN_BIDDERS, PRESET, type SubmittedBid, auctionConfigInput, selectBids } from '@interfold/auction-core'
+import { checkMasks, type SubmittedMask } from '@interfold/auction-provider-second-price'
 
 /** The zero commitment of the configuration input. */
 const ZERO_COMMITMENT = `0x${'00'.repeat(32)}`
@@ -127,7 +117,7 @@ export function planRun(
 ): RunPlan {
   const inputs = auctionInputs(type, bids, maskInputs)
   const counted = selectBids(bids, opens).length
-  if (isProviderType(type)) {
+  if (type === AuctionType.ProviderSecondPrice) {
     const { complete, missing, invalid } = checkMasks(maskInputs.masks, maskInputs.providers, opens)
     if (!complete) {
       const parts = [

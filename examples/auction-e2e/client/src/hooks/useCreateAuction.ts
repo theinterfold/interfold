@@ -9,8 +9,8 @@ import { useWalletClient } from 'wagmi'
 import { type Address, type Hex, parseAbi, parseEventLogs } from 'viem'
 import { CommitteeSize, DEFAULT_COMPUTE_PROVIDER_PARAMS, calculateInputWindow, encodeComputeProviderParams } from '@interfold/sdk'
 import { MockUSDC__factory } from '@interfold/contracts/types'
-import { type AuctionType, encodeAuctionParams, type PriceList } from '@interfold/auction'
-import { PARAM_SET } from '@interfold/auction/prover'
+import { type AuctionType, PARAM_SET, type PriceList } from '@interfold/auction-core'
+import { encodeParams } from '@/utils/designs'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { TEST_TOKEN_SOURCE, chain, createSdk, publicClient } from '@/utils/chain'
 import { FAUCET_ADDRESS, getContractAddresses } from '@/utils/env-config'
@@ -20,7 +20,7 @@ import { formatError } from '@/utils/error-formatting'
  * Seconds between the request and the start of the input window. The window must not start before
  * the request is mined, and the wallet prompts for the approval and the request take a while.
  */
-const INPUT_WINDOW_START_BUFFER = 180n
+export const INPUT_WINDOW_START_BUFFER = 180n
 
 export interface CreateInput {
   title: string
@@ -42,7 +42,7 @@ const faucetAbi = parseAbi(['function faucet() external'])
 export type CreateStep = 'idle' | 'quoting' | 'funding' | 'approving' | 'requesting' | 'confirming'
 
 export const STEP_LABELS: Record<Exclude<CreateStep, 'idle'>, string> = {
-  quoting: 'Quoting the E3 fee…',
+  quoting: 'Reading the creation fee…',
   funding: 'Getting test tokens…',
   approving: 'Approving the fee token…',
   requesting: 'Requesting the auction…',
@@ -135,7 +135,7 @@ export function useCreateAuction(account: `0x${string}` | undefined): UseCreateA
           paramSet: PARAM_SET,
           // The mock flag makes the compute provider return 32 zero bytes; the program server computes the real result.
           computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS, true),
-          customParams: encodeAuctionParams(input.auctionType, input.prices, input.title, input.gate, input.gateConfig, input.providers),
+          customParams: encodeParams(input.auctionType, input.prices, input.title, input.gate, input.gateConfig, input.providers),
         }
 
         setStep('quoting')

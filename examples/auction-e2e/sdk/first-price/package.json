@@ -1,7 +1,7 @@
 {
-  "name": "@interfold/auction",
+  "name": "@interfold/auction-first-price",
   "version": "0.1.0",
-  "description": "Sealed-bid auction on Interfold: slot layout and result decoders, bid selection, allowlist tree and the bid prover",
+  "description": "First-price sealed-bid auction on Interfold: one lane for each bidder",
   "private": true,
   "license": "LGPL-3.0-only",
   "type": "module",
@@ -10,21 +10,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./layout": {
-      "types": "./dist/layout.d.ts",
-      "import": "./dist/layout.js",
-      "default": "./dist/layout.js"
-    },
-    "./selection": {
-      "types": "./dist/selection.d.ts",
-      "import": "./dist/selection.js",
-      "default": "./dist/selection.js"
-    },
-    "./allowlist": {
-      "types": "./dist/allowlist.d.ts",
-      "import": "./dist/allowlist.js",
-      "default": "./dist/allowlist.js"
     },
     "./prover": {
       "types": "./dist/prover.d.ts",
@@ -44,26 +29,26 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/theinterfold/interfold.git",
-    "directory": "examples/auction-e2e/sdk"
+    "directory": "examples/auction-e2e/sdk/first-price"
   },
   "scripts": {
     "prebuild": "node scripts/copy-circuits.mjs",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist circuits",
-    "test": "vitest run"
+    "clean": "rm -rf dist circuits docs/api",
+    "test": "vitest run",
+    "docs:api": "typedoc"
   },
   "dependencies": {
-    "@aztec-foundation/bb.js": "6.0.0",
-    "@interfold/sdk": "workspace:*",
+    "@interfold/auction-core": "workspace:*",
     "@noir-lang/noir_js": "1.0.0-rc.3",
     "viem": "2.38.1"
   },
   "devDependencies": {
     "@interfold/config": "workspace:*",
-    "@interfold/user-data-encryption-prover": "workspace:*",
     "tsup": "^8.5.0",
+    "typedoc": "^0.28.0",
     "typescript": "^5.8.3",
     "vitest": "^1.6.1"
   }

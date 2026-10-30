@@ -16,8 +16,9 @@ import {
   bidTypedData,
   encodeBidInput,
   rolesFor,
-} from '@interfold/auction'
-import { type BidStep, BidProver } from '@interfold/auction/prover'
+} from '@interfold/auction-core'
+import type { BidProver, BidStep } from '@interfold/auction-core/prover'
+import { createProver } from '@/utils/designs'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { type StoredVersion, loadVersions, saveVersion } from '@/utils/bid-storage'
 import { chain, publicClient } from '@/utils/chain'
@@ -168,9 +169,9 @@ export function useBid({ e3Id, auctionType, levels, gateKind, members, account, 
           gateProof = allowlistProof(members, account)
         }
 
-        prover = await BidProver.create()
+        prover = await createProver(auctionType)
         const idOf = stepIds()
-        const prepared = await prover.prove(auctionType, level, levels, committeeKey, account, (step) => advance(idOf(step)))
+        const prepared = await prover.prove(level, levels, committeeKey, account, (step) => advance(idOf(step)))
         if (abandoned.current) return
         if (accountRef.current?.toLowerCase() !== account.toLowerCase()) {
           throw new Error('The connected account changed while the proof was running. Reconnect the account that bids and submit again.')

@@ -30,7 +30,8 @@ const EnvironmentError: React.FC<EnvironmentErrorProps> = ({ missingVars }) => (
       <div className='note'>
         Start the stack with <code className='addr'>pnpm dev:frontend</code>, which exports them from the local deployment, or copy{' '}
         <code className='addr'>.env.example</code> to <code className='addr'>.env</code> in the client directory and fill them in. Then
-        restart the dev server.
+        restart the dev server. A line of the file looks like this:
+        <code className='addr mt-2 block'>{missingVars[0]}=0x…</code>
       </div>
       <button onClick={() => window.location.reload()} className='btn block'>
         Reload page

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useEffect, useRef } from 'react'
+import React from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useSwitchChain } from 'wagmi'
 import { ConnectKitButton } from 'connectkit'
@@ -25,7 +25,16 @@ const NetworkStrip: React.FC = () => {
       <div className='site-header-grid faucet-strip-content'>
         <p>
           <span className='faucet-strip-network'>{chain.name} testnet</span>
-          {wrongChain ? 'Your wallet is on another network.' : 'Demo on insecure parameters: do not bid anything that matters.'}
+          {wrongChain ? (
+            'Your wallet is on another network.'
+          ) : (
+            <>
+              Demo on insecure parameters: do not bid anything that matters.{' '}
+              <Link to='/about' className='underline'>
+                Why?
+              </Link>
+            </>
+          )}
         </p>
         {wrongChain && (
           <button onClick={() => switchChain({ chainId: chain.id })} disabled={isPending} className='btn sm'>
@@ -35,19 +44,6 @@ const NetworkStrip: React.FC = () => {
       </div>
     </div>
   )
-}
-
-/** Asks the wallet to move to the app's chain once per connection. */
-function useSwitchToAppChain() {
-  const { address, wrongChain } = useWallet()
-  const { switchChain } = useSwitchChain()
-  const asked = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (!address || !wrongChain || asked.current === address) return
-    asked.current = address
-    switchChain({ chainId: chain.id })
-  }, [address, wrongChain, switchChain])
 }
 
 const WalletButton: React.FC = () => (
@@ -69,7 +65,6 @@ const WalletButton: React.FC = () => (
 )
 
 const Header: React.FC = () => {
-  useSwitchToAppChain()
   return (
     <>
       <header className='site-header-chrome'>

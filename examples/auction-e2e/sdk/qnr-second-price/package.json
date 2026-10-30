@@ -1,0 +1,55 @@
+{
+  "name": "@interfold/auction-qnr-second-price",
+  "version": "0.1.0",
+  "description": "Second-price sealed-bid auction on Interfold with no mask providers",
+  "private": true,
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./prover": {
+      "types": "./dist/prover.d.ts",
+      "import": "./dist/prover.js",
+      "default": "./dist/prover.js"
+    },
+    "./circuits/*": "./circuits/*",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "circuits"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theinterfold/interfold.git",
+    "directory": "examples/auction-e2e/sdk/qnr-second-price"
+  },
+  "scripts": {
+    "prebuild": "node scripts/copy-circuits.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist circuits docs/api",
+    "test": "vitest run",
+    "docs:api": "typedoc"
+  },
+  "dependencies": {
+    "@interfold/auction-core": "workspace:*",
+    "@noir-lang/noir_js": "1.0.0-rc.3",
+    "viem": "2.38.1"
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "tsup": "^8.5.0",
+    "typedoc": "^0.28.0",
+    "typescript": "^5.8.3",
+    "vitest": "^1.6.1"
+  }
+}

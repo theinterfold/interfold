@@ -20,6 +20,16 @@ const EXAMPLE = {
   ],
 } as const
 
+/** What one cell of a slot picture shows: a random number, a zero, or the zero or one that the reader uses. */
+export type Cell = 'rand' | 'zero' | 'read'
+
+/** The bids of the second-price example, in bidder order. */
+export const EXAMPLE_BIDS: readonly number[] = EXAMPLE.bids
+/** The bidder that wins the second-price example: the highest bid, and the first of the tied ones. */
+export const EXAMPLE_WINNER = EXAMPLE_BIDS.indexOf(Math.max(...EXAMPLE_BIDS))
+/** The price step of the second-price example: the second-highest bid. */
+export const EXAMPLE_PRICE = [...EXAMPLE_BIDS].sort((a, b) => b - a)[1]
+
 /** The cells of one level of the example table. */
 export function exampleRows() {
   return EXAMPLE.levels.map(({ level, atLeast, beaten }) => {
@@ -54,4 +64,28 @@ export function firstPriceRows(levels: number) {
     })
     return { level, lanes }
   })
+}
+
+/** The second-price example as a picture: for each bidder, one cell for each shown step. */
+export function exampleCells(): Cell[][] {
+  const rows = exampleRows()
+  return EXAMPLE_BIDS.map((_, bidder) =>
+    rows.map(
+      ({ level, tests }): Cell => (tests[bidder] !== 0 ? 'rand' : bidder === EXAMPLE_WINNER && level === EXAMPLE_PRICE ? 'read' : 'zero'),
+    ),
+  )
+}
+
+/** The highest bid of the first-price example is the price. The first bidder with it wins. */
+export const FIRST_PRICE_PRICE = Math.max(...FIRST_PRICE_BIDS)
+export const FIRST_PRICE_WINNER = (FIRST_PRICE_BIDS as readonly number[]).indexOf(FIRST_PRICE_PRICE)
+/** The last bidder with the top bid: the example has a tie, so this is not the winner. */
+export const FIRST_PRICE_LAST_TIED = (FIRST_PRICE_BIDS as readonly number[]).lastIndexOf(FIRST_PRICE_PRICE)
+
+/** The first-price example as a picture: for each bidder, one cell for each shown step. */
+export function firstPriceCells(levels: number): Cell[][] {
+  const rows = firstPriceRows(levels)
+  return FIRST_PRICE_BIDS.map((_, lane) =>
+    rows.map(({ lanes }): Cell => (lanes[lane].slot === 'random' ? 'rand' : lanes[lane].slot === 'one' ? 'read' : 'zero')),
+  )
 }

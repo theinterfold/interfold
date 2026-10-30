@@ -7,8 +7,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
 import type { Address } from 'viem'
-import { encodeMaskInput } from '@interfold/auction'
-import { type MaskStep, BidProver } from '@interfold/auction/prover'
+import { DEGREE } from '@interfold/auction-core'
+import { encodeMaskInput } from '@interfold/auction-provider-second-price'
+import { createBidProver, type MaskStep, type ProviderProver } from '@interfold/auction-provider-second-price/prover'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { chain, publicClient } from '@/utils/chain'
 import { getContractAddresses } from '@/utils/env-config'
@@ -17,9 +18,9 @@ import { type StepRow, type StepStatus } from './useBid'
 
 /** The steps of one mask, in the order they run. A mask is always sent by the provider's own wallet. */
 const MASK_STEPS: { id: string; label: string }[] = [
-  { id: 'encrypt', label: 'Draw a random mask of 128 nonzero values and encrypt it to the committee key' },
+  { id: 'encrypt', label: `Draw a random mask of ${DEGREE} nonzero values and encrypt it to the committee key` },
   { id: 'encryption-proof', label: 'Prove the encryption of the mask' },
-  { id: 'mask-proof', label: 'Prove that every one of the 128 values is nonzero' },
+  { id: 'mask-proof', label: `Prove that every one of the ${DEGREE} values is nonzero` },
   { id: 'send', label: 'Send the mask (confirm in your wallet)' },
   { id: 'confirm', label: 'Wait for the transaction to be mined' },
 ]
@@ -94,9 +95,9 @@ export function useMask({ e3Id, account, committeeKey, onSubmitted }: Params): U
     setError(null)
     setStatuses({})
     setRun({ startedAt, elapsedMs: null })
-    let prover: BidProver | undefined
+    let prover: ProviderProver | undefined
     try {
-      prover = await BidProver.create()
+      prover = await createBidProver()
       const prepared = await prover.proveMask(committeeKey, account, (step: MaskStep) => advance(step.kind))
       if (abandoned.current) return
       if (accountRef.current?.toLowerCase() !== account.toLowerCase()) {

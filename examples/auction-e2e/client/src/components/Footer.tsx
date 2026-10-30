@@ -30,7 +30,6 @@ const Footer: React.FC = () => (
           </a>
         </div>
       </div>
-      <p className='site-footer-copyright'>Demo on insecure parameters</p>
     </div>
   </footer>
 )

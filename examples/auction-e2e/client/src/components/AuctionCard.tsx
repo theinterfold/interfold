@@ -6,7 +6,9 @@
 
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE } from '@interfold/auction'
+import { MAX_BIDDERS } from '@interfold/auction-core'
+import { gateKind as gateKindOf } from '@/hooks/useAllowlist'
+import { designOf } from '@/utils/designs'
 import { type AuctionState, phaseOf, timeLeftLabel } from '@/utils/auction'
 import { shorten } from '@/utils/error-formatting'
 import { shortId } from '@/utils/format'
@@ -24,7 +26,8 @@ export const Pips: React.FC<{ filled: number; total: number }> = ({ filled, tota
 /** An auction as a row of the list: status and id, title, type and creator, then time and bidders. */
 const AuctionCard: React.FC<{ auction: AuctionState; now: bigint }> = ({ auction, now }) => {
   const phase = phaseOf(auction, now)
-  const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
+  const maxBidders = MAX_BIDDERS
+  const gate = gateKindOf(auction.gate)
   return (
     <Link to={`/auction/${auction.e3Id}`} className='list-row'>
       <div className='row-main flex items-start gap-4'>
@@ -32,13 +35,14 @@ const AuctionCard: React.FC<{ auction: AuctionState; now: bigint }> = ({ auction
         <div className='min-w-0 space-y-2'>
           <div className='flex min-w-0 flex-wrap items-center gap-3'>
             <StatusBadge phase={phase} />
+            {gate !== 'open' && <span className='tag muted'>{gate === 'allowlist' ? 'Allowlist only' : 'Gated'}</span>}
             <span className='id muted min-w-0 truncate' title={auction.e3Id.toString()}>
               {shortId(auction.e3Id)}
             </span>
           </div>
           <h3 className='h3'>{auction.title}</h3>
           <p className='muted text-sm'>
-            {AUCTION_TYPE_LABELS[auction.auctionType]} · {auction.prices.length} steps · by{' '}
+            {designOf(auction.auctionType).label} · {auction.prices.length} steps · by{' '}
             <span className='addr'>{shorten(auction.creator, 6, 4)}</span>
           </p>
         </div>

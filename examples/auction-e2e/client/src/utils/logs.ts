@@ -12,6 +12,28 @@ export interface BlockRange {
   toBlock: bigint
 }
 
+const blockAtTimestampCache = new Map<bigint, bigint>()
+
+/**
+ * The first block whose timestamp is at least `timestamp` (unix seconds), from `DEPLOY_BLOCK` to the head.
+ * Block timestamps never decrease, so a binary search finds it in about 20 reads. The contract keeps the
+ * timestamp of the request block, not its number, so this is how a scan starts at the request.
+ */
+export async function blockAtTimestamp(timestamp: bigint): Promise<bigint> {
+  const cached = blockAtTimestampCache.get(timestamp)
+  if (cached !== undefined) return cached
+  let low = DEPLOY_BLOCK
+  let high = await publicClient.getBlockNumber()
+  while (low < high) {
+    const middle = (low + high) / 2n
+    const { timestamp: at } = await publicClient.getBlock({ blockNumber: middle })
+    if (at >= timestamp) high = middle
+    else low = middle + 1n
+  }
+  blockAtTimestampCache.set(timestamp, low)
+  return low
+}
+
 /** The inclusive block ranges of at most `LOG_CHUNK_SIZE` blocks that cover `from` to the chain head. */
 export async function blockRanges(from: bigint = DEPLOY_BLOCK): Promise<{ ranges: BlockRange[]; head: bigint }> {
   const head = await publicClient.getBlockNumber()

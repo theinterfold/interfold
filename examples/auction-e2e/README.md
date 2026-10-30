@@ -251,9 +251,10 @@ If `gate` is the zero address, anyone can bid and `gateConfig` must be empty
 the Merkle root on chain, stores it and emits `AllowlistSet(program, e3Id, root, members)`. The leaf
 of a member is `keccak256(member)`. The inner nodes use the sorted-pair `keccak256`, and an odd node
 moves up unchanged. The `gateProof` of a bidder is `abi.encode(bytes32[] path)`.
-`sdk/src/allowlist.ts` (`allowlistRoot`, `allowlistProof`) builds the same root and path. The web
-app sorts and deduplicates the addresses that the creator enters. It builds the proof of a bidder
-from the `AllowlistSet` event. The web app finds the gate through `VITE_ALLOWLIST_GATE_ADDRESS`.
+`sdk/core/src/allowlist.ts` (`allowlistRoot`, `allowlistProof`) builds the same root and path. The
+web app sorts and deduplicates the addresses that the creator enters. It builds the proof of a
+bidder from the `AllowlistSet` event. The web app finds the gate through
+`VITE_ALLOWLIST_GATE_ADDRESS`.
 
 ### The program: which bids count
 
@@ -273,8 +274,9 @@ policy of the program (`policy()` in `program/src/lib.rs`) has two parts:
   commitment. A bidder with no such run is dropped whole. A run with malformed metadata is never
   selected. The bidder position in the computation is the order of the selected runs by leaf index.
 
-`sdk/src/selection.ts` (`selectBids`) is the same rule in TypeScript. The server, the web app and
-the integration test use it. The server starts no computation with fewer than 2 selected bidders.
+`sdk/core/src/selection.ts` (`selectBids`) is the same rule in TypeScript. The server, the web app
+and the integration test use it. The server starts no computation with fewer than 2 selected
+bidders.
 
 ### The program: the masks
 
@@ -288,10 +290,11 @@ of inputs with the version `MASK_VERSION` after input 0 as the masks. It does th
   `MASK_VERSION` after a bid is not a mask, and the policy ignores it. The contract never makes such
   an input.
 
-`selectBids` skips the masks. `checkMasks(masks, providers, opens)` in `sdk/src/selection.ts` checks
-them. It returns `complete` (every provider has a mask that opens), `missing` (the providers with no
-mask) and `invalid` (the providers whose mask does not open). The server and the web app use it. The
-server starts no computation until `complete` is true.
+`selectBids` skips the masks. `checkMasks(masks, providers, opens)` in
+`sdk/provider-second-price/src/masks.ts` checks them. It returns `complete` (every provider has a
+mask that opens), `missing` (the providers with no mask) and `invalid` (the providers whose mask
+does not open). The server and the web app use it. The server starts no computation until `complete`
+is true.
 
 ### The program: lanes
 
@@ -302,8 +305,8 @@ in the slots `0` to `16 n - 1` and 0 in the other slots, so the slots of the lan
 are 0 in every output.
 
 On a tie at the top, the lane of the lowest bidder position wins. The ciphertext bytes play no part
-in the tie, so a bidder cannot change it by encrypting again. `sdk/src/layout.ts` decodes the result
-of all three types, and the decoder returns the same shape for them.
+in the tie, so a bidder cannot change it by encrypting again. Each design package decodes the result
+(`decodeResult`), and the three decoders return the same shape.
 
 ### The program: the first-price type
 
@@ -412,7 +415,8 @@ out = tests * r
 
 The depth is 3: the squares have depth 1, `r` has depth 2, `tests` has depth 2 and `out` has
 depth 3. There are 7 ciphertext products. The constant 3 is the plaintext with the value 3 in every
-slot. `sdk/src/layout.ts` decodes the result with the same decoder as the other second-price type.
+slot. `decodeResult` of `@interfold/auction-qnr-second-price` reads the result with the same rule as
+the other second-price type.
 
 **Why it cannot fail.** The number 3 is not a square modulo 257 (a check of all 257 values, also
 done for 65537). So `S^2 - 3` is not 0 for any `S`, and `r` is not 0 in any slot, whatever the
@@ -524,6 +528,39 @@ The `ge` and `gt` ciphertexts of one bid come from one `b`, because the circuit 
 The limit of bidders is `maxBidders(type)`: 8 for every type. One copy of the lanes has `16 n`
 slots, and they must fit in the 128 slots of the ring.
 
+## The SDK
+
+The TypeScript SDK has four packages in `sdk/`. All are private workspace packages. Each design has
+its own package. They share one contract, one FHE program and one circuit set, so only the type id
+(`AuctionType`) changes between designs.
+
+| Package                                    | Type | Import it to                                                                                                                                          |
+| ------------------------------------------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@interfold/auction-core`                  |      | Use what every design shares: constants, `encodeBidInput`, `bidTypedData`, `selectBids`, the allowlist tree and `RegionResult`.                       |
+| `@interfold/auction-first-price`           | 0    | Request, bid on and decode a first-price auction (3 ciphertexts for each bid).                                                                        |
+| `@interfold/auction-provider-second-price` | 1    | Do the same for a second-price auction with mask providers (2 ciphertexts for each bid). It also has `checkMasks`, `encodeMaskInput` and `proveMask`. |
+| `@interfold/auction-qnr-second-price`      | 2    | Do the same for a second-price auction with no mask providers (4 ciphertexts for each bid).                                                           |
+
+Each design package has the same API:
+
+- `TYPE` and `design`: the type id and a description of the design (label, roles, what it reveals
+  and whom you trust).
+- `encodeParams(...)`: the `customParams` of `requestE3`. The provider package also takes the mask
+  providers.
+- `decodeResult(plaintextHex, bidders)` and `expectedResult(bids)`: read the published result, and
+  compute the plaintext reference.
+- `<package>/prover`: `createBidProver()`. Its `prove(bid, levels, committeeKey, bidder, onStep?)`
+  encrypts a bid and proves it. The provider prover also has `proveMask`.
+
+The root entry of each package has no proving backend. Import the `/prover` entry only where proofs
+are made, because it loads `@aztec-foundation/bb.js` and the circuits of the design. Each package
+ships only its own circuits. `auction_bid_pair` and `vk_anchor.json` are in
+`@interfold/auction-core`.
+
+The web app picks the package with the type of the auction (`client/src/utils/designs.ts`). Each
+package has a README with a quickstart. Run `pnpm docs:sdk` here to write the API reference of each
+package to its `docs/api` directory (TypeDoc).
+
 ## Prerequisites
 
 - Rust, Node, pnpm, `nargo` 1.0.0-rc.3, `bb` 6.0.0 and Foundry (`anvil`).
@@ -565,12 +602,10 @@ Run these commands in this order.
    pnpm dev:setup
    ```
 
-   `pnpm dev:setup` also builds `@interfold/auction` (`sdk/`, `pnpm build:sdk`). The client, the
-   server and the tests import it from `sdk/dist`, so run `pnpm build:sdk` again after you change
-   `sdk/src` or recompile the circuits. The package copies the compiled bid circuits and
-   `vk_anchor.json` from `circuits/` into `sdk/circuits`. `@interfold/auction` has the layout, the
-   selection and the allowlist; `@interfold/auction/prover` has `BidProver` and loads
-   `@aztec-foundation/bb.js`.
+   `pnpm dev:setup` also builds the four SDK packages (`sdk/`, `pnpm build:sdk`). The client, the
+   server and the tests import them from `sdk/*/dist`, so run `pnpm build:sdk` again after you
+   change `sdk/*/src` or recompile the circuits. Each package copies its own compiled circuits from
+   `circuits/` into its `circuits/` directory. See [The SDK](#the-sdk).
 
 4. Start the stack: anvil, the ciphernodes, the program server, the coordination server and the web
    app:
@@ -677,7 +712,7 @@ compute deadline. The other two types need nothing more.
 cargo test --release -p e3-user-program   # the FHE program and its input policy, all three types, against a local l-BFV key
 (cd circuits/bid && nargo test)           # the bid validity rules (the shared library)
 hardhat test                              # the contract and the allowlist gate (with a mock bid verifier)
-pnpm test:server                          # the server and the @interfold/auction package
+pnpm test:server                          # the server and the SDK packages
 pnpm test:integration                     # DKG -> 9 bid proofs and 1 mask proof -> FHE -> threshold decryption, the types 0 to 2
 ```
 
@@ -713,8 +748,9 @@ leaf and the selection of the input policy. The latest valid version wins. An ea
 if the latest does not open. A bidder with no bid that opens is dropped whole. A leaf vector is
 shared with the Solidity `inputLeaf`. `hardhat test` covers the contract (bids, updates, relayed
 bids, the verifiers, the allowlist and the gate configuration) and the Merkle root of the allowlist
-gate on chain and in TypeScript. `pnpm test:server` runs the unit tests of the server and of `sdk/`,
-including the input assembly for 2, 3 and 4 roles, the relay and the bid selection.
+gate on chain and in TypeScript. `pnpm test:server` runs the unit tests of the server and of the SDK
+packages in `sdk/`, including the input assembly for 2, 3 and 4 roles, the relay and the bid
+selection.
 
 The tests of the first-price type are these. `hardhat test` covers the creation (providers are
 rejected), the role count (3), the bidder limit (8) and the anchor rule: a bid of this type must
@@ -905,8 +941,8 @@ The server does this:
   configuration and each ciphertext of each bid, with its commitment, its bidder and its bid version
   (`input_commitments`, `input_slots`, `input_parents`). The input root covers all of them. The
   program then counts, for each bidder, its latest bid whose ciphertexts open their commitments. The
-  server applies the same rule (`sdk/src/selection.ts`) and does not start a run with fewer than two
-  such bidders.
+  server applies the same rule (`selectBids` in `sdk/core`) and does not start a run with fewer than
+  two such bidders.
 - For a mask-provider auction it also reads the providers (the `auctionProviders` view) and every
   `MaskSubmitted` event. It sends the runner the inputs in leaf order: the configuration with the
   providers, then the masks (`input_slots` is the provider and `input_parents` is `MASK_VERSION`),
@@ -916,12 +952,12 @@ The server does this:
   leaves.
 - If `MASK_PROVIDER_PRIVATE_KEY` is set, the server is a mask provider. For each mask-provider
   auction that lists its address, it waits for the committee key and for the input window. It then
-  draws a mask, proves it with `BidProver.proveMask` in Node and sends `publishInput` from that key.
-  It proves one mask at a time. It reads `maskSubmitted` first, so a restart sends no second mask. A
-  failed send is tried again with backoff and the same proof. If the contract rejects the proof, the
-  server proves again. The server skips an auction of another type, or an auction that does not list
-  its address. The mask is secret only while the server keeps it, so a public server key counts as
-  one provider only.
+  draws a mask, proves it with `proveMask` of `@interfold/auction-provider-second-price/prover` in
+  Node and sends `publishInput` from that key. It proves one mask at a time. It reads
+  `maskSubmitted` first, so a restart sends no second mask. A failed send is tried again with
+  backoff and the same proof. If the contract rejects the proof, the server proves again. The server
+  skips an auction of another type, or an auction that does not list its address. The mask is secret
+  only while the server keeps it, so a public server key counts as one provider only.
 - `GET /provider` returns `{ "address": "0x..." }`, the address of the mask provider, or status 404
   without `MASK_PROVIDER_PRIVATE_KEY`. The web app uses it to offer the server provider in the
   creation form. CORS is open.
@@ -999,8 +1035,8 @@ circuits, `types/` and the built SDK and wasm package, and none of them is commi
 prepared host and upload the output.
 
 1. Prepare the host. Run `pnpm dev:setup` and `pnpm compile` in this directory, and build the
-   workspace packages the client imports (`@interfold/sdk`, `@interfold/contracts` and
-   `@interfold/auction`).
+   workspace packages the client imports (`@interfold/sdk`, `@interfold/contracts` and the four
+   `@interfold/auction-*` packages).
 2. Link the client to a Vercel project: `cd client && vercel link`.
 3. Pull the project settings: `vercel pull --yes --environment=production`. Set the `VITE_*`
    variables of `client/.env.example` on the project first. Every value is public in the bundle: put
@@ -1045,39 +1081,39 @@ older figures were for a proof of each ciphertext, and they do not apply.
 
 ## Layout
 
-| Path                            | What                                                                                                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`                                                         |
-| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type and the result decoders                                                                                        |
-| `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, shares and bid proofs, and `proveMask` (a provider mask)                                                     |
-| `sdk/src/selection.ts`          | `selectBids` and `checkMasks`: the TypeScript form of the input policy (which bids and which masks count)                                                           |
-| `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                                                                   |
-| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the circuits, and the tables of the honest bids                                                             |
-| `circuits/pair/`, `shares/`     | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_shares` (roles 2 and 3, the shares): recursive                                                         |
-| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all                                                       |
-| `circuits/bid2/`, `mask/`       | `auction_bid2` (the bid proof of type 1) and `auction_mask` (the mask proof of a provider): the proofs the contract verifies                                        |
-| `contracts/AuctionProgram.sol`  | auction config and providers, bids, masks and updates, relayed-bid signatures, gate check, proof checks, leaves, DA check                                           |
-| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                                                                    |
-| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                                                                             |
-| `contracts/verifiers/`          | `AuctionVerifier2.sol`, `AuctionVerifier3.sol`, `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them. |
-| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all three auction types)                                                                        |
-| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                                                                    |
-| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                                                                    |
-| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                                                                        |
-| `guest/`                        | the OpenVM guest that proves the program                                                                                                                            |
-| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), mask provider (`GET /provider`), pictures (`/auctions/:e3Id/image`), output publication, `/health` |
-| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                                                                                 |
-| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                                                                            |
-| `client/`                       | the web app                                                                                                                                                         |
-| `test/`                         | the Hardhat tests of the contract and the gate                                                                                                                      |
-| `tests/`                        | the integration test and its input helper                                                                                                                           |
+| Path                            | What                                                                                                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sdk/core/`                     | `@interfold/auction-core`: the slot encoding, the on-chain encoding, the bid selection, the allowlist tree, the result reader and the shared proving engine (`/prover`)                |
+| `sdk/first-price/`              | `@interfold/auction-first-price`: type 0 (`TYPE`, `design`, `encodeParams`, `decodeResult`, `expectedResult`, `/prover`)                                                               |
+| `sdk/provider-second-price/`    | `@interfold/auction-provider-second-price`: type 1, and the mask provider tools (`checkMasks`, `encodeMaskInput`, `proveMask`)                                                         |
+| `sdk/qnr-second-price/`         | `@interfold/auction-qnr-second-price`: type 2                                                                                                                                          |
+| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the circuits, and the tables of the honest bids                                                                                |
+| `circuits/pair/`, `shares/`     | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_shares` (roles 2 and 3, the shares): recursive                                                                            |
+| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all                                                                          |
+| `circuits/bid2/`, `mask/`       | `auction_bid2` (the bid proof of type 1) and `auction_mask` (the mask proof of a provider): the proofs the contract verifies                                                           |
+| `contracts/AuctionProgram.sol`  | auction config and providers, bids, masks and updates, relayed-bid signatures, gate check, proof checks, leaves, DA check                                                              |
+| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                                                                                       |
+| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                                                                                                |
+| `contracts/verifiers/`          | `AuctionVerifier2.sol`, `AuctionVerifier3.sol`, `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them.                    |
+| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all three auction types)                                                                                           |
+| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                                                                                       |
+| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                                                                                       |
+| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                                                                                           |
+| `guest/`                        | the OpenVM guest that proves the program                                                                                                                                               |
+| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), mask provider (`GET /provider`), pictures (`/auctions/:e3Id/image`), output publication, `/health`                    |
+| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                                                                                                    |
+| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                                                                                               |
+| `client/`                       | the web app                                                                                                                                                                            |
+| `test/`                         | the Hardhat tests of the contract and the gate                                                                                                                                         |
+| `tests/`                        | the integration test and its input helper                                                                                                                                              |
+| `examples/`                     | one script for each design that runs a complete auction on the live Sepolia deploy (`pnpm example:first-price`, `pnpm example:provider-second-price`, `pnpm example:qnr-second-price`) |
 
 ## Limits
 
 - The parameters are insecure. They give no security.
-- An auction has 2 to 8 bidders, for every type. `maxBidders(type)` and `MAX_BIDDERS_BY_TYPE` in
-  `sdk/src/layout.ts` set the limit. The slot layout has one copy of the lanes, so `16 n` slots must
-  fit in 128.
+- An auction has 2 to 8 bidders, for every type. `maxBidders(type)` and `MAX_BIDDERS` in
+  `sdk/core/src/layout.ts` set the limit. The slot layout has one copy of the lanes, so `16 n` slots
+  must fit in 128.
 - An auction has 2 to 16 price steps, chosen by its creator. The slot layout always has 16 levels (0
   to 15). The steps `levels` to 15 stay empty, because every thermometer is 0 there. Thus the price
   never decodes to a step that the auction does not have.

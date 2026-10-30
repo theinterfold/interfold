@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { zeroAddress, type Hex } from 'viem'
-import { AuctionType, MASK_VERSION, auctionConfigInput, type SubmittedBid, type SubmittedMask } from '@interfold/auction'
+import { AuctionType, MASK_VERSION, auctionConfigInput, type SubmittedBid } from '@interfold/auction-core'
+import type { SubmittedMask } from '@interfold/auction-provider-second-price'
 import { auctionInputs, planRun } from './inputs'
 
 const alice = '0x1111111111111111111111111111111111111111'

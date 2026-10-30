@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { isAddress, type Address } from 'viem'
-import { MAX_ALLOWLIST_MEMBERS, sortedAllowlist } from '@interfold/auction'
+import { MAX_ALLOWLIST_MEMBERS, sortedAllowlist } from '@interfold/auction-core'
 
 /**
  * The addresses in a pasted list: separated by spaces, commas, semicolons or new lines. `members` is

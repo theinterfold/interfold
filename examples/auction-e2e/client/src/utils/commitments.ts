@@ -6,7 +6,7 @@
 
 import { bytesToHex, hexToBytes, type Hex } from 'viem'
 import { computeCiphertextCommitment } from '@interfold/sdk'
-import { PRESET } from '@interfold/auction'
+import { PRESET } from '@interfold/auction-core'
 
 /**
  * The `opens` function of `selectBids` and `checkMasks` for these ciphertexts: it hashes each one
