@@ -73,6 +73,15 @@ pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_4 --network localho
 heading "Add ciphernode $CIPHERNODE_ADDRESS_5"
 pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_5 --network localhost
 
+if [[ "${IDENTITY_GATE:-false}" == "true" ]]; then
+  heading "Require a verified bond owner (mock identity verifier)"
+  # Each node is its own bond owner. Under a required policy the nodes turn the owner shortlist
+  # off, and every eligible node submits a ticket.
+  pnpm identity:mock-gate \
+    --owners "$CIPHERNODE_ADDRESS_1,$CIPHERNODE_ADDRESS_2,$CIPHERNODE_ADDRESS_3,$CIPHERNODE_ADDRESS_4,$CIPHERNODE_ADDRESS_5" \
+    --network localhost
+fi
+
 heading "Request Committee"
 
 ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
