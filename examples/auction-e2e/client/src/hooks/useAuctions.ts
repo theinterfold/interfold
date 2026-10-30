@@ -17,9 +17,19 @@ export interface Loaded<T> {
   error: string | null
 }
 
+/** The list of auctions, and `retry`, which reads it again at once. */
+export interface AuctionList extends Loaded<AuctionState[]> {
+  retry: () => void
+}
+
 /** Every auction, newest first, refreshed while the page is open. */
-export function useAuctions(): Loaded<AuctionState[]> {
+export function useAuctions(): AuctionList {
   const [state, setState] = useState<Loaded<AuctionState[]>>({ data: [], loading: true, error: null })
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => {
+    setState((prev) => ({ ...prev, loading: true, error: null }))
+    setAttempt((count) => count + 1)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -39,9 +49,9 @@ export function useAuctions(): Loaded<AuctionState[]> {
       cancelled = true
       clearInterval(timer)
     }
-  }, [])
+  }, [attempt])
 
-  return state
+  return { ...state, retry }
 }
 
 export interface AuctionView {

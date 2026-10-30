@@ -5,11 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { Address } from 'viem'
-import type { SubmittedBid, SubmittedMask } from '@interfold/auction'
+import type { SubmittedBid } from '@interfold/auction-core'
+import type { SubmittedMask } from '@interfold/auction-provider-second-price'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { MerkleAllowlistGate__factory } from '@contract-types/factories/contracts/gates/MerkleAllowlistGate__factory'
 import { getContractAddresses } from './env-config'
-import { scanLogs } from './logs'
+import { blockAtTimestamp, scanLogs } from './logs'
 import { publicClient } from './chain'
 
 /** Every mask of a mask-provider auction in leaf order, from the `MaskSubmitted` events. */
@@ -35,18 +36,23 @@ export async function readSubmittedMasks(e3Id: bigint): Promise<SubmittedMask[]>
     .sort((a, b) => a.index - b.index)
 }
 
-/** Every bid of an E3 (all versions of all bidders) in leaf order, from the `BidSubmitted` events. */
-export async function readSubmittedBids(e3Id: bigint): Promise<SubmittedBid[]> {
+/**
+ * Every bid of an E3 (all versions of all bidders) in leaf order, from the `BidSubmitted` events.
+ * No bid comes before the request, so the scan starts at the block of `requestedAt` (unix seconds).
+ */
+export async function readSubmittedBids(e3Id: bigint, requestedAt: bigint): Promise<SubmittedBid[]> {
   const { e3Program } = getContractAddresses()
-  const { logs } = await scanLogs((range) =>
-    publicClient.getContractEvents({
-      address: e3Program,
-      abi: AuctionProgram__factory.abi,
-      eventName: 'BidSubmitted',
-      args: { e3Id },
-      strict: true,
-      ...range,
-    }),
+  const { logs } = await scanLogs(
+    (range) =>
+      publicClient.getContractEvents({
+        address: e3Program,
+        abi: AuctionProgram__factory.abi,
+        eventName: 'BidSubmitted',
+        args: { e3Id },
+        strict: true,
+        ...range,
+      }),
+    await blockAtTimestamp(requestedAt),
   )
   return logs
     .map(({ args }) => ({

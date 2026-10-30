@@ -1,0 +1,57 @@
+{
+  "name": "@interfold/auction-core",
+  "version": "0.1.0",
+  "description": "Sealed-bid auction on Interfold: the slot encoding, the on-chain encoding, the bid selection, the allowlist tree and the shared proving engine",
+  "private": true,
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./prover": {
+      "types": "./dist/prover.d.ts",
+      "import": "./dist/prover.js",
+      "default": "./dist/prover.js"
+    },
+    "./circuits/*": "./circuits/*",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "circuits"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theinterfold/interfold.git",
+    "directory": "examples/auction-e2e/sdk/core"
+  },
+  "scripts": {
+    "prebuild": "node scripts/copy-circuits.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist circuits docs/api",
+    "test": "vitest run",
+    "docs:api": "typedoc"
+  },
+  "dependencies": {
+    "@aztec-foundation/bb.js": "6.0.0",
+    "@interfold/sdk": "workspace:*",
+    "@noir-lang/noir_js": "1.0.0-rc.3",
+    "viem": "2.38.1"
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "@interfold/user-data-encryption-prover": "workspace:*",
+    "tsup": "^8.5.0",
+    "typedoc": "^0.28.0",
+    "typescript": "^5.8.3",
+    "vitest": "^1.6.1"
+  }
+}

@@ -32,25 +32,37 @@ import {
   allowlistRoot,
   bidInputsHash,
   bidTypedData,
-  decodeAuction,
   encodeAllowlistConfig,
   encodeAuctionParams,
   encodeBidInput,
-  encodeMaskInput,
   evenPrices,
-  expectedAuction,
   LEVELS,
-  MAX_BIDDERS_BY_TYPE,
+  MAX_BIDDERS,
   MAX_BIDS_PER_BIDDER,
+  PARAM_SET,
   PRESET,
   readPriceList,
   Role,
   rolesFor,
   selectBids,
   type SubmittedBid,
-} from '@interfold/auction'
-import { BidProver, PARAM_SET, type PreparedBid, type PreparedMask, toHex } from '@interfold/auction/prover'
+  toHex,
+} from '@interfold/auction-core'
+import type { PreparedBid } from '@interfold/auction-core/prover'
+import * as firstPrice from '@interfold/auction-first-price'
+import { createBidProver as createFirstPriceProver } from '@interfold/auction-first-price/prover'
+import * as providerSecondPrice from '@interfold/auction-provider-second-price'
+import { createBidProver as createProviderProver, type PreparedMask } from '@interfold/auction-provider-second-price/prover'
+import * as qnrSecondPrice from '@interfold/auction-qnr-second-price'
+import { createBidProver as createQnrProver } from '@interfold/auction-qnr-second-price/prover'
 import { advanceAnvilTime, sleep } from './anvil-helpers'
+
+/** The design package of each auction type. */
+const DESIGNS = {
+  [AuctionType.FirstPrice]: firstPrice,
+  [AuctionType.ProviderSecondPrice]: providerSecondPrice,
+  [AuctionType.QnrSecondPrice]: qnrSecondPrice,
+}
 
 const registryReadAbi = parseAbi(['function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)'])
 
@@ -278,18 +290,16 @@ describe('Sealed-bid auction', () => {
         const stored = await publicClient.readContract({ ...program, functionName: 'auctionPrices', args: [created.args.e3Id] })
         expect(stored).toEqual(padded)
         expect(readPriceList(auction.prices.length, stored)).toEqual(auction.prices)
-        // The contract and `sdk/src/layout.ts` keep their own tables of the roles and the limit of a type.
+        // The contract and `sdk/core/src/layout.ts` keep their own tables of the roles and the limit of a type.
         expect(await publicClient.readContract({ ...program, functionName: 'roleCount', args: [auction.type] })).toBe(
           rolesFor(auction.type).length,
         )
-        expect(await publicClient.readContract({ ...program, functionName: 'maxBidders', args: [auction.type] })).toBe(
-          MAX_BIDDERS_BY_TYPE[auction.type],
-        )
+        expect(await publicClient.readContract({ ...program, functionName: 'maxBidders', args: [auction.type] })).toBe(MAX_BIDDERS)
         expect(await publicClient.readContract({ ...program, functionName: 'auctionProviders', args: [created.args.e3Id] })).toEqual(
           providersOf(auction),
         )
         if (auction.allowlist) {
-          // The gate built its root on chain from the list; `sdk/src/allowlist.ts` builds the same root.
+          // The gate built its root on chain from the list; `sdk/core/src/allowlist.ts` builds the same root.
           const [set] = parseEventLogs({ abi: MerkleAllowlistGate__factory.abi, logs: receipt.logs, eventName: 'AllowlistSet' })
           expect(set.args).toMatchObject({
             program: contracts.e3Program,
@@ -326,9 +336,12 @@ describe('Sealed-bid auction', () => {
       // A proof binds its bidder, so each bid is proven for the address that will be its bidder.
       const prepared: PreparedBid[][] = AUCTIONS.map(() => [])
       let preparedMask: PreparedMask | undefined
-      const prover = await BidProver.create()
-      try {
-        for (const [a, auction] of AUCTIONS.entries()) {
+      const providerAuction = AUCTIONS.findIndex((auction) => auction.type === AuctionType.ProviderSecondPrice)
+      // One prover for each design, one at a time: every prover loads the SRS and takes much memory.
+      for (const [a, auction] of AUCTIONS.entries()) {
+        const providerProver = auction.type === AuctionType.ProviderSecondPrice ? await createProviderProver() : undefined
+        const prover = providerProver ?? (await (auction.type === AuctionType.FirstPrice ? createFirstPriceProver : createQnrProver)())
+        try {
           for (const [i, plan] of auction.bids.entries()) {
             if (plan.resend !== undefined) {
               prepared[a][i] = prepared[a][plan.resend]
@@ -336,7 +349,6 @@ describe('Sealed-bid auction', () => {
             }
             const started = Date.now()
             prepared[a][i] = await prover.prove(
-              auction.type,
               plan.level,
               auction.prices.length,
               committeeKeyOf[a],
@@ -345,14 +357,15 @@ describe('Sealed-bid auction', () => {
             )
             console.log(`Proved bid ${i} of auction ${a} in ${Date.now() - started}ms`)
           }
+          // The mask of the provider takes one encryption and one proof.
+          if (providerProver) {
+            preparedMask = await providerProver.proveMask(committeeKeyOf[providerAuction], creator, (step) =>
+              console.log(`Auction ${providerAuction}, mask: ${step.kind}`),
+            )
+          }
+        } finally {
+          await prover.destroy()
         }
-        // The mask of the provider takes one encryption and one proof.
-        const providerAuction = AUCTIONS.findIndex((auction) => auction.type === AuctionType.ProviderSecondPrice)
-        preparedMask = await prover.proveMask(committeeKeyOf[providerAuction], creator, (step) =>
-          console.log(`Auction ${providerAuction}, mask: ${step.kind}`),
-        )
-      } finally {
-        await prover.destroy()
       }
 
       // What each bid publishes. An unopened bid carries its own `gt` bytes in the `mask` position,
@@ -464,7 +477,7 @@ describe('Sealed-bid auction', () => {
         functionName: 'publishInput',
         args: [
           e3Ids[provider],
-          encodeMaskInput({
+          providerSecondPrice.encodeMaskInput({
             provider: creator,
             ciphertext: preparedMask!.ciphertext,
             commitment: preparedMask!.commitment,
@@ -578,14 +591,14 @@ describe('Sealed-bid auction', () => {
 
         const plaintextOutput = await waitFor(`the plaintext output of E3 ${e3Ids[a]}`, () => plaintexts.get(e3Ids[a]), 25 * 60_000)
         // Bidder position `j` is the place of the `j`-th counted bid in leaf order.
-        const result = await decodeAuction(auction.type, plaintextOutput, selected.length)
+        const result = await DESIGNS[auction.type].decodeResult(plaintextOutput, selected.length)
         console.log(
           `${auction.title}: winner bidder ${result.winner === null ? 'none' : bidderIndex(selected[result.winner].bidder)}, price ${result.price}`,
         )
         expect(result.unusedGroupsZero).toBe(true)
         const winnerPosition = selected.findIndex((bid) => bidderIndex(bid.bidder) === auction.winner)
         expect(result).toMatchObject({ winner: winnerPosition, price: auction.price })
-        expect(expectedAuction(auction.type, levels)).toEqual({ winner: winnerPosition, price: auction.price })
+        expect(DESIGNS[auction.type].expectedResult(levels)).toEqual({ winner: winnerPosition, price: auction.price })
       }
     },
     180 * 60_000,

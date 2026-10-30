@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Hex } from 'viem'
-import { MASK_VERSION } from './layout'
-import { checkMasks, selectBids, type SubmittedBid, type SubmittedMask } from './selection'
+import { MASK_VERSION } from './params'
+import { selectBids, type SubmittedBid } from './selection'
 
 const alice = '0x1111111111111111111111111111111111111111'
 const bob = '0x2222222222222222222222222222222222222222'
@@ -102,14 +102,6 @@ describe('selectBids', () => {
   })
 })
 
-const carol = '0x3333333333333333333333333333333333333333'
-
-/** The mask of `provider` at leaf `index`; `good` says whether it opens its commitment. */
-const maskOf = (provider: `0x${string}`, index: number, good = true): SubmittedMask => {
-  const ciphertext = `0x77${index}${provider.slice(2, 4)}` as Hex
-  return { provider, index, ciphertext, commitment: good ? commitmentOf(ciphertext) : '0xdead' }
-}
-
 describe('selectBids with masks', () => {
   it('skips an entry with the mask version, and the bids around it count', () => {
     const tree = new Tree()
@@ -124,45 +116,5 @@ describe('selectBids with masks', () => {
   it('never lets the mask version win against a bid of the same address', () => {
     const tree = new Tree()
     expect(picked([tree.bid(alice, 1), tree.bid(alice, MASK_VERSION, [true])])).toEqual([[alice, 1, 0]])
-  })
-})
-
-describe('checkMasks', () => {
-  const providers: `0x${string}`[] = [alice, bob, carol]
-
-  it('is complete when every provider has a mask that opens', () => {
-    const masks = [maskOf(alice, 1), maskOf(bob, 2), maskOf(carol, 3)]
-    expect(checkMasks(masks, providers, opens)).toEqual({ complete: true, missing: [], invalid: [] })
-  })
-
-  it('lists the providers that sent no mask, in the order of the auction', () => {
-    expect(checkMasks([maskOf(bob, 1)], providers, opens)).toEqual({ complete: false, missing: [alice, carol], invalid: [] })
-    expect(checkMasks([], providers, opens)).toEqual({ complete: false, missing: providers, invalid: [] })
-  })
-
-  it('lists the providers whose mask does not open its commitment', () => {
-    const masks = [maskOf(alice, 1), maskOf(bob, 2, false), maskOf(carol, 3)]
-    expect(checkMasks(masks, providers, opens)).toEqual({ complete: false, missing: [], invalid: [bob] })
-  })
-
-  it('ignores a mask from an address that is no provider', () => {
-    const stranger = '0x4444444444444444444444444444444444444444'
-    const masks = [maskOf(stranger, 1, false), maskOf(alice, 2)]
-    expect(checkMasks(masks, [alice], opens)).toEqual({ complete: true, missing: [], invalid: [] })
-  })
-
-  it('treats addresses that differ only in case as one provider, and reports it as the auction names it', () => {
-    const checksummed: `0x${string}` = '0xAbCdEf0000000000000000000000000000000001'
-    const masks = [maskOf(checksummed.toLowerCase() as `0x${string}`, 1, false)]
-    expect(checkMasks(masks, [checksummed], opens)).toEqual({ complete: false, missing: [], invalid: [checksummed] })
-  })
-
-  it('counts the mask with the lowest leaf of a provider', () => {
-    expect(checkMasks([maskOf(alice, 5, false), maskOf(alice, 2)], [alice], opens).complete).toBe(true)
-    expect(checkMasks([maskOf(alice, 2, false), maskOf(alice, 5)], [alice], opens)).toEqual({
-      complete: false,
-      missing: [],
-      invalid: [alice],
-    })
   })
 })

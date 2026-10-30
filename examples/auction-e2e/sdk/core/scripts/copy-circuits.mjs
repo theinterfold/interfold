@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+// Copies the compiled circuits of this package into `circuits/`. The circuits are build outputs of
+// `scripts/compile_circuits.sh` (they are not committed), so the package takes them at build time.
+// `src/prover.ts` imports them and `package.json` ships them.
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+const circuits = join(packageRoot, '..', '..', 'circuits')
+const out = join(packageRoot, 'circuits')
+
+const files = [
+  ['pair/target/auction_bid_pair.json', 'auction_bid_pair.json'],
+  ['target/vk_anchor.json', 'vk_anchor.json'],
+]
+
+const missing = files.map(([from]) => join(circuits, from)).filter((path) => !existsSync(path))
+if (missing.length > 0) {
+  console.error(`missing build outputs:\n  ${missing.join('\n  ')}\nrun \`pnpm compile:circuits\` in examples/auction-e2e first`)
+  process.exit(1)
+}
+
+mkdirSync(out, { recursive: true })
+for (const [from, to] of files) copyFileSync(join(circuits, from), join(out, to))
+console.log(`copied ${files.length} circuit files to ${out}`)

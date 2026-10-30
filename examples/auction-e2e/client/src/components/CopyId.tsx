@@ -10,7 +10,7 @@ import { shortId } from '@/utils/format'
 
 /** A long id in its short form, with the full value in the tooltip and a button to copy it. */
 const CopyId: React.FC<{ id: bigint }> = ({ id }) => {
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const full = id.toString()
   return (
     <button
@@ -19,16 +19,20 @@ const CopyId: React.FC<{ id: bigint }> = ({ id }) => {
       aria-label={`Copy id ${full}`}
       className='id-chip'
       onClick={() => {
-        void navigator.clipboard.writeText(full).then(() => {
-          setCopied(true)
-          setTimeout(() => setCopied(false), 2000)
-        })
+        const done = (next: 'copied' | 'failed') => {
+          setState(next)
+          setTimeout(() => setState('idle'), 2000)
+        }
+        navigator.clipboard.writeText(full).then(
+          () => done('copied'),
+          () => done('failed'),
+        )
       }}
     >
       <span>{shortId(id)}</span>
-      {copied ? <CheckIcon size={14} aria-hidden /> : <CopyIcon size={14} aria-hidden />}
+      {state === 'copied' ? <CheckIcon size={14} aria-hidden /> : <CopyIcon size={14} aria-hidden />}
       <span className='sr-only' aria-live='polite'>
-        {copied ? 'Copied' : ''}
+        {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : ''}
       </span>
     </button>
   )

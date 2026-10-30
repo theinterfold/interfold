@@ -28,7 +28,7 @@ import {
   encodeAllowlistConfig,
   encodeBidInput,
   evenPrices,
-} from '@interfold/auction'
+} from '@interfold/auction-core'
 import { AuctionProgram__factory } from '../types/factories/contracts'
 
 const PROOF = '0x01'
@@ -223,7 +223,7 @@ describe('AuctionProgram bids', () => {
 
   it('matches the shared leaf vector', async () => {
     const { program } = await setup()
-    // The same vector `program/src/lib.rs` and `sdk/src/selection.ts` test.
+    // The same vector `program/src/lib.rs` and `sdk/core/src/selection.ts` test.
     expect(await program.inputLeaf(filled(0x11), filled(0x22), '0x3333333333333333333333333333333333333333', 2)).to.equal(
       0x0b8ba63e8917dfb3f66cfcc1b0be5d3a8f8613ba8092d690a43b84daec02b94an,
     )
@@ -475,7 +475,7 @@ describe('AuctionProgram bids', () => {
 
     it('matches the shared config leaf vectors', async () => {
       const { program } = await setup()
-      // The vectors `program/src/lib.rs` and `sdk/src/layout.ts` test as well.
+      // The vectors `program/src/lib.rs` and `sdk/core/src/params.ts` test as well.
       expect(keccak256(concatHex([DOMAIN, '0x00']))).to.equal('0x7cb4b680799f9a657bac884e1e32705f63553405504316f74d41fe7405521933')
       expect(await program.configLeaf(FIRST_PRICE_TYPE, [])).to.equal(0x1bec199ab73c5a120b0bfce11b2fbfa512ed63745cd035d4c57e134c25521931n)
       expect(await program.configLeaf(PROVIDER_TYPE, [])).to.equal(0x04584f96228a1ea3762ebf79ae1cc47f032f2dd1103c11e6c57bb0825775a0d4n)
@@ -490,7 +490,7 @@ describe('AuctionProgram bids', () => {
 
     it('builds the config input with 20 raw bytes per provider', async () => {
       const { program } = await setup()
-      // The vector `program/src/lib.rs` and `sdk/src/layout.ts` test as well.
+      // The vector `program/src/lib.rs` and `sdk/core/src/params.ts` test as well.
       const input = concatHex([DOMAIN, '0x01', p1, p2])
       expect(input).to.equal(
         '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d76310111111111111111111111111111111111111111112222222222222222222222222222222222222222',

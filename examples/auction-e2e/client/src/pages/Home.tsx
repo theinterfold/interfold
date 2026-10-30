@@ -9,7 +9,8 @@ import { Link } from 'react-router-dom'
 import { LockKeyIcon, SealCheckIcon, UsersThreeIcon } from '@phosphor-icons/react'
 import { useAuctions } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
-import { type AuctionPhase, type AuctionState, phaseOf } from '@/utils/auction'
+import { type AuctionPhase, type AuctionState, PHASE_LABELS, phaseOf } from '@/utils/auction'
+import { KEY_GENERATION_HINT } from '@/utils/estimates'
 import AuctionCard, { AuctionCardSkeleton } from '@/components/AuctionCard'
 import Cipher from '@/components/Cipher'
 
@@ -21,7 +22,7 @@ const PRINCIPLES = [
   },
   {
     icon: UsersThreeIcon,
-    label: 'Decided without trust.',
+    label: 'Decided by a committee.',
     body: 'A program compares the encrypted bids. A threshold committee that no single party controls decrypts only the outcome.',
   },
   {
@@ -32,32 +33,30 @@ const PRINCIPLES = [
 ]
 
 interface Group {
-  title: string
+  /** The phase of every auction in the group. The title of the group is the label of the phase. */
+  phase: AuctionPhase
   note: string
-  phases: AuctionPhase[]
 }
 
 const GROUPS: Group[] = [
-  { title: 'Open for bids', note: 'The committee key is ready. Place a bid.', phases: ['bidding'] },
-  { title: 'Waiting for keys', note: 'The committee is generating the key bids are encrypted to.', phases: ['awaiting-key'] },
-  {
-    title: 'Being computed',
-    note: 'Bidding is closed and the outcome is being computed and decrypted.',
-    phases: ['computing', 'decrypting'],
-  },
-  { title: 'Finished', note: 'Results are public.', phases: ['complete', 'failed'] },
+  { phase: 'bidding', note: 'The committee key is ready. Place a bid.' },
+  { phase: 'awaiting-key', note: `The committee is generating the key that bids are encrypted to. This takes ${KEY_GENERATION_HINT}.` },
+  { phase: 'computing', note: 'Bidding is closed. The program is comparing the encrypted bids.' },
+  { phase: 'decrypting', note: 'The committee is decrypting the outcome.' },
+  { phase: 'complete', note: 'Results are public.' },
+  { phase: 'failed', note: 'These auctions have no result.' },
 ]
 
 const AuctionGroups: React.FC<{ auctions: AuctionState[]; now: bigint }> = ({ auctions, now }) => (
   <div className='space-y-10'>
     {GROUPS.map((group) => {
-      const inGroup = auctions.filter((auction) => group.phases.includes(phaseOf(auction, now)))
+      const inGroup = auctions.filter((auction) => phaseOf(auction, now) === group.phase)
       if (inGroup.length === 0) return null
       return (
-        <section key={group.title} className='space-y-4'>
+        <section key={group.phase} className='space-y-4'>
           <div className='flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1'>
             <h3 className='flex items-center gap-2 text-base font-semibold'>
-              {group.title} <span className='ui-count'>{inGroup.length}</span>
+              {PHASE_LABELS[group.phase]} <span className='ui-count'>{inGroup.length}</span>
             </h3>
             <p className='muted text-sm'>{group.note}</p>
           </div>
@@ -73,7 +72,7 @@ const AuctionGroups: React.FC<{ auctions: AuctionState[]; now: bigint }> = ({ au
 )
 
 const Home: React.FC = () => {
-  const { data: auctions, loading, error } = useAuctions()
+  const { data: auctions, loading, error, retry } = useAuctions()
   const now = useChainTime()
 
   return (
@@ -110,11 +109,16 @@ const Home: React.FC = () => {
         <div className='card space-y-4'>
           <div className='flex items-center justify-between gap-3'>
             <span className='mono muted'>Your bid, encrypted</span>
-            <span className='tag live dot'>FHE</span>
+            <span
+              className='tag live dot'
+              title='Fully homomorphic encryption: the program computes on the bids while they stay encrypted.'
+            >
+              Encrypted
+            </span>
           </div>
           <Cipher seed={11} length={300} />
           <div className='hr-soft' />
-          <p className='meta muted'>This is all anyone sees of a bid while the auction runs.</p>
+          <p className='meta muted'>This is what the chain stores of a bid. It is all anyone sees while the auction runs.</p>
         </div>
       </section>
 
@@ -129,24 +133,34 @@ const Home: React.FC = () => {
           </Link>
         </div>
 
-        {error && <div className='note bad mb-6'>Could not load the auctions: {error}</div>}
+        {error && (
+          <div role='alert' className='note bad mb-6 flex flex-wrap items-center justify-between gap-3'>
+            <span>Could not load the auctions: {error}</span>
+            <button type='button' onClick={retry} className='btn ghost sm'>
+              Try again
+            </button>
+          </div>
+        )}
 
         {loading ? (
-          <div className='space-y-3'>
+          <div className='space-y-3' role='status'>
+            <span className='sr-only'>Loading the auctions…</span>
             <AuctionCardSkeleton />
             <AuctionCardSkeleton />
             <AuctionCardSkeleton />
           </div>
         ) : auctions.length === 0 ? (
-          <div className='card flat space-y-3 text-center'>
-            <p className='h3'>No auctions yet</p>
-            <p className='muted'>Be the first: create one and share its link with the bidders.</p>
-            <div>
-              <Link to='/create' className='btn'>
-                Create an auction
-              </Link>
+          error ? null : (
+            <div className='card flat space-y-3 text-center'>
+              <p className='h3'>No auctions yet</p>
+              <p className='muted'>Be the first: create one and share its link with the bidders.</p>
+              <div>
+                <Link to='/create' className='btn'>
+                  Create an auction
+                </Link>
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <AuctionGroups auctions={auctions} now={now} />
         )}

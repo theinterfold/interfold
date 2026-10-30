@@ -5,21 +5,27 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useState } from 'react'
-import { MAX_BIDDERS_BY_TYPE, MAX_BIDS_PER_BIDDER, MIN_BIDDERS, rolesFor } from '@interfold/auction'
+import { MAX_BIDDERS, MAX_BIDS_PER_BIDDER, MIN_BIDDERS, rolesFor } from '@interfold/auction-core'
 import { useBid } from '@/hooks/useBid'
+import { useLeaveGuard } from '@/hooks/useLeaveGuard'
 import { type UseAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
 import type { Wallet } from '@/hooks/useWallet'
 import { type AuctionPhase, type AuctionState, formatPrice, maskCount, masksComplete } from '@/utils/auction'
+import { BID_PROOF_HINT, KEY_GENERATION_HINT } from '@/utils/estimates'
+import { sameAddress } from '@/utils/format'
 import { ConnectPrompt } from './ConnectPrompt'
 import { TxLink } from './Explorer'
 import Spinner from './Spinner'
 import SubmissionSteps from './SubmissionSteps'
+import { WrongChainNote } from './WrongChainNote'
 
 interface BidPanelProps {
   auction: AuctionState
   phase: AuctionPhase
   wallet: Wallet
   committeeKey: Uint8Array | null
+  /** Why the committee key could not be read, if it could not. */
+  keyError: string | null
   /** The members of the auction's allowlist, when it has one. */
   allowlist: UseAllowlist
   /** How many bids the connected account has on chain, or `null` before the first read. */
@@ -27,7 +33,15 @@ interface BidPanelProps {
   onSubmitted: () => void
 }
 
-const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKey, allowlist, bidCount, onSubmitted }) => {
+/** What to tell a visitor when bidding is over, by phase. */
+const CLOSED_NOTE: Partial<Record<AuctionPhase, string>> = {
+  computing: 'Bidding is closed. The program is computing the result.',
+  decrypting: 'Bidding is closed. The committee is decrypting the result.',
+  complete: 'Bidding is closed. The result is ready below.',
+  failed: 'Bidding is closed. The auction failed.',
+}
+
+const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKey, keyError, allowlist, bidCount, onSubmitted }) => {
   const levels = auction.prices.length
   const gateKind = gateKindOf(auction.gate)
   const bid = useBid({
@@ -42,8 +56,9 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
   })
   const [level, setLevel] = useState(0)
   const [relayed, setRelayed] = useState(false)
+  useLeaveGuard(bid.submitting)
 
-  const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
+  const maxBidders = MAX_BIDDERS
   const count = bidCount ?? 0
   const left = MAX_BIDS_PER_BIDDER - count
   // What this browser remembers of the bid that is on chain now.
@@ -51,7 +66,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
   const onList =
     allowlist.members === null || wallet.address === undefined
       ? null
-      : allowlist.members.some((member) => member.toLowerCase() === wallet.address?.toLowerCase())
+      : allowlist.members.some((member) => sameAddress(member, wallet.address))
   const limitNote = (
     <p className='muted text-xs'>
       This auction type takes {MIN_BIDDERS} to {maxBidders} bidders. {auction.bidderCount} of {maxBidders} places are taken.
@@ -60,9 +75,10 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
 
   // Why bidding is not possible right now, if it is not.
   let blocked: string | null = null
-  if (phase === 'awaiting-key') blocked = 'Bidding opens once the committee has published its key. Key generation takes several minutes.'
-  else if (phase !== 'bidding') blocked = 'Bidding is closed.'
-  else if (auction.providers.some((provider) => provider.address.toLowerCase() === wallet.address?.toLowerCase()))
+  if (phase === 'awaiting-key')
+    blocked = `Bidding opens once the committee has published its key. Key generation takes ${KEY_GENERATION_HINT}.`
+  else if (phase !== 'bidding') blocked = CLOSED_NOTE[phase] ?? 'Bidding is closed.'
+  else if (auction.providers.some((provider) => sameAddress(provider.address, wallet.address)))
     blocked = 'This account is a mask provider of the auction, and a mask provider cannot bid. Use another account to bid.'
   else if (!masksComplete(auction)) blocked = `Waiting for mask providers (${maskCount(auction)}/${auction.providers.length})`
   else if (gateKind === 'unknown')
@@ -73,7 +89,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
     blocked = 'This account is not on the allowlist of the auction, so the contract would reject its bid.'
   else if (left <= 0) blocked = `You have used all ${MAX_BIDS_PER_BIDDER} bids of this auction.`
   else if (count === 0 && auction.bidderCount >= maxBidders) blocked = `This auction is full: ${maxBidders} bidders have bid.`
-  else if (committeeKey === null) blocked = 'Fetching the committee key…'
+  else if (committeeKey === null) blocked = keyError === null ? 'Fetching the committee key…' : 'Bidding needs the committee key.'
 
   const canSubmit = wallet.ready && blocked === null && !bid.submitting && bidCount !== null
 
@@ -100,7 +116,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
 
   return (
     <div className='space-y-6'>
-      {wallet.wrongChain && <div className='note bad'>Your wallet is on another network. Switch networks to bid.</div>}
+      {wallet.wrongChain && <WrongChainNote>Your wallet is on another network. Switch networks to bid.</WrongChainNote>}
 
       {count > 0 && (
         <div className='inset ok p-4'>
@@ -146,16 +162,24 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
                 onClick={() => setLevel(l)}
                 className={`opt px-2 text-center ${level === l ? 'on' : ''}`}
               >
+                <span className='block text-xs text-muted'>Step {l}</span>
                 {formatPrice(l, auction.prices)}
               </button>
             ))}
           </div>
           <p className='muted text-xs'>
-            The creator set {levels} steps and the price of each. Your bid never leaves this browser unencrypted: only ciphertexts and a
-            proof are published. Nobody, the creator included, can read it.
-            {count > 0 &&
-              ' An update replaces your bid: the latest version that is valid counts, and earlier versions are ignored. An update also loses your place in the queue: if the top bids tie, the tied bidder who bid first wins, and your bid counts from the time of the update.'}
+            The creator set {levels} steps and the price of each. Your bid is encrypted in this browser. Only ciphertexts and a proof are
+            published. Nobody, the creator included, can read the bid.
           </p>
+          {count > 0 && (
+            <div className='note warn space-y-1 text-sm'>
+              <p className='font-semibold'>An update replaces your bid.</p>
+              <ul className='list-disc space-y-1 pl-5'>
+                <li>Only the latest valid version counts. Earlier versions are ignored.</li>
+                <li>You lose your place in the queue. If the top bids tie, the bidder who bid first wins.</li>
+              </ul>
+            </div>
+          )}
           {gateNote}
           {limitNote}
         </div>
@@ -177,8 +201,9 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
             <span>
               <span className='block font-semibold'>Send through relayer</span>
               <span className='muted block text-xs'>
-                You sign the bid in your wallet and the server sends the transaction and pays the gas. The relayer cannot change the bid:
-                the signature covers the bytes and the version.
+                You sign the bid in your wallet. The server sends the transaction and pays the gas. The relayer cannot change the bid,
+                because the signature covers the bytes and the version. The relayer sees your address and the time of the bid. If the
+                relayer is down, clear this box and send the bid from your wallet.
               </span>
             </span>
           </label>
@@ -193,14 +218,17 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
               `Update bid (${left} left)`
             )}
           </button>
-          <p className='muted text-xs'>
-            Proving runs in this tab and takes a few minutes: {rolesFor(auction.auctionType).length} encryptions with their proofs, then{' '}
-            {rolesFor(auction.auctionType).length === 4 ? 'three' : 'two'} proofs for the bid itself. Keep the tab open.
+          <p className='muted text-sm'>
+            Proving runs in this tab and takes {BID_PROOF_HINT}. It makes {rolesFor(auction.auctionType).length} encryptions with their
+            proofs, then {rolesFor(auction.auctionType).length === 4 ? 'three' : 'two'} proofs for the bid itself. Keep the tab open. The
+            page can stop responding for short periods. This is normal.
           </p>
         </div>
       )}
 
-      {bid.steps.length > 0 && <SubmissionSteps title='Your submission' steps={bid.steps} running={bid.submitting} run={bid.run} />}
+      {bid.steps.length > 0 && (
+        <SubmissionSteps title='Your submission' steps={bid.steps} running={bid.submitting} run={bid.run} expected={BID_PROOF_HINT} />
+      )}
     </div>
   )
 }

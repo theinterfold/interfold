@@ -21,19 +21,22 @@ import { ComputeScheduler } from './scheduler'
 import { closedReason, computeWindowOpen, type E3Window } from './window'
 import { getLogsChunked } from './logs'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import {
-  AUCTION_TYPE_LABELS,
-  encodeMaskInput,
-  isAuctionType,
-  isProviderType,
-  type SubmittedBid,
-  type SubmittedMask,
-} from '@interfold/auction'
-import { BidProver } from '@interfold/auction/prover'
+import { AuctionType, isAuctionType, type SubmittedBid } from '@interfold/auction-core'
+import { design as firstPrice } from '@interfold/auction-first-price'
+import { design as providerSecondPrice, encodeMaskInput, type SubmittedMask } from '@interfold/auction-provider-second-price'
+import { createBidProver } from '@interfold/auction-provider-second-price/prover'
+import { design as qnrSecondPrice } from '@interfold/auction-qnr-second-price'
 import { opensCommitment, planRun, type RunPlan } from './inputs'
 import { MaskProvider, MaskRejectedError, type ProviderAuction } from './provider'
 import { parseRelayRequest, relayBid, RelayRequestError, RelayRevertError } from './relay'
 import { imageRouter } from './image'
+
+/** The display name of each auction type, for the log. */
+const DESIGN_LABELS: Record<AuctionType, string> = {
+  [AuctionType.FirstPrice]: firstPrice.label,
+  [AuctionType.ProviderSecondPrice]: providerSecondPrice.label,
+  [AuctionType.QnrSecondPrice]: qnrSecondPrice.label,
+}
 
 // The coordination server orchestrates the FHE run automatically: it watches for
 // each E3's committee to publish, schedules the compute for when the input window
@@ -227,7 +230,7 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
 
   let providers: readonly Address[] = []
   let masks: SubmittedMask[] = []
-  if (isProviderType(auctionType)) {
+  if (auctionType === AuctionType.ProviderSecondPrice) {
     const [named, maskLogs] = await Promise.all([
       publicClient.readContract({
         address: config.program,
@@ -270,7 +273,7 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
     throw new Error(`E3 ${e3Id}: ${error instanceof Error ? error.message : error}`)
   }
   console.log(
-    `📊 Processing E3 ${e3Id} (${AUCTION_TYPE_LABELS[auctionType]}): ${bids.length} bid(s), ${plan.counted} counted, ${masks.length}/${providers.length} mask(s)`,
+    `📊 Processing E3 ${e3Id} (${DESIGN_LABELS[auctionType]}): ${bids.length} bid(s), ${plan.counted} counted, ${masks.length}/${providers.length} mask(s)`,
   )
   if (plan.kind === 'skip') {
     console.log(`⏭️  Skipping E3 ${e3Id}: ${plan.reason}`)
@@ -324,7 +327,7 @@ async function readProviderAuction(e3Id: bigint, provider: Address): Promise<Pro
     sdk.getE3Stage(e3Id),
     publicClient.getBlock(),
   ])
-  if (creator === zeroAddress || !isAuctionType(auctionType) || !isProviderType(auctionType)) return null
+  if (creator === zeroAddress || !isAuctionType(auctionType) || auctionType !== AuctionType.ProviderSecondPrice) return null
   const [providers, submitted] = await Promise.all([
     publicClient.readContract({ ...read, functionName: 'auctionProviders', args: [e3Id] }),
     publicClient.readContract({ ...read, functionName: 'maskSubmitted', args: [e3Id, provider] }),
@@ -338,7 +341,7 @@ const maskProvider =
         address: maskAccount.address,
         readAuction: (e3Id) => readProviderAuction(e3Id, maskAccount.address),
         prove: async (committeeKey) => {
-          const prover = await BidProver.create()
+          const prover = await createBidProver()
           try {
             const { ciphertext, commitment, proof } = await prover.proveMask(committeeKey, maskAccount.address)
             return { ciphertext, commitment, proof }

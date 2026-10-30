@@ -5,21 +5,27 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React from 'react'
+import { DEGREE } from '@interfold/auction-core'
+import { useLeaveGuard } from '@/hooks/useLeaveGuard'
 import { useInvalidMasks } from '@/hooks/useMaskCheck'
 import { useMask } from '@/hooks/useMask'
 import type { Wallet } from '@/hooks/useWallet'
-import { type AuctionPhase, type AuctionState, maskCount } from '@/utils/auction'
+import { type AuctionPhase, type AuctionState, maskCount, masksComplete } from '@/utils/auction'
+import { KEY_GENERATION_HINT, MASK_PROOF_HINT } from '@/utils/estimates'
+import { sameAddress } from '@/utils/format'
+import { ConnectPrompt } from './ConnectPrompt'
 import { AddressLink } from './Explorer'
 import Spinner from './Spinner'
 import SubmissionSteps from './SubmissionSteps'
-
-const sameAddress = (a: string, b: string | undefined) => b !== undefined && a.toLowerCase() === b.toLowerCase()
+import { WrongChainNote } from './WrongChainNote'
 
 interface MaskPanelProps {
   auction: AuctionState
   phase: AuctionPhase
   wallet: Wallet
   committeeKey: Uint8Array | null
+  /** Why the committee key could not be read, if it could not. */
+  keyError: string | null
   onSubmitted: () => void
 }
 
@@ -27,8 +33,9 @@ interface MaskPanelProps {
  * The mask providers of a mask-provider auction and whether each has sent its mask. A connected provider
  * that has not sent its mask can prove and send it here. Bidding opens when every mask is in.
  */
-const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committeeKey, onSubmitted }) => {
+const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committeeKey, keyError, onSubmitted }) => {
   const mask = useMask({ e3Id: auction.e3Id, account: wallet.address, committeeKey, onSubmitted })
+  useLeaveGuard(mask.submitting)
   const sent = maskCount(auction)
   const total = auction.providers.length
   const invalid = useInvalidMasks(
@@ -46,17 +53,19 @@ const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committee
       : !open
         ? 'The window for masks is closed.'
         : phase === 'awaiting-key'
-          ? 'Masks can be sent once the committee has published its key. Key generation takes several minutes.'
+          ? `Masks can be sent once the committee has published its key. Key generation takes ${KEY_GENERATION_HINT}.`
           : committeeKey === null
-            ? 'Fetching the committee key…'
+            ? keyError === null
+              ? 'Fetching the committee key…'
+              : 'Your mask needs the committee key.'
             : null
 
   return (
     <div className='space-y-6'>
       <p className='text-sm text-ink'>
-        Before bidding opens, each mask provider sends one random mask, encrypted to the committee key. The program multiplies the encrypted
-        result by the masks, so that the committee decrypts only the winner and the price. Bidding opens when every provider has sent its
-        mask. One honest provider is enough to keep the bids private.
+        A mask provider hides the losing bids for the bidders. Before bidding opens, each provider sends one random mask, encrypted to the
+        committee key. The program multiplies the encrypted result by the masks, so that the committee decrypts only the winner and the
+        price. Bidding opens when every provider has sent its mask. One honest provider is enough to keep the bids private.
       </p>
       <ul className='space-y-2'>
         {auction.providers.map((provider) => (
@@ -79,13 +88,20 @@ const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committee
         </div>
       )}
 
+      {!wallet.isConnected && open && !masksComplete(auction) && (
+        <ConnectPrompt>Are you a mask provider of this auction? Connect your wallet to send your mask.</ConnectPrompt>
+      )}
+      {mine && !mine.submitted && wallet.wrongChain && (
+        <WrongChainNote>Your wallet is on another network. Switch networks to send your mask.</WrongChainNote>
+      )}
+
       {mine && !mine.submitted && wallet.isConnected && !wallet.wrongChain && (
         <div className='space-y-3'>
           <p className='label !mb-0'>You are a mask provider of this auction</p>
           <p className='muted text-xs'>
-            Your mask is 128 random values, none of them zero. It never leaves this browser unencrypted. Proving runs in this tab and takes
-            a few minutes: one encryption with its proof, then one proof that no value is zero. Keep the tab open. A mask provider sends the
-            transaction itself: nobody can send it for you.
+            Your mask is {DEGREE} random values, none of them zero. It is encrypted in this browser. Proving runs in this tab and takes{' '}
+            {MASK_PROOF_HINT}. It makes one encryption with its proof, then one proof that no value is zero. Keep the tab open. The page can
+            stop responding for short periods. A mask provider sends the transaction itself: nobody can send it for you.
           </p>
           {blocked && <div className='note'>{blocked}</div>}
           <button onClick={() => void mask.submit()} disabled={blocked !== null || mask.submitting} className='btn accent block'>
@@ -101,7 +117,9 @@ const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committee
       )}
       {mine?.submitted && <div className='note ok'>Your mask is on chain. Thank you.</div>}
       {mask.error && <div className='note bad'>{mask.error}</div>}
-      {mask.steps.length > 0 && <SubmissionSteps title='Your mask' steps={mask.steps} running={mask.submitting} run={mask.run} />}
+      {mask.steps.length > 0 && (
+        <SubmissionSteps title='Your mask' steps={mask.steps} running={mask.submitting} run={mask.run} expected={MASK_PROOF_HINT} />
+      )}
     </div>
   )
 }

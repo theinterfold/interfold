@@ -133,7 +133,7 @@
 //! output at depth 3. There are 7 ct*ct products: 3 for `tests`, 2 squares, one for `r` and the
 //! last one.
 //!
-//! See `sdk/src/layout.ts` for the client decoder.
+//! See `decodeResult` in each design package under `sdk/` for the client decoder.
 
 use e3_compute_provider::policy::{InputRecord, leaf_from_digest};
 use e3_compute_provider::{ComputeError, FHEProcessorInput, InputPolicy, PublishedInput};

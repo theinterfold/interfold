@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { hexToBytes } from 'viem'
 import { CommitteePublicKeyAssembler } from '@interfold/sdk'
 import type { CommitteePublicKeyChunkPublishedData } from '@interfold/sdk'
@@ -12,6 +12,15 @@ import { CiphernodeRegistryOwnable__factory } from '@interfold/contracts/types'
 import { getContractAddresses } from '@/utils/env-config'
 import { scanLogs } from '@/utils/logs'
 import { getReadSdk, publicClient } from '@/utils/chain'
+import { formatError } from '@/utils/error-formatting'
+
+/** The committee key of an auction, why it could not be read, and a way to try again. */
+export interface CommitteeKey {
+  key: Uint8Array | null
+  /** Why the key could not be read. `null` while it is loading, and once it is found. */
+  error: string | null
+  retry: () => void
+}
 
 /**
  * The committee key of an E3, assembled from the registry's `CommitteePublicKeyChunkPublished` logs.
@@ -21,12 +30,17 @@ import { getReadSdk, publicClient } from '@/utils/chain'
  * assembler, which ignores a chunk it already holds.
  *
  * @param enabled Whether the key is still needed; the hook does nothing while it is `false`.
+ * @returns The key once it is assembled and valid, the last history read or key check error (`null` when there is none), and `retry`, which reads the history again.
  */
-export function useCommitteeKey(e3Id: bigint | null, enabled: boolean): Uint8Array | null {
+export function useCommitteeKey(e3Id: bigint | null, enabled: boolean): CommitteeKey {
   const [committeeKey, setCommitteeKey] = useState<Uint8Array | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt((count) => count + 1), [])
 
   useEffect(() => {
     setCommitteeKey(null)
+    setError(null)
     if (e3Id === null || !enabled) return
     const sdk = getReadSdk()
     const { ciphernodeRegistry } = getContractAddresses()
@@ -45,13 +59,18 @@ export function useCommitteeKey(e3Id: bigint | null, enabled: boolean): Uint8Arr
           // A reassembled key is an untrusted transport value until it matches the on-chain commitment.
           if (!(await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment)))) {
             console.warn(`Rejected committee key candidate for E3 ${e3Id}: commitment mismatch`)
+            if (!cancelled) setError('A key published for this auction does not match its on-chain commitment.')
             return
           }
           found = true
           assembler.clear(e3Id)
-          if (!cancelled) setCommitteeKey(assembled.publicKey)
+          if (!cancelled) {
+            setCommitteeKey(assembled.publicKey)
+            setError(null)
+          }
         } catch (err) {
           console.warn(`Ignored invalid committee key chunk for E3 ${e3Id}:`, err)
+          if (!cancelled) setError(`A key chunk is not valid: ${formatError(err)}`)
         }
       })
     }
@@ -78,16 +97,21 @@ export function useCommitteeKey(e3Id: bigint | null, enabled: boolean): Uint8Arr
     const unwatch = publicClient.watchContractEvent({
       ...query,
       onLogs: (logs) => logs.forEach((log) => handle(toData(log.args))),
+      // The subscription polls again after a failed poll, so one failure is not shown: a recovered poll would leave a stale alert.
+      onError: (err) => console.warn(`A poll for the committee key of E3 ${e3Id} failed:`, err),
     })
     scanLogs((range) => publicClient.getContractEvents({ ...query, ...range }))
       .then(({ logs }) => logs.forEach((log) => handle(toData(log.args))))
-      .catch((err) => console.warn(`Could not read the committee key history of E3 ${e3Id}:`, err))
+      .catch((err) => {
+        console.warn(`Could not read the committee key history of E3 ${e3Id}:`, err)
+        if (!cancelled) setError(formatError(err))
+      })
 
     return () => {
       cancelled = true
       unwatch()
     }
-  }, [e3Id, enabled])
+  }, [e3Id, enabled, attempt])
 
-  return committeeKey
+  return { key: committeeKey, error: committeeKey === null ? error : null, retry }
 }

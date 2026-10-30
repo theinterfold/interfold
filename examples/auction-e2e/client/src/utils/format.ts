@@ -13,3 +13,6 @@ export function shortId(id: bigint | string, head = 4, tail = 5): string {
   const digits = id.toString()
   return digits.length <= head + tail + 1 ? digits : `${digits.slice(0, head)}…${digits.slice(-tail)}`
 }
+
+/** Whether `a` and `b` are the same address, ignoring case. `b` may be missing. */
+export const sameAddress = (a: string, b: string | undefined): boolean => b !== undefined && a.toLowerCase() === b.toLowerCase()

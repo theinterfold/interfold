@@ -13,7 +13,10 @@ packages:
   - templates/default/client
   - examples/auction-e2e
   - examples/auction-e2e/client
-  - examples/auction-e2e/sdk
+  - examples/auction-e2e/sdk/core
+  - examples/auction-e2e/sdk/first-price
+  - examples/auction-e2e/sdk/provider-second-price
+  - examples/auction-e2e/sdk/qnr-second-price
   - examples/sealed-cca
   - examples/sealed-cca/client
   - examples/sealed-cca/sdk

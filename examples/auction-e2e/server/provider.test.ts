@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { describe, expect, it, vi } from 'vitest'
-import { AuctionType } from '@interfold/auction'
+import { AuctionType } from '@interfold/auction-core'
 import { E3Stage } from '@interfold/sdk/contracts'
 import { MaskProvider, MaskRejectedError, NOT_LISTED, decideMask, type ProviderAuction, type ProvedMask } from './provider'
 

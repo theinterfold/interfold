@@ -17,7 +17,10 @@
   },
   "dependencies": {
     "@aztec-foundation/bb.js": "6.0.0",
-    "@interfold/auction": "workspace:*",
+    "@interfold/auction-core": "workspace:*",
+    "@interfold/auction-first-price": "workspace:*",
+    "@interfold/auction-provider-second-price": "workspace:*",
+    "@interfold/auction-qnr-second-price": "workspace:*",
     "@interfold/contracts": "workspace:*",
     "@interfold/sdk": "workspace:*",
     "@noir-lang/noir_js": "1.0.0-rc.3",

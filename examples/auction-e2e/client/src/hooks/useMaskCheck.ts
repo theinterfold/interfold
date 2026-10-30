@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
-import { checkMasks } from '@interfold/auction'
+import { checkMasks } from '@interfold/auction-provider-second-price'
 import { readSubmittedMasks } from '@/utils/auction-events'
 import { opensCommitment } from '@/utils/commitments'
 

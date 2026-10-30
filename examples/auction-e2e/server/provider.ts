@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { Address, Hex } from 'viem'
-import { type AuctionType, isProviderType } from '@interfold/auction'
+import { AuctionType } from '@interfold/auction-core'
 import { E3Stage } from '@interfold/sdk/contracts'
 
 /** What a mask provider needs to know about a mask-provider auction to decide what to do. */
@@ -38,7 +38,7 @@ export const NOT_LISTED = 'this address is not a mask provider of the auction'
  * key is published, from the start of the input window to its end, and only if the creator named it.
  */
 export function decideMask(address: Address, auction: ProviderAuction): MaskDecision {
-  if (!isProviderType(auction.type)) return { kind: 'skip', reason: 'the auction type has no mask providers' }
+  if (auction.type !== AuctionType.ProviderSecondPrice) return { kind: 'skip', reason: 'the auction type has no mask providers' }
   if (!auction.providers.some((provider) => provider.toLowerCase() === address.toLowerCase())) {
     return { kind: 'skip', reason: NOT_LISTED }
   }

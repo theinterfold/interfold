@@ -7,7 +7,8 @@
 import { type Address, zeroAddress } from 'viem'
 import { E3Stage, FailureReason } from '@interfold/sdk'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
-import { type AuctionType, isAuctionType, isProviderType, type PriceList, readPriceList } from '@interfold/auction'
+import { type AuctionType, isAuctionType, type PriceList, readPriceList } from '@interfold/auction-core'
+import { hasProviders } from './designs'
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
 import { getReadSdk, publicClient } from './chain'
@@ -31,11 +32,13 @@ export interface AuctionState {
   failureReason: FailureReason | null
   /** Unix seconds: bids are accepted from `inputWindow[0]` to `inputWindow[1]`. */
   inputWindow: readonly [bigint, bigint]
+  /** Unix seconds of the block that requested the E3. The committee key request starts here. */
+  requestedAt: bigint
   /** The decrypted result, once the committee has published it. */
   plaintextOutput: `0x${string}` | null
   /** The bidder gate contract, or the zero address when anyone may bid. */
   gate: `0x${string}`
-  /** Addresses that have bid at least once. They take a place of `MAX_BIDDERS_BY_TYPE[auctionType]`. */
+  /** Addresses that have bid at least once. They take a place of `MAX_BIDDERS`. */
   bidderCount: number
   /** The mask providers the creator named, in that order. Empty for the types that have none. */
   providers: readonly MaskProviderState[]
@@ -53,6 +56,32 @@ export const PHASE_LABELS: Record<AuctionPhase, string> = {
   decrypting: 'Decrypting',
   complete: 'Result ready',
   failed: 'Failed',
+}
+
+/** The name of each step of the progress list: a noun, so that it reads the same before, during and after the step. */
+export const STEP_TITLES: Record<(typeof PHASE_ORDER)[number], string> = {
+  'awaiting-key': 'Committee key',
+  bidding: 'Bidding',
+  computing: 'Computation',
+  decrypting: 'Decryption',
+  complete: 'Result',
+}
+
+/** Why an auction failed, in words for the reader. Every reason has a line. */
+export const FAILURE_TEXT: Record<FailureReason, string> = {
+  [FailureReason.None]: 'No reason was recorded.',
+  [FailureReason.CommitteeFormationTimeout]: 'The committee did not form in time.',
+  [FailureReason.InsufficientCommitteeMembers]: 'Too few ciphernodes joined the committee.',
+  [FailureReason.DKGTimeout]: 'The committee did not finish the key in time.',
+  [FailureReason.DKGInvalidShares]: 'The committee produced invalid key shares.',
+  [FailureReason.NoInputsReceived]: 'No bid arrived before the window closed.',
+  [FailureReason.ComputeTimeout]: 'The computation did not finish in time.',
+  [FailureReason.ComputeProviderExpired]: 'The program did not respond in time.',
+  [FailureReason.ComputeProviderFailed]: 'The program failed to compute the result.',
+  [FailureReason.RequesterCancelled]: 'The creator cancelled the auction.',
+  [FailureReason.DecryptionTimeout]: 'The committee did not decrypt the result in time.',
+  [FailureReason.DecryptionInvalidShares]: 'The committee produced invalid decryption shares.',
+  [FailureReason.VerificationFailed]: 'The result did not pass verification.',
 }
 
 /** The bytes the committee publishes are `0x` until the decryption is on chain. */
@@ -147,7 +176,7 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
   const [e3, stage, providers] = await Promise.all([
     sdk.getE3(e3Id),
     sdk.getE3Stage(e3Id),
-    isProviderType(auctionType) ? loadProviders(e3Id) : Promise.resolve([]),
+    hasProviders(auctionType) ? loadProviders(e3Id) : Promise.resolve([]),
   ])
   const failureReason = stage === E3Stage.Failed ? await sdk.getFailureReason(e3Id) : null
   return {
@@ -159,6 +188,7 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
     stage,
     failureReason,
     inputWindow: e3.inputWindow,
+    requestedAt: e3.requestBlock,
     plaintextOutput: isPublished(e3.plaintextOutput) ? e3.plaintextOutput : null,
     gate,
     bidderCount: Number(bidders),

@@ -5,32 +5,33 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useWalletClient } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
 import {
   AUCTION_TYPES,
-  AUCTION_TYPE_DESCRIPTIONS,
-  AUCTION_TYPE_LABELS,
   AuctionType,
   MAX_ALLOWLIST_MEMBERS,
-  MAX_BIDDERS_BY_TYPE,
+  MAX_BIDDERS,
   MIN_BIDDERS,
   encodeAllowlistConfig,
-  isProviderType,
   rolesFor,
-} from '@interfold/auction'
-import { STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
+} from '@interfold/auction-core'
+import { designOf, hasProviders } from '@/utils/designs'
+import { INPUT_WINDOW_START_BUFFER, STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
+import { useLeaveGuard } from '@/hooks/useLeaveGuard'
 import { useWallet } from '@/hooks/useWallet'
 import { useServerProvider } from '@/hooks/useServerProvider'
 import { parseAllowlist } from '@/utils/allowlist-input'
 import { chain } from '@/utils/chain'
 import { ALLOWLIST_GATE_ADDRESS } from '@/utils/env-config'
 import { formatError } from '@/utils/error-formatting'
+import { BID_PROOF_HINT, KEY_GENERATION_HINT, KEY_GENERATION_MINUTES } from '@/utils/estimates'
 import { uploadImage } from '@/utils/image'
 import { ConnectPrompt } from '@/components/ConnectPrompt'
 import { INITIAL_PRICE_FORM, PriceLevelsField, pricesOf } from '@/components/PriceLevelsField'
 import Spinner from '@/components/Spinner'
+import { WrongChainNote } from '@/components/WrongChainNote'
 import { PictureField } from '@/components/PictureField'
 import { ProvidersField, checkProviders } from '@/components/ProvidersField'
 
@@ -46,22 +47,26 @@ const DURATIONS = [
 ] as const
 
 const NEXT_STEPS = [
-  'You approve the fee token and send the request. The wallet asks you to sign each.',
-  'The committee of ciphernodes generates the key. This takes several minutes.',
+  'You approve the fee token and send the request. The wallet asks you to sign each one.',
+  `The committee of ciphernodes generates the key. This takes ${KEY_GENERATION_HINT}.`,
   'Bidding opens once the key is published and stays open until the duration ends.',
   'After the window closes the result is computed and decrypted. Share the auction link with the bidders.',
 ]
 
 /** The next steps of an auction type: a type with mask providers needs their masks before bidding opens. */
 function nextSteps(type: AuctionType): string[] {
-  if (!isProviderType(type)) return NEXT_STEPS
+  if (!hasProviders(type)) return NEXT_STEPS
   return [
     ...NEXT_STEPS.slice(0, 2),
-    'Each mask provider sends its mask. A provider can do it from the auction page, and the server sends the mask of its own provider address.',
+    'Each mask provider sends its mask from the auction page. The demo server sends the mask for its own provider address.',
     'Bidding opens once the key is published and every mask is on chain, and stays open until the duration ends.',
     NEXT_STEPS[3],
   ]
 }
+
+/** The minutes that bidding stays open after the key is ready, for a window of `durationSeconds`. The window starts a few minutes after the request. */
+const biddingMinutes = (durationSeconds: number): number =>
+  Math.round(durationSeconds / 60 + Number(INPUT_WINDOW_START_BUFFER) / 60 - KEY_GENERATION_MINUTES)
 
 const UPLOAD_LABELS = { signing: 'Sign the picture in your wallet…', uploading: 'Uploading the picture…' } as const
 
@@ -109,6 +114,25 @@ const CreateAuction: React.FC = () => {
   const { providers, error: providersFault } = checkProviders(auctionType, providerRows)
   const canSubmit =
     ready && titleValid && 'prices' in priced && listError === null && providersFault === null && !busy && create.shortfall === null
+  useLeaveGuard(busy)
+
+  // Why the button is off, if it is: the first thing the creator must fix. A missing or wrong wallet has its own note above the button.
+  const blockReason =
+    busy || !ready
+      ? null
+      : !titleValid
+        ? bytes === 0
+          ? 'Enter a title.'
+          : `Shorten the title to ${MAX_TITLE_BYTES} bytes or less.`
+        : 'error' in priced
+          ? priced.error
+          : providersFault !== null
+            ? providersFault
+            : listError !== null
+              ? listError
+              : create.shortfall
+                ? 'Add fee tokens to this account first.'
+                : null
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -151,7 +175,7 @@ const CreateAuction: React.FC = () => {
         <h1 className='display'>Create an auction</h1>
         <p className='lede'>
           Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Every type takes{' '}
-          {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} bidders.
+          {MIN_BIDDERS} to {MAX_BIDDERS} bidders.
         </p>
       </header>
 
@@ -182,24 +206,25 @@ const CreateAuction: React.FC = () => {
               <label key={type} className={`choice ${auctionType === type ? 'on' : ''}`}>
                 <input type='radio' name='auction-type' checked={auctionType === type} onChange={() => setAuctionType(type)} />
                 <span className='space-y-1'>
-                  <span className='block font-semibold'>{AUCTION_TYPE_LABELS[type]}</span>
-                  <span className='block text-sm text-muted'>{AUCTION_TYPE_DESCRIPTIONS[type]}</span>
+                  <span className='block font-semibold'>{designOf(type).label}</span>
+                  <span className='block text-sm text-muted'>{designOf(type).reveals}</span>
+                  <span className='block text-sm text-muted'>Trust: {designOf(type).trust}</span>
                   <span className='block font-mono text-xs text-muted'>
-                    {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[type]} bidders · {rolesFor(type).length} ciphertexts for each bid
+                    {MIN_BIDDERS} to {MAX_BIDDERS} bidders · {rolesFor(type).length} ciphertexts for each bid
                   </span>
                 </span>
               </label>
             ))}
-            <p className='text-sm text-muted' aria-live='polite'>
-              {isProviderType(auctionType)
-                ? `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. Every bid has 2 ciphertexts, and the mask providers you name send the masks before bidding opens. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
-                : auctionType === AuctionType.QnrSecondPrice
-                  ? `If the top bids tie, the tied bidder who bid first wins. The auction never fails and needs no trusted party and no mask providers: the bidders themselves send the random shares. The price of this is a small statistical hint about the losing bids, which is larger on the small demo parameters than on secure ones. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
-                  : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. The auction never fails and needs no trusted party and no mask providers: each bid carries a mask that the bidder draws, and the masks hide every slot that the result does not need. The winning bid is the price, so it is public. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
+            <p className='text-sm text-muted'>
+              If the top bids tie, the tied bidder who bid first wins. The{' '}
+              <Link to='/about' className='linkish'>
+                How it works
+              </Link>{' '}
+              page explains ties.
             </p>
           </fieldset>
 
-          {isProviderType(auctionType) && (
+          {hasProviders(auctionType) && (
             <ProvidersField
               rows={providerRows}
               onChange={setEditedProviders}
@@ -279,19 +304,25 @@ const CreateAuction: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className='mt-1 text-xs text-muted'>
-              The duration counts from the request. Key generation takes several minutes and bids open only once the key is published, so
-              bidding gets less than the full time. Proving a bid takes several minutes too: leave room for it.
+            <p className='mt-1 text-sm text-muted'>
+              The window starts about {Number(INPUT_WINDOW_START_BUFFER) / 60} minutes after the request. Key generation takes{' '}
+              {KEY_GENERATION_HINT}, and bids open only once the key is published. A bid proof takes {BID_PROOF_HINT}. Leave room for both.
             </p>
+            {biddingMinutes(durationSeconds) < 15 && (
+              <p className='note warn mt-2 text-sm'>
+                With this duration, bidding stays open for about {Math.max(biddingMinutes(durationSeconds), 0)} minutes. A bidder may not
+                finish a proof in time. Choose a longer duration.
+              </p>
+            )}
           </div>
 
           {!ready && !wrongChain && <ConnectPrompt>Connect a wallet to create an auction.</ConnectPrompt>}
-          {wrongChain && <div className='note bad'>Your wallet is on another network. Switch to {chain.name} to continue.</div>}
+          {wrongChain && <WrongChainNote>Your wallet is on another network. Switch to {chain.name} to continue.</WrongChainNote>}
 
           {create.shortfall && (
             <div className='note warn space-y-3'>
               <p>
-                The E3 fee is <strong>{fee(create.shortfall.needed)}</strong> and this account holds{' '}
+                The creation fee is <strong>{fee(create.shortfall.needed)}</strong> and this account holds{' '}
                 <strong>{fee(create.shortfall.balance)}</strong>.
               </p>
               {create.tokenSource ? (
@@ -320,9 +351,14 @@ const CreateAuction: React.FC = () => {
               'Create auction'
             )}
           </button>
+          {blockReason && (
+            <p className='text-center text-sm text-muted' aria-live='polite'>
+              {blockReason}
+            </p>
+          )}
           <p className='text-center text-xs text-muted'>
-            Creating an auction pays the E3 fee in the fee token{create.feeToken ? ` (${create.feeToken.symbol})` : ''}. Bidders pay only
-            gas.
+            Creating an auction pays a creation fee in the fee token{create.feeToken ? ` (${create.feeToken.symbol})` : ''}. The fee pays
+            for the encrypted computation of the auction (an E3). Bidders pay only gas.
           </p>
         </form>
 
