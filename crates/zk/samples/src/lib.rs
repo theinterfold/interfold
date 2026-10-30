@@ -7,5 +7,6 @@
 //! Cryptographically valid artificial BFV data for tests and development tools, not live inputs.
 
 pub mod dkg;
-mod smudging;
+pub mod lbfv_proof_domain;
+
 pub mod threshold;

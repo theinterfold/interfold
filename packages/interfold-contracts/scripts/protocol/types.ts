@@ -149,7 +149,9 @@ export interface BfvVerifierRouteDeployment {
   committeeSize: number;
   decryptionVerifier: string;
   pkVerifier: string;
+  pkVerifierV2?: string;
   dkgAggregatorVerifier: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier: string;
   verifierZkTranscriptLib: string;
   dkgVerifierRelationsLib: string;
@@ -184,6 +186,7 @@ export interface ProtocolDeployment {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
@@ -252,6 +255,73 @@ export interface VrfSortitionUpgradePlan {
   randomness: RandomnessConfig;
   randomnessFlatFee: string;
   randomnessProviderOwnershipAcceptanceRequired: boolean;
+  safeTransactions: string;
+  governanceSafeBuilder?: string;
+  safeProposal?: SafeProposal;
+}
+
+export interface SecureCrispUpgradePlan {
+  name: string;
+  chainId: number;
+  operator: string;
+  protocolOwner: string;
+  interfoldProxy: string;
+  interfoldProxyAdmin: string;
+  interfoldImplementation: string;
+  lifecycleLibrary: string;
+  pricingLibrary: string;
+  registryProxy: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
+  sortitionLibrary: string;
+  bondingProxy: string;
+  bondingProxyAdmin: string;
+  bondingImplementation: string;
+  bondingAssetLibrary: string;
+  bondingEligibilityLibrary: string;
+  bondingSlashingLibrary: string;
+  bondingRegistrationLibrary: string;
+  bondingOwnershipLibrary: string;
+  refundManagerProxy: string;
+  refundManagerProxyAdmin: string;
+  refundManagerImplementation: string;
+  refundClaimLibrary: string;
+  previousSlashingManager: string;
+  slashingManager: string;
+  slashingEvidenceLibrary: string;
+  migratedSlashPolicyReasons: string[];
+  previousRandomnessProvider: string;
+  randomnessProvider: string;
+  randomness: RandomnessConfig;
+  randomnessProviderOwnershipAcceptanceRequired: boolean;
+  registeredOperatorCount: string;
+  preUpgradeActiveOperatorCount: string;
+  /** Whether activation raises the node-release policy and invalidates cached eligibility. */
+  nodeReleasePolicyUpdated: boolean;
+  registryRoot: string;
+  nodeReleaseRegistry: string;
+  nodeRelease: {
+    version: string;
+    protocolVersion: number;
+    nodeGeneration: number;
+    releaseId: string;
+  };
+  timeoutConfig: TimeoutConfig;
+  cryptoConfigId: string;
+  paramSet: number;
+  /** Minimum committee member count accepted for new E3 requests after activation. */
+  minimumCommitteeSize: string;
+  pkVerifier: string;
+  decryptionVerifier: string;
+  ciphertextVerifier: string;
+  crispProgram: string;
+  /** E3 programs closed to new requests by this activation. */
+  retiredE3Programs: string[];
+  dataAvailabilityVerifier: string;
+  inputAvailabilitySigner: string;
+  availBridge: string;
+  vectorx: string;
+  bfvVerifierRoutes: BfvVerifierRouteDeployment[];
   safeTransactions: string;
   governanceSafeBuilder?: string;
   safeProposal?: SafeProposal;
@@ -366,6 +436,7 @@ export interface ProtocolContracts {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;

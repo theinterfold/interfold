@@ -76,11 +76,12 @@ pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_5 --network localho
 heading "Request Committee"
 
 ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
-  --moduli 0x0000000007fffd81 \
-  --moduli 0x0000000007fff801 \
-  --moduli 0x0000000007fff781 \
-  --degree 64 \
-  --plaintext-modulus 17000000)
+  --moduli 0x00ffffffffffc601 \
+  --moduli 0x00ffffffffffc301 \
+  --moduli 0x00ffffffffffa501 \
+  --degree 128 \
+  --plaintext-modulus 100 \
+  --error1-variance 50471587840)
 
 sleep 4
 

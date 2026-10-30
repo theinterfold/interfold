@@ -19,7 +19,7 @@ pnpm check:links
 status=0
 printf '%s\n' "${pushed_refs:-}" | scripts/hooks/pushed-paths-match.sh .github/filters/circuits.yml || status=$?
 case "$status" in
-  0) pnpm check:verifiers ;;
+  0) pnpm generate:verifiers --preset insecure --committee minimum --on-chain --check --no-compile ;;
   1) ;;
   *) exit "$status" ;;
 esac

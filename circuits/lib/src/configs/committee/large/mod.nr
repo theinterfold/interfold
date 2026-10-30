@@ -10,5 +10,7 @@ pub global N_PARTIES: u32 = 45;
 pub global T: u32 = 22;
 pub global H: u32 = 34;
 
+pub mod parity_insecure_64;
 pub mod parity_insecure;
-pub mod parity_secure;
+pub mod parity_secure_8192;
+pub mod parity_secure_16384;

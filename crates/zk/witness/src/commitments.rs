@@ -10,18 +10,32 @@
 //! (polynomials, public keys, secret keys, shares, etc.) using the SAFE sponge hash function.
 //! All functions match the corresponding Noir circuit implementations exactly.
 
+use alloy_primitives::B256;
 use ark_bn254::Fr as Field;
-use ark_ff::{BigInt as FieldInteger, BigInteger, PrimeField};
+use ark_ff::{BigInteger, PrimeField};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_safe::SafeSponge;
 use fhe::bfv::PublicKey;
+use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use num_bigint::BigInt;
-use num_traits::{ToPrimitive, Zero};
 use std::slice::from_ref;
+
+use super::output_layout::{
+    CircuitInputLayout, CircuitOutputLayout, FIELD_BYTE_LEN, LBFV_PK_GENERATION_INPUTS,
+    LBFV_PK_GENERATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS,
+};
+
+/// Commitments recomputed from one party's serialized l-BFV PK and RLK shares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LbfvShareCommitments {
+    pub pk_generation_commitments: Vec<B256>,
+    pub rlk_d0_commitments: Vec<B256>,
+    pub rlk_d2_commitments: Vec<B256>,
+}
 
 // ============================================================================
 // DOMAIN SEPARATORS
@@ -43,10 +57,26 @@ const DS_PK_GENERATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "PK_GENERATION_LIMB_V1"
+const DS_PK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4c, 0x49,
+    0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// String: "SHARE_COMPUTATION"
 const DS_SHARE_COMPUTATION: [u8; 64] = [
     0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x55, 0x54, 0x41, 0x54, 0x49, 0x4f,
     0x4e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "SHARE_COMPUTATION_CHUNK"
+const DS_SHARE_COMPUTATION_CHUNK: [u8; 64] = [
+    0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x55, 0x54, 0x41, 0x54, 0x49, 0x4f,
+    0x4e, 0x5f, 0x43, 0x48, 0x55, 0x4e, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -95,6 +125,54 @@ pub(crate) const DS_SHARE_DECRYPTION_CHAIN_STATE: [u8; 64] = [
 const DS_PK_AGGREGATION: [u8; 64] = [
     0x50, 0x4b, 0x5f, 0x41, 0x47, 0x47, 0x52, 0x45, 0x47, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_GENERATION"
+const DS_RLK_GENERATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_GENERATION_LIMB_V1"
+const DS_RLK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4c,
+    0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_AGGREGATION"
+const DS_RLK_AGGREGATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x41, 0x47, 0x47, 0x52, 0x45, 0x47, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "LBFV_PUBLIC_KEY_V1"
+const DS_LBFV_PUBLIC_KEY_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x50, 0x55, 0x42, 0x4c, 0x49, 0x43, 0x5f, 0x4b, 0x45, 0x59, 0x5f,
+    0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "LBFV_RLK_V1"
+const DS_LBFV_RLK_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x52, 0x4c, 0x4b, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "LBFV_KEY_ENVELOPE_V1"
+const DS_LBFV_KEY_ENVELOPE_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x45, 0x4e, 0x56, 0x45, 0x4c, 0x4f, 0x50,
+    0x45, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -308,6 +386,55 @@ pub fn compute_threshold_pk_commitment(pk0: &CrtPolynomial, bit_pk: u32) -> BigI
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// Compute the row- and limb-bound commitment to one l-BFV public-key polynomial.
+pub fn compute_lbfv_pk_limb_commitment(
+    row_index: u32,
+    limb_index: u32,
+    pk0: &Polynomial,
+    bit_pk: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(1u64),
+        Field::from(row_index as u64),
+        Field::from(limb_index as u64),
+        Field::from(pk0.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(pk0), bit_pk);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// Row commitment over the per-limb `pk0` commitments of one l-BFV public-key row. Mirrors the
+/// Noir `compute_lbfv_pk_row_commitment_from_limbs`.
+pub fn compute_lbfv_pk_row_commitment_from_limbs(
+    row_index: u32,
+    limb_commitments: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(2u64),
+        Field::from(row_index as u64),
+        Field::from(limb_commitments.len() as u64),
+    ];
+    payload.extend(limb_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// l-BFV public-key row commitment through its limb commitments. Use this, not
+/// [`compute_threshold_pk_commitment`], for l-BFV row commitments.
+pub fn compute_lbfv_pk_row_commitment(row_index: u32, pk0: &CrtPolynomial, bit_pk: u32) -> BigInt {
+    let limbs = pk0
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_lbfv_pk_limb_commitment(row_index, limb as u32, polynomial, bit_pk)
+        })
+        .collect::<Vec<_>>();
+    compute_lbfv_pk_row_commitment_from_limbs(row_index, &limbs)
+}
+
 /// Compute the pk_commitment for a serialized `PublicKeyShare`, matching what the C1 circuit outputs.
 ///
 /// Deserializes the keyshare, extracts the pk0 polynomial, and hashes it
@@ -385,6 +512,144 @@ pub fn compute_share_computation_e_sm_commitment(e_sm: &CrtPolynomial, bit_e_sm:
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+fn field_to_bigint(field: Field) -> BigInt {
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+fn compute_chunk_commitment(payload: Vec<Field>) -> BigInt {
+    let input_size = payload.len() as u32;
+    field_to_bigint(
+        compute_commitments(
+            payload,
+            DS_SHARE_COMPUTATION_CHUNK,
+            [0x80000000 | input_size, 1],
+        )[0],
+    )
+}
+
+fn chunk_polynomial(polynomial: &Polynomial, chunk_idx: usize, chunk_size: usize) -> Polynomial {
+    let coefficients = polynomial.coefficients();
+    let start = coefficients.len() - ((chunk_idx + 1) * chunk_size);
+    Polynomial::new(coefficients[start..start + chunk_size].to_vec())
+}
+
+/// Compute the SK root for the C1 polynomial orientation.
+pub fn compute_sc_sk_secret_root_commitment(
+    sk: &Polynomial,
+    bit_sk: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(chunk_size > 0 && sk.coefficients().len().is_multiple_of(chunk_size));
+    let chunk_count = sk.coefficients().len() / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let chunk = chunk_polynomial(sk, chunk_idx, chunk_size);
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(0u64),
+            Field::from(chunk_idx as u64),
+            Field::from(sk.coefficients().len() as u64),
+            Field::from(chunk_size as u64),
+        ];
+        payload = flatten(payload, std::slice::from_ref(&chunk), bit_sk);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(0u64),
+        Field::from(sk.coefficients().len() as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+/// Compute the ESM root for the C1 polynomial orientation.
+pub fn compute_sc_esm_secret_root_commitment(
+    e_sm: &CrtPolynomial,
+    bit_e_sm: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(!e_sm.limbs.is_empty());
+    assert!(
+        chunk_size > 0
+            && e_sm.limbs[0]
+                .coefficients()
+                .len()
+                .is_multiple_of(chunk_size)
+    );
+    let degree = e_sm.limbs[0].coefficients().len();
+    let chunk_count = degree / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(1u64),
+            Field::from(chunk_idx as u64),
+            Field::from(degree as u64),
+            Field::from(chunk_size as u64),
+        ];
+        let chunks = e_sm
+            .limbs
+            .iter()
+            .map(|limb| chunk_polynomial(limb, chunk_idx, chunk_size))
+            .collect::<Vec<_>>();
+        payload = flatten(payload, &chunks, bit_e_sm);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(1u64),
+        Field::from(degree as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+/// Compute a recipient share root from its C3/C4 polynomial orientation.
+pub fn compute_sc_party_share_root_commitment(
+    party_idx: usize,
+    mod_idx: usize,
+    message: &Polynomial,
+    bit_share: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(chunk_size > 0 && message.coefficients().len().is_multiple_of(chunk_size));
+    let degree = message.coefficients().len();
+    let chunk_count = degree / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let chunk = chunk_polynomial(message, chunk_idx, chunk_size);
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(2u64),
+            Field::from(party_idx as u64),
+            Field::from(mod_idx as u64),
+            Field::from(chunk_idx as u64),
+            Field::from(degree as u64),
+            Field::from(chunk_size as u64),
+        ];
+        payload = flatten(payload, std::slice::from_ref(&chunk), bit_share);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(2u64),
+        Field::from(party_idx as u64),
+        Field::from(mod_idx as u64),
+        Field::from(degree as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+fn field_from_bigint(value: &BigInt) -> Field {
+    let (_, bytes) = value.to_bytes_le();
+    Field::from_le_bytes_mod_order(&bytes)
+}
+
 /// Compute share encryption commitment from message polynomial.
 ///
 /// This matches the Noir `compute_share_encryption_commitment_from_message` function exactly.
@@ -443,6 +708,354 @@ pub fn compute_pk_aggregation_commitment(
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// The `pk1` half of [`compute_pk_aggregation_commitment`].
+///
+/// On the l-BFV path `pk1` is a fixed CRS row, so this value is a per-row constant. The config
+/// generator emits it as `LBFV_CRS_ROW_COMMITMENTS`, and the aggregation circuit uses the constant
+/// instead of hashing the row in-circuit.
+pub fn compute_pk_aggregation_pk1_commitment(pk1: &CrtPolynomial, bit_pk: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &pk1.limbs, bit_pk);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_AGGREGATION, io)[0])
+}
+
+/// Commit to the complete ordered l-BFV public-key row set.
+pub fn compute_lbfv_public_key_commitment(row_commitments: &[BigInt]) -> BigInt {
+    let mut payload = vec![Field::from(1u64), Field::from(row_commitments.len() as u64)];
+    payload.extend(row_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_LBFV_PUBLIC_KEY_V1, io)[0])
+}
+
+/// Commit to the complete ordered l-BFV relinearization-key row set.
+pub fn compute_lbfv_rlk_commitment(
+    d0_commitments: &[BigInt],
+    d2_commitments: &[BigInt],
+) -> Result<BigInt, crate::WitnessError> {
+    if d0_commitments.is_empty() || d0_commitments.len() != d2_commitments.len() {
+        return Err(crate::WitnessError::Other(
+            "l-BFV RLK commitment requires equal nonempty d0 and d2 rows".to_string(),
+        ));
+    }
+    let mut payload = vec![Field::from(1u64), Field::from(d0_commitments.len() as u64)];
+    payload.extend(d0_commitments.iter().map(field_from_bigint));
+    payload.extend(d2_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    Ok(field_to_bigint(
+        compute_commitments(payload, DS_LBFV_RLK_V1, io)[0],
+    ))
+}
+
+/// Commit to one versioned l-BFV public-key and relinearization-key pair.
+pub fn compute_lbfv_key_envelope_commitment(
+    public_key_commitment: &BigInt,
+    rlk_commitment: &BigInt,
+) -> BigInt {
+    let payload = vec![
+        Field::from(1u64),
+        field_from_bigint(public_key_commitment),
+        field_from_bigint(rlk_commitment),
+    ];
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_LBFV_KEY_ENVELOPE_V1, io)[0])
+}
+
+/// Compute the RLK commitment for the ephemeral polynomial shared by all rows.
+pub fn compute_rlk_r_commitment(r: &Polynomial, bit_r: u32) -> BigInt {
+    let payload = flatten(vec![Field::from(0u64)], from_ref(r), bit_r);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Row commitment over the per-limb commitments of one RLK row component. Mirrors the Noir
+/// `compute_rlk_row_commitment_from_limbs` (`kind_tag` 2 = d0, 3 = d2).
+pub fn compute_rlk_row_commitment_from_limbs(
+    kind_tag: u64,
+    row_index: u32,
+    limb_commitments: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(3u64),
+        Field::from(kind_tag),
+        Field::from(row_index as u64),
+        Field::from(limb_commitments.len() as u64),
+    ];
+    payload.extend(limb_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Compute the RLK generation commitment for one `d0` row, through its limb commitments.
+pub fn compute_rlk_d0_commitment(row_index: u32, d0: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let limbs = d0
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_rlk_limb_d0_commitment(row_index, limb as u32, polynomial, bit_d)
+        })
+        .collect::<Vec<_>>();
+    compute_rlk_row_commitment_from_limbs(2, row_index, &limbs)
+}
+
+/// Compute the RLK generation commitment for one `d2` row, through its limb commitments.
+pub fn compute_rlk_d2_commitment(row_index: u32, d2: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let limbs = d2
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_rlk_limb_d2_commitment(row_index, limb as u32, polynomial, bit_d)
+        })
+        .collect::<Vec<_>>();
+    compute_rlk_row_commitment_from_limbs(3, row_index, &limbs)
+}
+
+fn compute_rlk_indexed_limb_commitment(
+    kind_tag: u64,
+    row_index: u32,
+    limb_index: u32,
+    polynomial: &Polynomial,
+    bit: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(kind_tag),
+        Field::from(row_index as u64),
+        Field::from(limb_index as u64),
+        Field::from(polynomial.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(polynomial), bit);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// Compute the row- and limb-bound commitment to one `d0` polynomial.
+pub fn compute_rlk_limb_d0_commitment(
+    row_index: u32,
+    limb_index: u32,
+    d0: &Polynomial,
+    bit_d: u32,
+) -> BigInt {
+    compute_rlk_indexed_limb_commitment(2, row_index, limb_index, d0, bit_d)
+}
+
+/// Compute the row- and limb-bound commitment to one `d2` polynomial.
+pub fn compute_rlk_limb_d2_commitment(
+    row_index: u32,
+    limb_index: u32,
+    d2: &Polynomial,
+    bit_d: u32,
+) -> BigInt {
+    compute_rlk_indexed_limb_commitment(3, row_index, limb_index, d2, bit_d)
+}
+
+/// Compute an RLK aggregation commitment for one aggregated component row.
+pub fn compute_rlk_aggregation_commitment(component: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &component.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_AGGREGATION, io)[0])
+}
+
+/// Validate that serialized l-BFV PK and RLK shares match their row-proof outputs.
+///
+/// This function validates only the public statement shape, row order, deserialization, and
+/// commitments. The caller must validate proof signatures and verify the proofs separately.
+pub fn validate_lbfv_serialized_share_commitments(
+    preset: BfvPreset,
+    public_key_share_bytes: &[u8],
+    rlk_share_bytes: &[u8],
+    public_key_row_signals: &[&[u8]],
+    rlk_row_signals: &[&[u8]],
+) -> Result<LbfvShareCommitments, crate::WitnessError> {
+    let (params, _) = build_pair_for_preset(preset)
+        .map_err(|error| crate::WitnessError::Other(error.to_string()))?;
+    let public_key_adapter =
+        crate::threshold::pk_generation::LbfvPkGenerationAdapter::from_parameters(preset, &params)?;
+    let rlk_adapter =
+        crate::threshold::rlk_generation::RlkGenerationAdapter::from_parameters(preset, &params)?;
+    validate_lbfv_serialized_share_commitments_with_adapters(
+        &params,
+        &public_key_adapter,
+        &rlk_adapter,
+        public_key_share_bytes,
+        rlk_share_bytes,
+        public_key_row_signals,
+        rlk_row_signals,
+    )
+}
+
+fn validate_lbfv_serialized_share_commitments_with_adapters(
+    params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+    public_key_adapter: &crate::threshold::pk_generation::LbfvPkGenerationAdapter,
+    rlk_adapter: &crate::threshold::rlk_generation::RlkGenerationAdapter,
+    public_key_share_bytes: &[u8],
+    rlk_share_bytes: &[u8],
+    public_key_row_signals: &[&[u8]],
+    rlk_row_signals: &[&[u8]],
+) -> Result<LbfvShareCommitments, crate::WitnessError> {
+    let row_count = public_key_adapter.row_count();
+    if rlk_adapter.row_count() != row_count {
+        return Err(crate::WitnessError::Other(format!(
+            "l-BFV adapters must expose the same number of rows"
+        )));
+    }
+    validate_lbfv_row_signals(
+        "public-key",
+        public_key_row_signals,
+        LBFV_PK_GENERATION_INPUTS,
+        LBFV_PK_GENERATION_OUTPUTS,
+        row_count,
+    )?;
+    validate_lbfv_row_signals(
+        "RLK",
+        rlk_row_signals,
+        RLK_GENERATION_INPUTS,
+        RLK_GENERATION_OUTPUTS,
+        row_count,
+    )?;
+
+    let public_key_share =
+        LbfvPublicKeyShare::from_bytes(public_key_share_bytes, params).map_err(|error| {
+            crate::WitnessError::Other(format!("l-BFV public-key share deserialize: {error}"))
+        })?;
+    let rlk_share = RelinKeyShare::from_bytes(rlk_share_bytes, params).map_err(|error| {
+        crate::WitnessError::Other(format!("l-BFV RLK share deserialize: {error}"))
+    })?;
+    let bit = e3_fhe_params::utils::compute_modulus_bit(params);
+    let pk_layout = CircuitOutputLayout::Fixed {
+        fields: LBFV_PK_GENERATION_OUTPUTS,
+    };
+    let rlk_layout = CircuitOutputLayout::Fixed {
+        fields: RLK_GENERATION_OUTPUTS,
+    };
+    let mut pk_generation_commitments = Vec::with_capacity(row_count);
+    let mut rlk_d0_commitments = Vec::with_capacity(row_count);
+    let mut rlk_d2_commitments = Vec::with_capacity(row_count);
+
+    for row in 0..row_count {
+        let (_, pk0) = public_key_adapter.share_row_components(row as u32, &public_key_share)?;
+        let actual_pk =
+            bigint_commitment_to_b256(compute_lbfv_pk_row_commitment(row as u32, &pk0, bit))?;
+        let expected_pk = extract_commitment(
+            &pk_layout,
+            public_key_row_signals[row],
+            "pk_commitment",
+            "public-key",
+            row,
+        )?;
+        if actual_pk != expected_pk {
+            return Err(crate::WitnessError::Other(format!(
+                "l-BFV public-key commitment mismatch at row {row}"
+            )));
+        }
+        pk_generation_commitments.push(actual_pk);
+
+        let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
+        let actual_d0 = bigint_commitment_to_b256(compute_rlk_d0_commitment(row as u32, &d0, bit))?;
+        let actual_d2 = bigint_commitment_to_b256(compute_rlk_d2_commitment(row as u32, &d2, bit))?;
+        let expected_d0 = extract_commitment(
+            &rlk_layout,
+            rlk_row_signals[row],
+            "d0_commitment",
+            "RLK d0",
+            row,
+        )?;
+        let expected_d2 = extract_commitment(
+            &rlk_layout,
+            rlk_row_signals[row],
+            "d2_commitment",
+            "RLK d2",
+            row,
+        )?;
+        if actual_d0 != expected_d0 {
+            return Err(crate::WitnessError::Other(format!(
+                "l-BFV RLK d0 commitment mismatch at row {row}"
+            )));
+        }
+        if actual_d2 != expected_d2 {
+            return Err(crate::WitnessError::Other(format!(
+                "l-BFV RLK d2 commitment mismatch at row {row}"
+            )));
+        }
+        rlk_d0_commitments.push(actual_d0);
+        rlk_d2_commitments.push(actual_d2);
+    }
+
+    Ok(LbfvShareCommitments {
+        pk_generation_commitments,
+        rlk_d0_commitments,
+        rlk_d2_commitments,
+    })
+}
+
+fn validate_lbfv_row_signals(
+    family: &str,
+    signals: &[&[u8]],
+    inputs: &'static [super::output_layout::OutputField],
+    outputs: &'static [super::output_layout::OutputField],
+    row_count: usize,
+) -> Result<(), crate::WitnessError> {
+    if signals.len() != row_count {
+        return Err(crate::WitnessError::Other(format!(
+            "l-BFV {family} proof bundle has {} rows; expected {row_count}",
+            signals.len()
+        )));
+    }
+    let expected_len = (inputs.len() + outputs.len()) * FIELD_BYTE_LEN;
+    let input_layout = CircuitInputLayout::Fixed { fields: inputs };
+    for (row, public_signals) in signals.iter().enumerate() {
+        if public_signals.len() != expected_len {
+            return Err(crate::WitnessError::Other(format!(
+                "l-BFV {family} proof row {row} has {} public bytes; expected {expected_len}",
+                public_signals.len()
+            )));
+        }
+        let row_field = input_layout
+            .extract_field(public_signals, "row_index")
+            .expect("the fixed l-BFV input layout contains row_index");
+        if row_field[..28].iter().any(|byte| *byte != 0)
+            || u32::from_be_bytes(
+                row_field[28..]
+                    .try_into()
+                    .expect("the row field has a four-byte suffix"),
+            ) != row as u32
+        {
+            return Err(crate::WitnessError::Other(format!(
+                "l-BFV {family} proof is not in row {row}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn extract_commitment(
+    layout: &CircuitOutputLayout,
+    public_signals: &[u8],
+    field: &str,
+    family: &str,
+    row: usize,
+) -> Result<B256, crate::WitnessError> {
+    layout
+        .extract_field(public_signals, field)
+        .map(B256::from_slice)
+        .ok_or_else(|| {
+            crate::WitnessError::Other(format!("l-BFV {family} proof row {row} is missing {field}"))
+        })
+}
+
+fn bigint_commitment_to_b256(commitment: BigInt) -> Result<B256, crate::WitnessError> {
+    let (sign, bytes) = commitment.to_bytes_be();
+    if sign == num_bigint::Sign::Minus || bytes.len() > FIELD_BYTE_LEN {
+        return Err(crate::WitnessError::Other(
+            "l-BFV commitment does not fit one field".to_string(),
+        ));
+    }
+    let mut field = [0u8; FIELD_BYTE_LEN];
+    field[FIELD_BYTE_LEN - bytes.len()..].copy_from_slice(&bytes);
+    Ok(B256::from(field))
+}
+
 /// Compute aggregation commitment.
 ///
 /// This matches the Noir `compute_recursive_aggregation_commitment` function exactly.
@@ -459,6 +1072,14 @@ pub fn compute_recursive_aggregation_commitment(payload: Vec<Field>) -> BigInt {
     let commitment_field = compute_commitments(payload, DS_RECURSIVE_AGGREGATION, io_pattern)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// The commitment to one ciphertext component (`ct0` or `ct1`) under `DS_CIPHERTEXT`, as the Noir
+/// `compute_multiple_polynomial_commitment::<N, L, BIT_CT>(ct, DS_CIPHERTEXT)` computes it.
+pub fn compute_ciphertext_component_commitment(ct: &CrtPolynomial, bit_ct: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &ct.limbs, bit_ct);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_CIPHERTEXT, io)[0])
 }
 
 /// Compute CRISP ciphertext commitment.
@@ -687,306 +1308,472 @@ pub fn compute_threshold_share_decryption_challenge(payload: Vec<Field>) -> BigI
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
-/// Compute hex-aligned packing parameters for a given `BIT`.
-/// Matches the Noir `packing_layout` function exactly.
-///
-/// # Arguments
-/// * `bit` - The bit width for coefficient bounds
-///
-/// # Returns
-/// A tuple of (nibble_bits, group) where:
-/// - `nibble_bits`: The bit width rounded up to the next multiple of 4
-/// - `group`: Maximum number of limbs that fit in one BN254 field element
-fn packing_layout(bit: u32) -> (u32, u32) {
-    // Ceil BIT up to the next multiple of 4 (nibble alignment).
-    let nibble_bits = bit.div_ceil(4) * 4;
-
-    // Each stored limb uses an extra nibble because negative coefficients
-    // will be shifted to positive, so radix = 2^(nibble_bits+4).
-    assert!(nibble_bits + 4 <= 254);
-
-    // Maximum limbs that fit in one BN254 element without wrap.
-    let group = 254 / (nibble_bits + 4);
-    assert!(group >= 1);
-    (nibble_bits, group)
-}
-
-/// Pack a polynomial's coefficients into a Vec<Field> of carriers using the shared hex-aligned layout.
-///
-/// Matches the Noir `packer` function exactly.
-/// Packs multiple coefficients into each field element using nibble-aligned layout.
-///
-/// # Arguments
-/// * `poly` - Polynomial whose coefficients to pack
-/// * `bit` - The bit width for coefficient bounds
-///
-/// # Returns
-/// A vector of field elements containing the packed coefficients.
-/// The number of field elements is `ceil(poly.coefficients().len() / group)` where `group` is
-/// determined by the packing layout.
-pub(crate) fn packer(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
-    packer_fixed_width(polynomial, bit).unwrap_or_else(|| packer_bigint(polynomial, bit))
-}
-
-/// Uses four machine words when each shifted coefficient fits its allocated digit.
-/// Other values use the original arbitrary-precision path.
-fn packer_fixed_width(polynomial: &Polynomial, bit: u32) -> Option<Vec<Field>> {
-    let (nibble_bits, group) = packing_layout(bit);
-    if nibble_bits > 120 {
-        return None;
-    }
-    let digit_bits = nibble_bits + 4;
-    let base = 1i128 << nibble_bits;
-    let radix = 1u128 << digit_bits;
-    let values = polynomial.coefficients();
-    let mut output = Vec::with_capacity(values.len().div_ceil(group as usize));
-    for chunk in values.chunks(group as usize) {
-        let mut accumulator = FieldInteger::<4>::from(0u64);
-        for index in 0..group as usize {
-            let value = match chunk.get(index) {
-                Some(value) => value.to_i128()?,
-                None => 0,
-            };
-            let digit = u128::try_from(value.checked_add(base)?).ok()?;
-            if digit >= radix {
-                return None;
-            }
-            accumulator <<= digit_bits;
-            let carry = accumulator.add_with_carry(&FieldInteger([
-                digit as u64,
-                (digit >> 64) as u64,
-                0,
-                0,
-            ]));
-            debug_assert!(!carry);
-        }
-        // The nibble-aligned layout uses at most 252 bits, below the field modulus.
-        output.push(Field::from_bigint(accumulator)?);
-    }
-    Some(output)
-}
-
-fn packer_bigint(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
-    let values = polynomial.coefficients();
-    let (nibble_bits, group) = packing_layout(bit);
-
-    let base = BigInt::from(2).pow(nibble_bits);
-    let radix = BigInt::from(2).pow(nibble_bits + 4);
-
-    let a = values.len() as u32;
-    let num_chunks = a.div_ceil(group);
-    let mut out = Vec::new();
-
-    // Process in fixed-size chunks of `group` limbs.
-    for chunk in 0..num_chunks {
-        // How many real values go into this chunk.
-        let remain = a - (chunk * group);
-        let take = if remain < group { remain } else { group };
-
-        // Build field element accumulator (big-endian concatenation in `radix`).
-        let mut acc = BigInt::zero();
-        for i in 0..take {
-            let v = &values[(chunk * group + i) as usize];
-            acc = acc * &radix + (v + &base);
-        }
-
-        // Pad remaining limb slots with the canonical zero-limb `digit = base`.
-        for _ in 0..(group - take) {
-            acc = acc * &radix + &base;
-        }
-
-        // Convert BigInt to Field element
-        let acc_biguint = if acc < BigInt::zero() {
-            // Should not happen with our packing scheme, but handle it
-            panic!("Negative accumulator in packer");
-        } else {
-            acc.to_biguint().unwrap()
-        };
-
-        // Convert to Field via bytes
-        let bytes = acc_biguint.to_bytes_le();
-        let field_elem = Field::from_le_bytes_mod_order(&bytes);
-        out.push(field_elem);
-    }
-    out
-}
-
-/// Flatten a slice of polynomials into a single linear stream of packed `Field` carriers.
-///
-/// Matches the Noir `flatten` function exactly.
-/// Packs each polynomial's coefficients using the same bit width and appends them sequentially.
-///
-/// # Arguments
-/// * `inputs` - Initial vector of field elements to append to
-/// * `polys` - Slice of polynomials to pack
-/// * `bit` - The bit width for coefficient bounds
-///
-/// # Returns
-/// Extended vector with packed polynomial coefficients appended in order.
-/// The polynomials are packed sequentially, maintaining a stable transcript layout.
-fn flatten(mut inputs: Vec<Field>, polynomials: &[Polynomial], bit: u32) -> Vec<Field> {
-    for polynomial in polynomials {
-        let packed = packer(polynomial, bit);
-        inputs.extend(packed);
-    }
-    inputs
-}
-
-/// Reverses, centers, and packs one canonical RNS row without per-coefficient allocations.
-/// Returns `None` if the row cannot use the fixed-width path.
-fn pack_centered_rns_row(coefficients: &[u64], modulus: u64, bit: u32) -> Option<Vec<Field>> {
-    let (nibble_bits, group) = packing_layout(bit);
-    if modulus == 0 || nibble_bits > 120 || coefficients.iter().any(|value| *value >= modulus) {
-        return None;
-    }
-    let base = 1i128 << nibble_bits;
-    let digit_bits = nibble_bits + 4;
-    let radix = 1u128 << digit_bits;
-    let group = group as usize;
-    let mut values = coefficients.iter().rev();
-    let mut output = Vec::with_capacity(coefficients.len().div_ceil(group));
-    for _ in 0..coefficients.len().div_ceil(group) {
-        let mut accumulator = FieldInteger::<4>::from(0u64);
-        for _ in 0..group {
-            let value = values.next().copied().unwrap_or(0);
-            let negative = if modulus.is_multiple_of(2) {
-                value >= modulus / 2
-            } else {
-                value > modulus / 2
-            };
-            let centered = i128::from(value) - if negative { i128::from(modulus) } else { 0 };
-            let digit = u128::try_from(centered.checked_add(base)?).ok()?;
-            if digit >= radix {
-                return None;
-            }
-            accumulator <<= digit_bits;
-            if accumulator.add_with_carry(&FieldInteger([digit as u64, (digit >> 64) as u64, 0, 0]))
-            {
-                return None;
-            }
-        }
-        output.push(Field::from_bigint(accumulator)?);
-    }
-    Some(output)
-}
-
-#[cfg(test)]
-mod packing_tests {
-    use super::*;
-
-    #[test]
-    fn direct_rns_packing_matches_reverse_center_and_bigint_packing() {
-        for modulus in [
-            2u64,
-            3,
-            16,
-            17,
-            65537,
-            (1 << 51) - 1,
-            (1 << 62) - 57,
-            u64::MAX,
-        ] {
-            let bit = 64 - (modulus / 2).leading_zeros();
-            for length in [0, 1, 3, 4, 7, 16, 31, 512] {
-                let edges = [0, 1, modulus / 2, modulus - 1];
-                let coefficients: Vec<_> = edges.into_iter().cycle().take(length).collect();
-                let mut reference = Polynomial::from_u64_vector(coefficients.clone());
-                reference.reverse();
-                reference.center(&BigInt::from(modulus));
-                assert_eq!(
-                    pack_centered_rns_row(&coefficients, modulus, bit).unwrap(),
-                    packer_bigint(&reference, bit)
-                );
-            }
-        }
-        assert!(pack_centered_rns_row(&[17], 17, 5).is_none());
-        assert!(pack_centered_rns_row(&[0], 0, 5).is_none());
-    }
-
-    #[test]
-    fn fixed_width_packing_matches_bigint_at_boundaries() {
-        for bit in [0, 1, 4, 5, 8, 31, 32, 51, 53, 60, 64, 100, 120] {
-            let (nibble_bits, group) = packing_layout(bit);
-            let base = BigInt::from(1) << nibble_bits;
-            let edge = [
-                -&base,
-                -&base + 1,
-                BigInt::from(-1),
-                BigInt::zero(),
-                &base - 1,
-                base,
-            ];
-            for length in [
-                0,
-                1,
-                group as usize - 1,
-                group as usize,
-                group as usize + 1,
-                100,
-            ] {
-                let polynomial =
-                    Polynomial::new(edge.iter().cycle().take(length).cloned().collect());
-                assert_eq!(
-                    packer_fixed_width(&polynomial, bit).unwrap(),
-                    packer_bigint(&polynomial, bit)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn fixed_width_packing_matches_bigint_for_deterministic_samples() {
-        let mut state = 7u64;
-        for bit in 1..=64 {
-            let values = (0..131)
-                .map(|_| {
-                    state ^= state << 13;
-                    state ^= state >> 7;
-                    state ^= state << 17;
-                    let magnitude = u128::from(state) & ((1u128 << bit) - 1);
-                    let value = BigInt::from(magnitude);
-                    if state & 1 == 0 {
-                        value
-                    } else {
-                        -value
-                    }
-                })
-                .collect();
-            let polynomial = Polynomial::new(values);
-            assert_eq!(
-                packer_fixed_width(&polynomial, bit).unwrap(),
-                packer_bigint(&polynomial, bit)
-            );
-        }
-    }
-
-    #[test]
-    fn packing_retains_bigint_fallback() {
-        for (bit, value) in [(8, BigInt::from(1) << 40), (200, BigInt::from(1) << 199)] {
-            let polynomial = Polynomial::new(vec![value]);
-            assert!(packer_fixed_width(&polynomial, bit).is_none());
-            assert_eq!(packer(&polynomial, bit), packer_bigint(&polynomial, bit));
-        }
-    }
-
-    #[test]
-    fn test_packing_layout() {
-        // Test nibble alignment
-        // For bit=1 or 4: nibble_bits=4, radix uses 4+4=8 bits, so group=254/8=31
-        assert_eq!(packing_layout(1), (4, 31));
-        assert_eq!(packing_layout(4), (4, 31));
-        // For bit=5 or 8: nibble_bits=8, radix uses 8+4=12 bits, so group=254/12=21
-        assert_eq!(packing_layout(5), (8, 21));
-        assert_eq!(packing_layout(8), (8, 21));
-        // For bit=51: nibble_bits=52, radix uses 52+4=56 bits, so group=254/56=4
-        assert_eq!(packing_layout(51), (52, 4));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use e3_polynomial::CrtPolynomial;
+    use fhe::bfv::{BfvParametersBuilder, CommonRandomPolyVec, SecretKey};
+    use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
+    use fhe_traits::Serialize;
+
+    const LBFV_SHARE_ROW_COUNT: usize = 5;
+
+    #[test]
+    fn lbfv_key_envelope_commitment_matches_noir_vector() {
+        let public_key_rows = [11u32, 22, 33, 44, 55].map(BigInt::from);
+        let d0_rows = [101u32, 102, 103, 104, 105].map(BigInt::from);
+        let d2_rows = [201u32, 202, 203, 204, 205].map(BigInt::from);
+        let public_key = compute_lbfv_public_key_commitment(&public_key_rows);
+        let rlk = compute_lbfv_rlk_commitment(&d0_rows, &d2_rows).unwrap();
+        let envelope = compute_lbfv_key_envelope_commitment(&public_key, &rlk);
+
+        assert_eq!(
+            public_key,
+            BigInt::parse_bytes(
+                b"8794038265432090420098367171184962926773673645207458062703877698737222004818",
+                10,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            rlk,
+            BigInt::parse_bytes(
+                b"8678089263775503676082767397312743320196209264612503417642947968755201858816",
+                10,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            envelope,
+            BigInt::parse_bytes(
+                b"18365618805205987395009526854274153391479792244574329633954644120137733297549",
+                10,
+            )
+            .unwrap()
+        );
+    }
+
+    fn field_to_bigint(value: Field) -> BigInt {
+        let bytes = value.into_bigint().to_bytes_le();
+        BigInt::from_bytes_le(num_bigint::Sign::Plus, &bytes)
+    }
+
+    struct LbfvShareFixture {
+        params: std::sync::Arc<fhe::bfv::BfvParameters>,
+        public_key_adapter: crate::threshold::pk_generation::LbfvPkGenerationAdapter,
+        rlk_adapter: crate::threshold::rlk_generation::RlkGenerationAdapter,
+        public_key_share_bytes: Vec<u8>,
+        rlk_share_bytes: Vec<u8>,
+        other_public_key_share_bytes: Vec<u8>,
+        other_rlk_share_bytes: Vec<u8>,
+        public_key_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT],
+        rlk_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT],
+    }
+
+    fn lbfv_share_fixture() -> Result<LbfvShareFixture, crate::WitnessError> {
+        let mut rng = rand::rng();
+        let params = BfvParametersBuilder::new()
+            .set_degree(8)
+            .set_plaintext_modulus(1153)
+            .set_moduli_sizes(&[62; LBFV_SHARE_ROW_COUNT])
+            .build_arc()
+            .map_err(|error| crate::WitnessError::Other(error.to_string()))?;
+        let crp_d1 = CommonRandomPolyVec::new(&params, &mut rng)?;
+        let crp_a = CommonRandomPolyVec::new(&params, &mut rng)?;
+        let public_key_adapter =
+            crate::threshold::pk_generation::LbfvPkGenerationAdapter::from_crp(&params, &crp_a)?;
+        let rlk_adapter = crate::threshold::rlk_generation::RlkGenerationAdapter::from_rows(
+            &params, &crp_d1, &crp_a,
+        )?;
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key_share =
+            LbfvPublicKeyShare::contribute_with_crp(&secret_key, &crp_a, &mut rng)?;
+        let (rlk_share, _) = RelinKeyShare::contribution_with_crp_extended(
+            &secret_key,
+            &crp_d1,
+            &crp_a,
+            0,
+            0,
+            &mut rng,
+        )?;
+        let other_secret_key = SecretKey::random(&params, &mut rng);
+        let other_public_key_share =
+            LbfvPublicKeyShare::contribute_with_crp(&other_secret_key, &crp_a, &mut rng)?;
+        let (other_rlk_share, _) = RelinKeyShare::contribution_with_crp_extended(
+            &other_secret_key,
+            &crp_d1,
+            &crp_a,
+            0,
+            0,
+            &mut rng,
+        )?;
+        let bit = e3_fhe_params::utils::compute_modulus_bit(&params);
+        let mut public_key_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT] =
+            std::array::from_fn(|_| {
+                vec![
+                    0;
+                    (LBFV_PK_GENERATION_INPUTS.len() + LBFV_PK_GENERATION_OUTPUTS.len())
+                        * FIELD_BYTE_LEN
+                ]
+            });
+        let mut rlk_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT] = std::array::from_fn(|_| {
+            vec![0; (RLK_GENERATION_INPUTS.len() + RLK_GENERATION_OUTPUTS.len()) * FIELD_BYTE_LEN]
+        });
+        let pk_commitment_field = LBFV_PK_GENERATION_INPUTS.len()
+            + LBFV_PK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "pk_commitment")
+                .unwrap();
+        let d0_commitment_field = RLK_GENERATION_INPUTS.len()
+            + RLK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "d0_commitment")
+                .unwrap();
+        let d2_commitment_field = RLK_GENERATION_INPUTS.len()
+            + RLK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "d2_commitment")
+                .unwrap();
+
+        for row in 0..LBFV_SHARE_ROW_COUNT {
+            public_key_row_signals[row][3 * FIELD_BYTE_LEN + 28..4 * FIELD_BYTE_LEN]
+                .copy_from_slice(&(row as u32).to_be_bytes());
+            rlk_row_signals[row][3 * FIELD_BYTE_LEN + 28..4 * FIELD_BYTE_LEN]
+                .copy_from_slice(&(row as u32).to_be_bytes());
+            let (_, pk0) =
+                public_key_adapter.share_row_components(row as u32, &public_key_share)?;
+            let pk_commitment =
+                bigint_commitment_to_b256(compute_lbfv_pk_row_commitment(row as u32, &pk0, bit))?;
+            public_key_row_signals[row]
+                [pk_commitment_field * FIELD_BYTE_LEN..(pk_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(pk_commitment.as_slice());
+
+            let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
+            let d0_commitment =
+                bigint_commitment_to_b256(compute_rlk_d0_commitment(row as u32, &d0, bit))?;
+            let d2_commitment =
+                bigint_commitment_to_b256(compute_rlk_d2_commitment(row as u32, &d2, bit))?;
+            rlk_row_signals[row]
+                [d0_commitment_field * FIELD_BYTE_LEN..(d0_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(d0_commitment.as_slice());
+            rlk_row_signals[row]
+                [d2_commitment_field * FIELD_BYTE_LEN..(d2_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(d2_commitment.as_slice());
+        }
+
+        Ok(LbfvShareFixture {
+            params,
+            public_key_adapter,
+            rlk_adapter,
+            public_key_share_bytes: public_key_share.to_bytes(),
+            rlk_share_bytes: rlk_share.to_bytes(),
+            other_public_key_share_bytes: other_public_key_share.to_bytes(),
+            other_rlk_share_bytes: other_rlk_share.to_bytes(),
+            public_key_row_signals,
+            rlk_row_signals,
+        })
+    }
+
+    fn validate_fixture(
+        fixture: &LbfvShareFixture,
+        public_key_share_bytes: &[u8],
+        rlk_share_bytes: &[u8],
+        public_key_row_signals: &[Vec<u8>],
+        rlk_row_signals: &[Vec<u8>],
+    ) -> Result<LbfvShareCommitments, crate::WitnessError> {
+        let public_key_row_signals = public_key_row_signals
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        let rlk_row_signals = rlk_row_signals
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        validate_lbfv_serialized_share_commitments_with_adapters(
+            &fixture.params,
+            &fixture.public_key_adapter,
+            &fixture.rlk_adapter,
+            public_key_share_bytes,
+            rlk_share_bytes,
+            &public_key_row_signals,
+            &rlk_row_signals,
+        )
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_accept_valid_rows() -> Result<(), crate::WitnessError> {
+        let fixture = lbfv_share_fixture()?;
+        let commitments = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )?;
+
+        assert_eq!(commitments.pk_generation_commitments.len(), 5);
+        assert_eq!(commitments.rlk_d0_commitments.len(), 5);
+        assert_eq!(commitments.rlk_d2_commitments.len(), 5);
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_mutated_shares() -> Result<(), crate::WitnessError>
+    {
+        let fixture = lbfv_share_fixture()?;
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.other_public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error
+            .to_string()
+            .contains("public-key commitment mismatch"));
+
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.other_rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("RLK d0 commitment mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_mutated_outputs() -> Result<(), crate::WitnessError>
+    {
+        let fixture = lbfv_share_fixture()?;
+        let mut public_key_row_signals = fixture.public_key_row_signals.clone();
+        public_key_row_signals[0][5 * FIELD_BYTE_LEN + 31] ^= 1;
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error
+            .to_string()
+            .contains("public-key commitment mismatch"));
+
+        let mut rlk_row_signals = fixture.rlk_row_signals.clone();
+        rlk_row_signals[0][7 * FIELD_BYTE_LEN + 31] ^= 1;
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("RLK d2 commitment mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_wrong_row_order() -> Result<(), crate::WitnessError>
+    {
+        let fixture = lbfv_share_fixture()?;
+        let mut public_key_row_signals = fixture.public_key_row_signals.clone();
+        public_key_row_signals.swap(0, 1);
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error.to_string().contains("not in row 0"));
+
+        let mut rlk_row_signals = fixture.rlk_row_signals.clone();
+        rlk_row_signals.swap(0, 1);
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("not in row 0"));
+        Ok(())
+    }
+
+    #[test]
+    fn compute_ciphertext_commitment_matches_manual_payload() {
+        let bit_ct = 4;
+        let ct0 = CrtPolynomial::new(vec![Polynomial::new(vec![
+            BigInt::from(1),
+            BigInt::from(2),
+        ])]);
+        let ct1 = CrtPolynomial::new(vec![Polynomial::new(vec![
+            BigInt::from(3),
+            BigInt::from(4),
+        ])]);
+
+        let mut payload0 = Vec::new();
+        payload0 = flatten(payload0, &ct0.limbs, bit_ct);
+        let io = [0x80000000 | payload0.len() as u32, 1];
+        let commit_ct0 = compute_commitments(payload0, DS_CIPHERTEXT, io)[0];
+
+        let mut payload1 = Vec::new();
+        payload1 = flatten(payload1, &ct1.limbs, bit_ct);
+        let io = [0x80000000 | payload1.len() as u32, 1];
+        let commit_ct1 = compute_commitments(payload1, DS_CIPHERTEXT, io)[0];
+
+        let inputs = vec![commit_ct0, commit_ct1];
+        let io = [0x80000000 | inputs.len() as u32, 1];
+        let expected = field_to_bigint(compute_commitments(inputs, DS_CIPHERTEXT, io)[0]);
+
+        let actual = compute_ciphertext_commitment(&ct0, &ct1, bit_ct);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rlk_commitments_match_tagged_noir_payloads() {
+        let bit_d = 4;
+        let component = CrtPolynomial::new(vec![Polynomial::new(vec![1.into(), (-2).into()])]);
+
+        let r_payload = flatten(
+            vec![Field::from(0u64)],
+            std::slice::from_ref(component.limb(0)),
+            bit_d,
+        );
+        let r_io = [0x80000000 | r_payload.len() as u32, 1];
+        let expected_r =
+            field_to_bigint(compute_commitments(r_payload, DS_RLK_GENERATION, r_io)[0]);
+        assert_eq!(
+            compute_rlk_r_commitment(component.limb(0), bit_d),
+            expected_r
+        );
+
+        // Rows commit through their limb commitments.
+        let d0_limbs = component
+            .limbs
+            .iter()
+            .enumerate()
+            .map(|(limb, polynomial)| {
+                compute_rlk_limb_d0_commitment(0, limb as u32, polynomial, bit_d)
+            })
+            .collect::<Vec<_>>();
+        let mut d0_payload = vec![
+            Field::from(3u64),
+            Field::from(2u64),
+            Field::from(0u64),
+            Field::from(d0_limbs.len() as u64),
+        ];
+        d0_payload.extend(d0_limbs.iter().map(field_from_bigint));
+        let d0_io = [0x80000000 | d0_payload.len() as u32, 1];
+        let expected_d0 =
+            field_to_bigint(compute_commitments(d0_payload, DS_RLK_GENERATION, d0_io)[0]);
+        assert_eq!(compute_rlk_d0_commitment(0, &component, bit_d), expected_d0);
+        assert_ne!(
+            compute_rlk_d2_commitment(0, &component, bit_d),
+            expected_d0,
+            "d0 and d2 row commitments must be domain-separated"
+        );
+
+        let aggregate_payload = flatten(Vec::new(), &component.limbs, bit_d);
+        let aggregate_io = [0x80000000 | aggregate_payload.len() as u32, 1];
+        let expected_aggregate = field_to_bigint(
+            compute_commitments(aggregate_payload, DS_RLK_AGGREGATION, aggregate_io)[0],
+        );
+        assert_eq!(
+            compute_rlk_aggregation_commitment(&component, bit_d),
+            expected_aggregate
+        );
+    }
+
+    #[test]
+    fn rlk_limb_commitments_bind_kind_row_and_limb() {
+        let polynomial = Polynomial::new(vec![1.into(), (-2).into()]);
+        let d0 = compute_rlk_limb_d0_commitment(2, 3, &polynomial, 4);
+
+        assert_ne!(d0, compute_rlk_limb_d0_commitment(2, 4, &polynomial, 4));
+        assert_ne!(d0, compute_rlk_limb_d0_commitment(1, 3, &polynomial, 4));
+        assert_ne!(d0, compute_rlk_limb_d2_commitment(2, 3, &polynomial, 4));
+    }
+
+    #[test]
+    fn lbfv_pk_limb_commitments_bind_kind_row_and_limb() {
+        let polynomial = Polynomial::new(vec![1.into(), (-2).into()]);
+        let pk0 = compute_lbfv_pk_limb_commitment(2, 3, &polynomial, 4);
+
+        assert_ne!(pk0, compute_lbfv_pk_limb_commitment(2, 4, &polynomial, 4));
+        assert_ne!(pk0, compute_lbfv_pk_limb_commitment(1, 3, &polynomial, 4));
+    }
+
+    #[test]
+    fn compute_threshold_pk_challenge_returns_single_bigint() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+        let input_size = payload.len() as u32;
+        let io_pattern = [0x80000000 | input_size, 1];
+        let expected_challenge = field_to_bigint(
+            compute_commitments(payload.clone(), DS_CLG_PK_GENERATION, io_pattern)[0],
+        );
+
+        let challenge = compute_threshold_pk_challenge(payload);
+        assert_eq!(challenge, expected_challenge);
+    }
+
+    #[test]
+    fn compute_share_encryption_challenge_returns_2l_elements() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+        let l = 3;
+
+        let challenges = compute_share_encryption_challenge(payload, l);
+        assert_eq!(challenges.len(), 2 * l);
+    }
+
+    #[test]
+    fn compute_recursive_aggregation_commitment_matches_manual_payload() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+
+        let input_size = payload.len() as u32;
+        let io_pattern = [0x80000000 | input_size, 1];
+        let expected = field_to_bigint(
+            compute_commitments(payload.clone(), DS_RECURSIVE_AGGREGATION, io_pattern)[0],
+        );
+
+        let actual = compute_recursive_aggregation_commitment(payload);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn compute_threshold_share_decryption_challenge_returns_single_bigint() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+
+        let input_size = payload.len() as u32;
+        let io_pattern = [0x80000000 | input_size, 1];
+        let expected = field_to_bigint(
+            compute_commitments(payload.clone(), DS_CLG_SHARE_DECRYPTION, io_pattern)[0],
+        );
+
+        let actual = compute_threshold_share_decryption_challenge(payload);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn compute_vk_hash_matches_manual_commitment() {
+        let vk_hashes = vec![
+            Field::from(7u64),
+            Field::from(8u64),
+            Field::from(9u64),
+            Field::from(10u64),
+        ];
+        let input_size = vk_hashes.len() as u32;
+        let io_pattern = [0x80000000 | input_size, 1];
+        let expected = compute_commitments(vk_hashes.clone(), super::DS_VK_HASH, io_pattern)[0];
+        assert_eq!(compute_vk_hash(vk_hashes), expected);
+    }
 
     #[test]
     fn compute_pk_commitment_from_keyshare_roundtrip() {
@@ -996,7 +1783,7 @@ mod tests {
         use fhe::bfv::SecretKey;
         use fhe::mbfv::PublicKeyShare;
         use fhe_traits::Serialize;
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let (params, _) = build_pair_for_preset(preset).unwrap();
         let crp = create_deterministic_crp_from_default_seed(&params);
 
@@ -1032,7 +1819,7 @@ mod tests {
         use fhe::bfv::{PublicKey, SecretKey};
         use fhe_traits::Serialize;
 
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
         let mut rng = rand::rng();
         let secret_key = SecretKey::random(&dkg_params, &mut rng);
@@ -1056,8 +1843,10 @@ mod tests {
     fn compute_dkg_pk_commitment_rejects_malformed_public_key() {
         assert!(compute_dkg_pk_commitment_from_public_key_bytes(
             b"not a BFV public key",
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
+            e3_fhe_params::BfvPreset::InsecureThreshold,
         )
         .is_err());
     }
 }
+
+use crate::packing::{flatten, pack_centered_rns_row};

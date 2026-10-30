@@ -3,8 +3,272 @@
 //! Signature, signer-slot, circuit, and canonical-shape validation.
 
 use super::*;
+use alloy::primitives::U256;
+use e3_committee_hash::{
+    hash_lbfv_accepted_party_set, hash_lbfv_proof_session, split_hash_to_field_limbs,
+};
+use e3_events::LbfvVerificationContext;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::{LbfvPkAggregationPublicLayout, RlkAggregationPublicLayout};
 
 impl ShareVerifier {
+    fn has_complete_row_family(
+        signed_proofs: &[SignedProofPayload],
+        expected_type: ProofType,
+        rows: usize,
+    ) -> bool {
+        if signed_proofs.len() != rows {
+            return false;
+        }
+        signed_proofs.iter().all(|signed| {
+            signed.payload.proof_type == expected_type
+                && signed.payload.proof.circuit == expected_type.circuit_names()[0]
+        })
+    }
+
+    /// `rows` proofs of `first`, then `second_count` proofs of `second`.
+    fn has_complete_lbfv_bundle(
+        signed_proofs: &[SignedProofPayload],
+        first: ProofType,
+        second: ProofType,
+        rows: usize,
+        second_count: usize,
+    ) -> bool {
+        signed_proofs.len() == rows + second_count
+            && Self::has_complete_row_family(&signed_proofs[..rows], first, rows)
+            && Self::has_complete_row_family(&signed_proofs[rows..], second, second_count)
+    }
+
+    fn public_field<'a>(
+        signed: &'a SignedProofPayload,
+        input: bool,
+        name: &str,
+    ) -> Option<&'a [u8]> {
+        let proof = &signed.payload.proof;
+        if input {
+            proof
+                .circuit
+                .input_layout()
+                .extract_field(&proof.public_signals, name)
+        } else {
+            proof
+                .circuit
+                .output_layout()
+                .extract_field(&proof.public_signals, name)
+        }
+    }
+
+    fn public_u32_equals(signed: &SignedProofPayload, name: &str, expected: u32) -> bool {
+        Self::public_field(signed, true, name).is_some_and(|field| {
+            field[..28].iter().all(|byte| *byte == 0) && field[28..] == expected.to_be_bytes()
+        })
+    }
+
+    fn public_field_at(signed: &SignedProofPayload, index: usize) -> &[u8] {
+        let start = index * e3_zk_witness::FIELD_BYTE_LEN;
+        &signed.payload.proof.public_signals[start..start + e3_zk_witness::FIELD_BYTE_LEN]
+    }
+
+    fn field_matches_u128(field: &[u8], expected: u128) -> bool {
+        field[..16].iter().all(|byte| *byte == 0) && field[16..] == expected.to_be_bytes()
+    }
+
+    fn has_authoritative_session(
+        signed: &SignedProofPayload,
+        expected_hi: u128,
+        expected_lo: u128,
+    ) -> bool {
+        Self::public_field(signed, true, "session_id_hi")
+            .is_some_and(|field| Self::field_matches_u128(field, expected_hi))
+            && Self::public_field(signed, true, "session_id_lo")
+                .is_some_and(|field| Self::field_matches_u128(field, expected_lo))
+    }
+
+    fn all_fields_equal(signed_proofs: &[SignedProofPayload], input: bool, name: &str) -> bool {
+        let Some(expected) = signed_proofs
+            .first()
+            .and_then(|signed| Self::public_field(signed, input, name))
+        else {
+            return false;
+        };
+        signed_proofs.iter().all(|signed| {
+            Self::public_field(signed, input, name).is_some_and(|field| field == expected)
+        })
+    }
+
+    pub(in crate::workflow::share_verification) fn has_valid_lbfv_statements(
+        kind: &VerificationKind,
+        signed_proofs: &[SignedProofPayload],
+        sender_party_id: u64,
+        e3_id: &E3id,
+        committee_size: CiphernodesCommitteeSize,
+        lbfv_context: Option<&LbfvVerificationContext>,
+    ) -> bool {
+        if !matches!(
+            kind,
+            VerificationKind::LbfvGenerationProofs | VerificationKind::LbfvAggregationProofs
+        ) {
+            return lbfv_context.is_none();
+        }
+        let Some(LbfvVerificationContext::V2(context)) = lbfv_context else {
+            return false;
+        };
+        let Ok(sender_party_id) = u32::try_from(sender_party_id) else {
+            return false;
+        };
+        let Ok(dispatch_e3_id) = U256::try_from(e3_id.clone()) else {
+            return false;
+        };
+        if context.proof_domain.chain_id != e3_id.chain_id()
+            || context.proof_domain.e3_id != dispatch_e3_id
+        {
+            return false;
+        }
+        let committee = committee_size.values();
+        let committee_h = committee.h;
+        let expected_session =
+            split_hash_to_field_limbs(hash_lbfv_proof_session(context.proof_domain));
+        let expected_fields = |proof_type| match proof_type {
+            ProofType::LbfvPkGeneration => Some(6),
+            ProofType::RlkGeneration => Some(8),
+            ProofType::LbfvPkAggregation => {
+                Some(LbfvPkAggregationPublicLayout::new(committee_h).field_count)
+            }
+            ProofType::RlkAggregation => {
+                Some(RlkAggregationPublicLayout::new(committee_h).field_count)
+            }
+            _ => None,
+        };
+        let exact_lbfv_public_shape = |proofs: &[SignedProofPayload]| {
+            proofs.iter().all(|signed| {
+                expected_fields(signed.payload.proof_type).is_some_and(|fields| {
+                    signed.payload.proof.public_signals.len()
+                        == fields * e3_zk_witness::FIELD_BYTE_LEN
+                })
+            })
+        };
+
+        match kind {
+            VerificationKind::LbfvGenerationProofs => {
+                if context.aggregation.is_some() {
+                    return false;
+                }
+                let lbfv_proofs = signed_proofs;
+                if lbfv_proofs.is_empty() || lbfv_proofs.len() % 2 != 0 {
+                    return false;
+                }
+                let rows = lbfv_proofs.len() / 2;
+                let rlk = &lbfv_proofs[rows..];
+                if !exact_lbfv_public_shape(lbfv_proofs) {
+                    return false;
+                }
+
+                // Every PK and RLK row of the party commits one `sk`. C2a's secret root must
+                // equal that commitment; the `lbfv_generation_sk` links check it.
+                lbfv_proofs.iter().all(|signed| {
+                    Self::has_authoritative_session(
+                        signed,
+                        expected_session.hi,
+                        expected_session.lo,
+                    )
+                }) && lbfv_proofs
+                    .iter()
+                    .all(|signed| Self::public_u32_equals(signed, "party_id", sender_party_id))
+                    && lbfv_proofs[..rows].iter().enumerate().all(|(row, signed)| {
+                        Self::public_u32_equals(signed, "row_index", row as u32)
+                    })
+                    && lbfv_proofs[rows..].iter().enumerate().all(|(row, signed)| {
+                        Self::public_u32_equals(signed, "row_index", row as u32)
+                    })
+                    && Self::all_fields_equal(lbfv_proofs, false, "sk_commitment")
+                    && Self::all_fields_equal(rlk, false, "r_commitment")
+            }
+            VerificationKind::LbfvAggregationProofs => {
+                let Some(aggregation) = context.aggregation.as_ref() else {
+                    return false;
+                };
+                // One PK proof and two RLK component proofs per row.
+                let families = 1 + RlkAggregationComponent::ALL.len();
+                if signed_proofs.is_empty() || signed_proofs.len() % families != 0 {
+                    return false;
+                }
+                let rows = signed_proofs.len() / families;
+                let accepted_party_ids = aggregation
+                    .accepted_parties
+                    .iter()
+                    .map(|party| party.party_id)
+                    .collect::<Vec<_>>();
+                let Ok(accepted_set_hash) =
+                    hash_lbfv_accepted_party_set(&accepted_party_ids, committee.n, committee.h)
+                else {
+                    return false;
+                };
+                let accepted_set = split_hash_to_field_limbs(accepted_set_hash);
+                let pk_layout = LbfvPkAggregationPublicLayout::new(committee_h);
+                let rlk_layout = RlkAggregationPublicLayout::new(committee_h);
+                if !exact_lbfv_public_shape(signed_proofs) {
+                    return false;
+                }
+
+                let statement_matches = |signed: &SignedProofPayload| {
+                    Self::has_authoritative_session(
+                        signed,
+                        expected_session.hi,
+                        expected_session.lo,
+                    ) && Self::public_u32_equals(signed, "aggregator_party_id", sender_party_id)
+                        && Self::public_field(signed, true, "accepted_party_set_hash_hi")
+                            .is_some_and(|field| Self::field_matches_u128(field, accepted_set.hi))
+                        && Self::public_field(signed, true, "accepted_party_set_hash_lo")
+                            .is_some_and(|field| Self::field_matches_u128(field, accepted_set.lo))
+                };
+                let pk_matches = signed_proofs[..rows]
+                    .iter()
+                    .enumerate()
+                    .all(|(row, signed)| {
+                        statement_matches(signed)
+                            && Self::public_u32_equals(signed, "row_index", row as u32)
+                            && aggregation.accepted_parties.iter().enumerate().all(
+                                |(party_position, party)| {
+                                    Self::public_field_at(
+                                        signed,
+                                        pk_layout.expected_pk_generation_commitments.start
+                                            + party_position,
+                                    ) == party.pk_generation_commitments[row].as_slice()
+                                },
+                            )
+                    });
+                let rlk_matches = RlkAggregationComponent::ALL
+                    .into_iter()
+                    .zip(signed_proofs[rows..].chunks(rows))
+                    .all(|(component, family)| {
+                        family.iter().enumerate().all(|(row, signed)| {
+                            statement_matches(signed)
+                                && Self::public_u32_equals(signed, "row_index", row as u32)
+                                && Self::public_u32_equals(signed, "component", component.index())
+                                && aggregation.accepted_parties.iter().enumerate().all(
+                                    |(party_position, party)| {
+                                        let expected = match component {
+                                            RlkAggregationComponent::D0 => {
+                                                &party.rlk_d0_commitments
+                                            }
+                                            RlkAggregationComponent::D2 => {
+                                                &party.rlk_d2_commitments
+                                            }
+                                        };
+                                        Self::public_field_at(
+                                            signed,
+                                            rlk_layout.expected_commitments.start + party_position,
+                                        ) == expected[row].as_slice()
+                                    },
+                                )
+                        })
+                    });
+                pk_matches && rlk_matches
+            }
+            _ => true,
+        }
+    }
+
     /// Keccak256 over `abi_encode((proof.data, proof.public_signals))`.
     pub(in crate::workflow::share_verification) fn proof_data_hash(
         signed: &SignedProofPayload,
@@ -28,9 +292,24 @@ impl ShareVerifier {
         signed_proofs: &[SignedProofPayload],
         params_preset: e3_fhe_params::BfvPreset,
     ) -> bool {
+        // Every proof must come from its type's circuit on this E3's protocol path; a circuit of
+        // the other path never satisfies the phase. C2-C4 dispatches carry the DKG preset, which
+        // names the path as well.
+        let on_path = signed_proofs.iter().all(|signed| {
+            signed
+                .payload
+                .proof_type
+                .circuit_names_for(params_preset)
+                .contains(&signed.payload.proof.circuit)
+        });
+        if !on_path {
+            return false;
+        }
         match kind {
+            // The l-BFV path proves no C1.
             VerificationKind::PkGenerationProofs => {
-                signed_proofs.len() == 1
+                !e3_fhe_params::is_lbfv_path(params_preset)
+                    && signed_proofs.len() == 1
                     && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
             }
             VerificationKind::ShareProofs => {
@@ -69,6 +348,27 @@ impl ShareVerifier {
                         signed.payload.proof_type == ProofType::C6ThresholdShareDecryption
                     })
             }
+            VerificationKind::LbfvGenerationProofs => e3_fhe_params::lbfv_row_count(params_preset)
+                .is_some_and(|rows| {
+                    Self::has_complete_lbfv_bundle(
+                        signed_proofs,
+                        ProofType::LbfvPkGeneration,
+                        ProofType::RlkGeneration,
+                        rows,
+                        rows,
+                    )
+                }),
+            // Canonical order is the PK rows, then the RLK `d0` rows, then the RLK `d2` rows.
+            VerificationKind::LbfvAggregationProofs => e3_fhe_params::lbfv_row_count(params_preset)
+                .is_some_and(|rows| {
+                    Self::has_complete_lbfv_bundle(
+                        signed_proofs,
+                        ProofType::LbfvPkAggregation,
+                        ProofType::RlkAggregation,
+                        rows,
+                        RlkAggregationComponent::ALL.len() * rows,
+                    )
+                }),
         }
     }
 

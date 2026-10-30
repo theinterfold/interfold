@@ -135,8 +135,22 @@ async fn trbfv_node_dkg_pipeline_measure() {
     let (c4a_ciphertexts, c4b_ciphertexts) = prep("C4 sender ciphertexts", || {
         pipeline::external_c4_ciphertexts(PRESET, &committee, &dkg_pk)
     });
-    let c4a_data = pipeline::c4_data(PRESET, &dkg_sk, &sk_inputs, c4a_ciphertexts);
-    let c4b_data = pipeline::c4_data(PRESET, &dkg_sk, &esm_inputs, c4b_ciphertexts);
+    let c4a_data = pipeline::c4_data(
+        PRESET,
+        &committee,
+        DkgInputType::SecretKey,
+        &dkg_sk,
+        &sk_inputs,
+        c4a_ciphertexts,
+    );
+    let c4b_data = pipeline::c4_data(
+        PRESET,
+        &committee,
+        DkgInputType::SmudgingNoise,
+        &dkg_sk,
+        &esm_inputs,
+        c4b_ciphertexts,
+    );
     note("every C3 recipient uses party 0's DKG key; production uses each recipient's C0 key (same circuit cost)");
     note("trBFV has one smudging noise per dealer (gen_esi_sss), so C3b has one proof per slot like C3a");
 
@@ -263,7 +277,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
             &prover,
             &NodeDkgFoldInput {
                 c0_proof: &c0_proof,
-                c1_proof: &c1_proof,
+                c1_proof: Some(&c1_proof),
                 c2a_proof: &c2a_proof,
                 c2b_proof: &c2b_proof,
                 c3a_inner_proofs: &c3a_proofs,
@@ -276,6 +290,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
                 party_id: PARTY_ID as u64,
             },
             &artifacts_dir,
+            PRESET,
         )
     });
 
@@ -398,6 +413,7 @@ async fn trbfv_c3_chonk_stack_measure() {
         measure(&format!("c3_chain {label}"), || {
             generate_c3_chonk_chain(
                 &prover,
+                CircuitName::ShareEncryption,
                 &c3_proofs,
                 &c3_slots,
                 total_slots,
@@ -471,6 +487,7 @@ async fn trbfv_c3_concurrency_measure() {
                     &sk_inputs,
                     slot,
                     DkgInputType::SecretKey,
+                    committee.clone(),
                 )
                 .expect("C3 witness data")
             })

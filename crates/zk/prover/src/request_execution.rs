@@ -17,14 +17,18 @@ use std::time::Duration;
 #[cfg(test)]
 use crate::ZkBackend;
 use crate::{
-    generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_node_dkg_fold, DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming,
+    c2_chunk_size, generate_nodes_fold_step, prove_chunked_share_computation,
+    prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_dkg_aggregation_v2,
+    prove_lbfv_aggregation_fold_step_for_preset, prove_lbfv_generation_fold_step_for_preset,
+    prove_lbfv_pk_generation_row, prove_node_dkg_fold, prove_node_dkg_fold_v2_for_preset,
+    prove_nodes_fold_v2_step_for_preset, prove_rlk_generation_row, validate_c2_terminal_proof,
+    C2TerminalAnchors, DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming,
     NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkError, ZkProver,
 };
 use crate::{
     DecryptedSharesAggregationCircuit, DkgShareDecryptionCircuit as ShareDecryptionCircuit,
-    PkAggregationCircuit, PkCircuit, PkGenerationCircuit, ShareComputationCircuit,
-    ShareEncryptionCircuit,
+    LbfvPkAggregationCircuit, PkAggregationCircuit, PkCircuit, PkGenerationCircuit,
+    RlkAggregationCircuit, ShareComputationCircuit, ShareEncryptionCircuit,
 };
 use e3_committee::CiphernodesCommitteeSize;
 #[cfg(test)]
@@ -34,11 +38,17 @@ use e3_events::{
     ComputeResponse, DecryptedSharesAggregationProofRequest,
     DecryptedSharesAggregationProofResponse, DecryptionAggregationRequest,
     DecryptionAggregationResponse, DkgAggregationRequest, DkgAggregationResponse,
-    DkgShareDecryptionProofRequest, DkgShareDecryptionProofResponse, NodeDkgFoldRequest,
-    NodeDkgFoldResponse, NodesFoldStepRequest, NodesFoldStepResponse, PartyVerificationResult,
-    PkAggregationProofRequest, PkAggregationProofResponse, PkBfvProofRequest, PkBfvProofResponse,
-    PkGenerationProofRequest, PkGenerationProofResponse, Proof, ShareComputationProofRequest,
-    ShareComputationProofResponse, ShareEncryptionProofRequest, ShareEncryptionProofResponse,
+    DkgAggregationV2Request, DkgAggregationV2Response, DkgShareDecryptionProofRequest,
+    DkgShareDecryptionProofResponse, LbfvAggregationFoldRequest, LbfvAggregationFoldResponse,
+    LbfvGenerationFoldRequest, LbfvGenerationFoldResponse, LbfvPkAggregationProofRequest,
+    LbfvPkAggregationProofResponse, LbfvPkGenerationProofRequest, LbfvPkGenerationProofResponse,
+    NodeDkgFoldRequest, NodeDkgFoldResponse, NodeDkgFoldV2Request, NodeDkgFoldV2Response,
+    NodesFoldStepRequest, NodesFoldStepResponse, NodesFoldV2StepRequest, NodesFoldV2StepResponse,
+    PartyVerificationResult, PkAggregationProofRequest, PkAggregationProofResponse,
+    PkBfvProofRequest, PkBfvProofResponse, PkGenerationProofRequest, PkGenerationProofResponse,
+    Proof, RlkAggregationProofRequest, RlkAggregationProofResponse, RlkGenerationProofRequest,
+    RlkGenerationProofResponse, ShareComputationProofRequest, ShareComputationProofResponse,
+    ShareEncryptionProofRequest, ShareEncryptionProofResponse,
     ThresholdShareDecryptionProofRequest, ThresholdShareDecryptionProofResponse,
     VerifyShareDecryptionProofsRequest, VerifyShareDecryptionProofsResponse,
     VerifyShareProofsRequest, VerifyShareProofsResponse, ZkError as ZkEventError, ZkRequest,
@@ -47,10 +57,10 @@ use e3_events::{
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvParamSet;
-#[cfg(test)]
 use e3_fhe_params::BfvPreset;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
+use e3_trbfv::gen_lbfv_key_shares::deserialize_c1_secret_key;
 use e3_trbfv::helpers::deserialize_secret_key;
 use e3_trbfv::helpers::try_poly_from_sensitive_bytes;
 use e3_trbfv::helpers::try_poly_ntt_from_bytes;
@@ -61,15 +71,33 @@ use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_witness::dkg::share_decryption::ShareDecryptionCircuitData;
 use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
 use e3_zk_witness::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData;
+use e3_zk_witness::threshold::lbfv_pk_aggregation::LbfvPkAggregationCircuitData;
 use e3_zk_witness::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_witness::threshold::pk_generation::PkGenerationCircuitData;
+use e3_zk_witness::threshold::pk_generation::{
+    LbfvPkGenerationAdapter, LbfvPkGenerationCircuitData,
+};
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationCircuitData;
+use e3_zk_witness::threshold::rlk_generation::{RlkGenerationAdapter, RlkGenerationCircuitData};
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey};
 use fhe::mbfv::PublicKeyShare;
-use fhe_math::rq::PowerBasis;
-use fhe_traits::{DeserializeParametrized, FheEncoder};
+use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare, RlkWitness};
+use fhe_math::rq::{NttShoup, Poly, PowerBasis};
+use fhe_traits::{DeserializeParametrized, DeserializeWithContext, FheEncoder};
 use ndarray::Array2;
 use num_bigint::BigInt;
 use tracing::info;
+use zeroize::{Zeroize, Zeroizing};
+
+/// The compiled C2 chunk size for a preset and committee; see [`c2_chunk_size`].
+fn c2_chunk_size_for(preset: BfvPreset, n_parties: usize) -> usize {
+    let degree = preset
+        .threshold_counterpart()
+        .unwrap_or(preset)
+        .metadata()
+        .degree;
+    c2_chunk_size(degree, n_parties)
+}
 
 /// Stable diagnostic operation label for a protocol proof request.
 pub fn zk_operation_name(request: &ZkRequest) -> &'static str {
@@ -89,6 +117,15 @@ pub fn zk_operation_name(request: &ZkRequest) -> &'static str {
         ZkRequest::NodesFoldStep(_) => "zk_nodes_fold_step",
         ZkRequest::DkgAggregation(_) => "zk_dkg_aggregation",
         ZkRequest::DecryptionAggregation(_) => "zk_decryption_aggregation",
+        ZkRequest::LbfvPkGeneration(_) => "zk_lbfv_pk_generation",
+        ZkRequest::RlkGeneration(_) => "zk_rlk_generation",
+        ZkRequest::LbfvPkAggregation(_) => "zk_lbfv_pk_aggregation",
+        ZkRequest::RlkAggregation(_) => "zk_rlk_aggregation",
+        ZkRequest::LbfvGenerationFold(_) => "zk_lbfv_generation_fold",
+        ZkRequest::NodeDkgFoldV2(_) => "zk_node_dkg_fold_v2",
+        ZkRequest::NodesFoldV2Step(_) => "zk_nodes_fold_v2_step",
+        ZkRequest::LbfvAggregationFold(_) => "zk_lbfv_aggregation_fold",
+        ZkRequest::DkgAggregationV2(_) => "zk_dkg_aggregation_v2",
     }
 }
 
@@ -137,6 +174,21 @@ pub fn execute_zk_request(
         ZkRequest::DecryptionAggregation(req) => {
             handle_decryption_aggregation_proof(prover, req, request)
         }
+        ZkRequest::LbfvPkGeneration(req) => {
+            handle_lbfv_pk_generation_proof(prover, cipher, req, request)
+        }
+        ZkRequest::RlkGeneration(req) => handle_rlk_generation_proof(prover, cipher, req, request),
+        ZkRequest::LbfvPkAggregation(req) => handle_lbfv_pk_aggregation_proof(prover, req, request),
+        ZkRequest::RlkAggregation(req) => handle_rlk_aggregation_proof(prover, req, request),
+        ZkRequest::LbfvGenerationFold(req) => {
+            handle_lbfv_generation_fold_proof(prover, req, request)
+        }
+        ZkRequest::NodeDkgFoldV2(req) => handle_node_dkg_fold_v2_proof(prover, req, request),
+        ZkRequest::NodesFoldV2Step(req) => handle_nodes_fold_v2_step_proof(prover, req, request),
+        ZkRequest::LbfvAggregationFold(req) => {
+            handle_lbfv_aggregation_fold_proof(prover, req, request)
+        }
+        ZkRequest::DkgAggregationV2(req) => handle_dkg_aggregation_v2_proof(prover, req, request),
     }
 }
 
@@ -240,6 +292,487 @@ fn handle_pk_aggregation_proof(
     ))
 }
 
+fn ensure_lbfv_preset(
+    preset: BfvPreset,
+    request: &ComputeRequest,
+) -> Result<(), ComputeRequestError> {
+    if !e3_fhe_params::supports_lbfv(preset) {
+        return Err(make_zk_error(
+            request,
+            format!("l-BFV row proofs require an l-BFV preset; received {preset:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// C1 is a trBFV proof: on the l-BFV path the row proofs bind `sk` and the C2b chunk leaves bound
+/// `e_sm`.
+fn ensure_c1_preset(
+    preset: BfvPreset,
+    request: &ComputeRequest,
+) -> Result<(), ComputeRequestError> {
+    if e3_fhe_params::is_lbfv_path(preset) {
+        return Err(make_zk_error(
+            request,
+            format!("the l-BFV path proves no C1; received {preset:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validated_row_instance(
+    proof_type: e3_events::ProofType,
+    proof: &Proof,
+    requested_row: u32,
+    params_preset: BfvPreset,
+    request: &ComputeRequest,
+) -> Result<u32, ComputeRequestError> {
+    let identity = proof_type
+        .identity(proof, e3_fhe_params::lbfv_row_count(params_preset))
+        .map_err(|error| make_zk_error(request, error.to_string()))?;
+    if identity.instance != requested_row {
+        return Err(make_zk_error(
+            request,
+            format!(
+                "proof row {} does not match requested row {requested_row}",
+                identity.instance
+            ),
+        ));
+    }
+    Ok(identity.instance)
+}
+
+fn build_lbfv_pk_generation_data(
+    cipher: &Cipher,
+    req: &LbfvPkGenerationProofRequest,
+    request: &ComputeRequest,
+) -> Result<
+    (
+        e3_zk_config::threshold::pk_generation::Configs,
+        LbfvPkGenerationCircuitData,
+    ),
+    ComputeRequestError,
+> {
+    ensure_lbfv_preset(req.params_preset, request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
+    let secret_key_bytes = req
+        .secret_key_bytes
+        .access(cipher)
+        .map_err(|error| make_zk_error(request, format!("secret_key_bytes decrypt: {error}")))?;
+    let secret_key = deserialize_c1_secret_key(&secret_key_bytes, &params).map_err(|error| {
+        make_zk_error(request, format!("secret_key_bytes deserialize: {error}"))
+    })?;
+    let public_key_share = LbfvPublicKeyShare::from_bytes(&req.public_key_share_bytes, &params)
+        .map_err(|error| {
+            make_zk_error(
+                request,
+                format!("public_key_share_bytes deserialize: {error}"),
+            )
+        })?;
+    let config = e3_zk_config::threshold::pk_generation::Configs::new(
+        req.params_preset,
+        &params,
+        req.committee_size,
+    )
+    .map_err(|error| make_zk_error(request, format!("circuit configuration: {error}")))?;
+    LbfvPkGenerationAdapter::from_config(&config)
+        .and_then(|adapter| {
+            adapter.row_data(
+                req.committee_size.values(),
+                req.proof_domain,
+                req.party_id,
+                req.row_index,
+                &secret_key,
+                &public_key_share,
+            )
+        })
+        .map(|data| (config, data))
+        .map_err(|error| make_zk_error(request, error.to_string()))
+}
+
+fn build_rlk_generation_data(
+    cipher: &Cipher,
+    req: &RlkGenerationProofRequest,
+    request: &ComputeRequest,
+) -> Result<
+    (
+        e3_zk_config::threshold::rlk_generation::RlkGenerationConfigs,
+        RlkGenerationCircuitData,
+    ),
+    ComputeRequestError,
+> {
+    ensure_lbfv_preset(req.params_preset, request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
+    let expected_rows = params.moduli().len();
+    if req.errors_d0_bytes.len() != expected_rows || req.errors_d2_bytes.len() != expected_rows {
+        return Err(make_zk_error(
+            request,
+            format!(
+                "RLK witness requires {expected_rows} d0 and d2 error rows; received {} and {}",
+                req.errors_d0_bytes.len(),
+                req.errors_d2_bytes.len()
+            ),
+        ));
+    }
+
+    let secret_key_bytes = req
+        .secret_key_bytes
+        .access(cipher)
+        .map_err(|error| make_zk_error(request, format!("secret_key_bytes decrypt: {error}")))?;
+    let secret_key = deserialize_c1_secret_key(&secret_key_bytes, &params).map_err(|error| {
+        make_zk_error(request, format!("secret_key_bytes deserialize: {error}"))
+    })?;
+    let r_bytes = req
+        .r_bytes
+        .access(cipher)
+        .map_err(|error| make_zk_error(request, format!("r_bytes decrypt: {error}")))?;
+    let r = deserialize_secret_key(&r_bytes, &params)
+        .map_err(|error| make_zk_error(request, format!("r_bytes deserialize: {error}")))?;
+    let share = RelinKeyShare::from_bytes(&req.rlk_share_bytes, &params)
+        .map_err(|error| make_zk_error(request, format!("rlk_share_bytes deserialize: {error}")))?;
+    let context = params
+        .context_at_level(0)
+        .map_err(|error| make_zk_error(request, format!("RLK context: {error}")))?;
+    let decrypt_errors = |name: &str,
+                          rows: &[e3_crypto::SensitiveBytes]|
+     -> Result<Vec<Poly<NttShoup>>, ComputeRequestError> {
+        rows.iter()
+            .enumerate()
+            .map(|(row_index, row)| {
+                let bytes = row.access(cipher).map_err(|error| {
+                    make_zk_error(request, format!("{name}[{row_index}] decrypt: {error}"))
+                })?;
+                Poly::<NttShoup>::from_bytes(&bytes, context).map_err(|error| {
+                    make_zk_error(request, format!("{name}[{row_index}] deserialize: {error}"))
+                })
+            })
+            .collect()
+    };
+    let mut witness = RlkWitness {
+        r: Zeroizing::new(r),
+        errors_d0: decrypt_errors("errors_d0_bytes", &req.errors_d0_bytes)?,
+        errors_d2: decrypt_errors("errors_d2_bytes", &req.errors_d2_bytes)?,
+    };
+    let config = e3_zk_config::threshold::rlk_generation::RlkGenerationConfigs::new(
+        req.params_preset,
+        &params,
+        req.committee_size,
+    )
+    .map_err(|error| make_zk_error(request, format!("circuit configuration: {error}")))?;
+    let data = RlkGenerationAdapter::from_config(&config)
+        .and_then(|adapter| {
+            adapter.row_data(
+                req.committee_size.values(),
+                req.proof_domain,
+                req.party_id,
+                req.row_index,
+                &secret_key,
+                &share,
+                &witness,
+            )
+        })
+        .map_err(|error| make_zk_error(request, error.to_string()));
+    witness.errors_d0.zeroize();
+    witness.errors_d2.zeroize();
+    data.map(|data| (config, data))
+}
+
+fn build_lbfv_pk_aggregation_data(
+    req: &LbfvPkAggregationProofRequest,
+    request: &ComputeRequest,
+) -> Result<LbfvPkAggregationCircuitData, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, request)?;
+    let committee = req.committee_size.values();
+    validate_lbfv_aggregation_parties(&req.party_ids, req.share_bytes.len(), &committee, request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
+    let shares = req
+        .share_bytes
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            LbfvPublicKeyShare::from_bytes(bytes, &params).map_err(|error| {
+                make_zk_error(
+                    request,
+                    format!("share_bytes[{index}] deserialize: {error}"),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(LbfvPkAggregationCircuitData {
+        committee,
+        proof_domain: req.proof_domain,
+        aggregator_party_id: req.aggregator_party_id,
+        party_ids: req.party_ids.clone(),
+        row_index: req.row_index,
+        shares,
+    })
+}
+
+fn build_rlk_aggregation_data(
+    req: &RlkAggregationProofRequest,
+    request: &ComputeRequest,
+) -> Result<RlkAggregationCircuitData, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, request)?;
+    let committee = req.committee_size.values();
+    validate_lbfv_aggregation_parties(&req.party_ids, req.share_bytes.len(), &committee, request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
+    let shares = req
+        .share_bytes
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            RelinKeyShare::from_bytes(bytes, &params).map_err(|error| {
+                make_zk_error(
+                    request,
+                    format!("share_bytes[{index}] deserialize: {error}"),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RlkAggregationCircuitData {
+        committee,
+        proof_domain: req.proof_domain,
+        aggregator_party_id: req.aggregator_party_id,
+        party_ids: req.party_ids.clone(),
+        row_index: req.row_index,
+        component: req.component,
+        shares,
+    })
+}
+
+fn validate_lbfv_aggregation_parties(
+    party_ids: &[u32],
+    share_count: usize,
+    committee: &e3_committee::CiphernodesCommittee,
+    request: &ComputeRequest,
+) -> Result<(), ComputeRequestError> {
+    if share_count != committee.h || party_ids.len() != committee.h {
+        return Err(make_zk_error(
+            request,
+            format!(
+                "l-BFV aggregation requires exactly {} party IDs and shares; received {} and {}",
+                committee.h,
+                party_ids.len(),
+                share_count
+            ),
+        ));
+    }
+    if party_ids
+        .iter()
+        .any(|party_id| usize::try_from(*party_id).map_or(true, |id| id >= committee.n))
+    {
+        return Err(make_zk_error(
+            request,
+            format!(
+                "l-BFV aggregation party IDs must be less than {}",
+                committee.n
+            ),
+        ));
+    }
+    if party_ids.windows(2).any(|ids| ids[0] >= ids[1]) {
+        return Err(make_zk_error(
+            request,
+            "l-BFV aggregation party IDs must be unique and strictly ascending".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn handle_lbfv_pk_generation_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: LbfvPkGenerationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    req.validate_operation_id()
+        .map_err(|error| make_zk_error(&request, error.to_string()))?;
+    let (config, data) = build_lbfv_pk_generation_data(cipher, &req, &request)?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_lbfv_pk_generation_row(
+        prover,
+        &config,
+        &data,
+        &zk_bb_work_id(&request),
+        &artifacts_dir,
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    let row_index = validated_row_instance(
+        e3_events::ProofType::LbfvPkGeneration,
+        &proof,
+        req.row_index,
+        req.params_preset,
+        &request,
+    )?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::LbfvPkGeneration(LbfvPkGenerationProofResponse {
+            operation_id: req.operation_id,
+            proof,
+            row_index,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_rlk_generation_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: RlkGenerationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    req.validate_operation_id()
+        .map_err(|error| make_zk_error(&request, error.to_string()))?;
+    let (config, data) = build_rlk_generation_data(cipher, &req, &request)?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_rlk_generation_row(
+        prover,
+        &config,
+        &data,
+        &zk_bb_work_id(&request),
+        &artifacts_dir,
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    let row_index = validated_row_instance(
+        e3_events::ProofType::RlkGeneration,
+        &proof,
+        req.row_index,
+        req.params_preset,
+        &request,
+    )?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::RlkGeneration(RlkGenerationProofResponse {
+            operation_id: req.operation_id,
+            proof,
+            row_index,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_lbfv_pk_aggregation_proof(
+    prover: &ZkProver,
+    req: LbfvPkAggregationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    req.validate_operation_id()
+        .map_err(|error| make_zk_error(&request, error.to_string()))?;
+    let data = build_lbfv_pk_aggregation_data(&req, &request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {e}")))?;
+    let config = e3_zk_config::threshold::lbfv_pk_aggregation::LbfvPkAggregationConfigs::new(
+        req.params_preset,
+        &params,
+        req.committee_size,
+    )
+    .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = LbfvPkAggregationCircuit
+        .prove(
+            prover,
+            &config,
+            &data,
+            &zk_bb_work_id(&request),
+            &artifacts_dir,
+        )
+        .map_err(|error| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+                request.clone(),
+            )
+        })?;
+    let row_index = validated_row_instance(
+        e3_events::ProofType::LbfvPkAggregation,
+        &proof,
+        req.row_index,
+        req.params_preset,
+        &request,
+    )?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::LbfvPkAggregation(LbfvPkAggregationProofResponse {
+            operation_id: req.operation_id,
+            proof,
+            row_index,
+            party_ids: req.party_ids,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_rlk_aggregation_proof(
+    prover: &ZkProver,
+    req: RlkAggregationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    req.validate_operation_id()
+        .map_err(|error| make_zk_error(&request, error.to_string()))?;
+    let data = build_rlk_aggregation_data(&req, &request)?;
+    let (params, _) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {e}")))?;
+    let config = e3_zk_config::threshold::rlk_aggregation::RlkAggregationConfigs::new(
+        req.params_preset,
+        &params,
+        req.committee_size,
+    )
+    .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = RlkAggregationCircuit
+        .prove(
+            prover,
+            &config,
+            &data,
+            &zk_bb_work_id(&request),
+            &artifacts_dir,
+        )
+        .map_err(|error| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+                request.clone(),
+            )
+        })?;
+    // The RLK aggregation instance is `component * row_count + row`.
+    let row_count = e3_fhe_params::lbfv_row_count(req.params_preset)
+        .ok_or_else(|| make_zk_error(&request, "the preset does not support l-BFV".into()))?;
+    let instance = req.component.index() * row_count as u32 + req.row_index;
+    validated_row_instance(
+        e3_events::ProofType::RlkAggregation,
+        &proof,
+        instance,
+        req.params_preset,
+        &request,
+    )?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::RlkAggregation(RlkAggregationProofResponse {
+            operation_id: req.operation_id,
+            proof,
+            row_index: req.row_index,
+            component: req.component,
+            party_ids: req.party_ids,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
 fn handle_threshold_share_decryption_proof(
     prover: &ZkProver,
     cipher: &Cipher,
@@ -253,8 +786,18 @@ fn handle_threshold_share_decryption_proof(
     let config = e3_zk_config::threshold::share_decryption::Configs::new(&threshold_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
 
-    // Validate the published key at the request boundary, although C6 does not use it.
-    PublicKey::from_bytes(&req.aggregated_pk_bytes, &threshold_params)
+    // Validate the published key at the request boundary, although C6 does not use it. On the
+    // l-BFV path the committee key is the key envelope (it is what the published commitment
+    // covers); the ciphertexts are encrypted under its component-0 encryption key, which the
+    // envelope check returns.
+    let encryption_key_bytes = if e3_bfv_client::is_lbfv_key_envelope(&req.aggregated_pk_bytes) {
+        e3_bfv_client::inspect_lbfv_key_envelope(&req.aggregated_pk_bytes, req.params_preset)
+            .map_err(|e| make_zk_error(&request, format!("aggregated_pk envelope: {e:?}")))?
+            .1
+    } else {
+        req.aggregated_pk_bytes.to_vec()
+    };
+    PublicKey::from_bytes(&encryption_key_bytes, &threshold_params)
         .map_err(|e| make_zk_error(&request, format!("aggregated_pk deserialize: {:?}", e)))?;
 
     // 3. Decrypt sk_poly_sum → Poly → CrtPolynomial (s)
@@ -428,7 +971,7 @@ fn handle_node_dkg_fold_proof(
     let job_id = zk_bb_work_id(&request);
     let input = NodeDkgFoldInput {
         c0_proof: &req.c0_proof,
-        c1_proof: &req.c1_proof,
+        c1_proof: req.c1_proof.as_ref(),
         c2a_proof: &req.c2a_proof,
         c2b_proof: &req.c2b_proof,
         c3a_inner_proofs: &req.c3a_inner_proofs,
@@ -443,12 +986,14 @@ fn handle_node_dkg_fold_proof(
     let NodeDkgFoldProveResult {
         proof,
         step_timings,
-    } = prove_node_dkg_fold(prover, &input, &job_id, &artifacts_dir).map_err(|e| {
-        ComputeRequestError::new(
-            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-            request.clone(),
-        )
-    })?;
+    } = prove_node_dkg_fold(prover, &input, &job_id, &artifacts_dir, req.params_preset).map_err(
+        |e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        },
+    )?;
     for step in step_timings {
         record_step(step);
     }
@@ -522,6 +1067,175 @@ fn handle_dkg_aggregation_proof(
     ))
 }
 
+fn handle_lbfv_generation_fold_proof(
+    prover: &ZkProver,
+    req: LbfvGenerationFoldRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_lbfv_generation_fold_step_for_preset(
+        prover,
+        &req.pk_proof,
+        &req.rlk_proof,
+        req.prior_accumulator.as_ref(),
+        req.row_index,
+        req.params_preset,
+        &zk_bb_work_id(&request),
+        artifacts_dir.as_str(),
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::LbfvGenerationFold(LbfvGenerationFoldResponse { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_node_dkg_fold_v2_proof(
+    prover: &ZkProver,
+    req: NodeDkgFoldV2Request,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_node_dkg_fold_v2_for_preset(
+        prover,
+        &req.legacy_node_fold_proof,
+        &req.generation_proof,
+        req.party_id,
+        req.params_preset,
+        req.committee_size,
+        &zk_bb_work_id(&request),
+        artifacts_dir.as_str(),
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::NodeDkgFoldV2(NodeDkgFoldV2Response { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_nodes_fold_v2_step_proof(
+    prover: &ZkProver,
+    req: NodesFoldV2StepRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    info!(
+        e3_id = %request.e3_id,
+        slot = req.slot_index,
+        total_slots = req.total_slots,
+        "Multithread: proving NodesFoldV2Step"
+    );
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_nodes_fold_v2_step_for_preset(
+        prover,
+        &req.inner_proof,
+        req.prior_accumulator.as_ref(),
+        req.slot_index,
+        req.total_slots,
+        req.params_preset,
+        req.committee_size,
+        &format!("{}-nodesfold-v2-{}", req.e3_id, req.slot_index),
+        artifacts_dir.as_str(),
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    info!(
+        e3_id = %request.e3_id,
+        slot = req.slot_index,
+        "Multithread: proved NodesFoldV2Step"
+    );
+    Ok(ComputeResponse::zk(
+        ZkResponse::NodesFoldV2Step(NodesFoldV2StepResponse {
+            accumulator_proof: proof,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_lbfv_aggregation_fold_proof(
+    prover: &ZkProver,
+    req: LbfvAggregationFoldRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = prove_lbfv_aggregation_fold_step_for_preset(
+        prover,
+        &req.pk_proof,
+        &req.rlk_d0_proof,
+        &req.rlk_d2_proof,
+        req.prior_accumulator.as_ref(),
+        req.row_index,
+        req.committee_size.values().h,
+        req.params_preset,
+        &zk_bb_work_id(&request),
+        artifacts_dir.as_str(),
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::LbfvAggregationFold(LbfvAggregationFoldResponse { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_dkg_aggregation_v2_proof(
+    prover: &ZkProver,
+    req: DkgAggregationV2Request,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    let proof = prove_dkg_aggregation_v2(
+        prover,
+        &req.nodes_fold_proof,
+        &req.aggregation_fold_proof,
+        &req.party_ids,
+        &req.committee_addresses,
+        &zk_bb_work_id(&request),
+        req.params_preset,
+        req.committee_size,
+    )
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::DkgAggregationV2(DkgAggregationV2Response { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
 fn handle_decryption_aggregation_proof(
     prover: &ZkProver,
     req: DecryptionAggregationRequest,
@@ -568,11 +1282,19 @@ fn make_zk_error(request: &ComputeRequest, msg: String) -> ComputeRequestError {
 }
 
 /// Barretenberg work subdirectory under `work_dir`: must be unique for concurrent jobs that share
-/// the same [`e3_events::E3id`] (e.g. three ciphernodes proving C0 in parallel).
+/// the same [`E3id`] (e.g. three ciphernodes proving C0 in parallel).
 ///
 /// Avoids `:` (from [`E3id`]'s `Display`) and `/` in path segments — some platforms / tooling are
 /// picky about those in directory names.
 fn zk_bb_work_id(request: &ComputeRequest) -> String {
+    let lbfv_operation_id = match &request.request {
+        ComputeRequestKind::TrBFV(request) => request.lbfv_operation_id(),
+        ComputeRequestKind::Zk(request) => request.lbfv_operation_id(),
+    };
+    if let Some(operation_id) = lbfv_operation_id {
+        return format!("lbfv_{operation_id}");
+    }
+
     format!("{}_{}", request.e3_id, request.correlation_id)
         .chars()
         .map(|c| match c {
@@ -598,6 +1320,14 @@ fn handle_share_computation_proof(
         req.committee_size,
     )
     .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
+
+    let committee = req.committee_size.values();
+    let parity_matrix = e3_zk_config::dkg::share_computation::parity::compute_parity_matrix(
+        threshold_params.moduli(),
+        committee.n,
+        committee.threshold,
+    )
+    .map_err(|e| make_zk_error(&request, format!("parity matrix: {e}")))?;
 
     // 2. Decrypt sensitive witness fields
     let secret_bytes = req
@@ -635,6 +1365,10 @@ fn handle_share_computation_proof(
         dkg_input_type: req.dkg_input_type,
         secret,
         secret_sss,
+        parity_matrix,
+        n_parties: committee.n as u32,
+        threshold: committee.threshold as u32,
+        chunk_size: c2_chunk_size_for(req.params_preset, committee.n) as u32,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -642,22 +1376,33 @@ fn handle_share_computation_proof(
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
-    let circuit = ShareComputationCircuit;
-    let proof = circuit
-        .prove(
+    // 7. The trBFV path proves C2 in one proof (sk_share_computation or e_sm_share_computation).
+    // The l-BFV path proves chunks and a terminal C2 projection; it uses the compiled default
+    // chunk size, and the `zk_cli --chunk-size` option does not reach this handler.
+    let proof = if e3_fhe_params::is_lbfv_path(req.params_preset) {
+        prove_chunked_share_computation(
             prover,
             &config,
             &circuit_data,
             &inner_job_id,
             &artifacts_dir,
         )
-        .map_err(|e| {
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-                request.clone(),
-            )
-        })?;
+        .map(|result| result.proof)
+    } else {
+        ShareComputationCircuit.prove(
+            prover,
+            &config,
+            &circuit_data,
+            &inner_job_id,
+            &artifacts_dir,
+        )
+    }
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
 
     Ok(ComputeResponse::zk(
         ZkResponse::ShareComputation(ShareComputationProofResponse {
@@ -675,6 +1420,7 @@ fn handle_pk_generation_proof(
     req: PkGenerationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_c1_preset(req.params_preset, &request)?;
     // 1. Build BFV parameters from the threshold preset
     let params = BfvParamSet::from(req.params_preset).build_arc();
 
@@ -799,10 +1545,17 @@ fn handle_share_encryption_proof(
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // 1. Build DKG params from threshold preset
-    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
+    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
 
     let config = e3_zk_config::dkg::share_encryption::Configs::new(&dkg_params)
+        .and_then(|config| config.with_preset(req.params_preset))
+        .and_then(|config| {
+            config.with_chunk_size(c2_chunk_size_for(
+                req.params_preset,
+                req.committee_size.values().n,
+            ))
+        })
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
 
     // 2. Decrypt sensitive witness data
@@ -841,7 +1594,35 @@ fn handle_share_encryption_proof(
     let e1_rns = try_poly_ntt_from_bytes(&e1_rns_bytes, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("e1_rns: {}", e)))?;
 
+    let committee_n = req.committee_size.values().n;
+    if req.recipient_party_id >= committee_n {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee size {}",
+                req.recipient_party_id, committee_n
+            ),
+        ));
+    }
+    // C3 encrypts one threshold Shamir row per proof. The ciphertext itself uses DKG parameters,
+    // but row_index belongs to the threshold secret's modulus domain.
+    let n_moduli = threshold_params.moduli().len();
+    if req.row_index >= n_moduli {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "row_index {} is outside modulus count {}",
+                req.row_index, n_moduli
+            ),
+        ));
+    }
+    let party_idx = u32::try_from(req.recipient_party_id)
+        .map_err(|e| make_zk_error(&request, format!("recipient_party_id: {e}")))?;
+    let mod_idx = u32::try_from(req.row_index)
+        .map_err(|e| make_zk_error(&request, format!("row_index: {e}")))?;
+
     // 5. Build circuit data
+    let committee_val = req.committee_size.values();
     let circuit_data = ShareEncryptionCircuitData {
         plaintext,
         ciphertext,
@@ -849,6 +1630,11 @@ fn handle_share_encryption_proof(
         u_rns,
         e0_rns,
         e1_rns,
+        dkg_input_type: req.dkg_input_type,
+        party_idx,
+        mod_idx,
+        chunk_size: c2_chunk_size_for(req.params_preset, committee_val.n) as u32,
+        committee: committee_val,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
@@ -888,6 +1674,7 @@ fn handle_dkg_share_decryption_proof(
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::new(&threshold_params, &dkg_params)
+        .and_then(|config| config.with_preset(req.params_preset))
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
 
     let sk_bytes = req
@@ -912,6 +1699,15 @@ fn handle_dkg_share_decryption_proof(
             format!(
                 "own_plaintext_idx {:?} out of range (num_honest_parties={})",
                 req.own_plaintext_idx, h
+            ),
+        ));
+    }
+    if req.recipient_party_id >= req.committee_size.values().n as u64 {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee N",
+                req.recipient_party_id
             ),
         ));
     }
@@ -1000,7 +1796,11 @@ fn handle_dkg_share_decryption_proof(
     let circuit_data = ShareDecryptionCircuitData {
         secret_key,
         honest_ciphertexts,
+        recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
+        dkg_input_type: req.dkg_input_type,
+        chunk_size: c2_chunk_size_for(req.params_preset, req.committee_size.values().n) as u32,
+        committee: req.committee_size.values(),
     };
 
     let circuit = ShareDecryptionCircuit;
@@ -1086,6 +1886,38 @@ fn handle_verify_share_proofs(
                 party_result.all_verified = false;
                 party_result.failed_signed_payload = Some(signed_proof.clone());
                 break;
+            }
+
+            // Bind l-BFV C2 terminal proofs (the chunk finalizers) to their deployment-time VK
+            // anchors before generic proof verification. A failure marks the signed proof
+            // invalid, like any other ZK failure. The trBFV C2 is a single proof with no chunk
+            // or batch VK to bind, and trBFV-only presets build no finalizer to load anchors from.
+            let proof_type = signed_proof.payload.proof_type;
+            if e3_fhe_params::is_lbfv_path(req.params_preset)
+                && matches!(
+                    proof_type,
+                    e3_events::ProofType::C2aSkShareComputation
+                        | e3_events::ProofType::C2bESmShareComputation
+                )
+            {
+                let anchor_result = C2TerminalAnchors::load(prover, proof_type, &artifacts_dir)
+                    .and_then(|anchors| {
+                        validate_c2_terminal_proof(
+                            req.params_preset,
+                            req.committee_size,
+                            proof_type,
+                            &signed_proof.payload.proof,
+                            &anchors,
+                        )
+                    });
+                if let Err(error) = anchor_result {
+                    info!(
+                        "C2 terminal proof VK binding failed for party {sender} ({proof_type:?}): {error}"
+                    );
+                    party_result.all_verified = false;
+                    party_result.failed_signed_payload = Some(signed_proof.clone());
+                    break;
+                }
             }
 
             // 2. A cryptographically invalid proof returns `Ok(false)`. A verifier process
@@ -1208,6 +2040,43 @@ fn handle_verify_share_decryption_proofs(
     ))
 }
 
+/// The committee C7 is proven against: the canonical row for `(threshold_m, threshold_n)`.
+///
+/// Its `h` is the DKG's honest-party count, which the circuits are compiled with. The decryption
+/// shares C7 combines number `threshold_m + 1`, which equals `h` only at the minimum committee, so
+/// the share count cannot stand in for `h`.
+#[cfg(test)]
+fn c7_committee(
+    threshold_m: usize,
+    threshold_n: usize,
+) -> anyhow::Result<e3_committee::CiphernodesCommittee> {
+    Ok(e3_committee::CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n)?.values())
+}
+
+#[cfg(test)]
+mod c7_committee_tests {
+    use super::c7_committee;
+    use e3_committee::CiphernodesCommitteeSize;
+
+    /// At the small committee `t + 1 = 10` shares are combined while `h = 14`; C7 still gets `h = 14`.
+    #[test]
+    fn c7_uses_the_canonical_h_not_the_share_count() {
+        for size in [
+            CiphernodesCommitteeSize::Minimum,
+            CiphernodesCommitteeSize::Micro,
+            CiphernodesCommitteeSize::Small,
+        ] {
+            let canonical = size.values();
+            assert_eq!(
+                c7_committee(canonical.threshold, canonical.n).unwrap(),
+                canonical
+            );
+        }
+        let small = CiphernodesCommitteeSize::Small.values();
+        assert_ne!(small.h, small.threshold + 1);
+    }
+}
+
 fn handle_decrypted_shares_aggregation_proof(
     prover: &ZkProver,
     mut req: DecryptedSharesAggregationProofRequest,
@@ -1221,6 +2090,7 @@ fn handle_decrypted_shares_aggregation_proof(
         &threshold_params,
         req.committee_size,
     )
+    .and_then(|config| config.with_preset(req.params_preset))
     .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
 
     if (req.threshold_m as usize, req.threshold_n as usize)
@@ -1490,5 +2360,216 @@ mod aggregation_request_tests {
                 &artifacts
             )
             .unwrap());
+    }
+}
+
+#[cfg(test)]
+mod lbfv_request_tests {
+    use super::*;
+    use e3_crypto::SensitiveBytes;
+    use e3_events::CorrelationId;
+    use e3_fhe_params::lbfv_crs_seed;
+    use e3_trbfv::lbfv_operation::LbfvOperationId;
+    use e3_utils::ArcBytes;
+    use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
+    use fhe::bfv::{CommonRandomPolyVec, SecretKey};
+    use fhe_math::rq::traits::TryConvertFrom;
+    use fhe_traits::Serialize as FheSerialize;
+
+    fn proof_domain() -> e3_committee_hash::LbfvProofDomainContext {
+        e3_zk_samples::lbfv_proof_domain::sample_lbfv_proof_domain()
+    }
+
+    fn compute_request(request: ZkRequest) -> ComputeRequest {
+        ComputeRequest::zk(request, CorrelationId::new(), E3id::new("7", 1))
+    }
+
+    fn operation_id(value: u8) -> LbfvOperationId {
+        LbfvOperationId([value; 32])
+    }
+
+    #[test]
+    fn lbfv_work_id_uses_the_stable_operation_id() {
+        let mut request_data = LbfvPkGenerationProofRequest {
+            operation_id: operation_id(0),
+            proof_domain: proof_domain(),
+            party_id: 1,
+            public_key_share_bytes: ArcBytes::from_bytes(&[3]),
+            secret_key_bytes: SensitiveBytes::from_encrypted(&[]),
+            row_index: 2,
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        request_data.operation_id = request_data.expected_operation_id();
+        let first = compute_request(ZkRequest::LbfvPkGeneration(request_data.clone()));
+        let retry = compute_request(ZkRequest::LbfvPkGeneration(request_data));
+
+        assert_eq!(zk_bb_work_id(&first), zk_bb_work_id(&retry));
+        assert!(zk_bb_work_id(&first).starts_with("lbfv_"));
+    }
+
+    #[tokio::test]
+    async fn builds_lbfv_pk_generation_data_from_serialized_request() {
+        let preset = BfvPreset::SecureThreshold16384;
+        let committee_size = CiphernodesCommitteeSize::Minimum;
+        let (params, _) = build_pair_for_preset(preset).unwrap();
+        let crp = CommonRandomPolyVec::from_seed(&params, lbfv_crs_seed(preset).unwrap()).unwrap();
+        let mut rng = rand::rng();
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key_share =
+            LbfvPublicKeyShare::contribute_with_crp(&secret_key, &crp, &mut rng).unwrap();
+        let c1_secret = Poly::<PowerBasis>::try_convert_from(
+            secret_key.coeffs.as_ref(),
+            params.context_at_level(0).unwrap(),
+            false,
+        )
+        .unwrap();
+        let cipher = Cipher::from_password("lbfv-row-test").await.unwrap();
+        let request_data = LbfvPkGenerationProofRequest {
+            operation_id: operation_id(1),
+            proof_domain: proof_domain(),
+            party_id: 0,
+            public_key_share_bytes: ArcBytes::from_bytes(&public_key_share.to_bytes()),
+            secret_key_bytes: SensitiveBytes::new(c1_secret.to_bytes(), &cipher).unwrap(),
+            row_index: 3,
+            params_preset: preset,
+            committee_size,
+        };
+        let request = compute_request(ZkRequest::LbfvPkGeneration(request_data.clone()));
+
+        let (_, data) = build_lbfv_pk_generation_data(&cipher, &request_data, &request).unwrap();
+
+        assert_eq!(data.row_index, request_data.row_index);
+        assert_eq!(data.committee, committee_size.values());
+        assert_eq!(data.pk0_share.limbs.len(), preset.metadata().num_moduli);
+    }
+
+    #[test]
+    fn lbfv_pk_aggregation_accepts_canonical_party_order() {
+        let preset = BfvPreset::SecureThreshold16384;
+        let committee_size = CiphernodesCommitteeSize::Minimum;
+        let sample = e3_zk_samples::threshold::lbfv_pk_aggregation::generate_sample_for_row(
+            preset,
+            committee_size.values(),
+            2,
+        )
+        .unwrap();
+        let request_data = LbfvPkAggregationProofRequest {
+            operation_id: operation_id(2),
+            proof_domain: sample.proof_domain,
+            aggregator_party_id: sample.aggregator_party_id,
+            party_ids: vec![0, 1],
+            share_bytes: sample
+                .shares
+                .iter()
+                .map(|share| ArcBytes::from_bytes(&share.to_bytes()))
+                .collect(),
+            row_index: 2,
+            params_preset: preset,
+            committee_size,
+        };
+        let request = compute_request(ZkRequest::LbfvPkAggregation(request_data.clone()));
+
+        let data = build_lbfv_pk_aggregation_data(&request_data, &request).unwrap();
+
+        assert_eq!(data.shares, sample.shares);
+    }
+
+    #[test]
+    fn c1_is_proved_only_on_the_trbfv_path() {
+        let request = |params_preset| {
+            compute_request(ZkRequest::PkGeneration(PkGenerationProofRequest {
+                pk0_share: ArcBytes::from_bytes(&[]),
+                sk: SensitiveBytes::from_encrypted(&[]),
+                eek: SensitiveBytes::from_encrypted(&[]),
+                e_sm: SensitiveBytes::from_encrypted(&[]),
+                params_preset,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            }))
+        };
+        for preset in [
+            BfvPreset::SecureThreshold16384,
+            BfvPreset::InsecureThresholdLbfv,
+        ] {
+            assert!(ensure_c1_preset(preset, &request(preset)).is_err());
+        }
+        for preset in [BfvPreset::SecureThreshold8192, BfvPreset::InsecureThreshold] {
+            assert!(ensure_c1_preset(preset, &request(preset)).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn lbfv_builders_reject_unsupported_presets_and_invalid_counts() {
+        let cipher = Cipher::from_password("lbfv-row-errors").await.unwrap();
+        let unsupported = LbfvPkGenerationProofRequest {
+            operation_id: operation_id(1),
+            proof_domain: proof_domain(),
+            party_id: 0,
+            public_key_share_bytes: ArcBytes::from_bytes(&[]),
+            secret_key_bytes: SensitiveBytes::from_encrypted(&[]),
+            row_index: 0,
+            params_preset: BfvPreset::SecureThreshold8192,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let request = compute_request(ZkRequest::LbfvPkGeneration(unsupported.clone()));
+        assert!(build_lbfv_pk_generation_data(&cipher, &unsupported, &request).is_err());
+
+        let wrong_pk_count = LbfvPkAggregationProofRequest {
+            operation_id: operation_id(2),
+            proof_domain: proof_domain(),
+            aggregator_party_id: 0,
+            party_ids: vec![0],
+            share_bytes: vec![ArcBytes::from_bytes(&[])],
+            row_index: 0,
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let request = compute_request(ZkRequest::LbfvPkAggregation(wrong_pk_count.clone()));
+        assert!(build_lbfv_pk_aggregation_data(&wrong_pk_count, &request).is_err());
+
+        let wrong_rlk_count = RlkAggregationProofRequest {
+            operation_id: operation_id(3),
+            proof_domain: proof_domain(),
+            aggregator_party_id: 0,
+            party_ids: vec![0],
+            share_bytes: vec![ArcBytes::from_bytes(&[])],
+            row_index: 0,
+            component: RlkAggregationComponent::D0,
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let request = compute_request(ZkRequest::RlkAggregation(wrong_rlk_count.clone()));
+        assert!(build_rlk_aggregation_data(&wrong_rlk_count, &request).is_err());
+
+        for party_ids in [vec![0, 0], vec![1, 0], vec![0, 3]] {
+            let noncanonical = LbfvPkAggregationProofRequest {
+                operation_id: operation_id(2),
+                proof_domain: proof_domain(),
+                aggregator_party_id: 0,
+                party_ids,
+                share_bytes: vec![ArcBytes::from_bytes(&[]); 2],
+                row_index: 0,
+                params_preset: BfvPreset::SecureThreshold16384,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            };
+            let request = compute_request(ZkRequest::LbfvPkAggregation(noncanonical.clone()));
+            assert!(build_lbfv_pk_aggregation_data(&noncanonical, &request).is_err());
+        }
+
+        let incomplete_witness = RlkGenerationProofRequest {
+            operation_id: operation_id(4),
+            proof_domain: proof_domain(),
+            party_id: 0,
+            rlk_share_bytes: ArcBytes::from_bytes(&[]),
+            secret_key_bytes: SensitiveBytes::from_encrypted(&[]),
+            r_bytes: SensitiveBytes::from_encrypted(&[]),
+            errors_d0_bytes: Vec::new(),
+            errors_d2_bytes: Vec::new(),
+            row_index: 0,
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let request = compute_request(ZkRequest::RlkGeneration(incomplete_witness.clone()));
+        assert!(build_rlk_generation_data(&cipher, &incomplete_witness, &request).is_err());
     }
 }

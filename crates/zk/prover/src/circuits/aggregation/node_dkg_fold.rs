@@ -6,6 +6,8 @@
 
 //! Production witness builders and provers for the per-node DKG fold pipeline and aggregator
 //! proofs ([`CircuitName::NodeFold`], [`CircuitName::DkgAggregator`], [`CircuitName::DecryptionAggregator`]).
+//! The node fold runs on either protocol path ([`NodeFoldCircuits`]); the DKG aggregator here is the
+//! trBFV path's, while the l-BFV path aggregates through `v2`.
 
 use crate::circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 use crate::circuits::aggregation::c6_chonk::{
@@ -110,9 +112,8 @@ struct NodeFoldWitness {
     c0_vk: Vec<String>,
     c0_proof: Vec<String>,
     c0_public: Vec<String>,
-    c1_vk: Vec<String>,
-    c1_proof: Vec<String>,
-    c1_public: Vec<String>,
+    #[serde(flatten)]
+    c1: Option<NodeFoldC1Witness>,
     c2ab_vk: Vec<String>,
     c2ab_proof: Vec<String>,
     c2ab_public: Vec<String>,
@@ -124,16 +125,26 @@ struct NodeFoldWitness {
     c4ab_public: Vec<String>,
     party_id: String,
     c0_key_hash: String,
-    c1_key_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    c1_key_hash: Option<String>,
     c2ab_key_hash: String,
     c3ab_key_hash: String,
     c4ab_key_hash: String,
 }
 
+/// The C1 inputs of the trBFV `node_fold`. The l-BFV `node_fold_chunked` folds no C1.
+#[derive(Serialize)]
+struct NodeFoldC1Witness {
+    c1_vk: Vec<String>,
+    c1_proof: Vec<String>,
+    c1_public: Vec<String>,
+}
+
 /// Inputs for [`prove_node_dkg_fold`]: recursive inner proofs and C3 slot metadata.
 pub struct NodeDkgFoldInput<'a> {
     pub c0_proof: &'a Proof,
-    pub c1_proof: &'a Proof,
+    /// The trBFV C1 proof. The l-BFV path folds no C1 and requires `None`.
+    pub c1_proof: Option<&'a Proof>,
     pub c2a_proof: &'a Proof,
     pub c2b_proof: &'a Proof,
     pub c3a_inner_proofs: &'a [Proof],
@@ -167,25 +178,120 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
     });
 }
 
-/// Run C2abFold || (C3a Chonk chain || C3b Chonk chain) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
+/// The circuits one protocol path folds into a [`NodeDkgFoldInput`]'s node proof.
 ///
-/// C2abFold and the two C3 Chonk chains are mutually independent and run concurrently via
+/// Both paths prove their C3 chains over Chonk. The trBFV path folds its final C2 proofs and its own
+/// C1/C4 circuits. The l-BFV path folds no C1, and folds the chunked C2 terminal proofs and the
+/// `_chunked` circuits, whose commitments are chunk roots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeFoldCircuits {
+    pub c1: Option<CircuitName>,
+    pub c2a: CircuitName,
+    pub c2b: CircuitName,
+    pub c2ab_fold: CircuitName,
+    pub c3: CircuitName,
+    /// The circuit of a C3 chain's last proof, which `c3ab_fold` verifies.
+    pub c3_chain: CircuitName,
+    pub c3ab_fold: CircuitName,
+    pub c4: CircuitName,
+    pub c4ab_fold: CircuitName,
+    pub node_fold: CircuitName,
+}
+
+impl NodeFoldCircuits {
+    pub const TRBFV: Self = Self {
+        c1: Some(CircuitName::PkGeneration),
+        c2a: CircuitName::SkShareComputation,
+        c2b: CircuitName::ESmShareComputation,
+        c2ab_fold: CircuitName::C2abFold,
+        c3: CircuitName::ShareEncryption,
+        c3_chain: CircuitName::C3ChonkAccumulate,
+        c3ab_fold: CircuitName::C3abFold,
+        c4: CircuitName::DkgShareDecryption,
+        c4ab_fold: CircuitName::C4abFold,
+        node_fold: CircuitName::NodeFold,
+    };
+
+    pub const LBFV: Self = Self {
+        c1: None,
+        c2a: CircuitName::SkC2ChunkFinalize,
+        c2b: CircuitName::ESmC2ChunkFinalize,
+        c2ab_fold: CircuitName::C2abChunkFold,
+        c3: CircuitName::ShareEncryptionChunked,
+        c3_chain: CircuitName::C3ChonkAccumulate,
+        c3ab_fold: CircuitName::C3abFoldChunked,
+        c4: CircuitName::DkgShareDecryptionChunked,
+        c4ab_fold: CircuitName::C4abFoldChunked,
+        node_fold: CircuitName::NodeFoldChunked,
+    };
+
+    /// The circuits for an E3 on `preset`, a threshold or DKG preset.
+    pub fn for_preset(preset: BfvPreset) -> Self {
+        if e3_fhe_params::is_lbfv_path(preset) {
+            Self::LBFV
+        } else {
+            Self::TRBFV
+        }
+    }
+}
+
+/// Run C2ab fold || (C3a chain || C3b chain) → C3ab fold → C4ab fold → node fold with the circuits of
+/// `preset`'s protocol path ([`NodeFoldCircuits`]); returns that path's node fold proof.
+///
+/// The C2ab fold and the two C3 Chonk chains are mutually independent and run concurrently via
 /// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
 pub fn prove_node_dkg_fold(
     prover: &ZkProver,
     input: &NodeDkgFoldInput,
     e3_id: &str,
     artifacts_dir: &str,
+    preset: BfvPreset,
 ) -> Result<NodeDkgFoldProveResult, ZkError> {
+    let circuits = NodeFoldCircuits::for_preset(preset);
     let mut step_timings = Vec::with_capacity(6);
+    match (input.c1_proof, circuits.c1) {
+        (Some(proof), Some(expected)) if proof.circuit != expected => {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C1 proof circuit {}, expected {expected}",
+                proof.circuit
+            )));
+        }
+        (Some(_), Some(_)) | (None, None) => {}
+        (None, Some(expected)) => {
+            return Err(ZkError::InvalidInput(format!(
+                "{} requires a {expected} proof",
+                circuits.node_fold
+            )));
+        }
+        (Some(proof), None) => {
+            return Err(ZkError::InvalidInput(format!(
+                "{} folds no C1 proof, got {}",
+                circuits.node_fold, proof.circuit
+            )));
+        }
+    }
+    for (label, proof, expected) in [
+        ("C2a", input.c2a_proof, circuits.c2a),
+        ("C2b", input.c2b_proof, circuits.c2b),
+        ("C4a", input.c4a_proof, circuits.c4),
+        ("C4b", input.c4b_proof, circuits.c4),
+    ] {
+        if proof.circuit != expected {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid {label} proof circuit {}, expected {expected}",
+                proof.circuit
+            )));
+        }
+    }
     let c2a_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::SkShareComputation,
+        circuits.c2a,
     )?;
     let c2b_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::ESmShareComputation,
+        circuits.c2b,
     )?;
+    let c2ab_circuit = circuits.c2ab_fold;
 
     let c2ab = C2abFoldWitness {
         c2a_vk: c2a_vk.verification_key.clone(),
@@ -198,7 +304,7 @@ pub fn prove_node_dkg_fold(
         c2b_key_hash: c2b_vk.key_hash.clone(),
     };
 
-    // c2ab_fold is independent of the c3 chains; c3a and c3b are independent of each other.
+    // The C2ab fold is independent of the c3 chains; c3a and c3b are independent of each other.
     // Run all three concurrently: c2ab || (c3a || c3b).
     let ((c2ab_result, c2ab_elapsed), ((c3a_result, c3a_elapsed), (c3b_result, c3b_elapsed))) =
         rayon::join(
@@ -206,7 +312,7 @@ pub fn prove_node_dkg_fold(
                 let t = Instant::now();
                 let r = build_and_prove_recursive_bin(
                     prover,
-                    CircuitName::C2abFold,
+                    c2ab_circuit,
                     &c2ab,
                     &format!("{e3_id}-c2ab"),
                     artifacts_dir,
@@ -217,7 +323,8 @@ pub fn prove_node_dkg_fold(
                 rayon::join(
                     || {
                         let t = Instant::now();
-                        let r = generate_c3_chonk_chain(
+                        let r = fold_c3(
+                            circuits,
                             prover,
                             input.c3a_inner_proofs,
                             input.c3_slot_indices_a,
@@ -229,7 +336,8 @@ pub fn prove_node_dkg_fold(
                     },
                     || {
                         let t = Instant::now();
-                        let r = generate_c3_chonk_chain(
+                        let r = fold_c3(
+                            circuits,
                             prover,
                             input.c3b_inner_proofs,
                             input.c3_slot_indices_b,
@@ -245,7 +353,7 @@ pub fn prove_node_dkg_fold(
 
     let c2ab_proof = c2ab_result?;
     step_timings.push(FoldProveStepTiming {
-        step: "c2ab_fold".to_string(),
+        step: c2ab_circuit.as_str().to_string(),
         seconds: c2ab_elapsed.as_secs_f64(),
     });
     let c3a_folded = c3a_result?;
@@ -261,7 +369,7 @@ pub fn prove_node_dkg_fold(
 
     let c3_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3ChonkAccumulate,
+        circuits.c3_chain,
     )?;
     let c3ab = C3abFoldWitness {
         c3a_vk: c3_fold_vk.verification_key.clone(),
@@ -276,18 +384,18 @@ pub fn prove_node_dkg_fold(
     let t = Instant::now();
     let c3ab_proof = build_and_prove_recursive_bin(
         prover,
-        CircuitName::C3abFold,
+        circuits.c3ab_fold,
         &c3ab,
         &format!("{e3_id}-c3ab"),
         artifacts_dir,
     )?;
     push_step(&mut step_timings, "c3ab_fold", t);
 
-    // C4a and C4b are both proofs of the same `DkgShareDecryption` circuit, so they share the
-    // same VK. Load it once and clone into both witness slots.
+    // C4a and C4b are both proofs of the path's one C4 circuit, so they share the same VK. Load
+    // it once and clone into both witness slots.
     let c4_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::DkgShareDecryption,
+        circuits.c4,
     )?;
     let c4ab = C4abFoldWitness {
         c4a_vk: c4_vk.verification_key.clone(),
@@ -302,7 +410,7 @@ pub fn prove_node_dkg_fold(
     let t = Instant::now();
     let c4ab_proof = build_and_prove_recursive_bin(
         prover,
-        CircuitName::C4abFold,
+        circuits.c4ab_fold,
         &c4ab,
         &format!("{e3_id}-c4ab"),
         artifacts_dir,
@@ -313,30 +421,39 @@ pub fn prove_node_dkg_fold(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::PkBfv,
     )?;
-    let c1_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::PkGeneration,
-    )?;
+    let (c1, c1_key_hash) = match (input.c1_proof, circuits.c1) {
+        (Some(proof), Some(circuit)) => {
+            let c1_vk = vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+                circuit,
+            )?;
+            let witness = NodeFoldC1Witness {
+                c1_vk: c1_vk.verification_key,
+                c1_proof: proof_field_strings(proof)?,
+                c1_public: proof_public_field_strings(proof)?,
+            };
+            (Some(witness), Some(c1_vk.key_hash))
+        }
+        _ => (None, None),
+    };
     let c2ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C2abFold,
+        c2ab_circuit,
     )?;
     let c3ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3abFold,
+        circuits.c3ab_fold,
     )?;
     let c4ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C4abFold,
+        circuits.c4ab_fold,
     )?;
 
     let nf = NodeFoldWitness {
         c0_vk: c0_vk.verification_key,
         c0_proof: proof_field_strings(input.c0_proof)?,
         c0_public: proof_public_field_strings(input.c0_proof)?,
-        c1_vk: c1_vk.verification_key,
-        c1_proof: proof_field_strings(input.c1_proof)?,
-        c1_public: proof_public_field_strings(input.c1_proof)?,
+        c1,
         c2ab_vk: c2ab_fold_vk.verification_key,
         c2ab_proof: proof_field_strings(&c2ab_proof)?,
         c2ab_public: proof_public_field_strings(&c2ab_proof)?,
@@ -348,7 +465,7 @@ pub fn prove_node_dkg_fold(
         c4ab_public: proof_public_field_strings(&c4ab_proof)?,
         party_id: u64_to_field_hex(input.party_id),
         c0_key_hash: c0_vk.key_hash,
-        c1_key_hash: c1_vk.key_hash,
+        c1_key_hash,
         c2ab_key_hash: c2ab_fold_vk.key_hash,
         c3ab_key_hash: c3ab_fold_vk.key_hash,
         c4ab_key_hash: c4ab_fold_vk.key_hash,
@@ -357,7 +474,7 @@ pub fn prove_node_dkg_fold(
     let t = Instant::now();
     let proof = build_and_prove_recursive_bin(
         prover,
-        CircuitName::NodeFold,
+        circuits.node_fold,
         &nf,
         &format!("{e3_id}-nodefold"),
         artifacts_dir,
@@ -368,6 +485,36 @@ pub fn prove_node_dkg_fold(
         proof,
         step_timings,
     })
+}
+
+/// Prove one C3 Chonk chain over the path's C3 circuit.
+fn fold_c3(
+    circuits: NodeFoldCircuits,
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    job_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if let Some(proof) = inner_proofs
+        .iter()
+        .find(|proof| proof.circuit != circuits.c3)
+    {
+        return Err(ZkError::InvalidInput(format!(
+            "invalid C3 proof circuit {}, expected {}",
+            proof.circuit, circuits.c3
+        )));
+    }
+    generate_c3_chonk_chain(
+        prover,
+        circuits.c3,
+        inner_proofs,
+        slot_indices,
+        total_slots,
+        job_id,
+        artifacts_dir,
+    )
 }
 
 /// Inputs for [`prove_dkg_aggregation`].
@@ -582,9 +729,15 @@ pub fn prove_decryption_aggregation_jobs(
     let artifacts_dir = artifacts_dir.as_str();
     // VKs and the compiled circuit are job-independent: load once, reuse per ciphertext.
     let c6_circuits = C6ChonkCircuits::load(prover, artifacts_dir)?;
+    // The l-BFV path proves C7 with the wide circuit; both share one public layout.
+    let c7_circuit = if e3_fhe_params::is_lbfv_path(preset) {
+        CircuitName::DecryptedSharesAggregationWide
+    } else {
+        CircuitName::DecryptedSharesAggregation
+    };
     let c7_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::DecryptedSharesAggregation,
+        c7_circuit,
     )?;
     let compiled = load_compiled_circuit(
         prover,
@@ -636,6 +789,12 @@ pub fn prove_decryption_aggregation_jobs(
                 )
             })?;
 
+        if job.c7_proof.circuit != c7_circuit {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C7 proof circuit {}, expected {c7_circuit}",
+                job.c7_proof.circuit
+            )));
+        }
         let witness = DecryptionAggregatorWitness {
             c6_root_vk: c6_circuits.root.verification_key.clone(),
             c6_root_vk_hash: c6_circuits.root.key_hash.clone(),

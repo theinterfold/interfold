@@ -10,6 +10,7 @@ use fhe::bfv::BfvParameters;
 use fhe_math::zq::Modulus;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
+use num_traits::ToPrimitive;
 use thiserror::Error;
 
 /// Errors from computing the k0_i batch of modular inverses.
@@ -79,6 +80,26 @@ pub fn compute_native_crt_coeff_bit(moduli: &[u64]) -> u32 {
 pub fn compute_msg_bit(params: &BfvParameters) -> u32 {
     let bound = params.plaintext().saturating_sub(1);
     (u64::BITS - bound.leading_zeros()).max(1)
+}
+
+/// Return the absolute coefficient bound of the BFV error sampler for `variance`.
+///
+/// Variances up to 16 use the centered binomial sampler with bound `2 * variance`. Larger
+/// variances use the uniform sampler, whose bound `b` is the smallest with `b * (b + 1) >= 3 * variance`.
+pub fn error_sampler_bound(variance: &BigUint) -> BigUint {
+    if let Some(value) = variance.to_u64().filter(|value| *value <= 16) {
+        return BigUint::from(2 * value);
+    }
+
+    let target = BigUint::from(3u32) * variance;
+    let mut bound = target.sqrt();
+    while &bound * (&bound + 1u32) < target {
+        bound += 1u32;
+    }
+    while bound > 0u32.into() && (&bound - 1u32) * &bound >= target {
+        bound -= 1u32;
+    }
+    bound
 }
 
 #[cfg(test)]
@@ -173,5 +194,17 @@ mod tests {
         ] {
             assert_eq!(compute_native_crt_coeff_bit(&moduli), expected);
         }
+    }
+
+    #[test]
+    fn error_sampler_bound_matches_cbd_and_uniform_variance_rules() {
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(16u32)),
+            BigUint::from(32u32)
+        );
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(13_334u32)),
+            BigUint::from(200u32)
+        );
     }
 }

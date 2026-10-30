@@ -15,16 +15,21 @@ use e3_data::Repositories;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind,
     CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3StageChanged, E3id,
-    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
-    Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest,
-    ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3Failed, E3Stage,
+    E3StageChanged, E3id, EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
+    InterfoldEvent, InterfoldEventData, LbfvKeyShareDocumentCreated, Proof, Sequenced,
+    SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::build_pair_for_preset;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;
+struct LbfvGenerationRows {
+    pk_proofs: Vec<Proof>,
+    rlk_proofs: Vec<Proof>,
+}
 #[cfg(test)]
 use recovery::{meta_repository, proof_repository};
 use recovery::{NodeProofRecovery, NodeProofRecoveryIndex};
@@ -39,9 +44,15 @@ pub struct NodeProofAggregator {
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     states: HashMap<E3id, DkgProofCollectionState>,
     fold_correlation: HashMap<CorrelationId, E3id>,
+
+    generation_fold_correlation: HashMap<CorrelationId, E3id>,
+    v2_legacy_correlation: HashMap<CorrelationId, E3id>,
     /// A completed local fold waiting for its request-time attestation context.
     pending_fold_proofs: HashMap<E3id, Proof>,
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+    generation_fold_accumulators: HashMap<E3id, Proof>,
+    generation_fold_next_rows: HashMap<E3id, u32>,
+    generation_fold_rows: HashMap<E3id, LbfvGenerationRows>,
     recovery_repositories: Option<Repositories>,
     recovery_index: NodeProofRecoveryIndex,
 }
@@ -62,8 +73,14 @@ impl NodeProofAggregator {
             dkg_fold_attestation_contexts_by_chain,
             states: HashMap::new(),
             fold_correlation: HashMap::new(),
+
+            generation_fold_correlation: HashMap::new(),
+            v2_legacy_correlation: HashMap::new(),
             pending_fold_proofs: HashMap::new(),
             pending_inner_proofs: HashMap::new(),
+            generation_fold_accumulators: HashMap::new(),
+            generation_fold_next_rows: HashMap::new(),
+            generation_fold_rows: HashMap::new(),
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
         }
@@ -116,6 +133,7 @@ impl NodeProofAggregator {
             addr.clone().into(),
         );
         bus.subscribe(EventType::ThresholdSharePending, addr.clone().into());
+        bus.subscribe(EventType::LbfvKeyShareDocumentCreated, addr.clone().into());
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
@@ -264,7 +282,7 @@ mod tests {
                     committee_n: 0,
                     committee_h: 0,
                     n_moduli: 0,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -284,7 +302,7 @@ mod tests {
         let request = ComputeRequest::zk(
             ZkRequest::NodeDkgFold(NodeDkgFoldRequest {
                 c0_proof: dummy_proof(1),
-                c1_proof: dummy_proof(2),
+                c1_proof: Some(dummy_proof(2)),
                 c2a_proof: dummy_proof(3),
                 c2b_proof: dummy_proof(4),
                 c3a_inner_proofs: Vec::new(),
@@ -295,7 +313,7 @@ mod tests {
                 c3_slot_indices_b: Vec::new(),
                 c3_total_slots: 0,
                 party_id: 7,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
             correlation_id,
@@ -356,7 +374,7 @@ mod tests {
                     committee_n: 3,
                     committee_h: 2,
                     n_moduli: 1,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -454,7 +472,7 @@ mod tests {
                 committee_n: 0,
                 committee_h: 0,
                 n_moduli: 0,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             },
             test_ctx(DKGRecursiveAggregationComplete {
@@ -545,7 +563,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         actor.persist_meta(&e3_id, &meta, &ec)?;
@@ -581,7 +599,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =
@@ -663,7 +681,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =

@@ -16,36 +16,84 @@ cp "$ACTIVE_COMMITTEE" "$BACKUP_DIR/active.nr"
 cp "$ACTIVE_PRESET" "$BACKUP_DIR/default.nr"
 trap restore_active_config EXIT
 
+# Every binary package with Noir tests is listed below, in exactly one group. The check that
+# follows fails when a package gains tests without being added, so no package is skipped silently.
+ACTIVE_PACKAGES=(
+  recursive_aggregation/decryption_aggregator
+)
+# These read the full preset (generated bounds, smudging and l-BFV row counts). The generated bounds
+# belong to the committed committee, so they run on it, once for each l-BFV-capable preset.
+LBFV_PACKAGES=(
+  chonk/c3_chonk_app_chunked
+  dkg/esm_share_computation_chunk
+  recursive_aggregation/dkg_aggregator_v2
+  recursive_aggregation/lbfv_aggregation_fold
+  recursive_aggregation/lbfv_aggregation_fold_kernel
+  recursive_aggregation/lbfv_generation_fold
+  recursive_aggregation/lbfv_generation_fold_kernel
+  recursive_aggregation/node_fold_chunked
+  recursive_aggregation/node_fold_v2
+  recursive_aggregation/nodes_fold_v2
+  recursive_aggregation/nodes_fold_v2_kernel
+)
+# These read only H, N_PARTIES and L_THRESHOLD, and run on the committee matrix at the end.
+MATRIX_PACKAGES=(
+  recursive_aggregation/dkg_aggregator
+  recursive_aggregation/node_fold
+)
+
+unlisted=$(cd "$REPO_ROOT/circuits/bin" && grep -rl --include='*.nr' '#\[test' . | sed 's|^\./||' | cut -d/ -f1,2 | sort -u |
+  grep -vxF -f <(printf '%s\n' "${ACTIVE_PACKAGES[@]}" "${LBFV_PACKAGES[@]}" "${MATRIX_PACKAGES[@]}") || true)
+if [ -n "$unlisted" ]; then
+  echo "Packages with Noir tests that scripts/circuits/test.sh does not run:" >&2
+  echo "$unlisted" >&2
+  exit 1
+fi
+
+# select_preset PRESET: point the default config at one preset (insecure_64, insecure, secure_8192,
+# secure_16384).
+select_preset() {
+  sed -E \
+    -e "s/preset: (insecure-64|insecure|secure-8192|secure-16384)$/preset: ${1//_/-}/g" \
+    -e "s/super::(insecure_64|insecure|secure_8192|secure_16384)::/super::$1::/g" \
+    "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
+}
+
 (cd "$REPO_ROOT/circuits/lib" && nargo test)
-(cd "$REPO_ROOT/circuits/bin/recursive_aggregation/decryption_aggregator" && nargo test)
+for package in "${ACTIVE_PACKAGES[@]}"; do
+  (cd "$REPO_ROOT/circuits/bin/$package" && nargo test)
+done
+for preset in insecure secure_16384; do
+  select_preset "$preset"
+  echo "Testing the l-BFV packages for ${preset//_/-}"
+  # The committed selector carries no l-BFV rows, so the library checks them here.
+  (cd "$REPO_ROOT/circuits/lib" && nargo test row_commitments_match_the_rows)
+  for package in "${LBFV_PACKAGES[@]}"; do
+    (cd "$REPO_ROOT/circuits/bin/$package" && nargo test)
+  done
+done
+cp "$BACKUP_DIR/default.nr" "$ACTIVE_PRESET"
 
 # The config circuit re-derives the committed secure parameters and bounds for the committed
 # committee. It runs before the loop below rewrites the committee selection.
 (cd "$REPO_ROOT/circuits/bin/config" && nargo execute)
 
-# The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD. Both presets have
-# L_THRESHOLD = 3. These pairs run each committee once and each preset at least once.
-for pair in minimum:insecure micro:secure small:secure; do
-  committee="${pair%%:*}"
-  preset="${pair##*:}"
+# These packages read H, N_PARTIES, and L_THRESHOLD. Cover each committee and both limb counts.
+for committee in minimum micro small; do
   sed -E \
     -e "s/committee: (minimum|micro|small)/committee: $committee/g" \
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  preset_name="${preset}-64"
-  if [[ "$preset" == "secure" ]]; then
-    preset_name="secure-8192"
-  fi
-  sed -E \
-    -e "s/preset: (insecure-64|secure-8192)/preset: $preset_name/g" \
-    -e "s/super::(insecure|secure)::/super::$preset::/g" \
-    "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
-  echo "Testing DKG aggregation for $preset_name/$committee"
-  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
-  # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same
-  # values these pairs cover.
-  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/node_fold" && nargo test)
+  for preset in insecure_64 secure_8192; do
+    select_preset "$preset"
+    echo "Testing DKG aggregation for ${preset//_/-}/$committee"
+    # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same
+    # values these pairs cover.
+    for package in "${MATRIX_PACKAGES[@]}"; do
+      (cd "$REPO_ROOT/circuits/bin/$package" && nargo test)
+    done
+  done
 done
 
 echo "Noir circuits tested successfully"

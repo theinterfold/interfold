@@ -8,6 +8,7 @@ impl Actor for PublicKeyAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        self.arm_lbfv_aggregation_redrive_timer(ctx);
     }
 }
 
@@ -39,6 +40,15 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::ComputeRequestError(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::LbfvKeyShareManifestPublished(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::LbfvKeyShareDocumentReceived(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
                 if data.e3_id == self.e3_id {
                     self.dkg_fold_attestation_context = Some(data.context);
@@ -51,7 +61,21 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
                     self.effects_enabled = true;
                     self.publish_inputs_ready(ec.clone())?;
-                    self.resume_in_flight_work(ec)
+                    if self.is_lbfv() {
+                        self.resume_lbfv_work(ec.clone(), ctx);
+                        if matches!(
+                            self.state.get(),
+                            Some(
+                                PublicKeyAggregatorState::GeneratingC5Proof { .. }
+                                    | PublicKeyAggregatorState::Complete { .. }
+                            )
+                        ) {
+                            self.resume_in_flight_work(ec.clone())?;
+                        }
+                        Ok(())
+                    } else {
+                        self.resume_in_flight_work(ec)
+                    }
                 });
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
@@ -110,7 +134,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     "{message}"
                 );
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                    self.handle_member_expelled(node, &ec)
+                    self.handle_member_expelled(node, &ec)?;
+                    if self.is_lbfv() {
+                        self.persist_lbfv_exclusion(node, ec.clone(), ctx);
+                    }
+                    Ok(())
                 });
             }
             _ => (),
@@ -124,7 +152,7 @@ impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<AggregatorChanged>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if msg.e3_id != self.e3_id || msg.is_aggregator == self.is_aggregator {
             return;
@@ -132,9 +160,24 @@ impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {
         self.is_aggregator = msg.is_aggregator;
         if self.can_run_aggregation_effects() {
             let ec = msg.get_ctx().clone();
-            trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                self.resume_in_flight_work(ec)
-            });
+            if self.is_lbfv() {
+                self.resume_lbfv_work(ec.clone(), ctx);
+                if matches!(
+                    self.state.get(),
+                    Some(
+                        PublicKeyAggregatorState::GeneratingC5Proof { .. }
+                            | PublicKeyAggregatorState::Complete { .. }
+                    )
+                ) {
+                    trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                        self.resume_in_flight_work(ec)
+                    });
+                }
+            } else {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.resume_in_flight_work(ec)
+                });
+            }
         }
     }
 }
@@ -145,7 +188,7 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
     fn handle(
         &mut self,
         event: TypedEvent<KeyshareCreated>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let (event, ec) = event.into_components();
         trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
@@ -170,11 +213,49 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             // If we just transitioned to VerifyingC1, dispatch verification
             // using c1_proofs stored in the new state.
             if became_ready && self.can_run_aggregation_effects() {
-                self.continue_c1_verification(ec)?;
+                self.continue_c1_verification(ec.clone())?;
+            }
+
+            if self.is_lbfv() {
+                let party_id = u32::try_from(party_id)
+                    .map_err(|_| anyhow::anyhow!("l-BFV party ID does not fit u32"))?;
+                self.validate_stored_lbfv_bundle(party_id, ec, ctx);
             }
 
             Ok(())
         })
+    }
+}
+
+impl Handler<TypedEvent<LbfvKeyShareManifestPublished>> for PublicKeyAggregator {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        event: TypedEvent<LbfvKeyShareManifestPublished>,
+        ctx: &mut Self::Context,
+    ) {
+        self.persist_lbfv_manifest(event, ctx);
+    }
+}
+
+impl Handler<TypedEvent<LbfvKeyShareDocumentReceived>> for PublicKeyAggregator {
+    type Result = ();
+
+    fn handle(&mut self, event: TypedEvent<LbfvKeyShareDocumentReceived>, ctx: &mut Self::Context) {
+        self.persist_lbfv_document(event, ctx);
+    }
+}
+
+impl Handler<TypedEvent<LbfvKeyShareDocumentFetchFailed>> for PublicKeyAggregator {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        event: TypedEvent<LbfvKeyShareDocumentFetchFailed>,
+        ctx: &mut Self::Context,
+    ) {
+        self.persist_lbfv_fetch_failure(event, ctx);
     }
 }
 
@@ -187,6 +268,14 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         if !self.can_continue_aggregation_effects() {
+            return;
+        }
+        if self.is_lbfv() && msg.kind == VerificationKind::PkGenerationProofs {
+            warn!("Ignoring standalone C1 verification completion for secure-16384");
+            return;
+        }
+        if self.is_lbfv() && msg.kind == VerificationKind::LbfvGenerationProofs {
+            self.handle_lbfv_verification_complete(msg, _ctx);
             return;
         }
         trap(

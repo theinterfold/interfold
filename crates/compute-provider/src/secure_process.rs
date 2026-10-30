@@ -26,6 +26,8 @@ use crate::policy::{InputPolicy, InputRecord, PublishedInput};
 use e3_bfv_client::client::compute_ct_commitment_with_params;
 use e3_fhe_params::decode_bfv_params_arc;
 use fhe::bfv::BfvParameters;
+use fhe::trlbfv::LBFVRelinearizationKey;
+use fhe_traits::DeserializeParametrized;
 use std::sync::Arc;
 
 /// What the first pass keeps of one input once its bytes are gone.
@@ -43,6 +45,7 @@ pub struct SecureProcess {
     published: Vec<PublishedData>,
     absorbed: Vec<Absorbed>,
     tree: MerkleTreeBuilder,
+    relinearization_key: Option<LBFVRelinearizationKey>,
 }
 
 impl SecureProcess {
@@ -74,7 +77,47 @@ impl SecureProcess {
             tree: MerkleTreeBuilder::new(indices.len()),
             indices,
             published,
+            relinearization_key: None,
         })
+    }
+
+    /// Binds the committee key that the computation uses to the committee public key hash.
+    ///
+    /// An l-BFV committee publishes its key as an envelope that carries the relinearization key.
+    /// When `committee_key` is such an envelope for an l-BFV preset, the envelope must match
+    /// `expected_commitment`, which is the committee public key hash the journal reveals. The
+    /// processor then receives the relinearization key from that envelope and no other. Any other
+    /// committee key leaves the processor without a relinearization key.
+    pub fn bind_committee_key(
+        &mut self,
+        committee_key: &[u8],
+        expected_commitment: Option<[u8; 32]>,
+    ) -> Result<(), ComputeError> {
+        let lbfv_preset = e3_fhe_params::BfvPreset::from_threshold_parameters(
+            self.params.degree(),
+            self.params.plaintext(),
+            self.params.moduli(),
+        )
+        .and_then(e3_fhe_params::BfvPreset::lbfv_label)
+        .filter(|_| e3_bfv_client::is_lbfv_key_envelope(committee_key));
+        let Some(lbfv_preset) = lbfv_preset else {
+            self.relinearization_key = None;
+            return Ok(());
+        };
+        let expected_commitment = expected_commitment.ok_or_else(|| {
+            ComputeError::CommitteeKey(
+                "l-BFV computation requires a committee-key commitment".to_string(),
+            )
+        })?;
+        e3_bfv_client::validate_lbfv_key_envelope(committee_key, expected_commitment, lbfv_preset)
+            .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
+        let envelope = e3_bfv_client::decode_lbfv_key_envelope(committee_key)
+            .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
+        self.relinearization_key = Some(
+            LBFVRelinearizationKey::from_bytes(&envelope.relinearization_key, &self.params)
+                .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?,
+        );
+        Ok(())
     }
 
     /// The decoded BFV parameters.
@@ -183,6 +226,7 @@ impl SecureProcess {
                 .map(|absorbed| absorbed.ciphertext_hash)
                 .collect(),
             selected,
+            relinearization_key: self.relinearization_key,
         })
     }
 }
@@ -195,6 +239,7 @@ pub struct Selected {
     indices: Vec<u64>,
     hashes: Vec<[u8; 32]>,
     selected: Vec<usize>,
+    relinearization_key: Option<LBFVRelinearizationKey>,
 }
 
 impl Selected {
@@ -225,6 +270,7 @@ impl Selected {
         let output = processor(FHEProcessorInput {
             ciphertexts: &mut ciphertexts,
             params: &self.params,
+            relinearization_key: self.relinearization_key.as_ref(),
         });
         if let Some(error) = ciphertexts.failure {
             return Err(error);
@@ -405,7 +451,7 @@ mod tests {
     /// Seven inputs. Input 4 does not deserialize and input 2's published commitment is wrong, so
     /// the policy drops both along with every odd index.
     fn round() -> ComputeInput {
-        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(11);
         let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);
@@ -434,6 +480,7 @@ mod tests {
             fhe_inputs: FHEInputs {
                 ciphertexts,
                 params: encode_bfv_params(&params),
+                committee_key: Vec::new(),
             },
             published,
         }

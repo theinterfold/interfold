@@ -30,9 +30,10 @@ describe('SDK circuit selection', () => {
     expect(DEFAULT_E3_CONFIG.committeeSize).toBe(CommitteeSize.Minimum)
   })
 
-  it('uses current configuration IDs and the current secure registry entry', () => {
+  it('uses current configuration IDs and routes secure requests to slots 2 and 3', () => {
     const fixture = JSON.parse(readFixture(new URL('../../../crates/fhe-params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'))
     expect(ParamSet.Secure8192).toBe(fixture.vectors.find((vector: { name: string }) => vector.name === 'current-secure').paramSet)
+    expect(ParamSet.Secure16384).toBe(3)
     for (const vector of fixture.vectors.filter((vector: { preset: string | null }) => vector.preset !== null)) {
       expect(cryptoConfigIdForParamSet(vector.paramSet)).toBe(vector.cryptoConfigId)
     }
@@ -45,7 +46,7 @@ describe('SDK circuit selection', () => {
   })
 
   it('accepts the supported preset and committee', async () => {
-    readFileSync.mockReturnValue(JSON.stringify({ preset: 'insecure-64', committee: 'minimum' }))
+    readFileSync.mockReturnValue(JSON.stringify({ preset: 'insecure', committee: 'minimum' }))
     await expect(assertSdkMinimumCircuits()).resolves.toBeUndefined()
   })
 
@@ -62,14 +63,19 @@ describe('SDK circuit selection', () => {
   })
 
   it.each(['micro', 'small', undefined])('rejects committee %s', async (committee) => {
-    readFileSync.mockReturnValue(JSON.stringify({ preset: 'insecure-64', committee }))
+    readFileSync.mockReturnValue(JSON.stringify({ preset: 'insecure', committee }))
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_COMMITTEE_MISMATCH' })
   })
 
-  it('rechecks the selection after another build changes the stamp', async () => {
-    readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'insecure-64', committee: 'minimum' }))
+  it('accepts a supported secure active preset after a separate circuit build', async () => {
+    readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'insecure', committee: 'minimum' }))
     readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'secure-8192', committee: 'minimum' }))
     await assertSdkMinimumCircuits()
+    await expect(assertSdkMinimumCircuits()).resolves.toBeUndefined()
+  })
+
+  it('rejects an unsupported active preset', async () => {
+    readFileSync.mockReturnValue(JSON.stringify({ preset: 'unknown', committee: 'minimum' }))
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_PRESET_MISMATCH' })
   })
 })

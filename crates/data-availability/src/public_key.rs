@@ -6,7 +6,9 @@ use anyhow::{ensure, Result};
 use std::ops::{Deref, Range};
 
 pub const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-pub const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+// Matches `CiphernodeRegistryOwnable.MAX_COMMITTEE_PUBLIC_KEY_BYTES`; a secure-16384 l-BFV key
+// envelope is about 7.8 MB.
+pub const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 
 /// An ephemeral layout, never a replacement for a consumer's persisted assembly record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

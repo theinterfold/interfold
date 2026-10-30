@@ -396,7 +396,7 @@ release validation. If validation fails, the installed circuits and version reco
 of this binary's circuit version. To install another archive, such as a local build, add
 `--allow-unpinned-archive`; the internal manifest checks still apply. To install a subset from a
 local archive, add `--circuits-configuration <PRESET/COMMITTEE>` for each required pair. For
-example, `--circuits-configuration insecure-64/minimum` selects the development configuration. This
+example, `--circuits-configuration insecure/minimum` selects the development configuration. This
 option requires `--circuits-archive` and cannot reduce the network download requirements.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
@@ -571,13 +571,8 @@ interfold ciphernode deactivate [--tickets <AMOUNT>] [--bond <AMOUNT>] [--operat
 Prints the on-chain state of an operator. The command sends no transaction.
 
 ```bash
-interfold ciphernode status [--operator <ADDRESS>] [--no-committees] [--chain <CHAIN>]
+interfold ciphernode status [--operator <ADDRESS>] [--chain <CHAIN>]
 ```
-
-| Flag              | Value       | Default           | Description                                                          |
-| ----------------- | ----------- | ----------------- | -------------------------------------------------------------------- |
-| `--operator`      | `<ADDRESS>` | Configured signer | Operator to show.                                                    |
-| `--no-committees` | None        | Off               | Do not list the committees. The command then reads no event history. |
 
 The output shows these values:
 
@@ -594,32 +589,13 @@ The output shows these values:
 A committee stays in the list until `releaseCommittee(e3Id)` releases it, also after its E3 is
 complete or failed. A `candidate` holds a provisional seat while the sortition of the E3 is open.
 
-To find the committees, the command reads the `unresolvedCommitteesOf` and `committeeObligationAt`
-views of `BondingRegistry`: one block read, one call for the number, and one call for each
-committee. These calls read no event history. A registry deployed before these views, or one that
-holds committees requested before them, does not list every committee. The command then reads the
-`CommitteeObligationUpdated` events of `BondingRegistry`. The first run reads from the
-`deploy_block` of the contract. When the configuration has no `deploy_block` for `bonding_registry`,
-the read starts at block 0. The first run sends one `eth_getLogs` request for each 10,000 blocks (or
-the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint accepts. Thus
-the first run can take some seconds, and longer on an endpoint with a small range limit.
-
-The command saves the result in `committee-scans/` in the node data directory, one file for each
-operator. A later run reads only the blocks after the saved block: usually one `eth_getLogs`
-request, and three block reads that detect a chain reorganization. After a reorganization of the
-saved block, the command reads the full history again. The read stops at the latest block minus the
-chain's `ingestion_confirmations`, so a new committee shows after that number of blocks.
-
-If the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
+The command reads the `CommitteeObligationUpdated` events of `BondingRegistry`, from the
+`deploy_block` of the contract to the latest block. When the configuration has no `deploy_block` for
+`bonding_registry`, the read starts at block 0. It sends one `eth_getLogs` request for each 10,000
+blocks (or the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint
+accepts. Thus the read can take some seconds, and longer on an endpoint with a small range limit. If
+the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
 other values.
-
-<Callout type='info'>
-  To monitor a node from a script, do not run this command often. Each run reads the chain, and a
-  hosted RPC endpoint can bill each read. Use `--no-committees`, or read the heartbeat files that
-  the node writes (see [Watch the node](/operate/running#watch-the-node)). They need no RPC request.
-  A running node of an earlier version refuses `--no-committees` until it restarts on the new
-  version.
-</Callout>
 
 ### `interfold faucet`
 

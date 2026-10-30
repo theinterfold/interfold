@@ -231,7 +231,7 @@ pub global {}_CT1_R_BOUNDS: [Field; L] = [{}];
 
 /************************************
 -------------------------------------
-user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
+user_data_encryption: ct0 leg
 -------------------------------------
 ************************************/
 
@@ -247,7 +247,7 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncrypti
 
 /************************************
 -------------------------------------
-user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
+user_data_encryption: ct1 leg
 -------------------------------------
 ************************************/
 

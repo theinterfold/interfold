@@ -11,17 +11,29 @@ import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
 import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
+import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
 
 /**
  * @title DkgFoldAttestationVerifier
  * @notice Stateless verifier for DKG fold attestations at committee publication.
  */
 contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
+    bytes32 private constant LBFV_ACCEPTED_SET_LABEL_HASH =
+        keccak256("interfold.lbfv.accepted-party-set:v1");
+
     struct BundleData {
         bytes32[] publicInputs;
         DkgFoldAttestationLib.Attestation[] attestations;
         DkgFoldAttestationLib.PartySlotBinding[] bindings;
         uint256 h;
+        /// @dev Index of the first party ID: 2 for the trBFV `dkg_aggregator` (after the
+        ///      nodes-fold and C5 key hashes), 1 for `dkg_aggregator_v2` (after the nodes-fold
+        ///      key hash only).
+        uint256 partyIdOffset;
+        /// @dev Offset of the SK aggregate commitments after the `h` party IDs: 5 for the trBFV
+        ///      `dkg_aggregator`, 21 for `dkg_aggregator_v2`, whose prefix also carries the
+        ///      legacy VK binding and the C2 chunk hashes.
+        uint256 commitmentOffset;
     }
 
     /// @inheritdoc IDkgFoldAttestationVerifier
@@ -40,11 +52,18 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             bytes32[] memory esmAggCommits
         )
     {
-        BundleData memory data = _loadBundle(proof, dkgAttestationBundle);
+        BundleData memory data = _loadBundle(
+            registry,
+            e3Id,
+            proof,
+            dkgAttestationBundle
+        );
         return _fillAnchors(registry, chainId, e3Id, data);
     }
 
     function _loadBundle(
+        address registry,
+        uint256 e3Id,
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) private view returns (BundleData memory data) {
@@ -55,16 +74,21 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         } catch {
             revert ICiphernodeRegistry.InvalidFoldAttestation();
         }
-        data.h = _honestPartyCount(data.publicInputs);
+        (data.h, data.partyIdOffset, data.commitmentOffset) = _honestPartyCount(
+            registry,
+            e3Id,
+            data.publicInputs
+        );
         // Defense in depth: require the public-inputs `partyId` slots
-        // (`publicInputs[2..2+h]`) to be strictly ascending. The zk circuit
-        // already enforces this, but rejecting duplicates here prevents two
-        // bindings from resolving to the same slot in `_partySlot` (which
-        // would silently overwrite each other in `partyIdsOut` etc.).
+        // (`publicInputs[partyIdOffset..partyIdOffset+h]`) to be strictly
+        // ascending. The zk circuit already enforces this, but rejecting
+        // duplicates here prevents two bindings from resolving to the same slot
+        // in `_partySlot` (which would silently overwrite each other in
+        // `partyIdsOut` etc.).
         for (uint256 k = 1; k < data.h; k++) {
             require(
-                uint256(data.publicInputs[2 + k]) >
-                    uint256(data.publicInputs[2 + k - 1]),
+                uint256(data.publicInputs[data.partyIdOffset + k]) >
+                    uint256(data.publicInputs[data.partyIdOffset + k - 1]),
                 ICiphernodeRegistry.InvalidFoldAttestation()
             );
         }
@@ -180,17 +204,105 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     }
 
     function _honestPartyCount(
+        address registry,
+        uint256 e3Id,
         bytes32[] memory publicInputs
-    ) private pure returns (uint256 h) {
+    )
+        private
+        view
+        returns (uint256 h, uint256 partyIdOffset, uint256 commitmentOffset)
+    {
+        (
+            uint256[2] memory v2Hs,
+            uint256[2] memory v2Ns,
+            uint256 candidates
+        ) = _v2Committees(publicInputs.length);
+        for (uint256 c = 0; c < candidates; ++c) {
+            if (
+                _isV2Statement(registry, e3Id, publicInputs, v2Hs[c], v2Ns[c])
+            ) {
+                return (v2Hs[c], 1, 21);
+            }
+        }
+        // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
             publicInputs.length >= 6 && (publicInputs.length - 6) % 3 == 0,
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
         h = (publicInputs.length - 6) / 3;
+        partyIdOffset = 2;
+        commitmentOffset = 5;
         // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
         // a zero-honest-party proof would otherwise pass this verifier with no
         // attestations to check and write empty anchors to the registry.
         require(h > 0, ICiphernodeRegistry.InvalidFoldAttestation());
+    }
+
+    function _isV2Statement(
+        address registry,
+        uint256 e3Id,
+        bytes32[] memory publicInputs,
+        uint256 v2H,
+        uint256 v2N
+    ) private view returns (bool) {
+        uint256 previous;
+        for (uint256 i = 0; i < v2H; ++i) {
+            uint256 partyId = uint256(publicInputs[1 + i]);
+            if (partyId >= v2N || (i > 0 && partyId <= previous)) return false;
+            previous = partyId;
+        }
+
+        bytes32 committeeHash = ICiphernodeRegistry(registry).getCommitteeHash(
+            e3Id
+        );
+        if (
+            publicInputs[1 + v2H] != CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[2 + v2H] != CommitteeHashLib.lo(committeeHash)
+        ) return false;
+
+        bytes memory acceptedSetPreimage = abi.encodePacked(
+            LBFV_ACCEPTED_SET_LABEL_HASH,
+            uint32(v2H)
+        );
+        for (uint256 i = 0; i < v2H; ++i) {
+            acceptedSetPreimage = bytes.concat(
+                acceptedSetPreimage,
+                abi.encodePacked(uint32(uint256(publicInputs[1 + i])))
+            );
+        }
+        bytes32 acceptedSetHash = keccak256(acceptedSetPreimage);
+        uint256 acceptedSetHiIdx = 26 + (3 * v2H);
+        uint256 acceptedSetLoIdx = 27 + (3 * v2H);
+        return
+            publicInputs[acceptedSetHiIdx] ==
+            CommitteeHashLib.hi(acceptedSetHash) &&
+            publicInputs[acceptedSetLoIdx] ==
+            CommitteeHashLib.lo(acceptedSetHash);
+    }
+
+    /// The committees whose `dkg_aggregator_v2` statement has `publicInputLength` inputs:
+    /// `39 + 3h + 3 * rows`, with 3 rows (insecure l-BFV) or 6 rows (secure-16384, one per CRT
+    /// modulus). A length can fit two committees (`h = 2` with six rows and `h = 5` with three are
+    /// both 63), so the caller checks each candidate against the E3's committee hash.
+    function _v2Committees(
+        uint256 publicInputLength
+    )
+        private
+        pure
+        returns (uint256[2] memory hs, uint256[2] memory ns, uint256 count)
+    {
+        uint256[3] memory h = [uint256(2), 5, 14];
+        uint256[3] memory n = [uint256(3), 9, 19];
+        uint256[2] memory rows = [uint256(3), 6];
+        for (uint256 i = 0; i < 3; ++i) {
+            for (uint256 r = 0; r < 2; ++r) {
+                if (39 + 3 * h[i] + 3 * rows[r] == publicInputLength) {
+                    hs[count] = h[i];
+                    ns[count] = n[i];
+                    ++count;
+                }
+            }
+        }
     }
 
     function _verifyBinding(
@@ -242,13 +354,12 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
 
-        uint256 partyIdOffset = 2;
-        uint256 skOffset = 5 + data.h;
-        uint256 esmOffset = 5 + (2 * data.h);
+        uint256 skOffset = data.commitmentOffset + data.h;
+        uint256 esmOffset = data.commitmentOffset + (2 * data.h);
 
         slot = _partySlot(
             data.publicInputs,
-            partyIdOffset,
+            data.partyIdOffset,
             data.h,
             binding.partyId
         );

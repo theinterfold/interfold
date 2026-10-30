@@ -115,12 +115,34 @@ rounds.
 The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
 change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
-rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
-the governance batch that raises the required protocol version, and upgrade every node before
-resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
-Storage schema and gossip/sync wire majors are unchanged.
+rollout: pause/drain, publish every build-policy artifact pair, replace PK/decryption wrappers and
+routers in the governance batch that raises the required protocol version, and upgrade every node
+before resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them
+first. Storage schema and gossip/sync wire majors are unchanged.
 
-## Dependency replacement
+## Historical secure CRISP activation and dependency replacement
+
+`upgrade:secure-crisp` reads the CRISP deployment record from `--crisp-deployments <path>` (the
+`packages/crisp-contracts/deployed_contracts.json` of the
+[CRISP repository](https://github.com/theinterfold/CRISP)). A missing option or file stops the
+script, unless `--crisp-program`, `--ciphertext-verifier`, and `--data-availability-verifier` give
+the three addresses. The validator and `resume` read the saved plan, not the record.
+
+`upgrade:secure-crisp`/validator read the **RISC Zero** program and frozen ImageID.sol; they cannot
+activate v0.19 OpenVM. Its historical batch upgraded four proxies, replaced SlashingManager while
+preserving operators/policies (including disabled policies), reused the funded VRF subscription with
+a new consumer, registered secure parameter set 2/routes, wired verifiers/CRISP, retired bootstrap
+programs, raised required release, and kept requests paused. Historical "version-7" wording
+describes that procedure, not current compiled protocol policy. Do not use the older partial
+CRISP-only builder on mainnet.
+
+Historical activation validation covers implementations, reciprocal graph, preserved counts/root,
+subscription/consumers, every route/VK, receipt binding, retired programs, and pause/drain. Keep old
+VRF consumer authorized through validation/first successful E3, then remove in a separately
+authorized cleanup. `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`
+requires complete refresh and T−1 owner capacity as well as release-ready count. Publish matching
+release source before governance activation. OpenVM needs its own guest/VM/Halo2 identity and
+separate cutover.
 
 There are **no concurrent registry generations**. Each request validates/snapshots one coherent
 graph; snapshots support drain routing, not early activation of a replacement. Generic replacement
@@ -142,15 +164,22 @@ and older lack keyshare guards.
 
 ### Insecure testnet preset reset
 
-`InsecureThreshold64` and `InsecureDkg64` occupy persisted `BfvPreset` discriminants 0 and 1.
-On-chain parameter-set index 0 carries the degree-64 tuple. Degree-512 stores used the same
+`InsecureThreshold` and `InsecureDkg` occupy persisted `BfvPreset` discriminants 0 and 1. On-chain
+parameter-set index 0 carries the degree-128 tuple. Degree-512 and degree-64 stores used the same
 discriminants under schema 8, so the schema marker cannot reject them. Before starting against a
 fresh testnet stack, testnet nodes must run `interfold node reset-data` under the guards below.
 Redeploy a testnet that holds degree-512 index-0 E3s; do not upgrade it in place or reinterpret
-those E3s with degree-64 parameters. This requirement does not replace mainnet's secure index-2
+those E3s with degree-128 parameters. This requirement does not replace mainnet's secure index-2
 cutover procedure.
 
 ### Identity and active-state guards
+
+The l-BFV protocol-4 contribution-wire cutoff uses typed fhe.rs `LBFVPublicKeyShare` and
+`LBFVRelinKeyShare` envelopes, not older bare contribution bytes. Version-3 PK documents carry
+signed PK row proofs without C1 and reject versions 1/2. Drain active work before a coordinated
+development-data cutoff and rebuild matching artifacts/consumers; do not reinterpret retained opaque
+payloads. This is separate from the insecure preset reset and is not authorization to erase operator
+identities or active keyshares.
 
 Operator/libp2p keys are in the same store under `//eth_private_key` and `//libp2p/keypair`;
 deleting a data directory destroys bonded identity. `nodes purge` also deletes cipher-key

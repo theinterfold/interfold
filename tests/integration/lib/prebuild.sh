@@ -28,12 +28,12 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   # Full-proof tests use published artifacts without requiring a local source-hash match.
   (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
   (cd "$ROOT_DIR" && pnpm build:circuits \
-    --preset insecure-64 \
+    --preset insecure \
     --committee minimum \
     --hydrate-bin-only \
     --no-clean-targets)
   (cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
-  for preset in insecure-64 secure-8192; do
+  for preset in insecure secure-8192; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
       "${INTEGRATION_NOIR}/circuits/${preset}/"
@@ -43,11 +43,11 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
   # silently rewriting committed contracts mid-test. If this errors, run
   # `pnpm generate:verifiers --write` and commit the diff.
-  (cd "$ROOT_DIR" && pnpm generate:verifiers --check --no-compile --no-clean-targets)
+  (cd "$ROOT_DIR" && pnpm generate:verifiers --preset insecure --committee minimum --check --no-compile --no-clean-targets)
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
   # still execute. Build only those two source groups for the fast CI profile.
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-64 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
 fi
 
 if ! command -v jq >/dev/null 2>&1; then

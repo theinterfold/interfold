@@ -13,14 +13,16 @@
 //      once more with requests open.
 //
 // Usage (from packages/interfold-contracts):
-//   FORK_URL=<mainnet RPC> LOG_RPC_URL=<RPCs> tsx scripts/upgrade/simulateV19Cutover.ts --crisp-dir <CRISP checkout>
+//   FORK_URL=<mainnet RPC> LOG_RPC_URL=<RPCs> tsx scripts/upgrade/simulateV19Cutover.ts --crisp-dir <CRISP checkout> [--legacy]
 //
 // `--crisp-dir` is a checkout of https://github.com/theinterfold/CRISP with its dependencies
 // installed. Step 3 deploys from its `packages/crisp-contracts` and temporarily overwrites the
 // `mainnet` entry of that package's `deployed_contracts.json`; the file is restored afterwards.
 // FORK_BLOCK pins the fork block. LOG_RPC_URL (comma-separated mainnet RPCs that serve eth_getLogs
-// history) lists the registered operators for the refresh. Nothing here signs for mainnet: every
-// transaction goes to the local fork, as an anvil test key or an impersonated account.
+// history) lists the registered operators for the refresh. `--legacy` also runs the v0.18
+// `secureCrisp.ts` against the fork first and reports how it fails. Nothing here signs for
+// mainnet: every transaction goes to the local fork, as an anvil test key or an impersonated
+// account.
 import { ethers } from "ethers";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -57,13 +59,14 @@ async function rpc(
   return provider.send(method, params);
 }
 
-/** Run a child command with the fork as `mainnet`; throws on failure. */
+/** Run a child command with the fork as `mainnet`; throws on failure unless `allowFailure`. */
 function run(
   cwd: string,
   command: string,
   args: string[],
   env: Record<string, string>,
-): void {
+  allowFailure = false,
+): { status: number; output: string } {
   console.log(
     `$ (${path.relative(repoRoot, cwd) || "."}) ${command} ${args.join(" ")}`,
   );
@@ -73,12 +76,14 @@ function run(
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
-  process.stdout.write(`${result.stdout ?? ""}${result.stderr ?? ""}`);
-  if (result.status !== 0) {
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  process.stdout.write(output);
+  if (result.status !== 0 && !allowFailure) {
     throw new Error(
       `${command} ${args.join(" ")} failed with status ${result.status}`,
     );
   }
+  return { status: result.status ?? 1, output };
 }
 
 async function startFork(): Promise<() => void> {
@@ -128,6 +133,7 @@ async function sendAs(
 }
 
 async function main() {
+  const legacy = process.argv.includes("--legacy");
   const crispCheckout = process.argv[process.argv.indexOf("--crisp-dir") + 1];
   if (!process.argv.includes("--crisp-dir") || !crispCheckout) {
     throw new Error(
@@ -270,6 +276,24 @@ async function main() {
       "--crisp-deployments",
       crispRecord,
     ];
+    if (legacy) {
+      log("legacy: run the v0.18 secure-CRISP builder against the fork");
+      const result = run(
+        packageDir,
+        "pnpm",
+        [
+          "exec",
+          "tsx",
+          "scripts/upgrade/secureCrisp.ts",
+          ...toolArgs,
+          "--input-availability-signer",
+          operator.address,
+        ],
+        {},
+        true,
+      );
+      console.log(`legacy builder exit status ${result.status}`);
+    }
 
     log("4. prepare the v0.19 cutover");
     run(

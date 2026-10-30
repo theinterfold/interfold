@@ -31,7 +31,7 @@
     "integration_test": "test_trbfv_actor",
     "benchmark_config": {
       "mode": "insecure",
-      "bfv_preset_subdir": "insecure-512",
+      "bfv_preset_subdir": "insecure",
       "bfv_preset": "InsecureThreshold512",
       "lambda": 2,
       "proof_aggregation_enabled": true,

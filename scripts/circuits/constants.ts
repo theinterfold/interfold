@@ -45,19 +45,28 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
  */
 export const CIRCUIT_PRESETS = {
   INSECURE_64: 'insecure-64',
+  INSECURE: 'insecure',
   SECURE_8192: 'secure-8192',
+  SECURE_16384: 'secure-16384',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
 
-export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_64, CIRCUIT_PRESETS.SECURE_8192]
+export const ALL_PRESETS: CircuitPreset[] = [
+  CIRCUIT_PRESETS.INSECURE_64,
+  CIRCUIT_PRESETS.INSECURE,
+  CIRCUIT_PRESETS.SECURE_8192,
+  CIRCUIT_PRESETS.SECURE_16384,
+]
 
 /**
  * Maps each preset to the Noir config module it re-exports from `circuits/lib/src/configs/default/mod.nr`.
  */
-export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure'> = {
-  [CIRCUIT_PRESETS.INSECURE_64]: 'insecure',
-  [CIRCUIT_PRESETS.SECURE_8192]: 'secure',
+export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure_64' | 'insecure' | 'secure_8192' | 'secure_16384'> = {
+  [CIRCUIT_PRESETS.INSECURE_64]: 'insecure_64',
+  [CIRCUIT_PRESETS.INSECURE]: 'insecure',
+  [CIRCUIT_PRESETS.SECURE_8192]: 'secure_8192',
+  [CIRCUIT_PRESETS.SECURE_16384]: 'secure_16384',
 }
 
 /**
@@ -116,6 +125,9 @@ export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
     return { preset, committee }
   })
 })()
+
+/** Pairs that a released circuit archive must contain for the current deployment matrix. */
+export const RELEASE_PRESET_COMMITTEE_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS
 
 export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
   return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)

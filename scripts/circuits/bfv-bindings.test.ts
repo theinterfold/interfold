@@ -63,10 +63,16 @@ test('deployment routes retain chain policy and order while projecting owner met
       ['insecure-64', 'micro'],
       ['insecure-64', 'small'],
       ['insecure-64', 'large'],
+      ['insecure', 'minimum'],
+      ['insecure', 'micro'],
+      ['insecure', 'small'],
       ['secure-8192', 'minimum'],
       ['secure-8192', 'micro'],
       ['secure-8192', 'small'],
       ['secure-8192', 'large'],
+      ['secure-16384', 'minimum'],
+      ['secure-16384', 'micro'],
+      ['secure-16384', 'small'],
     ],
   )
   assert.deepEqual(
@@ -132,7 +138,9 @@ test('generated parameters retain independent ABI and configuration-ID vectors',
   assert.equal(bfvPresetForParamSet(256), undefined)
   assert.equal(bfvPresetForParamSet('0' as unknown as number), undefined)
   assert.deepEqual(BFV_PARAMS.insecure64, BFV_PRESETS['insecure-64'].threshold)
+  assert.deepEqual(BFV_PARAMS.insecure, BFV_PRESETS.insecure.threshold)
   assert.deepEqual(BFV_PARAMS.secure8192, BFV_PRESETS['secure-8192'].threshold)
+  assert.deepEqual(BFV_PARAMS.secure16384, BFV_PRESETS['secure-16384'].threshold)
   assert.deepEqual(Object.keys(BFV_PARAMS.insecure64), ['degree', 'plaintextModulus', 'moduli', 'error1Variance'])
 })
 
@@ -309,8 +317,13 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'crates/committee/src/lib.rs',
       'crates/evm/client/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',
-      ...['minimum', 'micro', 'small', 'large'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
-      ...['insecure', 'secure'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
+      ...['minimum', 'micro', 'small'].flatMap((committee) =>
+        ['mod', 'parity_insecure_64', 'parity_insecure', 'parity_secure_8192', 'parity_secure_16384', 'smudging'].map(
+          (module) => `circuits/lib/src/configs/committee/${committee}/${module}.nr`,
+        ),
+      ),
+      ...['mod', 'parity_insecure_64', 'parity_secure_8192'].map((module) => `circuits/lib/src/configs/committee/large/${module}.nr`),
+      ...['insecure_64', 'insecure', 'secure_8192', 'secure_16384'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
     ]
     for (const file of files) {
       mkdirSync(dirname(join(temp, file)), { recursive: true })

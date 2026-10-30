@@ -9,6 +9,7 @@ impl ShareVerificationActor {
         &self,
         e3_id: E3id,
         kind: VerificationKind,
+        verification_id: Option<B256>,
         dishonest_parties: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
     ) {
@@ -16,6 +17,7 @@ impl ShareVerificationActor {
             ShareVerificationComplete {
                 e3_id,
                 kind,
+                verification_id,
                 dishonest_parties,
             },
             ec,

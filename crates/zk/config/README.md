@@ -36,6 +36,16 @@ named preset. Constructors validate before deriving bounds; `render` produces st
 Pass that same configuration to [witness preparation](../witness/README.md), rather than
 constructing another parameter set in a caller.
 
+The insecure profile remains degree 128 (`InsecureThreshold`/`InsecureDkg`, artifact label
+`insecure`). Its l-BFV labels use the same parameter tuple, so C3/C4/C7 configurations constructed
+from existing owners must retain the request label with `with_preset`. `for_preset` does this
+automatically. C2 stores the explicit preset and canonical chunk size; `with_chunk_size` selects a
+different compiled profile. `chunks::c2_chunk_size` is the shared sizing rule.
+
+`threshold::{lbfv_pk_aggregation,rlk_generation,rlk_aggregation}` own static l-BFV row constants.
+L-BFV public-key generation reuses `threshold::pk_generation::Configs`. These configurations retain
+their supplied parameter `Arc`, validate it before arithmetic, and render without private samples.
+
 Import `CircuitName` and `CircuitVariant` here, including from build/prover consumers. Their serde
 order and names, artifact paths, verifier-target strings, and layout mappings are compatibility
 contracts, not labels to rename during cleanup. Proof payloads and signed `ProofType` remain in

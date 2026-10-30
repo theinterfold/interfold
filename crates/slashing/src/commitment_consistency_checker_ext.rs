@@ -83,9 +83,15 @@ impl CommitmentConsistencyCheckerExtension {
         // the global bus as well would deliver every event twice and keep the actor alive after
         // the E3 context is removed.
         let repo = self.store.repositories().commitment_consistency(&e3_id);
-        let addr = CommitmentConsistencyChecker::new(&self.bus, e3_id, links, committee_h)
-            .with_snapshot(repo, restored)?
-            .start();
+        let addr = CommitmentConsistencyChecker::new(
+            &self.bus,
+            e3_id,
+            links,
+            committee_h,
+            meta.params_preset,
+        )
+        .with_snapshot(repo, restored)?
+        .start();
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
         Ok(())
@@ -164,7 +170,7 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::from_bytes(&[]),
             error_size: ArcBytes::from_bytes(&[]),
         }

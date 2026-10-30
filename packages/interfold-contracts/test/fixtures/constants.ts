@@ -32,6 +32,7 @@ export const PROOF = "0x1337";
 
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+export const CIRCUIT_VERSION = ethers.id(INTERFOLD_BFV_VERSION);
 
 function encodeBfvParams(params: {
   degree: bigint;
@@ -54,11 +55,14 @@ function encodeBfvParams(params: {
   );
 }
 
-/** The insecure-64 parameter set compiled into the active test circuits. */
+/** The insecure trBFV parameter set (index 0) that the test fixtures register. */
 export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure64);
 
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
+
+/** The secure-16384 parameter set that Sepolia/local deployments can also register. */
+export const BFV_PARAMS_SECURE_16384 = encodeBfvParams(BFV_PARAMS.secure16384);
 
 /** Circuit, BFV parameters, and verifier generation used by this build. */
 export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
@@ -67,7 +71,7 @@ export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_DEFAULT),
-      ethers.id(INTERFOLD_BFV_VERSION),
+      CIRCUIT_VERSION,
     ],
   ),
 );
@@ -79,10 +83,29 @@ export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_SECURE),
-      ethers.id(INTERFOLD_BFV_VERSION),
+      CIRCUIT_VERSION,
     ],
   ),
 );
+
+/** Circuit configuration ID for the secure-16384 parameter set. */
+export const SECURE_16384_CRYPTO_CONFIG_ID = ethers.keccak256(
+  abiCoder.encode(
+    ["bytes32", "bytes32", "bytes32"],
+    [
+      ENCRYPTION_SCHEME_ID,
+      ethers.keccak256(BFV_PARAMS_SECURE_16384),
+      CIRCUIT_VERSION,
+    ],
+  ),
+);
+
+export function cryptoConfigIdForParamSet(paramSet: number): string {
+  if (paramSet === 0) return ACTIVE_CRYPTO_CONFIG_ID;
+  if (paramSet === 2) return PRODUCTION_CRYPTO_CONFIG_ID;
+  if (paramSet === 3) return SECURE_16384_CRYPTO_CONFIG_ID;
+  throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
+}
 
 // ── Timeout configs ──────────────────────────────────────────────────────────
 /** 1h / 1h / 1h — used by short-lifecycle tests. */

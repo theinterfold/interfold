@@ -40,6 +40,18 @@ for required_file in \
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
+for committee in minimum micro small; do
+  for artifact in parity_insecure_64.nr parity_insecure.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
+    [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
+      || fail "missing generated committee artifact: $committee/$artifact"
+  done
+done
+# The large committee exists only for the trBFV presets.
+for artifact in parity_insecure_64.nr parity_secure_8192.nr; do
+  [[ -f "circuits/lib/src/configs/committee/large/$artifact" ]] \
+    || fail "missing generated committee artifact: large/$artifact"
+done
+
 # 1. Extract committee name from active.nr (matches "crate::configs::committee::<name>::N_PARTIES").
 if [[ ! -f "$ACTIVE_NR" ]]; then
   fail "missing $ACTIVE_NR"
@@ -124,21 +136,19 @@ check_sol_committee large LARGE 3
 error_bound_for_variance() {
   node -e '
 const variance = BigInt(process.argv[1]);
-if (variance < 16n) {
+if (variance <= 16n) {
   process.stdout.write((2n * variance).toString());
-  process.exit(0);
-}
-const value = 3n * variance;
-if (value < 2n) {
-  process.stdout.write(value.toString());
 } else {
-  let current = value;
-  let next = (current + value / current) / 2n;
-  while (next < current) {
-    current = next;
-    next = (current + value / current) / 2n;
+  const target = 3n * variance;
+  let bound = target;
+  let next = (bound + target / bound) / 2n;
+  while (next < bound) {
+    bound = next;
+    next = (bound + target / bound) / 2n;
   }
-  process.stdout.write(current.toString());
+  while (bound * (bound + 1n) < target) bound += 1n;
+  while (bound > 0n && (bound - 1n) * bound >= target) bound -= 1n;
+  process.stdout.write(bound.toString());
 }
 ' "$1"
 }
@@ -169,7 +179,8 @@ NODE
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
-  noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
+  # The formatter may wrap QIS across lines; read the numbers after `=` in declaration order.
+  noir_moduli=$(awk '/^pub global QIS:/,/];/' "$noir_file" | sed -E '1s/^[^=]*=//' | grep -oE '[0-9]+' | paste -sd, -)
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_mod_t=$(grep -E '^pub global Q_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_inverse_mod_t=$(grep -E '^pub global Q_INVERSE_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
@@ -200,8 +211,10 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
   fi
 }
 
-check_bfv_preset insecure-64 insecure
-check_bfv_preset secure-8192 secure
+check_bfv_preset insecure-64 insecure_64
+check_bfv_preset insecure insecure
+check_bfv_preset secure-8192 secure_8192
+check_bfv_preset secure-16384 secure_16384
 
 # 6. The owner snapshot must match the parameter/configuration hashes in BfvProtocol.sol.
 #    Consumer behavior is covered by binding, SDK, contract, and native tests. Keep this check
@@ -213,7 +226,8 @@ sol_bytes32() {
     | head -n1
 }
 
-for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192; do
+for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192 SECURE_16384:secure-16384 \
+  INSECURE_LBFV:insecure; do
   prefix="${prefix_and_preset%%:*}"
   preset="${prefix_and_preset#*:}"
   IFS=';' read -r utils_param_hash utils_config_id < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$preset" <<'NODE'
@@ -241,7 +255,7 @@ process.stdout.write(preset.cryptoConfigId);
 NODE
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:2; do
+for prefix_and_param_set in INSECURE:0 SECURE:2 SECURE_16384:3 INSECURE_LBFV:4; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -250,6 +264,10 @@ for prefix_and_param_set in INSECURE:0 SECURE:2; do
     fail "drift: paramSet=${param_set} config ID must match $PROTOCOL_SOL in shared bindings"
   fi
 done
+
+ORIGIN_V1_INSECURE_CONFIG_ID="0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
+[[ "$(sol_bytes32 INSECURE_CONFIG_ID)" != "$ORIGIN_V1_INSECURE_CONFIG_ID" ]] \
+  || fail "$PROTOCOL_SOL insecure configuration ID must differ from the origin interfold-bfv-v1 ID"
 
 check_utils_route() {
   local symbol="$1"
@@ -272,18 +290,21 @@ check_utils_route SECURE_MINIMUM secure-8192 minimum
 check_utils_route SECURE_MICRO secure-8192 micro
 check_utils_route SECURE_SMALL secure-8192 small
 check_utils_route SECURE_LARGE secure-8192 large
+check_utils_route SECURE_16384_MINIMUM secure-16384 minimum
+check_utils_route SECURE_16384_MICRO secure-16384 micro
+check_utils_route SECURE_16384_SMALL secure-16384 small
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL|LARGE)_BFV_CONFIG' \
+    | grep -oE '(INSECURE|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL|LARGE)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LARGE_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_LARGE_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LARGE_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_LARGE_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact eight-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"

@@ -3,6 +3,7 @@
 //! Apply commitment-consistency results and dispatch heavy ZK verification.
 
 use super::*;
+use e3_events::ProofIdentity;
 
 impl ShareVerificationActor {
     /// Handle consistency check response: add inconsistent parties to the
@@ -42,7 +43,9 @@ impl ShareVerificationActor {
         let (request, dispatched_party_ids) = match pending.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
-            | VerificationKind::PkGenerationProofs => {
+            | VerificationKind::PkGenerationProofs
+            | VerificationKind::LbfvGenerationProofs
+            | VerificationKind::LbfvAggregationProofs => {
                 let Some((passed, ids)) =
                     filter_consistent(pending.ecdsa_passed_share_proofs, inconsistent, |p| {
                         p.sender_party_id
@@ -51,6 +54,7 @@ impl ShareVerificationActor {
                     self.publish_complete(
                         pending.e3_id,
                         pending.kind,
+                        pending.verification_id,
                         dishonest_so_far,
                         pending.ec,
                     );
@@ -76,6 +80,7 @@ impl ShareVerificationActor {
                     self.publish_complete(
                         pending.e3_id,
                         pending.kind,
+                        pending.verification_id,
                         dishonest_so_far,
                         pending.ec,
                     );
@@ -100,17 +105,17 @@ impl ShareVerificationActor {
             .into_iter()
             .filter(|(pid, _)| dispatched_party_ids.contains(pid))
             .collect();
-        let party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>> = pending
+        let party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>> = pending
             .party_proof_hashes
             .into_iter()
             .filter(|(pid, _)| dispatched_party_ids.contains(pid))
             .collect();
-        let party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>> = pending
+        let party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = pending
             .party_public_signals
             .into_iter()
             .filter(|(pid, _)| dispatched_party_ids.contains(pid))
             .collect();
-        let party_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>> = pending
+        let party_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = pending
             .party_proof_data
             .into_iter()
             .filter(|(pid, _)| dispatched_party_ids.contains(pid))
@@ -125,6 +130,7 @@ impl ShareVerificationActor {
             PendingVerification {
                 e3_id: pending.e3_id.clone(),
                 kind: pending.kind.clone(),
+                verification_id: pending.verification_id,
                 ec: pending.ec.clone(),
                 ecdsa_dishonest: HashSet::new(),
                 pre_dishonest: dishonest_so_far,
@@ -150,6 +156,7 @@ impl ShareVerificationActor {
                 self.publish_complete(
                     zk_pending.e3_id,
                     zk_pending.kind,
+                    zk_pending.verification_id,
                     all_dishonest,
                     zk_pending.ec,
                 );

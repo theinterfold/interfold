@@ -41,7 +41,7 @@ function localAttestationSlashPolicy(
 }
 
 /**
- * Enables Lane A (`proposeSlash`) policies for all `ProofType` values (0–10).
+ * Enables Lane A (`proposeSlash`) policies for all `ProofType` values (0–14).
  * Local dev deploys omit this by default, which causes `SlashReasonDisabled` reverts.
  */
 export async function configureLocalSlashingPolicies(
@@ -64,7 +64,7 @@ export async function configureLocalSlashingPolicies(
     );
 
   console.log(
-    "Configuring local SlashingManager policies (proof types 0–10)...",
+    "Configuring local SlashingManager policies (proof types 0–14)...",
   );
 
   for (const proofType of DKG_PROOF_TYPES) {

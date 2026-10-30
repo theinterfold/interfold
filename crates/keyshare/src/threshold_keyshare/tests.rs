@@ -13,12 +13,12 @@ use crate::actors::threshold_share_collector::{
 };
 use crate::{ext::ThresholdKeyshareExtension, ThresholdKeyshareRepositoryFactory};
 use actix::{Actor, Addr, Handler};
-use alloy::primitives::Address;
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{
     AutoPersist, DataStore, InMemStore, Persistable, Repositories, RepositoriesFactory, Repository,
-    StoreConnector,
+    ShutdownStore, StoreConnector,
 };
 use e3_events::{
     hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CommitteeMemberExcluded,
@@ -27,7 +27,7 @@ use e3_events::{
     DkgCoordinationKind, DkgDealer, DkgProofSigned, E3Stage, E3StageChanged, E3id, EffectsEnabled,
     EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, EventType,
     FailureReason, Get, GetEvents, HistoryCollector, Insert, InterfoldEvent, InterfoldEventData,
-    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove, Seed,
     Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
     Unsequenced, VerificationKind,
 };
@@ -38,7 +38,10 @@ use e3_request::{
     META_KEY,
 };
 use e3_trbfv::{
-    gen_esi_sss::GenEsiSssRequest, TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
+    gen_esi_sss::GenEsiSssRequest,
+    gen_lbfv_key_shares::{EncryptedRlkWitness, GenLbfvKeySharesRequest, GenLbfvKeySharesResponse},
+    lbfv_operation::LbfvOperationId,
+    TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
 };
 use e3_utils::OrderedSet;
 use e3_zk_config::CircuitName;
@@ -67,6 +70,7 @@ async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(move |_| {
             read_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -964,11 +968,12 @@ async fn start_unwritable_actor(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -1100,11 +1105,12 @@ async fn build_actor(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -1113,7 +1119,7 @@ async fn build_actor(
 
 fn insecure_threshold_params() -> ArcBytes {
     ArcBytes::from_bytes(&encode_bfv_params(
-        &BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc(),
+        &BfvParamSet::from(BfvPreset::InsecureThreshold).build_arc(),
     ))
 }
 
@@ -1155,11 +1161,12 @@ async fn start_actor_before_selection_with_recovery(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(move |_| {
             Box::pin(async move {
@@ -1202,11 +1209,12 @@ async fn keyshare_in_init_over(
         bus,
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: dealer_signer(0),
         effects_enabled,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     }))
@@ -1335,11 +1343,12 @@ async fn a_node_that_lost_its_key_publishes_no_second_one() -> Result<()> {
             bus: bus.clone(),
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg64,
+            share_enc_preset: BfvPreset::InsecureDkg,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: false,
             recovery,
+            lbfv_generation: test_lbfv_generation(),
             recovery_payloads: test_recovery_payloads(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         })
@@ -1626,6 +1635,49 @@ fn test_recovery_in(
     )
 }
 
+fn test_lbfv_generation() -> Persistable<LbfvGenerationStateV1> {
+    let store = InMemStore::new(false).start();
+    let repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&store));
+    repo.send(None)
+}
+
+fn test_signer() -> PrivateKeySigner {
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse()
+        .unwrap()
+}
+
+fn secure_selection(e3_id: &E3id) -> CiphernodeSelected {
+    CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 1,
+        threshold_n: 3,
+        seed: Seed([0; 32]),
+        error_size: ArcBytes::from_bytes(&[1]),
+        params_preset: BfvPreset::SecureThreshold16384,
+        params: ArcBytes::from_bytes(b"secure-16384-params"),
+        party_id: 0,
+        committee: vec![
+            test_signer().address().to_string(),
+            Address::repeat_byte(0xfe).to_string(),
+            Address::repeat_byte(0xff).to_string(),
+        ],
+    }
+}
+
+fn ready_state() -> ReadyForDecryption {
+    ReadyForDecryption {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    }
+}
+
 fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
     let store = InMemStore::new(false).start();
     ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store))
@@ -1673,11 +1725,12 @@ async fn a_collection_with_another_key_of_this_node_starts_no_share_generation()
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg64,
+            share_enc_preset: BfvPreset::InsecureDkg,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: true,
             recovery: test_recovery(),
+            lbfv_generation: test_lbfv_generation(),
             recovery_payloads: test_recovery_payloads(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         });
@@ -1763,6 +1816,7 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -1803,6 +1857,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -1839,7 +1894,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
     let e3_id = E3id::new("early-batch", 1);
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (threshold_params, params) =
-        e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold64)?;
+        e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold)?;
     let l = threshold_params.moduli().len();
     let mut rng = rand::rng();
     let sk = fhe::bfv::SecretKey::random(&params, &mut rng);
@@ -1882,11 +1937,12 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
         bus,
         cipher: cipher.clone(),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -1995,6 +2051,7 @@ async fn replayed_signed_c3_proof_is_stored_once() -> Result<()> {
         signer,
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -2075,11 +2132,12 @@ async fn committee_actor(
         bus: bus.clone(),
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: signers[0].clone(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         bfv_key: test_bfv_key(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
@@ -2131,6 +2189,7 @@ fn share_proofs_verified(e3_id: &E3id) -> TypedEvent<ShareVerificationComplete> 
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
             dishonest_parties: BTreeSet::new(),
+            verification_id: None,
         },
         test_ec(1),
     )
@@ -2310,11 +2369,12 @@ async fn retired_share_batch(
         bus: bus.clone(),
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -2361,6 +2421,7 @@ async fn a_c2_c3_result_after_the_batch_retired_changes_nothing() -> Result<()> 
         e3_id,
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     actor.send(TypedEvent::new(verdict, grown_dispatch)).await?;
 
@@ -2429,6 +2490,7 @@ async fn a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch() -> Res
         e3_id,
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     actor.send(TypedEvent::new(verdict, other_batch)).await?;
 
@@ -2482,6 +2544,7 @@ async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     let dispatch_before_restart = |batch: &str| {
         keyshare_event(TestEvent::new(batch, 1), 10, EventSource::Local)
@@ -2548,6 +2611,7 @@ async fn a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch() -> Resu
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties,
+        verification_id: None,
     };
 
     // `{2}` is verified, and the batch grows to `{1, 2}`.
@@ -2584,6 +2648,7 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
     let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
@@ -2642,6 +2707,7 @@ async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
     let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
@@ -2736,6 +2802,7 @@ async fn replay_records_a_logged_dispatch_that_the_saved_state_lacks() -> Result
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
             dishonest_parties: BTreeSet::new(),
+            verification_id: None,
         },
         dispatch_ec.clone(),
     )?;
@@ -2824,6 +2891,7 @@ async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties,
+        verification_id: None,
     };
 
     // `{2}` is verified, and the batch grows to `{1, 2}`.
@@ -2920,6 +2988,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -3086,6 +3155,7 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         signer: signers[0].clone(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -3600,10 +3670,11 @@ async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()>
     state.expelled_parties.insert(1);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bfv_key: test_bfv_key(),
+        lbfv_generation: test_lbfv_generation(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state).await,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
@@ -3788,6 +3859,7 @@ async fn held_roster_starts_failover_without_every_peer_ready_report() -> Result
         signer: signers[0].clone(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -3894,6 +3966,7 @@ async fn lower_ranked_roster_replaces_an_accepted_roster_before_c4() -> Result<(
         signer: signers[2].clone(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -4007,6 +4080,7 @@ async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
         signer: signers[0].clone(),
         effects_enabled: false,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -4065,6 +4139,7 @@ async fn start_actor_with_state(
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -4300,9 +4375,10 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         num_honest_parties: 2,
         num_moduli: 1,
         own_plaintext_idx: Some(0),
+        recipient_party_id: actor.state.try_get()?.party_id,
         own_share_raw: Some(current.own_sk_share_raw),
         dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
-        params_preset: BfvPreset::InsecureDkg64,
+        params_preset: BfvPreset::InsecureDkg,
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
@@ -4390,11 +4466,12 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         bus: bus.clone(),
         cipher,
         state: repo.load().await?,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer,
         effects_enabled: false,
         recovery: recovery_repo.load().await?,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -4657,6 +4734,7 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
                             e3_id: e3_id.clone(),
                             kind: VerificationKind::DecryptionProofs,
                             dishonest_parties: BTreeSet::new(),
+                            verification_id: None,
                         },
                         test_ec(1),
                     ));
@@ -4847,11 +4925,12 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
             bus,
             cipher,
             state: repo.load().await?,
-            share_enc_preset: BfvPreset::InsecureDkg64,
+            share_enc_preset: BfvPreset::InsecureDkg,
             interfold_address: Address::ZERO,
             signer,
             effects_enabled: false,
             recovery: recovery_repo.load().await?,
+            lbfv_generation: test_lbfv_generation(),
             recovery_payloads: test_recovery_payloads(),
             dkg_timing_reader: Arc::new(|_| {
                 Box::pin(async { anyhow::bail!("recovery must use the saved deadline") })
@@ -5100,7 +5179,7 @@ async fn hydration_restores_canonical_publication_before_c4_deadline() -> Result
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: e3_events::Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold64,
+                params_preset: BfvPreset::InsecureThreshold,
                 params: insecure_threshold_params(),
                 error_size: ArcBytes::from_bytes(&[]),
             },
@@ -5463,10 +5542,11 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
     // Every write fails, so the terminal cleanup retries later.
     let mut keyshare = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bfv_key: test_bfv_key(),
+        lbfv_generation: test_lbfv_generation(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state.try_get()?).await,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -5582,6 +5662,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -5645,6 +5726,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -5671,6 +5753,7 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
@@ -5731,6 +5814,7 @@ async fn the_early_c4_buffer_keeps_the_first_message_from_each_party() -> Result
         effects_enabled: true,
         recovery: test_recovery(),
         recovery_payloads: test_recovery_payloads(),
+        lbfv_generation: test_lbfv_generation(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     let first_event = peer_c4_event(&e3_id, 1);
@@ -5829,7 +5913,7 @@ async fn canonical_key_fixture(
         AggregateConfig, AggregateId, CommitteePublicKeyChunkPublished, E3Requested, EvmLogObserved,
     };
     use std::{collections::HashMap, time::Duration};
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let params = BfvParamSet::from(preset);
     let pk = e3_bfv_client::client::generate_public_key(
         params.degree,
@@ -5949,11 +6033,12 @@ async fn keyshare_keeps_chain_key_when_network_publication_conflicts() -> Result
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::repeat_byte(9),
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -6061,11 +6146,12 @@ async fn keyshare_restart_revalidates_snapshot_public_key_context() -> Result<()
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state: repo.load().await?,
-            share_enc_preset: BfvPreset::InsecureDkg64,
+            share_enc_preset: BfvPreset::InsecureDkg,
             interfold_address: Address::repeat_byte(9),
             signer: alloy::signers::local::PrivateKeySigner::random(),
             effects_enabled: false,
             recovery: test_recovery(),
+            lbfv_generation: test_lbfv_generation(),
             recovery_payloads: test_recovery_payloads(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         })
@@ -6190,11 +6276,12 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                 bus,
                 cipher: Arc::new(Cipher::from_password("test-password").await?),
                 state: repo.load().await?,
-                share_enc_preset: BfvPreset::InsecureDkg64,
+                share_enc_preset: BfvPreset::InsecureDkg,
                 interfold_address: Address::repeat_byte(9),
                 signer: alloy::signers::local::PrivateKeySigner::random(),
                 effects_enabled: false,
                 recovery: recovery_repo.load().await?,
+                lbfv_generation: test_lbfv_generation(),
                 recovery_payloads: test_recovery_payloads(),
                 dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
             })
@@ -6294,11 +6381,12 @@ fn start_decryption_actor(
         bus,
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::repeat_byte(9),
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled,
         recovery,
+        lbfv_generation: test_lbfv_generation(),
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -6758,6 +6846,430 @@ async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Resul
 #[path = "tests/admission.rs"]
 mod admission;
 
+#[actix::test]
+async fn terminal_failure_stops_after_a_sidecar_cleanup_write_rejection() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let (state, state_repo) = test_state(&e3_id, KeyshareState::Init);
+    let lbfv_store = InMemStore::new(false).start();
+    let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
+    let mut lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&e3_id),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let mut request = GenLbfvKeySharesRequest {
+        operation_id: LbfvOperationId([0; 32]),
+        session_id: lbfv_state.context.proof_session_id.0,
+        party_id: lbfv_state.context.party_id,
+        secret_key_bytes: SensitiveBytes::from_encrypted(&[4]),
+        generation_seed: SensitiveBytes::from_encrypted(&[5]),
+        params_preset: BfvPreset::SecureThreshold16384,
+        ciphertext_level: 0,
+        key_level: 0,
+    };
+    request.operation_id = request.expected_operation_id();
+    lbfv_state.record_generation_request(request)?;
+    let lbfv_generation = lbfv_repo.send(Some(lbfv_state));
+    lbfv_store.send(ShutdownStore).await??;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384,
+        interfold_address: Address::repeat_byte(0x11),
+        recovery: test_recovery(),
+        lbfv_generation,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: test_signer(),
+        effects_enabled: true,
+    })
+    .start();
+    let failure = EncryptionKeyCollectionFailed {
+        e3_id: e3_id.clone(),
+        reason: "missing encryption keys".to_string(),
+        missing_parties: vec![2],
+    };
+
+    actor.send(failure).await?;
+
+    let events = next_events(&history, 2).await?;
+    assert!(matches!(
+        events[1].get_data(),
+        InterfoldEventData::E3Failed(data)
+            if data.e3_id == e3_id && data.reason == FailureReason::DKGTimeout
+    ));
+    assert!(matches!(
+        state_repo
+            .read()
+            .await?
+            .expect("persisted keyshare state")
+            .state,
+        KeyshareState::Failed {
+            reason: FailureReason::DKGTimeout,
+            ..
+        }
+    ));
+    assert!(actor.send(Die).await.is_ok());
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_repairs_a_torn_lbfv_terminal_failure() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let failed_at_stage = E3Stage::CommitteeFinalized;
+    let reason = FailureReason::DKGInvalidShares;
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::Failed {
+            failed_at_stage: failed_at_stage.clone(),
+            reason: reason.clone(),
+        },
+    );
+    let lbfv_store = InMemStore::new(false).start();
+    let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
+    let mut lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&e3_id),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let mut request = GenLbfvKeySharesRequest {
+        operation_id: LbfvOperationId([0; 32]),
+        session_id: lbfv_state.context.proof_session_id.0,
+        party_id: lbfv_state.context.party_id,
+        secret_key_bytes: SensitiveBytes::from_encrypted(&[4]),
+        generation_seed: SensitiveBytes::from_encrypted(&[5]),
+        params_preset: BfvPreset::SecureThreshold16384,
+        ciphertext_level: 0,
+        key_level: 0,
+    };
+    request.operation_id = request.expected_operation_id();
+    lbfv_state.record_generation_request(request.clone())?;
+    lbfv_state.record_generation_response(GenLbfvKeySharesResponse {
+        operation_id: request.operation_id,
+        public_key_share_bytes: ArcBytes::from_bytes(b"public-key-share"),
+        rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
+        witness: EncryptedRlkWitness {
+            r_bytes: SensitiveBytes::from_encrypted(&[6]),
+            errors_d0_bytes: (0..secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
+                .collect(),
+            errors_d2_bytes: (secure_lbfv_rows()..2 * secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
+                .collect(),
+        },
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384,
+        interfold_address: Address::repeat_byte(0x11),
+        recovery: test_recovery(),
+        lbfv_generation: lbfv_repo.send(Some(lbfv_state)),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: test_signer(),
+        effects_enabled: true,
+    })
+    .start();
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(effects_enabled).await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::E3Failed(data)
+            if data.e3_id == e3_id
+                && data.failed_at_stage == failed_at_stage
+                && data.reason == reason
+    ));
+    let repaired = lbfv_repo.read().await?.expect("persisted l-BFV state");
+    assert!(repaired.failure.is_some());
+    assert!(repaired.generation_request.is_none());
+    assert!(repaired.generation_response.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_redrives_the_durable_lbfv_generation_request() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let (state, _) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready_state()));
+    let lbfv_store = InMemStore::new(false).start();
+    let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
+    let mut lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&e3_id),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let mut request = GenLbfvKeySharesRequest {
+        operation_id: LbfvOperationId([0; 32]),
+        session_id: lbfv_state.context.proof_session_id.0,
+        party_id: lbfv_state.context.party_id,
+        secret_key_bytes: SensitiveBytes::from_encrypted(&[4]),
+        generation_seed: SensitiveBytes::from_encrypted(&[5]),
+        params_preset: BfvPreset::SecureThreshold16384,
+        ciphertext_level: 0,
+        key_level: 0,
+    };
+    request.operation_id = request.expected_operation_id();
+    lbfv_state.record_generation_request(request.clone())?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384,
+        interfold_address: Address::repeat_byte(0x11),
+        recovery: test_recovery(),
+        lbfv_generation: lbfv_repo.send(Some(lbfv_state)),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: test_signer(),
+        effects_enabled: true,
+    })
+    .start();
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(effects_enabled).await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ComputeRequest(data)
+            if matches!(
+                &data.request,
+                ComputeRequestKind::TrBFV(TrBFVRequest::GenLbfvKeyShares(redriven))
+                    if redriven == &request
+            )
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_redrives_all_missing_lbfv_row_requests() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let (state, _) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready_state()));
+    let lbfv_store = InMemStore::new(false).start();
+    let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
+    let mut lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&e3_id),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let mut request = GenLbfvKeySharesRequest {
+        operation_id: LbfvOperationId([0; 32]),
+        session_id: lbfv_state.context.proof_session_id.0,
+        party_id: lbfv_state.context.party_id,
+        secret_key_bytes: SensitiveBytes::from_encrypted(&[4]),
+        generation_seed: SensitiveBytes::from_encrypted(&[5]),
+        params_preset: BfvPreset::SecureThreshold16384,
+        ciphertext_level: 0,
+        key_level: 0,
+    };
+    request.operation_id = request.expected_operation_id();
+    lbfv_state.record_generation_request(request.clone())?;
+    lbfv_state.record_generation_response(GenLbfvKeySharesResponse {
+        operation_id: request.operation_id,
+        public_key_share_bytes: ArcBytes::from_bytes(b"public-key-share"),
+        rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
+        witness: EncryptedRlkWitness {
+            r_bytes: SensitiveBytes::from_encrypted(&[6]),
+            errors_d0_bytes: (0..secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
+                .collect(),
+            errors_d2_bytes: (secure_lbfv_rows()..2 * secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
+                .collect(),
+        },
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384,
+        interfold_address: Address::repeat_byte(0x11),
+        recovery: test_recovery(),
+        lbfv_generation: lbfv_repo.send(Some(lbfv_state)),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: test_signer(),
+        effects_enabled: true,
+    })
+    .start();
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(effects_enabled).await?;
+
+    let events = next_events(&history, 2 * secure_lbfv_rows()).await?;
+    let mut pk_rows = BTreeSet::new();
+    let mut rlk_rows = BTreeSet::new();
+    for event in events {
+        let InterfoldEventData::ComputeRequest(data) = event.into_data() else {
+            panic!("expected an l-BFV proof request");
+        };
+        let ComputeRequestKind::Zk(request) = data.request else {
+            panic!("expected an l-BFV ZK request");
+        };
+        match request {
+            ZkRequest::LbfvPkGeneration(request) => {
+                request.validate_operation_id()?;
+                pk_rows.insert(request.row_index);
+            }
+            ZkRequest::RlkGeneration(request) => {
+                request.validate_operation_id()?;
+                rlk_rows.insert(request.row_index);
+            }
+            _ => panic!("expected an l-BFV generation proof request"),
+        }
+    }
+    let all_rows = (0..secure_lbfv_rows() as u32).collect::<BTreeSet<_>>();
+    assert_eq!(pk_rows, all_rows);
+    assert_eq!(rlk_rows, all_rows);
+    Ok(())
+}
+
+fn secure_lbfv_rows() -> usize {
+    e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384).unwrap()
+}
+
+/// Start a ready l-BFV keyshare whose state has no C1 proof, because the l-BFV path proves none,
+/// and ask it to publish `KeyshareCreated`.
+async fn lbfv_ready_keyshare_without_c1(
+    lbfv_generation: Option<LbfvGenerationStateV1>,
+) -> Result<(
+    ThresholdKeyshare,
+    Addr<HistoryCollector<InterfoldEvent>>,
+    Repository<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+)> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let ready = ready_state();
+    assert!(ready.signed_pk_generation_proof.is_none());
+    let (state, state_repo) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready));
+    let recovery_store = InMemStore::new(false).start();
+    let recovery_repo =
+        Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&recovery_store));
+    let lbfv_store = InMemStore::new(false).start();
+    let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384,
+        interfold_address: Address::repeat_byte(0x11),
+        recovery: recovery_repo.send(Some(ThresholdKeyshareRecoveryState::default())),
+        lbfv_generation: lbfv_repo.send(lbfv_generation),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: test_signer(),
+        effects_enabled: true,
+    });
+    let trigger = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.publish_keyshare_created(trigger.get_ctx().clone())?;
+    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
+    Ok((actor, history, state_repo, recovery_repo))
+}
+
+#[actix::test]
+async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
+    let lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&E3id::new("42", 1)),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let (_actor, history, state_repo, recovery_repo) =
+        lbfv_ready_keyshare_without_c1(Some(lbfv_state)).await?;
+
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    assert!(
+        !state_repo
+            .read()
+            .await?
+            .expect("persisted keyshare state")
+            .keyshare_published
+    );
+    assert!(
+        recovery_repo
+            .read()
+            .await?
+            .expect("persisted recovery state")
+            .keyshare_publish_authorized
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn lbfv_keyshare_publication_does_not_wait_for_a_c1_proof() -> Result<()> {
+    // No l-BFV generation state makes the bundle gate pass, so only the C1 gate can defer.
+    let (_actor, history, state_repo, _) = lbfv_ready_keyshare_without_c1(None).await?;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let created = events
+        .iter()
+        .find_map(|event| match event.get_data() {
+            InterfoldEventData::KeyshareCreated(created) => Some(created.clone()),
+            _ => None,
+        })
+        .expect("KeyshareCreated without a C1 proof on the l-BFV path");
+    assert!(created.signed_pk_generation_proof.is_none());
+    assert!(
+        state_repo
+            .read()
+            .await?
+            .expect("persisted keyshare state")
+            .keyshare_published
+    );
+    Ok(())
+}
+
 /// Replay of a selection that the restored context lacks starts the keyshare before
 /// `EffectsEnabled`. It publishes nothing and starts no collector then, so an encryption-key cutoff
 /// that passes during replay ends nothing. At `EffectsEnabled` the rebuilt collector applies the
@@ -6781,7 +7293,7 @@ async fn a_keyshare_that_replay_starts_waits_for_effects() -> Result<()> {
             threshold_m: 1,
             threshold_n: 3,
             seed: e3_events::Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: insecure_threshold_params(),
             error_size: ArcBytes::from_bytes(&[]),
         },

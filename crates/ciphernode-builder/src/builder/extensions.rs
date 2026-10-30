@@ -80,7 +80,7 @@ impl CiphernodeBuilder {
                 bus,
                 &self.cipher,
                 addr,
-                interfold_addresses,
+                interfold_addresses.clone(),
                 dkg_timing_reader,
                 signer.clone(),
                 canonical_keys.clone(),
@@ -104,8 +104,10 @@ impl CiphernodeBuilder {
         info!("Setting up FheExtension");
         e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
         info!("Setting up PublicKeyAggregationExtension");
-        e3_builder =
-            e3_builder.with_recipient("publickey", PublicKeyAggregatorExtension::create(bus));
+        e3_builder = e3_builder.with_recipient(
+            "publickey",
+            PublicKeyAggregatorExtension::create(bus, interfold_addresses, addr.parse()?),
+        );
 
         // ── Threshold plaintext aggregation ──
         info!("Setting up ThresholdPlaintextAggregatorExtension");

@@ -51,15 +51,8 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 
 - **`BfvPreset::SecureThreshold8192`**: Secure threshold BFV parameters (degree 8192)
 - **`BfvPreset::SecureDkg8192`**: Production-ready DKG parameters (degree 8192)
-- **`BfvPreset::InsecureThreshold64`** (current `DEFAULT_BFV_PRESET`): Testing-only threshold BFV
-  parameters (degree 64)
-- **`BfvPreset::InsecureDkg64`**: Testing-only DKG parameters (degree 64)
-
-The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
-and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old
-degree-512 persisted discriminants does not migrate stored data. Follow the
-[testnet reset requirement](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset)
-before opening an existing degree-512 testnet store.
+- **`BfvPreset::InsecureThreshold`**: Testing-only threshold BFV parameters (degree 128)
+- **`BfvPreset::InsecureDkg`**: Testing-only DKG parameters (degree 128)
 
 In the PVSS protocol, two types of BFV parameters are needed:
 

@@ -89,6 +89,22 @@ impl E3Extension for ThresholdKeyshareExtension {
                 .err(EType::KeyGeneration, anyhow!(ERROR_KEYSHARE_META_MISSING));
             return;
         };
+        let lbfv_initial = if e3_fhe_params::supports_lbfv(data.params_preset) {
+            match crate::LbfvGenerationStateV1::from_selection(
+                data,
+                interfold_address,
+                self.signer.address(),
+                e3_config::current_node_release().protocol_version,
+            ) {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    self.bus.err(EType::KeyGeneration, error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let repo = ctx.repositories().threshold_keyshare(&e3_id);
         let container = repo.send(Some(ThresholdKeyshareState::new(
             e3_id.clone(),
@@ -107,6 +123,10 @@ impl E3Extension for ThresholdKeyshareExtension {
                 last_ec: Some(evt.get_ctx().clone()),
                 ..Default::default()
             }));
+        let lbfv_repo = ctx
+            .repositories()
+            .threshold_keyshare_lbfv_generation(&e3_id);
+        let lbfv_generation = lbfv_repo.send(lbfv_initial);
         let recovery_payloads = ThresholdKeyshareRecoveryPayloads::new(
             ctx.repositories()
                 .threshold_keyshare_recovery_payloads(&e3_id),
@@ -123,6 +143,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     share_enc_preset: meta.share_enc_preset(),
                     interfold_address,
                     recovery,
+                    lbfv_generation,
                     recovery_payloads,
                     bfv_key: ctx.repositories().threshold_keyshare_bfv_key(&e3_id),
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
@@ -164,6 +185,11 @@ impl E3Extension for ThresholdKeyshareExtension {
             "threshold-keyshare for E3 {} has no restart recovery record",
             snapshot.e3_id
         );
+        let lbfv_generation = ctx
+            .repositories()
+            .threshold_keyshare_lbfv_generation(&snapshot.e3_id)
+            .load()
+            .await?;
         ensure!(
             recovery.get().is_some_and(|value| {
                 value.schema_version == THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION
@@ -185,6 +211,20 @@ impl E3Extension for ThresholdKeyshareExtension {
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             return Err(anyhow!(ERROR_KEYSHARE_META_MISSING));
         };
+        if e3_fhe_params::supports_lbfv(meta.params_preset) {
+            let lbfv_state = lbfv_generation.get().ok_or_else(|| {
+                anyhow!(
+                    "l-BFV threshold-keyshare for E3 {} has no generation record",
+                    snapshot.e3_id
+                )
+            })?;
+            lbfv_state.validate_loaded()?;
+            ensure!(
+                lbfv_state.expected_signer()? == self.signer.address(),
+                "persisted l-BFV party slot for E3 {} does not match the node signer",
+                snapshot.e3_id
+            );
+        }
         let interfold_address = self
             .interfold_addresses
             .get(&snapshot.e3_id.chain_id())
@@ -204,6 +244,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             share_enc_preset: meta.share_enc_preset(),
             interfold_address,
             recovery,
+            lbfv_generation,
             recovery_payloads,
             bfv_key: ctx
                 .repositories()

@@ -40,9 +40,10 @@ use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
 use e3_zk_prover::{VersionInfo, ZkBackend};
-use fhe::bfv::PublicKey;
-use fhe_traits::{DeserializeParametrized, Serialize};
+use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey};
+use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use num_bigint::BigUint;
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,25 +66,35 @@ struct BenchmarkParams {
     plaintext_flow_timeout: Duration,
 }
 
+fn resolve_benchmark_preset(
+    benchmark_mode: &str,
+    requested_preset: Option<&str>,
+) -> (&'static str, BfvPreset) {
+    match requested_preset {
+        Some("insecure") => ("insecure", DEFAULT_BFV_PRESET),
+        // The insecure parameters on the l-BFV path: same circuit artifacts, l-BFV protocol flow.
+        // `insecure` alone runs trBFV, so this is the fast way to exercise the l-BFV path.
+        Some("insecure-lbfv") => ("insecure", BfvPreset::InsecureThresholdLbfv),
+        // The trBFV pair the contracts verify (set 0); `insecure` is the degree-128 twin.
+        Some("insecure-64") => ("insecure-64", BfvPreset::InsecureThreshold64),
+        Some("secure-8192") => ("secure-8192", BfvPreset::SecureThreshold8192),
+        Some("secure-16384") => ("secure-16384", BfvPreset::SecureThreshold16384),
+        Some(value) => panic!("BENCHMARK_PRESET has unsupported value {value:?}"),
+        None if benchmark_mode == "secure" => ("secure-8192", BfvPreset::SecureThreshold8192),
+        None => ("insecure", DEFAULT_BFV_PRESET),
+    }
+}
+
 fn select_benchmark_params() -> BenchmarkParams {
     let benchmark_mode = std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
-    let is_secure_mode = benchmark_mode == "secure";
-
-    let bfv_preset = if is_secure_mode {
-        BfvPreset::SecureThreshold8192
-    } else {
-        DEFAULT_BFV_PRESET
-    };
+    let requested_preset = std::env::var("BENCHMARK_PRESET").ok();
+    let (preset_subdir, bfv_preset) =
+        resolve_benchmark_preset(&benchmark_mode, requested_preset.as_deref());
+    let is_secure_mode = !preset_subdir.starts_with("insecure");
 
     // λ is part of the preset metadata; using a hard-coded value here will mix parameter
     // families and can invalidate noise/security assumptions.
     let lambda = bfv_preset.metadata().lambda;
-
-    let preset_subdir = if is_secure_mode {
-        "secure-8192"
-    } else {
-        "insecure-64"
-    };
 
     let committee = active_committee(preset_subdir);
     let is_small_committee = committee == e3_committee::CiphernodesCommitteeSize::Small;
@@ -121,6 +132,18 @@ fn select_benchmark_params() -> BenchmarkParams {
         "BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS",
         default_plaintext_flow_timeout,
     );
+    // The share collectors must outlast the flow they serve, or a long run is cut off by the
+    // collector rather than by the flow timeout the caller raised. Keep each collection window at
+    // least as long as the matching flow timeout plus a margin.
+    let collection_timeout_secs = collection_timeout_secs.map(|(enc, threshold, dec_shared)| {
+        let dkg_floor = pubkey_flow_timeout.as_secs() + 1_000;
+        let dec_floor = plaintext_flow_timeout.as_secs() + 1_000;
+        (
+            enc.max(dec_floor),
+            threshold.max(dkg_floor),
+            dec_shared.max(dkg_floor),
+        )
+    });
 
     BenchmarkParams {
         preset_subdir,
@@ -130,6 +153,37 @@ fn select_benchmark_params() -> BenchmarkParams {
         pubkey_flow_timeout,
         plaintext_flow_timeout,
     }
+}
+
+#[test]
+fn benchmark_preset_override_selects_secure_16384() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("secure", Some("secure-16384"));
+    assert_eq!(preset_subdir, "secure-16384");
+    assert!(matches!(preset, BfvPreset::SecureThreshold16384));
+}
+
+#[test]
+fn insecure_lbfv_override_runs_the_lbfv_path_on_insecure_artifacts() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure-lbfv"));
+    assert_eq!(preset_subdir, "insecure");
+    assert!(e3_fhe_params::supports_lbfv(preset));
+    assert!(!e3_fhe_params::supports_lbfv(
+        resolve_benchmark_preset("insecure", Some("insecure")).1
+    ));
+}
+
+#[test]
+fn insecure_64_override_runs_the_on_chain_trbfv_pair() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure-64"));
+    assert_eq!(preset_subdir, "insecure-64");
+    assert!(matches!(preset, BfvPreset::InsecureThreshold64));
+}
+
+#[test]
+fn secure_benchmark_mode_defaults_to_secure_8192() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("secure", None);
+    assert_eq!(preset_subdir, "secure-8192");
+    assert!(matches!(preset, BfvPreset::SecureThreshold8192));
 }
 
 fn benchmark_flow_timeout(name: &str, default: Duration) -> Duration {
@@ -227,6 +281,15 @@ fn uses_dist_preset_artifacts(preset_subdir: &str, committee_str: &str) -> bool 
         .exists()
 }
 
+fn uses_lbfv_artifacts(preset_subdir: &str) -> bool {
+    matches!(preset_subdir, "insecure" | "secure-16384")
+}
+
+/// Whether the archive holds the trBFV DKG circuits (`policy::has_trbfv` in `e3-zk-build`).
+fn uses_trbfv_artifacts(preset_subdir: &str) -> bool {
+    preset_subdir != "secure-16384"
+}
+
 /// Preset stamp path — under the new layout each `{preset}/{committee}` dir has its own stamp.
 fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBuf {
     if uses_dist_preset_artifacts(preset_subdir, committee_str) {
@@ -241,6 +304,17 @@ fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBu
             .join("bin")
             .join(".active-preset.json")
     }
+}
+
+fn build_stamp_matches(path: &std::path::Path, preset: &str, committee: &str) -> bool {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(stamp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    stamp.get("preset").and_then(|value| value.as_str()) == Some(preset)
+        && stamp.get("committee").and_then(|value| value.as_str()) == Some(committee)
 }
 
 /// Reads the active committee from `circuits/bin/.active-preset.json`, which is written by every
@@ -361,6 +435,56 @@ async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Res
     Ok(())
 }
 
+async fn validate_lbfv_v2_fixture(
+    backend: &ZkBackend,
+    preset_subdir: &str,
+    committee: &str,
+) -> Result<()> {
+    let artifacts_dir = format!("{preset_subdir}/{committee}");
+    let required_circuits = [
+        ("recursive/threshold", "lbfv_pk_generation"),
+        ("recursive/threshold", "rlk_generation"),
+        ("recursive/threshold", "lbfv_pk_aggregation"),
+        ("recursive/threshold", "rlk_aggregation"),
+        ("default/recursive_aggregation", "lbfv_generation_fold"),
+        (
+            "default/recursive_aggregation",
+            "lbfv_generation_fold_kernel",
+        ),
+        ("default/recursive_aggregation", "node_fold_v2"),
+        ("default/recursive_aggregation", "nodes_fold_v2"),
+        ("default/recursive_aggregation", "nodes_fold_v2_kernel"),
+        ("default/recursive_aggregation", "lbfv_aggregation_fold"),
+        (
+            "default/recursive_aggregation",
+            "lbfv_aggregation_fold_kernel",
+        ),
+        ("default/recursive_aggregation", "dkg_aggregator_v2"),
+        ("evm/recursive_aggregation", "dkg_aggregator_v2"),
+    ];
+
+    for (parent, circuit) in required_circuits {
+        let circuit_dir = backend
+            .circuits_dir
+            .join(&artifacts_dir)
+            .join(parent)
+            .join(circuit);
+        for extension in ["json", "vk", "vk_hash"] {
+            let path = circuit_dir.join(format!("{circuit}.{extension}"));
+            let metadata = tokio::fs::metadata(&path)
+                .await
+                .with_context(|| format!("l-BFV V2 fixture is missing {}", path.display()))?;
+            anyhow::ensure!(
+                metadata.is_file() && metadata.len() > 0,
+                "l-BFV V2 fixture artifact is empty: {}",
+                path.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Create a ZkBackend for integration tests.
 /// If a local bb binary is found, uses it with fixture files (fast path).
 /// Otherwise, calls `ensure_installed()` to download bb + circuits (CI path).
@@ -396,7 +520,8 @@ async fn setup_test_zk_backend(
         compile_error!("Integration tests require unix symlink support");
 
         let preset_out = circuits_dir.join(preset_subdir).join(committee_str);
-        let circuits_bin_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
+        let circuits_bin_marker = repo_root.join("circuits/bin/dkg/pk/target/pk.json");
+        let circuits_bin_group_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
         // `circuits/bin` is preset-agnostic on disk — only `.active-preset.json` records which
         // preset+committee the most recent local build targeted. Without it we cannot tell
         // whether `circuits/bin` matches `preset_subdir`, and copying wrong artifacts would
@@ -405,7 +530,21 @@ async fn setup_test_zk_backend(
 
         if uses_dist_preset_artifacts(preset_subdir, committee_str) {
             copy_dir_recursive(&dist_preset, &preset_out).await?;
-        } else if !circuits_bin_marker.exists() || !preset_build_stamp.exists() {
+            let dist_checksums = repo_root.join("dist/circuits/checksums.json");
+            if dist_checksums.exists() {
+                tokio::fs::copy(&dist_checksums, circuits_dir.join("checksums.json"))
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "copy circuit artifact {} -> {}",
+                            dist_checksums.display(),
+                            circuits_dir.join("checksums.json").display()
+                        )
+                    })?;
+            }
+        } else if (!circuits_bin_marker.exists() && !circuits_bin_group_marker.exists())
+            || !build_stamp_matches(&preset_build_stamp, preset_subdir, committee_str)
+        {
             // Either no local build exists, or the local build cannot be proven to match
             // the requested preset; download the pinned release tarball instead.
             println!(
@@ -420,15 +559,56 @@ async fn setup_test_zk_backend(
                 .ensure_installed()
                 .await
                 .context("download ZK circuits for integration tests")?;
+            if uses_lbfv_artifacts(preset_subdir) {
+                validate_lbfv_v2_fixture(&backend, preset_subdir, committee_str).await?;
+            }
             return Ok((backend, temp));
         } else {
             let circuits_build_root = repo_root.join("circuits").join("bin");
+            let circuit_target = |group: &str, circuit: &str| {
+                let target = circuits_build_root.join(group).join(circuit).join("target");
+                if target.join(format!("{circuit}.json")).exists() {
+                    target
+                } else {
+                    circuits_build_root.join(group).join("target")
+                }
+            };
+            let dkg_pk_target = circuit_target("dkg", "pk");
+            let dkg_sk_share_computation_chunk_target =
+                circuit_target("dkg", "sk_share_computation_chunk");
+            let dkg_esm_share_computation_chunk_target =
+                circuit_target("dkg", "esm_share_computation_chunk");
+            let dkg_share_encryption_target = circuit_target("dkg", "share_encryption");
+            let dkg_share_decryption_target = circuit_target("dkg", "share_decryption");
+            let threshold_pk_generation_target = circuit_target("threshold", "pk_generation");
+            let threshold_pk_aggregation_target = circuit_target("threshold", "pk_aggregation");
+            let threshold_lbfv_pk_generation_target =
+                circuit_target("threshold", "lbfv_pk_generation");
+            let threshold_lbfv_pk_aggregation_target =
+                circuit_target("threshold", "lbfv_pk_aggregation");
+            let threshold_rlk_generation_target = circuit_target("threshold", "rlk_generation");
+            let threshold_rlk_aggregation_target = circuit_target("threshold", "rlk_aggregation");
+            let threshold_share_decryption_target = circuit_target("threshold", "share_decryption");
+            let threshold_decrypted_shares_aggregation_target =
+                circuit_target("threshold", "decrypted_shares_aggregation");
+            // The trBFV chunk, limb and Chonk circuits share their workspaces' target directories.
             let dkg_target = circuits_build_root.join("dkg").join("target");
-            let threshold_target = circuits_build_root.join("threshold").join("target");
             let chonk_target = circuits_build_root.join("chonk").join("target");
-            let c2ab_fold_target = circuits_build_root
+            let c2_chunk_batch_target = circuits_build_root
                 .join("recursive_aggregation")
-                .join("c2ab_fold")
+                .join("c2_chunk_batch")
+                .join("target");
+            let sk_c2_chunk_finalize_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("sk_c2_chunk_finalize")
+                .join("target");
+            let esm_c2_chunk_finalize_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("esm_c2_chunk_finalize")
+                .join("target");
+            let c2ab_chunk_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c2ab_chunk_fold")
                 .join("target");
             let c3ab_fold_target = circuits_build_root
                 .join("recursive_aggregation")
@@ -457,6 +637,38 @@ async fn setup_test_zk_backend(
             let decryption_aggregator_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("decryption_aggregator")
+                .join("target");
+            let lbfv_generation_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_generation_fold")
+                .join("target");
+            let lbfv_generation_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_generation_fold_kernel")
+                .join("target");
+            let node_fold_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("node_fold_v2")
+                .join("target");
+            let nodes_fold_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold_v2")
+                .join("target");
+            let nodes_fold_v2_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold_v2_kernel")
+                .join("target");
+            let lbfv_aggregation_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_aggregation_fold")
+                .join("target");
+            let lbfv_aggregation_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_aggregation_fold_kernel")
+                .join("target");
+            let dkg_aggregator_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("dkg_aggregator_v2")
                 .join("target");
 
             // Helper: copy {name}.json + VK artifacts into a destination directory.
@@ -516,7 +728,7 @@ async fn setup_test_zk_backend(
 
             // T0 (pk)
             copy_circuit(
-                &dkg_target,
+                &dkg_pk_target,
                 &rv.join("dkg/pk"),
                 "pk",
                 ".vk_noir",
@@ -525,34 +737,47 @@ async fn setup_test_zk_backend(
             .await?;
             // C1 (pk_generation)
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_generation_target,
                 &rv.join("threshold/pk_generation"),
                 "pk_generation",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
             .await?;
-            // C2a (sk_share_computation)
+            // C2a chunk (sk_share_computation_chunk)
             copy_circuit(
-                &dkg_target,
-                &rv.join("dkg/sk_share_computation"),
-                "sk_share_computation",
+                &dkg_sk_share_computation_chunk_target,
+                &rv.join("dkg/sk_share_computation_chunk"),
+                "sk_share_computation_chunk",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
             .await?;
-            // C2b (e_sm_share_computation)
+            // C2b chunk (esm_share_computation_chunk)
             copy_circuit(
-                &dkg_target,
-                &rv.join("dkg/e_sm_share_computation"),
-                "e_sm_share_computation",
+                &dkg_esm_share_computation_chunk_target,
+                &rv.join("dkg/esm_share_computation_chunk"),
+                "esm_share_computation_chunk",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
             .await?;
+            // trBFV C2: the final proofs over the chunk chains staged under default/ below.
+            if uses_trbfv_artifacts(preset_subdir) {
+                for name in ["sk_share_computation", "e_sm_share_computation"] {
+                    copy_circuit(
+                        &circuit_target("dkg", name),
+                        &rv.join("dkg").join(name),
+                        name,
+                        ".vk_noir",
+                        ".vk_noir_hash",
+                    )
+                    .await?;
+                }
+            }
             // C3 (share_encryption)
             copy_circuit(
-                &dkg_target,
+                &dkg_share_encryption_target,
                 &rv.join("dkg/share_encryption"),
                 "share_encryption",
                 ".vk_noir",
@@ -561,7 +786,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C4 (dkg/share_decryption)
             copy_circuit(
-                &dkg_target,
+                &dkg_share_decryption_target,
                 &rv.join("dkg/share_decryption"),
                 "share_decryption",
                 ".vk_noir",
@@ -570,7 +795,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C5 (pk_aggregation)
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_aggregation_target,
                 &rv.join("threshold/pk_aggregation"),
                 "pk_aggregation",
                 ".vk_noir",
@@ -579,7 +804,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C6 (threshold/share_decryption)
             copy_circuit(
-                &threshold_target,
+                &threshold_share_decryption_target,
                 &rv.join("threshold/share_decryption"),
                 "share_decryption",
                 ".vk_noir",
@@ -588,13 +813,31 @@ async fn setup_test_zk_backend(
             .await?;
             // C7 (decrypted_shares_aggregation)
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &rv.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
             .await?;
+
+            if uses_lbfv_artifacts(preset_subdir) {
+                for (target, name) in [
+                    (&threshold_lbfv_pk_generation_target, "lbfv_pk_generation"),
+                    (&threshold_rlk_generation_target, "rlk_generation"),
+                    (&threshold_lbfv_pk_aggregation_target, "lbfv_pk_aggregation"),
+                    (&threshold_rlk_aggregation_target, "rlk_aggregation"),
+                ] {
+                    copy_circuit(
+                        target,
+                        &rv.join("threshold").join(name),
+                        name,
+                        ".vk_noir",
+                        ".vk_noir_hash",
+                    )
+                    .await?;
+                }
+            }
 
             // ── default/ variant (recursive aggregation bins, uses .vk_recursive) ───
 
@@ -603,7 +846,7 @@ async fn setup_test_zk_backend(
             // C5 (pk_aggregation) — proven with noir-recursive-no-zk and folded into
             // DkgAggregator, so it must be staged under default/ too.
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_aggregation_target,
                 &dv.join("threshold/pk_aggregation"),
                 "pk_aggregation",
                 ".vk_recursive",
@@ -611,31 +854,58 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            // The chunked C2 and C4 circuits are proven under the default variant.
-            for name in [
-                "sk_share_computation_chain",
-                "sk_share_computation_chain_last",
-                "e_sm_share_computation_chain",
-                "e_sm_share_computation_chain_last",
-                "share_decryption_limb_0",
-                "share_decryption_limb_1",
-                "share_decryption_limb_2",
-            ] {
-                copy_circuit(
-                    &dkg_target,
-                    &dv.join("dkg").join(name),
-                    name,
-                    ".vk_recursive",
-                    ".vk_recursive_hash",
-                )
-                .await?;
+            // The trBFV path proves C2 and C4 as chains and C3 over Chonk, under the default variant.
+            if uses_trbfv_artifacts(preset_subdir) {
+                for name in [
+                    "sk_share_computation_chain",
+                    "sk_share_computation_chain_last",
+                    "e_sm_share_computation_chain",
+                    "e_sm_share_computation_chain_last",
+                    "share_decryption_limb_0",
+                    "share_decryption_limb_1",
+                    "share_decryption_limb_2",
+                ] {
+                    copy_circuit(
+                        &dkg_target,
+                        &dv.join("dkg").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+                for name in [
+                    "c3_chonk_app",
+                    "c3_chonk_init_kernel",
+                    "c3_chonk_tail_kernel",
+                    "c3_chonk_hiding_kernel",
+                ] {
+                    copy_circuit(
+                        &chonk_target,
+                        &dv.join("chonk").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+                for name in ["c2ab_fold", "c3_chonk_tube", "c3_chonk_accumulate"] {
+                    copy_circuit(
+                        &circuits_build_root
+                            .join("recursive_aggregation")
+                            .join(name)
+                            .join("target"),
+                        &dv.join("recursive_aggregation").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
             }
-            // The C3 and C6 Chonk stacks share the `chonk` workspace target.
+            // Both paths decrypt through the C6 Chonk stack, which shares the `chonk` workspace
+            // target.
             for name in [
-                "c3_chonk_app",
-                "c3_chonk_init_kernel",
-                "c3_chonk_tail_kernel",
-                "c3_chonk_hiding_kernel",
                 "c6_chonk_app",
                 "c6_chonk_init_kernel",
                 "c6_chonk_tail_kernel",
@@ -650,12 +920,7 @@ async fn setup_test_zk_backend(
                 )
                 .await?;
             }
-            for name in [
-                "c3_chonk_tube",
-                "c3_chonk_accumulate",
-                "c6_chonk_tube",
-                "c6_chonk_root",
-            ] {
+            for name in ["c6_chonk_tube", "c6_chonk_root"] {
                 copy_circuit(
                     &circuits_build_root
                         .join("recursive_aggregation")
@@ -679,9 +944,33 @@ async fn setup_test_zk_backend(
             .await
             .context("copy the C6 VK-tree anchor")?;
             copy_circuit(
-                &c2ab_fold_target,
-                &dv.join("recursive_aggregation/c2ab_fold"),
-                "c2ab_fold",
+                &c2_chunk_batch_target,
+                &dv.join("recursive_aggregation/c2_chunk_batch"),
+                "c2_chunk_batch",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &sk_c2_chunk_finalize_target,
+                &dv.join("recursive_aggregation/sk_c2_chunk_finalize"),
+                "sk_c2_chunk_finalize",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &esm_c2_chunk_finalize_target,
+                &dv.join("recursive_aggregation/esm_c2_chunk_finalize"),
+                "esm_c2_chunk_finalize",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c2ab_chunk_fold_target,
+                &dv.join("recursive_aggregation/c2ab_chunk_fold"),
+                "c2ab_chunk_fold",
                 ".vk_recursive",
                 ".vk_recursive_hash",
             )
@@ -745,13 +1034,48 @@ async fn setup_test_zk_backend(
             // C7 (decrypted_shares_aggregation) — proven with noir-recursive-no-zk and
             // folded into DecryptionAggregator, so it must also be staged under default/.
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &dv.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk_recursive",
                 ".vk_recursive_hash",
             )
             .await?;
+
+            if uses_lbfv_artifacts(preset_subdir) {
+                for (target, name) in [
+                    (&lbfv_generation_fold_target, "lbfv_generation_fold"),
+                    (
+                        &lbfv_generation_fold_kernel_target,
+                        "lbfv_generation_fold_kernel",
+                    ),
+                    (&node_fold_v2_target, "node_fold_v2"),
+                    (&nodes_fold_v2_target, "nodes_fold_v2"),
+                    (&nodes_fold_v2_kernel_target, "nodes_fold_v2_kernel"),
+                    (&lbfv_aggregation_fold_target, "lbfv_aggregation_fold"),
+                    (
+                        &lbfv_aggregation_fold_kernel_target,
+                        "lbfv_aggregation_fold_kernel",
+                    ),
+                    (&dkg_aggregator_v2_target, "dkg_aggregator_v2"),
+                    (
+                        &circuits_build_root
+                            .join("recursive_aggregation")
+                            .join("c4ab_fold_chunked")
+                            .join("target"),
+                        "c4ab_fold_chunked",
+                    ),
+                ] {
+                    copy_circuit(
+                        target,
+                        &dv.join("recursive_aggregation").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+            }
 
             // ── evm/ variant (on-chain verification: DKG aggregator, C7) ───────────
 
@@ -777,16 +1101,31 @@ async fn setup_test_zk_backend(
             .await?;
             // C7 (decrypted_shares_aggregation) — EVM-targeted
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &ev.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk",
                 ".vk_hash",
             )
             .await?;
+
+            if uses_lbfv_artifacts(preset_subdir) {
+                copy_circuit(
+                    &dkg_aggregator_v2_target,
+                    &ev.join("recursive_aggregation/dkg_aggregator_v2"),
+                    "dkg_aggregator_v2",
+                    ".vk",
+                    ".vk_hash",
+                )
+                .await?;
+            }
         }
 
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
+
+        if uses_lbfv_artifacts(preset_subdir) {
+            validate_lbfv_v2_fixture(&backend, preset_subdir, committee_str).await?;
+        }
 
         // `CiphernodeBuilder` calls `ensure_installed()`, which deletes `circuits_dir` and downloads
         // the release tarball whenever `version.json` does not record the pinned bb/circuits
@@ -809,8 +1148,24 @@ async fn setup_test_zk_backend(
             .ensure_installed()
             .await
             .expect("Failed to download and install ZK backend");
+        if uses_lbfv_artifacts(preset_subdir) {
+            validate_lbfv_v2_fixture(
+                &backend,
+                preset_subdir,
+                active_committee(preset_subdir).as_str(),
+            )
+            .await?;
+        }
         Ok((backend, temp))
     }
+}
+
+#[actix::test]
+#[serial_test::serial]
+#[ignore = "requires secure-16384 circuit artifacts"]
+async fn test_secure_16384_fixture_setup() -> Result<()> {
+    let (_backend, _temp) = setup_test_zk_backend("secure-16384").await?;
+    Ok(())
 }
 
 pub fn save_snapshot(file_name: &str, bytes: &[u8]) {
@@ -1158,17 +1513,29 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("KeyshareCreated")
         }
         InterfoldEventData::ShareVerificationDispatched(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("ShareVerificationDispatched")
         }
         InterfoldEventData::CommitmentConsistencyCheckRequested(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("CommitmentConsistencyCheckRequested")
         }
         InterfoldEventData::CommitmentConsistencyCheckComplete(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("CommitmentConsistencyCheckComplete")
         }
@@ -1178,7 +1545,11 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("ProofVerificationPassed")
         }
         InterfoldEventData::ShareVerificationComplete(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("ShareVerificationComplete")
         }
@@ -1193,6 +1564,9 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
         }
         InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == *e3_id => {
             Some("PublicKeyAggregated")
+        }
+        InterfoldEventData::LbfvPublicKeyAggregated(data) if data.e3_id == *e3_id => {
+            Some("LbfvPublicKeyAggregated")
         }
         _ => None,
     }
@@ -1453,6 +1827,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // Parameters selected by benchmark mode.
     let benchmark_params = select_benchmark_params();
+    let is_lbfv = e3_fhe_params::supports_lbfv(benchmark_params.bfv_preset);
     let _env_guard = EnvTimeoutVarsGuard::new();
     if let Some((enc, threshold, dec_shared)) = benchmark_params.collection_timeout_secs {
         std::env::set_var("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS", enc.to_string());
@@ -1511,10 +1886,16 @@ async fn test_trbfv_actor() -> Result<()> {
     let lambda = benchmark_params.bfv_preset.lambda()?;
 
     let seed = Seed(create_seed_from_u64(123));
+    let mult_depth = benchmark_params
+        .bfv_preset
+        .search_defaults()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?
+        .mult_depth;
     let error_size = ArcBytes::from_bytes(&BigUint::to_bytes_be(&calculate_error_size(
         params_raw.clone(),
         threshold_n,
         threshold_m,
+        mult_depth,
         lambda,
     )?));
 
@@ -1537,9 +1918,7 @@ async fn test_trbfv_actor() -> Result<()> {
         rpc_url: "http://localhost:8545".into(),
         rpc_auth: Default::default(),
         contracts: e3_config::ContractAddresses {
-            interfold: e3_config::Contract::AddressOnly(
-                "0x0000000000000000000000000000000000000000".into(),
-            ),
+            interfold: e3_config::Contract::AddressOnly(Address::repeat_byte(0x11).to_string()),
             ciphernode_registry: e3_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
@@ -1757,7 +2136,7 @@ async fn test_trbfv_actor() -> Result<()> {
     // Prepare round
     let e3_requested_timer = Instant::now();
     // Trigger actor DKG
-    let e3_id = E3id::new("0", 1);
+    let e3_id = E3id::new("1", 1);
     let request_block = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 1;
 
     println!(
@@ -2080,24 +2459,27 @@ async fn test_trbfv_actor() -> Result<()> {
         "CommitmentConsistencyCheckRequested",
         "CommitmentConsistencyCheckComplete",
     ];
-    // C1 verification checks exactly the accepted H keyshare proofs.
-    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
-    active_aggregator_c1_c5.extend_from_slice(&[
-        "ShareVerificationComplete",
-        "PkAggregationProofPending",
-        "PkAggregationProofSigned",
-    ]);
+    if is_lbfv {
+        // The l-BFV path has no C1 and no C5: the aggregator verifies each party's l-BFV
+        // generation proofs (checked against the roster below) and publishes the key directly.
+        active_aggregator_c1_c5.push("ShareVerificationComplete");
+    } else {
+        // C1 verification checks exactly the accepted H keyshare proofs.
+        active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
+        active_aggregator_c1_c5.extend_from_slice(&[
+            "ShareVerificationComplete",
+            "PkAggregationProofPending",
+            "PkAggregationProofSigned",
+        ]);
+    }
 
-    // Gossip can duplicate KeyshareCreated; wait until PublicKeyAggregated rather than a fixed take count.
-    let h = nodes
-        .take_history_until_last_event(
-            0,
-            "PublicKeyAggregated",
-            Some(pubkey_flow_timeout),
-            Some(pubkey_flow_timeout),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node 0 pubkey flow: {e}"))?;
+    // The legacy publication is gossiped to the observer. The l-BFV publication intent remains
+    // local to the active aggregator and reaches the registry writer from that node.
+    let publication_event_name = if is_lbfv {
+        "LbfvPublicKeyAggregated"
+    } else {
+        "PublicKeyAggregated"
+    };
     // Every connected committee member can end up holding the aggregator role: the expected one
     // first, then the rest in committee order, which is the failover order.
     let mut aggregator_candidates = vec![active_aggregator_index];
@@ -2107,6 +2489,36 @@ async fn test_trbfv_actor() -> Result<()> {
             aggregator_candidates.push(node_index);
         }
     }
+    let (publication_node_index, h) = if is_lbfv {
+        wait_for_history_match_any(
+            &nodes,
+            &aggregator_candidates,
+            publication_event_name,
+            pubkey_flow_timeout,
+            |data| {
+                matches!(
+                    data,
+                    InterfoldEventData::LbfvPublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            },
+        )
+        .await
+    } else {
+        nodes
+            .take_history_until_last_event(
+                0,
+                publication_event_name,
+                Some(pubkey_flow_timeout),
+                Some(pubkey_flow_timeout),
+            )
+            .await
+            .map(|history| (0, history))
+    }
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "FAILURE on public-key flow while waiting for {publication_event_name}: {e}"
+        )
+    })?;
     // A progress-deadline failover moves the aggregator role during the public-key phase. The
     // promoted party takes over the work that is still open and the demoted one finishes what it
     // started, so the flow's events are spread over the parties that held the role.
@@ -2114,25 +2526,28 @@ async fn test_trbfv_actor() -> Result<()> {
         aggregator_role_nodes(&nodes, &aggregator_candidates, &e3_id).await?;
     let pubkey_failover = pubkey_aggregator_nodes
         .iter()
-        .any(|&node_index| node_index != active_aggregator_index);
+        .any(|&node_index| node_index != active_aggregator_index)
+        || (is_lbfv && publication_node_index != active_aggregator_index);
     if pubkey_failover {
         println!(
-            "Public-key aggregation failed over: the role was held by nodes {pubkey_aggregator_nodes:?}"
+            "Public-key aggregation failed over: the role was held by nodes {pubkey_aggregator_nodes:?}; node {publication_node_index} published"
         );
     }
     let actual_types = h.event_types();
-    println!("node 0 >> {:?}", actual_types);
+    println!("node {publication_node_index} >> {:?}", actual_types);
 
-    assert_eq!(
-        actual_types.first().map(String::as_str),
-        Some("AggregatorChanged"),
-        "node 0: first event must be AggregatorChanged"
-    );
-    assert_eq!(
-        actual_types.last().map(String::as_str),
-        Some("PublicKeyAggregated"),
-        "node 0: last event must be PublicKeyAggregated"
-    );
+    if !is_lbfv {
+        assert_eq!(
+            actual_types.first().map(String::as_str),
+            Some("AggregatorChanged"),
+            "node 0: first event must be AggregatorChanged"
+        );
+        assert_eq!(
+            actual_types.last().map(String::as_str),
+            Some(publication_event_name),
+            "node 0: last event must be {publication_event_name}"
+        );
+    }
 
     let dkg_parties: HashSet<u64> = h
         .iter()
@@ -2148,28 +2563,64 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // Observer gossip can arrive after PublicKeyAggregated. The aggregator
-    // must still collect all H selected folds before it publishes the key.
+    // Observer gossip can arrive after legacy publication. The aggregator must still collect all H
+    // selected folds before it publishes either publication intent.
     assert!(
         dkg_parties.len() <= threshold_n && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: observed an invalid DKG fold before PublicKeyAggregated: {dkg_parties:?}"
+        "publication history contains an invalid DKG fold before {publication_event_name}: {dkg_parties:?}"
     );
     assert!(
         ks_parties.len() <= threshold_n && ks_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: observed an invalid keyshare before PublicKeyAggregated: {ks_parties:?}"
+        "publication history contains an invalid keyshare before {publication_event_name}: {ks_parties:?}"
     );
-    let pk_agg = h
-        .iter()
-        .rev()
-        .find_map(|e| match e.get_data() {
-            InterfoldEventData::PublicKeyAggregated(d) => Some(d),
-            _ => None,
-        })
-        .expect("PublicKeyAggregated in history");
+    let (
+        publication_nodes_len,
+        publication_committee_addresses,
+        publication_honest_committee_addresses,
+        pubkey_bytes,
+        publication_pk_commitment,
+        dkg_aggregator_proof,
+        dkg_attestation_bundle,
+    ) = if is_lbfv {
+        let publication = h
+            .iter()
+            .rev()
+            .find_map(|event| match event.get_data() {
+                InterfoldEventData::LbfvPublicKeyAggregated(data) => Some(data),
+                _ => None,
+            })
+            .expect("LbfvPublicKeyAggregated in active aggregator history");
+        (
+            publication.nodes.len(),
+            publication.committee_addresses.clone(),
+            publication.honest_committee_addresses.clone(),
+            publication.pubkey.clone(),
+            publication.pk_commitment,
+            Some(publication.dkg_aggregator_v2_proof.clone()),
+            publication.dkg_attestation_bundle.clone(),
+        )
+    } else {
+        let publication = h
+            .iter()
+            .rev()
+            .find_map(|event| match event.get_data() {
+                InterfoldEventData::PublicKeyAggregated(data) => Some(data),
+                _ => None,
+            })
+            .expect("PublicKeyAggregated in observer history");
+        (
+            publication.nodes.len(),
+            publication.committee_addresses.clone(),
+            publication.honest_committee_addresses.clone(),
+            publication.pubkey.clone(),
+            publication.pk_commitment,
+            publication.dkg_aggregator_proof.clone(),
+            publication.dkg_attestation_bundle.clone(),
+        )
+    };
     assert_eq!(
-        pk_agg.nodes.len(),
-        committee_h,
-        "PublicKeyAggregated must list H={committee_h} honest nodes"
+        publication_nodes_len, committee_h,
+        "{publication_event_name} must list H={committee_h} honest nodes"
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
@@ -2187,7 +2638,11 @@ async fn test_trbfv_actor() -> Result<()> {
     // Under a failover, the parties that held the role between them recorded the flow.
     let mut role_events: Vec<InterfoldEvent> = Vec::new();
     if pubkey_failover {
-        for &node_index in &pubkey_aggregator_nodes {
+        let mut role_nodes = pubkey_aggregator_nodes.clone();
+        if is_lbfv && !role_nodes.contains(&publication_node_index) {
+            role_nodes.push(publication_node_index);
+        }
+        for node_index in role_nodes {
             role_events.extend(nodes.get_history(node_index).await?.iter().cloned());
         }
     }
@@ -2248,16 +2703,16 @@ async fn test_trbfv_actor() -> Result<()> {
     }
     let selected_addresses: Vec<Address> = accepted_rosters[0]
         .iter()
-        .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
+        .map(|&party_id| publication_committee_addresses[party_id as usize])
         .collect();
-    assert_eq!(selected_addresses, pk_agg.honest_committee_addresses);
+    assert_eq!(selected_addresses, publication_honest_committee_addresses);
     let mut expected_active_aggregator_pubkey_events = vec![
         "CommitteeFinalized",
         "CiphernodeSelected",
         "AggregatorChanged",
     ];
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
-    expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
+    expected_active_aggregator_pubkey_events.push(publication_event_name);
 
     // The active aggregator is also a selected committee member, so its node history contains
     // local ThresholdKeyshare DKG work in addition to the public-key aggregation stage. Project
@@ -2297,8 +2752,8 @@ async fn test_trbfv_actor() -> Result<()> {
         );
         assert_eq!(
             active_aggregator_pubkey_events.last().copied(),
-            Some("PublicKeyAggregated"),
-            "Active aggregator: last event must be PublicKeyAggregated"
+            Some(publication_event_name),
+            "Active aggregator: last public-key event must be {publication_event_name}"
         );
     } else {
         // The role moved, so no one party saw the whole flow. Every expected event must still
@@ -2327,6 +2782,15 @@ async fn test_trbfv_actor() -> Result<()> {
                 "public-key flow after failover: {event} seen {seen} times on the role holders, expected at least {expected}"
             );
         }
+        let publisher_keyshares =
+            project_history(&h, |data| publickey_aggregator_marker(data, &e3_id))
+                .iter()
+                .filter(|&&event| event == "KeyshareCreated")
+                .count();
+        assert!(
+            publisher_keyshares >= committee_h,
+            "publishing party saw {publisher_keyshares} keyshares; expected at least H={committee_h}"
+        );
         // Repeated work is tolerated, a second publication is not: a demoted and a promoted
         // aggregator both publishing the key is the failure a failover must not produce. Peers
         // forward the event, so only a holder's own publication counts. Event IDs cannot tell
@@ -2334,7 +2798,7 @@ async fn test_trbfv_actor() -> Result<()> {
         let publishes_key = |event: &InterfoldEvent| {
             event.source() == EventSource::Local
                 && publickey_aggregator_marker(event.get_data(), &e3_id)
-                    == Some("PublicKeyAggregated")
+                    == Some(publication_event_name)
         };
         let published = role_events
             .iter()
@@ -2342,7 +2806,7 @@ async fn test_trbfv_actor() -> Result<()> {
             .count();
         assert_eq!(
             published, 1,
-            "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
+            "public-key flow after failover: {publication_event_name} published {published} times across the role holders"
         );
         for &node_index in &pubkey_aggregator_nodes {
             let holder_history = nodes.get_history(node_index).await?;
@@ -2370,11 +2834,31 @@ async fn test_trbfv_actor() -> Result<()> {
                 });
                 assert_eq!(
                     flow_end,
-                    Some("PublicKeyAggregated"),
+                    Some(publication_event_name),
                     "Role holder {node_index}: publishing the key must end its public-key flow"
                 );
             }
         }
+    }
+    if is_lbfv {
+        // In place of C1: every selected party's l-BFV public-key generation proofs passed
+        // verification on the aggregator, and no other party's did.
+        let verified_parties: HashSet<u64> = roster_source
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ProofVerificationPassed(data)
+                    if data.e3_id == e3_id && data.proof_type == ProofType::LbfvPkGeneration =>
+                {
+                    Some(data.party_id)
+                }
+                _ => None,
+            })
+            .collect();
+        let roster: HashSet<u64> = accepted_rosters[0].iter().copied().collect();
+        assert_eq!(
+            verified_parties, roster,
+            "l-BFV public-key generation proofs must pass for exactly the selected roster"
+        );
     }
 
     if let Some(secs) = history_wall_seconds_between(
@@ -2385,49 +2869,119 @@ async fn test_trbfv_actor() -> Result<()> {
                 InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == e3_id
             )
         },
-        |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id),
+        |data| {
+            if is_lbfv {
+                matches!(
+                    data,
+                    InterfoldEventData::LbfvPublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            } else {
+                matches!(
+                    data,
+                    InterfoldEventData::PublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            }
+        },
     ) {
         report.push_wall(
-            "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
+            &format!("Aggregator P2: PkAggregation pending -> {publication_event_name} (wall)"),
             Duration::from_secs_f64(secs),
         );
     }
 
     report.push_wall(
-        "ThresholdShares -> PublicKeyAggregated",
+        &format!("ThresholdShares -> {publication_event_name}"),
         shares_to_pubkey_agg_timer.elapsed(),
     );
 
-    report.push((
-        "E3Request -> PublicKeyAggregated",
+    report.push_wall(
+        &format!("E3Request -> {publication_event_name}"),
         e3_requested_timer.elapsed(),
-    ));
+    );
+    if let Some(requested_party_id) = (!restart_during_dkg)
+        .then(|| std::env::var("BENCHMARK_RESTART_PARTY_ID").ok())
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        let restart_party_id = if accepted_rosters[0].contains(&(requested_party_id as u64))
+            && committee
+                .get(requested_party_id)
+                .is_some_and(|address| address != &active_aggregator_addr)
+        {
+            requested_party_id
+        } else {
+            accepted_rosters[0]
+                .iter()
+                .copied()
+                .map(|party_id| party_id as usize)
+                .find(|&party_id| {
+                    committee
+                        .get(party_id)
+                        .is_some_and(|address| address != &active_aggregator_addr)
+                })
+                .context("selected DKG roster has no non-aggregator restart target")?
+        };
+        let address = committee
+            .get(restart_party_id)
+            .ok_or_else(|| anyhow::anyhow!("restart party is outside the finalized committee"))?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        let identity = restart_identities
+            .lock()
+            .unwrap()
+            .get(&nodes[node_index].address())
+            .cloned()
+            .context("restart identity is missing")?;
+        println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
+        bus.event_bus()
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
+            .await?;
+        nodes
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder =
+                        CiphernodeBuilder::full(identity.rng, cipher.clone(), zk_backend.clone())
+                            .with_history_collector()
+                            .with_shared_taskpool(&task_pool)
+                            .with_multithread_concurrent_jobs(concurrent_jobs)
+                            .with_shared_multithread_report(&multithread_report)
+                            .with_signer(identity.signer)
+                            .with_eventstore_aggregate_config_for_testing(
+                                benchmark_aggregate_config.clone(),
+                            )
+                            .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                            .with_chains(std::slice::from_ref(&bench_chain_config))
+                            .with_persistence(&identity.log_path, &identity.kv_path)
+                            .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
+            .await?;
+        println!("Restarted committee party {restart_party_id} at node index {node_index}");
+    }
     let app_gen_timer = Instant::now();
 
-    // First we get the public key from the collector-visible gossip event.
+    // Use the public key from the publication event selected above.
     println!("Getting public key");
-    let Some(pubkey_event) = h.iter().rev().find_map(|event| match event.get_data() {
-        InterfoldEventData::PublicKeyAggregated(data) => Some(data.clone()),
-        _ => None,
-    }) else {
-        panic!(
-            "Was expecting collector history to contain PublicKeyAggregated, got: {:?}",
-            h.event_types()
-        );
-    };
-
-    let pubkey_bytes = pubkey_event.pubkey.clone();
-    let dkg_aggregator_proof = pubkey_event.dkg_aggregator_proof.clone();
     assert!(
         dkg_aggregator_proof.is_some(),
-        "PublicKeyAggregated must always carry a final DKG proof payload"
+        "{publication_event_name} must carry a final DKG proof payload"
     );
     assert!(
-        pubkey_event
-            .dkg_attestation_bundle
+        dkg_attestation_bundle
             .as_ref()
             .is_some_and(|bundle| !bundle.is_empty()),
-        "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
+        "{publication_event_name} must carry a non-empty DKG attestation payload"
     );
 
     // The synthetic registry records the same confirmed observation as chain ingestion.
@@ -2435,9 +2989,9 @@ async fn test_trbfv_actor() -> Result<()> {
         use alloy::sol_types::SolEvent;
         let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
         let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
-            e3Id: U256::ZERO,
-            nodes: pubkey_event.committee_addresses.clone(),
-            pkCommitment: pubkey_event.pk_commitment.into(),
+            e3Id: U256::try_from(e3_id.clone())?,
+            nodes: publication_committee_addresses.clone(),
+            pkCommitment: publication_pk_commitment.into(),
             proof,
         }
         .encode_log_data();
@@ -2464,8 +3018,7 @@ async fn test_trbfv_actor() -> Result<()> {
         )?;
         bus.publish_without_context(e3_events::CommitteePublished {
             e3_id: e3_id.clone(),
-            nodes: pubkey_event
-                .committee_addresses
+            nodes: publication_committee_addresses
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
@@ -2478,21 +3031,77 @@ async fn test_trbfv_actor() -> Result<()> {
         }
     }
 
-    let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;
+    e3_bfv_client::validate_pk_commitment(
+        &pubkey_bytes,
+        publication_pk_commitment,
+        params_raw.degree(),
+        params_raw.plaintext(),
+        params_raw.moduli().to_vec(),
+    )?;
+    let encryption_key_bytes = if e3_bfv_client::is_lbfv_key_envelope(&pubkey_bytes) {
+        e3_bfv_client::inspect_lbfv_key_envelope(&pubkey_bytes, benchmark_params.bfv_preset)?.1
+    } else {
+        pubkey_bytes.to_vec()
+    };
+    let pubkey = PublicKey::from_bytes(&encryption_key_bytes, &params_raw)?;
 
     println!("Generating inputs this takes some time...");
 
-    // Create the inputs
-    let num_votes_per_voter = 3;
+    // One output ciphertext is decrypted, so the decryption numbers are per ciphertext.
+    //
+    // trBFV is additive only (multiplicative depth 0): the output is the voters' tally.
+    // l-BFV supports three multiplications: one user's ciphertext of a random `v` is squared three
+    // times, each product relinearized with the committee's relinearization key, and must decrypt
+    // to `v^8 mod t`. That is the only end-to-end check of the relinearization key the DKG
+    // produces. A single fresh ciphertext keeps the noise inside the budget the parameters were
+    // searched for (at most `SEARCH_Z` fresh ciphertexts summed before the depth-3 circuit).
+    let num_outputs = 1;
     let num_voters = 30;
-    let (inputs, numbers) =
-        e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_votes_per_voter);
-    report.push(("Application CT Gen", app_gen_timer.elapsed()));
+    let plaintext_modulus = params_raw.plaintext();
+    let (outputs, expected_result): (Vec<Arc<Ciphertext>>, Vec<u64>) = if is_lbfv {
+        let envelope = e3_bfv_client::decode_lbfv_key_envelope(&pubkey_bytes)?;
+        let relinearization_key = fhe::trlbfv::LBFVRelinearizationKey::from_bytes(
+            &envelope.relinearization_key,
+            &params_raw,
+        )?;
+        let mut rng = rand::rng();
+        // Draw `v` until `v^8 mod t` is neither 0 nor 1, so a decryption that returns zero or one
+        // cannot pass by accident (for t = 100, any v sharing a factor with t gives v^8 = 0).
+        let pow8 = |x: u64| (0..3).fold(x % plaintext_modulus, |y, _| (y * y) % plaintext_modulus);
+        let v = loop {
+            let candidate = rng.random_range(2..plaintext_modulus);
+            if pow8(candidate) > 1 {
+                break candidate;
+            }
+        };
+        let pt = Plaintext::try_encode(&[v], Encoding::poly(), &params_raw)?;
+        let mut ct = pubkey.try_encrypt(&pt, &mut rng)?;
+        report.push(("Application CT Gen", app_gen_timer.elapsed()));
 
-    let running_app_timer = Instant::now();
-    println!("Running application to generate outputs...");
-    let outputs = e3_bfv_test_support::run_application(&inputs, &pubkey, num_votes_per_voter);
-    report.push(("Running FHE Application", running_app_timer.elapsed()));
+        let running_app_timer = Instant::now();
+        println!("Running the depth-3 application (v^8) on one user ciphertext...");
+        let mut expected = v % plaintext_modulus;
+        for _ in 0..3 {
+            let mut product = &ct * &ct;
+            relinearization_key.relinearizes(&mut product)?;
+            ct = product;
+            expected = (expected * expected) % plaintext_modulus;
+        }
+        report.push(("Running FHE Application", running_app_timer.elapsed()));
+        println!("Encrypted v = {v}; expecting v^8 mod t = {expected}");
+        (vec![Arc::new(ct)], vec![expected])
+    } else {
+        let (inputs, numbers) =
+            e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_outputs);
+        report.push(("Application CT Gen", app_gen_timer.elapsed()));
+
+        let running_app_timer = Instant::now();
+        println!("Running application to generate outputs...");
+        let outputs = e3_bfv_test_support::run_application(&inputs, &pubkey, num_outputs);
+        report.push(("Running FHE Application", running_app_timer.elapsed()));
+        let expected = numbers.iter().map(|vals| vals[0]).sum::<u64>() % plaintext_modulus;
+        (outputs, vec![expected])
+    };
 
     let publishing_ct_timer = Instant::now();
     println!("Have outputs. Creating ciphertexts...");
@@ -2892,8 +3501,29 @@ async fn test_trbfv_actor() -> Result<()> {
 
     assert_eq!(
         decryption_aggregator_proofs.len(),
-        num_votes_per_voter,
-        "PlaintextAggregated must carry one decryption proof per tally"
+        num_outputs,
+        "PlaintextAggregated must carry one decryption proof per output ciphertext"
+    );
+
+    let replay_committee = publication_committee_addresses
+        .iter()
+        .map(|address| format!("\"{address}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let replay_context_json = format!(
+        concat!(
+            "  \"replay_context\": {{\n",
+            "    \"chain_id\": {},\n",
+            "    \"e3_id\": \"{}\",\n",
+            "    \"interfold\": \"{}\",\n",
+            "    \"committee_root\": \"0\",\n",
+            "    \"committee_addresses\": [{}]\n",
+            "  }}"
+        ),
+        e3_id.chain_id(),
+        json_escape(e3_id.e3_id()),
+        Address::repeat_byte(0x11),
+        replay_committee,
     );
 
     if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
@@ -2911,13 +3541,15 @@ async fn test_trbfv_actor() -> Result<()> {
                     "  \"decryption_aggregator\": {{\n",
                     "    \"proof_hex\": \"{}\",\n",
                     "    \"public_inputs_hex\": \"{}\"\n",
-                    "  }}\n",
+                    "  }},\n",
+                    "{}\n",
                     "}}\n"
                 ),
                 to_hex(&dkg_proof.data),
                 to_hex(&dkg_proof.public_signals),
                 to_hex(&dec_proof.data),
                 to_hex(&dec_proof.public_signals),
+                replay_context_json,
             );
             fs::write(&path, json)?;
             println!("Wrote folded benchmark proofs to {path}");
@@ -2937,19 +3569,10 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let results: Vec<u64> = results.into_iter().map(|r| *r.first().unwrap()).collect();
 
-    // Show summation result (mod plaintext modulus)
-    let plaintext_modulus = params_raw.clone().plaintext();
-    let mut expected_result = [0u64; 3];
-    for vals in &numbers {
-        for j in 0..num_votes_per_voter {
-            expected_result[j] = (expected_result[j] + vals[j]) % plaintext_modulus;
-        }
-    }
-
     assert_eq!(
         results.as_slice(),
         expected_result.as_slice(),
-        "Threshold decryption must return every expected tally"
+        "Threshold decryption must return every expected output"
     );
 
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
@@ -3032,15 +3655,17 @@ async fn test_trbfv_actor() -> Result<()> {
                     "      \"proof_hex\": \"{}\",\n",
                     "      \"public_inputs_hex\": \"{}\"\n",
                     "    }}\n",
-                    "  }}\n"
+                    "  }},\n",
+                    "{}\n"
                 ),
                 to_hex(&dkg_proof.data),
                 to_hex(&dkg_proof.public_signals),
                 to_hex(&dec_proof.data),
                 to_hex(&dec_proof.public_signals),
+                replay_context_json,
             )
         } else {
-            String::from("  \"folded_artifacts\": null\n")
+            format!("  \"folded_artifacts\": null,\n{replay_context_json}\n")
         };
 
         let dkg_fold_verifier_json = benchmark_dkg_fold_attestation_verifier_address()

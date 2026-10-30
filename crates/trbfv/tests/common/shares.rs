@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_events::ThresholdShare;
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{BfvParamSet, DEFAULT_BFV_PRESET};
 use e3_trbfv::{
     calculate_decryption_key::{
         calculate_decryption_key, CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse,
@@ -48,7 +48,11 @@ pub fn generate_shares_hash_map(
     let threshold_n = trbfv_config.num_parties() as usize;
 
     // First, generate BFV encryption keys for all parties
-    let bfv_params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
+    // The DKG set paired with the default threshold set the tests use.
+    let dkg_preset = DEFAULT_BFV_PRESET
+        .dkg_counterpart()
+        .context("default preset has no DKG counterpart")?;
+    let bfv_params = BfvParamSet::from(dkg_preset).build_arc();
     let mut bfv_rng = rand::rng();
     let mut bfv_secret_keys = Vec::with_capacity(threshold_n);
     let mut bfv_public_keys = Vec::with_capacity(threshold_n);
@@ -76,8 +80,9 @@ pub fn generate_shares_hash_map(
                 GenPkShareAndSkSssRequest {
                     trbfv_config: trbfv_config.clone(),
                     crp: ArcBytes::from_bytes(&crp.to_bytes()),
-                    lambda: BfvPreset::InsecureThreshold64.lambda_config(),
+                    lambda: DEFAULT_BFV_PRESET.lambda_config(),
                     num_ciphertexts: 1,
+                    mult_depth: DEFAULT_BFV_PRESET.search_defaults().unwrap().mult_depth,
                 },
             )
         }?;

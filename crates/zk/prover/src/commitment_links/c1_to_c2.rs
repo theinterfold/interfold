@@ -10,13 +10,13 @@
 //!
 //! **C1 (PkGeneration)** outputs `(sk_commitment, pk_commitment, e_sm_commitment)`.
 //! Public signals contain 3 fields (no public inputs):
-//! - field 0: `sk_commitment`   (byte offset   0..32)
-//! - field 1: `pk_commitment`   (byte offset  32..64)
-//! - field 2: `e_sm_commitment` (byte offset  64..96)
+//! - field 0: `sk_commitment`
+//! - field 1: `pk_commitment`
+//! - field 2: `e_sm_commitment`
 //!
-//! **C2a/C2b (ShareComputation inner circuit)** takes `expected_secret_commitment`
-//! as its first public input (head, bytes 0..32). The remaining fields are
-//! per-party-per-modulus share commitment outputs from `commit_to_party_shares`.
+//! **C2a/C2b** are the trBFV single proofs (these links apply on the trBFV path only; the l-BFV
+//! path proves no C1). Their field 0 is the `expected_secret_commitment` public input, followed by
+//! the share commitments.
 //!
 //! ## Checks
 //!
@@ -156,7 +156,7 @@ mod tests {
         v
     }
 
-    /// C2 inner public signals: [expected_secret_commitment] + share commitments...
+    /// trBFV C2 public signals: [expected_secret_commitment] + share commitments...
     fn c2_signals(secret_commitment: [u8; 32], share_commitments: &[[u8; 32]]) -> Vec<u8> {
         let mut v = Vec::with_capacity(32 + share_commitments.len() * 32);
         v.extend_from_slice(&secret_commitment);
@@ -190,6 +190,15 @@ mod tests {
         let link = C1ToC2aSkCommitmentLink;
         let c2 = c2_signals(make_field(99), &[make_field(10)]);
         assert!(!link.check_signals(&[make_field(42)], &c2));
+    }
+
+    #[test]
+    fn c2a_does_not_match_a_share_commitment() {
+        let link = C1ToC2aSkCommitmentLink;
+        let sk = make_field(42);
+        // The secret commitment is field 0; the sk value only appears as a share commitment.
+        let c2 = c2_signals(make_field(99), &[sk]);
+        assert!(!link.check_signals(&[sk], &c2));
     }
 
     #[test]

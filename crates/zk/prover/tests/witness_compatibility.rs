@@ -10,21 +10,22 @@ use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_zk_config::threshold::{decrypted_shares_aggregation as c7, share_decryption as c6};
 use e3_zk_prover::{inputs_json_to_input_map, CompiledCircuit, WitnessGenerator};
 use e3_zk_witness::threshold::{decrypted_shares_aggregation as w7, share_decryption as w6};
+
 use fhe::bfv::Ciphertext;
 use fhe_math::rq::{Poly, PowerBasis};
 use num_bigint::BigInt;
 
 #[test]
-#[ignore = "requires prepared insecure-64/minimum C6/C7 artifacts"]
+#[ignore = "requires prepared insecure/minimum C6/C7 artifacts"]
 fn c6_c7_zero_products_execute_and_nondefault_widths_reject_fixed_abi() {
     let root = e3_zk_prover::test_utils::workspace_root().join("circuits/bin");
     let active: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(root.join(".active-preset.json")).unwrap())
             .unwrap();
-    assert_eq!(active["preset"], "insecure-64");
+    assert_eq!(active["preset"], "insecure");
     assert_eq!(active["committee"], "minimum");
     let mut config7 = c7::Configs::for_preset(
-        BfvPreset::InsecureThreshold64,
+        BfvPreset::InsecureThreshold,
         CiphernodesCommitteeSize::Minimum,
     )
     .unwrap();

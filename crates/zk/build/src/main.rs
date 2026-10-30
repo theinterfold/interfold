@@ -13,7 +13,7 @@ struct Cli {
     #[arg(default_value = "build")]
     command: Operation,
     /// BFV artifact preset, or all.
-    #[arg(long, default_value = "insecure-64")]
+    #[arg(long, default_value = "insecure")]
     preset: PresetSelection,
     /// Committee name, or all.
     #[arg(long, default_value = "minimum")]
@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(request.operation, Operation::Build);
         assert_eq!(
             request.preset,
-            PresetSelection::Single(BfvPreset::InsecureThreshold64)
+            PresetSelection::Single(BfvPreset::InsecureThreshold)
         );
         assert_eq!(
             request.committee,
@@ -147,6 +147,18 @@ mod tests {
         );
         assert_eq!(request.circuits, ["pk"]);
         assert!(request.no_clean && request.no_clean_targets);
+        assert_eq!(
+            parse(&["hash", "--preset", "insecure-lbfv"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvPreset::InsecureThresholdLbfv)
+        );
+        assert_eq!(
+            parse(&["build", "--preset", "secure-16384"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvPreset::SecureThreshold16384)
+        );
     }
 
     #[test]

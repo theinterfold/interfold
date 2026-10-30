@@ -92,10 +92,12 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
-              # The OpenVM worker is a workspace of its own. The `openvm_worker` and `docker`
-              # filters select their jobs.
+              # The OpenVM worker is a workspace of its own, and no cargo build reads the image
+              # files or the frozen image ID. The `openvm_worker` and `docker` filters select their
+              # jobs.
               - '!crates/openvm-prover/**'
               - '!crates/Dockerfile'
+              - '!crates/support/**'
               - '!**/*.md'
               - '!**/*.mdx'
             # The OpenVM worker is a cargo workspace of its own, built against the OpenVM SDK.
@@ -131,6 +133,8 @@ jobs:
               # path a hand-edited manifest never runs the drift check and
               # reaches the release assets stale.
               - 'deployments/**'
+              # SecureCrispArtifacts.spec.ts reads the CRISP image ID from this directory.
+              - 'crates/support/contracts/**'
               - '!**/*.md'
               - '!**/*.mdx'
             # `pnpm check:bindings` in rust_unit_tests runs this script.
@@ -527,9 +531,9 @@ jobs:
       - name: Stage source-aligned circuit fixtures
         run: |
           chmod +x .ci-noir/bin/bb
-          test -f .ci-noir/circuits/insecure-64/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
-          mkdir -p dist/circuits/insecure-64
-          cp -R .ci-noir/circuits/insecure-64/minimum dist/circuits/insecure-64/
+          test -f .ci-noir/circuits/insecure/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
+          mkdir -p dist/circuits/insecure
+          cp -R .ci-noir/circuits/insecure/minimum dist/circuits/insecure/
 
       # A separate test target, so no other step runs it. It fails when a persisted or gossiped
       # layout differs from its fixture. The in-crate locks run with the library tests. Without
@@ -610,7 +614,7 @@ jobs:
 
       - name: Prepare source-aligned circuit archive
         run: |
-          test -f .ci-noir/circuits/insecure-64/minimum/default/dkg/pk/pk.json
+          test -f .ci-noir/circuits/insecure/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
           pnpm tsx scripts/circuits/artifacts.ts checksums --dir .ci-noir/circuits
           mkdir -p "$RUNNER_TEMP/circuit-release"
@@ -1234,8 +1238,8 @@ jobs:
         timeout-minutes: 10
         run: pnpm store:circuits pull --latest
 
-      - name: Hydrate the insecure-64/minimum circuits
-        run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
+      - name: Hydrate the insecure/minimum circuits
+        run: pnpm build:circuits --preset insecure --committee minimum --hydrate-bin-only --no-clean-targets
 
       - name: Verify circuit artifacts
         run: |
@@ -1596,14 +1600,14 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built
+        run: pnpm build:circuits --preset insecure --committee minimum --skip-if-built
 
       - name: Install and verify candidate circuits
         working-directory: ./templates/default
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
-            --circuits-configuration insecure-64/minimum --allow-unpinned-archive
+            --circuits-configuration insecure/minimum --allow-unpinned-archive
           interfold noir setup
 
       - name: Verify downloaded artifacts

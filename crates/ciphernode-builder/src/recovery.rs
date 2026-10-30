@@ -840,7 +840,7 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         };
@@ -887,7 +887,7 @@ mod tests {
             threshold_m: 2,
             threshold_n: 3,
             seed: Seed([7; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::from_bytes(&[1, 2]),
             error_size: ArcBytes::from_bytes(&[3, 4]),
         };
@@ -922,7 +922,7 @@ mod tests {
                     threshold_m: 1,
                     threshold_n: 3,
                     seed: Seed([0; 32]),
-                    params_preset: BfvPreset::InsecureThreshold64,
+                    params_preset: BfvPreset::InsecureThreshold,
                     params: ArcBytes::default(),
                     error_size: ArcBytes::default(),
                 },

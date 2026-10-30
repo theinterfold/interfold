@@ -124,6 +124,30 @@ export interface ActiveBfvConfig {
   n: number;
 }
 
+/** On-chain index of the degree-128 insecure parameters on the l-BFV path. */
+export const INSECURE_LBFV_PARAM_SET = BFV_PRESETS["insecure"].paramSet;
+
+/** Parameter sets on the l-BFV path: secure-16384 (3) and insecure l-BFV (4). */
+export function isLbfvParamSet(paramSet: number): boolean {
+  return (
+    paramSet === BFV_PRESETS["secure-16384"].paramSet ||
+    paramSet === INSECURE_LBFV_PARAM_SET
+  );
+}
+
+/**
+ * The parameter set a local deployment registers: the active artifact pair's. `BFV_PARAM_SET`
+ * may restate it but cannot select parameters the active artifacts were not built for.
+ */
+export function localBfvParamSet(): number {
+  const override = process.env.BFV_PARAM_SET;
+  if (override === undefined || override === "") return ACTIVE_BFV_PARAM_SET;
+  if (Number(override) === ACTIVE_BFV_PARAM_SET) return ACTIVE_BFV_PARAM_SET;
+  throw new Error(
+    `BFV_PARAM_SET=${override} does not match the active circuit artifacts (parameter set ${ACTIVE_BFV_PARAM_SET}); select the matching preset with pnpm build:circuits`,
+  );
+}
+
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
@@ -143,6 +167,7 @@ function bfvConfig(
   };
 }
 
+// Generated from scripts/circuits/build-pairs.json and canonical committee values.
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "minimum",
@@ -161,6 +186,21 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
 export const INSECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "large",
+);
+
+export const INSECURE_LBFV_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "minimum",
+);
+
+export const INSECURE_LBFV_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "micro",
+);
+
+export const INSECURE_LBFV_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "small",
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
@@ -183,6 +223,21 @@ export const SECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "large",
 );
 
+export const SECURE_16384_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "minimum",
+);
+
+export const SECURE_16384_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "micro",
+);
+
+export const SECURE_16384_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "small",
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -198,24 +253,61 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   INSECURE_MICRO_BFV_CONFIG,
   INSECURE_SMALL_BFV_CONFIG,
   INSECURE_LARGE_BFV_CONFIG,
+  INSECURE_LBFV_MINIMUM_BFV_CONFIG,
+  INSECURE_LBFV_MICRO_BFV_CONFIG,
+  INSECURE_LBFV_SMALL_BFV_CONFIG,
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
   SECURE_LARGE_BFV_CONFIG,
+  SECURE_16384_MINIMUM_BFV_CONFIG,
+  SECURE_16384_MICRO_BFV_CONFIG,
+  SECURE_16384_SMALL_BFV_CONFIG,
 ] as const;
 
 /** Local artifact selection, independent of the production/testnet admission defaults. */
-const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
+export const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
   (config) =>
     config.preset === ACTIVE_BFV_PRESET &&
     config.committee === ACTIVE_BFV_COMMITTEE,
 )!;
+
+/**
+ * The l-BFV pair for local V2 artifacts: the active pair when it is l-BFV, otherwise the insecure
+ * l-BFV pair of the same committee (trBFV pairs have no V2 aggregator). The large committee is
+ * trBFV-only, so it falls back to the insecure l-BFV minimum pair.
+ */
+export const ACTIVE_LBFV_CONFIG: ActiveBfvConfig = isLbfvParamSet(
+  ACTIVE_BFV_CONFIG.paramSet,
+)
+  ? ACTIVE_BFV_CONFIG
+  : (TESTNET_BFV_CONFIGS.find(
+      (config) =>
+        isLbfvParamSet(config.paramSet) &&
+        config.preset === "insecure" &&
+        config.committee === ACTIVE_BFV_COMMITTEE,
+    ) ?? INSECURE_LBFV_MINIMUM_BFV_CONFIG);
 
 export const BFV_DKG_H = ACTIVE_BFV_CONFIG.h;
 export const BFV_THRESHOLD_T = ACTIVE_BFV_CONFIG.t;
 export const ACTIVE_BFV_PARAM_SET = ACTIVE_BFV_CONFIG.paramSet;
 export const ACTIVE_BFV_COMMITTEE_SIZE = ACTIVE_BFV_CONFIG.committeeSize;
 export const ACTIVE_BFV_COMMITTEE_N = ACTIVE_BFV_CONFIG.n;
+
+/** Source namespace shared by protocol deployment and local Ignition modules. */
+export function bfvHonkSource(
+  config: ActiveBfvConfig,
+  contractName:
+    | "DkgAggregatorVerifier"
+    | "DecryptionAggregatorVerifier"
+    | "DkgAggregatorV2Verifier",
+): string {
+  const pair =
+    config.preset === "insecure" && config.committee === "minimum"
+      ? ""
+      : `${config.preset}/${config.committee}/`;
+  return `contracts/verifiers/bfv/honk/${pair}${contractName}.sol`;
+}
 
 /**
  * Names a circuit directory in the release-archive layout (`<preset>/<committee>/default/...`):
@@ -280,6 +372,9 @@ export function committeeThresholdsForChain(
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
+  // trBFV dkg_aggregator public inputs: nodes_fold + c5 key hashes (2), party_ids (h),
+  // committee hash limbs (2), sk/esm agg commits (2h), aggregated pk commit (1), plus the
+  // returned key hash (1).
   return 3 * h + 6;
 }
 
@@ -289,6 +384,36 @@ export function bfvDkgCommitteeHashIndices(h: number): {
   lo: number;
 } {
   return { hi: 2 + h, lo: 3 + h };
+}
+
+/**
+ * `dkg_aggregator_v2` EVM public-input layout for honest-set size `h` and `rows` l-BFV rows
+ * (matches `BfvPkVerifierV2`): nodes-fold key hash (1), party_ids (h), committee hash limbs (2),
+ * legacy VK binding (15), then the returned legacy key hash, C2a/C2b chunk key hashes (3),
+ * sk/esm agg commits (2h), key envelope commitment, V2 key hash, session limbs (2), aggregator
+ * id, accepted-set limbs (2), aggregate pk/d0/d2 (3 * rows) and the V2 VK binding (11).
+ */
+export function bfvPkV2PublicInputLayout(
+  h: number,
+  rows: number,
+): {
+  length: number;
+  committeeHash: { hi: number; lo: number };
+  legacyVkBindingStart: number;
+  skC2ChunkKeyHash: number;
+  esmC2ChunkKeyHash: number;
+  pkCommitment: number;
+  v2VkBindingStart: number;
+} {
+  return {
+    length: 39 + 3 * h + 3 * rows,
+    committeeHash: { hi: 1 + h, lo: 2 + h },
+    legacyVkBindingStart: 3 + h,
+    skC2ChunkKeyHash: 19 + h,
+    esmC2ChunkKeyHash: 20 + h,
+    pkCommitment: 21 + 3 * h,
+    v2VkBindingStart: 28 + 3 * h + 3 * rows,
+  };
 }
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
@@ -357,6 +482,44 @@ function releaseCircuitRoot(config?: ActiveBfvConfig): string | undefined {
   return path.join(dir, preset, committee);
 }
 
+function localCircuitArtifactPath(
+  group: string,
+  circuit: string,
+  fileName: string,
+): string {
+  const root = getRepoRoot();
+  const circuitPath = path.join(
+    root,
+    "circuits/bin",
+    group,
+    circuit,
+    "target",
+    fileName,
+  );
+  return fs.existsSync(circuitPath)
+    ? circuitPath
+    : path.join(root, "circuits/bin", group, "target", fileName);
+}
+
+type BfvVkVariant = "default" | "recursive";
+
+function localRecursiveVkHashPath(
+  group: string,
+  circuit: string,
+  variant: BfvVkVariant = "default",
+): string {
+  return localCircuitArtifactPath(
+    group,
+    circuit,
+    `${circuit}.${variant === "recursive" ? "vk_noir_hash" : "vk_recursive_hash"}`,
+  );
+}
+
+/** Complete VK-tree anchor emitted next to a fold circuit (`*.vk_tree_hash`). */
+function localVkTreeHashPath(group: string, circuit: string): string {
+  return localCircuitArtifactPath(group, circuit, `${circuit}.vk_tree_hash`);
+}
+
 /** Complete nodes-fold VK-tree anchor and C5 recursive VK hash. */
 export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   const releaseRoot = releaseCircuitRoot(config);
@@ -370,26 +533,192 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
         releaseRoot,
         "default/threshold/pk_aggregation/pk_aggregation.vk_hash",
       ),
+      skC2Chunk: path.join(
+        releaseRoot,
+        "recursive/dkg/sk_share_computation_chunk/sk_share_computation_chunk.vk_hash",
+      ),
+      esmC2Chunk: path.join(
+        releaseRoot,
+        "recursive/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk_hash",
+      ),
     } as const;
   }
 
-  const root = getRepoRoot();
   return {
-    nodesFold: path.join(
-      root,
-      "circuits/bin/recursive_aggregation/nodes_fold/target/nodes_fold.vk_tree_hash",
+    nodesFold: localVkTreeHashPath("recursive_aggregation", "nodes_fold"),
+    c5: localRecursiveVkHashPath("threshold", "pk_aggregation"),
+    skC2Chunk: localRecursiveVkHashPath(
+      "dkg",
+      "sk_share_computation_chunk",
+      "recursive",
     ),
-    c5: path.join(
-      root,
-      "circuits/bin/threshold/target/pk_aggregation.vk_recursive_hash",
+    esmC2Chunk: localRecursiveVkHashPath(
+      "dkg",
+      "esm_share_computation_chunk",
+      "recursive",
     ),
   } as const;
+}
+
+/**
+ * Recursive VK hashes of the l-BFV path's legacy DKG pipeline, in the order `dkg_aggregator_v2`
+ * binds them (`legacy_vk_binding` in `crates/zk/prover/src/circuits/aggregation/v2.rs`).
+ */
+export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
+  const root = releaseCircuitRoot(config);
+  const recursive = "recursive";
+  const defaultVariant = "default";
+  const local = (
+    group: string,
+    circuit: string,
+    variant: BfvVkVariant = "default",
+  ) => localRecursiveVkHashPath(group, circuit, variant);
+  return [
+    root
+      ? path.join(
+          root,
+          "default/recursive_aggregation/node_fold_chunked/node_fold_chunked.vk_hash",
+        )
+      : local("recursive_aggregation", "node_fold_chunked"),
+    root
+      ? path.join(root, `${recursive}/dkg/pk/pk.vk_hash`)
+      : local("dkg", "pk", recursive),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold.vk_hash`,
+        )
+      : local("recursive_aggregation", "c2ab_chunk_fold"),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c3ab_fold_chunked/c3ab_fold_chunked.vk_hash`,
+        )
+      : local("recursive_aggregation", "c3ab_fold_chunked"),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c4ab_fold_chunked/c4ab_fold_chunked.vk_hash`,
+        )
+      : local("recursive_aggregation", "c4ab_fold_chunked"),
+    root
+      ? path.join(
+          root,
+          `${recursive}/recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize.vk_hash`,
+        )
+      : local("recursive_aggregation", "sk_c2_chunk_finalize", recursive),
+    root
+      ? path.join(
+          root,
+          `${recursive}/recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize.vk_hash`,
+        )
+      : local("recursive_aggregation", "esm_c2_chunk_finalize", recursive),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c2_chunk_batch/c2_chunk_batch.vk_hash`,
+        )
+      : local("recursive_aggregation", "c2_chunk_batch"),
+    root
+      ? path.join(
+          root,
+          `${recursive}/dkg/sk_share_computation_chunk/sk_share_computation_chunk.vk_hash`,
+        )
+      : local("dkg", "sk_share_computation_chunk", recursive),
+    root
+      ? path.join(
+          root,
+          `${recursive}/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk_hash`,
+        )
+      : local("dkg", "esm_share_computation_chunk", recursive),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c3_chonk_accumulate/c3_chonk_accumulate.vk_hash`,
+        )
+      : local("recursive_aggregation", "c3_chonk_accumulate"),
+    root
+      ? path.join(
+          root,
+          `${recursive}/dkg/share_encryption_chunked/share_encryption_chunked.vk_hash`,
+        )
+      : local("dkg", "share_encryption_chunked", recursive),
+    root
+      ? path.join(
+          root,
+          `${recursive}/dkg/share_decryption_chunked/share_decryption_chunked.vk_hash`,
+        )
+      : local("dkg", "share_decryption_chunked", recursive),
+    // The C3 Chonk chain's seven keys, hashed into the anchor beside `c3ab_fold_chunked`.
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/c3ab_fold_chunked/c3ab_fold_chunked.vk_tree_hash`,
+        )
+      : localVkTreeHashPath("recursive_aggregation", "c3ab_fold_chunked"),
+    root
+      ? path.join(
+          root,
+          `${defaultVariant}/recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel.vk_hash`,
+        )
+      : local("recursive_aggregation", "nodes_fold_kernel"),
+  ] as const;
+}
+
+/** Recursive VK hashes used by the V2 DKG aggregation wrapper. */
+export function getBfvV2SubCircuitVkHashPaths(config?: ActiveBfvConfig) {
+  const root = releaseCircuitRoot(config);
+  return {
+    nodesFold: root
+      ? path.join(
+          root,
+          "default/recursive_aggregation/nodes_fold_v2/nodes_fold_v2.vk_hash",
+        )
+      : localRecursiveVkHashPath("recursive_aggregation", "nodes_fold_v2"),
+  } as const;
+}
+
+/** V2 recursive VK binding manifest in the order consumed by `dkg_aggregator_v2`. */
+export function getBfvV2VkBindingHashPaths(config?: ActiveBfvConfig) {
+  const root = releaseCircuitRoot(config);
+  const defaultVariant = "default";
+  const recursive = "recursive";
+  const pathFor = (variant: BfvVkVariant, group: string, circuit: string) =>
+    root
+      ? path.join(root, `${variant}/${group}/${circuit}/${circuit}.vk_hash`)
+      : localRecursiveVkHashPath(group, circuit, variant);
+
+  return [
+    pathFor(defaultVariant, "recursive_aggregation", "node_fold_v2"),
+    pathFor(defaultVariant, "recursive_aggregation", "nodes_fold_v2"),
+    pathFor(defaultVariant, "recursive_aggregation", "nodes_fold_v2_kernel"),
+    pathFor(defaultVariant, "recursive_aggregation", "lbfv_generation_fold"),
+    pathFor(
+      defaultVariant,
+      "recursive_aggregation",
+      "lbfv_generation_fold_kernel",
+    ),
+    pathFor(recursive, "threshold", "lbfv_pk_generation"),
+    pathFor(recursive, "threshold", "rlk_generation"),
+    pathFor(defaultVariant, "recursive_aggregation", "lbfv_aggregation_fold"),
+    pathFor(
+      defaultVariant,
+      "recursive_aggregation",
+      "lbfv_aggregation_fold_kernel",
+    ),
+    pathFor(recursive, "threshold", "lbfv_pk_aggregation"),
+    pathFor(recursive, "threshold", "rlk_aggregation"),
+  ] as const;
 }
 
 /** Complete C6-fold VK-tree anchor and C7 recursive VK hash. */
 export function getBfvDecryptionSubCircuitVkHashPaths(
   config?: ActiveBfvConfig,
 ) {
+  // The l-BFV path proves C7 with the wide circuit; the trBFV path with the bounded one.
+  const c7Circuit = isLbfvParamSet(config?.paramSet ?? localBfvParamSet())
+    ? "decrypted_shares_aggregation_wide"
+    : "decrypted_shares_aggregation";
   const releaseRoot = releaseCircuitRoot(config);
   if (releaseRoot) {
     return {
@@ -399,21 +728,14 @@ export function getBfvDecryptionSubCircuitVkHashPaths(
       ),
       c7: path.join(
         releaseRoot,
-        "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.vk_hash",
+        `default/threshold/${c7Circuit}/${c7Circuit}.vk_hash`,
       ),
     } as const;
   }
 
-  const root = getRepoRoot();
   return {
-    c6Fold: path.join(
-      root,
-      "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash",
-    ),
-    c7: path.join(
-      root,
-      "circuits/bin/threshold/target/decrypted_shares_aggregation.vk_recursive_hash",
-    ),
+    c6Fold: localVkTreeHashPath("recursive_aggregation", "c6_fold"),
+    c7: localRecursiveVkHashPath("threshold", c7Circuit),
   } as const;
 }
 
@@ -561,7 +883,28 @@ export function readBfvVkCommitment(
 }
 
 export function getBfvVkCommitments(config?: ActiveBfvConfig) {
-  const [nodesFold, c5, c6Fold, c7] = readVkCommitmentValues(
+  const c6Fold: VkCommitmentKey = {
+    circuit: "recursive_aggregation/c6_fold",
+    proofVariant: "default",
+    hashKind: "recursive-tree-commitment",
+  };
+  // The l-BFV path has no `BfvPkVerifier` (no nodes-fold or C5 pins) and proves C7 with the wide
+  // circuit; the trBFV path with the bounded one.
+  if (isLbfvParamSet(config?.paramSet ?? localBfvParamSet())) {
+    const [c6FoldValue, c7] = readVkCommitmentValues(
+      [
+        c6Fold,
+        {
+          circuit: "threshold/decrypted_shares_aggregation_wide",
+          proofVariant: "default",
+          hashKind: "bb-vk-hash",
+        },
+      ],
+      config,
+    );
+    return { nodesFold: undefined, c5: undefined, c6Fold: c6FoldValue, c7 };
+  }
+  const [nodesFold, c5, c6FoldValue, c7] = readVkCommitmentValues(
     [
       {
         circuit: "recursive_aggregation/nodes_fold",
@@ -573,11 +916,7 @@ export function getBfvVkCommitments(config?: ActiveBfvConfig) {
         proofVariant: "default",
         hashKind: "bb-vk-hash",
       },
-      {
-        circuit: "recursive_aggregation/c6_fold",
-        proofVariant: "default",
-        hashKind: "recursive-tree-commitment",
-      },
+      c6Fold,
       {
         circuit: "threshold/decrypted_shares_aggregation",
         proofVariant: "default",
@@ -586,13 +925,22 @@ export function getBfvVkCommitments(config?: ActiveBfvConfig) {
     ],
     config,
   );
-  return { nodesFold, c5, c6Fold, c7 };
+  return { nodesFold, c5, c6Fold: c6FoldValue, c7 };
 }
 
 /** On-chain `BfvPkVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
   expectedC5KeyHash(): Promise<string>;
+}
+
+/** On-chain `BfvPkVerifierV2` sub-circuit VK immutables (for deploy-time staleness checks). */
+export interface BfvPkVerifierV2VkReader {
+  expectedNodesFoldKeyHash(): Promise<string>;
+  expectedSkC2ChunkKeyHash(): Promise<string>;
+  expectedESmC2ChunkKeyHash(): Promise<string>;
+  expectedLegacyVkBinding(index: bigint): Promise<string>;
+  expectedV2VkBinding(index: bigint): Promise<string>;
 }
 
 /** On-chain `BfvDecryptionVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
@@ -625,6 +973,71 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     `BfvPkVerifier at ${address} has stale sub-circuit VK immutables. ` +
       `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
       `on-chain c5=${onChainC5} expected=${expectedC5}. ` +
+      `Redeploy after pnpm compile:circuits or remove the stale entry from deployed_contracts.json.`,
+  );
+}
+
+/**
+ * Ensures deployed `BfvPkVerifierV2` immutables match current legacy and V2 recursive VK hashes.
+ */
+export async function assertBfvPkVerifierV2VkHashes(
+  verifier: BfvPkVerifierV2VkReader,
+  address: string,
+  config?: ActiveBfvConfig,
+): Promise<void> {
+  const expectedNodesFold = readVkRecursiveHash(
+    getBfvV2SubCircuitVkHashPaths(config).nodesFold,
+    config,
+  );
+  const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
+  const expectedSkC2Chunk = readVkRecursiveHash(pkPaths.skC2Chunk, config);
+  const expectedESmC2Chunk = readVkRecursiveHash(pkPaths.esmC2Chunk, config);
+  const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths(config).map(
+    (filePath) => readVkRecursiveHash(filePath, config),
+  );
+  const expectedV2VkBinding = getBfvV2VkBindingHashPaths(config).map(
+    (filePath) => readVkRecursiveHash(filePath, config),
+  );
+
+  const [onChainNodesFold, onChainSkC2Chunk, onChainESmC2Chunk] =
+    await Promise.all([
+      verifier.expectedNodesFoldKeyHash(),
+      verifier.expectedSkC2ChunkKeyHash(),
+      verifier.expectedESmC2ChunkKeyHash(),
+    ]);
+  const [onChainLegacyVkBinding, onChainV2VkBinding] = await Promise.all([
+    Promise.all(
+      expectedLegacyVkBinding.map((_, index) =>
+        verifier.expectedLegacyVkBinding(BigInt(index)),
+      ),
+    ),
+    Promise.all(
+      expectedV2VkBinding.map((_, index) =>
+        verifier.expectedV2VkBinding(BigInt(index)),
+      ),
+    ),
+  ]);
+
+  if (
+    onChainNodesFold === expectedNodesFold &&
+    onChainSkC2Chunk === expectedSkC2Chunk &&
+    onChainESmC2Chunk === expectedESmC2Chunk &&
+    onChainLegacyVkBinding.every(
+      (value, index) => value === expectedLegacyVkBinding[index],
+    ) &&
+    onChainV2VkBinding.every(
+      (value, index) => value === expectedV2VkBinding[index],
+    )
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `BfvPkVerifierV2 at ${address} has stale sub-circuit VK immutables. ` +
+      `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
+      `on-chain sk_c2_chunk=${onChainSkC2Chunk} expected=${expectedSkC2Chunk}; ` +
+      `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}; ` +
+      `legacy or V2 recursive VK binding mismatch at one or more indices. ` +
       `Redeploy after pnpm compile:circuits or remove the stale entry from deployed_contracts.json.`,
   );
 }

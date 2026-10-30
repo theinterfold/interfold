@@ -9,11 +9,14 @@
 pub mod commitments;
 pub mod dkg;
 pub mod encoding;
+pub mod encryption;
 pub mod errors;
 mod negacyclic;
+pub mod packing;
 pub mod threshold;
 mod validation;
 
+pub use commitments::*;
 pub use commitments::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
     compute_ciphertext_commitment_from_power_basis, compute_commitments, compute_dkg_pk_commitment,
@@ -25,4 +28,9 @@ pub use commitments::{
     compute_threshold_pk_commitment, compute_threshold_share_decryption_challenge,
     compute_user_data_encryption_challenge_commitment, compute_vk_hash,
 };
+pub use e3_zk_config::output_layout;
+pub use e3_zk_config::output_layout::*;
+pub use e3_zk_config::DkgInputType;
+pub use encoding::*;
+pub use encryption::{encrypt_with_intermediates, EncryptionIntermediates};
 pub use errors::WitnessError;

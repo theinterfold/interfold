@@ -31,7 +31,7 @@ impl Default for CiphernodeSelected {
         CiphernodeSelected {
             e3_id: E3id::new("0", 0),
             error_size: ArcBytes::from_bytes(&[]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::from_bytes(&[]),
             party_id: 0,
             committee: Vec::new(),

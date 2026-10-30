@@ -90,7 +90,7 @@ async function assertNodeCircuits(): Promise<void> {
     )
   }
 
-  if (active.preset !== 'insecure-64') {
-    throw new SDKError('SDK encryption circuits require the insecure-64 preset.', 'SDK_CIRCUIT_PRESET_MISMATCH')
+  if (!['insecure', 'secure-8192', 'secure-16384'].includes(active.preset ?? '')) {
+    throw new SDKError('SDK encryption circuits require a supported BFV preset.', 'SDK_CIRCUIT_PRESET_MISMATCH')
   }
 }

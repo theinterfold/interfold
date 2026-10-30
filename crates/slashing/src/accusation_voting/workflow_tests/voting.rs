@@ -160,6 +160,7 @@ fn signed_accusation(
         deadline,
         signed_payload: None,
         signature: ArcBytes::default(),
+        proof_instance: 0,
     };
     let digest = AccusationVoting::accusation_digest(&accusation);
     let sig = who.sign_message_sync(&digest).unwrap();
@@ -186,7 +187,13 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     let own = signed_vote(&me, sm, &v.e3_id, id, data_hash, NOW + VALIDITY);
     insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
     v.received_data.insert(
-        (accused, ProofType::C1PkGeneration),
+        (
+            accused,
+            e3_events::ProofIdentity {
+                proof_type: ProofType::C1PkGeneration,
+                instance: 0,
+            },
+        ),
         ReceivedProofData {
             data_hash,
             verification_passed: false,

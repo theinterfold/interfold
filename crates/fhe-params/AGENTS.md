@@ -6,7 +6,7 @@ Keep BFV presets, parameter builders, and scalar parameter arithmetic here, not 
 - Threshold and DKG presets are paired but not interchangeable. Preserve serialized preset order,
   canonical names, and explicit unsupported-value errors; test-only insecure sets are not a
   production fallback.
-- The degree-64 insecure variants reuse degree-512 discriminants under schema 8. Preserve the
+- The degree-128 insecure variants reuse degree-512 discriminants. Preserve the
   [testnet reset boundary](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset);
   matching serialized discriminants do not prove matching parameter meaning.
 - Use exact integer arithmetic in search and residue/width derivation. Narrowing plaintext moduli or

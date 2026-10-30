@@ -156,6 +156,13 @@ interfold_event_data!(
     EligibilityConfigurationVersionUpdatedAt,
     BondingAssetConfigUpdated,
     BondingAssetConfigUpdatedAt,
+    // l-BFV variants are appended after main's last variant so main's discriminants are unchanged.
+    LbfvKeyShareDocumentCreated,
+    LbfvKeyShareDocumentReceived,
+    LbfvKeyShareManifestPublished,
+    LbfvKeyShareDocumentFetchRequested,
+    LbfvKeyShareDocumentFetchFailed,
+    LbfvPublicKeyAggregated,
 );
 
 impl fmt::Display for EventType {
@@ -203,6 +210,7 @@ impl InterfoldEventData {
             InterfoldEventData::PublishDocumentRequested(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::DocumentReceived(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvPublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
@@ -272,6 +280,19 @@ impl InterfoldEventData {
             }
             InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
                 Some(data.e3_id.clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(ref data) => Some(data.e3_id().clone()),
+            InterfoldEventData::LbfvKeyShareDocumentReceived(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareManifestPublished(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(ref data) => {
+                Some(data.e3_id().clone())
             }
             // The failed request keeps the E3 that the work belonged to. Without this arm the
             // error logs for a failed computation have an empty `e3_id` field.

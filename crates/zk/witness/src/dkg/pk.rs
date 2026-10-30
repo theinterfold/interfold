@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
 
         let config = Configs::new(&dkg_params).unwrap();
         let expected_bits = compute_modulus_bit(&dkg_params);
@@ -78,7 +78,7 @@ mod tests {
         assert_eq!(
             modulus_bound,
             BigUint::from(
-                (e3_fhe_params::constants::insecure_64::dkg::MODULI
+                (e3_fhe_params::constants::insecure::dkg::MODULI
                     .iter()
                     .max()
                     .unwrap()

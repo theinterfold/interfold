@@ -5,18 +5,20 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Sample data generation for the share-computation circuit: committee, DKG public key,
-//! secret (SK or smudging noise) in CRT form and Shamir shares.
+//! secret (SK or smudging noise) in CRT form, Shamir shares, and parity matrices.
 
-use e3_fhe_params::BfvPreset;
+type SecretShares = Vec<ndarray::Array2<BigInt>>;
+use e3_fhe_params::{generate_smudging_error, BfvPreset};
 use e3_polynomial::CrtPolynomial;
-use e3_zk_config::{dkg::share_computation::Configs, DkgInputType};
+use e3_zk_config::DkgInputType;
 use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_witness::WitnessError;
 use fhe::bfv::SecretKey;
 use fhe::trbfv::ShareManager;
+use fhe_math::rq::Poly;
 use num_bigint::BigInt;
 
-/// Generates sample data for the share-computation circuit.
+use e3_zk_config::dkg::share_computation::Configs;
 pub fn generate(
     config: &Configs,
     preset: BfvPreset,
@@ -24,9 +26,10 @@ pub fn generate(
 ) -> Result<ShareComputationCircuitData, WitnessError> {
     let threshold_params = &config.params;
     let committee = config.committee.values();
+
     let mut rng = rand::rng();
 
-    let mut share_manager =
+    let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
@@ -35,18 +38,19 @@ pub fn generate(
             let threshold_secret_key = SecretKey::random(&threshold_params, &mut rng);
 
             let sk_poly = share_manager
-                .coeffs_to_poly_level0(threshold_secret_key.coeffs.as_ref())
+                .coeffs_to_poly_level0(threshold_secret_key.coeffs.clone().as_ref())
                 .map_err(|e| {
                     WitnessError::Sample(format!("Failed to convert secret key to poly: {:?}", e))
                 })?;
 
             let sk_sss_u64 = share_manager
-                .generate_secret_shares_from_poly(sk_poly, &mut rng)
+                .generate_secret_key_shares(sk_poly.clone(), &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     WitnessError::Sample(format!("Failed to generate secret shares: {:?}", e))
                 })?;
 
-            let secret_sss = sk_sss_u64
+            let secret_sss: SecretShares = sk_sss_u64
                 .into_iter()
                 .map(|arr| arr.mapv(BigInt::from))
                 .collect();
@@ -65,38 +69,63 @@ pub fn generate(
             (secret_crt, secret_sss)
         }
         DkgInputType::SmudgingNoise => {
-            // C2 samples with committee.n ciphertexts, not the other families' default z.
-            let noise =
-                crate::smudging::generator(threshold_params, committee.n, committee.n, preset)?;
-            let esi_coeffs = noise.generate_smudging_error(&mut rng).map_err(|e| {
+            let lambda = preset
+                .lambda()
+                .map_err(|e| WitnessError::Sample(e.to_string()))?;
+            let sd = preset
+                .search_defaults()
+                .ok_or_else(|| WitnessError::Sample("Preset has no search defaults".into()))?;
+            let esi_coeffs = generate_smudging_error(
+                threshold_params.clone(),
+                committee.n,
+                sd.z as usize,
+                sd.mult_depth,
+                lambda,
+                &mut rng,
+            )
+            .map_err(|e| {
                 WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e))
-            })?;
-            let esi_poly = share_manager.bigints_to_poly(&esi_coeffs)?;
+            })
+            .unwrap();
+            let esi_poly =
+                Poly::from_bigints(&esi_coeffs, threshold_params.context_at_level(0).unwrap())
+                    .unwrap();
             let esi_sss_u64 = share_manager
-                .generate_secret_shares_from_poly(esi_poly, &mut rng)
+                .generate_secret_key_shares(esi_poly.clone(), &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     WitnessError::Sample(format!("Failed to generate error shares: {:?}", e))
-                })?;
-            let secret_sss = esi_sss_u64
+                })
+                .unwrap();
+            let secret_sss: SecretShares = esi_sss_u64
                 .into_iter()
                 .map(|arr| arr.mapv(BigInt::from))
                 .collect();
 
             let mut secret_crt =
                 CrtPolynomial::from_mod_q_polynomial(&esi_coeffs, threshold_params.moduli());
-            secret_crt.center(threshold_params.moduli())?;
+            secret_crt.center(threshold_params.moduli()).unwrap();
 
             (secret_crt, secret_sss)
         }
     };
 
     Ok(ShareComputationCircuitData {
+        parity_matrix: e3_zk_config::dkg::share_computation::parity::compute_parity_matrix(
+            threshold_params.moduli(),
+            committee.n,
+            committee.threshold,
+        )
+        .map_err(WitnessError::Sample)?,
+        n_parties: committee.n as u32,
+        threshold: committee.threshold as u32,
+        chunk_size: config.chunk_size as u32,
         dkg_input_type,
+
         secret,
         secret_sss,
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::generate;
@@ -108,13 +137,13 @@ mod tests {
     fn test_generate_secret_key_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let config = e3_zk_config::dkg::share_computation::Configs::for_preset(
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             CiphernodesCommitteeSize::Small,
         )
         .unwrap();
         let sample = generate(
             &config,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             DkgInputType::SecretKey,
         )
         .unwrap();
@@ -122,11 +151,11 @@ mod tests {
         assert_eq!(sample.dkg_input_type, DkgInputType::SecretKey);
         assert_eq!(
             sample.secret_sss.len(),
-            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure::threshold::MODULI.len()
         );
         assert_eq!(
             sample.secret.limbs.len(),
-            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure::threshold::MODULI.len()
         );
     }
 
@@ -134,13 +163,13 @@ mod tests {
     fn test_generate_smudging_noise_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let config = e3_zk_config::dkg::share_computation::Configs::for_preset(
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             CiphernodesCommitteeSize::Small,
         )
         .unwrap();
         let sample = generate(
             &config,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             DkgInputType::SmudgingNoise,
         )
         .unwrap();
@@ -148,11 +177,78 @@ mod tests {
         assert_eq!(sample.dkg_input_type, DkgInputType::SmudgingNoise);
         assert_eq!(
             sample.secret_sss.len(),
-            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure::threshold::MODULI.len()
         );
         assert_eq!(
             sample.secret.limbs.len(),
-            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure::threshold::MODULI.len()
         );
+    }
+}
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_zk_witness::dkg::share_computation::{prepare_chunk, Inputs};
+
+    const SPLIT_FIELDS: [&str; 5] = [
+        "e_sm_plus_high",
+        "e_sm_plus_low",
+        "e_sm_minus_high",
+        "e_sm_minus_low",
+        "e_sm_carry",
+    ];
+
+    #[test]
+    fn chunk_leaves_preserve_every_coefficient_and_lift() {
+        let preset = BfvPreset::InsecureThresholdLbfv;
+        let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum)
+            .unwrap()
+            .with_chunk_size(64)
+            .unwrap();
+        for kind in [DkgInputType::SecretKey, DkgInputType::SmudgingNoise] {
+            let data = generate(&config, preset, kind).unwrap();
+            let inputs = Inputs::compute(&config, &data).unwrap();
+            let whole = inputs.to_json();
+            let mut y = Vec::new();
+            let mut lift = vec![Vec::new(); SPLIT_FIELDS.len()];
+            for index in 0..2 {
+                let chunk = prepare_chunk(&config, &data, index).unwrap();
+                assert_eq!(chunk["chunk_idx"], index);
+                y.extend(chunk["y_chunk"].as_array().unwrap().iter().cloned());
+                if kind == DkgInputType::SmudgingNoise {
+                    for (i, name) in SPLIT_FIELDS.iter().enumerate() {
+                        lift[i].extend(
+                            chunk[format!("{name}_chunk")]["coefficients"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .cloned(),
+                        );
+                    }
+                    for limb in chunk["e_sm_quotients_chunk"].as_array().unwrap() {
+                        assert_eq!(limb["coefficients"].as_array().unwrap().len(), 64);
+                    }
+                } else {
+                    assert_eq!(
+                        chunk["secret_chunk"]["coefficients"]
+                            .as_array()
+                            .unwrap()
+                            .len(),
+                        64
+                    );
+                }
+            }
+            assert_eq!(serde_json::Value::Array(y), whole["y"]);
+            if kind == DkgInputType::SmudgingNoise {
+                for (values, name) in lift.into_iter().zip(SPLIT_FIELDS) {
+                    assert_eq!(
+                        serde_json::Value::Array(values),
+                        whole[name]["coefficients"]
+                    );
+                }
+            }
+            assert!(prepare_chunk(&config, &data, 2).is_err());
+        }
     }
 }

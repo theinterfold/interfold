@@ -6,48 +6,73 @@
 
 //! Sample data generation for pk generation circuit.
 //!
-//! The sample contains one public-key share and its matching secret and smudging material.
+//! [`Sample`] produces a random BFV key pair and plaintext; the public key and plaintext are used as input
+//! for codegen and tests.
 
-use e3_fhe_params::create_deterministic_crp_from_default_seed;
+use e3_fhe_params::{create_deterministic_crp_from_default_seed, generate_smudging_error};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use e3_zk_config::threshold::pk_generation::Configs;
 use e3_zk_witness::{threshold::pk_generation::PkGenerationCircuitData, WitnessError};
+use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
-use fhe::{
-    bfv::SecretKey,
-    trbfv::{smudging::SmudgingNoiseGenerator, ShareManager},
-};
+use fhe_math::rq::{Poly, PowerBasis};
+use std::ops::Deref;
 
+use e3_zk_config::threshold::pk_generation::Configs;
 pub fn generate(config: &Configs) -> Result<PkGenerationCircuitData, WitnessError> {
     let threshold_params = &config.params;
+    let preset = config.preset;
+    let committee = config.committee.values();
+
     let mut rng = rand::rng();
 
-    let secret_key = SecretKey::random(threshold_params, &mut rng);
-    let crp = create_deterministic_crp_from_default_seed(threshold_params);
+    let secret_key = SecretKey::random(&threshold_params, &mut rng);
+    let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-    let (pk_share, intermediates) =
-        PublicKeyShare::new_with_intermediates(&secret_key, crp, &mut rng).map_err(|e| {
-            WitnessError::Sample(format!("Failed to create public key share: {:?}", e))
-        })?;
+    let (pk0, _a, _s, eek) = PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng)
+        .map_err(|e| WitnessError::Sample(format!("Failed to create public key share: {:?}", e)))?;
 
-    let committee = config.committee.values();
-    let share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone())?;
-    // C1 supplies the same additive, all-N-participant bound as the sample noise setup.
-    let noise =
-        SmudgingNoiseGenerator::new(threshold_params.clone(), config.bounds.e_sm_bound.clone());
-    let e_sm = share_manager.bigints_to_poly(&noise.generate_smudging_error(&mut rng)?)?;
+    let num_parties = committee.n;
+
+    let defaults = preset
+        .search_defaults()
+        .ok_or_else(|| WitnessError::Sample("missing search defaults".to_string()))?;
+    let num_ciphertexts = defaults.z;
+    // Lambda is secure or insecure depending on the preset's security tier.
+    let lambda = preset
+        .lambda()
+        .map_err(|e| WitnessError::Sample(e.to_string()))?;
+
+    // Generate smudging error coefficients
+    let esi_coeffs = generate_smudging_error(
+        threshold_params.clone(),
+        num_parties,
+        num_ciphertexts as usize,
+        defaults.mult_depth,
+        lambda,
+        &mut rng,
+    )?;
+
+    // Convert to polynomial in RNS representation
+    // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly
+    let e_sm_rns_zeroizing = Poly::<PowerBasis>::from_bigints(
+        &esi_coeffs,
+        threshold_params
+            .context_at_level(0)
+            .map_err(|e| WitnessError::Sample(e.to_string()))?,
+    )
+    .map_err(|e| WitnessError::Sample(e.to_string()))?;
+
+    let e_sm = e_sm_rns_zeroizing.deref().clone();
 
     Ok(PkGenerationCircuitData {
-        pk0_share: CrtPolynomial::from_fhe_polynomial(pk_share.p0_share()),
-        eek: CrtPolynomial::from_fhe_polynomial(intermediates.error()),
-        e_sm: CrtPolynomial::from_fhe_polynomial(&*e_sm),
-        e_sm_lifted: Polynomial::from_fhe_polynomial(&*e_sm),
-        sk: CrtPolynomial::from_fhe_polynomial(intermediates.secret_key()),
+        pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0),
+        eek: CrtPolynomial::from_fhe_polynomial(&eek),
+        e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
+        e_sm_lifted: Polynomial::from_fhe_polynomial(&e_sm),
+        sk: CrtPolynomial::from_fhe_polynomial(&_s),
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::generate;

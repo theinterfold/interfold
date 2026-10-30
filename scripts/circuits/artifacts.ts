@@ -11,6 +11,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { join, relative, resolve } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './constants'
 import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
+import requiredLbfvArtifacts from '../../crates/zk/prover/required-artifacts-lbfv.json'
+import requiredTrbfvArtifacts from '../../crates/zk/prover/required-artifacts-trbfv.json'
 import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
@@ -57,7 +59,7 @@ function artifactFiles(dir: string, base = dir): string[] {
   return files.sort()
 }
 
-function refreshChecksums(dir: string): void {
+export function refreshChecksums(dir: string): void {
   const sums: Record<string, string> = {}
   const lines: string[] = []
 
@@ -114,8 +116,18 @@ function stampFiles(dir: string): string[] {
   return stamps
 }
 
+// Preset directories that serve the l-BFV path, and those that serve only it. The Rust installer
+// applies the same rule (`required_artifacts` in `crates/zk/prover/src/backend/download.rs`).
+const LBFV_PRESET_DIRS = new Set(['insecure', 'secure-16384'])
+const LBFV_ONLY_PRESET_DIRS = new Set(['secure-16384'])
+
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return requiredArtifacts.map((artifact) => join(preset, committee, artifact))
+  const artifacts = [
+    ...requiredArtifacts,
+    ...(LBFV_ONLY_PRESET_DIRS.has(preset) ? [] : requiredTrbfvArtifacts),
+    ...(LBFV_PRESET_DIRS.has(preset) ? requiredLbfvArtifacts : []),
+  ]
+  return artifacts.map((artifact) => join(preset, committee, artifact))
 }
 
 type BuildStamp = {

@@ -17,7 +17,7 @@ use num_traits::Zero;
 
 #[test]
 fn c0_binds_public_key_material_to_the_supplied_configuration() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let config = dkg_config::pk::Configs::for_preset(preset).unwrap();
     let key = e3_zk_samples::dkg::pk::generate(&config.params).unwrap();
     assert!(dkg::pk::Inputs::compute(&config, &key).is_ok());
@@ -48,7 +48,7 @@ fn c0_binds_public_key_material_to_the_supplied_configuration() {
 
 #[test]
 fn malformed_c1_c2_c5_shapes_return_errors_before_computation() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let committee = CiphernodesCommitteeSize::Minimum;
     let c1 = config::pk_generation::Configs::for_preset(preset, committee).unwrap();
     let sample = e3_zk_samples::threshold::pk_generation::generate(&c1).unwrap();
@@ -160,7 +160,7 @@ fn malformed_c1_c2_c5_shapes_return_errors_before_computation() {
 
 #[test]
 fn zero_products_prepare_full_circuit_shapes_without_changing_polynomial_zero() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let committee = CiphernodesCommitteeSize::Minimum;
     let c1 = config::pk_generation::Configs::for_preset(preset, committee).unwrap();
     let zero = Polynomial::new(vec![BigInt::zero(); c1.params.degree()]);
@@ -244,42 +244,44 @@ fn zero_products_prepare_full_circuit_shapes_without_changing_polynomial_zero() 
 
 #[test]
 fn c6_c7_native_prefix_commitments_agree_and_c7_pads_short_messages() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let committee = CiphernodesCommitteeSize::Small;
     let mut c7 =
         config::decrypted_shares_aggregation::Configs::for_preset(preset, committee).unwrap();
     let mut c6 = config::share_decryption::Configs::new(&c7.params).unwrap();
-    let sample =
-        e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&c7, preset).unwrap();
-    assert_eq!(sample.d_share_polys.len(), 10);
-    assert_eq!(committee.values().h, 14);
-    let native = CrtPolynomial::from_fhe_polynomial(&sample.d_share_polys[0]);
-    let zero = CrtPolynomial::new(vec![
-        Polynomial::new(vec![
-            BigInt::zero();
-            c6.params.degree()
-        ]);
-        c6.params.moduli().len()
-    ]);
-    let c6_data = threshold::share_decryption::ShareDecryptionCircuitData {
-        ciphertext: Ciphertext::new(
-            vec![
-                sample.d_share_polys[0].clone().into_ntt(),
-                Poly::<PowerBasis>::zero(c6.params.context_at_level(0).unwrap()).into_ntt(),
-            ],
-            &c6.params,
-        )
-        .unwrap(),
-        s: zero.clone(),
-        e: zero,
-        d_share: native.clone(),
-        domain_hi: 0,
-        domain_lo: 0,
-    };
-    let mut prior_commitment = None;
-    for width in [c7.max_msg_non_zero_coeffs, 7] {
+    let full_width = c7.max_msg_non_zero_coeffs;
+    let mut last_data = None;
+    for width in [full_width, 7] {
         c6.max_msg_non_zero_coeffs = width;
         c7.max_msg_non_zero_coeffs = width;
+        let sample =
+            e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&c7, preset).unwrap();
+        assert_eq!(sample.d_share_polys.len(), 10);
+        assert_eq!(committee.values().h, 14);
+        let native = CrtPolynomial::from_fhe_polynomial(&sample.d_share_polys[0]);
+        let zero = CrtPolynomial::new(vec![
+            Polynomial::new(vec![
+                BigInt::zero();
+                c6.params.degree()
+            ]);
+            c6.params.moduli().len()
+        ]);
+        let c6_data = threshold::share_decryption::ShareDecryptionCircuitData {
+            ciphertext: Ciphertext::new(
+                vec![
+                    sample.d_share_polys[0].clone().into_ntt(),
+                    Poly::<PowerBasis>::zero(c6.params.context_at_level(0).unwrap()).into_ntt(),
+                ],
+                &c6.params,
+            )
+            .unwrap(),
+            s: zero.clone(),
+            e: zero,
+            d_share: native.clone(),
+            domain_hi: 0,
+            domain_lo: 0,
+        };
+
         let a = threshold::share_decryption::Inputs::compute(&c6, &c6_data).unwrap();
         let b = threshold::decrypted_shares_aggregation::Inputs::compute(&c7, &sample).unwrap();
         assert_eq!(a.d_native_trunc, b.decryption_shares[0]);
@@ -292,20 +294,30 @@ fn c6_c7_native_prefix_commitments_agree_and_c7_pads_short_messages() {
             width,
         );
         assert_eq!(commitment, b.expected_d_commitments[0]);
-        if let Some(prior) = prior_commitment {
+        if width != full_width {
+            let mut full_config = c6.clone();
+            full_config.max_msg_non_zero_coeffs = full_width;
+            let full =
+                threshold::share_decryption::Inputs::compute(&full_config, &c6_data).unwrap();
+            let full_commitment = e3_zk_witness::compute_threshold_decryption_share_commitment(
+                &full.d_native_trunc,
+                full_config.bits.d_native_bit,
+                full_width,
+            );
             assert_ne!(
-                commitment, prior,
-                "the configured prefix width must affect its commitment"
+                commitment, full_commitment,
+                "the configured prefix width must affect the same share's commitment"
             );
         }
-        prior_commitment = Some(commitment);
         let mut short = sample.clone();
         short.message_vec = vec![2, 1];
         let padded = threshold::decrypted_shares_aggregation::Inputs::compute(&c7, &short).unwrap();
         let mut expected = vec![BigInt::from(2), BigInt::from(1)];
         expected.resize(width, BigInt::zero());
         assert_eq!(padded.message.coefficients(), expected);
+        last_data = Some((sample, c6_data));
     }
+    let (sample, c6_data) = last_data.unwrap();
     for ids in [
         vec![0, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         vec![1, 1, 3, 4, 5, 6, 7, 8, 9, 10],

@@ -31,6 +31,8 @@ pub struct ProofFailureAccusation {
     pub accused_party_id: u64,
     /// Which proof type allegedly failed.
     pub proof_type: ProofType,
+    /// Row index for a multirow proof type. Singleton proof types use zero.
+    pub proof_instance: u32,
     /// keccak256 hash of (data + proof) as received by the accuser.
     pub data_hash: [u8; 32],
     /// Unix time at which the accuser created this accusation.

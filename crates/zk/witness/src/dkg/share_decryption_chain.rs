@@ -14,9 +14,10 @@
 use super::share_computation_chain::field_to_string;
 use super::share_decryption::Inputs;
 use crate::commitments::{
-    compute_commitments, packer, DS_AGGREGATED_SHARES, DS_SHARE_DECRYPTION_CHAIN_STATE,
+    compute_commitments, DS_AGGREGATED_SHARES, DS_SHARE_DECRYPTION_CHAIN_STATE,
 };
 use crate::encoding::poly_coefficients_to_toml_json;
+use crate::packing::packer;
 use crate::WitnessError;
 use ark_bn254::Fr as Field;
 use e3_polynomial::Polynomial;

@@ -6,15 +6,15 @@
 
 //! Static parameters, bounds, widths, and Noir declarations.
 
-use crate::field::join_display;
+use crate::field::{get_zkp_modulus, join_display};
 use crate::{CircuitMetadata, ConfigError};
 use e3_committee::CiphernodesCommitteeSize;
+use e3_fhe_params::calculate_smudging_bound;
 use e3_fhe_params::utils::*;
 use e3_fhe_params::{BfvPreset, ParameterType};
 use fhe::bfv::{BfvParameters, SecretKey};
-use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
 use num_bigint::BigUint;
-use num_traits::ToPrimitive;
+use num_traits::{One, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 pub mod crp;
@@ -28,9 +28,11 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 #[derive(Debug, Clone)]
 pub struct Configs {
     pub params: Arc<BfvParameters>,
+    pub preset: BfvPreset,
     pub committee: CiphernodesCommitteeSize,
     pub bits: Bits,
     pub bounds: Bounds,
+    pub e_sm_split: ESmSplit,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -52,6 +54,69 @@ pub struct Bounds {
     pub r_bounds: Vec<BigUint>,
     pub pk_bound: BigUint,
 }
+/// The smudging bound split that lets the l-BFV C2b leaves check `|e| <= B` when `B` exceeds the
+/// field, as it does at secure-16384. `B + e` and `B - e` are each `high * 2^split_bits + low` with
+/// both parts non-negative, and their sum is checked against `2B` limb by limb with one carry, so
+/// `e` is never formed in the field. Each residue is tied to `B + e` modulo `q_l` through
+/// `radix_mod_q[l] = 2^split_bits mod q_l` and `bound_mod_q[l] = B mod q_l`, with a quotient below
+/// `2^quotient_bit` in magnitude.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ESmSplit {
+    /// The smudging bound `B` itself. Witnesses read it; it is not emitted, being above the field
+    /// at secure-16384.
+    pub bound: BigUint,
+    pub split_bits: u32,
+    pub high_bit: u32,
+    pub quotient_bit: u32,
+    pub twice_bound_high: BigUint,
+    pub twice_bound_low: BigUint,
+    pub radix_mod_q: Vec<BigUint>,
+    pub bound_mod_q: Vec<BigUint>,
+}
+impl ESmSplit {
+    pub fn new(e_sm_bound: &BigUint, moduli: &[u64]) -> Result<Self, ConfigError> {
+        let twice_bound = e_sm_bound * 2u32;
+        // `B + e` and `B - e` lie in `[0, 2B]`, which `width` bits hold.
+        let width = calculate_bit_width(&twice_bound);
+        let split_bits = width.div_ceil(2);
+        let high_bit = width - split_bits;
+        let radix = BigUint::one() << split_bits;
+        let mut radix_mod_q = Vec::with_capacity(moduli.len());
+        let mut bound_mod_q = Vec::with_capacity(moduli.len());
+        let mut quotient_bound = BigUint::from(0u32);
+        let mut q_bit = 0;
+        for &q in moduli {
+            let q = BigUint::from(q);
+            radix_mod_q.push(&radix % &q);
+            bound_mod_q.push(e_sm_bound % &q);
+            // `t = (high * radix_mod_q + low - bound_mod_q - r) / q` with `high < 2^high_bit`,
+            // `low < 2^split_bits` and `|r| < q`: above, below `2^high_bit + 2^split_bits / q + 1`;
+            // below, above `-2`.
+            quotient_bound = quotient_bound.max((BigUint::one() << high_bit) + &radix / &q + 2u32);
+            q_bit = q_bit.max(calculate_bit_width(&q));
+        }
+        let quotient_bit = calculate_bit_width(&quotient_bound);
+        // Every term of the three relations must stay far below the field for them to hold over
+        // the integers: `high * radix_mod_q`, `low`, and `q * t`.
+        let field_bit = calculate_bit_width(&get_zkp_modulus().to_biguint().expect("positive"));
+        let widest = (high_bit + q_bit).max(split_bits).max(quotient_bit + q_bit) + 2;
+        if widest >= field_bit - 1 {
+            return Err(ConfigError::Other(format!(
+                "the smudging bound split needs {widest} bits, too close to the {field_bit}-bit field"
+            )));
+        }
+        Ok(ESmSplit {
+            bound: e_sm_bound.clone(),
+            split_bits,
+            high_bit,
+            quotient_bit,
+            twice_bound_high: &twice_bound >> split_bits,
+            twice_bound_low: &twice_bound % &radix,
+            radix_mod_q,
+            bound_mod_q,
+        })
+    }
+}
 impl Configs {
     pub fn new(
         preset: BfvPreset,
@@ -62,13 +127,16 @@ impl Configs {
 
         let bounds = Bounds::new(preset, threshold_params, committee)?;
         let bits = Bits::new(threshold_params, &bounds);
+        let e_sm_split = ESmSplit::new(&bounds.e_sm_bound, threshold_params.moduli())?;
 
         Ok(Configs {
             params: threshold_params.clone(),
+            preset,
             committee,
 
             bits,
             bounds,
+            e_sm_split,
         })
     }
 }
@@ -96,16 +164,14 @@ impl Bounds {
         let lambda = preset
             .lambda()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
-        let smudging_config = SmudgingBoundCalculatorConfig::new(
+        let e_sm_bound = calculate_smudging_bound(
             threshold_params.clone(),
             committee_n,
             sd.z as usize,
+            sd.mult_depth,
             lambda,
-        )?;
-        let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
-        let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {
-            ConfigError::Other(format!("Failed to calculate smudging bound: {:?}", e))
-        })?;
+        )
+        .map_err(|e| ConfigError::Other(format!("Failed to calculate smudging bound: {:?}", e)))?;
 
         // Calculate bounds for each CRT basis
         let num_moduli = ctx.moduli().len();
@@ -218,16 +284,48 @@ impl Configs {
             _ => (BigUint::from(3u32) * variance).sqrt(),
         };
 
+        let bits = &configs.bits;
+        let bounds = &configs.bounds;
+        let split = &configs.e_sm_split;
+        let n = configs.params.degree();
+        let l = configs.params.moduli().len();
+        let radix_mod_q_str = join_display(&split.radix_mod_q, ", ");
+        let bound_mod_q_str = join_display(&split.bound_mod_q, ", ");
+
+        // C1 reads the smudging bound as one field element. A bound at or above the field (the
+        // l-BFV secure-16384 preset, which has no C1) cannot be written at all: nargo rejects the
+        // literal wherever a global references it. Such presets get only the split below.
+        let c1_bound = if bounds.e_sm_bound < get_zkp_modulus().to_biguint().expect("positive") {
+            format!(
+                r#"use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+
+pub global {prefix}_E_SM_BOUND: Field = {e_sm_bound};
+
+pub global {prefix}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
+    QIS,
+    {prefix}_EEK_BOUND,
+    {prefix}_SK_BOUND,
+    {prefix}_E_SM_BOUND,
+    {prefix}_E_SM_LIMB_BOUNDS,
+    {prefix}_E_SM_QUOTIENT_BOUNDS,
+    {prefix}_R_BOUNDS,
+);
+"#,
+                e_sm_bound = bounds.e_sm_bound,
+            )
+        } else {
+            String::new()
+        };
+
         Ok(format!(
-            r#"use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
-use crate::math::polynomial::Polynomial;
+            r#"use crate::math::polynomial::Polynomial;
 
 // Global configs for Threshold Public Key Generation circuit
-pub global N: u32 = {};
-pub global L: u32 = {};
-pub global QIS: [Field; L] = [{}];
+pub global N: u32 = {n};
+pub global L: u32 = {l};
+pub global QIS: [Field; L] = [{qis_str}];
 
-{}
+{crp_matrix_str}
 
 /************************************
 -------------------------------------
@@ -235,72 +333,47 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 -------------------------------------
 ************************************/
 
-pub global {}_BIT_EEK: u32 = {};
-pub global {}_BIT_SK: u32 = {};
-pub global {}_BIT_E_SM: u32 = {};
-pub global {}_BIT_E_SM_LIFTED: u32 = {};
-pub global {}_BIT_E_SM_QUOTIENT: u32 = {};
-pub global {}_BIT_R: u32 = {};
-pub global {}_BIT_PK: u32 = {};
+pub global {prefix}_BIT_EEK: u32 = {eek_bit};
+pub global {prefix}_BIT_SK: u32 = {sk_bit};
+pub global {prefix}_BIT_E_SM: u32 = {e_sm_bit};
+pub global {prefix}_BIT_E_SM_LIFTED: u32 = {e_sm_lifted_bit};
+pub global {prefix}_BIT_E_SM_QUOTIENT: u32 = {e_sm_quotient_bit};
+pub global {prefix}_BIT_R: u32 = {r_bit};
+pub global {prefix}_BIT_PK: u32 = {pk_bit};
 
-pub global {}_EEK_BOUND: Field = {};
-pub global {}_SK_BOUND: Field = {};
-pub global {}_E_SM_BOUND: Field = {};
-pub global {}_E_SM_LIMB_BOUNDS: [Field; L] = [{}];
-pub global {}_E_SM_QUOTIENT_BOUNDS: [Field; L] = [{}];
-pub global {}_R_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_EEK_BOUND: Field = {eek_bound};
+pub global {prefix}_SK_BOUND: Field = {sk_bound};
+pub global {prefix}_E_SM_LIMB_BOUNDS: [Field; L] = [{e_sm_limb_bounds_str}];
+pub global {prefix}_E_SM_QUOTIENT_BOUNDS: [Field; L] = [{e_sm_quotient_bounds_str}];
+pub global {prefix}_R_BOUNDS: [Field; L] = [{r_bounds_str}];
 
-pub global {}_B_ENC: Field = {};
+pub global {prefix}_B_ENC: Field = {b_enc};
 
-pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
-    QIS,
-    {}_EEK_BOUND,
-    {}_SK_BOUND,
-    {}_E_SM_BOUND,
-    {}_E_SM_LIMB_BOUNDS,
-    {}_E_SM_QUOTIENT_BOUNDS,
-    {}_R_BOUNDS,
-);
-"#,
-            configs.params.degree(),
-            configs.params.moduli().len(),
-            qis_str,
-            crp_matrix_str,
-            prefix,
-            configs.bits.eek_bit,
-            prefix,
-            configs.bits.sk_bit,
-            prefix,
-            configs.bits.e_sm_bit,
-            prefix,
-            configs.bits.e_sm_lifted_bit,
-            prefix,
-            configs.bits.e_sm_quotient_bit,
-            prefix,
-            configs.bits.r_bit,
-            prefix,
-            configs.bits.pk_bit,
-            prefix,
-            configs.bounds.eek_bound,
-            prefix,
-            configs.bounds.sk_bound,
-            prefix,
-            configs.bounds.e_sm_bound,
-            prefix,
-            e_sm_limb_bounds_str,
-            prefix,
-            e_sm_quotient_bounds_str,
-            prefix,
-            r_bounds_str,
-            prefix,
-            b_enc,
-            prefix,
-            prefix,
-            prefix,
-            prefix,
-            prefix,
-            prefix,
-            prefix,
+// The smudging bound split for the l-BFV C2b leaves: `B + e` and `B - e` are each
+// `high * 2^SPLIT_BITS + low`, and their sum is `2B = TWICE_BOUND_HIGH * 2^SPLIT_BITS + TWICE_BOUND_LOW`.
+pub global {prefix}_E_SM_SPLIT_BITS: u32 = {split_bits};
+pub global {prefix}_BIT_E_SM_HIGH: u32 = {high_bit};
+pub global {prefix}_BIT_E_SM_SPLIT_QUOTIENT: u32 = {quotient_bit};
+pub global {prefix}_E_SM_TWICE_BOUND_HIGH: Field = {twice_bound_high};
+pub global {prefix}_E_SM_TWICE_BOUND_LOW: Field = {twice_bound_low};
+pub global {prefix}_E_SM_RADIX_MOD_Q: [Field; L] = [{radix_mod_q_str}];
+pub global {prefix}_E_SM_BOUND_MOD_Q: [Field; L] = [{bound_mod_q_str}];
+
+{c1_bound}"#,
+            eek_bit = bits.eek_bit,
+            sk_bit = bits.sk_bit,
+            e_sm_bit = bits.e_sm_bit,
+            e_sm_lifted_bit = bits.e_sm_lifted_bit,
+            e_sm_quotient_bit = bits.e_sm_quotient_bit,
+            r_bit = bits.r_bit,
+            pk_bit = bits.pk_bit,
+            eek_bound = bounds.eek_bound,
+            sk_bound = bounds.sk_bound,
+            split_bits = split.split_bits,
+            high_bit = split.high_bit,
+            quotient_bit = split.quotient_bit,
+            twice_bound_high = split.twice_bound_high,
+            twice_bound_low = split.twice_bound_low,
         ))
     }
 }

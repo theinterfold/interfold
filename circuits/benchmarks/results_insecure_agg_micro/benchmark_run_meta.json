@@ -1,6 +1,6 @@
 {
   "benchmark_mode": "insecure",
-  "bfv_preset_subdir": "insecure-512",
+  "bfv_preset_subdir": "insecure",
   "committee": "micro",
   "proof_aggregation": true,
   "multithread_jobs": 13,

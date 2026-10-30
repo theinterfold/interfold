@@ -116,7 +116,7 @@ fn vote_digest_matches_reference() {
 /// The accusation digest must include `deadline`.
 #[test]
 fn accusation_digest_binds_deadline() {
-    let make = |deadline: u64| ProofFailureAccusation {
+    let make = |deadline: u64, proof_instance: u32| ProofFailureAccusation {
         e3_id: E3id::new("9", 31337),
         accuser: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             .parse()
@@ -126,15 +126,28 @@ fn accusation_digest_binds_deadline() {
             .unwrap(),
         accused_party_id: 1,
         proof_type: ProofType::C1PkGeneration,
+        proof_instance,
         data_hash: [0x42; 32],
         issued_at: 1_699_999_000,
         deadline,
         signed_payload: None,
         signature: ArcBytes::default(),
     };
-    let a = AccusationVoting::accusation_digest(&make(1_700_000_000));
-    let b = AccusationVoting::accusation_digest(&make(1_700_000_001));
+    let a = AccusationVoting::accusation_digest(&make(1_700_000_000, 0));
+    let b = AccusationVoting::accusation_digest(&make(1_700_000_001, 0));
     assert_ne!(a, b, "deadline must be part of the accusation digest");
+
+    let row = make(1_700_000_000, 1);
+    assert_ne!(
+        a,
+        AccusationVoting::accusation_digest(&row),
+        "nonzero proof instances must use a distinct accusation signature domain"
+    );
+    assert_ne!(
+        AccusationVoting::accusation_id(&make(1_700_000_000, 0)),
+        AccusationVoting::accusation_id(&row),
+        "nonzero proof instances must produce distinct accusation IDs"
+    );
 }
 
 #[test]
@@ -208,7 +221,7 @@ async fn only_an_expulsion_removes_a_voter() -> anyhow::Result<()> {
             1,
             300,
             DEFAULT_ACCUSATION_DEADLINE_SKEW_SECS,
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
+            e3_fhe_params::BfvPreset::InsecureThreshold,
         )
         .start();
         let event = |data: InterfoldEventData, seq: u64| {
@@ -249,6 +262,7 @@ async fn only_an_expulsion_removes_a_voter() -> anyhow::Result<()> {
                     accused_address: accused,
                     accused_party_id: 2,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     data_hash: [7; 32],
                     evidence: Default::default(),
                 }

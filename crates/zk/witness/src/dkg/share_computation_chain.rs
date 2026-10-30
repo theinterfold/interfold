@@ -13,9 +13,10 @@
 
 use super::share_computation::Inputs;
 use crate::commitments::{
-    compute_commitments, packer, DS_SHARE_COMPUTATION_CHAIN_OUTPUT,
-    DS_SHARE_COMPUTATION_CHAIN_SECRET, DS_SHARE_COMPUTATION_CHAIN_STATE, DS_SHARE_ENCRYPTION,
+    compute_commitments, DS_SHARE_COMPUTATION_CHAIN_OUTPUT, DS_SHARE_COMPUTATION_CHAIN_SECRET,
+    DS_SHARE_COMPUTATION_CHAIN_STATE, DS_SHARE_ENCRYPTION,
 };
+use crate::packing::packer;
 use crate::WitnessError;
 use ark_bn254::Fr as Field;
 use ark_ff::{BigInteger, PrimeField};

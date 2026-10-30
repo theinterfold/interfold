@@ -198,20 +198,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         );
     }
 
-    /// Verifies that the message (share) polynomial hashes to the expected commitment
-    /// produced in C2a (for C3a) or C2b (for C3b).
-    ///
-    /// This is the binding check: the plaintext being encrypted must be exactly the share
-    /// that was verified in C2. Any deviation, encrypting a different value, substituting
-    /// a forged share, will cause this assertion to fail.
-    fn verify_message_commitment(self) {
-        assert(
-            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)
-                == self.expected_message_commitment,
-            "Message commitment mismatch",
-        );
-    }
-
     /// Checks the carries `z` of the scaled message: `k1 == q_mod_t * m - t * z`, so the scaled
     /// message need never be materialised.
     ///
@@ -330,11 +316,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// `N` of its coefficients in unpacked, one sponge absorption each, and the scaled form never
     /// builds it. And `ct0_r` is replaced by the narrower `Q0`, which determines it given the
     /// committed message and the carries derived from that message.
-    fn payload_scaled(self, q0: [Polynomial<N>; L]) -> [Field] {
+    fn payload_scaled(self, q0: [Polynomial<N>; L], ct_commitment: Option<Field>) -> [Field] {
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        inputs = self.absorb_ciphertext(inputs, ct_commitment);
+
         // Every value below enters already shifted to the non-negative window its range check pins,
         // packed at exactly that width (`flatten_exact_width`): `e + bound` and `u + bound` in
         // `[0, 2^(BIT + 1))` (`check_range_bounds`), `Q0[0] + q0_offset` in `[0, 2^BIT_Q0)`,
@@ -391,23 +377,22 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
                     - self.configs.qis[i] * self.ct1_r[i].coefficients[j];
             }
             assert(
-                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot(kernel),
+                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot_for_degree(kernel),
                 "ct0 encryption check failed",
             );
             assert(
-                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot(kernel),
+                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot_for_degree(kernel),
                 "ct1 encryption check failed",
             );
         }
     }
 
-    fn payload(self, k1: Polynomial<N>) -> [Field] {
+    fn payload(self, k1: Polynomial<N>, ct_commitment: Option<Field>) -> [Field] {
         // Use pk commitment instead of full pk polynomials
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
         // Every vector below is bounded by `check_range_bounds`, so the plain packing is injective.
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        inputs = self.absorb_ciphertext(inputs, ct_commitment);
 
         inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
         inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
@@ -428,17 +413,83 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         inputs
     }
 
+    /// Absorbs the ciphertext: as packed limbs, or through `ct_commitment` when one is given.
+    ///
+    /// `check_range_bounds` keeps `ct0is` / `ct1is` in their centered windows, so the plain packing
+    /// under `compute_ciphertext_commitment` is injective and the commitment fixes the limbs before
+    /// the challenge exactly as absorbing them does. It is the commitment this circuit outputs, so
+    /// absorbing it instead of the limbs saves a second hash of all `2 * L * N` coefficients.
+    fn absorb_ciphertext(self, mut inputs: [Field], ct_commitment: Option<Field>) -> [Field] {
+        if ct_commitment.is_some() {
+            inputs = inputs.push_back(ct_commitment.unwrap());
+        } else {
+            inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
+            inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        }
+        inputs
+    }
+
     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
     pub fn execute(self) -> Field {
+        self.execute_with(|message| {
+            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(message)
+        })
+    }
+
+    /// [`Self::execute`] with the message commitment supplied by the caller.
+    ///
+    /// Used by the trBFV `share_encryption`; `message` is range-checked below, so creating its
+    /// commitment needs no checked packing. The l-BFV `share_encryption_chunked` calls
+    /// [`Self::execute_with_committed_ciphertext`] instead.
+    pub fn execute_with<Env>(self, commit_message: fn[Env](Polynomial<N>) -> Field) -> Field {
+        self.execute_inner(commit_message, false, false)
+    }
+
+    /// [`Self::execute_with`] with the ciphertext entering the transcript through the commitment
+    /// this circuit outputs rather than as packed limbs (see `absorb_ciphertext`). Used by the
+    /// l-BFV `share_encryption_chunked`; the trBFV `share_encryption` keeps its transcript.
+    ///
+    /// `message_bounded_by_opening` skips the message's own `[0, t)` range check. A caller may set it
+    /// only when `commit_message` opens a commitment injectively (checked packing) whose creator
+    /// bounded the message to a sub-window of `[0, t)`, so the bound transfers through the opening.
+    /// The l-BFV caller opens C2's chunk root, whose leaves bound each share to `[0, q_l)`, and
+    /// asserts `q_l <= t`.
+    pub fn execute_with_committed_ciphertext<Env>(
+        self,
+        commit_message: fn[Env](Polynomial<N>) -> Field,
+        message_bounded_by_opening: bool,
+    ) -> Field {
+        self.execute_inner(commit_message, true, message_bounded_by_opening)
+    }
+
+    /// `absorb_ct_commitment` and `message_bounded_by_opening` are compile-time constants at every
+    /// call site, so only one transcript form and one message check are compiled into each circuit.
+    fn execute_inner<Env>(
+        self,
+        commit_message: fn[Env](Polynomial<N>) -> Field,
+        absorb_ct_commitment: bool,
+        message_bounded_by_opening: bool,
+    ) -> Field {
+        let ct_commitment = if absorb_ct_commitment {
+            Option::some(
+                compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is),
+            )
+        } else {
+            Option::none()
+        };
+
         // Step 1: Verify public key commitment matches expected
         self.verify_pk_commitment();
 
         // Step 2: Verify message commitment matches expected
-        self.verify_message_commitment();
+        assert(
+            commit_message(self.message) == self.expected_message_commitment,
+            "Message commitment mismatch",
+        );
 
         // Step 3: Range-check everything the identity reads except the quotients, whose form
         // depends on which path runs.
-        self.check_range_bounds();
+        self.check_range_bounds(!message_bounded_by_opening);
 
         // Steps 4-6. `scaled_quotient` is a generated flag, so this resolves at compile time and the
         // unused branch costs nothing. The scaled form folds `k0 * k1` into the quotient, which drops
@@ -448,20 +499,26 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             let z = self.check_rounding_carries();
             let q0 = self.scaled_quotient_terms(z);
             self.check_scaled_quotient_bounds(q0);
-            let gammas = compute_share_encryption_challenge::<L>(self.payload_scaled(q0));
+            let gammas =
+                compute_share_encryption_challenge::<L>(self.payload_scaled(q0, ct_commitment));
             self.verify_evaluations_scaled(gammas, z, q0);
         } else {
             self.check_quotient_bounds();
             let k1 = self.compute_scaled_message();
-            let gammas = self.generate_challenge(k1);
+            let gammas = self.generate_challenge(k1, ct_commitment);
             self.verify_evaluations(gammas, k1);
         }
 
-        compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+        if ct_commitment.is_some() {
+            ct_commitment.unwrap()
+        } else {
+            compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+        }
     }
 
-    /// Performs range checks on all secret witness polynomial coefficients.
-    fn check_range_bounds(self) {
+    /// Performs range checks on all secret witness polynomial coefficients. `check_message` is false
+    /// only where the message's `[0, t)` bound arrives through an injective opening instead.
+    fn check_range_bounds(self, check_message: bool) {
         // `u` is ternary: `c^3 = c` has exactly the roots {-1, 0, 1}, so `u + u_bound` still fits the
         // `BIT_U + 1` bits its transcript packing assumes.
         assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
@@ -470,7 +527,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         self.e1.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
 
         // Message should be in [0, t)
-        self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
+        if check_message {
+            self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
+        }
 
         for i in 0..L {
             // The key is bounded by C0 and transferred through the checked opening in
@@ -510,8 +569,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Returns 2*L challenge values: one primary gamma at index 0 for evaluating all
     /// polynomials, L-1 weights at indices 1..L-1 for batching ct0 equations across
     /// moduli, and L weights at indices L..2L-1 for batching ct1 equations.
-    fn generate_challenge(self, k1: Polynomial<N>) -> [Field] {
-        let inputs = self.payload(k1);
+    fn generate_challenge(self, k1: Polynomial<N>, ct_commitment: Option<Field>) -> [Field] {
+        let inputs = self.payload(k1, ct_commitment);
 
         compute_share_encryption_challenge::<L>(inputs)
     }
@@ -541,11 +600,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
                     - self.configs.qis[i] * self.ct1_r[i].coefficients[j];
             }
             assert(
-                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot(kernel),
+                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot_for_degree(kernel),
                 "ct0 encryption check failed",
             );
             assert(
-                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot(kernel),
+                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot_for_degree(kernel),
                 "ct1 encryption check failed",
             );
         }
@@ -629,7 +688,7 @@ fn reduced_identity_fixture() -> ShareEncryption<4, 1, 6, 6, 1, 1, 1, 3, 3, 3, 3
 fn largest_plaintext_coefficient_is_accepted() {
     let mut c = reduced_identity_fixture();
     c.message.coefficients[0] = 4;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// A plaintext coefficient at `t` is rejected.
@@ -637,7 +696,7 @@ fn largest_plaintext_coefficient_is_accepted() {
 fn plaintext_coefficient_at_t_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.message.coefficients[0] = 5;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// C3 bounds each ciphertext component before it creates the commitment.
@@ -645,28 +704,28 @@ fn plaintext_coefficient_at_t_is_rejected() {
 fn ct0_above_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct0is[0].coefficients[0] = 49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct0_below_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct0is[0].coefficients[0] = -49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct1_above_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct1is[0].coefficients[0] = 49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct1_below_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct1is[0].coefficients[0] = -49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// Fixture for the scaled-quotient path, at `N = 4`, `L = 2`, `q = [101, 103]`, `t = 13`.
@@ -784,4 +843,50 @@ fn tampered_second_limb_quotient_is_rejected() {
     let mut tampered = honest_scaled_quotients();
     tampered[1] = Polynomial::new([0, -3, -5, 0]);
     let _ = scaled_fixture(Polynomial::new([0, 0, 0, 2]), tampered).execute();
+}
+
+/// The committed-ciphertext transcript (l-BFV `share_encryption_chunked`) accepts the honest witness
+/// on both paths and outputs the same commitment as the limb transcript.
+#[test]
+fn committed_ciphertext_transcript_accepts_honest_witnesses() {
+    let message_commitment = |m| compute_share_encryption_commitment_from_message::<4, 3>(m);
+    let direct = reduced_identity_fixture();
+    assert(direct.execute_with_committed_ciphertext(message_commitment, false) == direct.execute());
+
+    let scaled = scaled_fixture(Polynomial::new([0, 0, 0, 2]), honest_scaled_quotients());
+    let scaled_commitment = |m| compute_share_encryption_commitment_from_message::<4, 4>(m);
+    assert(scaled.execute_with_committed_ciphertext(scaled_commitment, false) == scaled.execute());
+}
+
+/// The commitment stands in for the limbs in the transcript, so the challenge must still move with
+/// the ciphertext: a tampered limb changes the absorbed commitment, and with it the challenge.
+#[test]
+fn committed_ciphertext_challenge_depends_on_the_limbs() {
+    let c = scaled_fixture(Polynomial::new([0, 0, 0, 2]), honest_scaled_quotients());
+    let q0 = c.scaled_quotient_terms(c.z[0]);
+    let commitment = compute_ciphertext_commitment::<4, 2, 6>(c.ct0is, c.ct1is);
+    let gamma =
+        compute_share_encryption_challenge::<2>(c.payload_scaled(q0, Option::some(commitment)));
+
+    let mut tampered = c;
+    tampered.ct1is[1].coefficients[0] += 1;
+    let tampered_commitment =
+        compute_ciphertext_commitment::<4, 2, 6>(tampered.ct0is, tampered.ct1is);
+    let tampered_gamma = compute_share_encryption_challenge::<2>(tampered.payload_scaled(
+        q0,
+        Option::some(tampered_commitment),
+    ));
+    assert(gamma[0] != tampered_gamma[0]);
+}
+
+/// A tampered quotient is still rejected when the ciphertext enters through its commitment.
+#[test(should_fail)]
+fn committed_ciphertext_rejects_a_tampered_quotient() {
+    let mut tampered = honest_scaled_quotients();
+    tampered[0].coefficients[1] += 1;
+    let c = scaled_fixture(Polynomial::new([0, 0, 0, 2]), tampered);
+    let _ = c.execute_with_committed_ciphertext(
+        |m| compute_share_encryption_commitment_from_message::<4, 4>(m),
+        false,
+    );
 }

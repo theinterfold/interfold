@@ -16,16 +16,31 @@ use actix::Message;
 use alloy::primitives::{keccak256, Address, FixedBytes, Signature, U256};
 use alloy::signers::{local::PrivateKeySigner, SignerSync};
 use alloy::sol_types::SolValue;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
-/// Proof type identifier covering all node-generated proofs, including
-/// aggregation proofs (C5 pk aggregation and C7 decrypted shares aggregation).
+/// Proof type identifier for externally signed node proofs.
+///
+/// Bincode encodes this enum by variant order. Do not reorder variants.
+/// Add new proof types at the end. Keep retired proof types for compatibility.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    strum::EnumCount,
+)]
 pub enum ProofType {
     /// C0 — BFV public key proof (Proof 0).
     C0PkBfv = 0,
@@ -49,26 +64,105 @@ pub enum ProofType {
     C6ThresholdShareDecryption = 9,
     /// C7 — Decrypted shares aggregation proof (Proof 7).
     C7DecryptedSharesAggregation = 10,
+    /// Row-level l-BFV public-key generation proof.
+    LbfvPkGeneration = 11,
+    /// Row-level l-BFV relinearization-key generation proof.
+    RlkGeneration = 12,
+    /// Row-level threshold l-BFV public-key aggregation proof.
+    LbfvPkAggregation = 13,
+    /// l-BFV relinearization-key aggregation proof for one component of one row.
+    RlkAggregation = 14,
+}
+
+/// Stable identity of one externally signed proof instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProofIdentity {
+    pub proof_type: ProofType,
+    /// Zero for singleton proof types. Row proof types use their public `row_index`; RLK
+    /// aggregation, which proves each row once per component, uses
+    /// `component * row_count + row_index`.
+    pub instance: u32,
 }
 
 impl ProofType {
-    /// Map this proof type to its corresponding circuit names.
+    /// Number of row instances required for each l-BFV proof family.
+    pub const LBFV_ROW_INSTANCES: u32 = 6;
+
+    /// Complete list of externally signed proof types in durable order.
+    pub const ALL: [Self; <Self as strum::EnumCount>::COUNT] = [
+        Self::C0PkBfv,
+        Self::C1PkGeneration,
+        Self::C2aSkShareComputation,
+        Self::C2bESmShareComputation,
+        Self::C3aSkShareEncryption,
+        Self::C3bESmShareEncryption,
+        Self::C4aSkShareDecryption,
+        Self::C4bESmShareDecryption,
+        Self::C5PkAggregation,
+        Self::C6ThresholdShareDecryption,
+        Self::C7DecryptedSharesAggregation,
+        Self::LbfvPkGeneration,
+        Self::RlkGeneration,
+        Self::LbfvPkAggregation,
+        Self::RlkAggregation,
+    ];
+
+    /// Circuits that may produce this proof type on either proving path, trBFV first.
+    ///
+    /// Verification that knows the E3's preset uses [`ProofType::circuit_names_for`], which admits
+    /// only that path's circuits.
     pub fn circuit_names(&self) -> Vec<CircuitName> {
+        let mut names = self.circuit_names_for_path(false);
+        for name in self.circuit_names_for_path(true) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// Circuits that may produce this proof type for an E3 on `preset` (threshold or DKG preset):
+    /// the l-BFV path's chunked circuits on that path, otherwise the trBFV circuits. Empty when
+    /// the path proves no such proof (C1 on the l-BFV path).
+    pub fn circuit_names_for(&self, preset: e3_fhe_params::BfvPreset) -> Vec<CircuitName> {
+        self.circuit_names_for_path(e3_fhe_params::is_lbfv_path(preset))
+    }
+
+    fn circuit_names_for_path(&self, lbfv: bool) -> Vec<CircuitName> {
+        let pick =
+            |trbfv: CircuitName, chunked: CircuitName| vec![if lbfv { chunked } else { trbfv }];
         match self {
             ProofType::C0PkBfv => vec![CircuitName::PkBfv],
+            // The l-BFV path proves no C1: the row proofs bind `sk` and the C2b chunk leaves bound
+            // `e_sm`, so no circuit produces a C1 proof there.
+            ProofType::C1PkGeneration if lbfv => vec![],
             ProofType::C1PkGeneration => vec![CircuitName::PkGeneration],
-            ProofType::C2aSkShareComputation => vec![CircuitName::SkShareComputation],
-            ProofType::C2bESmShareComputation => vec![CircuitName::ESmShareComputation],
-            ProofType::C3aSkShareEncryption => vec![CircuitName::ShareEncryption],
-            ProofType::C3bESmShareEncryption => vec![CircuitName::ShareEncryption],
-            ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => {
-                vec![CircuitName::DkgShareDecryption]
-            }
+            ProofType::C2aSkShareComputation => pick(
+                CircuitName::SkShareComputation,
+                CircuitName::SkC2ChunkFinalize,
+            ),
+            ProofType::C2bESmShareComputation => pick(
+                CircuitName::ESmShareComputation,
+                CircuitName::ESmC2ChunkFinalize,
+            ),
+            ProofType::C3aSkShareEncryption | ProofType::C3bESmShareEncryption => pick(
+                CircuitName::ShareEncryption,
+                CircuitName::ShareEncryptionChunked,
+            ),
+            ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => pick(
+                CircuitName::DkgShareDecryption,
+                CircuitName::DkgShareDecryptionChunked,
+            ),
             ProofType::C6ThresholdShareDecryption => vec![CircuitName::ThresholdShareDecryption],
-            ProofType::C7DecryptedSharesAggregation => {
-                vec![CircuitName::DecryptedSharesAggregation]
-            }
+            ProofType::C7DecryptedSharesAggregation => pick(
+                CircuitName::DecryptedSharesAggregation,
+                CircuitName::DecryptedSharesAggregationWide,
+            ),
             ProofType::C5PkAggregation => vec![CircuitName::PkAggregation],
+            ProofType::LbfvPkGeneration => vec![CircuitName::LbfvPkGeneration],
+            ProofType::RlkGeneration => vec![CircuitName::RlkGeneration],
+            ProofType::LbfvPkAggregation => vec![CircuitName::LbfvPkAggregation],
+            ProofType::RlkAggregation => vec![CircuitName::RlkAggregation],
         }
     }
 
@@ -76,6 +170,77 @@ impl ProofType {
     pub fn attestation_slash_reason(&self) -> FixedBytes<32> {
         keccak256(U256::from(*self as u8).to_be_bytes::<32>())
     }
+
+    pub fn is_multirow(self) -> bool {
+        matches!(
+            self,
+            Self::LbfvPkGeneration
+                | Self::RlkGeneration
+                | Self::LbfvPkAggregation
+                | Self::RlkAggregation
+        )
+    }
+
+    /// Derive the proof instance from the signed circuit public inputs.
+    pub fn instance_from_public_signals(
+        self,
+        public_signals: &[u8],
+        lbfv_row_count: Option<usize>,
+    ) -> Result<u32> {
+        if !self.is_multirow() {
+            return Ok(0);
+        }
+
+        let row_count = lbfv_row_count
+            .ok_or_else(|| anyhow!("missing l-BFV row count for proof type {self:?}"))?;
+
+        let circuit = self.circuit_names()[0];
+        let row = public_u32_input(circuit, public_signals, "row_index", self)?;
+        ensure!(
+            (row as usize) < row_count,
+            "row_index {row} is outside 0..{row_count}"
+        );
+        if self != Self::RlkAggregation {
+            return Ok(row);
+        }
+        let component = public_u32_input(circuit, public_signals, "component", self)?;
+        let component = RlkAggregationComponent::from_index(component).ok_or_else(|| {
+            anyhow!("RLK aggregation component {component} is not 0 (d0) or 1 (d2)")
+        })?;
+        Ok(component.index() * row_count as u32 + row)
+    }
+
+    /// Validate the circuit mapping and derive the stable proof identity.
+    pub fn identity(self, proof: &Proof, lbfv_row_count: Option<usize>) -> Result<ProofIdentity> {
+        ensure!(
+            self.circuit_names().contains(&proof.circuit),
+            "circuit {:?} does not match proof type {self:?}",
+            proof.circuit
+        );
+        Ok(ProofIdentity {
+            proof_type: self,
+            instance: self.instance_from_public_signals(&proof.public_signals, lbfv_row_count)?,
+        })
+    }
+}
+
+fn public_u32_input(
+    circuit: CircuitName,
+    public_signals: &[u8],
+    name: &str,
+    proof_type: ProofType,
+) -> Result<u32> {
+    let field = circuit
+        .input_layout()
+        .extract_field(public_signals, name)
+        .ok_or_else(|| anyhow!("missing {name} public input for {proof_type:?}"))?;
+    ensure!(
+        field[..28].iter().all(|byte| *byte == 0),
+        "{name} public input does not fit u32"
+    );
+    Ok(u32::from_be_bytes(
+        field[28..].try_into().expect("four-byte u32 suffix"),
+    ))
 }
 
 impl fmt::Display for ProofType {
@@ -371,43 +536,226 @@ mod tests {
     }
 
     #[test]
-    fn proof_type_circuit_names_mapping() {
-        assert_eq!(ProofType::C0PkBfv.circuit_names(), vec![CircuitName::PkBfv]);
+    fn proof_type_discriminants_preserve_durable_order() {
+        let expected = [
+            (ProofType::C0PkBfv, 0),
+            (ProofType::C1PkGeneration, 1),
+            (ProofType::C2aSkShareComputation, 2),
+            (ProofType::C2bESmShareComputation, 3),
+            (ProofType::C3aSkShareEncryption, 4),
+            (ProofType::C3bESmShareEncryption, 5),
+            (ProofType::C4aSkShareDecryption, 6),
+            (ProofType::C4bESmShareDecryption, 7),
+            (ProofType::C5PkAggregation, 8),
+            (ProofType::C6ThresholdShareDecryption, 9),
+            (ProofType::C7DecryptedSharesAggregation, 10),
+            (ProofType::LbfvPkGeneration, 11),
+            (ProofType::RlkGeneration, 12),
+            (ProofType::LbfvPkAggregation, 13),
+            (ProofType::RlkAggregation, 14),
+        ];
+
+        assert_eq!(ProofType::ALL, expected.map(|(proof_type, _)| proof_type));
+        for (proof_type, discriminant) in expected {
+            assert_eq!(proof_type as u8, discriminant, "{proof_type:?}");
+        }
+    }
+
+    #[test]
+    fn proof_type_bincode_bytes_preserve_variant_order() {
+        for proof_type in ProofType::ALL {
+            let discriminant = proof_type as u8;
+            let expected = [discriminant, 0, 0, 0];
+            assert_eq!(bincode::serialize(&proof_type).unwrap(), expected);
+            assert_eq!(
+                bincode::deserialize::<ProofType>(&expected).unwrap(),
+                proof_type
+            );
+        }
+    }
+
+    #[test]
+    fn proof_type_circuit_names_mapping_is_complete() {
+        use e3_fhe_params::BfvPreset;
+        use CircuitName as C;
+        // (proof type, trBFV circuit, l-BFV circuit; `None` when the l-BFV path proves none)
+        let expected = [
+            (ProofType::C0PkBfv, C::PkBfv, Some(C::PkBfv)),
+            (ProofType::C1PkGeneration, C::PkGeneration, None),
+            (
+                ProofType::C2aSkShareComputation,
+                C::SkShareComputation,
+                Some(C::SkC2ChunkFinalize),
+            ),
+            (
+                ProofType::C2bESmShareComputation,
+                C::ESmShareComputation,
+                Some(C::ESmC2ChunkFinalize),
+            ),
+            (
+                ProofType::C3aSkShareEncryption,
+                C::ShareEncryption,
+                Some(C::ShareEncryptionChunked),
+            ),
+            (
+                ProofType::C3bESmShareEncryption,
+                C::ShareEncryption,
+                Some(C::ShareEncryptionChunked),
+            ),
+            (
+                ProofType::C4aSkShareDecryption,
+                C::DkgShareDecryption,
+                Some(C::DkgShareDecryptionChunked),
+            ),
+            (
+                ProofType::C4bESmShareDecryption,
+                C::DkgShareDecryption,
+                Some(C::DkgShareDecryptionChunked),
+            ),
+            (
+                ProofType::C5PkAggregation,
+                C::PkAggregation,
+                Some(C::PkAggregation),
+            ),
+            (
+                ProofType::C6ThresholdShareDecryption,
+                C::ThresholdShareDecryption,
+                Some(C::ThresholdShareDecryption),
+            ),
+            (
+                ProofType::C7DecryptedSharesAggregation,
+                C::DecryptedSharesAggregation,
+                Some(C::DecryptedSharesAggregationWide),
+            ),
+            (
+                ProofType::LbfvPkGeneration,
+                C::LbfvPkGeneration,
+                Some(C::LbfvPkGeneration),
+            ),
+            (
+                ProofType::RlkGeneration,
+                C::RlkGeneration,
+                Some(C::RlkGeneration),
+            ),
+            (
+                ProofType::LbfvPkAggregation,
+                C::LbfvPkAggregation,
+                Some(C::LbfvPkAggregation),
+            ),
+            (
+                ProofType::RlkAggregation,
+                C::RlkAggregation,
+                Some(C::RlkAggregation),
+            ),
+        ];
+
         assert_eq!(
-            ProofType::C1PkGeneration.circuit_names(),
-            vec![CircuitName::PkGeneration]
+            ProofType::ALL,
+            expected.map(|(proof_type, _, _)| proof_type)
         );
-        assert_eq!(
-            ProofType::C3aSkShareEncryption.circuit_names(),
-            vec![CircuitName::ShareEncryption]
-        );
-        assert_eq!(
-            ProofType::C3bESmShareEncryption.circuit_names(),
-            vec![CircuitName::ShareEncryption]
-        );
-        assert_eq!(
-            ProofType::C4aSkShareDecryption.circuit_names(),
-            vec![CircuitName::DkgShareDecryption]
-        );
-        assert_eq!(
-            ProofType::C4bESmShareDecryption.circuit_names(),
-            vec![CircuitName::DkgShareDecryption]
-        );
-        assert_eq!(
-            ProofType::C2aSkShareComputation.circuit_names(),
-            vec![CircuitName::SkShareComputation]
-        );
-        assert_eq!(
-            ProofType::C2bESmShareComputation.circuit_names(),
-            vec![CircuitName::ESmShareComputation]
-        );
-        assert_eq!(
-            ProofType::C6ThresholdShareDecryption.circuit_names(),
-            vec![CircuitName::ThresholdShareDecryption]
-        );
-        assert_eq!(
-            ProofType::C7DecryptedSharesAggregation.circuit_names(),
-            vec![CircuitName::DecryptedSharesAggregation]
-        );
+        for (proof_type, trbfv, lbfv) in expected {
+            for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
+                assert_eq!(
+                    proof_type.circuit_names_for(preset),
+                    vec![trbfv],
+                    "{proof_type:?}"
+                );
+            }
+            for preset in [
+                BfvPreset::InsecureThresholdLbfv,
+                BfvPreset::SecureThreshold16384,
+            ] {
+                assert_eq!(
+                    proof_type.circuit_names_for(preset),
+                    lbfv.into_iter().collect::<Vec<_>>(),
+                    "{proof_type:?}"
+                );
+            }
+            let union = match lbfv {
+                Some(lbfv) if lbfv != trbfv => vec![trbfv, lbfv],
+                _ => vec![trbfv],
+            };
+            assert_eq!(proof_type.circuit_names(), union, "{proof_type:?}");
+        }
+    }
+
+    #[test]
+    fn rlk_aggregation_instances_separate_components_of_a_row() {
+        let field = e3_zk_config::FIELD_BYTE_LEN;
+        let signals = |row: u8, component: u8| {
+            let mut signals = vec![0u8; 10 * field];
+            signals[6 * field - 1] = row;
+            signals[7 * field - 1] = component;
+            signals
+        };
+        let instance = |row, component| {
+            ProofType::RlkAggregation
+                .instance_from_public_signals(&signals(row, component), Some(5))
+        };
+
+        assert_eq!(instance(3, 0).unwrap(), 3);
+        assert_eq!(instance(3, 1).unwrap(), 8);
+        assert!(instance(3, 2).is_err());
+        assert!(instance(5, 0).is_err());
+    }
+
+    #[test]
+    fn existing_proof_payload_digests_are_stable() {
+        let expected = [
+            (
+                ProofType::C0PkBfv,
+                "37507604f71509f27967c0f4249478526d7f4006d7598ef672ca9091a33bff13",
+            ),
+            (
+                ProofType::C1PkGeneration,
+                "df0b5be871f1bca9705f2f2491ad11b746d1dad82ca6ae4c18f2d7d7b10896e6",
+            ),
+            (
+                ProofType::C2aSkShareComputation,
+                "53925d98f1735af2b6bd6fe20ec37aa02f5b13af58856531407f8d54c022239b",
+            ),
+            (
+                ProofType::C2bESmShareComputation,
+                "68b1e1c357c37c7c6fd065e5d56f08fc13e8b034367f5f7bb4276c366623fad6",
+            ),
+            (
+                ProofType::C3aSkShareEncryption,
+                "d6c33915e48b266e16fc921435a2a5f543e78c157f25c14f62683a9e0f7cb462",
+            ),
+            (
+                ProofType::C3bESmShareEncryption,
+                "233970e7eb9996637b8d31c5812cc244fb69df3ecbeacec5dc6809ac20286ff4",
+            ),
+            (
+                ProofType::C4aSkShareDecryption,
+                "679bced615422ba5eee8f2d8cc0b5c9a6bc576db22176cfca2eb559170efcf60",
+            ),
+            (
+                ProofType::C4bESmShareDecryption,
+                "9665346cdf9b7d7a49092ec195edb7e7a842f531b2e4c291d5c8f1c3c069d1cf",
+            ),
+            (
+                ProofType::C5PkAggregation,
+                "cc48e7c7daf150e9c83a556cb26b4ea761a18c9372b55edbdcfc4cab288d55c2",
+            ),
+            (
+                ProofType::C6ThresholdShareDecryption,
+                "99f1e3c1c8debdfb62a4d18f79433b089e4712350daebf925f25fe96eff1357c",
+            ),
+            (
+                ProofType::C7DecryptedSharesAggregation,
+                "11729ea624067dbb9c123454c35a59522eadb7d3cbf792ea0c130417237cd157",
+            ),
+        ];
+
+        for (proof_type, digest) in expected {
+            let mut payload = test_payload();
+            payload.proof_type = proof_type;
+            assert_eq!(
+                payload.digest().unwrap().as_slice(),
+                hex::decode(digest).unwrap().as_slice(),
+                "{proof_type:?}"
+            );
+        }
     }
 }

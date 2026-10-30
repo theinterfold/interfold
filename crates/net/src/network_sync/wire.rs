@@ -23,7 +23,7 @@ pub(crate) const MAX_DIRECT_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 /// The largest sync envelope that a direct reply carries. The transport frame adds the CBOR enum
 /// and byte-string headers to the envelope, and must stay within the 10 MiB response limit.
 pub(crate) const MAX_SYNC_ENVELOPE_BYTES: usize = MAX_DIRECT_MESSAGE_BYTES - 64;
-pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
+pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 const GOSSIP_MAGIC: [u8; 4] = *b"IFG3";
 const SYNC_MAGIC: [u8; 4] = *b"IFS3";

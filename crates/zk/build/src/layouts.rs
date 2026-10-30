@@ -123,14 +123,8 @@ pub fn check(root: &Path, request: &Request) -> Result<()> {
         let artifact: Value = serde_json::from_slice(&fs::read(&path).with_context(|| format!("Read {}; prepare this pair with pnpm build:circuits --preset {preset} --committee {committee}", path.display()))?)?;
         let count = validate_abi(&artifact["abi"], threshold)
             .with_context(|| format!("{preset}/{committee} compiled decryption ABI"))?;
-        // The development/CI pair occupies honk/ itself; other pairs coexist below it.
-        let base = root.join("packages/interfold-contracts/contracts/verifiers/bfv/honk");
-        let directory = if preset == "insecure-64" && committee == "minimum" {
-            base
-        } else {
-            base.join(preset).join(committee)
-        };
-        let source = directory.join("DecryptionAggregatorVerifier.sol");
+        let source = crate::honk_verifier_dir(root, preset, committee)
+            .join("DecryptionAggregatorVerifier.sol");
         validate_honk_count(
             &fs::read_to_string(&source).with_context(|| format!("Read {}", source.display()))?,
             count,
@@ -148,6 +142,7 @@ pub fn check(root: &Path, request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_fhe_params::BfvPreset;
     use serde_json::json;
 
     // Public ABI excerpt of the independently compiled insecure/minimum decryption aggregator.
@@ -223,7 +218,8 @@ mod tests {
         )
         .unwrap();
         let before = crate::tests::snapshot(temp.path());
-        assert!(check(temp.path(), &crate::tests::request()).is_err());
+        let request = crate::tests::request_for(BfvPreset::InsecureThreshold64);
+        assert!(check(temp.path(), &request).is_err());
         assert_eq!(crate::tests::snapshot(temp.path()), before);
     }
 
@@ -234,15 +230,16 @@ mod tests {
         let files = [
             ("scripts/circuits/build-pairs.json", r#"[["insecure-64","minimum"]]"#.to_string()),
             ("dist/circuits/insecure-64/minimum/evm/recursive_aggregation/decryption_aggregator/decryption_aggregator.json", json!({"abi": compiled_abi()}).to_string()),
-            ("packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol", "uint256 constant NUMBER_OF_PUBLIC_INPUTS = 72;".to_string()),
+            ("packages/interfold-contracts/contracts/verifiers/bfv/honk/insecure-64/minimum/DecryptionAggregatorVerifier.sol", "uint256 constant NUMBER_OF_PUBLIC_INPUTS = 72;".to_string()),
         ];
         for (path, contents) in &files {
             let path = root.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, contents).unwrap();
         }
+        let request = crate::tests::request_for(BfvPreset::InsecureThreshold64);
         let before = crate::tests::snapshot(root);
-        check(root, &crate::tests::request()).unwrap();
+        check(root, &request).unwrap();
         assert_eq!(crate::tests::snapshot(root), before);
         fs::write(
             root.join(files[2].0),
@@ -250,7 +247,7 @@ mod tests {
         )
         .unwrap();
         let before = crate::tests::snapshot(root);
-        assert!(check(root, &crate::tests::request()).is_err());
+        assert!(check(root, &request).is_err());
         assert_eq!(crate::tests::snapshot(root), before);
     }
 }

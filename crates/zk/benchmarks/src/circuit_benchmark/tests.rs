@@ -12,7 +12,7 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
     ))
     .unwrap();
     assert_eq!(config.select("secure", &[]).unwrap().len(), 11);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 10);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 14);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
@@ -224,8 +224,15 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
 }
 
 #[test]
+fn an_insecure_64_export_replays_on_the_insecure_64_pair() {
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1}});
+    let cfg = protocol::configuration(&doc, None, None, 1).unwrap();
+    assert_eq!(cfg.preset, "insecure-64");
+}
+
+#[test]
 fn replay_rejects_bad_proofs_and_wrong_configuration_before_evm_execution() {
-    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1},"folded_artifacts":{"dkg_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"},"decryption_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"}}});
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure","committee_n":3,"committee_h":2,"committee_t":1},"folded_artifacts":{"dkg_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"},"decryption_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"}}});
     assert!(protocol::configuration(&doc, Some("secure"), None, 1).is_err());
     assert!(protocol::configuration(&doc, None, Some("micro"), 1).is_err());
     assert!(protocol::folded(&doc).is_err());
@@ -350,6 +357,7 @@ fn integration_launcher_delivers_full_proof_controls_and_structured_export_paths
     let cfg = protocol::Configuration {
         mode: "secure".into(),
         preset: "secure-8192".into(),
+        request_preset: None,
         committee: e3_committee::CiphernodesCommitteeSize::Micro,
         jobs: 3,
         bb_binary: Some(PathBuf::from("/validated/bb")),
@@ -532,7 +540,8 @@ fn integration_child_uses_validated_bb_even_when_path_selects_another_binary() {
     assert!(e3_zk_build::reports_version(&observed, "5.2.0"));
     let cfg = protocol::Configuration {
         mode: "insecure".into(),
-        preset: "insecure-64".into(),
+        preset: "insecure".into(),
+        request_preset: None,
         committee: e3_committee::CiphernodesCommitteeSize::Minimum,
         jobs: 1,
         bb_binary: Some(selected.clone()),

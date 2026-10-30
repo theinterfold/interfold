@@ -68,7 +68,7 @@ const requestParams = {
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
-  paramSet: 0, // Insecure64 for development
+  paramSet: 0, // Insecure128 for development
   computeProviderParams: '0x...',
   customParams: '0x...',
 }
@@ -490,16 +490,18 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name               | On-chain `paramSet` index | Use case                                                                 |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_64'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
-| `'SECURE_THRESHOLD_8192'` | `2`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
+| Preset name                 | On-chain `paramSet` index | Use case                                                                       |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_64'`   | `0`                       | Fast local or testnet trBFV work. This preset is not cryptographically secure. |
+| `'INSECURE_THRESHOLD_LBFV'` | `4`                       | Fast local or testnet l-BFV work at degree 128. Not cryptographically secure.  |
+| `'SECURE_THRESHOLD_8192'`   | `2`                       | Production-equivalent work with degree 8192 and three ciphertext moduli.       |
+| `'SECURE_THRESHOLD_16384'`  | `3`                       | l-BFV work with degree 16384 and six ciphertext moduli.                        |
 
-| Network           | Supported presets                                       |
-| ----------------- | ------------------------------------------------------- |
-| Local development | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
-| Sepolia testnet   | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
-| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                          |
+| Network           | Supported presets                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| Local development | `'INSECURE_THRESHOLD_64'`, `'SECURE_THRESHOLD_8192'`, and `'SECURE_THRESHOLD_16384'` |
+| Sepolia testnet   | `'INSECURE_THRESHOLD_64'`, `'SECURE_THRESHOLD_8192'`, and `'SECURE_THRESHOLD_16384'` |
+| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                                                       |
 
 Use the preset that the target E3 selects. This package includes proof artifacts only for
 `'INSECURE_THRESHOLD_64'`. For secure proof generation, use matching application artifacts such as
@@ -509,9 +511,9 @@ the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 `generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
 user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
-`--preset insecure-64 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+`--preset insecure --committee minimum` (`scripts/compile-circuits.sh`), so they only match
 `'INSECURE_THRESHOLD_64'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
-`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=64 circuits cannot
+`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=128 circuits cannot
 execute.
 
 For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and

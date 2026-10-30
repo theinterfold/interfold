@@ -18,10 +18,10 @@ use num_traits::Signed;
 
 #[test]
 fn test_bound_and_bits_computation_consistency() {
-    let bounds = Configs::for_preset(BfvPreset::InsecureThreshold64)
+    let bounds = Configs::for_preset(BfvPreset::InsecureThreshold)
         .map(|config| config.bounds)
         .unwrap();
-    let bits = Configs::for_preset(BfvPreset::InsecureThreshold64)
+    let bits = Configs::for_preset(BfvPreset::InsecureThreshold)
         .map(|config| config.bits)
         .unwrap();
     let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
@@ -29,7 +29,7 @@ fn test_bound_and_bits_computation_consistency() {
     assert_eq!(
         max_pk_bound.clone(),
         BigUint::from(
-            (e3_fhe_params::constants::insecure_64::threshold::MODULI
+            (e3_fhe_params::constants::insecure::threshold::MODULI
                 .iter()
                 .max()
                 .unwrap()
@@ -42,17 +42,23 @@ fn test_bound_and_bits_computation_consistency() {
 
 #[test]
 fn insecure_e0_bound_matches_error1_sampler() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let bounds = Configs::for_preset(preset)
         .map(|config| config.bounds)
         .unwrap();
     let bits = Configs::for_preset(preset)
         .map(|config| config.bits)
         .unwrap();
-    // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
-    assert_eq!(bounds.e0_bound, BigUint::from(460800u32));
+    // B_Enc of the insecure search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+    assert_eq!(bounds.e0_bound, BigUint::from(389120u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
     assert_eq!(bits.e0_bit, 19);
+
+    let config = Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+    assert_eq!(config.bounds.e0_bound, BigUint::from(460800u32));
+    assert_eq!(config.bounds.e1_bound, BigUint::from(20u32));
+    assert_eq!(config.bits.e0_bit, 19);
 }
 
 /// ct1 hard-codes the CRS, so a key with a random `a` cannot be proven; say so up front.
@@ -76,17 +82,16 @@ fn keys_off_the_protocol_crs_are_rejected() {
 #[test]
 fn exact_encryption_material_is_repeatable_and_closes_both_reduced_identities() {
     use fhe_traits::{FheDecoder, Serialize};
-    for preset in [
-        BfvPreset::InsecureThreshold64,
-        BfvPreset::SecureThreshold8192,
-    ] {
+    for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
         let config = Configs::for_preset(preset).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&config.params).unwrap();
-        let (ciphertext, material) = sample
-            .public_key
-            .try_encrypt_with_intermediates(&sample.plaintext, &mut rand::rng())
-            .unwrap();
+        let (ciphertext, material) = e3_zk_witness::encrypt_with_intermediates(
+            &sample.public_key,
+            &sample.plaintext,
+            &mut rand::rng(),
+        )
+        .unwrap();
         let bytes = ciphertext.to_bytes();
         let inputs = Inputs::compute(&config, &sample, &ciphertext, &material).unwrap();
         let again = Inputs::compute(&config, &sample, &ciphertext, &material).unwrap();
@@ -168,11 +173,11 @@ fn reduce_by_long_division(poly: &Polynomial, n: usize) -> Polynomial {
 
 #[test]
 fn test_bfv_public_key_to_greco() {
-    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
     let sample =
         e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
     let (_, inputs) = encrypt_and_prepare(
-        &Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap(),
+        &Configs::for_preset(BfvPreset::InsecureThreshold).unwrap(),
         &sample,
     )
     .unwrap();
@@ -185,11 +190,11 @@ fn test_bfv_public_key_to_greco() {
 /// Both components must stay centered, and conversion must not modify the ciphertext.
 #[test]
 fn conversion_centers_both_components_and_is_repeatable() {
-    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
     let sample =
         e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
     let (ciphertext, _) = encrypt_and_prepare(
-        &Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap(),
+        &Configs::for_preset(BfvPreset::InsecureThreshold).unwrap(),
         &sample,
     )
     .unwrap();
@@ -216,11 +221,11 @@ fn conversion_centers_both_components_and_is_repeatable() {
 /// An extra component must not share the commitment of its two-component prefix.
 #[test]
 fn ciphertext_with_more_than_two_components_is_rejected() {
-    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
     let sample =
         e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
     let (ciphertext, _) = encrypt_and_prepare(
-        &Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap(),
+        &Configs::for_preset(BfvPreset::InsecureThreshold).unwrap(),
         &sample,
     )
     .unwrap();
@@ -247,11 +252,11 @@ fn ciphertext_with_more_than_two_components_is_rejected() {
 
 #[test]
 fn test_bfv_ciphertext_to_greco() {
-    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+    let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
     let sample =
         e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
     let (ciphertext, inputs) = encrypt_and_prepare(
-        &Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap(),
+        &Configs::for_preset(BfvPreset::InsecureThreshold).unwrap(),
         &sample,
     )
     .unwrap();

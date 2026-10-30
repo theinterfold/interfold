@@ -306,6 +306,41 @@ fn residue_range_fallback_rejects_the_modulus() {
     assert_in_residue_range::<8>(100, 100);
 }
 
+/// [`flatten`] / [`flatten_checked`] of one `A`-value polynomial whose values are read through
+/// `value_at(i)` instead of an array, so a caller packing a slice or a reordering of a larger
+/// polynomial does not first copy it into a new array. Copying `A` values element by element into
+/// an array and reading them back costs far more compile memory than the gates involved (a
+/// degree-16384 C4 opening: 27.6 GB with its copies, 13.6 GB with one fewer). The carriers equal
+/// `pack::<A, BIT>` / `pack_checked::<A, BIT>` of the values `[value_at(0), ..., value_at(A - 1)]`.
+pub fn flatten_with<let A: u32, let BIT: u32, Env>(
+    mut inputs: [Field],
+    value_at: fn[Env](u32) -> Field,
+    checked: bool,
+) -> [Field] {
+    let (nibble_bits, group) = packing_layout::<BIT>();
+    let base = 2.pow_32(nibble_bits as Field);
+    let radix = 2.pow_32((nibble_bits + 4) as Field);
+    let num_chunks = (A + group - 1) / group;
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+        let mut acc = 0;
+        for i in 0..take {
+            let digit = value_at(chunk * group + i) + base;
+            if checked {
+                // digit < radix = 2^(nibble_bits + 4): the injectivity condition of `pack_checked`.
+                digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
+            }
+            acc = acc * radix + digit;
+        }
+        for _ in 0..(group - take) {
+            acc = acc * radix + base;
+        }
+        inputs = inputs.push_back(acc);
+    }
+    inputs
+}
+
 /// Appends `value_at(0) .. value_at(A - 1)` packed at exactly `W` bits each: `253 / W` digits per
 /// carrier, big-endian, the last carrier padded with zero digits.
 ///
@@ -543,6 +578,37 @@ fn test_pack_checked_matches_pack_partial_chunk() {
     for i in 0..plain.len() {
         assert(plain[i] == checked[i]);
     }
+}
+
+#[test]
+fn test_pack_accepts_valid_signed_and_native_values() {
+    let signed = pack_checked::<3, 4>([-16, 0, 15]);
+    let native = pack_checked::<3, 4>([0, 8, 15]);
+
+    assert(signed.len() == 1);
+    assert(native.len() == 1);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_lower_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base + 1) * radix) + (base - radix);
+    assert(valid == colliding);
+
+    let _ = pack_checked::<2, 4>([1, -radix]);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_upper_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base - 1) * radix) + (base + radix);
+    assert(valid == colliding);
+
+    let _ = pack_checked::<2, 4>([-1, radix]);
 }
 
 #[test]

@@ -17,12 +17,9 @@ pub const NOIR_PATH: &str = "circuits/lib/src/configs/protocol.nr";
 
 pub fn solidity(params: &OperationParams) -> Result<String> {
     let mut text = format!("{HEADER}pragma solidity >=0.8.27;\n\n{GENERATED}library BfvProtocol {{\n    bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256(\"{BFV_ENCRYPTION_SCHEME}\");\n    bytes32 internal constant CIRCUIT_VERSION = keccak256(\"{INTERFOLD_BFV_VERSION}\");\n");
-    for preset in BfvPreset::PAIR_PRESETS {
-        let label = crate::tier(preset).to_uppercase();
+    for (param_set, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+        let label = solidity_label(preset)?;
         let material = params.get(preset);
-        let param_set = preset
-            .on_chain_param_set()
-            .context("Current parameter-set index")?;
         text.push_str(&format!("\n    bytes32 internal constant {label}_CONFIG_ID =\n        {:#x};\n    uint8 internal constant {label}_PARAM_SET = {param_set};\n    bytes32 internal constant {label}_PARAM_SET_HASH =\n        {:#x};\n", material.config_id, material.parameter_hash));
     }
     for committee in CiphernodesCommitteeSize::ALL {
@@ -44,15 +41,35 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
     Ok(text)
 }
 
+/// Solidity name of an on-chain parameter set. `SECURE` keeps its deployed name for secure-8192.
+fn solidity_label(preset: BfvPreset) -> Result<&'static str> {
+    Ok(match preset {
+        BfvPreset::InsecureThreshold64 => "INSECURE",
+        BfvPreset::SecureThreshold8192 => "SECURE",
+        BfvPreset::SecureThreshold16384 => "SECURE_16384",
+        BfvPreset::InsecureThresholdLbfv => "INSECURE_LBFV",
+        other => bail!("{other:?} has no on-chain parameter set"),
+    })
+}
+
 pub fn noir_sources(root: &Path) -> Vec<(PathBuf, String)> {
     let dimensions = CircuitDimensions::current();
     let protocol = format!("{HEADER}\n{GENERATED}\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = {};\npub global MESSAGE_COEFF_BYTE_LEN: u32 = {};\npub global FIELD_BYTE_LEN: u32 = {};\npub global PLAINTEXT_BYTE_LEN: u32 = {};\n", dimensions.message_coeffs_count, dimensions.message_coeff_byte_len, dimensions.field_byte_len, dimensions.plaintext_byte_len);
     let mut sources = vec![(root.join(NOIR_PATH), protocol)];
     for committee in CiphernodesCommitteeSize::ALL {
+        // One parity matrix per preset, plus the shared smudging widths where the committee has
+        // them; see `parity_files`.
+        let mut modules: String = crate::ARTIFACT_PRESETS
+            .iter()
+            .map(|preset| format!("pub mod parity_{};\n", crate::tier(*preset)))
+            .collect();
+        if crate::committee_has_smudging(committee) {
+            modules.push_str("pub mod smudging;\n");
+        }
         let values = committee.values();
         sources.push((
             root.join(format!("circuits/lib/src/configs/committee/{committee}/mod.nr")),
-            format!("{HEADER}\n{GENERATED}\npub global N_PARTIES: u32 = {};\npub global T: u32 = {};\npub global H: u32 = {};\n\npub mod parity_insecure;\npub mod parity_secure;\n", values.n, values.threshold, values.h),
+            format!("{HEADER}\n{GENERATED}\npub global N_PARTIES: u32 = {};\npub global T: u32 = {};\npub global H: u32 = {};\n\n{modules}", values.n, values.threshold, values.h),
         ));
     }
     sources

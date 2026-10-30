@@ -210,3 +210,92 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
     }
     assert_eq!(CircuitVariant::default(), CircuitVariant::Default);
 }
+
+#[test]
+fn appended_lbfv_enum_bytes_names_and_paths_are_unchanged() {
+    // Appended after the baseline 21 variants and the 19 trBFV chunk and Chonk variants; retired
+    // names keep their slot so later bytes hold.
+    for (offset, (name, path)) in [
+        ("SkShareComputationChunk", "dkg/sk_share_computation_chunk"),
+        (
+            "ESmShareComputationChunk",
+            "dkg/esm_share_computation_chunk",
+        ),
+        ("C2ChunkBatch", "recursive_aggregation/c2_chunk_batch"),
+        (
+            "SkC2ChunkFinalize",
+            "recursive_aggregation/sk_c2_chunk_finalize",
+        ),
+        (
+            "ESmC2ChunkFinalize",
+            "recursive_aggregation/esm_c2_chunk_finalize",
+        ),
+        ("C2abChunkFold", "recursive_aggregation/c2ab_chunk_fold"),
+        ("RlkGeneration", "threshold/rlk_generation"),
+        ("RlkAggregation", "threshold/rlk_aggregation"),
+        ("LbfvPkGeneration", "threshold/lbfv_pk_generation"),
+        ("LbfvPkAggregation", "threshold/lbfv_pk_aggregation"),
+        ("RlkGenerationLimb", "threshold/rlk_generation_limb"),
+        (
+            "LbfvGenerationFold",
+            "recursive_aggregation/lbfv_generation_fold",
+        ),
+        (
+            "LbfvGenerationFoldKernel",
+            "recursive_aggregation/lbfv_generation_fold_kernel",
+        ),
+        ("NodeFoldV2", "recursive_aggregation/node_fold_v2"),
+        ("NodesFoldV2", "recursive_aggregation/nodes_fold_v2"),
+        (
+            "NodesFoldV2Kernel",
+            "recursive_aggregation/nodes_fold_v2_kernel",
+        ),
+        (
+            "LbfvAggregationFold",
+            "recursive_aggregation/lbfv_aggregation_fold",
+        ),
+        (
+            "LbfvAggregationFoldKernel",
+            "recursive_aggregation/lbfv_aggregation_fold_kernel",
+        ),
+        ("DkgAggregatorV2", "recursive_aggregation/dkg_aggregator_v2"),
+        ("LbfvPkGenerationLimb", "threshold/lbfv_pk_generation_limb"),
+        ("PkGenerationChunked", "threshold/pk_generation_chunked"),
+        ("ShareEncryptionChunked", "dkg/share_encryption_chunked"),
+        ("DkgShareDecryptionChunked", "dkg/share_decryption_chunked"),
+        ("C3FoldChunked", "recursive_aggregation/c3_fold_chunked"),
+        (
+            "C3FoldKernelChunked",
+            "recursive_aggregation/c3_fold_kernel_chunked",
+        ),
+        ("C3abFoldChunked", "recursive_aggregation/c3ab_fold_chunked"),
+        ("NodeFoldChunked", "recursive_aggregation/node_fold_chunked"),
+        (
+            "DecryptedSharesAggregationWide",
+            "threshold/decrypted_shares_aggregation_wide",
+        ),
+        ("C4abFoldChunked", "recursive_aggregation/c4ab_fold_chunked"),
+        ("C3ChonkAppChunked", "chonk/c3_chonk_app_chunked"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let json = serde_json::Value::String(name.to_owned());
+        let circuit: CircuitName = serde_json::from_value(json.clone()).unwrap();
+        let bytes = (40 + offset as u32).to_le_bytes();
+        assert_eq!(
+            bincode::deserialize::<CircuitName>(&bytes).unwrap(),
+            circuit
+        );
+        assert_eq!(bincode::serialize(&circuit).unwrap(), bytes);
+        assert_eq!(serde_json::to_value(circuit).unwrap(), json);
+        assert_eq!(circuit.dir_path(), path);
+    }
+    // The l-BFV chunked C4 returns only its commitment; the trBFV C4 also returns its key tree.
+    assert_eq!(
+        CircuitName::DkgShareDecryptionChunked
+            .output_layout()
+            .field_count(),
+        Some(1)
+    );
+}

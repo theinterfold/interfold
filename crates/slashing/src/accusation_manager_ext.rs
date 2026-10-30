@@ -298,7 +298,7 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         }
@@ -432,6 +432,7 @@ mod tests {
                     accused_address: accused,
                     accused_party_id,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     data_hash: [7; 32],
                     evidence: Default::default(),
                 }
@@ -532,6 +533,7 @@ mod tests {
                     accused_address: accused,
                     accused_party_id,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     data_hash: [7; 32],
                     evidence: Default::default(),
                 }
@@ -635,6 +637,7 @@ mod tests {
                     accused_address: accused,
                     accused_party_id,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     data_hash: [7; 32],
                     evidence: alloy::primitives::Bytes::from(vec![0x11; 32]),
                 }

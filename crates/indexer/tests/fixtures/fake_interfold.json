@@ -1,0 +1,377 @@
+{
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "ciphertextOutput",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "ciphertextCommitment",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CiphertextOutputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address[]",
+          "name": "nodes",
+          "type": "address[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "publicKey",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "pkCommitment",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "CommitteePublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "inputHash",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "plaintextOutput",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "PlaintextOutputPublished",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "e3CryptoConfigIds",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "ciphertextOutput",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "ciphertextCommitment",
+          "type": "bytes32"
+        }
+      ],
+      "name": "emitCiphertextOutputPublished",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "publicKey",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "pkCommitment",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "emitCommitteePublished",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        },
+        {
+          "internalType": "uint256",
+          "name": "inputHash",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "emitInputPublished",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "plaintextOutput",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "emitPlaintextOutputPublished",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "seed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "requestBlock",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "encryptionSchemeId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "address",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "address",
+              "name": "decryptionVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "pkVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "committeePublicKey",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextOutput",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes",
+              "name": "plaintextOutput",
+              "type": "bytes"
+            },
+            {
+              "internalType": "address",
+              "name": "requester",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextCommitment",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct E3",
+          "name": "e3",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "name": "paramSetRegistry",
+      "outputs": [
+        {
+          "internalType": "bytes",
+          "name": "",
+          "type": "bytes"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "configId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "setCryptoConfigId",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bin": "6080604052348015600e575f5ffd5b506112948061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610086575f3560e01c806396ac0f3b1161005957806396ac0f3b14610122578063997a65491461013e578063d1245f621461015a578063e811aac21461018a57610086565b806314cb82561461008a578063406ed35c146100a65780635d168418146100d657806385be9c9014610106575b5f5ffd5b6100a4600480360381019061009f91906108cc565b6101a6565b005b6100c060048036038101906100bb9190610968565b610238565b6040516100cd9190610cbc565b60405180910390f35b6100f060048036038101906100eb9190610d06565b610447565b6040516100fd9190610d79565b60405180910390f35b610120600480360381019061011b9190610d99565b6104e1565b005b61013c60048036038101906101379190610e05565b610520565b005b61015860048036038101906101539190610e85565b610562565b005b610174600480360381019061016f9190610968565b6105a1565b6040516101819190610f1c565b60405180910390f35b6101a4600480360381019061019f9190610f35565b610600565b005b5f600167ffffffffffffffff8111156101c2576101c1610775565b5b6040519080825280602002602001820160405280156101f05781602001602082028036833780820191505090505b509050847fbf0636a312095f6c09c909823813b50e392323588d2d83432e7512c64041e67f82868686604051610229949392919061101b565b60405180910390a25050505050565b61024061061a565b604051806101e00160405280641cbe991a1481526020015f600281111561026a576102696109a2565b5b815260200163011e1a308152602001604051806040016040528063011e1a94815260200163011e1af881525081526020017f14f9360f06febcf574a557425de89f79616527bf261f25aeeebc03a76cb43e818152602001737f3e4df648b8cb96c1d343be976b91b97cad5c2173ffffffffffffffffffffffffffffffffffffffff1681526020015f60ff168152602001604051602001610309906110cd565b6040516020818303038152906040528152602001734b0d8c2e5f7a6c832f8b16d3ab0e7f5d9e9b24b173ffffffffffffffffffffffffffffffffffffffff168152602001735c1e9d3f8a7b6c932f9c27e4ab1f8f6e0f0c35c273ffffffffffffffffffffffffffffffffffffffff1681526020017f06964bb7beff00b669cdbbb9d638474c3baddfb0c6b23daa3f473f9cc82fa2ca81526020017ffb187777e3981c450650dcf397080199d0877e5a65ee8e3989cb9abff10545a081526020016040516020016103d890611135565b604051602081830303815290604052815260200173dead00000000000000000000000000000000000173ffffffffffffffffffffffffffffffffffffffff1681526020017f9b9827ce89df210793f4658a00c78cd69bb3c052c06e7fd7e3dd3d79357aceb78152509050919050565b5f602052805f5260405f205f91509050805461046290611180565b80601f016020809104026020016040519081016040528092919081815260200182805461048e90611180565b80156104d95780601f106104b0576101008083540402835291602001916104d9565b820191905f5260205f20905b8154815290600101906020018083116104bc57829003601f168201915b505050505081565b827f14aae41a7e884e6fa7416650ba8bbacdf3ec272ae0a1659100be08303dce045583836040516105139291906111b0565b60405180910390a2505050565b837f7555a0b1b87fe36304326aed23f5c78102b63922b1141f8df7d4593eff2021dd848484604051610554939291906111ed565b60405180910390a250505050565b827f3a140076c461ebc41d74833ae0ee8bbc8079a135a63392098cd381e84350b69b8383604051610594929190611229565b60405180910390a2505050565b5f5f5f1b60015f8481526020019081526020015f2054146105d55760015f8381526020019081526020015f205490506105fb565b7f968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d4955f1b90505b919050565b8060015f8481526020019081526020015f20819055505050565b604051806101e001604052805f81526020015f600281111561063f5761063e6109a2565b5b81526020015f81526020016106526106f7565b81526020015f81526020015f73ffffffffffffffffffffffffffffffffffffffff1681526020015f60ff168152602001606081526020015f73ffffffffffffffffffffffffffffffffffffffff1681526020015f73ffffffffffffffffffffffffffffffffffffffff1681526020015f81526020015f8152602001606081526020015f73ffffffffffffffffffffffffffffffffffffffff1681526020015f81525090565b6040518060400160405280600290602082028036833780820191505090505090565b5f604051905090565b5f5ffd5b5f5ffd5b5f819050919050565b61073c8161072a565b8114610746575f5ffd5b50565b5f8135905061075781610733565b92915050565b5f5ffd5b5f5ffd5b5f601f19601f8301169050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b6107ab82610765565b810181811067ffffffffffffffff821117156107ca576107c9610775565b5b80604052505050565b5f6107dc610719565b90506107e882826107a2565b919050565b5f67ffffffffffffffff82111561080757610806610775565b5b61081082610765565b9050602081019050919050565b828183375f83830152505050565b5f61083d610838846107ed565b6107d3565b90508281526020810184848401111561085957610858610761565b5b61086484828561081d565b509392505050565b5f82601f8301126108805761087f61075d565b5b813561089084826020860161082b565b91505092915050565b5f819050919050565b6108ab81610899565b81146108b5575f5ffd5b50565b5f813590506108c6816108a2565b92915050565b5f5f5f5f608085870312156108e4576108e3610722565b5b5f6108f187828801610749565b945050602085013567ffffffffffffffff81111561091257610911610726565b5b61091e8782880161086c565b935050604061092f878288016108b8565b925050606085013567ffffffffffffffff8111156109505761094f610726565b5b61095c8782880161086c565b91505092959194509250565b5f6020828403121561097d5761097c610722565b5b5f61098a84828501610749565b91505092915050565b61099c8161072a565b82525050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602160045260245ffd5b600381106109e0576109df6109a2565b5b50565b5f8190506109f0826109cf565b919050565b5f6109ff826109e3565b9050919050565b610a0f816109f5565b82525050565b5f60029050919050565b5f81905092915050565b5f819050919050565b5f610a3d8383610993565b60208301905092915050565b5f602082019050919050565b610a5e81610a15565b610a688184610a1f565b9250610a7382610a29565b805f5b83811015610aa3578151610a8a8782610a32565b9650610a9583610a49565b925050600181019050610a76565b505050505050565b610ab481610899565b82525050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f610ae382610aba565b9050919050565b610af381610ad9565b82525050565b5f60ff82169050919050565b610b0e81610af9565b82525050565b5f81519050919050565b5f82825260208201905092915050565b8281835e5f83830152505050565b5f610b4682610b14565b610b508185610b1e565b9350610b60818560208601610b2e565b610b6981610765565b840191505092915050565b5f61020083015f830151610b8a5f860182610993565b506020830151610b9d6020860182610a06565b506040830151610bb06040860182610993565b506060830151610bc36060860182610a55565b506080830151610bd660a0860182610aab565b5060a0830151610be960c0860182610aea565b5060c0830151610bfc60e0860182610b05565b5060e0830151848203610100860152610c158282610b3c565b915050610100830151610c2c610120860182610aea565b50610120830151610c41610140860182610aea565b50610140830151610c56610160860182610aab565b50610160830151610c6b610180860182610aab565b506101808301518482036101a0860152610c858282610b3c565b9150506101a0830151610c9c6101c0860182610aea565b506101c0830151610cb16101e0860182610aab565b508091505092915050565b5f6020820190508181035f830152610cd48184610b74565b905092915050565b610ce581610af9565b8114610cef575f5ffd5b50565b5f81359050610d0081610cdc565b92915050565b5f60208284031215610d1b57610d1a610722565b5b5f610d2884828501610cf2565b91505092915050565b5f82825260208201905092915050565b5f610d4b82610b14565b610d558185610d31565b9350610d65818560208601610b2e565b610d6e81610765565b840191505092915050565b5f6020820190508181035f830152610d918184610d41565b905092915050565b5f5f5f60608486031215610db057610daf610722565b5b5f610dbd86828701610749565b935050602084013567ffffffffffffffff811115610dde57610ddd610726565b5b610dea8682870161086c565b9250506040610dfb868287016108b8565b9150509250925092565b5f5f5f5f60808587031215610e1d57610e1c610722565b5b5f610e2a87828801610749565b945050602085013567ffffffffffffffff811115610e4b57610e4a610726565b5b610e578782880161086c565b9350506040610e6887828801610749565b9250506060610e7987828801610749565b91505092959194509250565b5f5f5f60608486031215610e9c57610e9b610722565b5b5f610ea986828701610749565b935050602084013567ffffffffffffffff811115610eca57610ec9610726565b5b610ed68682870161086c565b925050604084013567ffffffffffffffff811115610ef757610ef6610726565b5b610f038682870161086c565b9150509250925092565b610f1681610899565b82525050565b5f602082019050610f2f5f830184610f0d565b92915050565b5f5f60408385031215610f4b57610f4a610722565b5b5f610f5885828601610749565b9250506020610f69858286016108b8565b9150509250929050565b5f81519050919050565b5f82825260208201905092915050565b5f819050602082019050919050565b5f610fa78383610aea565b60208301905092915050565b5f602082019050919050565b5f610fc982610f73565b610fd38185610f7d565b9350610fde83610f8d565b805f5b8381101561100e578151610ff58882610f9c565b975061100083610fb3565b925050600181019050610fe1565b5085935050505092915050565b5f6080820190508181035f8301526110338187610fbf565b905081810360208301526110478186610d41565b90506110566040830185610f0d565b81810360608301526110688184610d41565b905095945050505050565b5f82825260208201905092915050565b7f637573746f6d5f706172616d73000000000000000000000000000000000000005f82015250565b5f6110b7600d83611073565b91506110c282611083565b602082019050919050565b5f6020820190508181035f8301526110e4816110ab565b9050919050565b7f6465637279707465645f726573756c74000000000000000000000000000000005f82015250565b5f61111f601083611073565b915061112a826110eb565b602082019050919050565b5f6020820190508181035f83015261114c81611113565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602260045260245ffd5b5f600282049050600182168061119757607f821691505b6020821081036111aa576111a9611153565b5b50919050565b5f6040820190508181035f8301526111c88185610d41565b90506111d76020830184610f0d565b9392505050565b6111e78161072a565b82525050565b5f6060820190508181035f8301526112058186610d41565b905061121460208301856111de565b61122160408301846111de565b949350505050565b5f6040820190508181035f8301526112418185610d41565b905081810360208301526112558184610d41565b9050939250505056fea2646970667358221220808e99a99a0247bab33abdcc76680034bfb3503b0d67047306956aa51671ed5c64736f6c634300081c0033"
+}

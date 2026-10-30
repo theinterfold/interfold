@@ -33,7 +33,12 @@ actix = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+alloy = { workspace = true }
 e3-event-system = { workspace = true }
+e3-committee-hash = { workspace = true }
+e3-fhe-params = { workspace = true }
+fhe = { workspace = true }
+fhe-traits = { workspace = true }
 e3-request = { workspace = true }
 e3-sync = { workspace = true }
 e3-layout-lock = { workspace = true }

@@ -157,12 +157,7 @@ Claims must respect three independent holds:
    terminal release. Finalized members remain held through E3 termination **and** past request-time
    manager's accusation submission deadline, even if they deregister. Anyone can call
    `releaseCommittee` on that registry; a new implementation must backfill live obligations or wait
-   for their termination. `unresolvedCommitteesOf(operator)` counts these committees, and
-   `committeeObligationAt(operator, index)` lists them from a set that `BondingSlashingLib` changes
-   together with `unresolvedCommitteeCount`. The set began at the upgrade that added it, so it can
-   miss older committees but never holds extra ones: for an operator in an older committee, the last
-   indexes revert `CommitteeObligationNotTracked`, and callers such as `ciphernode status` read the
-   `CommitteeObligationUpdated` events instead.
+   for their termination.
 3. Aggregate proposal locks in BondingRegistry from every current or retained manager. Withdraw,
    unbond, deregister, and claim revert `OperatorUnderSlash` until every applicable proposal
    resolves. Exit paths read local counts, never call a potentially broken manager.

@@ -17,6 +17,7 @@ where
     input: ComputeInput,
     provider: P,
     processor: FHEProcessor,
+    committee_public_key_hash: Option<[u8; 32]>,
 }
 
 impl<P> ComputeManager<P>
@@ -42,7 +43,17 @@ where
                 published,
             },
             processor: fhe_processor,
+            committee_public_key_hash: None,
         }
+    }
+
+    /// Binds an l-BFV committee key to the committee public key hash that the journal reveals.
+    ///
+    /// See [`crate::SecureProcess::bind_committee_key`]. The provider must bind the key to the
+    /// same hash, or it proves a different computation from the one whose ciphertext this returns.
+    pub fn with_committee_public_key_hash(mut self, committee_public_key_hash: [u8; 32]) -> Self {
+        self.committee_public_key_hash = Some(committee_public_key_hash);
+        self
     }
 
     /// Proves the computation and returns the ciphertext to publish.
@@ -74,7 +85,12 @@ where
         policy: InputPolicy,
         batching: Batching,
     ) -> Result<(P::Output, Vec<u8>), ComputeError> {
-        let (_, ciphertext) = self.input.run_batched(self.processor, policy, batching)?;
+        let (_, ciphertext) = self.input.run_bound_batched(
+            self.processor,
+            policy,
+            self.committee_public_key_hash,
+            batching,
+        )?;
 
         Ok((self.provider.prove(&self.input, policy), ciphertext))
     }

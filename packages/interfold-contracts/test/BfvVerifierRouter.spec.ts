@@ -25,8 +25,17 @@ function proofWithAnchors(
   return abiCoder.encode(["bytes", "bytes32[]"], ["0x1234", inputs]);
 }
 
+function pkProofWithAnchor(length: number, nodesFoldKeyHash: string): string {
+  const inputs = Array.from({ length }, () => ethers.ZeroHash);
+  inputs[0] = nodesFoldKeyHash;
+  return abiCoder.encode(["bytes", "bytes32[]"], ["0x1234", inputs]);
+}
+
 describe("BFV verifier routers", function () {
   it("preserves decryption route lengths for all committees and non-preset positive thresholds", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
     for (const [threshold, expected] of [
       [1, 64],
       [4, 73],
@@ -39,14 +48,22 @@ describe("BFV verifier routers", function () {
       );
       const router = await ethers.deployContract(
         "BfvDecryptionVerifierRouter",
-        [[await route.getAddress()], threshold],
+        [
+          await registry.getAddress(),
+          [await route.getAddress()],
+          [0],
+          threshold,
+        ],
       );
       const [, count] = await router.routeAt(0);
       expect(count).to.equal(expected);
     }
   });
 
-  it("routes PK proofs by public-input length and VK anchors", async function () {
+  it("routes PK proofs by public-input length and nodes-fold VK anchor", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
     const [, nodeOne, nodeTwo] = await ethers.getSigners();
     const sortedNodes = [
       await nodeOne.getAddress(),
@@ -62,30 +79,29 @@ describe("BFV verifier routers", function () {
     const minimum = await ethers.deployContract("MockBfvPkVerifierRoute", [
       2,
       HASH_A,
-      HASH_B,
       false,
     ]);
     const sameLength = await ethers.deployContract("MockBfvPkVerifierRoute", [
       10,
       HASH_A,
-      HASH_B,
       false,
     ]);
     const small = await ethers.deployContract("MockBfvPkVerifierRoute", [
       10,
       HASH_C,
-      HASH_D,
       true,
     ]);
     const router = await ethers.deployContract("BfvPkVerifierRouter", [
+      await registry.getAddress(),
       [
         await minimum.getAddress(),
         await sameLength.getAddress(),
         await small.getAddress(),
       ],
+      [0, 0, 0],
       10,
     ]);
-    const smallProof = proofWithAnchors(36, HASH_C, HASH_D);
+    const smallProof = pkProofWithAnchor(54, HASH_C);
     // The selected route rejects any call other than this exact forwarding.
     await small.expectCall(
       small.interface.encodeFunctionData("verify", [...context, smallProof]),
@@ -96,18 +112,61 @@ describe("BFV verifier routers", function () {
     expect(await router.h()).to.equal(10);
     expect(await router.routeCount()).to.equal(3);
     expect(await verify(smallProof)).to.equal(true);
-    expect(await verify(proofWithAnchors(36, HASH_A, HASH_B))).to.equal(false);
-    expect(await verify(proofWithAnchors(12, HASH_A, HASH_B))).to.equal(false);
+    expect(await verify(pkProofWithAnchor(54, HASH_A))).to.equal(false);
+    expect(await verify(pkProofWithAnchor(30, HASH_A))).to.equal(false);
 
     await expect(
-      verify(proofWithAnchors(36, HASH_A, HASH_D)),
+      verify(pkProofWithAnchor(54, HASH_B)),
     ).to.be.revertedWithCustomError(router, "VkHashMismatch");
     await expect(
-      verify(proofWithAnchors(36, HASH_C, HASH_A)),
-    ).to.be.revertedWithCustomError(router, "VkHashMismatch");
-    await expect(
-      verify(proofWithAnchors(13, HASH_A, HASH_B)),
+      verify(pkProofWithAnchor(55, HASH_A)),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
+  });
+
+  it("rejects a PK route for a different E3 parameter set", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [2]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
+    const legacy = await ethers.deployContract("MockBfvPkVerifierRoute", [
+      2,
+      HASH_A,
+      true,
+    ]);
+    const secure16384 = await ethers.deployContract("MockBfvPkVerifierRoute", [
+      2,
+      HASH_C,
+      true,
+    ]);
+    const router = await ethers.deployContract("BfvPkVerifierRouter", [
+      await registry.getAddress(),
+      [await legacy.getAddress(), await secure16384.getAddress()],
+      [0, 2],
+      2,
+    ]);
+
+    expect((await router.routeAt(1))[3]).to.equal(2);
+    expect(
+      await router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        pkProofWithAnchor(30, HASH_C),
+      ),
+    ).to.equal(true);
+    await expect(
+      router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        pkProofWithAnchor(30, HASH_A),
+      ),
+    )
+      .to.be.revertedWithCustomError(router, "ParamSetRouteMismatch")
+      .withArgs(2);
   });
 
   it("routes decryption proofs by public-input length and VK anchors", async function () {
@@ -130,12 +189,17 @@ describe("BFV verifier routers", function () {
       "MockBfvDecryptionVerifierRoute",
       [9, HASH_C, HASH_D, true],
     );
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
     const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
+      await registry.getAddress(),
       [
         await minimum.getAddress(),
         await sameLength.getAddress(),
         await small.getAddress(),
       ],
+      [0, 0, 0],
       9,
     ]);
     const smallLen = bfvDecExpectedPublicInputsLen(9);
@@ -166,5 +230,51 @@ describe("BFV verifier routers", function () {
     await expect(
       verify(proofWithAnchors(minimumLen + 1, HASH_A, HASH_B)),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
+  });
+
+  it("rejects a decryption route for a different E3 parameter set", async function () {
+    // The E3 runs the l-BFV path (parameter set 4); its proof carries the trBFV route's anchors.
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [4]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
+    const trbfv = await ethers.deployContract(
+      "MockBfvDecryptionVerifierRoute",
+      [1, HASH_A, HASH_B, true],
+    );
+    const lbfv = await ethers.deployContract("MockBfvDecryptionVerifierRoute", [
+      1,
+      HASH_A,
+      HASH_C,
+      true,
+    ]);
+    const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
+      await registry.getAddress(),
+      [await trbfv.getAddress(), await lbfv.getAddress()],
+      [0, 4],
+      1,
+    ]);
+    const context = [
+      21,
+      ethers.id("decryption-domain"),
+      ethers.id("plaintext-output"),
+      ethers.id("decryption-committee"),
+      ethers.id("ciphertext-commitment"),
+    ] as const;
+
+    expect((await router.routeAt(1))[4]).to.equal(4);
+    expect(
+      await router.verify.staticCall(
+        ...context,
+        proofWithAnchors(bfvDecExpectedPublicInputsLen(1), HASH_A, HASH_C),
+      ),
+    ).to.equal(true);
+    await expect(
+      router.verify.staticCall(
+        ...context,
+        proofWithAnchors(bfvDecExpectedPublicInputsLen(1), HASH_A, HASH_B),
+      ),
+    )
+      .to.be.revertedWithCustomError(router, "ParamSetRouteMismatch")
+      .withArgs(4);
   });
 });

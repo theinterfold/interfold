@@ -11,7 +11,7 @@ mod share_computation {
 
     #[test]
     fn input_committee_must_match_the_supplied_configuration() {
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let matching = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
         let sample = e3_zk_samples::dkg::share_computation::generate(
             &matching,
@@ -32,13 +32,13 @@ mod share_computation {
     #[test]
     fn test_input_smudging_noise_secret_consistency() {
         let config = Configs::for_preset(
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             CiphernodesCommitteeSize::Small,
         )
         .unwrap();
         let sample = e3_zk_samples::dkg::share_computation::generate(
             &config,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             DkgInputType::SmudgingNoise,
         )
         .unwrap();
@@ -76,7 +76,7 @@ mod share_decryption {
     #[test]
     fn test_bound_and_bits_computation_consistency() {
         let (threshold_params, dkg_params) =
-            build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+            build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let config = Configs::new(&threshold_params, &dkg_params).unwrap();
         let bits = &config.bits;
         assert_eq!(bits.msg_bit, compute_msg_bit(&dkg_params));
@@ -86,10 +86,10 @@ mod share_decryption {
     #[test]
     fn test_input_decryption_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let config = Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let config = Configs::for_preset(BfvPreset::InsecureThreshold).unwrap();
         let sample = e3_zk_samples::dkg::share_decryption::generate(
             &config,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
         )
@@ -109,7 +109,7 @@ mod share_decryption {
     #[test]
     fn own_share_rows_must_carry_the_configured_degree() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let config = Configs::for_preset(preset).unwrap();
         let mut sample = e3_zk_samples::dkg::share_decryption::generate(
             &config,
@@ -127,7 +127,7 @@ mod share_decryption {
     #[test]
     fn test_commitment_ordering_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let config = Configs::for_preset(preset).unwrap();
         let sample = e3_zk_samples::dkg::share_decryption::generate(
             &config,
@@ -186,7 +186,7 @@ mod share_encryption {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let config = Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let config = Configs::for_preset(BfvPreset::InsecureThreshold).unwrap();
         let bounds = &config.bounds;
         let bits = &config.bits;
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
@@ -194,7 +194,7 @@ mod share_encryption {
         assert_eq!(
             max_pk_bound.clone(),
             BigUint::from(
-                (e3_fhe_params::constants::insecure_64::dkg::MODULI
+                (e3_fhe_params::constants::insecure::dkg::MODULI
                     .iter()
                     .max()
                     .unwrap()
@@ -206,7 +206,7 @@ mod share_encryption {
         assert_eq!(
             bounds.msg_bound,
             BigUint::from(
-                BfvPreset::InsecureThreshold64
+                BfvPreset::InsecureThreshold
                     .build_pair()
                     .unwrap()
                     .1
@@ -217,14 +217,14 @@ mod share_encryption {
 
     #[test]
     fn test_input_message_consistency() {
-        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
-        let (threshold_params, dkg_params) = BfvPreset::InsecureThreshold64.build_pair().unwrap();
+        let (threshold_params, dkg_params) = BfvPreset::InsecureThreshold.build_pair().unwrap();
         let config = Configs::new(&dkg_params).unwrap();
         let sample = e3_zk_samples::dkg::share_encryption::generate(
             &threshold_params,
             &dkg_params,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
             sd.z,
@@ -241,7 +241,7 @@ mod share_encryption {
 
     #[test]
     fn generated_share_encryption_witness_respects_ct0_r_bounds() {
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let (threshold_params, dkg_params) = preset.build_pair().unwrap();
         let config = Configs::new(&dkg_params).unwrap();
         let sample = e3_zk_samples::dkg::share_encryption::generate(
@@ -268,12 +268,12 @@ mod share_encryption {
 
     #[test]
     fn plaintext_with_a_foreign_degree_is_rejected() {
-        let (threshold_params, dkg_params) = BfvPreset::InsecureThreshold64.build_pair().unwrap();
+        let (threshold_params, dkg_params) = BfvPreset::InsecureThreshold.build_pair().unwrap();
         let config = Configs::new(&dkg_params).unwrap();
         let mut sample = e3_zk_samples::dkg::share_encryption::generate(
             &threshold_params,
             &dkg_params,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             CiphernodesCommitteeSize::Minimum.values(),
             DkgInputType::SecretKey,
             0,

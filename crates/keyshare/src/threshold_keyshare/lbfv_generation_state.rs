@@ -1,0 +1,1170 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! Durable state and pure transitions for local l-BFV key-share generation.
+
+use std::collections::BTreeMap;
+
+use alloy::primitives::{Address, U256};
+use anyhow::{anyhow, ensure, Context, Result};
+use e3_committee_hash::{
+    hash_lbfv_proof_session, validate_and_hash_finalized_committee, LbfvProofDomainContext,
+};
+use e3_events::{
+    CiphernodeSelected, LbfvKeyShareDocument, LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest,
+    LbfvKeyShareManifestV1, LbfvPkGenerationProofRequest, LbfvPkGenerationProofResponse,
+    LbfvPublicKeyShareDocumentV3, LbfvRelinearizationKeyShareDocumentV2, ProofIdentity, ProofType,
+    RlkGenerationProofRequest, RlkGenerationProofResponse, SignedLbfvKeyShareManifest,
+    SignedProofPayload, ZkRequest,
+};
+use e3_fhe_params::{lbfv_row_count, supports_lbfv, BfvPreset, LBFV_CONSTANTS_VERSION};
+use e3_trbfv::{
+    gen_lbfv_key_shares::{GenLbfvKeySharesRequest, GenLbfvKeySharesResponse},
+    lbfv_operation::LbfvOperationId,
+};
+
+pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 4;
+
+/// Version 1 snapshot for one party's local l-BFV generation workflow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LbfvGenerationStateV1 {
+    pub schema_version: u32,
+    pub context: LbfvKeyShareDocumentContextV1,
+    pub committee: Vec<Address>,
+    pub generation_request: Option<GenLbfvKeySharesRequest>,
+    pub generation_response: Option<GenLbfvKeySharesResponse>,
+    pub signed_pk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+    pub signed_rlk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+    pub public_key_document: Option<LbfvKeyShareDocument>,
+    pub relinearization_key_document: Option<LbfvKeyShareDocument>,
+    pub signed_manifest: Option<SignedLbfvKeyShareManifest>,
+    pub failure: Option<String>,
+    pub params_preset: BfvPreset,
+}
+
+impl serde::Serialize for LbfvGenerationStateV1 {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("LbfvGenerationStateV1", 12)?;
+        state.serialize_field("schema_version", &self.schema_version)?;
+        state.serialize_field("context", &self.context)?;
+        state.serialize_field("committee", &self.committee)?;
+        state.serialize_field("generation_request", &self.generation_request)?;
+        state.serialize_field("generation_response", &self.generation_response)?;
+        state.serialize_field("signed_pk_row_proofs", &self.signed_pk_row_proofs)?;
+        state.serialize_field("signed_rlk_row_proofs", &self.signed_rlk_row_proofs)?;
+        state.serialize_field("public_key_document", &self.public_key_document)?;
+        state.serialize_field(
+            "relinearization_key_document",
+            &self.relinearization_key_document,
+        )?;
+        state.serialize_field("signed_manifest", &self.signed_manifest)?;
+        state.serialize_field("failure", &self.failure)?;
+        state.serialize_field("params_preset", &self.params_preset)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StateVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for StateVisitor {
+            type Value = LbfvGenerationStateV1;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a versioned l-BFV generation state")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                use serde::de::Error;
+                let schema_version: u32 = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation schema version"))?;
+                if schema_version != LBFV_GENERATION_SCHEMA_VERSION {
+                    return Err(A::Error::custom(format!(
+                        "unsupported l-BFV generation schema version {schema_version}"
+                    )));
+                }
+                let context = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation context"))?;
+                let committee = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation committee"))?;
+                let generation_request = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation request"))?;
+                let generation_response = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation response"))?;
+                let signed_pk_row_proofs = sequence
+                    .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV PK proofs"))?;
+                let signed_rlk_row_proofs = sequence
+                    .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV RLK proofs"))?;
+                let public_key_document = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV public-key document"))?;
+                let relinearization_key_document = sequence.next_element()?.ok_or_else(|| {
+                    A::Error::custom("missing l-BFV relinearization-key document")
+                })?;
+                let signed_manifest = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV manifest"))?;
+                let failure = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV failure state"))?;
+                let params_preset = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV parameter preset"))?;
+                Ok(LbfvGenerationStateV1 {
+                    schema_version: LBFV_GENERATION_SCHEMA_VERSION,
+                    context,
+                    committee,
+                    generation_request,
+                    generation_response,
+                    signed_pk_row_proofs,
+                    signed_rlk_row_proofs,
+                    public_key_document,
+                    relinearization_key_document,
+                    signed_manifest,
+                    failure,
+                    params_preset,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "LbfvGenerationStateV1",
+            &[
+                "schema_version",
+                "context",
+                "committee",
+                "generation_request",
+                "generation_response",
+                "signed_pk_row_proofs",
+                "signed_rlk_row_proofs",
+                "public_key_document",
+                "relinearization_key_document",
+                "signed_manifest",
+                "failure",
+                "params_preset",
+            ],
+            StateVisitor,
+        )
+    }
+}
+
+impl LbfvGenerationStateV1 {
+    pub fn from_selection(
+        selection: &CiphernodeSelected,
+        interfold_address: Address,
+        signer: Address,
+        protocol_version: u32,
+    ) -> Result<Self> {
+        ensure!(
+            supports_lbfv(selection.params_preset),
+            "l-BFV generation state requires a preset with l-BFV parameters"
+        );
+        let committee = selection
+            .committee
+            .iter()
+            .map(|address| {
+                address
+                    .parse::<Address>()
+                    .with_context(|| format!("invalid finalized committee address {address}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        e3_committee::CiphernodesCommitteeSize::from_threshold(
+            selection.threshold_m,
+            selection.threshold_n,
+        )?;
+        let finalized_committee_hash =
+            validate_and_hash_finalized_committee(&committee, selection.threshold_n)
+                .map_err(anyhow::Error::msg)?;
+        let party_id = u32::try_from(selection.party_id)
+            .context("l-BFV party ID does not fit the transport schema")?;
+        ensure!(
+            committee.get(party_id as usize) == Some(&signer),
+            "l-BFV signer does not match the selected party slot"
+        );
+        let e3_id: U256 = selection
+            .e3_id
+            .clone()
+            .try_into()
+            .map_err(|_| anyhow!("l-BFV E3 ID cannot be converted to U256"))?;
+        // The contract rebuilds the session from `ActiveCryptoConfig.configIdForParamSet`, so this
+        // must be the same configuration ID the E3 request carries.
+        let crypto_config_id = e3_fhe_params::crypto_config_id(&selection.params);
+        let proof_domain = LbfvProofDomainContext {
+            protocol_version,
+            chain_id: selection.e3_id.chain_id(),
+            interfold_address,
+            e3_id,
+            crypto_config_id,
+            finalized_committee_hash,
+            lbfv_constants_version: LBFV_CONSTANTS_VERSION,
+            ciphertext_level: 0,
+            key_level: 0,
+        };
+        let context = LbfvKeyShareDocumentContextV1 {
+            e3_id: selection.e3_id.clone(),
+            proof_domain,
+            proof_session_id: hash_lbfv_proof_session(proof_domain),
+            party_id,
+        };
+        context.validate()?;
+
+        Ok(Self {
+            schema_version: LBFV_GENERATION_SCHEMA_VERSION,
+            context,
+            committee,
+            generation_request: None,
+            generation_response: None,
+            signed_pk_row_proofs: BTreeMap::new(),
+            signed_rlk_row_proofs: BTreeMap::new(),
+            public_key_document: None,
+            relinearization_key_document: None,
+            signed_manifest: None,
+            failure: None,
+            params_preset: selection.params_preset,
+        })
+    }
+
+    pub fn validate_loaded(&self) -> Result<()> {
+        ensure!(
+            self.schema_version == LBFV_GENERATION_SCHEMA_VERSION,
+            "unsupported l-BFV generation schema version {}",
+            self.schema_version
+        );
+        self.context.validate()?;
+        let row_count = self.row_count()?;
+        self.committee_size()?;
+        ensure!(
+            validate_and_hash_finalized_committee(&self.committee, self.committee.len())
+                .map_err(anyhow::Error::msg)?
+                == self.context.proof_domain.finalized_committee_hash,
+            "persisted l-BFV committee does not match the proof domain"
+        );
+        ensure!(
+            self.committee.get(self.context.party_id as usize).is_some(),
+            "persisted l-BFV party ID is outside the committee"
+        );
+        if let Some(request) = &self.generation_request {
+            request.validate_operation_id()?;
+            ensure!(
+                request.session_id == self.context.proof_session_id.0
+                    && request.party_id == self.context.party_id
+                    && request.params_preset == self.params_preset,
+                "persisted l-BFV generation request does not match its context"
+            );
+        }
+        if self.is_ready() {
+            self.signed_manifest
+                .as_ref()
+                .unwrap()
+                .validate_documents_for_preset(
+                    self.public_key_document.as_ref().unwrap(),
+                    self.relinearization_key_document.as_ref().unwrap(),
+                    self.params_preset,
+                )?;
+            self.signed_manifest
+                .as_ref()
+                .unwrap()
+                .verify_committee_signer(&self.committee)?;
+        }
+        ensure!(
+            self.signed_pk_row_proofs
+                .keys()
+                .all(|row| (*row as usize) < row_count)
+                && self
+                    .signed_rlk_row_proofs
+                    .keys()
+                    .all(|row| (*row as usize) < row_count),
+            "persisted l-BFV proof row is outside the selected preset"
+        );
+        Ok(())
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.public_key_document.is_some()
+            && self.relinearization_key_document.is_some()
+            && self.signed_manifest.is_some()
+            && self.failure.is_none()
+    }
+
+    pub fn expected_signer(&self) -> Result<Address> {
+        self.committee
+            .get(self.context.party_id as usize)
+            .copied()
+            .ok_or_else(|| anyhow!("l-BFV party ID is outside the committee"))
+    }
+
+    pub fn record_generation_request(&mut self, request: GenLbfvKeySharesRequest) -> Result<bool> {
+        request.validate_operation_id()?;
+        ensure!(
+            request.session_id == self.context.proof_session_id.0
+                && request.party_id == self.context.party_id
+                && request.params_preset == self.params_preset,
+            "l-BFV generation request does not match its durable context"
+        );
+        if let Some(existing) = &self.generation_request {
+            ensure!(
+                existing == &request,
+                "conflicting l-BFV generation request for one proof session"
+            );
+            return Ok(false);
+        }
+        ensure!(!self.is_ready(), "l-BFV generation is already complete");
+        self.generation_request = Some(request);
+        Ok(true)
+    }
+
+    pub fn record_generation_response(
+        &mut self,
+        response: GenLbfvKeySharesResponse,
+    ) -> Result<bool> {
+        if self.is_ready() || self.failure.is_some() {
+            return Ok(false);
+        }
+        let request = self
+            .generation_request
+            .as_ref()
+            .ok_or_else(|| anyhow!("l-BFV generation response has no durable request"))?;
+        ensure!(
+            response.operation_id == request.operation_id,
+            "l-BFV generation response operation ID does not match its request"
+        );
+        ensure!(
+            !response.public_key_share_bytes.is_empty() && !response.rlk_share_bytes.is_empty(),
+            "l-BFV generation response contains an empty share"
+        );
+        LbfvPkGenerationProofRequest::from_lbfv_key_shares(
+            request,
+            &response,
+            self.context.proof_domain,
+            0,
+            self.committee_size()?,
+        )?;
+        RlkGenerationProofRequest::from_lbfv_key_shares(
+            request,
+            &response,
+            self.context.proof_domain,
+            0,
+            self.committee_size()?,
+        )?;
+        if let Some(existing) = &self.generation_response {
+            ensure!(
+                existing == &response,
+                "conflicting l-BFV generation response for one operation"
+            );
+            return Ok(false);
+        }
+        self.generation_response = Some(response);
+        Ok(true)
+    }
+
+    pub fn record_pk_row_proof(
+        &mut self,
+        response: &LbfvPkGenerationProofResponse,
+        signed: SignedProofPayload,
+    ) -> Result<bool> {
+        if self.is_ready() || self.failure.is_some() {
+            return Ok(false);
+        }
+        let expected = self.pk_request(response.row_index)?;
+        ensure!(
+            response.operation_id == expected.operation_id,
+            "l-BFV public-key proof response operation ID does not match its request"
+        );
+        ensure!(
+            signed.payload.proof == response.proof,
+            "signed l-BFV public-key proof does not match its compute response"
+        );
+        self.validate_signed_proof(&signed, ProofType::LbfvPkGeneration, response.row_index)?;
+        insert_first(
+            &mut self.signed_pk_row_proofs,
+            response.row_index,
+            signed,
+            "public-key",
+        )
+    }
+
+    pub fn record_rlk_row_proof(
+        &mut self,
+        response: &RlkGenerationProofResponse,
+        signed: SignedProofPayload,
+    ) -> Result<bool> {
+        if self.is_ready() || self.failure.is_some() {
+            return Ok(false);
+        }
+        let expected = self.rlk_request(response.row_index)?;
+        ensure!(
+            response.operation_id == expected.operation_id,
+            "RLK proof response operation ID does not match its request"
+        );
+        ensure!(
+            signed.payload.proof == response.proof,
+            "signed RLK proof does not match its compute response"
+        );
+        self.validate_signed_proof(&signed, ProofType::RlkGeneration, response.row_index)?;
+        insert_first(
+            &mut self.signed_rlk_row_proofs,
+            response.row_index,
+            signed,
+            "relinearization-key",
+        )
+    }
+
+    pub fn pending_proof_identities(&self) -> Vec<ProofIdentity> {
+        if self.generation_response.is_none() || self.is_ready() || self.failure.is_some() {
+            return Vec::new();
+        }
+        let row_count = self.row_count().unwrap_or_default();
+        let mut identities = Vec::with_capacity(2 * row_count);
+        for row in 0..row_count as u32 {
+            if !self.signed_pk_row_proofs.contains_key(&row) {
+                identities.push(ProofIdentity {
+                    proof_type: ProofType::LbfvPkGeneration,
+                    instance: row,
+                });
+            }
+            if !self.signed_rlk_row_proofs.contains_key(&row) {
+                identities.push(ProofIdentity {
+                    proof_type: ProofType::RlkGeneration,
+                    instance: row,
+                });
+            }
+        }
+        identities
+    }
+
+    pub fn awaits_operation(&self, operation_id: LbfvOperationId) -> Result<bool> {
+        if self.is_ready() || self.failure.is_some() {
+            return Ok(false);
+        }
+        if self.generation_response.is_none()
+            && self
+                .generation_request
+                .as_ref()
+                .is_some_and(|request| request.operation_id == operation_id)
+        {
+            return Ok(true);
+        }
+        for identity in self.pending_proof_identities() {
+            if self.proof_request(identity)?.lbfv_operation_id() == Some(operation_id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn proof_request(&self, identity: ProofIdentity) -> Result<ZkRequest> {
+        match identity.proof_type {
+            ProofType::LbfvPkGeneration => Ok(ZkRequest::LbfvPkGeneration(
+                self.pk_request(identity.instance)?,
+            )),
+            ProofType::RlkGeneration => Ok(ZkRequest::RlkGeneration(
+                self.rlk_request(identity.instance)?,
+            )),
+            _ => Err(anyhow!("unsupported l-BFV generation proof identity")),
+        }
+    }
+
+    pub fn build_documents(&self) -> Result<Option<(LbfvKeyShareDocument, LbfvKeyShareDocument)>> {
+        let Some(response) = &self.generation_response else {
+            return Ok(None);
+        };
+        let row_count = self.row_count()?;
+        if self.signed_pk_row_proofs.len() != row_count
+            || self.signed_rlk_row_proofs.len() != row_count
+        {
+            return Ok(None);
+        }
+        let pk_rows = rows_from_map(&self.signed_pk_row_proofs)?;
+        let rlk_rows = rows_from_map(&self.signed_rlk_row_proofs)?;
+        let public_key = LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
+            context: self.context.clone(),
+            share: response.public_key_share_bytes.clone(),
+            signed_row_proofs: pk_rows,
+        });
+        let relinearization_key =
+            LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
+                context: self.context.clone(),
+                share: response.rlk_share_bytes.clone(),
+                signed_row_proofs: rlk_rows,
+            });
+        public_key.validate_for_preset(self.params_preset)?;
+        relinearization_key.validate_for_preset(self.params_preset)?;
+        Ok(Some((public_key, relinearization_key)))
+    }
+
+    pub fn manifest_for_documents(
+        &self,
+        public_key: &LbfvKeyShareDocument,
+        relinearization_key: &LbfvKeyShareDocument,
+    ) -> Result<LbfvKeyShareManifest> {
+        Ok(LbfvKeyShareManifest::V1(LbfvKeyShareManifestV1 {
+            context: self.context.clone(),
+            public_key_document_hash: public_key.content_hash()?,
+            relinearization_key_document_hash: relinearization_key.content_hash()?,
+        }))
+    }
+
+    pub fn record_bundle(
+        &mut self,
+        public_key: LbfvKeyShareDocument,
+        relinearization_key: LbfvKeyShareDocument,
+        signed_manifest: SignedLbfvKeyShareManifest,
+    ) -> Result<bool> {
+        signed_manifest.validate_documents_for_preset(
+            &public_key,
+            &relinearization_key,
+            self.params_preset,
+        )?;
+        signed_manifest.verify_committee_signer(&self.committee)?;
+        if self.is_ready() {
+            ensure!(
+                self.public_key_document.as_ref() == Some(&public_key)
+                    && self.relinearization_key_document.as_ref() == Some(&relinearization_key)
+                    && self.signed_manifest.as_ref() == Some(&signed_manifest),
+                "conflicting completed l-BFV generation bundle"
+            );
+            return Ok(false);
+        }
+        self.public_key_document = Some(public_key);
+        self.relinearization_key_document = Some(relinearization_key);
+        self.signed_manifest = Some(signed_manifest);
+        self.generation_request = None;
+        self.generation_response = None;
+        Ok(true)
+    }
+
+    pub fn record_failure(&mut self, reason: &str) {
+        if self.failure.is_none() {
+            self.failure = Some(reason.to_owned());
+        }
+        self.generation_request = None;
+        self.generation_response = None;
+    }
+
+    fn pk_request(&self, row: u32) -> Result<LbfvPkGenerationProofRequest> {
+        LbfvPkGenerationProofRequest::from_lbfv_key_shares(
+            self.generation_request
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing durable l-BFV generation request"))?,
+            self.generation_response
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing durable l-BFV generation response"))?,
+            self.context.proof_domain,
+            row,
+            self.committee_size()?,
+        )
+    }
+
+    fn rlk_request(&self, row: u32) -> Result<RlkGenerationProofRequest> {
+        RlkGenerationProofRequest::from_lbfv_key_shares(
+            self.generation_request
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing durable l-BFV generation request"))?,
+            self.generation_response
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing durable l-BFV generation response"))?,
+            self.context.proof_domain,
+            row,
+            self.committee_size()?,
+        )
+    }
+
+    fn validate_signed_proof(
+        &self,
+        signed: &SignedProofPayload,
+        proof_type: ProofType,
+        instance: u32,
+    ) -> Result<()> {
+        let signer = self.context.validate_signed_proof(
+            signed,
+            ProofIdentity {
+                proof_type,
+                instance,
+            },
+            lbfv_row_count(self.params_preset),
+        )?;
+        let expected_signer = self.expected_signer()?;
+        ensure!(
+            signer == expected_signer,
+            "signed l-BFV proof signer does not match the party slot"
+        );
+        Ok(())
+    }
+
+    fn committee_size(&self) -> Result<e3_committee::CiphernodesCommitteeSize> {
+        e3_committee::CiphernodesCommitteeSize::from_threshold(
+            self.committee.len().saturating_sub(1) / 2,
+            self.committee.len(),
+        )
+    }
+
+    fn row_count(&self) -> Result<usize> {
+        lbfv_row_count(self.params_preset)
+            .ok_or_else(|| anyhow!("selected preset does not support l-BFV"))
+    }
+}
+
+fn insert_first(
+    proofs: &mut BTreeMap<u32, SignedProofPayload>,
+    row: u32,
+    signed: SignedProofPayload,
+    share_kind: &str,
+) -> Result<bool> {
+    match proofs.entry(row) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(signed);
+            Ok(true)
+        }
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            ensure!(
+                entry.get().payload == signed.payload,
+                "conflicting l-BFV {share_kind} proof for row {row}"
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn rows_from_map(proofs: &BTreeMap<u32, SignedProofPayload>) -> Result<Vec<SignedProofPayload>> {
+    proofs
+        .keys()
+        .next()
+        .copied()
+        .map(|_| ())
+        .ok_or_else(|| anyhow!("missing l-BFV row proofs"))?;
+    let row_count = proofs.len();
+    (0..row_count as u32)
+        .map(|row| {
+            proofs
+                .get(&row)
+                .cloned()
+                .ok_or_else(|| anyhow!("missing l-BFV row proof {row}"))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        primitives::{keccak256, B256},
+        signers::local::PrivateKeySigner,
+    };
+    use e3_committee_hash::split_hash_to_field_limbs;
+    use e3_crypto::SensitiveBytes;
+    use e3_events::{CircuitName, E3id, Proof, ProofPayload, Seed};
+    use e3_trbfv::gen_lbfv_key_shares::EncryptedRlkWitness;
+    use e3_utils::ArcBytes;
+    use e3_zk_config::FIELD_BYTE_LEN;
+
+    const LEGACY_GENERATION_STATE: &[u8] =
+        include_bytes!("fixtures/lbfv_generation_state_v1.bincode");
+
+    #[derive(serde::Serialize)]
+    struct LegacyLbfvGenerationStateV1 {
+        schema_version: u32,
+        context: LbfvKeyShareDocumentContextV1,
+        committee: Vec<Address>,
+        generation_request: Option<GenLbfvKeySharesRequest>,
+        generation_response: Option<GenLbfvKeySharesResponse>,
+        signed_c1_proof: Option<SignedProofPayload>,
+        signed_pk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+        signed_rlk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+        public_key_document: Option<LbfvKeyShareDocument>,
+        relinearization_key_document: Option<LbfvKeyShareDocument>,
+        signed_manifest: Option<SignedLbfvKeyShareManifest>,
+        failure: Option<String>,
+    }
+
+    fn signer() -> PrivateKeySigner {
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .parse()
+            .unwrap()
+    }
+
+    fn state() -> LbfvGenerationStateV1 {
+        let signer = signer();
+        LbfvGenerationStateV1::from_selection(
+            &CiphernodeSelected {
+                e3_id: E3id::new("7", 31_337),
+                threshold_m: 1,
+                threshold_n: 3,
+                seed: Seed([0; 32]),
+                error_size: ArcBytes::from_bytes(&[1]),
+                params_preset: BfvPreset::SecureThreshold16384,
+                params: ArcBytes::from_bytes(b"secure-16384-params"),
+                party_id: 1,
+                committee: vec![
+                    Address::ZERO.to_string(),
+                    signer.address().to_string(),
+                    Address::repeat_byte(0xff).to_string(),
+                ],
+            },
+            Address::repeat_byte(0x11),
+            signer.address(),
+            4,
+        )
+        .unwrap()
+    }
+
+    fn legacy_state() -> LegacyLbfvGenerationStateV1 {
+        let mut state = state();
+        let pk_proof = signed_proof(
+            &state,
+            ProofType::LbfvPkGeneration,
+            proof(&state, CircuitName::LbfvPkGeneration, 0),
+        );
+        let rlk_proof = signed_proof(
+            &state,
+            ProofType::RlkGeneration,
+            proof(&state, CircuitName::RlkGeneration, 0),
+        );
+        state.signed_pk_row_proofs.insert(0, pk_proof);
+        state.signed_rlk_row_proofs.insert(0, rlk_proof);
+        LegacyLbfvGenerationStateV1 {
+            schema_version: 1,
+            context: state.context,
+            committee: state.committee,
+            generation_request: state.generation_request,
+            generation_response: state.generation_response,
+            signed_c1_proof: None,
+            signed_pk_row_proofs: state.signed_pk_row_proofs,
+            signed_rlk_row_proofs: state.signed_rlk_row_proofs,
+            public_key_document: state.public_key_document,
+            relinearization_key_document: state.relinearization_key_document,
+            signed_manifest: state.signed_manifest,
+            failure: state.failure,
+        }
+    }
+
+    #[test]
+    fn legacy_generation_fixture_is_rejected_after_codec_cutover() {
+        assert_eq!(
+            bincode::serialize(&legacy_state()).unwrap(),
+            LEGACY_GENERATION_STATE
+        );
+
+        let error = bincode::deserialize::<LbfvGenerationStateV1>(LEGACY_GENERATION_STATE)
+            .expect_err("pre-cutover generation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV generation schema version 1"));
+    }
+
+    /// `BfvPkVerifierV2` rebuilds the session with `ActiveCryptoConfig.configIdForParamSet`, so
+    /// the session must use the configuration ID the contract pins for parameter set 3.
+    #[test]
+    fn proof_session_uses_the_on_chain_configuration_id() {
+        let signer = signer();
+        let preset = BfvPreset::SecureThreshold16384;
+        let params =
+            e3_fhe_params::encode_bfv_params(&e3_fhe_params::BfvParamSet::from(preset).build_arc());
+        let state = LbfvGenerationStateV1::from_selection(
+            &CiphernodeSelected {
+                e3_id: E3id::new("7", 31_337),
+                threshold_m: 1,
+                threshold_n: 3,
+                seed: Seed([0; 32]),
+                error_size: ArcBytes::from_bytes(&[1]),
+                params_preset: preset,
+                params: ArcBytes::from_bytes(&params),
+                party_id: 1,
+                committee: vec![
+                    Address::ZERO.to_string(),
+                    signer.address().to_string(),
+                    Address::repeat_byte(0xff).to_string(),
+                ],
+            },
+            Address::repeat_byte(0x11),
+            signer.address(),
+            4,
+        )
+        .unwrap();
+
+        // The generated metadata is what `BfvProtocol.sol` pins for each parameter set.
+        let pinned = e3_fhe_params::metadata::BfvMetadata::current()
+            .unwrap()
+            .presets
+            .into_iter()
+            .find(|record| record.param_set == 3)
+            .unwrap()
+            .crypto_config_id;
+        assert_eq!(
+            state.context.proof_domain.crypto_config_id,
+            pinned.parse::<B256>().unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_micro_committee() {
+        let signer = signer();
+        let selection = CiphernodeSelected {
+            e3_id: E3id::new("7", 31_337),
+            threshold_m: 4,
+            threshold_n: 9,
+            seed: Seed([0; 32]),
+            error_size: ArcBytes::from_bytes(&[1]),
+            params_preset: BfvPreset::SecureThreshold16384,
+            params: ArcBytes::from_bytes(b"secure-16384-params"),
+            party_id: 1,
+            committee: vec![
+                Address::ZERO.to_string(),
+                signer.address().to_string(),
+                Address::repeat_byte(0xff).to_string(),
+            ],
+        };
+
+        let error = LbfvGenerationStateV1::from_selection(
+            &selection,
+            Address::repeat_byte(0x11),
+            signer.address(),
+            4,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("exactly 9 committee addresses"));
+    }
+
+    #[test]
+    fn secure_committee_selections_round_trip_all_finalized_party_slots() {
+        let signer = signer();
+        let preset = BfvPreset::SecureThreshold16384;
+        let params =
+            e3_fhe_params::encode_bfv_params(&e3_fhe_params::BfvParamSet::from(preset).build_arc());
+        for committee_size in [
+            e3_committee::CiphernodesCommitteeSize::Micro,
+            e3_committee::CiphernodesCommitteeSize::Small,
+        ] {
+            let values = committee_size.values();
+            let last_party_id = values.n - 1;
+            let mut committee: Vec<_> = (1..values.n)
+                .map(|slot| Address::repeat_byte(slot as u8))
+                .collect();
+            committee.push(signer.address());
+            let selection = CiphernodeSelected {
+                e3_id: E3id::new("7", 31_337),
+                threshold_m: values.threshold,
+                threshold_n: values.n,
+                seed: Seed([0; 32]),
+                error_size: ArcBytes::from_bytes(&[1]),
+                params_preset: preset,
+                params: ArcBytes::from_bytes(&params),
+                party_id: last_party_id as u64,
+                committee: committee.iter().map(ToString::to_string).collect(),
+            };
+            let state = LbfvGenerationStateV1::from_selection(
+                &selection,
+                Address::repeat_byte(0x11),
+                signer.address(),
+                4,
+            )
+            .unwrap();
+            let restored: LbfvGenerationStateV1 =
+                bincode::deserialize(&bincode::serialize(&state).unwrap()).unwrap();
+            restored.validate_loaded().unwrap();
+            assert_eq!(restored.committee, committee);
+            assert_eq!(restored.context.party_id, last_party_id as u32);
+            assert_eq!(
+                restored.context.proof_session_id,
+                state.context.proof_session_id
+            );
+            assert_eq!(
+                restored.context.proof_domain.crypto_config_id,
+                e3_fhe_params::crypto_config_id(&params)
+            );
+        }
+    }
+
+    fn generation_request(state: &LbfvGenerationStateV1) -> GenLbfvKeySharesRequest {
+        let mut request = GenLbfvKeySharesRequest {
+            operation_id: LbfvOperationId([0; 32]),
+            session_id: state.context.proof_session_id.0,
+            party_id: state.context.party_id,
+            secret_key_bytes: SensitiveBytes::from_encrypted(&[1]),
+            generation_seed: SensitiveBytes::from_encrypted(&[2]),
+            params_preset: BfvPreset::SecureThreshold16384,
+            ciphertext_level: 0,
+            key_level: 0,
+        };
+        request.operation_id = request.expected_operation_id();
+        request
+    }
+
+    fn generation_response(request: &GenLbfvKeySharesRequest) -> GenLbfvKeySharesResponse {
+        let row_count = lbfv_row_count(request.params_preset).unwrap();
+        GenLbfvKeySharesResponse {
+            operation_id: request.operation_id,
+            public_key_share_bytes: ArcBytes::from_bytes(b"public-key-share"),
+            rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
+            witness: EncryptedRlkWitness {
+                r_bytes: SensitiveBytes::from_encrypted(&[3]),
+                errors_d0_bytes: (0..row_count)
+                    .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
+                    .collect(),
+                errors_d2_bytes: (0..row_count)
+                    .map(|row| SensitiveBytes::from_encrypted(&[row as u8 + 5]))
+                    .collect(),
+            },
+        }
+    }
+
+    fn proof(state: &LbfvGenerationStateV1, circuit: CircuitName, row: u32) -> Proof {
+        let input = circuit.input_layout();
+        let field_count =
+            input.field_count().unwrap() + circuit.output_layout().field_count().unwrap();
+        let mut signals = vec![0u8; field_count * FIELD_BYTE_LEN];
+        if let Some(index) = input.field_index("session_id_hi") {
+            let session = split_hash_to_field_limbs(state.context.proof_session_id);
+            signals[index * 32 + 16..index * 32 + 32].copy_from_slice(&session.hi.to_be_bytes());
+            let index = input.field_index("session_id_lo").unwrap();
+            signals[index * 32 + 16..index * 32 + 32].copy_from_slice(&session.lo.to_be_bytes());
+            let index = input.field_index("party_id").unwrap();
+            signals[index * 32 + 28..index * 32 + 32]
+                .copy_from_slice(&state.context.party_id.to_be_bytes());
+            let index = input.field_index("row_index").unwrap();
+            signals[index * 32 + 28..index * 32 + 32].copy_from_slice(&row.to_be_bytes());
+        }
+        Proof::new(
+            circuit,
+            ArcBytes::from_bytes(&[0xaa]),
+            ArcBytes::from_bytes(&signals),
+        )
+    }
+
+    fn signed_proof(
+        state: &LbfvGenerationStateV1,
+        proof_type: ProofType,
+        proof: Proof,
+    ) -> SignedProofPayload {
+        SignedProofPayload::sign(
+            ProofPayload {
+                e3_id: state.context.e3_id.clone(),
+                proof_type,
+                proof,
+            },
+            &signer(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn generation_state_redrives_missing_rows_and_finalizes_one_bundle() {
+        let mut state = state();
+        let request = generation_request(&state);
+        let response = generation_response(&request);
+        assert!(state.record_generation_request(request).unwrap());
+        assert!(state.record_generation_response(response.clone()).unwrap());
+        assert_eq!(
+            state.pending_proof_identities().len(),
+            2 * lbfv_row_count(state.params_preset).unwrap()
+        );
+
+        let mut late_pk_row = None;
+        let mut late_rlk_row = None;
+        for row in 0..lbfv_row_count(state.params_preset).unwrap() as u32 {
+            let ZkRequest::LbfvPkGeneration(request) = state
+                .proof_request(ProofIdentity {
+                    proof_type: ProofType::LbfvPkGeneration,
+                    instance: row,
+                })
+                .unwrap()
+            else {
+                unreachable!();
+            };
+            let response = LbfvPkGenerationProofResponse {
+                operation_id: request.operation_id,
+                proof: proof(&state, CircuitName::LbfvPkGeneration, row),
+                row_index: row,
+            };
+            let signed = signed_proof(&state, ProofType::LbfvPkGeneration, response.proof.clone());
+            if row == 0 {
+                late_pk_row = Some((response.clone(), signed.clone()));
+            }
+            state.record_pk_row_proof(&response, signed).unwrap();
+
+            let ZkRequest::RlkGeneration(request) = state
+                .proof_request(ProofIdentity {
+                    proof_type: ProofType::RlkGeneration,
+                    instance: row,
+                })
+                .unwrap()
+            else {
+                unreachable!();
+            };
+            let response = RlkGenerationProofResponse {
+                operation_id: request.operation_id,
+                proof: proof(&state, CircuitName::RlkGeneration, row),
+                row_index: row,
+            };
+            let signed = signed_proof(&state, ProofType::RlkGeneration, response.proof.clone());
+            if row == 0 {
+                late_rlk_row = Some((response.clone(), signed.clone()));
+            }
+            state.record_rlk_row_proof(&response, signed).unwrap();
+        }
+        assert!(state.pending_proof_identities().is_empty());
+
+        let (public_key, relinearization_key) = state.build_documents().unwrap().unwrap();
+        let manifest = SignedLbfvKeyShareManifest::sign(
+            state
+                .manifest_for_documents(&public_key, &relinearization_key)
+                .unwrap(),
+            &signer(),
+        )
+        .unwrap();
+        assert!(state
+            .record_bundle(public_key, relinearization_key, manifest)
+            .unwrap());
+        assert!(state.is_ready());
+        assert!(state.generation_request.is_none());
+        assert!(state.generation_response.is_none());
+        assert!(!state.record_generation_response(response).unwrap());
+        let (response, signed) = late_pk_row.unwrap();
+        assert!(!state.record_pk_row_proof(&response, signed).unwrap());
+        let (response, signed) = late_rlk_row.unwrap();
+        assert!(!state.record_rlk_row_proof(&response, signed).unwrap());
+
+        let encoded = bincode::serialize(&state).unwrap();
+        assert_eq!(
+            keccak256(&encoded),
+            "0x2d7ec428893001e184d553f76d4ea88a52fbf52e2c0af84c56ac5454fa593428"
+                .parse::<B256>()
+                .unwrap()
+        );
+        let restored: LbfvGenerationStateV1 = bincode::deserialize(&encoded).unwrap();
+        restored.validate_loaded().unwrap();
+        assert_eq!(restored, state);
+    }
+
+    #[test]
+    fn generation_state_rejects_a_conflicting_response() {
+        let mut state = state();
+        let request = generation_request(&state);
+        let response = generation_response(&request);
+        state.record_generation_request(request).unwrap();
+        state.record_generation_response(response.clone()).unwrap();
+        let mut conflicting = response;
+        conflicting.public_key_share_bytes = ArcBytes::from_bytes(b"different-share");
+        assert!(state.record_generation_response(conflicting).is_err());
+    }
+
+    #[test]
+    fn generation_state_accepts_errors_only_for_pending_operations() {
+        let mut state = state();
+        let request = generation_request(&state);
+        assert!(state.record_generation_request(request.clone()).unwrap());
+        assert!(state.awaits_operation(request.operation_id).unwrap());
+
+        assert!(state
+            .record_generation_response(generation_response(&request))
+            .unwrap());
+        assert!(!state.awaits_operation(request.operation_id).unwrap());
+
+        let identity = ProofIdentity {
+            proof_type: ProofType::LbfvPkGeneration,
+            instance: 0,
+        };
+        let ZkRequest::LbfvPkGeneration(row_request) = state.proof_request(identity).unwrap()
+        else {
+            unreachable!();
+        };
+        assert!(state.awaits_operation(row_request.operation_id).unwrap());
+
+        let response = LbfvPkGenerationProofResponse {
+            operation_id: row_request.operation_id,
+            proof: proof(&state, CircuitName::LbfvPkGeneration, 0),
+            row_index: 0,
+        };
+        state
+            .record_pk_row_proof(
+                &response,
+                signed_proof(&state, ProofType::LbfvPkGeneration, response.proof.clone()),
+            )
+            .unwrap();
+        assert!(!state.awaits_operation(row_request.operation_id).unwrap());
+    }
+
+    #[test]
+    fn generation_state_rejects_conflicting_signed_proofs() {
+        let mut state = state();
+        let request = generation_request(&state);
+        state.record_generation_request(request.clone()).unwrap();
+        state
+            .record_generation_response(generation_response(&request))
+            .unwrap();
+
+        let identity = ProofIdentity {
+            proof_type: ProofType::LbfvPkGeneration,
+            instance: 0,
+        };
+        let ZkRequest::LbfvPkGeneration(row_request) = state.proof_request(identity).unwrap()
+        else {
+            unreachable!();
+        };
+        let response = LbfvPkGenerationProofResponse {
+            operation_id: row_request.operation_id,
+            proof: proof(&state, CircuitName::LbfvPkGeneration, 0),
+            row_index: 0,
+        };
+        state
+            .record_pk_row_proof(
+                &response,
+                signed_proof(&state, ProofType::LbfvPkGeneration, response.proof.clone()),
+            )
+            .unwrap();
+        let conflicting_response = LbfvPkGenerationProofResponse {
+            proof: Proof::new(
+                CircuitName::LbfvPkGeneration,
+                ArcBytes::from_bytes(&[0xbb]),
+                response.proof.public_signals.clone(),
+            ),
+            ..response
+        };
+        assert!(state
+            .record_pk_row_proof(
+                &conflicting_response,
+                signed_proof(
+                    &state,
+                    ProofType::LbfvPkGeneration,
+                    conflicting_response.proof.clone(),
+                ),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn terminal_failure_discards_generation_secrets_and_witnesses() {
+        let mut state = state();
+        let request = generation_request(&state);
+        let response = generation_response(&request);
+        state.record_generation_request(request).unwrap();
+        state.record_generation_response(response).unwrap();
+
+        state.record_failure("generation failed");
+
+        assert_eq!(state.failure.as_deref(), Some("generation failed"));
+        assert!(state.generation_request.is_none());
+        assert!(state.generation_response.is_none());
+        assert!(state.pending_proof_identities().is_empty());
+    }
+}

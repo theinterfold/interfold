@@ -9,8 +9,10 @@
 //! Standalone command-line tool for searching BFV parameters using NTT-friendly primes.
 
 use clap::Parser;
-use e3_fhe_params::constants::defaults::DEFAULT_SECURE_LAMBDA;
-use e3_fhe_params::constants::search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z};
+use e3_fhe_params::constants::defaults::{DEFAULT_SECURE_16384_LAMBDA, SECURE_16384_MULT_DEPTH};
+use e3_fhe_params::constants::secure_16384_search_defaults::{
+    B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z,
+};
 use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
@@ -25,7 +27,7 @@ use num_bigint::BigUint;
 #[derive(Parser, Debug, Clone)]
 #[command(version, about = "Search BFV params with NTT-friendly CRT primes")]
 struct Args {
-    /// Number of parties n (ciphernodes). Defaults to the SecureThreshold8192 search inputs.
+    /// Number of parties n (ciphernodes). Every default is a SecureThreshold16384 search input.
     #[arg(long, default_value_t = SEARCH_N)]
     n: u128,
 
@@ -38,7 +40,7 @@ struct Args {
     k: u128,
 
     /// Statistical security parameter λ (negl(λ)=2^{-λ}).
-    #[arg(long, default_value_t = DEFAULT_SECURE_LAMBDA as u32)]
+    #[arg(long, default_value_t = DEFAULT_SECURE_16384_LAMBDA as u32)]
     lambda: u32,
 
     /// Bound B on the error distribution ψ used to generate e1 when encrypting (20 for CBD with σ≈3.2).
@@ -67,7 +69,7 @@ struct Args {
     min_prime_bits: u8,
 
     /// Levels of multiplication and relinearization after the z additions (0 = summation only).
-    #[arg(long, default_value_t = 0u32)]
+    #[arg(long, default_value_t = SECURE_16384_MULT_DEPTH)]
     mult_depth: u32,
 
     /// Verbose per-candidate logging
@@ -168,7 +170,7 @@ fn print_param_set(
             "  B_fresh               = {}",
             result.b_fresh.to_str_radix(10)
         );
-        println!("  B_C (= B_fresh)       = {}", result.b_c.to_str_radix(10));
+        println!("  B_C (+ r_k(q))        = {}", result.b_c.to_str_radix(10));
         println!();
         println!("  log₂(2·B_C)           = {:.6}", result.lhs_log2);
     }

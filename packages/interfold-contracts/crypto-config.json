@@ -84,6 +84,89 @@
           "multDepth": 0,
           "minPrimeBits": 50
         }
+      },
+      {
+        "preset": "secure-16384",
+        "paramSet": 3,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_16384",
+          "degree": "16384",
+          "plaintextModulus": "65537",
+          "moduli": [
+            "4503599637200897",
+            "4503599635628033",
+            "4503599634644993",
+            "4503599634579457",
+            "4503599633989633",
+            "4503599632613377"
+          ],
+          "error1Variance": "63980174197113950682582616558744119541760"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_16384",
+          "degree": "16384",
+          "plaintextModulus": "4503599637200897",
+          "moduli": [
+            "18014398510661633",
+            "18014398511382529"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3",
+        "cryptoConfigId": "0x9318179273216fd60351e8cdf0380dab2143b53f34f4962f60348c556b5b29d5",
+        "search": {
+          "n": "19",
+          "z": "5000",
+          "k": "65537",
+          "lambda": 45,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": null,
+          "insecure": false,
+          "multDepth": 3,
+          "minPrimeBits": 50
+        }
+      },
+      {
+        "preset": "insecure",
+        "paramSet": 4,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_LBFV",
+          "degree": "128",
+          "plaintextModulus": "100",
+          "moduli": [
+            "72057594037913089",
+            "72057594037912321",
+            "72057594037904641"
+          ],
+          "error1Variance": "50471587840"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_LBFV",
+          "degree": "128",
+          "plaintextModulus": "72057594037913089",
+          "moduli": [
+            "144115188075827201",
+            "144115188075828481"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258",
+        "cryptoConfigId": "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
+        "search": {
+          "n": "19",
+          "z": "3",
+          "k": "100",
+          "lambda": 2,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": "128",
+          "insecure": true,
+          "multDepth": 3,
+          "minPrimeBits": 12
+        }
       }
     ]
   },
@@ -182,6 +265,18 @@
       "large"
     ],
     [
+      "insecure",
+      "minimum"
+    ],
+    [
+      "insecure",
+      "micro"
+    ],
+    [
+      "insecure",
+      "small"
+    ],
+    [
       "secure-8192",
       "minimum"
     ],
@@ -196,6 +291,18 @@
     [
       "secure-8192",
       "large"
+    ],
+    [
+      "secure-16384",
+      "minimum"
+    ],
+    [
+      "secure-16384",
+      "micro"
+    ],
+    [
+      "secure-16384",
+      "small"
     ]
   ]
 }

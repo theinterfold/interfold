@@ -26,8 +26,12 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 pub struct Configs {
     pub params: Arc<BfvParameters>,
     pub committee: CiphernodesCommitteeSize,
-    preset: BfvPreset,
+    pub preset: BfvPreset,
+    pub chunk_size: usize,
     pub bits: Bits,
+    /// The smudging bound split the l-BFV C2b leaves check; `None` on the trBFV path, where C1
+    /// bounds the smudging noise.
+    pub e_sm_split: Option<crate::threshold::pk_generation::ESmSplit>,
     /// C2a's chunks.
     pub sk_chunks: ChunkLayout,
     /// C2b's chunks.
@@ -47,6 +51,14 @@ impl Configs {
     ) -> Result<Self, ConfigError> {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
         let bits = Bits::new(threshold_params);
+        let e_sm_split = if e3_fhe_params::is_lbfv_path(preset) {
+            Some(
+                crate::threshold::pk_generation::Configs::new(preset, threshold_params, committee)?
+                    .e_sm_split,
+            )
+        } else {
+            None
+        };
         let degree = threshold_params.degree();
         let sk_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
         let e_sm_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
@@ -55,8 +67,13 @@ impl Configs {
             params: threshold_params.clone(),
             committee,
             preset,
+            chunk_size: crate::chunks::c2_chunk_size(
+                threshold_params.degree(),
+                committee.values().n,
+            ),
 
             bits,
+            e_sm_split,
             sk_chunks,
             e_sm_chunks,
         })
@@ -120,12 +137,23 @@ impl Bits {
     }
 }
 impl Configs {
+    pub fn with_chunk_size(mut self, chunk_size: usize) -> Result<Self, ConfigError> {
+        if chunk_size == 0 || !self.params.degree().is_multiple_of(chunk_size) {
+            return Err(ConfigError::Other(format!(
+                "C2 chunk size {chunk_size} must divide polynomial degree {}",
+                self.params.degree()
+            )));
+        }
+        self.chunk_size = chunk_size;
+        Ok(self)
+    }
+
     pub fn render(&self) -> Result<String, ConfigError> {
         let configs = self;
         let preset = self.preset;
         let committee = self.committee;
         let threshold_params = &self.params;
-        let config_name = preset.metadata().security.as_config_str();
+        let config_name = preset.noir_config_module();
         let bits = &configs.bits;
         let committee = committee.values();
         let parity_matrix_str =
@@ -136,6 +164,8 @@ impl Configs {
 pub use crate::configs::{}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}};
 
 pub global N: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 
 {}
 /************************************
@@ -180,6 +210,8 @@ pub global {}_E_SM_N_CHUNKS: u32 = {};
 "#,
             config_name,
             configs.params.degree(),
+            configs.chunk_size,
+            configs.params.degree() / configs.chunk_size,
             parity_matrix_str,
             prefix,
             bits.bit_share,

@@ -185,7 +185,7 @@ struct C6Fixture {
 
 async fn c6_fixture() -> C6Fixture {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let bb = find_bb()
         .await
         .expect("missing required test prerequisite: bb not found");

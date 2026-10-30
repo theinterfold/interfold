@@ -87,11 +87,9 @@ impl CiphernodeSelectorState {
 #[rtype(result = "Result<CiphernodeSelectorState>")]
 pub struct GetCiphernodeSelectorState;
 
-const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// The public-key phase also waits for the node fold proof of every roster member before C5 can
-/// publish. Those proofs can arrive long after the key shares that start the budget, so this phase
-/// gets a longer budget than the others.
-const PUBLIC_KEY_PROGRESS_TIMEOUT: Duration = Duration::from_secs(40 * 60);
+const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+// Public-key aggregation includes the per-node recursive folds and needs the full proof budget.
+const PUBLIC_KEY_PROGRESS_TIMEOUT: Duration = AGGREGATOR_PROGRESS_TIMEOUT;
 
 trait Clock: Send + Sync {
     fn now_unix_secs(&self) -> u64;

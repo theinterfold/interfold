@@ -129,6 +129,7 @@ async fn reset_keeps_state_that_the_chain_cannot_restore() -> Result<()> {
         votes_for: Vec::new(),
         outcome: e3_events::AccusationOutcome::AccusedFaulted,
         evidence: alloy::primitives::Bytes::new(),
+        proof_instance: 0,
     })?;
     repositories
         .slashing_writer_recovery(1)

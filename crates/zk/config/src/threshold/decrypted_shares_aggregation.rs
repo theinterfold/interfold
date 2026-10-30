@@ -24,6 +24,7 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 };
 #[derive(Debug, Clone)]
 pub struct Configs {
+    pub preset: BfvPreset,
     pub params: Arc<BfvParameters>,
     pub committee: CiphernodesCommitteeSize,
     pub plaintext_modulus: u64,
@@ -54,7 +55,8 @@ impl Configs {
         threshold_params: &Arc<BfvParameters>,
         committee: CiphernodesCommitteeSize,
     ) -> Result<Self, ConfigError> {
-        crate::parameters::matching_preset(threshold_params, ParameterType::THRESHOLD)?;
+        let preset =
+            crate::parameters::matching_preset(threshold_params, ParameterType::THRESHOLD)?;
         let t = threshold_params.plaintext();
         let q = threshold_params.context_at_level(0)?.modulus();
         let q_mod_t = q % t;
@@ -69,6 +71,7 @@ impl Configs {
             .expect("inverse below a u64 modulus must fit u64");
         let bits = Bits::new(threshold_params)?;
         Ok(Configs {
+            preset,
             params: threshold_params.clone(),
             committee,
 
@@ -128,7 +131,7 @@ pub global PLAINTEXT_MODULUS: Field = {};
 pub global Q_MOD_T: Field = {};
 pub global Q_MOD_T_CENTERED: Field = {};
 pub global Q_INVERSE_MOD_T: Field = {};
-        
+
 /************************************
 -------------------------------------
 decrypted_shares_aggregation (CIRCUIT 7)
@@ -166,6 +169,12 @@ pub global {}_CONFIGS: DecryptedSharesAggregationConfigs<L> =
 }
 
 impl Configs {
+    pub fn with_preset(mut self, preset: BfvPreset) -> Result<Self, ConfigError> {
+        crate::parameters::require_threshold_preset(preset, &self.params)?;
+        self.preset = preset;
+        Ok(self)
+    }
+
     pub fn for_preset(
         preset: BfvPreset,
         committee: CiphernodesCommitteeSize,
@@ -173,7 +182,8 @@ impl Configs {
         let (threshold_params, _) = preset
             .build_pair()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
-        Self::new(&threshold_params, committee)
+        Self::new(&threshold_params, committee)?
+            .with_preset(preset.threshold_counterpart().unwrap_or(preset))
     }
 }
 
@@ -182,10 +192,7 @@ mod tests {
     use super::*;
     #[test]
     fn rounding_constants_use_the_full_level_zero_modulus() {
-        for preset in [
-            BfvPreset::InsecureThreshold64,
-            BfvPreset::SecureThreshold8192,
-        ] {
+        for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
             let configs = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
             // Full CRT product is independent of the cached context used by the computation.
             let q: BigUint = configs

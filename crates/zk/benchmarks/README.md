@@ -27,13 +27,16 @@ pnpm bench:circuits list --mode insecure --committee minimum
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
 pnpm bench:circuits protocol --mode insecure --committee minimum --multithread-jobs 2
 pnpm bench:circuits gas --mode insecure --committee minimum
+pnpm bench:circuits list --mode insecure --preset insecure-lbfv --committee minimum
+pnpm bench:circuits list --mode secure --preset secure-16384 --committee small
 pnpm bench:circuits replay --input <saved-run-or-summary> --output <new-directory>
 pnpm bench:circuits report --input <saved-run> [--output <new-report.md>]
 pnpm test:circuit-bench
 ```
 
-`circuits/benchmarks/config.json` selects the leaf cases and their permitted modes; unknown or
-mode-restricted selections fail. Historical result directories and that config stay under
+`circuits/benchmarks/config.json` selects the leaf cases and their permitted modes/presets; unknown
+or restricted selections fail. `insecure-lbfv` selects protocol param-set 4 while sharing the
+degree-128 `insecure` archive. Historical result directories and that config stay under
 `circuits/benchmarks/`.
 
 ## Measurement rules
@@ -84,7 +87,7 @@ The active preset and committee must match the request, and the driver verifies 
 inventory and checksums. To select an archived pair without compiling:
 
 ```bash
-pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only
+pnpm build:circuits --preset insecure --committee minimum --hydrate-bin-only
 ```
 
 Verifier gas and calldata gas stay separate measurements; calldata cost never substitutes for

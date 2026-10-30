@@ -24,7 +24,7 @@ export const VOTE_TYPEHASH = ethers.keccak256(
 /**
  * Helper to create signed committee attestation evidence for Lane A.
  *
- * Returns `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
+ * Returns `abi.encode(uint256 proofType, uint256 proofInstance, address[] voters, bytes32[] dataHashes,
  *                     bytes evidence, uint256 issuedAt, uint256 deadline,
  *                     bytes[] signatures)` with
  * voters sorted ascending by address.
@@ -57,16 +57,22 @@ export async function signAndEncodeAttestation(
   deadline?: bigint,
   dataHashOverride?: string,
   issuedAt?: bigint,
+  proofInstance: number = 0,
 ): Promise<string> {
   const latestBlock = await ethers.provider.getBlock("latest");
   const effectiveIssuedAt =
     issuedAt ?? BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000));
   const effectiveDeadline = deadline ?? effectiveIssuedAt + 30n * 60n;
   const accusationId = ethers.keccak256(
-    ethers.solidityPacked(
-      ["uint256", "uint256", "address", "uint256"],
-      [chainId, e3Id, operator, proofType],
-    ),
+    proofInstance === 0
+      ? ethers.solidityPacked(
+          ["uint256", "uint256", "address", "uint256"],
+          [chainId, e3Id, operator, proofType],
+        )
+      : ethers.solidityPacked(
+          ["uint256", "uint256", "address", "uint256", "uint256"],
+          [chainId, e3Id, operator, proofType, proofInstance],
+        ),
   );
 
   const domain: TypedDataDomain = {
@@ -138,6 +144,7 @@ export async function signAndEncodeAttestation(
   return ethers.AbiCoder.defaultAbiCoder().encode(
     [
       "uint256",
+      "uint256",
       "address[]",
       "bytes32[]",
       "bytes",
@@ -147,6 +154,7 @@ export async function signAndEncodeAttestation(
     ],
     [
       proofType,
+      proofInstance,
       voters,
       dataHashes,
       evidence,

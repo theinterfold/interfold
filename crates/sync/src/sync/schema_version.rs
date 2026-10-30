@@ -86,6 +86,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_schema_is_v9() {
+        assert_eq!(SCHEMA_VERSION, 9);
+        assert!(matches!(
+            decide_schema_version(Some(8), SCHEMA_VERSION, true),
+            SchemaVersionDecision::Halt(_)
+        ));
+    }
+
+    #[test]
     fn fresh_store_writes_current() {
         assert_eq!(
             decide_schema_version(None, 4, false),

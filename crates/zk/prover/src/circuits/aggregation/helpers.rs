@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Shared helpers for the sequential `c3_fold` / `c6_fold` / `nodes_fold` accumulators and
-//! the single-shot `node_dkg_fold` builder.
+//! Shared helpers for the sequential `nodes_fold` accumulator and the single-shot
+//! `node_dkg_fold` builder.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
