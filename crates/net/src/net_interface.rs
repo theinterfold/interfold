@@ -26,6 +26,7 @@ use crate::{
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
     gossip_ingress::GossipIngress,
     gossip_subscription_health::{GossipSubscriptionHealth, GOSSIP_SUBSCRIPTION_GRACE},
+    inbound_ip_limits::{AddressGroupLimit, InboundIpLimits},
     keypair::Libp2pKeypair,
     net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
@@ -388,30 +389,37 @@ fn is_unspecified_addr(addr: &Multiaddr) -> bool {
     })
 }
 
-fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
+/// The cause of a denied inbound connection, when it has type `T`.
+fn denial_cause<T: std::error::Error + 'static>(error: &ListenError) -> Option<&T> {
     let ListenError::Denied { cause } = error else {
-        return false;
+        return None;
     };
     let mut current: &(dyn std::error::Error + 'static) = cause;
     loop {
-        if let Some(exceeded) = current.downcast_ref::<connection_limits::Exceeded>() {
-            // libp2p-connection-limits 0.6.0 keeps the limit kind private. Cargo.lock pins this
-            // dependency, and the regression test verifies its per-peer display text.
-            return exceeded
-                .to_string()
-                .contains(LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT);
+        if let Some(cause) = current.downcast_ref::<T>() {
+            return Some(cause);
         }
-        let Some(source) = current.source() else {
-            return false;
-        };
-        current = source;
+        current = current.source()?;
     }
+}
+
+fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
+    // libp2p-connection-limits 0.6.0 keeps the limit kind private. Cargo.lock pins this
+    // dependency, and the regression test verifies its per-peer display text.
+    denial_cause::<connection_limits::Exceeded>(error).is_some_and(|exceeded| {
+        exceeded
+            .to_string()
+            .contains(LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT)
+    })
 }
 
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
     /// First, so it holds back a dial before the other behaviours prepare it.
     gossip_health: GossipSubscriptionHealth,
+    /// Before the behaviours that prepare an inbound connection, and before `connection_limits`,
+    /// so a refused connection reports the address-group limit.
+    inbound_ip_limits: InboundIpLimits,
     gossipsub: GossipBehaviour,
     kademlia: KademliaBehaviour<MemoryStore>,
     connection_limits: connection_limits::Behaviour,
@@ -954,6 +962,7 @@ fn create_behaviour(
 
     Ok(NodeBehaviour {
         gossip_health: GossipSubscriptionHealth::default(),
+        inbound_ip_limits: InboundIpLimits::default(),
         gossipsub,
         kademlia,
         connection_limits,
@@ -1027,23 +1036,41 @@ async fn process_swarm_event(
                     connection_id,
                     peer_id,
                 })?;
-            } else if let Err(kind) = peer_admission.stage(
-                peer_id,
-                PeerAdmission::pending(
-                    connection_id,
-                    remote_addr,
-                    direction,
-                    num_established.get(),
-                ),
-            ) {
-                debug!(%peer_id, "Disconnecting a peer rejected during the admission TTL");
-                let _ = swarm.disconnect_peer_id(peer_id);
-                event_tx.send(NetEvent::PeerRejected {
-                    connection_id,
-                    kind,
-                    reason: "peer is temporarily blocked by the network admission policy"
-                        .to_string(),
-                })?;
+            } else {
+                match peer_admission.stage(
+                    peer_id,
+                    PeerAdmission::pending(
+                        connection_id,
+                        remote_addr,
+                        direction,
+                        num_established.get(),
+                    ),
+                ) {
+                    Ok(None) => {}
+                    Ok(Some((evicted_peer, evicted))) => {
+                        debug!(
+                            %evicted_peer,
+                            "Closed an inbound connection that did not complete Identify, to make room for a newer one"
+                        );
+                        swarm.close_connection(evicted);
+                        event_tx.send(NetEvent::PeerRejected {
+                            connection_id: evicted,
+                            kind: PeerRejectionKind::Transient,
+                            reason: "too many inbound connections are waiting for Identify"
+                                .to_string(),
+                        })?;
+                    }
+                    Err(kind) => {
+                        debug!(%peer_id, "Disconnecting a peer rejected during the admission TTL");
+                        let _ = swarm.disconnect_peer_id(peer_id);
+                        event_tx.send(NetEvent::PeerRejected {
+                            connection_id,
+                            kind,
+                            reason: "peer is temporarily blocked by the network admission policy"
+                                .to_string(),
+                        })?;
+                    }
+                }
             }
         }
 
@@ -1184,13 +1211,16 @@ async fn process_swarm_event(
 
         SwarmEvent::IncomingConnectionError { error, .. } => {
             let is_redundant_connection = is_redundant_peer_connection_denial(&error);
+            let is_address_group_limit = denial_cause::<AddressGroupLimit>(&error).is_some();
             let error_str = format!("{:#}", anyhow::Error::from(error));
             // Downgrade benign handshake failures to debug:
             // - "Local peer ID": self-dial attempt
             // - "aborted by peer": simultaneous connection dedup (both sides dialed,
             //   libp2p keeps one connection and the other side aborts the handshake)
             // - per-peer connection-limit denial: an existing peer opened a redundant connection
+            // - address-group limit: the limit works as intended, and a flood would fill the log
             if is_redundant_connection
+                || is_address_group_limit
                 || error_str.contains("Local peer ID")
                 || error_str.contains("aborted by peer")
             {

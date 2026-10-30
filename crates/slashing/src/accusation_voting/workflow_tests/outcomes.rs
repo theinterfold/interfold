@@ -109,7 +109,7 @@ fn local_proof_failure_requires_the_claimed_dealers_signature() {
             e3_id: voting.e3_id.clone(),
             proof_type: ProofType::C3aSkShareEncryption,
             proof: e3_events::Proof::new(
-                e3_events::CircuitName::ShareEncryption,
+                e3_zk_config::CircuitName::ShareEncryption,
                 ArcBytes::from_bytes(&[1]),
                 ArcBytes::from_bytes(&[2]),
             ),

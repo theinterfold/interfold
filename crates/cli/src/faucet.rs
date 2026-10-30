@@ -21,6 +21,7 @@ use e3_evm::{
     helpers::{load_signer_from_repository, ProviderConfig},
     EthPrivateKeyRepositoryFactory,
 };
+use e3_evm_contracts::IERC20Metadata as IERC20;
 
 mod faucet_contract {
     use super::sol;
@@ -41,18 +42,6 @@ mod faucet_contract {
     );
 }
 
-mod erc20 {
-    use super::sol;
-
-    sol!(
-        #[sol(rpc)]
-        interface IERC20 {
-            function balanceOf(address account) external view returns (uint256);
-        }
-    );
-}
-
-use erc20::IERC20;
 use faucet_contract::FaucetContract;
 
 use crate::helpers::chain::select_chain;

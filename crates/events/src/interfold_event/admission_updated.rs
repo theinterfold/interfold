@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::Message;
-use alloy::{primitives::B256, sol, sol_types::SolEvent};
+use alloy::{primitives::B256, sol_types::SolEvent};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
@@ -36,19 +36,10 @@ pub struct AdmissionUpdated {
     pub change: AdmissionChange,
 }
 
-// Keep this ABI for logs saved before admission events had a typed payload.
-sol! {
-    struct StoredAdmissionPolicy {
-        bool cooldownEnabled;
-        bool admissionsPaused;
-        uint48 cooldownDuration;
-        uint48 pauseTimepoint;
-        bool pauseCooldownEnabled;
-        uint48 pauseCooldownDuration;
-    }
-    event AdmissionPolicyUpdated(uint48 timepoint, StoredAdmissionPolicy policy);
-    event AdmissionStarted(address indexed operator, uint48 timepoint);
-}
+// These are wire bindings only; the durable AdmissionUpdated/AdmissionPolicy above do not move.
+pub use e3_evm_contracts::legacy::{
+    AdmissionPolicyUpdated, AdmissionStarted, StoredAdmissionPolicy,
+};
 
 impl AdmissionUpdated {
     /// Decode an admission log preserved by an older binary. The caller must verify its EVM source.
@@ -114,5 +105,53 @@ impl Display for AdmissionUpdated {
             "AdmissionUpdated {{ chain: {}, timepoint: {}, change: {:?} }}",
             self.chain_id, self.timepoint, self.change
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::hex;
+    use e3_utils::ArcBytes;
+
+    #[test]
+    fn saved_raw_admission_layout_remains_readable() {
+        // Frozen pre-typed-payload log: timepoint=100, followed by the six static policy words.
+        // Do not encode this fixture with the current binding: that would hide historical drift.
+        let log = crate::EvmLogObserved {
+            contract: "BondingRegistry".into(),
+            chain_id: 42,
+            e3_id: None,
+            event_name: "UnknownEvmLog".into(),
+            signature: None,
+            known: false,
+            topics: vec![
+                "0x61639d071f0039c475821c28098b7eb4642dffe9607e19d3a73d6055d0932db2".into(),
+            ],
+            data: ArcBytes::from_bytes(&hex!(
+                "0000000000000000000000000000000000000000000000000000000000000064"
+                "0000000000000000000000000000000000000000000000000000000000000001"
+                "0000000000000000000000000000000000000000000000000000000000000001"
+                "0000000000000000000000000000000000000000000000000000000000000014"
+                "000000000000000000000000000000000000000000000000000000000000005a"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "000000000000000000000000000000000000000000000000000000000000001e"
+            )),
+        };
+        assert_eq!(
+            AdmissionUpdated::from_observed_log(&log).unwrap().unwrap(),
+            AdmissionUpdated {
+                chain_id: 42,
+                timepoint: 100,
+                change: AdmissionChange::Policy(AdmissionPolicy {
+                    cooldown_enabled: true,
+                    admissions_paused: true,
+                    cooldown_duration: 20,
+                    pause_timepoint: 90,
+                    pause_cooldown_enabled: false,
+                    pause_cooldown_duration: 30,
+                }),
+            }
+        );
     }
 }

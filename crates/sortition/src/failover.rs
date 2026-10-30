@@ -11,14 +11,56 @@
 //! publish the expected on-chain result before the durable deadline, every node
 //! can skip it and select the next party without a separate election protocol.
 
+use e3_committee::Committee;
 pub use e3_events::AggregationPhase as AggregatorPhase;
-use e3_events::{Committee, E3Stage, E3id};
+use e3_events::{E3Stage, E3id};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
 pub const AGGREGATOR_FAILOVER_SCHEMA_VERSION: u16 = 3;
 const LEGACY_EARLY_TIMER_SCHEMA_VERSION: u16 = 1;
+
+/// Lowest party ID not expelled or presumed unresponsive, or `None` if all are skipped.
+pub fn active_aggregator_party_id(committee: &Committee, skipped: &[u64]) -> Option<u64> {
+    (0..committee.len() as u64).find(|party_id| !skipped.contains(party_id))
+}
+
+/// Whether this address is active under both canonical exclusions and phase-local failover.
+pub fn effective_aggregator(
+    committee: &Committee,
+    my_addr: &str,
+    expelled: &[u64],
+    unresponsive: &[u64],
+) -> bool {
+    let skipped: Vec<u64> = expelled
+        .iter()
+        .chain(unresponsive.iter())
+        .copied()
+        .collect();
+    active_aggregator_party_id(committee, &skipped)
+        .and_then(|party_id| committee.members().get(party_id as usize))
+        .map(|addr| addr.eq_ignore_ascii_case(my_addr))
+        .unwrap_or(false)
+}
+
+/// Eligible members in promotion order, starting with the active aggregator.
+pub fn aggregator_standbys(
+    committee: &Committee,
+    skipped: &[u64],
+    limit: usize,
+) -> Vec<(u64, String)> {
+    (0..committee.len() as u64)
+        .filter(|party_id| !skipped.contains(party_id))
+        .take(limit)
+        .filter_map(|party_id| {
+            committee
+                .members()
+                .get(party_id as usize)
+                .map(|addr| (party_id, addr.clone()))
+        })
+        .collect()
+}
 
 /// A durable timer. Its phase and active party identify the pending work. The
 /// absolute deadline preserves the budget across restart.
@@ -216,7 +258,7 @@ pub fn apply_due_timeout(
         .chain(unresponsive.iter())
         .copied()
         .collect();
-    let Some(active) = committee.active_aggregator_party_id(&skipped) else {
+    let Some(active) = active_aggregator_party_id(committee, &skipped) else {
         return FailoverDecision::Hold;
     };
     if state
@@ -226,7 +268,7 @@ pub fn apply_due_timeout(
     {
         return FailoverDecision::Hold;
     }
-    let standbys = committee.aggregator_standbys(&skipped, committee.len());
+    let standbys = aggregator_standbys(committee, &skipped, committee.len());
 
     let Some((promote_to, new_addr)) = standbys
         .iter()
@@ -271,6 +313,33 @@ mod tests {
 
     fn committee() -> Committee {
         Committee::new(vec!["0xa".into(), "0xb".into(), "0xc".into()])
+    }
+
+    #[test]
+    fn selection_preserves_party_order_and_combines_skip_sets() {
+        let c = Committee::new(vec!["0xBbB".into(), "0xccc".into(), "0xaaa".into()]);
+        assert_eq!(active_aggregator_party_id(&c, &[]), Some(0));
+        assert!(effective_aggregator(&c, "0xBBB", &[], &[]));
+        assert!(!effective_aggregator(&c, "0xbbb", &[], &[0]));
+        assert!(effective_aggregator(&c, "0xCCC", &[], &[0]));
+        assert!(effective_aggregator(&c, "0xaaa", &[0], &[1]));
+        assert_eq!(active_aggregator_party_id(&c, &[0, 1]), Some(2));
+        assert_eq!(active_aggregator_party_id(&c, &[0, 1, 2]), None);
+        assert!(!effective_aggregator(&c, "0xaaa", &[0, 1, 2], &[]));
+        assert_eq!(
+            aggregator_standbys(&c, &[], 10),
+            vec![
+                (0, "0xBbB".into()),
+                (1, "0xccc".into()),
+                (2, "0xaaa".into()),
+            ]
+        );
+        assert_eq!(aggregator_standbys(&c, &[0], 1), vec![(1, "0xccc".into())]);
+        assert!(aggregator_standbys(&c, &[], 0).is_empty());
+        assert_eq!(
+            active_aggregator_party_id(&Committee::new(vec![]), &[]),
+            None
+        );
     }
 
     /// The public-key phase waits for node fold proofs, so its budget can be longer than the

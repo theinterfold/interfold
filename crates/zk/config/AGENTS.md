@@ -1,9 +1,11 @@
 # e3-zk-config
 
-Static BFV configuration, bounds, bit widths, parity, and public-input layouts belong here.
-[README.md](README.md) owns construction and rendering APIs.
+Circuit identity/variants, static BFV configuration, bounds, parity, and public-input layouts belong
+here. [README.md](README.md) owns construction and rendering APIs.
 
 - Keep normal dependencies free of witness, samples, build tooling, and runtime orchestration.
+- Preserve identity enum order/serde names, circuit paths, prover targets, and layout selection.
+  These identities are embedded in saved/signed payloads even though events only re-exports them.
 - `Configs::new` retains the supplied parameter owner. Validate supported ring/CRT/sampler profiles
   before derived arithmetic. Share C3/user-encryption `k0is` across bounds, rendering, and
   preparation.

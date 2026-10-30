@@ -21,7 +21,7 @@ use e3_data::{
     StoreConnector,
 };
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExcluded,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CommitteeMemberExcluded,
     CommitteeMemberExpelled, CommitteePublished, ComputeRequest, ComputeRequestError,
     ComputeRequestErrorKind, ComputeRequestKind, DecryptionKeyShared, DkgCoordination,
     DkgCoordinationKind, DkgDealer, DkgProofSigned, E3Stage, E3StageChanged, E3id, EffectsEnabled,
@@ -41,6 +41,7 @@ use e3_trbfv::{
     gen_esi_sss::GenEsiSssRequest, TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
 };
 use e3_utils::OrderedSet;
+use e3_zk_config::CircuitName;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

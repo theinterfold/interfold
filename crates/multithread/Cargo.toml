@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+e3-zk-config.workspace = true
 alloy.workspace = true
 e3-bfv-client.workspace = true
 e3-committee.workspace = true

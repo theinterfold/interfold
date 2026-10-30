@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 
 impl ThresholdPlaintextAggregator {
     pub(super) fn c6_has_canonical_domain(&self, proof: &Proof, ciphertext: &ArcBytes) -> bool {

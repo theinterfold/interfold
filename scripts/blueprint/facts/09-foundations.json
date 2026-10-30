@@ -818,7 +818,7 @@
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
-          "ref": "crates/tests/tests/layout_lock.rs@251@fn persisted_layouts_match_the_locked_fixture()"
+          "ref": "crates/tests/tests/layout_lock.rs@249@fn persisted_layouts_match_the_locked_fixture()"
         }
       ],
       "rust_patterns": [
@@ -840,7 +840,7 @@
         {
           "pattern": "unit-test",
           "note": "the layout test is a plain #[test] that calls the fixture check",
-          "ref": "crates/tests/tests/layout_lock.rs@250@#[test]"
+          "ref": "crates/tests/tests/layout_lock.rs@248@#[test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],

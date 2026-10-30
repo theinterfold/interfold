@@ -52,10 +52,11 @@ Peer events arriving before chain admission wait in a bounded memory-only queue.
 admitting chain event in arrival order; a restart before admission loses that held history. This
 queue is separate from deferred delivery to missing recipients.
 
-`canonical_key::CanonicalPublicKeys` is the shared cache for confirmed key identity and
-decryption-domain repair. Its EVM projection establishes authority; a local `PublicKeyAggregated`
-intent cannot. Repository factory traits expose typed context, metadata, lifecycle, and
-router-checkpoint storage to startup/recovery consumers.
+`canonical_key::CanonicalPublicKeys` stays here as the shared runtime authority for confirmed key
+identity and decryption-domain repair, not a transport type or a second service in events. Its EVM
+projection establishes authority; a local `PublicKeyAggregated` intent cannot. Repository factory
+traits expose typed context, metadata, lifecycle, and router-checkpoint storage to startup/recovery
+consumers.
 
 See [persistence and replay](../../docs/architecture/persistence-and-replay.md) for checkpoint,
 deferred-queue, overflow, and teardown limits.
