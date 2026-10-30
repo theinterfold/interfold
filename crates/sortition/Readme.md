@@ -3,10 +3,15 @@
 ## Purpose
 
 `e3-sortition` projects request-time operator eligibility, scores local ticket submissions, retains
-finalized committees, and derives this node's party/aggregator roles. Contracts finalize membership;
-DKG and aggregation are downstream consumers. The walkthrough below places selection in the larger
-E3 lifecycle; the [selection domain](../../docs/architecture/committee-selection.md) owns the
-cross-component rules and limits.
+finalized committees, coordinates committee-finalization attempts, and derives this node's
+party/aggregator roles. Contracts finalize membership; DKG and aggregation are downstream consumers.
+The walkthrough below places selection in the larger E3 lifecycle; the
+[selection domain](../../docs/architecture/committee-selection.md) owns the cross-component rules
+and limits.
+
+Ordered membership/lookup belongs to `e3-committee`. The free functions in
+[`failover.rs`](src/failover.rs) choose active/standby aggregators from that supplied order; they do
+not reorder members or renumber finalized slots.
 
 ## Map
 
@@ -16,6 +21,7 @@ cross-component rules and limits.
 | [`sortition/node_registry.rs`](src/sortition/node_registry.rs), [`sortition/admission.rs`](src/sortition/admission.rs), [`sortition/bond_owners.rs`](src/sortition/bond_owners.rs)             | Historical eligibility, policy, and request-time owners.              |
 | [`sortition/selection_backend.rs`](src/sortition/selection_backend.rs), [`sortition/ticket_selection.rs`](src/sortition/ticket_selection.rs), [`sortition/ticket.rs`](src/sortition/ticket.rs) | Owner shortlist, score/rank calculation, and canonical ticket digest. |
 | [`ciphernode_selection/`](src/ciphernode_selection), [`failover.rs`](src/failover.rs)                                                                                                          | Finalized party roles and readiness-gated aggregator failover.        |
+| [`committee_finalization/`](src/committee_finalization)                                                                                                                                        | Separate node-wide finalization actor, chain-time input and recovery. |
 | [`messages.rs`](src/messages.rs), [`repo.rs`](src/repo.rs)                                                                                                                                     | Query/delivery messages and typed persistence.                        |
 
 ## Runtime integration
@@ -25,6 +31,18 @@ subscribes to registry/request events. `CiphernodeSelector::attach` restores loc
 roles. The [builder caller](../ciphernode-builder/src/builder/sortition.rs) shows their combined
 setup, including committee reconciliation and pending ticket intents. Consumers query the actor with
 messages such as `GetNodesForE3`; they do not rerun selection from current balances.
+
+Full nodes also attach
+`CommitteeFinalizer::attach_with_recovery(bus, repository, chain_time_reader)` at the existing
+[startup boundary](../ciphernode-builder/src/builder/startup.rs). The `CommitteeChainTimeReader`
+reads latest block time for the request's chain; the [EVM adapter](../evm/runtime/src/chain_time.rs)
+creates a fresh provider per attempt. The actor retains deadline/rank, effects gating and
+cancellation. It remains separate from `Sortition`, and bootstrap does not attach it. Recovery keeps
+its original store key and schema despite the ownership move.
+
+The finalizer, recovery types, schema constant and repository factory are now exported by
+`e3_sortition`, not `e3_aggregator`; Rust callers must migrate those imports and pass a reader
+instead of a provider map. This source API change does not itself require a data migration.
 
 `FailoverPolicy` supplies a 10-minute roster/plaintext budget and a 40-minute public-key budget in
 the production selector. `timeout(phase)` selects the budget; `with_public_key_timeout` overrides
@@ -417,6 +435,11 @@ vectors, historical owners/admission, capacity reservations, and phase-specific 
 cases cover role restoration/promotion. On-chain ticket acceptance and owner caps are covered by the
 [contract suite](../../packages/interfold-contracts/README.md), separately from local decisions. See
 [AGENTS.md](AGENTS.md) for selection/snapshot changes.
+
+`cargo test --locked -p e3-sortition --lib committee_finalizer` covers formation timing, retries,
+cancellation, production sync replay, and reopening a pre-refactor snapshot at the original disk
+key. EVM's `chain_time` tests cover fresh providers and Anvil timestamps separately; neither suite
+establishes recursive proof validity.
 
 ### Integration testing flow
 

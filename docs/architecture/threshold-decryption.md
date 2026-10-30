@@ -3,8 +3,8 @@
 Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
 [plaintext aggregation](../../crates/aggregator/src/plaintext_aggregation/),
 [canonical key projection](../../crates/request/src/canonical_key.rs), and
-[EVM canonical authority](../../crates/evm/src/canonical_key.rs). [DKG](dkg.md) defines the accepted
-H-roster and zero-based committee identities.
+[EVM canonical authority](../../crates/evm/runtime/src/canonical_key.rs). [DKG](dkg.md) defines the
+accepted H-roster and zero-based committee identities.
 
 ## Authority before work
 

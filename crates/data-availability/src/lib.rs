@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Content-addressed data-availability transport used by Interfold applications.
+//! Content-addressed transport and committee-public-key chunk mechanics.
 //!
 //! Ethereum verifies an Avail/VectorX receipt before it records a reference. Readers still hash
 //! the bytes after retrieval. The receipt proves that the committed bytes were published; the
@@ -16,6 +16,8 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+pub mod public_key;
 
 /// Maximum object size accepted by the application transport.
 ///

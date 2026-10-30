@@ -34,10 +34,7 @@
 
 use std::path::Path;
 
-use e3_aggregator::{
-    CommitteeFinalizerRepositoryFactory, PublicKeyRepositoryFactory,
-    TrBfvPlaintextRepositoryFactory,
-};
+use e3_aggregator::{PublicKeyRepositoryFactory, TrBfvPlaintextRepositoryFactory};
 use e3_data::{Repositories, Repository};
 use e3_events::{
     AggregateId, E3id, Event, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
@@ -58,8 +55,8 @@ use e3_request::{
 };
 use e3_sortition::{
     AggregatorFailoverRepositoryFactory, CiphernodeSelectorFactory,
-    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
-    SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
+    CommitteeFinalizerRepositoryFactory, FinalizedCommitteesRepositoryFactory,
+    NodeStateRepositoryFactory, SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
 };
 use e3_sync::SyncRepositoryFactory;
 use serde::de::DeserializeOwned;
@@ -132,12 +129,13 @@ fn layout_rows() -> Vec<String> {
         "threshold_keyshare_bfv_key",
         none,
     ));
-    // e3-aggregator
+    // e3-sortition (the finalizer keeps its original persisted identity)
     repository(
         "committee_finalizer_recovery",
         |r| r.committee_finalizer_recovery(),
         &mut rows,
     );
+    // e3-aggregator
     repository("trbfv_plaintext", |r| r.trbfv_plaintext(&e3()), &mut rows);
     repository(
         "trbfv_plaintext_recovery",

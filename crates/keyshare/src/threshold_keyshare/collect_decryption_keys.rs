@@ -143,8 +143,9 @@ impl DecryptionKeySharedCollection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{CircuitName, Proof, ProofPayload, ProofType, SignedProofPayload};
+    use e3_events::{Proof, ProofPayload, ProofType, SignedProofPayload};
     use e3_utils::utility_types::ArcBytes;
+    use e3_zk_config::CircuitName;
 
     fn proof() -> SignedProofPayload {
         SignedProofPayload {

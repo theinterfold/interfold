@@ -118,8 +118,8 @@
         },
         {
           "name": "CircuitName",
-          "what": "names of the ZK circuits (PkBfv, PkGeneration, ThresholdShareDecryption, DecryptedSharesAggregation, fold circuits) with as_str",
-          "ref": "crates/events/src/interfold_event/proof.rs@109@pub enum CircuitName {"
+          "what": "compatibility re-export of the static circuit identity owned by e3-zk-config; proof payloads stay in events",
+          "ref": "crates/events/src/interfold_event/proof.rs@5@pub use e3_zk_config::{CircuitName, CircuitVariant};"
         },
         {
           "name": "ProofType",
@@ -180,7 +180,7 @@
       "read_first": [
         {
           "why": "crate surface: the module list and re-exports; start from the bus",
-          "ref": "crates/events/src/lib.rs@47@pub use eventbus::*;"
+          "ref": "crates/events/src/lib.rs@39@pub use eventbus::*;"
         },
         {
           "why": "publishing: BusHandle stamps a local event with the HLC and hands it to the Sequencer",
@@ -219,11 +219,6 @@
           "pattern": "anyhow-context",
           "note": "a failed log sync becomes a contextual error before the event is dispatched",
           "ref": "crates/events/src/eventstore.rs@81@.context(\"failed to sync event before dispatch\")"
-        },
-        {
-          "pattern": "enum-match",
-          "note": "CircuitName::as_str maps each circuit to its name string",
-          "ref": "crates/events/src/interfold_event/proof.rs@157@CircuitName::PkBfv => \"pk\","
         },
         {
           "pattern": "newtype",

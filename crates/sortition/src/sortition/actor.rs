@@ -14,15 +14,15 @@ use crate::CiphernodeSelector;
 use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention, IdentityPolicyState};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
+use e3_committee::Committee;
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::{
     prelude::*, trap, BondOwnerSetAt, BondingAssetConfigUpdatedAt, CiphernodeAdded,
-    CiphernodeRemoved, Committee, CommitteeFinalized, CommitteeMemberExcluded,
-    CommitteeMemberExpelled, CommitteeRequested, ConfigurationUpdatedAt, E3Failed,
-    E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EffectsEnabled,
-    EligibilityConfigurationVersionUpdatedAt, EventContext, EventType, InterfoldEvent,
-    OperatorActivationChangedAt, PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdatedAt,
-    TicketGenerated, TypedEvent,
+    CiphernodeRemoved, CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled,
+    CommitteeRequested, ConfigurationUpdatedAt, E3Failed, E3RequestComplete, E3Requested, E3Stage,
+    E3StageChanged, EType, EffectsEnabled, EligibilityConfigurationVersionUpdatedAt, EventContext,
+    EventType, InterfoldEvent, OperatorActivationChangedAt, PlaintextOutputPublished, Seed,
+    Sequenced, TicketBalanceUpdatedAt, TicketGenerated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};

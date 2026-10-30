@@ -1,6 +1,6 @@
 # Application data availability
 
-Owners: [ciphernode DA coordinator](../../crates/evm/src/data_availability/),
+Owners: [ciphernode DA coordinator](../../crates/evm/runtime/src/data_availability/),
 [CRISP server](https://github.com/theinterfold/CRISP/tree/main/server), and
 [DA contract adapter](../../packages/interfold-contracts/contracts/). Committee public keys use
 bounded Ethereum event chunks, not Avail; [DKG](dkg.md) owns their commitment validation. Voter and

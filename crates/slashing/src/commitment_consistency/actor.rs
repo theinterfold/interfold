@@ -32,12 +32,13 @@
 //! [`CommitmentConsistencyCheckComplete`]: e3_events::CommitmentConsistencyCheckComplete
 //! [`CommitmentConsistencyViolation`]: e3_events::CommitmentConsistencyViolation
 
+use crate::CommitmentLink;
 use actix::{Actor, Addr, Context, Handler};
 use e3_data::Repository;
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, CommitmentRosterSelected,
-    E3RequestComplete, E3id, EventContext, EventPublisher, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData, ProofVerificationPassed, Sequenced, TypedEvent,
+    BusHandle, CommitmentConsistencyCheckRequested, CommitmentRosterSelected, E3RequestComplete,
+    E3id, EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
+    InterfoldEventData, ProofVerificationPassed, Sequenced, TypedEvent,
 };
 use e3_utils::NotifySync;
 use tracing::{error, info};

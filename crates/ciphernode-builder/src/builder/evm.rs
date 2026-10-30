@@ -134,6 +134,12 @@ impl CiphernodeBuilder {
         }
         // Delay ingestion until the configured number of confirmations is present.
         let ingestion_confirmations = chain.ingestion_confirmations()?;
+        info!(
+            chain = %chain.name,
+            chain_id,
+            ingestion_confirmations,
+            "Chain logs are applied after this many confirmations"
+        );
         evm_config.insert(chain_id, chain.try_into()?);
 
         let provider_factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
