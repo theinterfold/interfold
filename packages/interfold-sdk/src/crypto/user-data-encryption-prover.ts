@@ -5,72 +5,29 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { Barretenberg, UltraHonkBackend, type ProofData } from '@aztec-foundation/bb.js'
-import userDataEncryptionCt0Circuit from '../../../../circuits/bin/threshold/target/user_data_encryption_ct0.json'
-import userDataEncryptionCt1Circuit from '../../../../circuits/bin/threshold/target/user_data_encryption_ct1.json'
 import userDataEncryptionCircuit from '../../../../circuits/bin/threshold/target/user_data_encryption.json'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
-import { proofToFields } from '../utils'
 
 import type { CircuitInputs } from './user-data-encryption'
 
 export const proveUserDataEncryption = async (circuitInputs: CircuitInputs): Promise<ProofData> => {
-  // The outer circuit needs 2^21 SRS points. Pass the size to `new`: on the WASM backend that
+  // The circuit needs 2^21 SRS points. Pass the size to `new`: on the WASM backend that
   // browsers use, a later `initSRSChonk` call does not enlarge the SRS that `new` loads.
   const api = await Barretenberg.new({ srsSize: 2 ** 21 })
 
   try {
-    const { witness: userDataEncryptionCt0Witness } = await executeCircuit(userDataEncryptionCt0Circuit as CompiledCircuit, {
+    // One circuit proves both ciphertext legs over a shared `u`. It hard-codes the CRS as `pk1`, so
+    // the key's second component is not an input.
+    const { witness: userDataEncryptionWitness } = await executeCircuit(userDataEncryptionCircuit as CompiledCircuit, {
       pk0is: circuitInputs.pk0is,
       ct0is: circuitInputs.ct0is,
-      u: circuitInputs.u,
-      e0: circuitInputs.e0,
-      k1: circuitInputs.k1,
-      r: circuitInputs.r,
-    })
-    const { witness: userDataEncryptionCt1Witness } = await executeCircuit(userDataEncryptionCt1Circuit as CompiledCircuit, {
-      pk1is: circuitInputs.pk1is,
       ct1is: circuitInputs.ct1is,
       u: circuitInputs.u,
+      e0: circuitInputs.e0,
       e1: circuitInputs.e1,
+      k1: circuitInputs.k1,
+      r: circuitInputs.r,
       r_ct1: circuitInputs.r_ct1,
-    })
-
-    const userDataEncryptionCt0Backend = new UltraHonkBackend((userDataEncryptionCt0Circuit as CompiledCircuit).bytecode, api)
-    const userDataEncryptionCt1Backend = new UltraHonkBackend((userDataEncryptionCt1Circuit as CompiledCircuit).bytecode, api)
-
-    const { proof: userDataEncryptionCt0Proof, publicInputs: userDataEncryptionCt0PublicInputs } =
-      await userDataEncryptionCt0Backend.generateProof(userDataEncryptionCt0Witness, {
-        verifierTarget: 'noir-recursive-no-zk',
-      })
-    const { proof: userDataEncryptionCt1Proof, publicInputs: userDataEncryptionCt1PublicInputs } =
-      await userDataEncryptionCt1Backend.generateProof(userDataEncryptionCt1Witness, {
-        verifierTarget: 'noir-recursive-no-zk',
-      })
-
-    const userDataEncryptionCt0Artifacts = await userDataEncryptionCt0Backend.generateRecursiveProofArtifacts(
-      userDataEncryptionCt0Proof,
-      userDataEncryptionCt0PublicInputs.length,
-      {
-        verifierTarget: 'noir-recursive-no-zk',
-      },
-    )
-    const userDataEncryptionCt1Artifacts = await userDataEncryptionCt1Backend.generateRecursiveProofArtifacts(
-      userDataEncryptionCt1Proof,
-      userDataEncryptionCt1PublicInputs.length,
-      {
-        verifierTarget: 'noir-recursive-no-zk',
-      },
-    )
-
-    const { witness: userDataEncryptionWitness } = await executeCircuit(userDataEncryptionCircuit as CompiledCircuit, {
-      ct0_verification_key: userDataEncryptionCt0Artifacts.vkAsFields,
-      ct0_proof: proofToFields(userDataEncryptionCt0Proof),
-      ct0_public_inputs: userDataEncryptionCt0PublicInputs,
-      ct0_key_hash: userDataEncryptionCt0Artifacts.vkHash,
-      ct1_verification_key: userDataEncryptionCt1Artifacts.vkAsFields,
-      ct1_proof: proofToFields(userDataEncryptionCt1Proof),
-      ct1_public_inputs: userDataEncryptionCt1PublicInputs,
-      ct1_key_hash: userDataEncryptionCt1Artifacts.vkHash,
     })
 
     const userDataEncryptionBackend = new UltraHonkBackend((userDataEncryptionCircuit as CompiledCircuit).bytecode, api)

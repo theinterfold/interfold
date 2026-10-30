@@ -65,7 +65,7 @@ pub(crate) fn prepare(
     let m = material;
     match case {
         Case::Config => Ok(InputMap::new()),
-        Case::Ct0 | Case::Ct1 => {
+        Case::Ude => {
             if ude.is_none() {
                 let outcome = (|| -> Result<serde_json::Value> {
                     let config = threshold::user_data_encryption::Configs::new(&m.threshold)?;

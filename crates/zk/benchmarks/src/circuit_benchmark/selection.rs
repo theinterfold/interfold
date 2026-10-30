@@ -8,16 +8,15 @@ use serde::Deserialize;
 pub(crate) enum Case {
     Named(CircuitName),
     Config,
-    Ct0,
-    Ct1,
+    /// `threshold/user_data_encryption`: both encryption legs in one circuit.
+    Ude,
 }
 
 impl Case {
     pub fn parse(path: &str) -> Result<Self> {
         match path {
             "config" => Ok(Self::Config),
-            "threshold/user_data_encryption_ct0" => Ok(Self::Ct0),
-            "threshold/user_data_encryption_ct1" => Ok(Self::Ct1),
+            "threshold/user_data_encryption" => Ok(Self::Ude),
             _ => [
                 CircuitName::PkBfv,
                 CircuitName::SkShareComputation,
@@ -39,8 +38,7 @@ impl Case {
         match self {
             Self::Named(name) => name.dir_path(),
             Self::Config => "config".into(),
-            Self::Ct0 => "threshold/user_data_encryption_ct0".into(),
-            Self::Ct1 => "threshold/user_data_encryption_ct1".into(),
+            Self::Ude => "threshold/user_data_encryption".into(),
         }
     }
     pub fn name(self) -> String {

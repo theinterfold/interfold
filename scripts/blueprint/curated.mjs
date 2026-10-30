@@ -711,7 +711,7 @@ function circuits() {
         lines: ['AggregatorVerifier', 'via BfvDecryptionVerifier'],
         drill: 'contract:Verifiers',
       },
-      chip('p3', 60, 1100, 'P3 user_data_encryption', 'ct0 + ct1 are valid', 'P3 user_data_encryption', 340),
+      chip('p3', 60, 1100, 'P3 user_data_encryption', 'ct0 + ct1 in one proof', 'P3 user_data_encryption', 340),
       {
         id: 'lib',
         x: 1360,

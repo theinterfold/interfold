@@ -17,7 +17,7 @@ const sdk = new InterfoldSDK({
 
 describe('proof API forwarding', () => {
   let publicKey: Uint8Array
-  let expectedKeyInputs: Pick<CircuitInputs, 'pk0is' | 'pk1is'>
+  let expectedKeyInputs: Pick<CircuitInputs, 'pk0is'>
   let encodeCoefficient: (value: bigint) => bigint
   const proof = { proof: new Uint8Array([1, 2, 3]), publicInputs: ['0x01'] }
 
@@ -42,7 +42,8 @@ describe('proof API forwarding', () => {
     expect(generateProof).toHaveBeenCalledOnce()
     const [inputs] = vi.mocked(generateProof).mock.calls[0]
     expect(inputs.pk0is).toEqual(expectedKeyInputs.pk0is)
-    expect(inputs.pk1is).toEqual(expectedKeyInputs.pk1is)
+    // ct1 hard-codes the CRS, so the key's second component is not an input.
+    expect(inputs).not.toHaveProperty('pk1is')
     const expectedPlaintext = Array<bigint>(64).fill(0n)
     expectedPlaintext[63] = encodeCoefficient(1n)
     if (kind === 'vector') expectedPlaintext[62] = encodeCoefficient(2n)

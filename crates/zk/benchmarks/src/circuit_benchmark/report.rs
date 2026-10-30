@@ -421,6 +421,7 @@ pub(crate) fn render(data: &Data) -> Result<String> {
 fn leaf<'a>(leaves: &'a [Leaf], path: &str) -> Option<&'a Leaf> {
     leaves.iter().find(|leaf| leaf.path == path)
 }
+/// Saved records from the two-leg UDE layout: sum the legs. The one-circuit UDE is its own leaf row.
 fn ude_totals(out: &mut String, leaves: &[Leaf]) {
     if let (Some(ct0), Some(ct1)) = (
         leaf(leaves, "threshold/user_data_encryption_ct0"),
@@ -461,7 +462,7 @@ fn artifact_table(out: &mut String, data: &Data) -> Result<()> {
                 Some(measured.calldata_gas_total),
             );
         } else if key == "user" && sizes.0.is_none() {
-            // Only the actual historical wrapper is an on-chain artifact. A ct0 leaf is not one.
+            // The UDE circuit is the on-chain artifact. A historical ct0 leaf is not one.
             if let Some(wrapper) = leaf(&data.leaves, "threshold/user_data_encryption") {
                 sizes = (wrapper.proof_bytes, wrapper.public_bytes, wrapper.calldata);
             }
@@ -581,6 +582,15 @@ fn phase_table(out: &mut String, data: &Data) {
             seconds(ct0.prove.zip(ct1.prove).map(|(a, b)| a + b)),
             number(proof),
             number(proof.zip(public).map(|(a, b)| a + b))
+        );
+    }
+    if let Some(ude) = leaf(&data.leaves, "threshold/user_data_encryption") {
+        *out += &format!(
+            "| User | P3 | UDE leaf proof, shared setup excluded | {} | {} | {} | {} |\n",
+            text(&ude.origin),
+            seconds(ude.prove),
+            number(ude.proof_bytes),
+            number(ude.proof_bytes.zip(ude.public_bytes).map(|(a, b)| a + b))
         );
     }
     if let Some(c6) = leaf(&data.leaves, "threshold/share_decryption") {
