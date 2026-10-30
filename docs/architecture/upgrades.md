@@ -136,6 +136,11 @@ owner, and checks the identifier and the expiry. The proof's version is the valu
 `identity.zkPassportVersion`; ZKPassport rejects a retired version ("Verifier not found"). The
 batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed.
 
+`upgrade:identity:simulate` runs the whole rollout on an Anvil mainnet fork (`FORK_URL`, and
+`LOG_RPC_URL` for the operator history): prepare, execute as the protocol owner, and validate; with
+`--proof <file>`, register that owner; then check that `enforce` refuses too few verified owners,
+force it, read the capacity that is left, and relax it again.
+
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
