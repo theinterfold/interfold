@@ -40,8 +40,8 @@ coefficients and must remain behind encrypted-storage/caller boundaries.
 Register `ext::FheExtension::create(bus, rng)` on `E3RouterBuilder`. On `E3Requested` it stores the
 request's FHE snapshot and injects `Arc<Fhe>` at `ext::FHE_KEY`; it does not register an
 event-recipient actor. Hydration restores parameters/CRP and injects the supplied RNG separately.
-The [builder caller](../ciphernode-builder/src/builder/extensions.rs) installs it alongside
-aggregation extensions. `FheRepositoryFactory` supplies typed snapshot storage.
+The [builder caller](../ciphernode/builder/src/extensions.rs) installs it alongside aggregation
+extensions. `FheRepositoryFactory` supplies typed snapshot storage.
 
 ## Tests
 

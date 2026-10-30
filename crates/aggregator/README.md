@@ -29,7 +29,7 @@ Use the extensions in `e3_aggregator::ext` with an `e3_request::E3RouterBuilder`
 - `ThresholdPlaintextAggregatorExtension::create(...)` creates or hydrates `plaintext`, using the
   bus, sortition actor, proof-aggregation setting, canonical keys, and sequence-history reader.
 
-The [ciphernode wiring](../ciphernode-builder/src/builder/extensions.rs) shows registration through
+The [ciphernode wiring](../ciphernode/builder/src/extensions.rs) shows registration through
 `with_recipient`, including the FHE dependency. Consumers do not construct the private
 public-key/plaintext actor modules directly. Committee formation is owned by
 [sortition](../sortition/Readme.md#runtime-integration), not aggregation. Canonical-key inputs come
@@ -42,7 +42,7 @@ intents; confirmed contract events establish canonical completion.
 
 ## Using the capability
 
-For a complete runtime use [CiphernodeBuilder](../ciphernode-builder/README.md). The crate also
+For a complete runtime use [CiphernodeBuilder](../ciphernode/builder/README.md). The crate also
 exports typed recovery states and repository factory traits for persistence integration. See
 [DKG](../../docs/architecture/dkg.md) and
 [threshold decryption](../../docs/architecture/threshold-decryption.md) for protocol boundaries.

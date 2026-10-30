@@ -3,7 +3,7 @@ members = [
   "crates/aggregator",
   "crates/bfv-client",
   "crates/bfv-test-support",
-  "crates/ciphernode-builder",
+  "crates/ciphernode/builder",
   "crates/cli",
   "crates/committee",
   "crates/committee-hash",
@@ -29,7 +29,7 @@ members = [
   "crates/keyshare",
   "crates/layout-lock",
   "crates/logger",
-  "crates/multithread",
+  "crates/ciphernode/multithread",
   "crates/net",
   "crates/openvm-host",
   "crates/openvm-types",
@@ -41,7 +41,7 @@ members = [
   "crates/request",
   "crates/safe",
   "crates/sdk",
-  "crates/daemon-server",
+  "crates/ciphernode/daemon-server",
   "crates/slashing",
   "crates/sortition",
   "crates/sync",
@@ -93,7 +93,7 @@ e3-committee = { version = "0.20.0-dev.2", path = "./crates/committee" }
 e3-config = { version = "0.20.0-dev.2", path = "./crates/config" }
 e3-console = { version = "0.20.0-dev.2", path = "./crates/console" }
 e3-dashboard = { version = "0.20.0-dev.2", path = "./crates/dashboard" }
-e3-ciphernode-builder = { version = "0.20.0-dev.2", path = "./crates/ciphernode-builder" }
+e3-ciphernode-builder = { version = "0.20.0-dev.2", path = "./crates/ciphernode/builder" }
 e3-crypto = { version = "0.20.0-dev.2", path = "./crates/crypto" }
 e3-data = { version = "0.20.0-dev.2", path = "./crates/data" }
 e3-data-availability = { version = "0.20.0-dev.2", path = "./crates/data-availability" }
@@ -113,7 +113,7 @@ e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }
 e3-fhe-params = { version = "0.20.0-dev.2", path = "./crates/fhe-params" }
 e3-fs = { version = "0.20.0-dev.2", path = "./crates/fs" }
 e3-indexer = { version = "0.20.0-dev.2", path = "./crates/evm/indexer" }
-e3-multithread = { version = "0.20.0-dev.2", path = "./crates/multithread" }
+e3-multithread = { version = "0.20.0-dev.2", path = "./crates/ciphernode/multithread" }
 e3-keyshare = { version = "0.20.0-dev.2", path = "./crates/keyshare" }
 e3-logger = { version = "0.20.0-dev.2", path = "./crates/logger" }
 e3-net = { version = "0.20.0-dev.2", path = "./crates/net" }
@@ -121,7 +121,7 @@ e3-compute-provider = { version = "0.20.0-dev.2", path = "./crates/compute-provi
 e3-openvm-host = { version = "0.20.0-dev.2", path = "./crates/openvm-host" }
 e3-openvm-types = { version = "0.20.0-dev.2", path = "./crates/openvm-types" }
 e3-sortition = { version = "0.20.0-dev.2", path = "./crates/sortition" }
-e3-daemon-server = { version = "0.20.0-dev.2", path = "./crates/daemon-server" }
+e3-daemon-server = { version = "0.20.0-dev.2", path = "./crates/ciphernode/daemon-server" }
 e3-program-runner = { version = "0.20.0-dev.2", path = "./crates/program-runner" }
 e3-program-server = { version = "0.20.0-dev.2", path = "./crates/program-server" }
 e3-polynomial = { version = "0.20.0-dev.2", path = "./crates/polynomial" }

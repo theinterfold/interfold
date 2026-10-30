@@ -64,7 +64,7 @@ Both in-memory and persisted assembly connect the aggregate router to that same 
 event with no configured store therefore reports fatal storage failure without a panic or dispatch
 to another aggregate. The CLI or library caller must monitor the watch to stop its process.
 
-For production lifecycle/replay use [CiphernodeBuilder](../ciphernode-builder/README.md) and the
+For production lifecycle/replay use [CiphernodeBuilder](../ciphernode/builder/README.md) and the
 [persistence contract](../../docs/architecture/persistence-and-replay.md).
 
 ## Tests

@@ -2,7 +2,7 @@
 
 Owners: [event system](../../crates/event-system/), [events](../../crates/events/),
 [data](../../crates/data/), [request router](../../crates/request/), [sync](../../crates/sync/), and
-[ciphernode builder](../../crates/ciphernode-builder/). [Design principles](design-principles.md)
+[ciphernode builder](../../crates/ciphernode/builder/). [Design principles](design-principles.md)
 describe the direction; owner-local documentation describes implementation boundaries. Neither makes
 an unimplemented durability guarantee true.
 
@@ -327,8 +327,9 @@ call-count ceiling cannot establish safe delivery. Proof-skipping rejection is t
 validation function rather than the full startup path.
 [Schema tests](../../crates/entrypoint/tests/validate_older_schema.rs) check failure before
 recovery;
-[finalized reconciliation tests](../../crates/ciphernode-builder/src/finalized_lifecycle.rs) include
-bounded failed-batch retry. [Effect-gate tests](../../crates/multithread/src/effect_gate.rs) include
+[finalized reconciliation tests](../../crates/ciphernode/builder/src/finalized_lifecycle.rs) include
+bounded failed-batch retry.
+[Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs) include
 `replayed_failure_does_not_suppress_a_recovery_attempt`. Run affected focused Cargo tests and
 `pnpm test:integration` for cross-layer restart/shutdown scenarios. None closes the gaps merely by
 existing.

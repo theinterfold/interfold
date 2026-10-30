@@ -28,14 +28,14 @@ not reorder members or renumber finalized slots.
 
 `Sortition::attach(SortitionAttachParams { ... }).await` restores repositories/backend and
 subscribes to registry/request events. `CiphernodeSelector::attach` restores local party/aggregator
-roles. The [builder caller](../ciphernode-builder/src/builder/sortition.rs) shows their combined
-setup, including committee reconciliation and pending ticket intents. Consumers query the actor with
+roles. The [builder caller](../ciphernode/builder/src/sortition.rs) shows their combined setup,
+including committee reconciliation and pending ticket intents. Consumers query the actor with
 messages such as `GetNodesForE3`; they do not rerun selection from current balances.
 
 Full nodes also attach
 `CommitteeFinalizer::attach_with_recovery(bus, repository, chain_time_reader)` at the existing
-[startup boundary](../ciphernode-builder/src/builder/startup.rs). The `CommitteeChainTimeReader`
-reads latest block time for the request's chain; the [EVM adapter](../evm/runtime/src/chain_time.rs)
+[startup boundary](../ciphernode/builder/src/startup.rs). The `CommitteeChainTimeReader` reads
+latest block time for the request's chain; the [EVM adapter](../evm/runtime/src/chain_time.rs)
 creates a fresh provider per attempt. The actor retains deadline/rank, effects gating and
 cancellation. It remains separate from `Sortition`, and bootstrap does not attach it. Recovery keeps
 its original store key and schema despite the ownership move.

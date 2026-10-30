@@ -23,8 +23,8 @@ CLI, not this transport.
 
 The server accepts non-Send handlers and uses `spawn_local`: run it inside an Actix/local-task
 context, not an ordinary multi-thread Tokio task alone. The CLI's
-[socket setup](../cli/src/start.rs) demonstrates the complete local command handler; allowed remote
-command conversions are in [cli.rs](../cli/src/cli.rs).
+[socket setup](../../cli/src/start.rs) demonstrates the complete local command handler; allowed
+remote command conversions are in [cli.rs](../../cli/src/cli.rs).
 
 ## Transport limits
 
@@ -32,11 +32,11 @@ There is no authentication or TLS. Keep the control socket local. Its manual HTT
 content-length framing, not arbitrary chunked requests, and is not a general-purpose HTTP server
 with framework body/time limits. Handler errors become HTTP 500 responses.
 
-Use [program-server](../program-server/README.md) for the separate computation-job HTTP API.
+Use [program-server](../../program-server/README.md) for the separate computation-job HTTP API.
 
 ## Tests
 
 `cargo check --locked -p e3-daemon-server --tests` checks its callback/transport types without a
 live node. There are currently no dedicated crate test functions. The
-[CLI startup handler](../cli/src/start.rs) is the integration point for exercising allowed commands
-and output forwarding. See [AGENTS.md](AGENTS.md) for transport-change constraints.
+[CLI startup handler](../../cli/src/start.rs) is the integration point for exercising allowed
+commands and output forwarding. See [AGENTS.md](AGENTS.md) for transport-change constraints.
