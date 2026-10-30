@@ -932,7 +932,8 @@ mod tests {
         selection.format(root).unwrap();
         selection.publish().unwrap();
         assert_eq!(crate::tests::snapshot(root), before);
-        crate::tests::write_pins(root);
+        // Restores the pins and the prover's required-artifact lists, which the source hash reads.
+        identity::tests::seed_sources(root);
 
         let pair = root.join("dist/circuits/insecure/minimum");
         for (group, name) in [("dkg", "pk"), ("threshold", "pk_generation")] {
@@ -1051,14 +1052,11 @@ mod tests {
         // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 32
         // seeded anchor keys the build does not write.
         assert_eq!(manifest["files"].as_object().unwrap().len(), 50);
-        let hash =
-            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
-        let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            built_stamp.source_hash, hash,
-            "staged source identity differs from published sources"
+        assert!(
+            read_stamp(&pair.join(".build-stamp.json"))
+                .unwrap()
+                .is_none(),
+            "partial build stamped the pair"
         );
 
         // Cache reuse and non-release hydration need neither compiler nor BB probes. Invalid pins

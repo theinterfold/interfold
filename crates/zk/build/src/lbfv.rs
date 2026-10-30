@@ -27,6 +27,7 @@ fn rows(params: &Arc<BfvParameters>, seed: [u8; 32]) -> Result<Vec<CrtPolynomial
         .collect()
 }
 
+/// The rows as `nargo fmt` lays them out, so a repeated sync finds nothing to change.
 fn rows_literal(rows: &[CrtPolynomial]) -> String {
     let rows = rows
         .iter()
@@ -40,20 +41,20 @@ fn rows_literal(rows: &[CrtPolynomial]) -> String {
                         .iter()
                         .map(|coefficient| {
                             format!(
-                                "        {},",
+                                "            {},",
                                 e3_zk_config::field::bigint_to_field(coefficient)
                             )
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
-                    format!("    Polynomial::new([\n{coefficients}\n    ]),")
+                    format!("        Polynomial::new([\n{coefficients}\n        ]),")
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!("[\n{limbs}\n]")
+            format!("    [\n{limbs}\n    ],")
         })
         .collect::<Vec<_>>()
-        .join(",\n");
+        .join("\n");
     format!("[\n{rows}\n]")
 }
 
@@ -76,15 +77,17 @@ pub fn public_randomness(
     let commitments = |rows: &[CrtPolynomial]| {
         rows.iter()
             .map(|row| {
-                e3_zk_witness::commitments::compute_pk_aggregation_pk1_commitment(row, bit)
-                    .to_string()
+                format!(
+                    "    {},",
+                    e3_zk_witness::commitments::compute_pk_aggregation_pk1_commitment(row, bit)
+                )
             })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("\n")
     };
     let slug = preset.noir_config_module();
     let header = "// SPDX-License-Identifier: LGPL-3.0-only\n//\n// This file is provided WITHOUT ANY WARRANTY;\n// without even the implied warranty of MERCHANTABILITY\n// or FITNESS FOR A PARTICULAR PURPOSE.\n";
-    let module = format!("{header}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];\n\n/// `commit(LBFV_URS_GADGET_ROWS[row])` under the same hash, which `rlk_generation` opens.\npub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];\n", commitments(&crs), commitments(&urs));
+    let module = format!("{header}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [\n{}\n];\n\n/// `commit(LBFV_URS_GADGET_ROWS[row])` under the same hash, which `rlk_generation` opens.\npub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [\n{}\n];\n", commitments(&crs), commitments(&urs));
     let directory = root
         .join("circuits/lib/src/configs")
         .join(slug)

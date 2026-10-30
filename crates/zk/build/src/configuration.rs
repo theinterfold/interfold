@@ -516,10 +516,12 @@ fn active_committee_source(committee: CiphernodesCommitteeSize) -> String {
         ));
     }
     if super::committee_has_smudging(committee) {
-        let names: Vec<_> = tiers
+        let mut names: Vec<_> = tiers
             .iter()
             .map(|tier| format!("{}_E_SM_BIT", tier.to_uppercase()))
             .collect();
+        // Sorted again: `INSECURE_64_E_SM_BIT` precedes `INSECURE_E_SM_BIT`, unlike their tiers.
+        names.sort_unstable();
         exports.push_str(&format!(
             "pub use crate::configs::committee::@committee@::smudging::{{\n    {},\n}};\n",
             names.join(", ")
