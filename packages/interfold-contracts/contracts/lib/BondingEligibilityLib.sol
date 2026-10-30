@@ -22,6 +22,7 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
 import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
+import { BondingIdentityLib } from "./BondingIdentityLib.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
 library BondingEligibilityLib {
@@ -177,7 +178,8 @@ library BondingEligibilityLib {
             timepoint < state.refreshCompletedAt ||
             version == 0 ||
             version != versions.latest() ||
-            !BondingAdmissionLib.capacityPolicyMatches(timepoint)
+            !BondingAdmissionLib.capacityPolicyMatches(timepoint) ||
+            !BondingIdentityLib.capacityPolicyMatches(timepoint)
         ) return 0;
         return BondOwnerCapacityLib.countAt(timepoint);
     }
@@ -194,6 +196,10 @@ library BondingEligibilityLib {
         uint256 timepoint
     ) external view returns (IBondingAdmission.AdmissionPolicy memory) {
         return BondingAdmissionLib.policyAt(timepoint);
+    }
+
+    function setIdentityPolicy(address registry, bool required) external {
+        BondingIdentityLib.setPolicy(registry, required);
     }
 
     /// @dev Call before registration. A new operator cannot settle an existing operator's check.
@@ -249,17 +255,24 @@ library BondingEligibilityLib {
             .policyAt(timepoint);
         if (!BondingAdmissionLib.allows(operator, timepoint, policy))
             return false;
-        if (!policy.admissionsPaused) return true;
-        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
-        uint208 version = state.configurationVersions.upperLookupRecent(
-            policy.pauseTimepoint
-        );
-        return
-            version != 0 &&
-            state.operatorActiveVersions[operator].upperLookupRecent(
+        if (policy.admissionsPaused) {
+            BondingEligibilityStorage.EligibilityLayout
+                storage state = _layout();
+            uint208 version = state.configurationVersions.upperLookupRecent(
                 policy.pauseTimepoint
-            ) ==
-            version;
+            );
+            if (
+                version == 0 ||
+                state.operatorActiveVersions[operator].upperLookupRecent(
+                    policy.pauseTimepoint
+                ) !=
+                version ||
+                // The frozen pool also needs identity at the cutoff, so a credential or a policy
+                // change after the pause cannot add an operator.
+                !BondingIdentityLib.allows(operator, policy.pauseTimepoint)
+            ) return false;
+        }
+        return BondingIdentityLib.allows(operator, timepoint);
     }
 
     function _layout()

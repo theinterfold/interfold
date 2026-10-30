@@ -31,9 +31,11 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
 import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
+import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import {
     BondingAdmissionStorage
 } from "../storage/BondingAdmissionStorage.sol";
+import { BondingIdentityStorage } from "../storage/BondingIdentityStorage.sol";
 import {
     BondOwnerHistoryStorage
 } from "../storage/BondOwnerHistoryStorage.sol";
@@ -54,7 +56,9 @@ contract BondingRegistry is
     IBondingRegistry,
     IBondOwnerHistory,
     IBondingAdmission,
+    IBondingIdentity,
     BondingAdmissionStorage,
+    BondingIdentityStorage,
     BondOwnerHistoryStorage,
     BondingEligibilityStorage,
     BondingSlashingStorage,
@@ -390,6 +394,14 @@ contract BondingRegistry is
         uint256 timepoint
     ) external view returns (AdmissionPolicy memory) {
         return BondingEligibilityLib.admissionPolicyAt(timepoint);
+    }
+
+    /// @inheritdoc IBondingIdentity
+    function setIdentityPolicy(
+        address identityRegistry,
+        bool required
+    ) external onlyOwner {
+        BondingEligibilityLib.setIdentityPolicy(identityRegistry, required);
     }
 
     /// @inheritdoc IBondingRegistry
