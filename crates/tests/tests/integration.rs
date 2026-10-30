@@ -2331,20 +2331,22 @@ async fn test_trbfv_actor() -> Result<()> {
         // aggregator both publishing the key is the failure a failover must not produce. Peers
         // forward the event, so only a holder's own publication counts. Event IDs cannot tell
         // two publications apart, since identical content hashes to the same ID.
+        let publishes_key = |event: &InterfoldEvent| {
+            event.source() == EventSource::Local
+                && publickey_aggregator_marker(event.get_data(), &e3_id)
+                    == Some("PublicKeyAggregated")
+        };
         let published = role_events
             .iter()
-            .filter(|event| {
-                event.source() == EventSource::Local
-                    && publickey_aggregator_marker(event.get_data(), &e3_id)
-                        == Some("PublicKeyAggregated")
-            })
+            .filter(|event| publishes_key(event))
             .count();
         assert_eq!(
             published, 1,
             "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
         );
         for &node_index in &pubkey_aggregator_nodes {
-            let holder_events = project_history(&nodes.get_history(node_index).await?, |data| {
+            let holder_history = nodes.get_history(node_index).await?;
+            let holder_events = project_history(&holder_history, |data| {
                 publickey_aggregator_marker(data, &e3_id)
             });
             let keyshare_count = holder_events
@@ -2360,7 +2362,8 @@ async fn test_trbfv_actor() -> Result<()> {
                 Some("CommitteeFinalized"),
                 "Role holder {node_index}: first event must be CommitteeFinalized"
             );
-            if holder_events.contains(&"PublicKeyAggregated") {
+            // A demoted holder can still finish work after a peer forwards it the key.
+            if holder_history.iter().any(publishes_key) {
                 // Gossip can deliver keyshares and folds after publication.
                 let flow_end = holder_events.iter().copied().rfind(|event| {
                     *event != "KeyshareCreated" && *event != "DKGRecursiveAggregationComplete"
