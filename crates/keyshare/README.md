@@ -35,7 +35,7 @@ record keys/shares without starting collectors or timers until `EffectsEnabled` 
 The constructor takes the bus, local encryption `Cipher`, operator address, per-chain Interfold
 addresses, `DkgTimingReader`, signer, and shared `canonical_key::CanonicalPublicKeys`. The timing
 reader returns the request's canonical deadline/window; metadata comes from the router context. See
-the [production wiring](../ciphernode-builder/src/builder/extensions.rs) for dependencies and
+the [production wiring](../ciphernode/builder/src/extensions.rs) for dependencies and
 named-recipient registration rather than reproducing a runtime fixture.
 
 The crate exports actor construction parameters, recovery payload/state types, and

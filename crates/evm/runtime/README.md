@@ -35,8 +35,8 @@ produces `ProviderCache<WriteEnabled>` for signer-backed effects.
 `EvmSystemChainBuilder::new(bus, provider)` attaches contract-address routes and builds an
 `EvmChainGatewayHandle`. Configure log windows, startup buffer limits, provider factories, and
 optional ingestion progress before building. The composition root's
-[EVM wiring](../../ciphernode-builder/src/builder/evm.rs) is the complete reader/writer recipe;
-operators should normally use [CiphernodeBuilder](../../ciphernode-builder/README.md).
+[EVM wiring](../../ciphernode/builder/src/evm.rs) is the complete reader/writer recipe; operators
+should normally use [CiphernodeBuilder](../../ciphernode/builder/README.md).
 
 Subscriptions wake canonical backfill; they do not themselves prove complete ingestion. Configured
 confirmation depth applies independently of whether the RPC URL is loopback. Gateway
