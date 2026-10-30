@@ -50,8 +50,8 @@ behavior; record unmet requirements as gaps rather than weakening them to match 
   claims against code and tests.
 - Migrations need explicit compatibility, release-counter, rollout, and rollback decisions for human
   review. Follow [Protocol compatibility](CONTRIBUTING.md#protocol-compatibility).
-- Use canonical generators for committee/preset outputs, parity matrices, verifiers, constants, and
-  deployment manifests. Preset switches change shared files: coordinate them. See
+- Use canonical generators for committee/preset outputs, verifiers, constants, and deployment
+  manifests. Preset switches change shared files: coordinate them. See
   [Circuit Builder](scripts/circuits/README.md#circuit-builder) and
   [contract addresses](packages/interfold-contracts/README.md#contract-addresses).
 - Release preparation and publication follow [RELEASING.md](RELEASING.md); commit/push flags and

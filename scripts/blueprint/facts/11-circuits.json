@@ -172,7 +172,7 @@
       "key_types": [
         {
           "name": "SecretKeyShareComputation",
-          "what": "the C2a statement: secret commitment, secret, the share grid and the parity matrix",
+          "what": "the C2a statement: secret commitment, secret and the share grid",
           "ref": "circuits/lib/src/core/dkg/share_computation.nr@36@pub struct SecretKeyShareComputation<"
         },
         {
@@ -976,15 +976,11 @@
         },
         {
           "why": "the CRT product check against the secure DKG preset",
-          "ref": "circuits/bin/config/src/main.nr@128@assert(product == DKG_Q_MOD_T"
-        },
-        {
-          "why": "the parity matrix check: the parity matrix times the generator is zero modulo each prime",
-          "ref": "circuits/bin/config/src/main.nr@179@Parity matrix verification failed"
+          "ref": "circuits/bin/config/src/main.nr@126@assert(product == DKG_Q_MOD_T"
         },
         {
           "why": "the cross-preset check that the DKG and threshold configs agree on N",
-          "ref": "circuits/bin/config/src/main.nr@603@assert(DKG_N == THRESHOLD_N"
+          "ref": "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N"
         }
       ],
       "rust_patterns": [],

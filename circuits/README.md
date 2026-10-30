@@ -85,9 +85,9 @@ For recursive trust and public-input bindings, see
 
 ### Configuration
 
-| Path     | Role                                                                    |
-| -------- | ----------------------------------------------------------------------- |
-| `config` | Validates secure preset constants (CRT moduli, bounds, parity matrices) |
+| Path     | Role                                                   |
+| -------- | ------------------------------------------------------ |
+| `config` | Validates secure preset constants (CRT moduli, bounds) |
 
 ## Build and test
 
