@@ -22,9 +22,10 @@ use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
     ComputeResponseKind, ConfigurationUpdated, CorrelationId, DkgFoldAttestationContextEstablished,
-    E3Requested, E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
-    PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, Unsubscribe,
-    VerificationKind, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    E3Requested, E3id, EventSource, EventType, InterfoldEvent, InterfoldEventData,
+    OperatorActivationChanged, PlaintextAggregated, ProofType, Seed, TakeEvents,
+    TicketBalanceUpdated, Unsubscribe, VerificationKind, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -2327,10 +2328,16 @@ async fn test_trbfv_actor() -> Result<()> {
             );
         }
         // Repeated work is tolerated, a second publication is not: a demoted and a promoted
-        // aggregator both publishing the key is the failure a failover must not produce.
-        let published = observed
+        // aggregator both publishing the key is the failure a failover must not produce. Peers
+        // forward the event, so only a holder's own publication counts. Event IDs cannot tell
+        // two publications apart, since identical content hashes to the same ID.
+        let published = role_events
             .iter()
-            .filter(|&&event| event == "PublicKeyAggregated")
+            .filter(|event| {
+                event.source() == EventSource::Local
+                    && publickey_aggregator_marker(event.get_data(), &e3_id)
+                        == Some("PublicKeyAggregated")
+            })
             .count();
         assert_eq!(
             published, 1,
@@ -2354,8 +2361,12 @@ async fn test_trbfv_actor() -> Result<()> {
                 "Role holder {node_index}: first event must be CommitteeFinalized"
             );
             if holder_events.contains(&"PublicKeyAggregated") {
+                // Gossip can deliver keyshares and folds after publication.
+                let flow_end = holder_events.iter().copied().rfind(|event| {
+                    *event != "KeyshareCreated" && *event != "DKGRecursiveAggregationComplete"
+                });
                 assert_eq!(
-                    holder_events.last().copied(),
+                    flow_end,
                     Some("PublicKeyAggregated"),
                     "Role holder {node_index}: publishing the key must end its public-key flow"
                 );
