@@ -13,4 +13,4 @@ This is a feature-gated facade, not another implementation of BFV, EVM, or index
 
 Use the [README feature checks/prerequisites](README.md#tests-and-feature-checks). Feature changes
 need minimal, BFV-only, and default export checks; underlying owner tests, especially the
-[indexer boundary](../indexer/AGENTS.md), cover behavior.
+[indexer boundary](../evm/indexer/AGENTS.md), cover behavior.

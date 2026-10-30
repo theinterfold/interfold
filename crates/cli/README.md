@@ -95,4 +95,4 @@ Run `cargo test --locked -p e3-cli` with the build prerequisites above. Inline t
 command/configuration behavior, local update/archive replacement, and telemetry redaction;
 [`cli_secrets.rs`](tests/cli_secrets.rs) exercises the executable's secret/configuration handling.
 The [integration harness](../../tests/integration) covers live multi-process operation separately.
-See [AGENTS.md](AGENTS.md) for generated bindings and command-safety change guidance.
+See [AGENTS.md](AGENTS.md) for shared bindings and command-safety change guidance.

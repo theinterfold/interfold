@@ -6,6 +6,7 @@
 
 //! Static circuit configuration and public-input layout contracts.
 
+pub mod circuit;
 pub mod constants;
 pub mod dkg;
 pub mod field;
@@ -14,6 +15,7 @@ pub mod output_layout;
 mod parameters;
 pub mod threshold;
 
+pub use circuit::{CircuitName, CircuitVariant};
 pub use constants::{FIELD_BYTE_LEN, MAX_MSG_NON_ZERO_COEFFS, MESSAGE_COEFF_BYTE_LEN};
 pub use metadata::CircuitMetadata;
 pub use output_layout::{

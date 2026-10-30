@@ -18,8 +18,8 @@ use std::time::Duration;
 use crate::ZkBackend;
 use crate::{
     generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
-    FoldProveStepTiming, NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkError, ZkProver,
+    prove_node_dkg_fold, DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming,
+    NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkError, ZkProver,
 };
 use crate::{
     DecryptedSharesAggregationCircuit, DkgShareDecryptionCircuit as ShareDecryptionCircuit,
@@ -56,7 +56,7 @@ use e3_trbfv::helpers::try_poly_from_sensitive_bytes;
 use e3_trbfv::helpers::try_poly_ntt_from_bytes;
 use e3_trbfv::helpers::try_poly_pb_from_bytes;
 use e3_trbfv::shares::SharedSecret;
-use e3_zk_config::DkgInputType;
+use e3_zk_config::{CircuitVariant, DkgInputType};
 use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_witness::dkg::share_decryption::ShareDecryptionCircuitData;
 use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;

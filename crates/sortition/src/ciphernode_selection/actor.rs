@@ -5,14 +5,15 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::failover::{
-    apply_due_timeout, phase_for_stage, reconcile_active_party, reconcile_phase,
-    AggregatorFailoverState, AggregatorPhase, ExpectedFailoverDeadline, FailoverDecision,
-    FailoverPolicy,
+    active_aggregator_party_id, apply_due_timeout, effective_aggregator, phase_for_stage,
+    reconcile_active_party, reconcile_phase, AggregatorFailoverState, AggregatorPhase,
+    ExpectedFailoverDeadline, FailoverDecision, FailoverPolicy,
 };
 use crate::WithSortitionTicket;
 use actix::prelude::*;
 use anyhow::Result;
 use anyhow::{bail, ensure};
+use e3_committee::Committee;
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::E3RequestComplete;
 use e3_events::EventContext;
@@ -20,7 +21,7 @@ use e3_events::Sequenced;
 use e3_events::TypedEvent;
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregatorChanged, BusHandle, CiphernodeSelected,
-    CiphertextOutputPublished, CommitmentRosterSelected, Committee, CommitteeFinalized,
+    CiphertextOutputPublished, CommitmentRosterSelected, CommitteeFinalized,
     CommitteeMemberExcluded, CommitteeMemberExpelled, E3Failed, E3Requested, E3Stage,
     E3StageChanged, E3id, EType, EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData,
     PlaintextOutputPublished, Shutdown, TicketGenerated, TicketId,
@@ -286,7 +287,7 @@ impl CiphernodeSelector {
                     .unwrap_or_default();
                 (
                     e3_id.clone(),
-                    committee.effective_aggregator(address, &expelled, &unresponsive),
+                    effective_aggregator(committee, address, &expelled, &unresponsive),
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -361,8 +362,9 @@ impl CiphernodeSelector {
             .chain(unresponsive.iter())
             .copied()
             .collect::<Vec<_>>();
-        let active_party_id = committee.active_aggregator_party_id(&skipped);
-        let is_aggregator = committee.effective_aggregator(&self.address, &expelled, &unresponsive);
+        let active_party_id = active_aggregator_party_id(&committee, &skipped);
+        let is_aggregator =
+            effective_aggregator(&committee, &self.address, &expelled, &unresponsive);
         let previous = state.is_aggregator.get(e3_id).copied();
         let active_party_changed =
             self.announced_active_parties.get(e3_id).copied() != Some(active_party_id);
@@ -572,7 +574,7 @@ impl CiphernodeSelector {
             .and_then(|state| state.unresponsive.get(e3_id).cloned())
             .unwrap_or_default();
         let skipped = expelled.into_iter().chain(unresponsive).collect::<Vec<_>>();
-        committee.active_aggregator_party_id(&skipped)
+        active_aggregator_party_id(committee, &skipped)
     }
 
     fn reconcile_failover_assignment(
