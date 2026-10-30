@@ -656,18 +656,30 @@ export const identityMockGate = task(
         await provider.send(impersonationRpc.stopImpersonating, [owner]);
       }
 
+      // An estimate made in the same second as the previous capacity change can fall short once the
+      // call is mined in a later second, where its checkpoints start new entries. Send with a margin.
+      const bonding = bondingRegistry.connect(admin);
+      const registryAddress = await registry.getAddress();
+      const policyGas = await bonding.setIdentityPolicy.estimateGas(
+        registryAddress,
+        true,
+      );
       await (
-        await bondingRegistry
-          .connect(admin)
-          .setIdentityPolicy(await registry.getAddress(), true)
+        await bonding.setIdentityPolicy(registryAddress, true, {
+          gasLimit: policyGas * 2n,
+        })
       ).wait();
       // The policy change resets owner capacity; a refresh counts the verified owners again.
+      const refreshGas =
+        await bonding.refreshOperatorStatuses.estimateGas(list);
       await (
-        await bondingRegistry.connect(admin).refreshOperatorStatuses(list)
+        await bonding.refreshOperatorStatuses(list, {
+          gasLimit: refreshGas * 2n,
+        })
       ).wait();
       // Requests read the capacity one second before they start, so it shows from the next block.
       console.log(
-        `Identity required: registry ${await registry.getAddress()}, ${list.length} verified owners`,
+        `Identity required: registry ${registryAddress}, ${list.length} verified owners`,
       );
     },
   }))
