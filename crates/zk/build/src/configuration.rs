@@ -695,7 +695,7 @@ pub fn check_ownership(root: &Path) -> Result<()> {
         "crates/zk/config/src/constants.rs",
         "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
         "circuits/lib/src/configs/protocol.nr",
-        "crates/indexer/tests/fixtures/fake_interfold.sol",
+        "crates/evm/indexer/tests/fixtures/fake_interfold.sol",
         "crates/zk/build/src/tests.rs",
         "packages/interfold-contracts/scripts/upgrade/v19Cutover.ts",
         "packages/interfold-contracts/test/Risc0BfvCiphertextVerifier.spec.ts",

@@ -8,11 +8,12 @@ use std::{fs, path::Path, process::Command};
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use e3_events::{CircuitName, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, get_tempdir, load_vk_artifacts,
 };
-use e3_zk_prover::{CircuitVariant, CompiledCircuit, WitnessGenerator, ZkError, ZkProver};
+use e3_zk_prover::{CompiledCircuit, WitnessGenerator, ZkError, ZkProver};
 use serde_json::{json, Value};
 
 pub struct SubstituteProof {

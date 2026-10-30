@@ -293,7 +293,7 @@
       "documentation": [{ "title": "Rust client integration", "path": "docs/architecture/rust-client-integration.md" }],
       "kind": "crate",
       "path": "crates/sdk",
-      "one_line": "Umbrella crate that re-exports the bfv-client, fhe-params, evm-helpers and indexer crates behind Cargo features.",
+      "one_line": "Umbrella crate that re-exports BFV parameters/client, the EVM client and indexer behind Cargo features.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -309,54 +309,54 @@
           "ref": "crates/sdk/src/lib.rs@8@pub use e3_bfv_client as bfv_client;"
         },
         {
-          "why": "the EVM helpers",
-          "ref": "crates/sdk/src/lib.rs@13@pub use e3_evm_helpers as evm_helpers;"
+          "why": "the preferred EVM client export",
+          "ref": "crates/sdk/src/lib.rs@13@pub use e3_evm_client as evm;"
         },
         {
           "why": "the indexer",
-          "ref": "crates/sdk/src/lib.rs@16@pub use e3_indexer as indexer;"
+          "ref": "crates/sdk/src/lib.rs@21@pub use e3_indexer as indexer;"
         }
       ],
       "rust_patterns": [],
-      "depends_on": ["e3-evm-helpers", "e3-bfv-client", "e3-fhe-params", "e3-indexer"],
-      "tests": "No tests in this crate. Compile check: cargo check -p e3-sdk (default features). Each re-exported crate has its own tests.",
+      "depends_on": ["e3-evm-client", "e3-bfv-client", "e3-fhe-params", "e3-indexer"],
+      "tests": "tests/exports.rs checks capability exports and preferred/legacy EVM type identity. CI runs minimal, BFV-only, EVM-only, indexer-only and default selections; behavior stays tested in each owner crate.",
       "unverified": [
         "rust_patterns is empty on purpose: the crate is cfg-gated re-exports and no pattern from the schema list appears in it.",
-        "Feature combinations other than the default were not compiled in this pass."
+        "Export checks do not replace downstream application integration scenarios."
       ]
     },
     {
       "id": "e3-indexer",
       "documentation": [{ "title": "Rust client catch-up", "path": "docs/architecture/rust-client-integration.md" }],
       "kind": "crate",
-      "path": "crates/indexer",
+      "path": "crates/evm/indexer",
       "one_line": "Tracks E3 contract logs through a caller-supplied DataStore, with opt-in historical catch-up and cursor writes.",
       "actors": [],
       "consumes": [
         {
           "name": "CommitteePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@686@move |e: CommitteePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@657@move |e: CommitteePublished, ctx| async move {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@698@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@669@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@774@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@745@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputReferencePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@797@move |event: CiphertextOutputReferencePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@768@move |event: CiphertextOutputReferencePublished, ctx| async move {"
         },
         {
           "name": "PlaintextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@819@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@790@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
         }
       ],
       "emits": [],
@@ -364,231 +364,231 @@
         {
           "name": "E3 record under the key _e3:<id> in the crate's InMemoryStore",
           "where": "memory",
-          "ref": "crates/indexer/src/indexer.rs@142@pub struct InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@122@pub struct InMemoryStore {"
         },
         {
           "name": "callback queue and cursor flags (backfill_enabled, cursor_high, caught_up)",
           "where": "memory",
-          "ref": "crates/indexer/src/indexer.rs@286@callbacks: CallbackQueue,"
+          "ref": "crates/evm/indexer/src/indexer.rs@266@callbacks: CallbackQueue,"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldIndexer",
           "what": "owns the IndexerContext and the listen loop, which restarts the listeners after an error",
-          "ref": "crates/indexer/src/indexer.rs@255@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@235@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "IndexerContext",
           "what": "shared by every handler: store, listeners, contract handle, callback queue and cursor flags",
-          "ref": "crates/indexer/src/indexer.rs@279@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@259@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "DataStore",
           "what": "the storage trait the caller implements: async insert, get and modify over serde values",
-          "ref": "crates/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
+          "ref": "crates/evm/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
         },
         {
           "name": "E3",
           "what": "the stored round record: inputs, output, committee key and hash, params, request block, input window, requester",
-          "ref": "crates/indexer/src/models.rs@20@pub struct E3 {"
+          "ref": "crates/evm/indexer/src/models.rs@20@pub struct E3 {"
         },
         {
           "name": "E3Repository",
           "what": "typed updates to one E3 record: set_e3_if_absent, output reference, output, plaintext",
-          "ref": "crates/indexer/src/repo.rs@18@pub struct E3Repository<S: DataStore> {"
+          "ref": "crates/evm/indexer/src/repo.rs@18@pub struct E3Repository<S: DataStore> {"
         },
         {
           "name": "CallbackQueue",
           "what": "callbacks keyed by block timestamp, run once a block's timestamp reaches them",
-          "ref": "crates/indexer/src/callback_queue.rs@58@pub struct CallbackQueue {"
+          "ref": "crates/evm/indexer/src/callback_queue.rs@58@pub struct CallbackQueue {"
         }
       ],
       "read_first": [
         {
           "why": "the storage boundary: the caller supplies any DataStore",
-          "ref": "crates/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
+          "ref": "crates/evm/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
         },
         {
           "why": "construction: reads the chain id, wires the listeners and registers the handlers",
-          "ref": "crates/indexer/src/indexer.rs@584@pub async fn new("
+          "ref": "crates/evm/indexer/src/indexer.rs@555@pub async fn new("
         },
         {
           "why": "opt-in catch-up and cursor, with the reason for the opt-in in the doc",
-          "ref": "crates/indexer/src/indexer.rs@939@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
+          "ref": "crates/evm/indexer/src/indexer.rs@910@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
         },
         {
           "why": "committee key handling: the on-chain commitment check before storage",
-          "ref": "crates/indexer/src/indexer.rs@508@if let Err(error) = validate_pk_commitment("
+          "ref": "crates/evm/indexer/src/indexer.rs@477@if let Err(error) = validate_pk_commitment("
         },
         {
           "why": "the live loop: backfill, subscribe, overlap replay, restart on error",
-          "ref": "crates/indexer/src/indexer.rs@1036@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1007@pub async fn listen(&self) -> Result<()> {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-def",
           "note": "DataStore is an async trait with an associated Error type and generic methods; the crate owns no database",
-          "ref": "crates/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
+          "ref": "crates/evm/indexer/src/traits.rs@13@pub trait DataStore: Send + Sync + 'static {"
         },
         {
           "pattern": "trait-impl",
           "note": "InMemoryStore implements DataStore, storing values as bincode bytes",
-          "ref": "crates/indexer/src/indexer.rs@161@impl DataStore for InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@141@impl DataStore for InMemoryStore {"
         },
         {
           "pattern": "tokio-select",
           "note": "listen() races the event listener, the block listener and the overlap replay, and restarts when one ends",
-          "ref": "crates/indexer/src/indexer.rs@1137@let res = tokio::select! {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1108@let res = tokio::select! {"
         },
         {
           "pattern": "arc-shared",
           "note": "handlers hold a Weak reference to the context, so the context and its listeners can be dropped",
-          "ref": "crates/indexer/src/indexer.rs@632@let ctx_weak = Arc::downgrade(&ctx);"
+          "ref": "crates/evm/indexer/src/indexer.rs@603@let ctx_weak = Arc::downgrade(&ctx);"
         }
       ],
-      "depends_on": ["e3-bfv-client", "e3-evm-helpers", "e3-fhe-params"],
-      "tests": "cargo test -p e3-indexer. Unit tests: indexer.rs (cfg(test) at line 1202), repo.rs (line 132) and callback_queue.rs. Integration tests in tests/integration.rs start Anvil (tests/helpers.rs:11), and build.rs runs scripts/build_fixtures.sh, which needs solc and jq on PATH.",
-      "unverified": ["The integration tests were not run in this pass; only their setup was read."]
+      "depends_on": ["e3-bfv-client", "e3-data-availability", "e3-evm-client", "e3-evm-contracts", "e3-fhe-params"],
+      "tests": "cargo test -p e3-indexer. Inline and Anvil-backed tests cover projections, chunk replay and candidate admission. Fixture builds need solc and jq on PATH.",
+      "unverified": ["Local-chain replay does not establish reorg rollback or all-handler crash consistency."]
     },
     {
-      "id": "e3-evm-helpers",
+      "id": "e3-evm-client",
       "documentation": [{ "title": "Rust chain integration", "path": "docs/architecture/rust-client-integration.md" }],
       "kind": "crate",
-      "path": "crates/evm-helpers",
+      "path": "crates/evm/client",
       "one_line": "Ethereum client layer: Interfold contract bindings, log and block listeners with catch-up, a per-account nonce allocator, and retry helpers.",
       "actors": [],
       "consumes": [
         {
           "name": "log subscription on the contract filter",
           "by": "EventListener",
-          "ref": "crates/evm-helpers/src/event_listener.rs@198@.subscribe_logs(&self.filter)"
+          "ref": "crates/evm/client/src/event_listener.rs@198@.subscribe_logs(&self.filter)"
         },
         {
           "name": "logs for one block window during catch-up",
           "by": "EventListener",
-          "ref": "crates/evm-helpers/src/event_listener.rs@321@let mut logs = self.provider.get_logs(&filter).await?;"
+          "ref": "crates/evm/client/src/event_listener.rs@321@let mut logs = self.provider.get_logs(&filter).await?;"
         },
         {
           "name": "new block headers",
           "by": "BlockListener",
-          "ref": "crates/evm-helpers/src/block_listener.rs@44@let mut stream = self.provider.subscribe_blocks().await?.into_stream();"
+          "ref": "crates/evm/client/src/block_listener.rs@44@let mut stream = self.provider.subscribe_blocks().await?.into_stream();"
         }
       ],
       "emits": [
         {
           "name": "decoded log passed to the typed handlers registered for its event signature",
           "by": "EventListener",
-          "ref": "crates/evm-helpers/src/event_listener.rs@176@let wrapped_handler = Box::new(move |log: &Log| {"
+          "ref": "crates/evm/client/src/event_listener.rs@176@let wrapped_handler = Box::new(move |log: &Log| {"
         },
         {
           "name": "request and registerE3Program transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@499@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
+          "ref": "crates/evm/client/src/contracts.rs@428@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
         },
         {
           "name": "publishCiphertextOutput and publishPlaintextOutput transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@549@let receipt = send_with_next_nonce("
+          "ref": "crates/evm/client/src/contracts.rs@479@contract.publishCiphertextOutput("
         }
       ],
       "state": [
         {
           "name": "nonce reservations per (chain id, account), with the time each was sent",
           "where": "memory",
-          "ref": "crates/evm-helpers/src/nonce.rs@35@type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;"
+          "ref": "crates/evm/client/src/nonce.rs@35@type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;"
         },
         {
           "name": "live subscription progress flags, read by an owner that keeps a cursor",
           "where": "memory",
-          "ref": "crates/evm-helpers/src/event_listener.rs@41@pub struct LiveProgress {"
+          "ref": "crates/evm/client/src/event_listener.rs@41@pub struct LiveProgress {"
         },
         {
           "name": "typed handler map keyed by event signature",
           "where": "memory",
-          "ref": "crates/evm-helpers/src/event_listener.rs@121@handlers: Arc<RwLock<HashMap<B256, Vec<EventHandler>>>>,"
+          "ref": "crates/evm/client/src/event_listener.rs@121@handlers: Arc<RwLock<HashMap<B256, Vec<EventHandler>>>>,"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldContract",
           "what": "typed handle to the Interfold contract, read-only or read-write by its marker type",
-          "ref": "crates/evm-helpers/src/contracts.rs@252@pub struct InterfoldContract<T: ProviderType> {"
+          "ref": "crates/evm/client/src/contracts.rs@181@pub struct InterfoldContract<T: ProviderType> {"
         },
         {
           "name": "EventListener",
           "what": "subscribes to the contract's logs and dispatches them to typed or raw handlers",
-          "ref": "crates/evm-helpers/src/event_listener.rs@118@pub struct EventListener {"
+          "ref": "crates/evm/client/src/event_listener.rs@118@pub struct EventListener {"
         },
         {
           "name": "BlockListener",
           "what": "subscribes to new block headers and runs each registered handler in its own task",
-          "ref": "crates/evm-helpers/src/block_listener.rs@18@pub struct BlockListener {"
+          "ref": "crates/evm/client/src/block_listener.rs@18@pub struct BlockListener {"
         },
         {
           "name": "InterfoldRead",
           "what": "read-only trait over the Interfold contract: E3 record, stage, failure reason, deadlines and quotes",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm/client/src/contracts.rs@84@pub trait InterfoldRead {"
         },
         {
           "name": "InterfoldWrite",
           "what": "write trait for read-write handles: request, register program, publish outputs",
-          "ref": "crates/evm-helpers/src/contracts.rs@198@pub trait InterfoldWrite {"
+          "ref": "crates/evm/client/src/contracts.rs@127@pub trait InterfoldWrite {"
         },
         {
           "name": "ProviderType",
           "what": "marker trait; ReadOnly and ReadWrite select the provider behind InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@233@pub trait ProviderType: Clone + Send + Sync + 'static {"
+          "ref": "crates/evm/client/src/contracts.rs@162@pub trait ProviderType: Clone + Send + Sync + 'static {"
         },
         {
           "name": "ThresholdQueue",
           "what": "binary-heap queue that releases items up to a threshold value; the indexer's callback queue is built on it",
-          "ref": "crates/evm-helpers/src/threshold_queue.rs@16@pub struct ThresholdQueue<T> {"
+          "ref": "crates/evm/client/src/threshold_queue.rs@16@pub struct ThresholdQueue<T> {"
         }
       ],
       "read_first": [
         {
           "why": "the Interfold ABI as Rust sees it: the sol! contract with request and publish functions",
-          "ref": "crates/evm-helpers/src/contracts.rs@129@contract Interfold {"
+          "ref": "crates/evm/contracts/src/lib.rs@39@interface IInterfold {"
         },
         {
           "why": "read operations and their trait",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm/client/src/contracts.rs@84@pub trait InterfoldRead {"
         },
         {
           "why": "the log subscription loop; it marks the subscription live so that an owner can replay the gap after it",
-          "ref": "crates/evm-helpers/src/event_listener.rs@195@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/evm/client/src/event_listener.rs@195@pub async fn listen(&self) -> Result<()> {"
         },
         {
           "why": "the single send path that every transaction helper uses for its nonce",
-          "ref": "crates/evm-helpers/src/nonce.rs@63@pub async fn send_with_next_nonce<P, D>("
+          "ref": "crates/evm/client/src/nonce.rs@63@pub async fn send_with_next_nonce<P, D>("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-def",
           "note": "ThresholdItem lets one heap queue release any item type once a threshold has passed",
-          "ref": "crates/evm-helpers/src/threshold_queue.rs@21@pub trait ThresholdItem: Ord {"
+          "ref": "crates/evm/client/src/threshold_queue.rs@21@pub trait ThresholdItem: Ord {"
         },
         {
           "pattern": "trait-impl",
           "note": "InterfoldRead is implemented once for every InterfoldContract, whatever its provider type",
-          "ref": "crates/evm-helpers/src/contracts.rs@361@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
+          "ref": "crates/evm/client/src/contracts.rs@290@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
         },
         {
           "pattern": "tokio-spawn",
           "note": "each block handler runs in its own task; an error is printed rather than returned",
-          "ref": "crates/evm-helpers/src/block_listener.rs@49@tokio::spawn(async move {"
+          "ref": "crates/evm/client/src/block_listener.rs@49@tokio::spawn(async move {"
         },
         {
           "pattern": "option-combinators",
           "note": "a missing wallet becomes an error through ok_or_else, then ?",
-          "ref": "crates/evm-helpers/src/contracts.rs@540@.ok_or_else(|| eyre::eyre!("
+          "ref": "crates/evm/client/src/contracts.rs@469@.ok_or_else(|| eyre::eyre!("
         }
       ],
-      "depends_on": ["e3-utils"],
-      "tests": "cargo test -p e3-evm-helpers. Unit tests: nonce.rs (cfg(test) at line 138), event_listener.rs (line 402) and threshold_queue.rs (line 81). Integration tests in tests/integration.rs start Anvil (tests/helpers.rs:9), and build.rs runs scripts/build_fixtures.sh, which needs solc and jq.",
+      "depends_on": ["e3-utils", "e3-evm-contracts", "e3-fhe-params"],
+      "tests": "cargo test -p e3-evm-client. Integration tests in tests/integration.rs start Anvil; build.rs runs scripts/build_fixtures.sh, which needs solc and jq.",
       "unverified": [
         "Nonce safety across processes that share one key is described only in a code comment (nonce.rs:54-55); no test in this crate covers it.",
         "The ABI bindings were not diffed against packages/interfold-contracts in this pass."

@@ -29,7 +29,8 @@
 //!   to in their C1 proof.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C1 → C2a: `sk_commitment` from PkGeneration must match C2a's `expected_secret_commitment`.

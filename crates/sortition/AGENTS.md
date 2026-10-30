@@ -16,6 +16,9 @@ IDs.
   budgets.
 - Backfill only missing versioned recovery records. Existing ticket intents keep ticket number/rank;
   snapshot-derived roles/selections are injected, not appended as synthetic facts on every boot.
+- Keep formation's finalizer a separate actor with its original recovery key/schema. Preserve saved
+  request context, absolute deadline, rank stagger, effects gating and cancellation. Time-reader
+  adapters must create a fresh provider per attempt; this crate must not depend on EVM.
 
 See [selection](../../docs/architecture/committee-selection.md) and
 [DKG](../../docs/architecture/dkg.md). Use the [README tests](Readme.md#tests); on-chain

@@ -21,5 +21,6 @@ tracing.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 e3-events = { workspace = true, features = ["test-helpers"] }
 e3-event-system.workspace = true
