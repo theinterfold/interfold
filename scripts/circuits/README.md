@@ -137,11 +137,11 @@ the generator would produce.
 Hydration accepts a different source hash, reports it, and records the original artifact hash in the
 active stamp. It never restamps the archive. `--skip-if-built` still requires a source match.
 
-Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash` and
-`c6_fold.vk_tree_hash` anchors. A build with `--group`, `--circuit`, or `--skip-vk`, or a build with
-a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
-hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
-BFV verifiers or aggregate proofs.
+Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash`,
+`c6_fold.vk_tree_hash` and (for l-BFV pairs) `c3ab_fold_chunked.vk_tree_hash` anchors. A build with
+`--group`, `--circuit`, or `--skip-vk`, or a build with a failed circuit, removes every anchor from
+the pair and from `circuits/bin/`. An old anchor can hash a key that no longer matches the compiled
+circuits. Run a complete build before you deploy the BFV verifiers or aggregate proofs.
 
 After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
 builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old

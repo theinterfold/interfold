@@ -34,7 +34,6 @@ pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_terminal_validation::{
     validate_c2_terminal_proof, C2TerminalAnchors,
 };
-pub use circuits::aggregation::c3_accumulator_chunked::generate_sequential_c3_fold_chunked;
 pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 pub use circuits::aggregation::c6_chonk::generate_c6_chonk_root;
 pub use circuits::aggregation::node_dkg_fold::{

@@ -1288,6 +1288,8 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "chonk", "c6_chonk_app"),
     ("default", "chonk", "c6_chonk_init_kernel"),
     ("default", "chonk", "c6_chonk_tail_kernel"),
+    ("recursive", "dkg", "share_encryption_chunked"),
+    ("default", "chonk", "c3_chonk_app_chunked"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1349,15 +1351,40 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
                 ]),
             ])),
         ),
+        // The l-BFV chain shares the trBFV chain's accumulator, tube and kernels.
+        (
+            "c3ab_fold_chunked",
+            field_bytes(compute_vk_hash(vec![
+                keys[2], keys[3], keys[24], keys[32], keys[33], keys[26], keys[27],
+            ])),
+        ),
     ];
-    assert_eq!(vk_tree::hashes(root).unwrap(), expected);
+    assert_eq!(vk_tree::hashes(root).unwrap(), expected[..2]);
+    assert_eq!(vk_tree::anchors(root, "insecure").unwrap(), expected);
+    assert_eq!(
+        vk_tree::anchors(root, "insecure-64").unwrap(),
+        expected[..2]
+    );
+    assert_eq!(
+        vk_tree::anchors(root, "secure-16384").unwrap(),
+        expected[1..]
+    );
     for (i, key) in keys.iter().enumerate() {
-        // Keys 14..=16 and 28.. are the C6 chain; every other key is under the node fold.
-        let c6 = usize::from((14..=16).contains(&i) || i >= 28);
+        // Keys 14..=16 and 28..=31 are the C6 chain, 32 and 33 only the l-BFV C3 chain's;
+        // every other key is under the node fold.
+        let c6 = (14..=16).contains(&i) || (28..=31).contains(&i);
+        let lbfv_c3 = [2, 3, 24, 26, 27, 32, 33].contains(&i);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
-        let changed = vk_tree::hashes(root).unwrap();
-        assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));
-        assert_eq!(changed[1 - c6].1, expected[1 - c6].1);
+        let changed = vk_tree::anchors(root, "insecure").unwrap();
+        for (anchor, binds) in [!c6 && i < 32, c6, lbfv_c3].into_iter().enumerate() {
+            assert_eq!(
+                changed[anchor].1 != expected[anchor].1,
+                binds,
+                "{} under {}",
+                key_path(i),
+                expected[anchor].0
+            );
+        }
         write(root, &key_path(i), field_bytes(*key));
     }
     write(root, &key_path(0), [0xff; 32]);
@@ -1385,14 +1412,14 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
             .unwrap();
-    for name in ["nodes_fold", "c6_fold"] {
+    for name in ["nodes_fold", "c6_fold", "c3ab_fold_chunked"] {
         let relative =
             format!("insecure/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash");
         let digest = checksum(&root.join("dist/circuits").join(&relative)).unwrap();
         assert_eq!(manifest["files"][&relative], digest);
     }
     artifacts::refresh_anchors(root, &pair, false).unwrap();
-    for name in ["nodes_fold", "c6_fold"] {
+    for name in ["nodes_fold", "c6_fold", "c3ab_fold_chunked"] {
         assert!(!pair
             .join(format!(
                 "default/recursive_aggregation/{name}/{name}.vk_tree_hash"

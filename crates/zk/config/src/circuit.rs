@@ -193,11 +193,13 @@ pub enum CircuitName {
     ShareEncryptionChunked = 61,
     /// C4 on the l-BFV path: opens the decrypted shares against chunk-root commitments.
     DkgShareDecryptionChunked = 62,
-    /// [`CircuitName::C3Fold`] over [`CircuitName::ShareEncryptionChunked`] proofs.
+    /// Retired sequential C3 fold over [`CircuitName::ShareEncryptionChunked`] proofs; the l-BFV
+    /// path proves C3 over Chonk. Kept so stored encodings keep their indices.
     C3FoldChunked = 63,
-    /// Genesis accumulator for [`CircuitName::C3FoldChunked`].
+    /// Retired `c3_fold_chunked` kernel. Kept so stored encodings keep their indices.
     C3FoldKernelChunked = 64,
-    /// [`CircuitName::C3abFold`] over chunked C3 folds.
+    /// [`CircuitName::C3abFold`] over the l-BFV C3 Chonk accumulators, with the VK manifest that
+    /// `dkg_aggregator_v2` binds.
     C3abFoldChunked = 65,
     /// Per-node DKG fold of the l-BFV path's C0..C4 proofs.
     NodeFoldChunked = 66,
@@ -205,6 +207,9 @@ pub enum CircuitName {
     DecryptedSharesAggregationWide = 67,
     /// C4ab fold on the l-BFV path: its chunked C4 proofs expose no limb-key tree.
     C4abFoldChunked = 68,
+    /// [`CircuitName::C3ChonkApp`] over [`CircuitName::ShareEncryptionChunked`] proofs, each bound
+    /// to its slot's party and modulus.
+    C3ChonkAppChunked = 69,
 }
 
 impl CircuitName {
@@ -279,6 +284,7 @@ impl CircuitName {
             CircuitName::NodeFoldChunked => "node_fold_chunked",
             CircuitName::DecryptedSharesAggregationWide => "decrypted_shares_aggregation_wide",
             CircuitName::C4abFoldChunked => "c4ab_fold_chunked",
+            CircuitName::C3ChonkAppChunked => "c3_chonk_app_chunked",
         }
     }
 
@@ -312,6 +318,7 @@ impl CircuitName {
             | CircuitName::LbfvPkAggregation
             | CircuitName::RlkGenerationLimb => "threshold",
             CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkAppChunked
             | CircuitName::C3ChonkInitKernel
             | CircuitName::C3ChonkTailKernel
             | CircuitName::C3ChonkHidingKernel
@@ -452,6 +459,7 @@ impl CircuitName {
             | CircuitName::DkgShareDecryptionLimb1
             | CircuitName::DkgShareDecryptionLimb2
             | CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkAppChunked
             | CircuitName::C3ChonkInitKernel
             | CircuitName::C3ChonkTailKernel
             | CircuitName::C3ChonkHidingKernel

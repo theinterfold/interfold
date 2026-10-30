@@ -634,9 +634,9 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     root
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c3_fold_chunked/c3_fold_chunked.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c3_chonk_accumulate/c3_chonk_accumulate.vk_hash`,
         )
-      : local("recursive_aggregation", "c3_fold_chunked"),
+      : local("recursive_aggregation", "c3_chonk_accumulate"),
     root
       ? path.join(
           root,
@@ -649,12 +649,13 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
           `${recursive}/dkg/share_decryption_chunked/share_decryption_chunked.vk_hash`,
         )
       : local("dkg", "share_decryption_chunked", recursive),
+    // The C3 Chonk chain's seven keys, hashed into the anchor beside `c3ab_fold_chunked`.
     root
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c3_fold_kernel_chunked/c3_fold_kernel_chunked.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c3ab_fold_chunked/c3ab_fold_chunked.vk_tree_hash`,
         )
-      : local("recursive_aggregation", "c3_fold_kernel_chunked"),
+      : localVkTreeHashPath("recursive_aggregation", "c3ab_fold_chunked"),
     root
       ? path.join(
           root,

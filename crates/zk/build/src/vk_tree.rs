@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
+use crate::policy;
 use anyhow::{bail, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
@@ -49,17 +50,7 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
             "e_sm_share_computation_chain_last",
         )?,
     ]);
-    // `c3ab_fold` hashes each chain's seven key hashes in the order its proof exposes them.
-    let chonk = |name| load(root, "default", "chonk", name);
-    let c3_chain = compute_vk_hash(vec![
-        fold("c3_chonk_accumulate")?,
-        fold("c3_chonk_tube")?,
-        chonk("c3_chonk_hiding_kernel")?,
-        load(root, "recursive", "dkg", "share_encryption")?,
-        chonk("c3_chonk_app")?,
-        chonk("c3_chonk_init_kernel")?,
-        chonk("c3_chonk_tail_kernel")?,
-    ]);
+    let c3_chain = c3_chain_hash(root, "share_encryption", "c3_chonk_app")?;
     let c3 = compute_vk_hash(vec![c3_chain, c3_chain]);
     // Each final C4 exposes the hash of its three limb keys; `c4ab_fold` hashes it next to the C4
     // key, for C4a and C4b alike.
@@ -86,16 +77,54 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
         fold("node_fold")?,
         node,
     ]);
-    let encode = |value: Fr| {
-        let repr = value.into_bigint().to_bytes_be();
-        let mut bytes = [0; 32];
-        bytes[32 - repr.len()..].copy_from_slice(&repr);
-        bytes
-    };
     Ok([
         ("nodes_fold", encode(nodes)),
         ("c6_fold", decryption_hash(root)?),
     ])
+}
+
+/// The hash of a C3 Chonk chain's seven keys, in the order its accumulator exposes them and
+/// `c3ab_fold` / `c3ab_fold_chunked` hash them. The two paths differ only in the leaf and the app.
+fn c3_chain_hash(root: &Path, leaf: &str, app: &str) -> Result<Fr> {
+    let fold = |name| load(root, "default", "recursive_aggregation", name);
+    let chonk = |name| load(root, "default", "chonk", name);
+    Ok(compute_vk_hash(vec![
+        fold("c3_chonk_accumulate")?,
+        fold("c3_chonk_tube")?,
+        chonk("c3_chonk_hiding_kernel")?,
+        load(root, "recursive", "dkg", leaf)?,
+        chonk(app)?,
+        chonk("c3_chonk_init_kernel")?,
+        chonk("c3_chonk_tail_kernel")?,
+    ]))
+}
+
+/// The anchors a pair's archive writes: the nodes-fold tree on trBFV, the C6 tree on every pair,
+/// and on l-BFV the C3 chain that `dkg_aggregator_v2` binds, named after `c3ab_fold_chunked`.
+pub fn anchors(root: &Path, preset: &str) -> Result<Vec<(&'static str, [u8; 32])>> {
+    let mut anchors = if policy::has_trbfv(preset) {
+        hashes(root)?.to_vec()
+    } else {
+        vec![("c6_fold", decryption_hash(root)?)]
+    };
+    if policy::has_lbfv(preset) {
+        anchors.push((
+            "c3ab_fold_chunked",
+            encode(c3_chain_hash(
+                root,
+                "share_encryption_chunked",
+                "c3_chonk_app_chunked",
+            )?),
+        ));
+    }
+    Ok(anchors)
+}
+
+fn encode(value: Fr) -> [u8; 32] {
+    let repr = value.into_bigint().to_bytes_be();
+    let mut bytes = [0; 32];
+    bytes[32 - repr.len()..].copy_from_slice(&repr);
+    bytes
 }
 
 pub fn decryption_hash(root: &Path) -> Result<[u8; 32]> {
@@ -116,8 +145,5 @@ pub fn decryption_hash(root: &Path) -> Result<[u8; 32]> {
             chonk("c6_chonk_tail_kernel")?,
         ]),
     ]);
-    let repr = hash.into_bigint().to_bytes_be();
-    let mut bytes = [0; 32];
-    bytes[32 - repr.len()..].copy_from_slice(&repr);
-    Ok(bytes)
+    Ok(encode(hash))
 }

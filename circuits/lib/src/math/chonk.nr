@@ -6,10 +6,11 @@
 
 //! Chonk (Barretenberg client IVC) types and the C3 Chonk accumulator.
 //!
-//! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`) verifies
-//! a batch of C3 proofs and writes their rows; each kernel verifies the circuit before it and
-//! passes the rows on. Inside a Mega app an UltraHonk verification costs about 12K gates against
-//! about 700K in an UltraHonk circuit, which is what makes a stack cheaper than folding the proofs one UltraHonk step at a time.
+//! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`, or
+//! `c3_chonk_app_chunked` on the l-BFV path) verifies a batch of C3 proofs and writes their rows;
+//! each kernel verifies the circuit before it and passes the rows on. Inside a Mega app an
+//! UltraHonk verification costs about 12K gates against about 700K in an UltraHonk circuit, which
+//! is what makes a stack cheaper than folding the proofs one UltraHonk step at a time.
 //!
 //! **Keys.** Every key a stage verifies against is a witness, so each stage appends its key's hash
 //! to the data it passes on: the app the C3 leaf key, the init kernel the app key, the tail kernel
@@ -18,7 +19,8 @@
 //! stack built from other circuits is rejected.
 //!
 //! **Rollups.** The tube and `c3_chonk_accumulate` are rollup proofs: each carries an IPA claim,
-//! the accumulate step merges two into one, and `c3ab_fold` closes both chains' claims once.
+//! the accumulate step merges two into one, and `c3ab_fold` (`c3ab_fold_chunked` on l-BFV) closes
+//! both chains' claims once.
 
 use crate::configs::default::T;
 
@@ -62,6 +64,7 @@ pub global C3_CHONK_LEAVES: u32 = 24;
 pub global C3_CHONK_KEYS: u32 = 7;
 pub global C3_CHONK_OWN_KEY: u32 = 0;
 pub global C3_CHONK_TUBE_KEY: u32 = 1;
+pub global C3_CHONK_LEAF_KEY: u32 = 3;
 
 /// C6 proofs one `c6_chonk_app` verifies: a decryption's whole chain, one per slot, so one stack
 /// holds it while `T + 1` stays under the ECCVM bound of `C3_CHONK_LEAVES`-sized stacks.

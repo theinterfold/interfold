@@ -85,10 +85,13 @@ pub global VK_C2B_FINALIZE: u32 = 6;
 pub global VK_C2_BATCH: u32 = 7;
 pub global VK_C2A_CHUNK: u32 = 8;
 pub global VK_C2B_CHUNK: u32 = 9;
-pub global VK_C3_FOLD: u32 = 10;
+/// The C3 Chonk accumulator closing each C3 chain.
+pub global VK_C3_ACCUMULATE: u32 = 10;
 pub global VK_SHARE_ENCRYPTION: u32 = 11;
 pub global VK_C4: u32 = 12;
-pub global VK_C3_FOLD_KERNEL: u32 = 13;
+/// Hash of a C3 chain's seven keys (`c3ab_fold_chunked`), the anchor the build writes as
+/// `c3ab_fold_chunked.vk_tree_hash`.
+pub global VK_C3_CHAIN: u32 = 13;
 /// Not constrained by this circuit: the l-BFV nodes fold is `nodes_fold_v2`, whose kernel is bound
 /// through `v2_vk_binding[V2_VK_NODES_FOLD_KERNEL]`. The slot is kept so the legacy binding layout
 /// is unchanged; anchoring it on-chain binds nothing.
@@ -233,16 +236,12 @@ fn main(
     ]
         .as_vector());
     let expected_c3_manifest = compute_vk_hash([
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_ACCUMULATE],
+        vk_binding[VK_C3_ACCUMULATE],
         vk_binding[VK_SHARE_ENCRYPTION],
         vk_binding[VK_SHARE_ENCRYPTION],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD_KERNEL],
-        vk_binding[VK_C3_FOLD_KERNEL],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C3_CHAIN],
+        vk_binding[VK_C3_CHAIN],
     ]
         .as_vector());
     let expected_c4_manifest = compute_vk_hash([vk_binding[VK_C4], vk_binding[VK_C4]].as_vector());

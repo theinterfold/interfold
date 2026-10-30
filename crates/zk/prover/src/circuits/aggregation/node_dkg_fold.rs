@@ -9,7 +9,6 @@
 //! The node fold runs on either protocol path ([`NodeFoldCircuits`]); the DKG aggregator here is the
 //! trBFV path's, while the l-BFV path aggregates through `v2`.
 
-use crate::circuits::aggregation::c3_accumulator_chunked::generate_sequential_c3_fold_chunked;
 use crate::circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 use crate::circuits::aggregation::c6_chonk::{
     generate_c6_chonk, C6ChonkCircuits, C6_ROOT_COLUMNS, C6_ROOT_DOMAIN_HI,
@@ -181,9 +180,9 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
 
 /// The circuits one protocol path folds into a [`NodeDkgFoldInput`]'s node proof.
 ///
-/// The trBFV path folds its final C2 proofs, C3 chains over Chonk, and its own C1/C4 circuits. The
-/// l-BFV path folds no C1, and folds the chunked C2 terminal proofs and the `_chunked` circuits,
-/// whose commitments are chunk roots.
+/// Both paths prove their C3 chains over Chonk. The trBFV path folds its final C2 proofs and its own
+/// C1/C4 circuits. The l-BFV path folds no C1, and folds the chunked C2 terminal proofs and the
+/// `_chunked` circuits, whose commitments are chunk roots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeFoldCircuits {
     pub c1: Option<CircuitName>,
@@ -219,7 +218,7 @@ impl NodeFoldCircuits {
         c2b: CircuitName::ESmC2ChunkFinalize,
         c2ab_fold: CircuitName::C2abChunkFold,
         c3: CircuitName::ShareEncryptionChunked,
-        c3_chain: CircuitName::C3FoldChunked,
+        c3_chain: CircuitName::C3ChonkAccumulate,
         c3ab_fold: CircuitName::C3abFoldChunked,
         c4: CircuitName::DkgShareDecryptionChunked,
         c4ab_fold: CircuitName::C4abFoldChunked,
@@ -234,17 +233,12 @@ impl NodeFoldCircuits {
             Self::TRBFV
         }
     }
-
-    fn is_lbfv(&self) -> bool {
-        *self == Self::LBFV
-    }
 }
 
 /// Run C2ab fold || (C3a chain || C3b chain) → C3ab fold → C4ab fold → node fold with the circuits of
 /// `preset`'s protocol path ([`NodeFoldCircuits`]); returns that path's node fold proof.
 ///
-/// The C2ab fold and the two C3 chains (Chonk on trBFV, `c3_fold_chunked` on l-BFV) are mutually
-/// independent and run concurrently via
+/// The C2ab fold and the two C3 Chonk chains are mutually independent and run concurrently via
 /// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
 pub fn prove_node_dkg_fold(
     prover: &ZkProver,
@@ -493,8 +487,7 @@ pub fn prove_node_dkg_fold(
     })
 }
 
-/// Prove one C3 chain with the path's accumulator (Chonk on trBFV, `c3_fold_chunked` on l-BFV);
-/// the two take different witnesses.
+/// Prove one C3 Chonk chain over the path's C3 circuit.
 fn fold_c3(
     circuits: NodeFoldCircuits,
     prover: &ZkProver,
@@ -513,25 +506,15 @@ fn fold_c3(
             proof.circuit, circuits.c3
         )));
     }
-    if circuits.is_lbfv() {
-        generate_sequential_c3_fold_chunked(
-            prover,
-            inner_proofs,
-            slot_indices,
-            total_slots,
-            job_id,
-            artifacts_dir,
-        )
-    } else {
-        generate_c3_chonk_chain(
-            prover,
-            inner_proofs,
-            slot_indices,
-            total_slots,
-            job_id,
-            artifacts_dir,
-        )
-    }
+    generate_c3_chonk_chain(
+        prover,
+        circuits.c3,
+        inner_proofs,
+        slot_indices,
+        total_slots,
+        job_id,
+        artifacts_dir,
+    )
 }
 
 /// Inputs for [`prove_dkg_aggregation`].

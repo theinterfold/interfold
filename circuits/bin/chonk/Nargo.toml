@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "c3_chonk_app",
+    "c3_chonk_app_chunked",
     "c3_chonk_init_kernel",
     "c3_chonk_tail_kernel",
     "c3_chonk_hiding_kernel",

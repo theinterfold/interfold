@@ -275,6 +275,7 @@ fn appended_lbfv_enum_bytes_names_and_paths_are_unchanged() {
             "threshold/decrypted_shares_aggregation_wide",
         ),
         ("C4abFoldChunked", "recursive_aggregation/c4ab_fold_chunked"),
+        ("C3ChonkAppChunked", "chonk/c3_chonk_app_chunked"),
     ]
     .into_iter()
     .enumerate()

@@ -69,13 +69,9 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
         commitments.insert(format!("bb-vk-hash/default/{circuit}"), hash_file(&path)?);
     }
     // Use the existing ordered SAFE implementation, including repeated descendants. Only trBFV
-    // archives build the nodes-fold tree; every archive builds the C6 tree.
-    let trees = if policy::has_trbfv(preset) {
-        vk_tree::hashes(&pair)?.to_vec()
-    } else {
-        vec![("c6_fold", vk_tree::decryption_hash(&pair)?)]
-    };
-    for (name, value) in trees {
+    // archives build the nodes-fold tree and only l-BFV archives the C3 chain; every archive
+    // builds the C6 tree.
+    for (name, value) in vk_tree::anchors(&pair, preset)? {
         let path = pair
             .join("default/recursive_aggregation")
             .join(name)

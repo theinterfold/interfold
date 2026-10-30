@@ -413,6 +413,7 @@ async fn trbfv_c3_chonk_stack_measure() {
         measure(&format!("c3_chain {label}"), || {
             generate_c3_chonk_chain(
                 &prover,
+                CircuitName::ShareEncryption,
                 &c3_proofs,
                 &c3_slots,
                 total_slots,

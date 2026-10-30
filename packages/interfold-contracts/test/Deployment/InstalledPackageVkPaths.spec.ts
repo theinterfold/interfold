@@ -118,7 +118,9 @@ describe("local l-BFV VK variants", function () {
       expect(file).to.match(
         [1, 5, 6, 8, 9, 11, 12].includes(index)
           ? /\.vk_noir_hash$/
-          : /\.vk_recursive_hash$/,
+          : index === 13
+            ? /\.vk_tree_hash$/
+            : /\.vk_recursive_hash$/,
       );
     }
     const v2 = getBfvV2VkBindingHashPaths();

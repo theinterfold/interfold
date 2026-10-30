@@ -200,6 +200,12 @@ writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output 
 kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
 on an accumulator.
 
+The l-BFV path uses the same kernels, tube and accumulator with `c3_chonk_app_chunked`, whose
+`share_encryption_chunked` leaves also expose their party and modulus. The app requires both to
+match each real leaf's slot (`party * L_THRESHOLD + modulus`); the sentinel place is not checked.
+`c3ab_fold_chunked` closes both chains as `c3ab_fold` does and exports the C3 manifest
+`hash(C3a key, C3b key, C3a leaf, C3b leaf, C3a chain, C3b chain)` for `node_fold_chunked`.
+
 Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
 verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
 proof that verifies under the leaf key; the prover repeats the stack's first leaf, but the circuit
@@ -216,6 +222,8 @@ C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_las
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, C3, app, init, tail)
 C3 tree    = hash(C3a chain, C3b chain)
+l-BFV C3   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, chunked C3, chunked app,
+                  init, tail)
 C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryption_limb_2)
 C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
@@ -287,12 +295,15 @@ verifying a C4 directly compares it with its own limb keys.
 ### l-BFV and user-encryption recursive anchors
 
 For l-BFV, the legacy manifest has 15 entries with no C1, and the independent V2 manifest has 11. Do
-not equate corresponding legacy/V2 VKs. Each row kernel starts at row zero; a fold accepts only the
-next row, and terminal consumers require the final configured row. Generation PK rows open fixed CRS
-commitments; RLK rows open fixed URS and CRS commitments and bind both output components. All
-prover-chosen secret, error, quotient, and key data must reach the transcript before challenge
-derivation. Aggregation opens the creator's range-checked packed carriers and normalizes their sum
-in circuit; checked openings and canonical carry windows remain necessary.
+not equate corresponding legacy/V2 VKs. Its C3 entries are the accumulator key (slot 10), the
+chunked C3 key (11) and the l-BFV C3 chain hash (13), which the builder writes as
+`c3ab_fold_chunked.vk_tree_hash` in archives that serve l-BFV; `dkg_aggregator_v2` rebuilds the C3
+manifest from them. Each row kernel starts at row zero; a fold accepts only the next row, and
+terminal consumers require the final configured row. Generation PK rows open fixed CRS commitments;
+RLK rows open fixed URS and CRS commitments and bind both output components. All prover-chosen
+secret, error, quotient, and key data must reach the transcript before challenge derivation.
+Aggregation opens the creator's range-checked packed carriers and normalizes their sum in circuit;
+checked openings and canonical carry windows remain necessary.
 
 Every chunked user-encryption descendant VK reaches an anchor: identity outputs the leaf hash; the
 leg manifest hashes `(identity, leaf, pk_ct)` in that order; the wrapper exports

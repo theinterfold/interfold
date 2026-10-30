@@ -4,11 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C3 over Chonk (see `circuits/lib/src/math/chonk.nr`). The inner `ShareEncryption` proofs go
-//! into stacks of `lib::math::chonk::C3_CHONK_LEAVES`; each stack is an app and three kernels proved as one Chonk
-//! proof, which a [`CircuitName::C3ChonkTube`] rollup proof verifies. A chain of
-//! [`CircuitName::C3ChonkAccumulate`] proofs merges the tubes in order, and `c3ab_fold` closes
-//! the last accumulator's IPA claim. A chain always has at least two stacks, so it ends on an
+//! C3 over Chonk (see `circuits/lib/src/math/chonk.nr`) on both protocol paths. The inner C3 proofs
+//! (`ShareEncryption` on trBFV, `ShareEncryptionChunked` on l-BFV) go into stacks of
+//! `lib::math::chonk::C3_CHONK_LEAVES`; each stack is the path's app and three shared kernels
+//! proved as one Chonk proof, which a [`CircuitName::C3ChonkTube`] rollup proof verifies. A chain
+//! of [`CircuitName::C3ChonkAccumulate`] proofs merges the tubes in order, and `c3ab_fold`
+//! (`c3ab_fold_chunked` on l-BFV) closes the last accumulator's IPA claim. A chain always has at least two stacks, so it ends on an
 //! accumulator.
 //!
 //! A stack with fewer leaves fills its empty places with a repeat of its first leaf under the
@@ -31,6 +32,7 @@ const C3_CHONK_KEYS: usize = 7;
 struct C3ChonkCircuits {
     /// Inner C3 proofs one app verifies (`C3_CHONK_LEAVES`).
     leaves_per_stack: usize,
+    leaf_circuit: CircuitName,
     leaf: VkArtifacts,
     stack: ChonkStack,
     tube: VkArtifacts,
@@ -38,13 +40,23 @@ struct C3ChonkCircuits {
 }
 
 impl C3ChonkCircuits {
-    fn load(prover: &ZkProver, artifacts_dir: &str) -> Result<Self, ZkError> {
+    fn load(prover: &ZkProver, artifacts_dir: &str, leaf: CircuitName) -> Result<Self, ZkError> {
+        // The l-BFV leaf also exposes its party and modulus, which its app binds to the slot.
+        let app = match leaf {
+            CircuitName::ShareEncryption => CircuitName::C3ChonkApp,
+            CircuitName::ShareEncryptionChunked => CircuitName::C3ChonkAppChunked,
+            other => {
+                return Err(ZkError::InvalidInput(format!(
+                    "{other} is not a C3 Chonk leaf"
+                )))
+            }
+        };
         let default = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
         let stack = ChonkStack::load(
             prover,
             artifacts_dir,
             [
-                CircuitName::C3ChonkApp,
+                app,
                 CircuitName::C3ChonkInitKernel,
                 CircuitName::C3ChonkTailKernel,
                 CircuitName::C3ChonkHidingKernel,
@@ -52,9 +64,10 @@ impl C3ChonkCircuits {
         )?;
         Ok(Self {
             leaves_per_stack: stack.app_leaves()?,
+            leaf_circuit: leaf,
             leaf: vk::load_vk_artifacts(
                 &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-                CircuitName::ShareEncryption,
+                leaf,
             )?,
             stack,
             tube: vk::load_vk_artifacts(&default, CircuitName::C3ChonkTube)?,
@@ -63,20 +76,36 @@ impl C3ChonkCircuits {
     }
 }
 
-/// Inner C3 public transcript: two inputs + `ct_commitment` output.
-fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], ZkError> {
-    if proof.circuit != CircuitName::ShareEncryption {
+/// An inner C3 proof's public transcript, as its app verifies it, and the `(pk, msg, ct)` row it
+/// writes: `[pk, msg, ct]` for `ShareEncryption`, `[pk, msg, party, modulus, ct]` for
+/// `ShareEncryptionChunked`.
+fn c3_inner_public_inputs(
+    proof: &Proof,
+    leaf: CircuitName,
+) -> Result<(Vec<String>, [String; 3]), ZkError> {
+    if proof.circuit != leaf {
         return Err(ZkError::InvalidInput(format!(
-            "expected ShareEncryption inner proof, got {}",
+            "expected {leaf} inner proof, got {}",
             proof.circuit
         )));
     }
-    let ctx = "C3 inner ShareEncryption proof";
-    Ok([
-        extract_single_field(proof, "input", field_keys::EXPECTED_PK_COMMITMENT, ctx)?,
-        extract_single_field(proof, "input", field_keys::EXPECTED_MESSAGE_COMMITMENT, ctx)?,
-        extract_single_field(proof, "output", field_keys::CT_COMMITMENT, ctx)?,
-    ])
+    let ctx = "C3 inner proof";
+    let input = |name| extract_single_field(proof, "input", name, ctx);
+    let pk = input(field_keys::EXPECTED_PK_COMMITMENT)?;
+    let msg = input(field_keys::EXPECTED_MESSAGE_COMMITMENT)?;
+    let ct = extract_single_field(proof, "output", field_keys::CT_COMMITMENT, ctx)?;
+    let public = if leaf == CircuitName::ShareEncryptionChunked {
+        vec![
+            pk.clone(),
+            msg.clone(),
+            input("party_idx")?,
+            input("mod_idx")?,
+            ct.clone(),
+        ]
+    } else {
+        vec![pk.clone(), msg.clone(), ct.clone()]
+    };
+    Ok((public, [pk, msg, ct]))
 }
 
 #[derive(Serialize)]
@@ -84,7 +113,7 @@ struct AppInput {
     leaf_vk: Vec<String>,
     leaf_key_hash: String,
     proofs: Vec<Vec<String>>,
-    c3_public_inputs: Vec<[String; 3]>,
+    c3_public_inputs: Vec<Vec<String>>,
     slot_indices: Vec<u32>,
 }
 
@@ -136,10 +165,10 @@ fn prove_stack_and_tube(
             .get(k)
             .copied()
             .unwrap_or((*first, total_slots as u32));
-        let public = share_encryption_inner_public_inputs(proof)?;
+        let (public, row) = c3_inner_public_inputs(proof, circuits.leaf_circuit)?;
         if (slot as usize) < total_slots {
-            for (column, value) in public.iter().enumerate() {
-                rows[column * total_slots + slot as usize] = value.clone();
+            for (column, value) in row.into_iter().enumerate() {
+                rows[column * total_slots + slot as usize] = value;
             }
         }
         proofs.push(bytes_to_field_strings(&proof.data)?);
@@ -231,13 +260,14 @@ fn prove_accumulate(
     Ok(proof)
 }
 
-/// Accumulates `inner_proofs` in order into one [`CircuitName::C3ChonkAccumulate`] proof — the
-/// integration surface for ciphernodes.
+/// Accumulates `inner_proofs`, all proofs of the C3 circuit `leaf`, in order into one
+/// [`CircuitName::C3ChonkAccumulate`] proof — the integration surface for ciphernodes.
 ///
 /// `slot_indices[i]` is the `(party * L_THRESHOLD + modulus)` slot for `inner_proofs[i]`.
 /// `total_slots` must equal `N_PARTIES * L_THRESHOLD` and determines the row count.
 pub fn generate_c3_chonk_chain(
     prover: &ZkProver,
+    leaf: CircuitName,
     inner_proofs: &[Proof],
     slot_indices: &[u32],
     total_slots: usize,
@@ -275,7 +305,7 @@ pub fn generate_c3_chonk_chain(
         }
         seen[idx] = true;
     }
-    let circuits = C3ChonkCircuits::load(prover, artifacts_dir)?;
+    let circuits = C3ChonkCircuits::load(prover, artifacts_dir, leaf)?;
     let leaves: Vec<(&Proof, u32)> = inner_proofs
         .iter()
         .zip(slot_indices.iter().copied())

@@ -616,6 +616,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     let c3a_folded = generate_c3_chonk_chain(
         &prover,
+        CircuitName::ShareEncryption,
         &c3a_inners,
         &slot_indices,
         total_slots,
@@ -625,6 +626,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     .expect("c3 chonk sk chain");
     let c3b_folded = generate_c3_chonk_chain(
         &prover,
+        CircuitName::ShareEncryption,
         &c3b_inners,
         &slot_indices,
         total_slots,

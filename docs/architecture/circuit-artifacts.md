@@ -133,11 +133,13 @@ it.
 
 ## Verifier and deployment compatibility
 
-Complete pair builds generate `nodes_fold.vk_tree_hash`/`c6_fold.vk_tree_hash` from all recursive
-keys. The C6 anchor keeps the retired `c6_fold` path, although C6 now runs over Chonk. Subset
-builds, skip-VK, or any circuit failure remove **both** pair/bin anchors to prevent stale pins.
-Cache markers and release validation require both; hydration copies them. Final wrappers pin these
-tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
+Complete pair builds generate `nodes_fold.vk_tree_hash` (trBFV pairs), `c6_fold.vk_tree_hash`, and
+`c3ab_fold_chunked.vk_tree_hash` (l-BFV pairs) from all recursive keys. The C6 anchor keeps the
+retired `c6_fold` path, although C6 now runs over Chonk. The l-BFV anchor is the C3 Chonk chain hash
+that the legacy VK binding pins in slot 13. Subset builds, skip-VK, or any circuit failure remove
+**every** pair/bin anchor to prevent stale pins. Cache markers and release validation require the
+pair's anchors; hydration copies them. Final wrappers pin the nodes/C6 tree hashes at input zero and
+C5/C7 separately, not an immediate fold VK hash.
 
 Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable routers dispatch by
 public-input length and VK anchors. Selecting an already installed matching pair needs no

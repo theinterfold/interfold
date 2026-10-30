@@ -4,9 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Row placement for the C3 Chonk app (`c3_chonk_app`). A stack can hold fewer leaves than its
-//! size, so a place can be empty: its slot index is the sentinel `SLOTS` and it writes nothing (its
-//! proof position repeats a real leaf of the stack).
+//! Row placement for the C3 Chonk apps (`c3_chonk_app`, `c3_chonk_app_chunked`). A stack can
+//! hold fewer leaves than its size, so a place can be empty: its slot index is the sentinel
+//! `SLOTS` and it writes nothing (its proof position repeats a real leaf of the stack).
 
 /// Writes each leaf's `(pk, msg, ct)` row into its slot, which must be empty. A slot index of
 /// `SLOTS` marks an empty place and writes nothing; any other index must be in range.

@@ -19,8 +19,6 @@ DIRS=(
   "bin/recursive_aggregation/esm_c2_chunk_finalize"
   "bin/recursive_aggregation/c2ab_chunk_fold"
   "bin/recursive_aggregation/c2ab_fold"
-  "bin/recursive_aggregation/c3_fold_chunked"
-  "bin/recursive_aggregation/c3_fold_kernel_chunked"
   "bin/recursive_aggregation/c3ab_fold_chunked"
   "bin/recursive_aggregation/node_fold_chunked"
   "bin/recursive_aggregation/c3ab_fold"

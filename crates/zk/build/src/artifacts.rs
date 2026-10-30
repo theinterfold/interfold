@@ -451,8 +451,9 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             .arg(job.path());
         if verifier_target == CHONK_TARGET {
             // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding
-            // kernel ends the stack; its key is the stack's Chonk key.
-            let kind = if circuit.name.ends_with("_app") {
+            // kernel ends the stack; its key is the stack's Chonk key. Apps are `*_chonk_app` and
+            // the l-BFV `c3_chonk_app_chunked`.
+            let kind = if circuit.name.contains("_chonk_app") {
                 "app"
             } else if circuit.name.ends_with("_hiding_kernel") {
                 "hiding"
@@ -535,7 +536,7 @@ fn write_chonk_vk_hash(job: &Path) -> Result<()> {
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
     vk_commitments::invalidate(pair)?;
-    for name in ["nodes_fold", "c6_fold"] {
+    for name in ["nodes_fold", "c6_fold", "c3ab_fold_chunked"] {
         for path in [
             pair.join("default/recursive_aggregation")
                 .join(name)
@@ -551,16 +552,12 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
         }
     }
     if complete {
-        let decryption_only = pair
+        let preset = pair
             .parent()
             .and_then(Path::file_name)
-            .is_some_and(|name| name == "secure-16384");
-        let hashes = if decryption_only {
-            vec![("c6_fold", vk_tree::decryption_hash(pair)?)]
-        } else {
-            vk_tree::hashes(pair)?.to_vec()
-        };
-        for (name, bytes) in hashes {
+            .and_then(|name| name.to_str())
+            .context("Artifact pair has no preset parent")?;
+        for (name, bytes) in vk_tree::anchors(pair, preset)? {
             for directory in [
                 pair.join("default/recursive_aggregation").join(name),
                 root.join("circuits/bin/recursive_aggregation")
@@ -994,7 +991,7 @@ mod tests {
         partial.no_clean = true;
         partial.no_clean_targets = true;
         super::super::execute(root, &partial).unwrap();
-        for name in ["nodes_fold", "c6_fold"] {
+        for name in ["nodes_fold", "c6_fold", "c3ab_fold_chunked"] {
             assert!(
                 !pair
                     .join(format!(
@@ -1051,9 +1048,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 30
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 32
         // seeded anchor keys the build does not write.
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 48);
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 50);
         let hash =
             identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))

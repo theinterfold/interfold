@@ -24,8 +24,8 @@ ACTIVE_PACKAGES=(
 # These read the full preset (generated bounds, smudging and l-BFV row counts). The generated bounds
 # belong to the committed committee, so they run on it, once for each l-BFV-capable preset.
 LBFV_PACKAGES=(
+  chonk/c3_chonk_app_chunked
   dkg/esm_share_computation_chunk
-  recursive_aggregation/c3_fold_chunked
   recursive_aggregation/dkg_aggregator_v2
   recursive_aggregation/lbfv_aggregation_fold
   recursive_aggregation/lbfv_aggregation_fold_kernel

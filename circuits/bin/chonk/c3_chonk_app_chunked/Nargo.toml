@@ -1,5 +1,5 @@
 [package]
-name = "c3_fold_chunked"
+name = "c3_chonk_app_chunked"
 type = "bin"
 authors = ["Gnosis Guild / Interfold"]
 

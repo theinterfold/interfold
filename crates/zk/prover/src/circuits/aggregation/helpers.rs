@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Shared helpers for the sequential `c3_fold_chunked` / `nodes_fold` accumulators and
-//! the single-shot `node_dkg_fold` builder.
+//! Shared helpers for the sequential `nodes_fold` accumulator and the single-shot
+//! `node_dkg_fold` builder.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
@@ -83,24 +83,6 @@ pub fn extract_single_field(
     Ok(fields.into_iter().next().expect("len == 1 verified above"))
 }
 
-/// Parses fold-accumulator public signals as field strings, checking the circuit and that the tail
-/// after `prefix_len` is whole slots of `slot_width` (`c3_fold_chunked`).
-pub fn parse_acc_public_field_strings(
-    proof: &Proof,
-    expected_circuit: CircuitName,
-    prefix_len: usize,
-    slot_width: usize,
-) -> Result<Vec<String>, ZkError> {
-    let v = parse_acc_public_field_strings_flat(proof, expected_circuit, prefix_len)?;
-    if !(v.len() - prefix_len).is_multiple_of(slot_width) {
-        return Err(ZkError::InvalidInput(format!(
-            "unexpected {expected_circuit} public signal field count: {} (prefix={prefix_len}, slot_width={slot_width})",
-            v.len()
-        )));
-    }
-    Ok(v)
-}
-
 /// Parses an accumulator proof's public signals as field strings, checking its circuit and that
 /// they hold at least the prefix. The per-slot width (`nodes_fold` stores a whole `node_fold`
 /// statement per slot) is known only at runtime, so the caller checks the total length against
@@ -124,38 +106,4 @@ pub fn parse_acc_public_field_strings_flat(
         )));
     }
     Ok(v)
-}
-
-/// Sequential fold driver: applies `step(inner, prior_acc, slot_index)` per inner proof,
-/// threading each step's output as the next step's accumulator.
-///
-/// The first step returns the chain's kernel proof, so a fold proof needs at least two inner
-/// proofs; with one, the chain would end on the kernel.
-pub fn sequential_fold<F>(
-    label: &str,
-    inner_proofs: &[Proof],
-    slot_indices: &[u32],
-    mut step: F,
-) -> Result<Proof, ZkError>
-where
-    F: FnMut(&Proof, Option<&Proof>, u32) -> Result<Proof, ZkError>,
-{
-    if inner_proofs.len() < 2 {
-        return Err(ZkError::InvalidInput(format!(
-            "{label}: need at least two inner proofs, got {}",
-            inner_proofs.len()
-        )));
-    }
-    if inner_proofs.len() != slot_indices.len() {
-        return Err(ZkError::InvalidInput(format!(
-            "{label}: inner_proofs and slot_indices length mismatch ({} vs {})",
-            inner_proofs.len(),
-            slot_indices.len()
-        )));
-    }
-    let mut acc: Option<Proof> = None;
-    for (i, inner) in inner_proofs.iter().enumerate() {
-        acc = Some(step(inner, acc.as_ref(), slot_indices[i])?);
-    }
-    Ok(acc.expect("loop body executed at least once on non-empty input"))
 }

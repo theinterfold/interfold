@@ -862,10 +862,9 @@ struct DkgAggregationV2Witness {
     v2_vk_binding: Vec<String>,
 }
 
-fn legacy_vk_binding(
-    prover: &ZkProver,
-    artifacts_dir: &str,
-) -> Result<Vec<vk::VkArtifacts>, ZkError> {
+/// `dkg_aggregator_v2`'s legacy binding: key hashes, except slot 13 (`VK_C3_CHAIN`), the hash of
+/// the C3 Chonk chain's seven keys that the build writes beside `c3ab_fold_chunked`.
+fn legacy_vk_binding(prover: &ZkProver, artifacts_dir: &str) -> Result<Vec<String>, ZkError> {
     let circuits = [
         CircuitName::NodeFoldChunked,
         CircuitName::PkBfv,
@@ -877,13 +876,12 @@ fn legacy_vk_binding(
         CircuitName::C2ChunkBatch,
         CircuitName::SkShareComputationChunk,
         CircuitName::ESmShareComputationChunk,
-        CircuitName::C3FoldChunked,
+        CircuitName::C3ChonkAccumulate,
         CircuitName::ShareEncryptionChunked,
         CircuitName::DkgShareDecryptionChunked,
-        CircuitName::C3FoldKernelChunked,
         CircuitName::NodesFoldKernel,
     ];
-    circuits
+    let mut binding = circuits
         .into_iter()
         .map(|circuit| {
             let variant = match circuit {
@@ -896,9 +894,17 @@ fn legacy_vk_binding(
                 | CircuitName::DkgShareDecryptionChunked => CircuitVariant::Recursive,
                 _ => CircuitVariant::Default,
             };
-            load_vk(prover, variant, artifacts_dir, circuit)
+            Ok(load_vk(prover, variant, artifacts_dir, circuit)?.key_hash)
         })
-        .collect()
+        .collect::<Result<Vec<_>, ZkError>>()?;
+    binding.insert(
+        13,
+        vk::load_vk_tree_hash(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3abFoldChunked,
+        )?,
+    );
+    Ok(binding)
 }
 
 fn v2_vk_binding(prover: &ZkProver, artifacts_dir: &str) -> Result<Vec<vk::VkArtifacts>, ZkError> {
@@ -1018,10 +1024,7 @@ pub fn prove_dkg_aggregation_v2(
             .collect(),
         committee_hash_hi,
         committee_hash_lo,
-        vk_binding: legacy
-            .into_iter()
-            .map(|artifact| artifact.key_hash)
-            .collect(),
+        vk_binding: legacy,
         aggregation_fold_vk: aggregation_vk.verification_key,
         aggregation_fold_proof: proof_fields(aggregation_fold_proof)?,
         aggregation_fold_public,
