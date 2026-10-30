@@ -27,8 +27,8 @@ Storage admission precedes actor writes: inspect raw persisted schema and role, 
 compatible checkpoint, and reconcile the router before resuming work. Public helpers include
 `inspect_persisted_schema_version`, `preflight_schema_version`, `preflight_node_role`,
 `reconcile_request_router_checkpoint`, and `project_restored_request_contexts`. The
-[builder startup caller](../ciphernode-builder/src/builder/startup.rs) supplies repositories,
-aggregate IDs, and the sequence-history reader in the production order.
+[builder startup caller](../ciphernode/builder/src/startup.rs) supplies repositories, aggregate IDs,
+and the sequence-history reader in the production order.
 
 `sync(bus, evm_config, repositories, aggregate_config, eventstore).await` performs the
 replay/history workflow. Production uses `sync_with_net_ready` with a readiness future armed before

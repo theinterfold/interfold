@@ -56,7 +56,7 @@ Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
 verification runs off the actor runtime through that pool, preserving serial response/barrier order.
 These arguments are required: callers must not create an independent production verification pool.
-The [builder wiring](../../ciphernode-builder/src/builder/extensions.rs) shows hydration before
+The [builder wiring](../../ciphernode/builder/src/extensions.rs) shows hydration before
 effect-enabled replay. Operators normally use the [CLI Noir commands](../../cli/src/noir.rs), not
 manual actor construction. Slashing implementation lives in [e3-slashing](../../slashing/README.md).
 

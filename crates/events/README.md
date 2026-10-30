@@ -46,7 +46,7 @@ re-exported here because slashing already depends on events.
 ## Runtime use
 
 Most consumers obtain an enabled `BusHandle` from [EventSystem](../event-system/README.md) or
-[CiphernodeBuilder](../ciphernode-builder/README.md), not by manually wiring the actors:
+[CiphernodeBuilder](../ciphernode/builder/README.md), not by manually wiring the actors:
 
 - `subscribe(EventType, recipient)` delivers matching sequenced events to Actix recipients.
 - `publish(data, context)` preserves causation; `publish_without_context(data)` creates an origin.

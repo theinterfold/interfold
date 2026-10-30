@@ -139,7 +139,7 @@
       "read_first": [
         {
           "why": "Wiring: the node builds E3Router and installs the router extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode/builder/src/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
         {

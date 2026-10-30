@@ -2,8 +2,8 @@
 
 See [README.md](README.md) for profiles, configuration, and handle lifecycle. This is the ciphernode
 composition root. Protocol decisions belong to their capability crates; attach them here without
-copying their rules. `builder/startup.rs` documents the dependency order of Storage → Restart → Live
-→ Protocol; preserve the prerequisites, not just the current line order.
+copying their rules. `src/startup.rs` documents the dependency order of Storage → Restart → Live →
+Protocol; preserve the prerequisites, not just the current line order.
 
 - Keep the full/bootstrap profiles closed: bootstrap has only the Interfold reader and no protocol
   extensions/writers or compute scheduler. Do not expose independent component switches that bypass
@@ -20,7 +20,8 @@ copying their rules. `builder/startup.rs` documents the dependency order of Stor
 - Do not make shared test support depend on this crate: lower-level tests would pull the complete
   stack and can cycle through event-system. Multi-node composition belongs in `crates/tests`.
 
-[Persistence](../../docs/architecture/persistence-and-replay.md) owns startup and failure-signal
-semantics; [slashing](../../docs/architecture/slashing.md) owns chain-specific manager resolution.
-Use the [README test commands and prerequisites](README.md#tests). Recovery and profile changes need
-the affected multi-node scenarios; in-memory construction alone is not restart coverage.
+[Persistence](../../../docs/architecture/persistence-and-replay.md) owns startup and failure-signal
+semantics; [slashing](../../../docs/architecture/slashing.md) owns chain-specific manager
+resolution. Use the [README test commands and prerequisites](README.md#tests). Recovery and profile
+changes need the affected multi-node scenarios; in-memory construction alone is not restart
+coverage.

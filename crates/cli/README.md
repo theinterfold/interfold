@@ -6,7 +6,7 @@ The `interfold` executable manages ciphernode operation and application projects
 configuration/identity, full/bootstrap startup, multi-node processes, offline state checks, Noir
 artifacts, binary updates/removal, and program compilation/services. It delegates node lifecycle to
 [e3-entrypoint](../entrypoint/README.md) and composition to
-[e3-ciphernode-builder](../ciphernode-builder/README.md).
+[e3-ciphernode-builder](../ciphernode/builder/README.md).
 
 ## Map
 

@@ -35,8 +35,8 @@ Each public module exposes a typed request/response and its calculation function
 
 `TrBFVRequest`, `TrBFVResponse`, and `TrBFVError` provide the worker dispatch envelope.
 `TrBFVFailure` retains structured threshold error/party attribution when available, in addition to a
-human-readable message. The [multithread dispatcher](../multithread/src/multithread.rs) is the
-production caller showing RNG/cipher/request handling.
+human-readable message. The [compute dispatcher](../ciphernode/multithread/src/multithread.rs) is
+the production caller showing RNG/cipher/request handling.
 
 `TrBFVRequest::execute(&rng, &cipher)` is the synchronous native execution boundary. It dispatches
 to the existing calculations, locks caller-owned randomness only for randomized operations, and

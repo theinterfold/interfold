@@ -774,57 +774,57 @@
       "id": "e3-multithread",
       "documentation": [{ "title": "Compute effects and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
-      "path": "crates/multithread",
+      "path": "crates/ciphernode/multithread",
       "one_line": "Ciphernode worker actor that runs TrBFV and ZK compute requests on a Rayon pool and publishes results or errors back to the event bus.",
       "actors": [
         {
           "name": "Multithread",
           "role": "runs compute requests off the event path and publishes their responses",
-          "ref": "crates/multithread/src/multithread.rs@50@pub struct Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@50@pub struct Multithread {"
         },
         {
           "name": "ComputeEffectGate",
           "role": "holds requests until EffectsEnabled and replays or deduplicates outcomes by request key",
-          "ref": "crates/multithread/src/effect_gate.rs@100@pub(crate) struct ComputeEffectGate {"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@100@pub(crate) struct ComputeEffectGate {"
         },
         {
           "name": "MultithreadReport",
           "role": "records how long each operation took, for the report",
-          "ref": "crates/multithread/src/report.rs@30@pub struct MultithreadReport {"
+          "ref": "crates/ciphernode/multithread/src/report.rs@30@pub struct MultithreadReport {"
         }
       ],
       "consumes": [
         {
           "name": "ComputeRequest (a TrBFV or ZK job)",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@491@InterfoldEventData::ComputeRequest(_) if self.enabled => {"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@491@InterfoldEventData::ComputeRequest(_) if self.enabled => {"
         },
         {
           "name": "EffectsEnabled, which releases the queued requests",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@498@InterfoldEventData::EffectsEnabled(_) => self.enable(),"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@498@InterfoldEventData::EffectsEnabled(_) => self.enable(),"
         },
         {
           "name": "E3Failed, E3StageChanged and E3RequestComplete, which cancel the E3's task groups",
           "by": "Multithread",
-          "ref": "crates/multithread/src/multithread.rs@176@EventType::E3Failed,"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@176@EventType::E3Failed,"
         }
       ],
       "emits": [
         {
           "name": "ComputeResponse",
           "by": "Multithread",
-          "ref": "crates/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
         },
         {
           "name": "ComputeRequestError, for failures that are not retried",
           "by": "Multithread",
-          "ref": "crates/multithread/src/multithread.rs@646@bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@646@bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;"
         },
         {
           "name": "stored outcomes sent to the other request IDs waiting on the same work",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@386@ComputeOutcome::Response(response) => bus.publish("
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@386@ComputeOutcome::Response(response) => bus.publish("
         }
       ],
       "state": [
@@ -836,12 +836,12 @@
         {
           "name": "requests the worker is running, counted per correlation ID",
           "where": "memory",
-          "ref": "crates/multithread/src/effect_gate.rs@49@pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@49@pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);"
         },
         {
           "name": "pending, forwarded and replayed-outcome maps in the gate",
           "where": "memory",
-          "ref": "crates/multithread/src/effect_gate.rs@104@pending: HashMap<RequestKey, InterfoldEvent>,"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@104@pending: HashMap<RequestKey, InterfoldEvent>,"
         }
       ],
       "key_types": [
@@ -858,26 +858,26 @@
         {
           "name": "ComputeCapacity",
           "what": "job limit after the CPU and memory caps (13 GiB per prover job, 4 GiB reserved for the node)",
-          "ref": "crates/multithread/src/memory.rs@26@pub struct ComputeCapacity {"
+          "ref": "crates/ciphernode/multithread/src/memory.rs@26@pub struct ComputeCapacity {"
         },
         {
           "name": "ComputeOutcome",
           "what": "a response or an error that the gate keeps for requests waiting on the same work",
-          "ref": "crates/multithread/src/effect_gate.rs@25@enum ComputeOutcome {"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@25@enum ComputeOutcome {"
         }
       ],
       "read_first": [
         {
           "why": "wiring: attach creates the actor, subscribes it to the bus, and starts the gate",
-          "ref": "crates/multithread/src/multithread.rs@101@pub fn attach("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@101@pub fn attach("
         },
         {
           "why": "the gate: when a request goes to the worker, and when a stored result is reused",
-          "ref": "crates/multithread/src/effect_gate.rs@250@fn forward(&mut self, event: InterfoldEvent) -> bool {"
+          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@250@fn forward(&mut self, event: InterfoldEvent) -> bool {"
         },
         {
           "why": "the actor's request handler and its retry loop",
-          "ref": "crates/multithread/src/multithread.rs@550@async fn handle_compute_request_event("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@550@async fn handle_compute_request_event("
         },
         {
           "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
@@ -885,24 +885,24 @@
         },
         {
           "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/multithread/src/multithread.rs@856@fn handle_compute_request("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@856@fn handle_compute_request("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/multithread/src/multithread.rs@505@impl Actor for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@505@impl Actor for Multithread {"
         },
         {
           "pattern": "actix-handler",
           "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/multithread/src/multithread.rs@512@impl Handler<InterfoldEvent> for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@512@impl Handler<InterfoldEvent> for Multithread {"
         },
         {
           "pattern": "actix-recipient",
           "note": "the gate receives the actor as a Recipient, so it sends events without naming the actor type",
-          "ref": "crates/multithread/src/multithread.rs@125@addr.clone().recipient(),"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@125@addr.clone().recipient(),"
         },
         {
           "pattern": "channel",
@@ -925,7 +925,7 @@
       "unverified": [
         "The ZK prover (ZkProver) lives in crates/zk/prover and was not read; the proof side is described only from the dispatch in multithread.rs.",
         "The memory constants (memory.rs:19 and memory.rs:22) are values in code; their effect on a real host was not measured.",
-        "The thread counts and job limits are set in crates/ciphernode-builder/src/builder/mod.rs (with_multithread_config); the builder was checked only at the call sites."
+        "The thread counts and job limits are set in crates/ciphernode/builder/src/lib.rs (with_multithread_config); the builder was checked only at the call sites."
       ]
     },
     {
@@ -941,7 +941,7 @@
       "consumes": [
         {
           "name": "TrBFVRequest variants: generate, sum, share and combine",
-          "by": "handle_trbfv_request in crates/multithread",
+          "by": "handle_trbfv_request in crates/ciphernode/multithread",
           "ref": "crates/trbfv/src/trbfv_request.rs@27@pub enum TrBFVRequest {"
         },
         {

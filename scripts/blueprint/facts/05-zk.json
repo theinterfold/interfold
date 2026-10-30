@@ -355,7 +355,7 @@
         "versions.json circuits_checksums lists only 0.18.0 while required_circuits_version is 0.19.0; the 0.19.0 digest is inserted at build time from E3_CIRCUITS_ARCHIVE_SHA256 (config.rs:80-85). I did not check how release builds set that variable.",
         "NodeProofAggregator persists through e3-data Repositories (node_proof_aggregation/actor.rs:45); whether that store is sled-backed was not traced (crates/data/src/lib.rs:18 declares sled_db).",
         "The commitment_links/*.rs consistency rules and the ECDSA checks in share_verification/transitions/ecdsa.rs were not read beyond their names.",
-        "The TaskPool, retry and memory logic in crates/multithread was not read beyond the dispatch path."
+        "The TaskPool, retry and memory logic in crates/ciphernode/multithread was not read beyond the dispatch path."
       ]
     },
     {

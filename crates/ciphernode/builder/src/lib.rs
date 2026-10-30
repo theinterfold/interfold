@@ -8,12 +8,17 @@
 //! the startup steps that [`CiphernodeBuilder::build`] orders.
 
 mod chain_parameters;
+mod ciphernode;
 mod evm;
 mod extensions;
+mod finalized_lifecycle;
 mod net;
+mod recovery;
 mod restart;
 mod sortition;
 mod startup;
+
+pub use ciphernode::*;
 
 use actix::Addr;
 use derivative::Derivative;

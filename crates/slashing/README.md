@@ -36,9 +36,9 @@ Register these per-E3 capabilities through `E3RouterBuilder::with_recipient`:
   `commitment_consistency_checker` recipient. The factory maps a BFV preset to the expected
   `CommitmentLink` rules; the standard composition uses `e3_zk_prover::default_links`.
 
-The [builder caller](../ciphernode-builder/src/builder/extensions.rs) shows chain-specific
-configuration and registration. Exported `AccusationManager` and `CommitmentConsistencyChecker` also
-support lower-level harnesses; extensions are the normal runtime entry.
+The [builder caller](../ciphernode/builder/src/extensions.rs) shows chain-specific configuration and
+registration. Exported `AccusationManager` and `CommitmentConsistencyChecker` also support
+lower-level harnesses; extensions are the normal runtime entry.
 
 ## Evidence boundary
 

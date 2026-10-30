@@ -37,6 +37,6 @@ unbounded: this is not acknowledged delivery or a backpressure mechanism.
 
 `cargo check --locked -p e3-console --tests` checks the crate and test-target compilation without
 external services; it currently has no dedicated test functions. The channel example above is a
-capture pattern for command tests. The [daemon](../daemon-server/README.md) and
+capture pattern for command tests. The [daemon](../ciphernode/daemon-server/README.md) and
 [CLI](../cli/README.md) are concrete consumers. See [AGENTS.md](AGENTS.md) for framing and drain
 constraints.
