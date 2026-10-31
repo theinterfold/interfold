@@ -156,6 +156,10 @@ async function execute(
     gas.push(receipt.gasUsed);
   }
   console.log(`gas per call: ${gas.join(", ")}`);
+  // Capacity reads one second before the head, as a request does, so mine a later block: the
+  // operators that the last call refreshed count only from there.
+  await provider.send("evm_increaseTime", [2]);
+  await provider.send("evm_mine", []);
   return gas;
 }
 
