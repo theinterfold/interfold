@@ -290,11 +290,18 @@ async function registeredOperators(
     .map((url) => url.trim())
     .filter(Boolean)
     .map((url) => new ethersLib.JsonRpcProvider(url));
+  // A fork can mine past the head of the log RPCs. The count check below still refuses a history
+  // that misses a registered operator.
+  const heads = await Promise.all(
+    [ethers.provider, ...logProviders].map((provider) =>
+      provider.getBlockNumber(),
+    ),
+  );
   const added = await addedOperators(
     logProviders.length > 0 ? logProviders : [ethers.provider],
     deployment.ciphernodeRegistry,
     fromBlock,
-    await ethers.provider.getBlockNumber(),
+    Math.min(...heads),
   );
   const registered: string[] = [];
   for (const operator of added) {
