@@ -106,6 +106,47 @@ fork. It overwrites the `mainnet` entry of the checkout's
 `packages/crisp-contracts/deployed_contracts.json` with the fork's addresses, passes that file as
 `--crisp-deployments`, and restores the file when it ends.
 
+`upgrade:identity` (`scripts/upgrade/identityGate.ts prepare`) rolls out the
+[owner identity](registration-and-bonding.md#owner-identity) gate. It reads the `identity` section
+of the protocol config (ZKPassport root verifier, version, domain, scope, identifier type, OPRF key
+hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It checks the
+ProxyAdmin owner and the root verifier's code, then deploys `ZKPassportIdentityVerifier`,
+`OwnerIdentityRegistry` owned by the protocol owner, and a linked BondingRegistry implementation.
+Its governance batch upgrades BondingRegistry, sets the identity policy to the new registry with
+`required = false`, which publishes the registry to the verification page, and refreshes every
+registered operator in batches of 20, because every policy change resets counted owner capacity.
+
+`upgrade:identity:enforce` writes the batch that sets `required = true` and refreshes every
+operator. It refuses while fewer owners than the largest committee needs have a credential that
+lasts to the end of the current window (`--force` overrides). `upgrade:identity:relax` is its
+rollback; during an admission pause, the identity rule at the pause cutoff stays until the admission
+policy changes too. `upgrade:identity:validate -- --required <true|false>` reads back the
+implementation, the registry owner and verifier, every verifier setting and the identifier
+namespace, the latest `IdentityPolicyUpdated` against the expected policy, and the owner capacity
+for the largest committee. Write each batch shortly before execution: an operator that deregisters
+after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch reverts with
+it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a paused,
+staged refresh. Execute each batch with a gas limit well above the estimate (for example 1.5 times).
+An estimate made at the timestamp of an earlier capacity change can fall short once the batch is
+mined in a later block, where the capacity checkpoints start new entries.
+
+Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
+that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
+`CONFIRM_MAINNET_FORK=1`, and point the `mainnet` network at the fork with `RPC_URL` and a test
+`PRIVATE_KEY`; the script refuses any chain that is not an Anvil mainnet fork. It deploys the
+verifier with the proof's settings, checks that another owner is rejected, registers the bound
+owner, and checks the identifier and the expiry. The proof's version is the value for
+`identity.zkPassportVersion`; ZKPassport rejects a retired version ("Verifier not found"). The
+batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed. After
+the `prepare` batch executes, set `identityDeployBlock` for the network in
+`packages/interfold-dashboard/src/lib/networks.ts` to the upgrade block. Until then, the
+verification page reads only recent blocks for the policy.
+
+`upgrade:identity:simulate` runs the whole rollout on an Anvil mainnet fork (`FORK_URL`, and
+`LOG_RPC_URL` for the operator history): prepare, execute as the protocol owner, and validate; with
+`--proof <file>`, register that owner; then check that `enforce` refuses too few verified owners,
+force it, read the capacity that is left, and relax it again.
+
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
