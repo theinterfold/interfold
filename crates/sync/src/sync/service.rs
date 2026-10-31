@@ -155,6 +155,7 @@ pub struct RestartStateBackfill {
     pub slash_intents: Vec<AccusationQuorumReached>,
     pub bond_owner_updates: Vec<TypedEvent<BondOwnerSetAt>>,
     pub admission_updates: Vec<e3_events::AdmissionUpdated>,
+    pub identity_policy_updates: Vec<e3_events::IdentityPolicyChange>,
 }
 
 impl RestartStateBackfill {
@@ -246,6 +247,9 @@ pub async fn project_restart_state_backfill(
             {
                 if let Some(admission) = e3_events::AdmissionUpdated::from_observed_log(log)? {
                     recovered.admission_updates.push(admission);
+                }
+                if let Some(change) = e3_events::IdentityPolicyChange::from_observed_log(log)? {
+                    recovered.identity_policy_updates.push(change);
                 }
             }
             InterfoldEventData::AdmissionUpdated(admission)

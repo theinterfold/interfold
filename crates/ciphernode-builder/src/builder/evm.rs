@@ -17,7 +17,7 @@ use e3_config::chain_config::ChainConfig;
 use e3_events::{BusHandle, DkgFoldAttestationContext, E3Stage, E3id, EvmEventConfig};
 use e3_evm::{
     fetch_randomness_providers, ingestion_heartbeat_files, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, ConcreteReadProvider,
+    CapacityRefresher, CiphernodeRegistrySol, CiphernodeRegistrySolReader, ConcreteReadProvider,
     DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EnabledChain,
     EvmChainGatewayHandle, EvmSystemChainBuilder, IngestionProgressSink, InterfoldSolReader,
     InterfoldSolWriter, ProviderCache, ProviderConfig, ProviderFactory,
@@ -83,6 +83,7 @@ impl CiphernodeBuilder {
                 attach_ciphernode_registry(&mut readers, provider_cache, restart).await?;
                 attach_slashing_manager(&mut readers, provider_cache, storage, slashing_manager)
                     .await?;
+                attach_capacity_refresher(&readers, provider_cache, protocol).await?;
             } else {
                 readers
                     .system
@@ -330,6 +331,27 @@ async fn attach_slashing_manager(
         },
         Err(e) => error!(
             "Failed to create write provider for SlashingManager, skipping: {}",
+            e
+        ),
+    }
+    Ok(())
+}
+
+/// Attach the writer that refreshes this node's operator in each owner capacity window.
+async fn attach_capacity_refresher(
+    readers: &ChainReaders<'_>,
+    provider_cache: &mut ProviderCache<WriteEnabled>,
+    protocol: &Protocol,
+) -> Result<()> {
+    match provider_cache.ensure_write_provider(readers.chain).await {
+        Ok(write_provider) => CapacityRefresher::attach(
+            readers.bus,
+            write_provider,
+            readers.chain.contracts.bonding_registry.address()?,
+            protocol.sortition.clone().recipient(),
+        ),
+        Err(e) => error!(
+            "Failed to create write provider for the capacity refresher, skipping: {}",
             e
         ),
     }

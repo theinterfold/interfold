@@ -104,7 +104,14 @@ establish human uniqueness or prevent pre-request wallet splitting/collusion.
 Rust shortlists N-plus-buffer distinct owners with their eligible operator backups. An
 operator-count cutoff must not discard necessary owners. If any eligible operator lacks owner
 history, turn the owner shortlist off and rank every eligible operator; Solidity still rejects zero
-snapshot owners. Committee formation requires N distinct snapshot owners, not N submissions.
+snapshot owners. A required identity policy at T−1 also turns the shortlist off, because the node
+does not know which owners hold a credential: every eligible operator submits, and the ticket gas
+estimate fails for an operator whose owner has no credential, so it sends nothing. During an
+admission pause, a policy that was required at the pause cutoff also turns the shortlist off, as the
+contract still checks identity at the cutoff. The node reads the policy history from its own log; a
+node that ran an older release while the policy changed, and then upgrades again, keeps the old
+history until its data is reset. Committee formation requires N distinct snapshot owners, not N
+submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an
@@ -114,8 +121,8 @@ Capacity proves neither online availability nor independent people. Insufficient
 fees and treasury credit before a VRF draw. A required
 [owner identity](registration-and-bonding.md#owner-identity) policy also gates each snapshot owner
 at T−1. Capacity then counts only owners whose credential lasts through the current 30-day window
-and fails closed at the window end or after a revocation until refreshes rebuild it. Gap: the Rust
-owner shortlist does not apply the identity policy.
+and fails closed at the window end or after a revocation until refreshes rebuild it. Each full node
+refreshes its own operator once in each window.
 
 Before dispatching its canonical ticket, a selected node persists one provisional `active_jobs`
 reservation. Replay reuses it. Canonical committee finalization retains selected reservations and
@@ -140,11 +147,12 @@ active/standby policy. Moving the representation must not change either ordering
 behavior; [DKG identities](dkg.md#identities-and-dimensions) constrain downstream slots.
 
 Ticket submissions include `committeeDeadline`; `finalizeCommittee` requires strictly later time.
-Members schedule staggered calls, but the first successful transaction locks canonical on-chain
-order. It must finalize by `committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot
-buy more paid lifetime. Fewer than N submissions fails with supplier-paid
-`InsufficientCommitteeMembers`. Finalization snapshots every operator's reward recipient and retains
-its collateral obligation.
+Members schedule calls staggered by submission rank, 30 seconds apart and at most 20 steps (about 10
+minutes) after the deadline: without the shortlist, the rank also counts operators that never
+submit. The first successful transaction locks canonical on-chain order. It must finalize by
+`committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot buy more paid lifetime.
+Fewer than N submissions fails with supplier-paid `InsufficientCommitteeMembers`. Finalization
+snapshots every operator's reward recipient and retains its collateral obligation.
 
 The [sortition finalizer](../../crates/sortition/src/committee_finalization/actor.rs) retains
 request/context/ticket before effects and re-arms from its saved absolute committee deadline after

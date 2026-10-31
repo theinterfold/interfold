@@ -8,10 +8,10 @@ use crate::domain::backends::{SortitionBackend, SortitionList};
 use crate::domain::node_registry::{NodeRegistry, NodeStateStore, SortitionSnapshot};
 use crate::messages::{
     CommitteeMembersResponse, E3CommitteeContainsRequest, E3CommitteeContainsResponse,
-    GetCommitteeMembersRequest, WithSortitionTicket,
+    GetCommitteeMembersRequest, IdentityPolicyRequiredAt, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
-use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention};
+use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention, IdentityPolicyState};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_committee::Committee;
@@ -66,6 +66,8 @@ pub struct Sortition {
     /// Owner history is derived from chain events and persisted separately from node state.
     bond_owners: Persistable<BondOwnerState>,
     admission: Persistable<AdmissionState>,
+    /// The bond-owner identity policy, derived from BondingRegistry logs.
+    identity_policy: Persistable<IdentityPolicyState>,
     /// Event bus for error reporting and interfold event subscription.
     bus: BusHandle,
     /// Persistent map of finalized committees per E3
@@ -186,6 +188,7 @@ pub struct SortitionParams {
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
     pub bond_owners: Persistable<BondOwnerState>,
     pub admission: Persistable<AdmissionState>,
+    pub identity_policy: Persistable<IdentityPolicyState>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
     /// Persisted delayed and pre-finalization inputs.
@@ -207,6 +210,7 @@ pub struct SortitionAttachParams<'a> {
     pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
     pub bond_owners_store: Repository<BondOwnerState>,
     pub admission_store: Repository<AdmissionState>,
+    pub identity_policy_store: Repository<IdentityPolicyState>,
     pub recovery_store: Repository<SortitionRecoveryState>,
     pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
     pub default_backend: SortitionBackend,
@@ -223,6 +227,7 @@ impl Sortition {
             node_state: params.node_state,
             bond_owners: params.bond_owners,
             admission: params.admission,
+            identity_policy: params.identity_policy,
             bus: params.bus,
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
@@ -242,6 +247,7 @@ impl Sortition {
             node_state_store,
             bond_owners_store,
             admission_store,
+            identity_policy_store,
             recovery_store,
             committees_store,
             default_backend,
@@ -267,6 +273,10 @@ impl Sortition {
             .load_or_default(AdmissionState::default())
             .await?;
         admission.try_get()?.validate()?;
+        let identity_policy = identity_policy_store
+            .load_or_default(IdentityPolicyState::default())
+            .await?;
+        identity_policy.try_get()?.validate()?;
         let recovery = recovery_store
             .load_or_default(SortitionRecoveryState::default())
             .await?;
@@ -287,6 +297,7 @@ impl Sortition {
             node_state,
             bond_owners,
             admission,
+            identity_policy,
             recovery,
             finalized_committees,
             ciphernode_selector,
@@ -371,7 +382,15 @@ impl Sortition {
         let state = state_map.get(&chain_id)?;
         let owners = self.bond_owners.get()?;
         let admission = self.admission.get()?;
-        let state = admission.filter(chain_id, snapshot.request_block.checked_sub(1)?, state);
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let state = admission.filter(chain_id, timepoint, state);
+        // The node does not know which owners hold a credential, so a required identity policy
+        // turns the owner shortlist off and every eligible node submits.
+        let owner_shortlist = !self.identity_policy.get()?.required_for_selection(
+            chain_id,
+            timepoint,
+            admission.pause_cutoff(chain_id, timepoint),
+        );
 
         backend
             .get_submission_index(
@@ -383,6 +402,7 @@ impl Sortition {
                 snapshot,
                 candidate_owners,
                 &owners,
+                owner_shortlist,
             )
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);

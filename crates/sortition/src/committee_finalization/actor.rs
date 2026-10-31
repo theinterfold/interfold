@@ -36,6 +36,11 @@ const FINALIZATION_BUFFER_SECONDS: u64 = 1;
 /// The delay applies only while earlier members stay silent, so a larger value
 /// costs nothing when the first member finalizes.
 const FINALIZE_INTERVAL_SECONDS: u64 = 30;
+/// The last attempt step. Without the owner shortlist (incomplete owner history or a required
+/// identity policy), the submission rank also counts operators that never submit, such as the
+/// operators of unverified owners. The cap keeps a valid member's attempt about 10 minutes after
+/// the deadline at most, well inside the DKG window, however many such operators rank first.
+const MAX_FINALIZATION_STEPS: u64 = 20;
 const FINALIZATION_RPC_RETRY_SECONDS: u64 = 30;
 pub const COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION: u32 = 1;
 
@@ -79,7 +84,11 @@ fn finalization_delay_seconds(committee_deadline: u64, now: u64, party_index: u6
     committee_deadline
         .saturating_sub(now)
         .saturating_add(FINALIZATION_BUFFER_SECONDS)
-        .saturating_add(party_index.saturating_mul(FINALIZE_INTERVAL_SECONDS))
+        .saturating_add(
+            party_index
+                .min(MAX_FINALIZATION_STEPS)
+                .saturating_mul(FINALIZE_INTERVAL_SECONDS),
+        )
 }
 
 /// CommitteeFinalizer is an actor that listens to CommitteeRequested events and dispatches
@@ -269,7 +278,7 @@ impl Actor for CommitteeFinalizer {
 
 #[cfg(test)]
 mod tests {
-    use super::{finalization_delay_seconds, FINALIZE_INTERVAL_SECONDS};
+    use super::{finalization_delay_seconds, FINALIZE_INTERVAL_SECONDS, MAX_FINALIZATION_STEPS};
 
     /// Longest block interval observed on Sepolia. The stagger must exceed it,
     /// plus the log read that cancels a pending attempt.
@@ -290,6 +299,14 @@ mod tests {
             "stagger {} must exceed one block interval",
             second - first
         );
+    }
+
+    #[test]
+    fn many_silent_better_ranked_operators_cannot_delay_past_the_cap() {
+        let capped = 1 + MAX_FINALIZATION_STEPS * FINALIZE_INTERVAL_SECONDS;
+        assert_eq!(finalization_delay_seconds(1_000, 1_000, 240), capped);
+        assert_eq!(finalization_delay_seconds(1_000, 1_000, u64::MAX), capped);
+        assert!(capped <= 10 * 60 + 1);
     }
 
     #[test]

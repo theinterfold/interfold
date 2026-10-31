@@ -20,6 +20,7 @@ Shared contract signatures, tuple layouts, events and errors belong to
 | [`interfold_writing/`](src/interfold_writing), [`slashing_writing/`](src/slashing_writing)                                    | Publication preflights/retries and slash outbox.                                   |
 | [`canonical_key.rs`](src/canonical_key.rs), [`data_availability/`](src/data_availability)                                     | Confirmed key authority and referenced-output retrieval.                           |
 | [`node_release.rs`](src/node_release.rs), [`slashing_manager_address.rs`](src/slashing_manager_address.rs)                    | Startup release acknowledgment and authoritative manager resolution.               |
+| [`capacity_refresh.rs`](src/capacity_refresh.rs)                                                                              | Operator refresh in each owner capacity window under a required identity policy.   |
 | [`chain_time.rs`](src/chain_time.rs)                                                                                          | Fresh-provider latest-block time adapter for sortition's committee finalizer.      |
 
 The read path fetches confirmed logs, decodes observations, orders the startup handoff, and sends
@@ -52,6 +53,14 @@ Slash intents retain their first-recorded time, preserving the remaining fallbac
 restart. Decoded permanent contract errors end retries. Failure-path reads/transactions use capped
 per-E3 backoff; a successful call clears its count. Release acknowledgment rereads state on each of
 three attempts to avoid sending again after a mined success.
+
+`CapacityRefresher` starts 10 minutes after effects start and then checks every 10 minutes at the
+latest block's timestamp. When sortition reports a required identity policy and this process has not
+refreshed the operator in the current 30-day window, it sends `refreshOperatorStatus` for the
+operator. An unregistered operator sends nothing until it registers. A sent refresh settles before
+another one: the next check waits while it is pending, takes the window from its block once mined,
+and sends again only after a revert or when the RPC no longer knows it. A failed read waits for the
+next check. The window lives only in memory, so a restart costs at most one more refresh.
 
 Public helpers also include `ProviderConfig`, canonical DKG timing/lifecycle reads,
 `fetch_operator_status`, and slashing-manager resolution. See

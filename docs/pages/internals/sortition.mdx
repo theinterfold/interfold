@@ -432,7 +432,7 @@ finalizes a full committee before the DKG deadline, `markE3Failed` records
 The Rust `CommitteeFinalizer` schedules one finalization attempt for each local ticket:
 
 $$
-t_{\text{wait}} = \max(t_{\text{close}} - t_{\text{now}}, 0) + 1\,\text{s} + 30\,\text{s} \times \texttt{party\_index}
+t_{\text{wait}} = \max(t_{\text{close}} - t_{\text{now}}, 0) + 1\,\text{s} + 30\,\text{s} \times \min(\texttt{party\_index}, 20)
 $$
 
 Before it sends, the writer runs a preflight call. If another member already finalized, the writer

@@ -199,6 +199,7 @@
     "e3:enable": "hardhat interfold:enableE3",
     "ciphernode:add": "hardhat ciphernode:add",
     "ciphernode:admin-add": "hardhat ciphernode:admin-add",
+    "identity:mock-gate": "hardhat identity:mock-gate",
     "ciphernode:mint-tokens": "hardhat ciphernode:mint-tokens",
     "ciphernode:remove": "hardhat ciphernode:remove",
     "committee:new": "hardhat committee:new",

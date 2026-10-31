@@ -258,6 +258,7 @@ mod tests {
                     snapshot,
                     30,
                     &BondOwnerState::default(),
+                    true,
                 )
                 .unwrap()
                 .expect("all eligible nodes must submit");
@@ -285,7 +286,8 @@ mod tests {
                     &state,
                     snapshot,
                     30,
-                    &BondOwnerState::default()
+                    &BondOwnerState::default(),
+                    true,
                 )
                 .unwrap(),
             None
@@ -303,12 +305,79 @@ mod tests {
                     &state,
                     snapshot,
                     30,
-                    &BondOwnerState::default()
+                    &BondOwnerState::default(),
+                    true,
                 )
                 .unwrap()
                 .is_some(),
             "a restart keeps its existing reservation"
         );
+    }
+
+    #[test]
+    fn a_required_identity_policy_lets_every_eligible_node_submit() {
+        let mut backend = SortitionBackend::default();
+        let mut state = NodeStateStore::default();
+        let mut owners = BondOwnerState::default();
+        for i in 1..=5u8 {
+            let address = Address::from([i; 20]);
+            backend.add(address.to_string());
+            state.nodes.insert(
+                address.to_string(),
+                NodeState {
+                    ticket_balance: U256::from(10),
+                    active: true,
+                    ticket_balance_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: U256::from(10),
+                    }],
+                    active_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: true,
+                    }],
+                    ..Default::default()
+                },
+            );
+            owners
+                .record(
+                    &e3_events::BondOwnerSet {
+                        operator: address.to_string(),
+                        bond_owner: Address::from([i + 100; 20]).to_string(),
+                        chain_id: 1,
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        let snapshot = SortitionSnapshot {
+            request_block: 10,
+            ticket_price: U256::from(10),
+        };
+        let submitting = |owner_shortlist: bool| {
+            backend
+                .nodes()
+                .into_iter()
+                .filter(|node| {
+                    backend
+                        .get_submission_index(
+                            E3id::new("1", 1),
+                            Seed::from(U256::from(1)),
+                            node.clone(),
+                            1,
+                            &state,
+                            snapshot,
+                            1,
+                            &owners,
+                            owner_shortlist,
+                        )
+                        .unwrap()
+                        .is_some()
+                })
+                .count()
+        };
+        // With complete owner history, the shortlist keeps one owner's candidate.
+        assert_eq!(submitting(true), 1);
+        assert_eq!(submitting(false), 5);
     }
 
     #[test]
@@ -354,15 +423,22 @@ mod tests {
             request_block: 10,
             ticket_price: U256::from(10),
         };
-        let rank = |e3: &E3id,
-                    node: &str,
-                    state: &NodeStateStore,
-                    view,
-                    owners: &BondOwnerState| {
-            backend
-                .get_submission_index(e3.clone(), seed, node.to_owned(), 1, state, view, 1, owners)
-                .unwrap()
-        };
+        let rank =
+            |e3: &E3id, node: &str, state: &NodeStateStore, view, owners: &BondOwnerState| {
+                backend
+                    .get_submission_index(
+                        e3.clone(),
+                        seed,
+                        node.to_owned(),
+                        1,
+                        state,
+                        view,
+                        1,
+                        owners,
+                        true,
+                    )
+                    .unwrap()
+            };
         let mut original = backend
             .nodes()
             .into_iter()
@@ -635,6 +711,7 @@ impl SortitionBackend {
     }
 
     /// Apply the candidate limit to owners, without excluding their fallback operators.
+    #[allow(clippy::too_many_arguments)]
     pub fn get_submission_index(
         &self,
         e3_id: E3id,
@@ -645,6 +722,7 @@ impl SortitionBackend {
         snapshot: SortitionSnapshot,
         candidate_owners: usize,
         owner_state: &BondOwnerState,
+        owner_shortlist: bool,
     ) -> Result<Option<(u64, Option<u64>)>> {
         let want: Address = address.parse()?;
         if !ScoreBackend::has_local_capacity(node_state, &e3_id, want, snapshot) {
@@ -664,7 +742,20 @@ impl SortitionBackend {
             })
             .collect();
         let missing_owners = nodes.len() - owners.len();
-        let winners = if missing_owners == 0 {
+        let winners = if !owner_shortlist {
+            // Under a required identity policy the node cannot tell verified owners apart, so an
+            // owner shortlist could leave out every verified owner. The contract rejects the
+            // tickets of unverified owners.
+            tracing::info!(
+                chain_id,
+                e3_id = %e3_id,
+                timepoint,
+                eligible_operators = nodes.len(),
+                event = "sortition_identity_policy_all_candidates",
+                "The identity policy is required; submitting without the owner shortlist"
+            );
+            ScoreSortition::new(nodes.len()).get_committee(e3_id, seed, &nodes)?
+        } else if missing_owners == 0 {
             ScoreSortition::new(candidate_owners)
                 .get_owner_candidates(e3_id, seed, &nodes, &owners)?
         } else {
