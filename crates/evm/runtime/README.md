@@ -57,7 +57,7 @@ three attempts to avoid sending again after a mined success.
 `CapacityRefresher` starts 10 minutes after effects start and then checks every 10 minutes at the
 latest block's timestamp. When sortition reports a required identity policy and this process has not
 refreshed the operator in the current 30-day window, it sends `refreshOperatorStatus` for the
-operator. An unregistered operator sends nothing for that window. A sent refresh settles before
+operator. An unregistered operator sends nothing until it registers. A sent refresh settles before
 another one: the next check waits while it is pending, takes the window from its block once mined,
 and sends again only after a revert or when the RPC no longer knows it. A failed read waits for the
 next check. The window lives only in memory, so a restart costs at most one more refresh.

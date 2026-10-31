@@ -213,10 +213,10 @@ where
     if !refresh_due(required, timestamp, progress.refreshed_window) {
         return Ok(());
     }
-    match send_refresh(provider, bonding_registry).await? {
-        Some(hash) => progress.pending = Some(hash),
-        // The registry has nothing to count for an unregistered operator.
-        None => progress.refreshed_window = Some(timestamp / CAPACITY_WINDOW_SECS),
+    // An unregistered operator sends nothing and keeps the window open, so a registration later in
+    // the window gets its refresh at the next check.
+    if let Some(hash) = send_refresh(provider, bonding_registry).await? {
+        progress.pending = Some(hash);
     }
     Ok(())
 }

@@ -645,15 +645,18 @@ export const identityMockGate = task(
           )
         ).wait();
         await provider.send(impersonationRpc.impersonate, [owner]);
-        await provider.send(impersonationRpc.setBalance, [
-          owner,
-          "0x56BC75E2D63100000",
-        ]);
-        const ownerSigner = await ethers.getSigner(owner);
-        await (
-          await registry.connect(ownerSigner).getFunction("register")("0x")
-        ).wait();
-        await provider.send(impersonationRpc.stopImpersonating, [owner]);
+        try {
+          await provider.send(impersonationRpc.setBalance, [
+            owner,
+            "0x56BC75E2D63100000",
+          ]);
+          const ownerSigner = await ethers.getSigner(owner);
+          await (
+            await registry.connect(ownerSigner).getFunction("register")("0x")
+          ).wait();
+        } finally {
+          await provider.send(impersonationRpc.stopImpersonating, [owner]);
+        }
       }
 
       // An estimate made in the same second as the previous capacity change can fall short once the
