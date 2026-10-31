@@ -2037,6 +2037,30 @@ button {
   margin: 0;
 }
 
+/* Bond-owner identity: the ZKPassport request and its QR code */
+.opidentity__request {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+}
+.opidentity__qr {
+  width: 240px;
+  height: 240px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+.opcheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
 /* E3 rewards: the claimable total first, then the committee history */
 .oprewards__title {
   font-family: var(--serif);

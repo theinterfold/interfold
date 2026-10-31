@@ -33,6 +33,9 @@ export type NetworkProfile = {
   // Empty string = no faucet on this network (hides the operator-guide card).
   faucet: string
   deployBlock: string
+  // First block of the identity policy scan: a block at or before the BondingRegistry upgrade that
+  // added the policy. Empty until that upgrade: the panel then reads only recent blocks.
+  identityDeployBlock: string
   // Fee token metadata for formatting escrowed fees/rewards. Hardcoded per
   // deployment (like the addresses) rather than read on-chain at runtime.
   feeSymbol: string
@@ -60,6 +63,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     // Deploy block of the Interfold and the CiphernodeRegistry (11873232), the earliest of those two
     // and the CRISPProgram (11873424). A later value silently drops early registry events.
     deployBlock: '11873232',
+    identityDeployBlock: '',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
@@ -81,6 +85,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     faucet: '',
     // All mainnet contracts were deployed in the same block.
     deployBlock: '25786403',
+    identityDeployBlock: '',
     // USDS (0xdC035D45…384F) on the mainnet deployment.
     feeSymbol: 'USDS',
     feeDecimals: 18,
@@ -100,6 +105,7 @@ const SETTINGS = [
   'FEE_TOKEN_SYMBOL',
   'FEE_TOKEN_DECIMALS',
   'DEPLOY_BLOCK',
+  'IDENTITY_DEPLOY_BLOCK',
   'COMPUTE_WINDOW',
   'DECRYPTION_WINDOW',
 ] as const
@@ -154,4 +160,14 @@ export function selectNetwork(env: Env, hostname: string | undefined): NetworkKe
 // the dashboard's to check.
 export function unscopedOverrideKeys(env: Env): string[] {
   return SETTINGS.map((setting) => `VITE_${setting}`).filter((key) => key in env)
+}
+
+// Block overrides that are not whole numbers, for example "26300000.0". The page reads
+// them with BigInt when it loads, so one bad value would stop the whole page.
+export function invalidBlockOverrides(env: Env): string[] {
+  const settings: Setting[] = ['DEPLOY_BLOCK', 'IDENTITY_DEPLOY_BLOCK']
+  return NETWORK_KEYS.flatMap((network) => settings.map((setting) => overrideKey(network, setting))).filter((key) => {
+    const value = env[key]?.trim()
+    return value !== undefined && value !== '' && !/^\d+$/.test(value)
+  })
 }
