@@ -11,6 +11,7 @@ THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 LOG="$(mktemp)"
 tail -n +1 -f "$LOG" &
 TAIL_PID=$!
+trap 'kill "$TAIL_PID" 2>/dev/null || true; rm -f "$LOG"' EXIT
 status=0
 IDENTITY_GATE=true "$THIS_DIR/base.sh" > "$LOG" 2>&1 || status=$?
 sleep 1
