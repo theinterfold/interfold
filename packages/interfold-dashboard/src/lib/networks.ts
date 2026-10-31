@@ -161,3 +161,13 @@ export function selectNetwork(env: Env, hostname: string | undefined): NetworkKe
 export function unscopedOverrideKeys(env: Env): string[] {
   return SETTINGS.map((setting) => `VITE_${setting}`).filter((key) => key in env)
 }
+
+// Block overrides that are not whole numbers, for example "26300000.0". The page reads
+// them with BigInt when it loads, so one bad value would stop the whole page.
+export function invalidBlockOverrides(env: Env): string[] {
+  const settings: Setting[] = ['DEPLOY_BLOCK', 'IDENTITY_DEPLOY_BLOCK']
+  return NETWORK_KEYS.flatMap((network) => settings.map((setting) => overrideKey(network, setting))).filter((key) => {
+    const value = env[key]?.trim()
+    return value !== undefined && value !== '' && !/^\d+$/.test(value)
+  })
+}

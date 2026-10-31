@@ -1389,7 +1389,8 @@ function identityService(verifier: VerifierConfig | null, previewFaceMatch: bool
     ? {
         domain: verifier.domain,
         scope: verifier.scope,
-        faceMatch: verifier.faceMatchRequired,
+        // The SDK requires strict FaceMatch for a salted identifier.
+        faceMatch: verifier.faceMatchRequired || verifier.nullifierType === 1,
         nullifierType: verifier.nullifierType,
         proofValidity: verifier.proofValidity,
         maxValidity: verifier.maxValidity,
@@ -1421,8 +1422,9 @@ function IdentityPanel({
   // undefined while loading; null when the network has no identity policy.
   const [policy, setPolicy] = useState<IdentityPolicy | null | undefined>(undefined)
   const [verifier, setVerifier] = useState<VerifierConfig | null>(null)
-  // Kept with the owner that it was read for, so another owner never shows these values.
-  const [account, setAccount] = useState<{ owner: Address; value: OwnerAccount } | null>(null)
+  // Kept with the owner and registry that it was read for, so another owner or registry never
+  // shows these values.
+  const [account, setAccount] = useState<{ owner: Address; registry: Address | null; value: OwnerAccount } | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [request, setRequest] = useState<IdentityRequest>({ phase: 'idle' })
   // null until the owner types a date.
@@ -1453,9 +1455,10 @@ function IdentityPanel({
   useEffect(() => {
     if (policy === undefined) return
     let cancelled = false
-    fetchOwnerAccount(owner, policy?.registry ?? null).then(
+    const registry = policy?.registry ?? null
+    fetchOwnerAccount(owner, registry).then(
       (value) => {
-        if (!cancelled) setAccount({ owner, value })
+        if (!cancelled) setAccount({ owner, registry, value })
       },
       () => {
         if (!cancelled) setLoadFailed(true)
@@ -1475,17 +1478,28 @@ function IdentityPanel({
     },
     [],
   )
-  // A finished proof expires, so its view follows the clock while the page stays open.
+  // A finished proof and a credential both expire, so the panel follows the clock while the page
+  // stays open.
   const [clock, setClock] = useState(() => BigInt(Math.floor(Date.now() / 1000)))
   useEffect(() => {
-    if (request.phase !== 'ready') return undefined
     const id = setInterval(() => setClock(BigInt(Math.floor(Date.now() / 1000))), 30_000)
     return () => clearInterval(id)
-  }, [request.phase])
+  }, [])
 
   const service = identityService(verifier, previewFaceMatch)
-  const loaded = account?.owner === owner ? account.value : null
-  const current = loaded && clock > loaded.now ? { ...loaded, now: clock } : loaded
+  const loaded = account?.owner === owner && account.registry === (policy?.registry ?? null) ? account.value : null
+  const current =
+    loaded && clock > loaded.now
+      ? {
+          ...loaded,
+          now: clock,
+          // isVerifiedAt holds through the expiry second.
+          identity: loaded.identity && {
+            ...loaded.identity,
+            verifiedNow: loaded.identity.verifiedNow && clock <= loaded.identity.expiresAt,
+          },
+        }
+      : loaded
   // A published registry without a verifier keeps its credentials, but takes no registration.
   const registrationClosed = Boolean(policy) && verifier === null
   // Until the owner types a date, the field offers the longest credential that the verifier allows.
@@ -1519,8 +1533,7 @@ function IdentityPanel({
         .gte('expiry_date', new Date(Number(validUntil) * 1000))
         .bind('user_address', owner)
         .bind('chain', chain)
-      // The SDK requires strict FaceMatch for a salted identifier.
-      if (service.faceMatch || service.nullifierType === 1) query = query.facematch('strict')
+      if (service.faceMatch) query = query.facematch('strict')
       const result = query.done()
       if (requestToken.current !== token) return zkPassport.cancelRequest(result.requestId)
       cancelRequest.current = () => zkPassport.cancelRequest(result.requestId)
