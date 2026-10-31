@@ -113,10 +113,10 @@ current 30-day capacity window. Before a deployment (no policy log), it makes a 
 planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
 the verifier parameters, and the evidence, so a fork test can replay it.
 
-The policy scan needs an RPC that serves logs from `IDENTITY_DEPLOY_BLOCK` on. Public RPCs such as
-publicnode keep only about a day of logs. After the upgrade, set `IDENTITY_DEPLOY_BLOCK` to the
-upgrade block and use an RPC with that history. For a preview before the upgrade, a recent block is
-enough, for example `VITE_MAINNET_IDENTITY_DEPLOY_BLOCK=<a block from today>`.
+Until a network has the identity upgrade, leave `IDENTITY_DEPLOY_BLOCK` unset. No policy log exists
+yet, so the panel reads only the latest 2,000 blocks, which public RPCs serve. After the upgrade,
+set `identityDeployBlock` in `src/lib/networks.ts` to the upgrade block, and use an RPC that serves
+logs from there: public RPCs such as publicnode keep only about a day of logs.
 
 Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
@@ -149,7 +149,8 @@ default:
   the "Get test tokens" action on a testnet too.
 - `FEE_TOKEN_SYMBOL`, `FEE_TOKEN_DECIMALS` — fee token display.
 - `DEPLOY_BLOCK` — first block to scan from (the Interfold deploy block).
-- `IDENTITY_DEPLOY_BLOCK` — first block of the identity policy scan (defaults to `DEPLOY_BLOCK`).
+- `IDENTITY_DEPLOY_BLOCK` — first block of the identity policy scan (unset before the identity
+  upgrade: the scan reads only recent blocks).
 - `COMPUTE_WINDOW`, `DECRYPTION_WINDOW` — E3 timeout windows in seconds.
 
 `vite.config.ts` stops the build when an override has no network scope (for example `VITE_RPC_URL`),

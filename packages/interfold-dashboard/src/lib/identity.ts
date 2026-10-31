@@ -79,6 +79,19 @@ export type OwnerAccount = {
   identity: { identityId: Hex; expiresAt: bigint; verifiedNow: boolean } | null
 }
 
+/** Blocks that the policy scan reads before the network has the identity upgrade (about 6.7 hours). */
+export const RECENT_POLICY_BLOCKS = 2_000n
+
+/**
+ * First block of the policy scan. Without a configured block the network has no identity upgrade
+ * yet, so no policy log exists and recent blocks give the same answer. Public RPCs keep only about a
+ * day of logs, so a scan from the protocol deploy block would fail there.
+ */
+export function policyScanStart(configured: bigint | null, head: bigint): bigint {
+  if (configured !== null) return configured
+  return head > RECENT_POLICY_BLOCKS ? head - RECENT_POLICY_BLOCKS : 0n
+}
+
 /**
  * The current identity policy: the latest IdentityPolicyUpdated log. Null before the first log, and
  * when the latest log clears the registry.
@@ -87,7 +100,7 @@ export async function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
   const head = await publicClient.getBlockNumber()
   const logs = await getLogsChunked<any>(
     { address: CONTRACTS.BondingRegistry, event: IDENTITY_POLICY_UPDATED },
-    IDENTITY_DEPLOY_BLOCK,
+    policyScanStart(IDENTITY_DEPLOY_BLOCK, head),
     head,
   )
   const latest = logs[logs.length - 1]
