@@ -98364,11 +98364,11 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 
 pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;
-pub global PK_GENERATION_BIT_E_SM: u32 = 52;
+pub global PK_GENERATION_BIT_E_SM: u32 = 53;
 pub global PK_GENERATION_BIT_E_SM_LIFTED: u32 = 281;
 pub global PK_GENERATION_BIT_E_SM_QUOTIENT: u32 = 229;
 pub global PK_GENERATION_BIT_R: u32 = 14;
-pub global PK_GENERATION_BIT_PK: u32 = 52;
+pub global PK_GENERATION_BIT_PK: u32 = 53;
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
 pub global PK_GENERATION_E_SM_LIMB_BOUNDS: [Field; L] = [
@@ -98444,7 +98444,7 @@ pub global RLK_GENERATION_BIT_E0: u32 = 5;
 pub global RLK_GENERATION_BIT_E2: u32 = 5;
 pub global RLK_GENERATION_BIT_RD0: u32 = 14;
 pub global RLK_GENERATION_BIT_RD2: u32 = 14;
-pub global RLK_GENERATION_BIT_D: u32 = 52;
+pub global RLK_GENERATION_BIT_D: u32 = 53;
 
 pub global RLK_GENERATION_R_BOUND: Field = 1;
 pub global RLK_GENERATION_SK_BOUND: Field = 1;
@@ -98463,7 +98463,7 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
     RLK_GENERATION_RD2_BOUNDS,
 );
 
-pub global RLK_AGGREGATION_BIT_D: u32 = 52;
+pub global RLK_AGGREGATION_BIT_D: u32 = 53;
 pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************
@@ -98472,7 +98472,7 @@ pk_aggregation (CIRCUIT 5)
 -------------------------------------
 ************************************/
 
-pub global PK_AGGREGATION_BIT_PK: u32 = 52;
+pub global PK_AGGREGATION_BIT_PK: u32 = 53;
 pub global PK_AGGREGATION_CONFIGS: PkAggregationConfigs<L> = PkAggregationConfigs::new(QIS);
 
 /************************************
@@ -98481,8 +98481,8 @@ user_data_encryption (trBFV)
 -------------------------------------
 ************************************/
 
-pub global USER_DATA_ENCRYPTION_BIT_PK: u32 = 52;
-pub global USER_DATA_ENCRYPTION_BIT_CT: u32 = 52;
+pub global USER_DATA_ENCRYPTION_BIT_PK: u32 = 53;
+pub global USER_DATA_ENCRYPTION_BIT_CT: u32 = 53;
 pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 1;
 pub global USER_DATA_ENCRYPTION_BIT_E0: u32 = 69;
 pub global USER_DATA_ENCRYPTION_BIT_E1: u32 = 5;
@@ -98536,8 +98536,8 @@ user_data_encryption chunked pipeline (l-BFV)
 -------------------------------------
 ************************************/
 
-pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_PK: u32 = 52;
-pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_CT: u32 = 52;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_PK: u32 = 53;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_CT: u32 = 53;
 pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_U: u32 = 1;
 pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E0: u32 = 69;
 pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E1: u32 = 5;
@@ -98592,11 +98592,11 @@ share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)
 -------------------------------------
 ************************************/
 
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_CT: u32 = 52;
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_SK: u32 = 52;
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_E_SM: u32 = 52;
+pub global THRESHOLD_SHARE_DECRYPTION_BIT_CT: u32 = 53;
+pub global THRESHOLD_SHARE_DECRYPTION_BIT_SK: u32 = 53;
+pub global THRESHOLD_SHARE_DECRYPTION_BIT_E_SM: u32 = 53;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_R: u32 = 65;
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_D: u32 = 52;
+pub global THRESHOLD_SHARE_DECRYPTION_BIT_D: u32 = 53;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_D_NATIVE: u32 = 53;
 pub global THRESHOLD_SHARE_DECRYPTION_R_BOUNDS: [Field; L] = [
     18446744113974865922,

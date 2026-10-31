@@ -59,7 +59,7 @@ pub global SHARE_COMPUTATION_BIT_SHARE: u32 = 53;
 pub global SHARE_COMPUTATION_SK_BIT_SECRET: u32 = 1;
 pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 52;
+pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 53;
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
 

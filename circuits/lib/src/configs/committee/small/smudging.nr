@@ -12,4 +12,4 @@
 pub global INSECURE_64_E_SM_BIT: u32 = 26;
 pub global INSECURE_E_SM_BIT: u32 = 55;
 pub global SECURE_8192_E_SM_BIT: u32 = 59;
-pub global SECURE_16384_E_SM_BIT: u32 = 52;
+pub global SECURE_16384_E_SM_BIT: u32 = 53;

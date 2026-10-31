@@ -7,7 +7,7 @@
 //! Chunked user-encryption bounds and static Noir declarations.
 use crate::ConfigError;
 use e3_fhe_params::{
-    utils::{calculate_bit_width, compute_k0is},
+    utils::{calculate_bit_width, compute_k0is, compute_modulus_bit},
     BfvPreset, ParameterType,
 };
 use fhe::bfv::{BfvParameters, SecretKey};
@@ -57,12 +57,10 @@ pub struct Bits {
     pub p1_bit: u32,
 }
 impl Bits {
-    fn new(_threshold_params: &Arc<BfvParameters>, data: &Bounds) -> Result<Self, ConfigError> {
-        let max_pk_bound = data.pk_bounds.iter().max().unwrap();
-
-        let pk_bit = calculate_bit_width(max_pk_bound);
+    fn new(threshold_params: &Arc<BfvParameters>, data: &Bounds) -> Result<Self, ConfigError> {
+        let pk_bit = compute_modulus_bit(threshold_params);
         // We can safely assume that the ct bound is the same as the pk bound.
-        let ct_bit = calculate_bit_width(max_pk_bound);
+        let ct_bit = pk_bit;
         let u_bit = calculate_bit_width(&data.u_bound);
         let e0_bit = calculate_bit_width(&data.e0_bound);
         let e1_bit = calculate_bit_width(&data.e1_bound);

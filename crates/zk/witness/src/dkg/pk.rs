@@ -61,7 +61,7 @@ impl Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_fhe_params::{build_pair_for_preset, utils::compute_modulus_bit};
+    use e3_fhe_params::{build_pair_for_preset, utils::compute_dkg_modulus_bit};
     use num_bigint::BigUint;
 
     use e3_fhe_params::BfvPreset;
@@ -71,7 +71,7 @@ mod tests {
         let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
 
         let config = Configs::new(&dkg_params).unwrap();
-        let expected_bits = compute_modulus_bit(&dkg_params);
+        let expected_bits = compute_dkg_modulus_bit(&dkg_params);
 
         let modulus_bound =
             (BigUint::from(*dkg_params.moduli().iter().max().unwrap()) - 1u32) / 2u32;

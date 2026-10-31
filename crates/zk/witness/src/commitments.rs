@@ -349,7 +349,7 @@ pub fn compute_dkg_pk_commitment_from_public_key_bytes(
     let commitment = compute_dkg_pk_commitment(
         &pk0,
         &pk1,
-        e3_fhe_params::utils::compute_modulus_bit(&dkg_params),
+        e3_fhe_params::utils::compute_dkg_modulus_bit(&dkg_params),
     );
 
     let (_, be_bytes) = commitment.to_bytes_be();

@@ -228,12 +228,7 @@ impl Bits {
         // e_sm limbs are centered residues, so they share the pk/modulus width. The lifted value
         // carries the smudging bound and needs its own, much wider, window.
         let e_sm_lifted_bit = calculate_bit_width(&data.e_sm_bound);
-        let e_sm_bit = data
-            .e_sm_limb_bounds
-            .iter()
-            .max()
-            .map(calculate_bit_width)
-            .unwrap_or(0);
+        let e_sm_bit = e3_fhe_params::utils::compute_modulus_bit(threshold_params);
         let e_sm_quotient_bit = data
             .e_sm_quotient_bounds
             .iter()

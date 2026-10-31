@@ -60,11 +60,26 @@ pub fn calculate_bit_width(bound: &BigUint) -> u32 {
     bound.bits().max(1) as u32
 }
 
-/// Return the bit width of centered ring coefficients.
-pub fn compute_modulus_bit(params: &BfvParameters) -> u32 {
+/// Return the bit width of centered coefficients under a DKG key, which no circuit sums packed.
+pub fn compute_dkg_modulus_bit(params: &BfvParameters) -> u32 {
     let moduli = params.moduli();
     let bound = moduli.iter().copied().max().unwrap().saturating_sub(1) / 2;
     (u64::BITS - bound.leading_zeros()).max(1)
+}
+
+/// Return the bit width of centered threshold ring coefficients.
+///
+/// This width also sets the nibble-aligned packing layout. A width on a nibble boundary would pack
+/// centered values narrower than the canonical shares, one bit wider, and leave the aggregation
+/// circuits too small a carry for the committee, so it takes the next bit. Circuits still range
+/// check against the exact bound.
+pub fn compute_modulus_bit(params: &BfvParameters) -> u32 {
+    let bit = compute_dkg_modulus_bit(params);
+    if bit.is_multiple_of(4) {
+        bit + 1
+    } else {
+        bit
+    }
 }
 
 /// Return max_l bits(q_l - 1) for native CRT coefficients in [0, q_l).
@@ -165,6 +180,18 @@ mod tests {
             ),
         ] {
             assert_eq!(compute_k0is(&moduli, t).unwrap_err().to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn centered_and_canonical_widths_share_a_packing_nibble() {
+        for preset in crate::BfvPreset::PAIR_PRESETS {
+            let (threshold, _) = crate::build_pair_for_preset(preset).unwrap();
+            assert_eq!(
+                compute_modulus_bit(&threshold).div_ceil(4),
+                compute_native_crt_coeff_bit(threshold.moduli()).div_ceil(4),
+                "{preset:?}"
+            );
         }
     }
 
