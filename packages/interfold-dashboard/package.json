@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/Inspector.test.tsx src/Operator.test.tsx src/lib/identity.test.ts",
+    "test": "tsx --test src/Inspector.test.tsx src/Operator.test.tsx src/lib/identity.test.ts src/lib/networks.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

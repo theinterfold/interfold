@@ -261,6 +261,7 @@ test('date fields round-trip in UTC and reject impossible dates', () => {
   assert.equal(dateInput(parseDateInput('2027-12-01')!), '2027-12-01')
   assert.equal(parseDateInput('2026-02-31'), null)
   assert.equal(parseDateInput('01/12/2027'), null)
+  assert.equal(parseDateInput('0099-01-01'), BigInt(Date.parse('0099-01-01T00:00:00Z') / 1000))
 })
 
 test('the identity panel shows the credential and offers a request', () => {

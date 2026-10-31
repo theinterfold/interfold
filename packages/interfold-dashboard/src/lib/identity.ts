@@ -295,11 +295,12 @@ export function dateInput(ts: bigint): string {
 export function parseDateInput(value: string): bigint | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
   if (!match) return null
-  const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-  const day = new Date(ms)
+  // setUTCFullYear keeps a year below 100, which Date.UTC would move to 19xx.
+  const day = new Date(0)
+  day.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
   // Reject dates that roll over, such as 2026-02-31.
   if (day.getUTCMonth() !== Number(match[2]) - 1 || day.getUTCDate() !== Number(match[3])) return null
-  return BigInt(ms / 1000)
+  return BigInt(day.getTime() / 1000)
 }
 
 /** Everything that a registration or a test needs to replay one proof, as the page downloads it. */
