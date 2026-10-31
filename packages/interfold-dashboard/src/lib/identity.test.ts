@@ -23,6 +23,8 @@ import {
   registrationDeadline,
   safeRegistrationBatch,
   type ProofResult,
+  policyScanStart,
+  RECENT_POLICY_BLOCKS,
 } from './identity'
 
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -148,4 +150,10 @@ test('an EIP-7702 account registers itself; a contract wallet goes through its o
 test('a proof registers until it is too old or its credential ends', () => {
   assert.equal(registrationDeadline(1_000n, 600n, 5_000n), 1_600n)
   assert.equal(registrationDeadline(1_000n, 600n, 1_200n), 1_200n)
+})
+
+test('the policy scan reads recent blocks until the network has the identity upgrade', () => {
+  assert.equal(policyScanStart(null, 26_311_752n), 26_311_752n - RECENT_POLICY_BLOCKS)
+  assert.equal(policyScanStart(null, 100n), 0n)
+  assert.equal(policyScanStart(26_400_000n, 26_500_000n), 26_400_000n)
 })

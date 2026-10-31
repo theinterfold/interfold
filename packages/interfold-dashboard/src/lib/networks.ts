@@ -34,7 +34,7 @@ export type NetworkProfile = {
   faucet: string
   deployBlock: string
   // First block of the identity policy scan: a block at or before the BondingRegistry upgrade that
-  // added the policy. Empty = deployBlock.
+  // added the policy. Empty until that upgrade: the panel then reads only recent blocks.
   identityDeployBlock: string
   // Fee token metadata for formatting escrowed fees/rewards. Hardcoded per
   // deployment (like the addresses) rather than read on-chain at runtime.
