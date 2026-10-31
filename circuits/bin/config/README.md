@@ -1,7 +1,7 @@
 # `config`
 
 Pre-deployment circuit: checks the active DKG and threshold config constants (CRT, bounds,
-Reed–Solomon parity matrices, cross-file consistency).
+cross-file consistency).
 
 |            |                                                                |
 | ---------- | -------------------------------------------------------------- |

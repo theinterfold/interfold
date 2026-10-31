@@ -17,7 +17,6 @@ e3-zk-config.workspace = true
 e3-polynomial = { workspace = true, features = ["serde"] }
 e3-polynomial-fhe.workspace = true
 e3-committee.workspace = true
-e3-parity-matrix.workspace = true
 e3-safe.workspace = true
 e3-fhe-params.workspace = true
 fhe.workspace = true

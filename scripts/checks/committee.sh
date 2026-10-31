@@ -7,7 +7,7 @@
 
 # Compatibility entry point for BFV source consistency. Numerical facts come from the Rust-owner
 # snapshot, not Rust/TypeScript source parsing. With Nargo installed, typed regeneration checks every
-# preset and committee declaration, selector, and parity matrix in isolation.
+# preset and committee declaration, and selector in isolation.
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
@@ -27,7 +27,7 @@ UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
 RAN_STAMP_CHECK=false
-RAN_PARITY_CHECK=false
+RAN_GENERATED_CHECK=false
 
 fail() {
   echo "❌ check:committee: $*" >&2
@@ -40,16 +40,10 @@ for required_file in \
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
+# The large committee exists only for the trBFV presets, which have no shared smudging widths.
 for committee in minimum micro small; do
-  for artifact in parity_insecure_64.nr parity_insecure.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
-    [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
-      || fail "missing generated committee artifact: $committee/$artifact"
-  done
-done
-# The large committee exists only for the trBFV presets.
-for artifact in parity_insecure_64.nr parity_secure_8192.nr; do
-  [[ -f "circuits/lib/src/configs/committee/large/$artifact" ]] \
-    || fail "missing generated committee artifact: large/$artifact"
+  [[ -f "circuits/lib/src/configs/committee/$committee/smudging.nr" ]] \
+    || fail "missing generated committee artifact: $committee/smudging.nr"
 done
 
 # 1. Extract committee name from active.nr (matches "crate::configs::committee::<name>::N_PARTIES").
@@ -359,9 +353,9 @@ else
 fi
 if command -v nargo >/dev/null 2>&1; then
   pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
-  RAN_PARITY_CHECK=true
+  RAN_GENERATED_CHECK=true
 else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
-echo "✓ check:committee: owner bindings, BFV tuples, configuration IDs, routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) agree (source-only)$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', generated preset/committee/parity files')"
+echo "✓ check:committee: owner bindings, BFV tuples, configuration IDs, routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) agree (source-only)$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_GENERATED_CHECK" = true ] && echo ', generated preset/committee files')"

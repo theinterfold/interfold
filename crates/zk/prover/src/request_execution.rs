@@ -1322,13 +1322,6 @@ fn handle_share_computation_proof(
     .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
 
     let committee = req.committee_size.values();
-    let parity_matrix = e3_zk_config::dkg::share_computation::parity::compute_parity_matrix(
-        threshold_params.moduli(),
-        committee.n,
-        committee.threshold,
-    )
-    .map_err(|e| make_zk_error(&request, format!("parity matrix: {e}")))?;
-
     // 2. Decrypt sensitive witness fields
     let secret_bytes = req
         .secret_raw
@@ -1360,12 +1353,11 @@ fn handle_share_computation_proof(
         .map(|arr| arr.mapv(BigInt::from))
         .collect();
 
-    // 5. Build circuit data; the compiled Noir config contains the parity matrix.
+    // 5. Build circuit data.
     let circuit_data = ShareComputationCircuitData {
         dkg_input_type: req.dkg_input_type,
         secret,
         secret_sss,
-        parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: c2_chunk_size_for(req.params_preset, committee.n) as u32,

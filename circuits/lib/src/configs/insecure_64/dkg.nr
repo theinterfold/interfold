@@ -20,10 +20,6 @@ pub global Q_MOD_T: Field = 76240648;
 pub global Q_MOD_T_CENTERED: Field = -57976441;
 pub global DKG_ERROR_BOUND: Field = 20;
 
-// Parity matrix is sized for the active committee and the insecure-64 threshold QIS;
-// see `committee/{name}/parity_insecure_64.nr`. Re-exported via `committee::active`.
-pub use crate::configs::committee::active::PARITY_MATRIX_INSECURE_64 as PARITY_MATRIX;
-
 /************************************
 -------------------------------------
 pk (CIRCUIT 0)

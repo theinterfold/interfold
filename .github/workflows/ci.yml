@@ -114,7 +114,6 @@ jobs:
               - 'crates/compute-provider/**'
               - 'crates/fhe-params/**'
               - 'crates/openvm-types/**'
-              - 'crates/parity-matrix/**'
               - 'crates/polynomial/**'
               - 'crates/safe/**'
               - 'crates/zk/config/**'

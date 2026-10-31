@@ -146,13 +146,13 @@
     "id": "D12",
     "supported": true,
     "refs": [
-      "circuits/bin/config/src/main.nr@22@use lib::configs::secure::dkg::{",
-      "circuits/bin/config/src/main.nr@34@use lib::configs::secure::threshold::{",
-      "circuits/bin/config/src/main.nr@90@fn main() {",
-      "circuits/bin/config/src/main.nr@130@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@209@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@619@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@622@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@21@use lib::configs::secure::dkg::{",
+      "circuits/bin/config/src/main.nr@33@use lib::configs::secure::threshold::{",
+      "circuits/bin/config/src/main.nr@89@fn main() {",
+      "circuits/bin/config/src/main.nr@127@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@160@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@570@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@573@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure::dkg::{",

@@ -141,10 +141,6 @@ pub fn share_computation_sk_from_pk(
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let mut rng = rng();
 
-    let parity_matrix =
-        compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(WitnessError::Sample)?;
-
     let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
@@ -165,7 +161,6 @@ pub fn share_computation_sk_from_pk(
         dkg_input_type: DkgInputType::SecretKey,
         secret: pk.sk.clone(),
         secret_sss,
-        parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: c2_chunk_size(threshold_params.degree(), committee.n) as u32,
@@ -182,10 +177,6 @@ pub fn share_computation_esm_from_esi(
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let mut rng = rng();
-
-    let parity_matrix =
-        compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(WitnessError::Sample)?;
 
     let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
@@ -211,7 +202,6 @@ pub fn share_computation_esm_from_esi(
         dkg_input_type: DkgInputType::SmudgingNoise,
         secret: pk.e_sm.clone(),
         secret_sss,
-        parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: c2_chunk_size(threshold_params.degree(), committee.n) as u32,
@@ -269,5 +259,3 @@ pub fn share_encryption_for_slot(
         committee,
     })
 }
-
-use e3_zk_config::dkg::share_computation::parity::compute_parity_matrix;

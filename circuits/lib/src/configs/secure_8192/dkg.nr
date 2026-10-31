@@ -20,10 +20,6 @@ pub global Q_MOD_T: Field = 3169161947774985;
 pub global Q_MOD_T_CENTERED: Field = 3169161947774985;
 pub global DKG_ERROR_BOUND: Field = 20;
 
-// Parity matrix is sized for the active committee and the secure-8192 threshold QIS;
-// see `committee/{name}/parity_secure_8192.nr`. Re-exported via `committee::active`.
-pub use crate::configs::committee::active::PARITY_MATRIX_SECURE_8192 as PARITY_MATRIX;
-
 /************************************
 -------------------------------------
 pk (CIRCUIT 0)

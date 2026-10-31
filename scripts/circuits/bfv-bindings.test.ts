@@ -318,11 +318,9 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'crates/evm/client/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',
       ...['minimum', 'micro', 'small'].flatMap((committee) =>
-        ['mod', 'parity_insecure_64', 'parity_insecure', 'parity_secure_8192', 'parity_secure_16384', 'smudging'].map(
-          (module) => `circuits/lib/src/configs/committee/${committee}/${module}.nr`,
-        ),
+        ['mod', 'smudging'].map((module) => `circuits/lib/src/configs/committee/${committee}/${module}.nr`),
       ),
-      ...['mod', 'parity_insecure_64', 'parity_secure_8192'].map((module) => `circuits/lib/src/configs/committee/large/${module}.nr`),
+      'circuits/lib/src/configs/committee/large/mod.nr',
       ...['insecure_64', 'insecure', 'secure_8192', 'secure_16384'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
     ]
     for (const file of files) {

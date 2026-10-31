@@ -27,7 +27,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 pub struct ShareComputationCircuitData {
-    pub parity_matrix: Vec<e3_parity_matrix::ParityMatrix>,
     pub n_parties: u32,
     pub threshold: u32,
     pub chunk_size: u32,

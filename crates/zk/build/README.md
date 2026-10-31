@@ -6,7 +6,7 @@ This unpublished development crate owns repository circuit building. Its library
 hash, generated-configuration check, and synchronization operations from a typed `Request`. Its thin
 binary supplies the project command entry point, `pnpm build:circuits`.
 
-The implementation calls `e3-zk-config` for static rendering and parity values, and
+The implementation calls `e3-zk-config` for static rendering values, and
 `e3-zk-witness::compute_vk_hash` for ordered SAFE hashes. It uses the existing Nargo, BB, and verifier
 tools; it does not implement a compiler or a prover. It has no sample-support dependency.
 
@@ -59,5 +59,5 @@ it does not change compiled artifacts or their stamps.
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools
 and compile only temporary circuits. Run `pnpm build:circuits check --committee all` for this
-checkout's generated parity/configuration comparison. These are not a full proof matrix.
+checkout's generated configuration comparison. These are not a full proof matrix.
 [AGENTS.md](AGENTS.md) owns artifact and editing hazards.

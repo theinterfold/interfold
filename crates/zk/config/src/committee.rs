@@ -37,11 +37,3 @@ pub fn canonical_committee_for_circuit(
     }
     Ok(expected)
 }
-
-/// Resolve a canonical committee row from `(n, threshold)` alone, deriving `h` from the table.
-///
-/// Codegen paths that parameterize the parity matrix from `(N, T)` only use this. Returns the
-/// canonical row when `(n, threshold)` matches a known committee size; otherwise errors.
-pub fn try_canonical_from_t_n(n: usize, threshold: usize) -> Result<CiphernodesCommittee> {
-    Ok(CiphernodesCommitteeSize::from_threshold(threshold, n)?.values())
-}

@@ -28,7 +28,6 @@ this field does not change an existing compiled ABI.
 | [parameters.rs](src/parameters.rs)                                       | Supported parameter, CRT-basis, and sampler validation.            |
 | [metadata.rs](src/metadata.rs), [output_layout.rs](src/output_layout.rs) | Circuit labels and exported public-input layouts.                  |
 | [dkg/](src/dkg), [threshold/](src/threshold)                             | Per-circuit Configs, bounds, widths, and Noir rendering.           |
-| [parity.rs](src/dkg/share_computation/parity.rs)                         | Canonical committee parity material.                               |
 | [field.rs](src/field.rs)                                                 | Shared BN254 field constants.                                      |
 
 Use the circuit family's `Configs::new` with an existing BFV parameter owner, or `for_preset` for a
@@ -55,6 +54,6 @@ contracts, not labels to rename during cleanup. Proof payloads and signed `Proof
 
 Run `cargo test --locked -p e3-zk-config`. Inline suites cover layouts, supported/rejected parameter
 and sampler profiles, C3 identities, and level-zero rounding constants. Run
-`pnpm test:circuit-build` for parity/bounds/rendering integration and the affected witness suite for
+`pnpm test:circuit-build` for bounds/rendering integration and the affected witness suite for
 shape/encoding behavior. Neither replaces real-proof acceptance. [AGENTS.md](AGENTS.md) owns change
 guidance.

@@ -514,16 +514,16 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         write(root, path, "changed");
         assert_ne!(hash(), before, "{path}");
     }
-    let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure.nr");
-    let updates = vec![(parity.clone(), "generated parity\n".to_owned())];
+    let generated = root.join("circuits/lib/src/configs/committee/micro/generated.nr");
+    let updates = vec![(generated.clone(), "generated source\n".to_owned())];
     let projected =
         identity::source_hash_with_updates(root, &opts, Some("insecure"), Some("micro"), &updates)
             .unwrap();
     assert!(
-        !parity.exists(),
+        !generated.exists(),
         "projected identity published a missing source"
     );
-    fs::write(&parity, &updates[0].1).unwrap();
+    fs::write(&generated, &updates[0].1).unwrap();
     assert_eq!(
         hash(),
         projected,
@@ -809,7 +809,7 @@ fn insecure_public_randomness_matches_the_committed_lbfv_rows() {
 }
 
 #[test]
-fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
+fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -825,19 +825,20 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
-    // The same material renders parity files, bound updates, and Solidity's deployed hashes.
+    // The same material renders smudging widths, bound updates, and Solidity's deployed hashes.
     for committee in [
         CiphernodesCommitteeSize::Minimum,
         CiphernodesCommitteeSize::Micro,
         CiphernodesCommitteeSize::Small,
     ] {
-        let parity = configuration::parity_files(committee, &params).unwrap();
-        // One parity matrix per artifact preset plus the shared smudging widths.
-        assert_eq!(parity.len(), crate::ARTIFACT_PRESETS.len() + 1);
+        let smudging = configuration::smudging_files(committee, &params).unwrap();
+        assert_eq!(smudging.len(), 1);
     }
-    // `large` has a parity matrix per preset, so the library compiles, but no smudging widths.
-    let large = configuration::parity_files(CiphernodesCommitteeSize::Large, &params).unwrap();
-    assert_eq!(large.len(), crate::ARTIFACT_PRESETS.len());
+    assert!(
+        configuration::smudging_files(CiphernodesCommitteeSize::Large, &params)
+            .unwrap()
+            .is_empty()
+    );
     let material = params.get(BfvPreset::InsecureThreshold);
     let bounds = configuration::bound_updates(
         root,

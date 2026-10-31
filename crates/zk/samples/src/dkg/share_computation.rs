@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Sample data generation for the share-computation circuit: committee, DKG public key,
-//! secret (SK or smudging noise) in CRT form, Shamir shares, and parity matrices.
+//! secret (SK or smudging noise) in CRT form, and Shamir shares.
 
 type SecretShares = Vec<ndarray::Array2<BigInt>>;
 use e3_fhe_params::{generate_smudging_error, BfvPreset};
@@ -111,12 +111,6 @@ pub fn generate(
     };
 
     Ok(ShareComputationCircuitData {
-        parity_matrix: e3_zk_config::dkg::share_computation::parity::compute_parity_matrix(
-            threshold_params.moduli(),
-            committee.n,
-            committee.threshold,
-        )
-        .map_err(WitnessError::Sample)?,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: config.chunk_size as u32,
