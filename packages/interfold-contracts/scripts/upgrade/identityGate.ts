@@ -728,6 +728,11 @@ export async function validateIdentityGate(): Promise<void> {
 
   // An operator that registered after the batch read its operator list, and before the batch
   // executed, is not in its refresh, so the policy change left it uncounted. Anyone may refresh it.
+  if (typeof plan.writtenBlock !== "number") {
+    throw new Error(
+      `${repoRelativePath(planPath(config))} has no writtenBlock; write the batch again with this script`,
+    );
+  }
   const missing = await lateRegistrations(
     ethers.provider,
     deployment.ciphernodeRegistry,

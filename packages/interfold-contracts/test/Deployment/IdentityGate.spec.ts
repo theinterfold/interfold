@@ -26,6 +26,7 @@ import {
 } from "../../scripts/upgrade/identityGate";
 import {
   type ProofBundle,
+  expectedExpiresAt,
   expectedIdentityId,
   readProofBundle,
 } from "../../scripts/upgrade/identityProofFork";
@@ -275,27 +276,45 @@ describe("identity gate rollout", function () {
   });
 
   it("reads late registrations from the connected chain only", async function () {
+    const topic = ethersLib.id(
+      "CiphernodeAdded(address,uint256,uint256,uint256)",
+    );
     const added = (operator: string, blockNumber: number) => ({
       blockNumber,
-      topics: [ethersLib.ZeroHash, ethersLib.zeroPadValue(operator, 32)],
+      topics: [topic, ethersLib.zeroPadValue(operator, 32)],
     });
     // The connected chain: on a fork, these include blocks that no public log RPC has.
     const logs = [
       added(addr(0xabc1), 10),
       added(addr(0xabc2), 12),
       added(addr(0xabc3), 13),
+      added(addr(0xabc5), 20),
       added(addr(0xabc4), 30),
     ];
+    const filters: unknown[] = [];
     const provider = {
-      getLogs: async (filter: { fromBlock: number; toBlock: number }) =>
-        logs.filter(
+      getLogs: async (filter: {
+        address: string;
+        topics: string[];
+        fromBlock: number;
+        toBlock: number;
+      }) => {
+        filters.push({ address: filter.address, topics: filter.topics });
+        return logs.filter(
           (log) =>
             log.blockNumber >= filter.fromBlock &&
             log.blockNumber <= filter.toBlock,
-        ),
+        );
+      },
     } as unknown as ethersLib.Provider;
-    const registered = new Set([addr(0xabc1), addr(0xabc2), addr(0xabc4)]);
-    // 0xabc1 is in the batch, 0xabc3 left again, and 0xabc4 came after the policy change.
+    const registered = new Set([
+      addr(0xabc1),
+      addr(0xabc2),
+      addr(0xabc4),
+      addr(0xabc5),
+    ]);
+    // 0xabc1 is in the batch, 0xabc3 left again, 0xabc5 is in the policy block, and 0xabc4 came
+    // after the policy change.
     expect(
       await lateRegistrations(
         provider,
@@ -305,6 +324,16 @@ describe("identity gate rollout", function () {
         20,
         [addr(0xabc1)],
       ),
-    ).to.deep.equal([addr(0xabc2)]);
+    ).to.deep.equal([addr(0xabc2), addr(0xabc5)]);
+    expect(filters).to.deep.equal([{ address: addr(9), topics: [topic] }]);
+  });
+
+  it("ends a credential at validUntil or at the validity cap", function () {
+    const bundle = {
+      validUntil: "2000",
+      proofDate: "1000",
+    } as unknown as ProofBundle;
+    expect(expectedExpiresAt(bundle, 5_000n)).to.equal(2_000n);
+    expect(expectedExpiresAt(bundle, 500n)).to.equal(1_500n);
   });
 });
