@@ -109,6 +109,32 @@ export function unrefreshedOperators(
   return registered.filter((operator) => !seen.has(operator.toLowerCase()));
 }
 
+/**
+ * Operators added from `fromBlock` to `toBlock` that are still registered, but that the batch did
+ * not refresh. The connected chain serves this recent range, also on a fork, whose own blocks no
+ * public log RPC has.
+ */
+export async function lateRegistrations(
+  provider: ethersLib.Provider,
+  ciphernodeRegistry: string,
+  isRegistered: (operator: string) => Promise<boolean>,
+  fromBlock: number,
+  toBlock: number,
+  refreshed: string[],
+): Promise<string[]> {
+  const added = await addedOperators(
+    [provider],
+    ciphernodeRegistry,
+    fromBlock,
+    toBlock,
+  );
+  const registered: string[] = [];
+  for (const operator of added) {
+    if (await isRegistered(operator)) registered.push(operator);
+  }
+  return unrefreshedOperators(registered, refreshed);
+}
+
 function assertBatchSize(operators: number): void {
   if (operators > MAX_BATCH_OPERATORS) {
     throw new Error(
@@ -258,6 +284,8 @@ interface IdentityGatePlan {
   operators: number;
   /** The operators that the last written batch refreshes. */
   refreshed: string[];
+  /** The last block that the operator list of the last written batch read. */
+  writtenBlock: number;
   batches: Record<string, string>;
 }
 
@@ -313,15 +341,11 @@ async function requireChain(
   }
 }
 
-/**
- * Every registered operator, from the registry's `CiphernodeAdded` history. With `upToBlock`, only
- * those added up to that block.
- */
+/** Every registered operator, from the registry's `CiphernodeAdded` history, and the last block read. */
 async function registeredOperators(
   ethers: any,
   deployment: ProtocolDeployment,
-  upToBlock?: number,
-): Promise<string[]> {
+): Promise<{ operators: string[]; toBlock: number }> {
   const bonding = await ethers.getContractAt(
     "BondingRegistry",
     deployment.bondingRegistryProxy,
@@ -341,39 +365,24 @@ async function registeredOperators(
       provider.getBlockNumber(),
     ),
   );
-  const toBlock = upToBlock ?? Math.min(...heads);
-  const scanned = Math.min(toBlock, ...heads);
+  const toBlock = Math.min(...heads);
   const added = await addedOperators(
     logProviders.length > 0 ? logProviders : [ethers.provider],
     deployment.ciphernodeRegistry,
     fromBlock,
-    scanned,
+    toBlock,
   );
-  // Blocks past the head of a log RPC (a lagging RPC, or a fork's own blocks) come from the
-  // connected chain, so a bounded history has no gap.
-  if (scanned < toBlock) {
-    added.push(
-      ...(await addedOperators(
-        [ethers.provider],
-        deployment.ciphernodeRegistry,
-        scanned + 1,
-        toBlock,
-      )),
-    );
+  const operators: string[] = [];
+  for (const operator of added) {
+    if (await bonding.isRegistered(operator)) operators.push(operator);
   }
-  const registered: string[] = [];
-  for (const operator of new Set(added)) {
-    if (await bonding.isRegistered(operator)) registered.push(operator);
-  }
-  // A history that ends at an earlier block cannot match today's count.
-  if (upToBlock !== undefined) return registered;
   const expected = await bonding.numRegisteredOperators();
-  if (BigInt(registered.length) !== expected) {
+  if (BigInt(operators.length) !== expected) {
     throw new Error(
-      `The registry history from block ${fromBlock} names ${registered.length} of ${expected} registered operators; pass an earlier --from-block or a --log-rpc with the full history`,
+      `The registry history from block ${fromBlock} names ${operators.length} of ${expected} registered operators; pass an earlier --from-block or a --log-rpc with the full history`,
     );
   }
-  return registered;
+  return { operators, toBlock };
 }
 
 /**
@@ -470,7 +479,10 @@ export async function prepareIdentityGate(): Promise<void> {
   }
   await assertAragonGovernancePreconditions(ethers, config);
   // Discovery reads only existing contracts, so a failure here leaves no deployment behind.
-  const operators = await registeredOperators(ethers, deployment);
+  const { operators, toBlock: writtenBlock } = await registeredOperators(
+    ethers,
+    deployment,
+  );
   assertBatchSize(operators.length);
 
   const verifierFactory = await ethers.getContractFactory(
@@ -536,6 +548,7 @@ export async function prepareIdentityGate(): Promise<void> {
     deployBlock,
     operators: operators.length,
     refreshed: operators,
+    writtenBlock,
     batches: { prepare: prepareBatch },
   };
   writeJson(planPath(config), plan);
@@ -557,7 +570,10 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   await requireChain(ethers, config, deployment);
   const plan = loadPlan(config, deployment);
   await assertAragonGovernancePreconditions(ethers, config);
-  const operators = await registeredOperators(ethers, deployment);
+  const { operators, toBlock: writtenBlock } = await registeredOperators(
+    ethers,
+    deployment,
+  );
   // A required policy counts only owners whose credential lasts to the end of the window that
   // executes the batch. Enforcing it with too few would leave requests with zero capacity.
   let deadline: bigint | undefined;
@@ -602,6 +618,7 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
       : "Stop requiring a verified bond owner, and refresh every operator.",
   );
   plan.refreshed = operators;
+  plan.writtenBlock = writtenBlock;
   writeJson(planPath(config), plan);
   console.log(`
 Identity ${stage} batch written
@@ -709,11 +726,15 @@ export async function validateIdentityGate(): Promise<void> {
     );
   }
 
-  // An operator that registered after the batch was written, and before it executed, is not in its
-  // refresh, so the policy change left it uncounted. Anyone may refresh it.
-  const missing = unrefreshedOperators(
-    await registeredOperators(ethers, deployment, latest!.blockNumber),
-    plan.refreshed ?? [],
+  // An operator that registered after the batch read its operator list, and before the batch
+  // executed, is not in its refresh, so the policy change left it uncounted. Anyone may refresh it.
+  const missing = await lateRegistrations(
+    ethers.provider,
+    deployment.ciphernodeRegistry,
+    (operator) => bonding.isRegistered(operator),
+    plan.writtenBlock,
+    latest!.blockNumber,
+    plan.refreshed,
   );
   if (missing.length > 0) {
     if (!hasFlag("refresh-missing")) {
