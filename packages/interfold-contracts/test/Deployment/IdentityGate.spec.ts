@@ -13,12 +13,15 @@ import { proxyAdminInterface } from "../../scripts/protocol/constants";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
   CAPACITY_WINDOW,
+  EXECUTION_MARGIN,
   MAX_BATCH_OPERATORS,
   REFRESH_BATCH,
   buildIdentityGateTransactions,
   capacityWindowEnd,
+  enforceDeadline,
   identityGateSettings,
   identityNamespace,
+  unrefreshedOperators,
 } from "../../scripts/upgrade/identityGate";
 import {
   type ProofBundle,
@@ -208,6 +211,13 @@ describe("identity gate rollout", function () {
   });
 
   it("matches the contract's capacity window and identifier namespace", function () {
+    const solidity = fs.readFileSync(
+      new URL("../../contracts/lib/BondOwnerCapacityLib.sol", import.meta.url),
+      "utf8",
+    );
+    const window = /IDENTITY_CAPACITY_WINDOW\s*=\s*(\d+)\s*days/.exec(solidity);
+    expect(window, "IDENTITY_CAPACITY_WINDOW declaration").to.not.equal(null);
+    expect(BigInt(window![1]) * 86_400n).to.equal(CAPACITY_WINDOW);
     const start = CAPACITY_WINDOW * 680n;
     expect(capacityWindowEnd(start)).to.equal(start + CAPACITY_WINDOW - 1n);
     expect(capacityWindowEnd(start + CAPACITY_WINDOW)).to.equal(
@@ -227,5 +237,39 @@ describe("identity gate rollout", function () {
     expect(identityNamespace(domain, "Interfold-bond-owner")).to.not.equal(
       identityNamespace(domain, "interfold-bond-owner"),
     );
+  });
+
+  it("counts enforce owners to the window of the latest execution", function () {
+    const start = CAPACITY_WINDOW * 680n;
+    // Early in a window, a week later is still the same window.
+    expect(enforceDeadline(start)).to.equal(capacityWindowEnd(start));
+    // A week before the window ends, execution can fall in the next window.
+    const late = start + CAPACITY_WINDOW - EXECUTION_MARGIN;
+    expect(enforceDeadline(late)).to.equal(
+      capacityWindowEnd(start + CAPACITY_WINDOW),
+    );
+    const day = new Date(Number(start + 86_400n) * 1000)
+      .toISOString()
+      .slice(0, 10);
+    expect(enforceDeadline(start, day)).to.equal(capacityWindowEnd(start));
+    expect(() => enforceDeadline(start + 2n * 86_400n, day)).to.throw(
+      /in the past/,
+    );
+    expect(() => enforceDeadline(start, "next week")).to.throw(
+      /must be a date/,
+    );
+  });
+
+  it("finds registered operators that a batch did not refresh", function () {
+    // Checksummed and lowercase forms name the same operator.
+    expect(
+      unrefreshedOperators(
+        [addr(0xabc1), addr(0xabc2), addr(0xabc3)],
+        [addr(0xabc1).toLowerCase(), addr(0xabc3)],
+      ),
+    ).to.deep.equal([addr(0xabc2)]);
+    expect(unrefreshedOperators([addr(0xabc1)], [])).to.deep.equal([
+      addr(0xabc1),
+    ]);
   });
 });

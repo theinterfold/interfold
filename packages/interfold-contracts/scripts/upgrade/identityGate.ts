@@ -22,6 +22,7 @@ import { pathToFileURL } from "node:url";
 
 import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
+import { assertAragonGovernancePreconditions } from "../protocol/actions";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { proxyAdminInterface } from "../protocol/constants";
 import {
@@ -73,12 +74,51 @@ export const REFRESH_BATCH = 20;
 export const MAX_BATCH_OPERATORS = 200;
 /** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
 export const CAPACITY_WINDOW = 30n * 86_400n;
+/** Time to execute an enforce batch when `--execute-by` is not given: the Safe signs it meanwhile. */
+export const EXECUTION_MARGIN = 7n * 86_400n;
 const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
 
 /** The last second of the capacity window that contains `timestamp` (`_windowEnd`). */
 export function capacityWindowEnd(timestamp: bigint): bigint {
   return (timestamp / CAPACITY_WINDOW + 1n) * CAPACITY_WINDOW - 1n;
 }
+
+/**
+ * The end of the capacity window that contains the latest execution of an enforce batch. An owner
+ * whose credential lasts to it counts at any execution until then, in this window or the next.
+ */
+export function enforceDeadline(now: bigint, executeBy?: string): bigint {
+  if (executeBy === undefined) return capacityWindowEnd(now + EXECUTION_MARGIN);
+  const ms = Date.parse(executeBy);
+  if (Number.isNaN(ms)) {
+    throw new Error(
+      `--execute-by must be a date, for example 2026-11-15; got "${executeBy}"`,
+    );
+  }
+  const at = BigInt(Math.floor(ms / 1000));
+  if (at < now) throw new Error(`--execute-by ${executeBy} is in the past`);
+  return capacityWindowEnd(at);
+}
+
+/** Registered operators that a batch did not refresh. */
+export function unrefreshedOperators(
+  registered: string[],
+  refreshed: string[],
+): string[] {
+  const seen = new Set(refreshed.map((operator) => operator.toLowerCase()));
+  return registered.filter((operator) => !seen.has(operator.toLowerCase()));
+}
+
+function assertBatchSize(operators: number): void {
+  if (operators > MAX_BATCH_OPERATORS) {
+    throw new Error(
+      `${operators} operators exceed the ${MAX_BATCH_OPERATORS} that one governance transaction refreshes; pause requests and refresh in stages`,
+    );
+  }
+}
+
+const isoTime = (timestamp: bigint) =>
+  new Date(Number(timestamp) * 1000).toISOString();
 
 /** The identifier namespace of a verifier with this domain and scope. */
 export function identityNamespace(domain: string, scope: string): string {
@@ -104,11 +144,7 @@ export interface IdentityGateDecisions {
 export function buildIdentityGateTransactions(
   decisions: IdentityGateDecisions,
 ): SafeTransaction[] {
-  if (decisions.operators.length > MAX_BATCH_OPERATORS) {
-    throw new Error(
-      `${decisions.operators.length} operators exceed the ${MAX_BATCH_OPERATORS} that one governance transaction refreshes; pause requests and refresh in stages`,
-    );
-  }
+  assertBatchSize(decisions.operators.length);
   const txs: SafeTransaction[] = [];
   if (decisions.upgrade) {
     txs.push(
@@ -217,7 +253,11 @@ interface IdentityGatePlan {
   identityRegistry: string;
   identityVerifier: string;
   settings: IdentityGateConfig;
+  /** Block of the registry deployment: no policy log is older. */
+  deployBlock: number;
   operators: number;
+  /** The operators that the last written batch refreshes. */
+  refreshed: string[];
   batches: Record<string, string>;
 }
 
@@ -273,10 +313,14 @@ async function requireChain(
   }
 }
 
-/** Every registered operator, from the registry's `CiphernodeAdded` history. */
+/**
+ * Every registered operator, from the registry's `CiphernodeAdded` history. With `upToBlock`, only
+ * those added up to that block.
+ */
 async function registeredOperators(
   ethers: any,
   deployment: ProtocolDeployment,
+  upToBlock?: number,
 ): Promise<string[]> {
   const bonding = await ethers.getContractAt(
     "BondingRegistry",
@@ -301,12 +345,14 @@ async function registeredOperators(
     logProviders.length > 0 ? logProviders : [ethers.provider],
     deployment.ciphernodeRegistry,
     fromBlock,
-    Math.min(...heads),
+    Math.min(upToBlock ?? Number.MAX_SAFE_INTEGER, ...heads),
   );
   const registered: string[] = [];
   for (const operator of added) {
     if (await bonding.isRegistered(operator)) registered.push(operator);
   }
+  // A history that ends at an earlier block cannot match today's count.
+  if (upToBlock !== undefined) return registered;
   const expected = await bonding.numRegisteredOperators();
   if (BigInt(registered.length) !== expected) {
     throw new Error(
@@ -317,15 +363,16 @@ async function registeredOperators(
 }
 
 /**
- * The distinct owners that a refresh under a required policy would count now: owners of active
- * operators whose credential lasts to the end of the current capacity window. The admission
- * cooldown can still exclude some, so `validate` checks the executed result.
+ * The distinct owners that a refresh under a required policy would count until `deadline`: owners
+ * of active operators whose credential lasts to it. The admission cooldown can still exclude some,
+ * so `validate` checks the executed result.
  */
 async function countableOwners(
   ethers: any,
   deployment: ProtocolDeployment,
   plan: IdentityGatePlan,
   operators: string[],
+  deadline: bigint,
 ): Promise<number> {
   const bonding = await ethers.getContractAt(
     "BondingRegistry",
@@ -335,14 +382,12 @@ async function countableOwners(
     "OwnerIdentityRegistry",
     plan.identityRegistry,
   );
-  const block = await ethers.provider.getBlock("latest");
-  const windowEnd = capacityWindowEnd(BigInt(block.timestamp));
   const owners = new Set<string>();
   for (const operator of operators) {
     if (!(await bonding.isActive(operator))) continue;
     const owner: string = await bonding.bondOwnerOf(operator);
     const [, expiresAt] = await registry.identityOf(owner);
-    if (BigInt(expiresAt) >= windowEnd) owners.add(owner.toLowerCase());
+    if (BigInt(expiresAt) >= deadline) owners.add(owner.toLowerCase());
   }
   return owners.size;
 }
@@ -409,6 +454,10 @@ export async function prepareIdentityGate(): Promise<void> {
       `BondingRegistry ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${adminOwner}`,
     );
   }
+  await assertAragonGovernancePreconditions(ethers, config);
+  // Discovery reads only existing contracts, so a failure here leaves no deployment behind.
+  const operators = await registeredOperators(ethers, deployment);
+  assertBatchSize(operators.length);
 
   const verifierFactory = await ethers.getContractFactory(
     "ZKPassportIdentityVerifier",
@@ -437,6 +486,8 @@ export async function prepareIdentityGate(): Promise<void> {
   );
   await registry.waitForDeployment();
   const identityRegistry = await deployedAddress(registry);
+  const deployBlock = (await registry.deploymentTransaction()!.wait())!
+    .blockNumber;
 
   const { implementation, ...libraries } = await deployUpgradeImplementation(
     ethers,
@@ -444,7 +495,6 @@ export async function prepareIdentityGate(): Promise<void> {
     "bondingRegistry",
     deployment,
   );
-  const operators = await registeredOperators(ethers, deployment);
   const txs = buildIdentityGateTransactions({
     bondingRegistry: deployment.bondingRegistryProxy,
     upgrade: { proxyAdmin: config.bondingRegistryProxyAdmin, implementation },
@@ -469,7 +519,9 @@ export async function prepareIdentityGate(): Promise<void> {
     identityRegistry,
     identityVerifier,
     settings,
+    deployBlock,
     operators: operators.length,
+    refreshed: operators,
     batches: { prepare: prepareBatch },
   };
   writeJson(planPath(config), plan);
@@ -490,15 +542,21 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
   const plan = loadPlan(config, deployment);
+  await assertAragonGovernancePreconditions(ethers, config);
   const operators = await registeredOperators(ethers, deployment);
+  // A required policy counts only owners whose credential lasts to the end of the window that
+  // executes the batch. Enforcing it with too few would leave requests with zero capacity.
+  let deadline: bigint | undefined;
   if (required) {
-    // A required policy counts only owners whose credential lasts to the window end. Enforcing it
-    // with too few would leave requests with zero capacity.
+    const block = await ethers.provider.getBlock("latest");
+    if (!block) throw new Error("Could not read the latest block");
+    deadline = enforceDeadline(BigInt(block.timestamp), arg("execute-by"));
     const countable = await countableOwners(
       ethers,
       deployment,
       plan,
       operators,
+      deadline,
     );
     const needed = requiredActiveOperators(
       config.interfold.committeeThresholds,
@@ -507,10 +565,12 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
     );
     if (BigInt(countable) < needed && !hasFlag("force")) {
       throw new Error(
-        `Only ${countable} owners have a credential that lasts to the end of this window; the largest committee needs ${needed}. Wait for more registrations, or pass --force`,
+        `Only ${countable} owners have a credential that lasts to ${isoTime(deadline)}, the end of the capacity window of the latest execution; the largest committee needs ${needed}. Wait for more registrations, pass an earlier --execute-by, or pass --force`,
       );
     }
-    console.log(`  countable owners: ${countable} (needed ${needed})`);
+    console.log(
+      `  countable owners: ${countable} (needed ${needed}) for execution by ${isoTime(deadline)}`,
+    );
   }
   const txs = buildIdentityGateTransactions({
     bondingRegistry: deployment.bondingRegistryProxy,
@@ -523,16 +583,17 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
     config,
     stage,
     txs,
-    required
-      ? "Require a verified bond owner for new committees, and refresh every operator."
+    deadline !== undefined
+      ? `Require a verified bond owner for new committees, and refresh every operator. Execute by ${isoTime(deadline)}.`
       : "Stop requiring a verified bond owner, and refresh every operator.",
   );
+  plan.refreshed = operators;
   writeJson(planPath(config), plan);
   console.log(`
 Identity ${stage} batch written
   registry:        ${plan.identityRegistry}
   operators:       ${operators.length}
-  governance batch:${plan.batches[stage]} (${txs.length} transactions)
+  governance batch:${plan.batches[stage]} (${txs.length} transactions)${deadline !== undefined ? `\n  execute by:      ${isoTime(deadline)}` : ""}
 `);
 }
 
@@ -612,9 +673,10 @@ export async function validateIdentityGate(): Promise<void> {
     "BondingRegistry",
     plan.bondingRegistry,
   );
+  // No policy log is older than the registry, so the query starts at its deployment.
   const logs = await bonding.queryFilter(
     bonding.filters.IdentityPolicyUpdated(),
-    Number(arg("policy-from-block") ?? 0),
+    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
   );
   const latest = logs[logs.length - 1] as ethersLib.EventLog | undefined;
   if (!latest) {
@@ -631,6 +693,34 @@ export async function validateIdentityGate(): Promise<void> {
     throw new Error(
       `Identity gate validation failed:\n  ${failures.join("\n  ")}`,
     );
+  }
+
+  // An operator that registered after the batch was written, and before it executed, is not in its
+  // refresh, so the policy change left it uncounted. Anyone may refresh it.
+  const missing = unrefreshedOperators(
+    await registeredOperators(ethers, deployment, latest!.blockNumber),
+    plan.refreshed ?? [],
+  );
+  if (missing.length > 0) {
+    if (!hasFlag("refresh-missing")) {
+      throw new Error(
+        `${missing.length} operators registered before the batch executed but are not in its refresh: ${missing.join(", ")}. Rerun with --refresh-missing to refresh them from this account (anyone may)`,
+      );
+    }
+    for (let start = 0; start < missing.length; start += REFRESH_BATCH) {
+      const chunk = missing.slice(start, start + REFRESH_BATCH);
+      const gas = await bonding.refreshOperatorStatuses.estimateGas(chunk);
+      await (
+        await bonding.refreshOperatorStatuses(chunk, { gasLimit: gas * 2n })
+      ).wait();
+    }
+    plan.refreshed = [...(plan.refreshed ?? []), ...missing];
+    writeJson(planPath(config), plan);
+    // Capacity reads one second before the head, so check it from a later block.
+    console.log(
+      `Refreshed ${missing.length} operators: ${missing.join(", ")}. Run validate again to check the capacity.`,
+    );
+    return;
   }
 
   const required = requiredActiveOperators(

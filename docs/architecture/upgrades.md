@@ -110,25 +110,31 @@ fork. It overwrites the `mainnet` entry of the checkout's
 [owner identity](registration-and-bonding.md#owner-identity) gate. It reads the `identity` section
 of the protocol config (ZKPassport root verifier, version, domain, scope, identifier type, OPRF key
 hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It checks the
-ProxyAdmin owner and the root verifier's code, then deploys `ZKPassportIdentityVerifier`,
-`OwnerIdentityRegistry` owned by the protocol owner, and a linked BondingRegistry implementation.
-Its governance batch upgrades BondingRegistry, sets the identity policy to the new registry with
-`required = false`, which publishes the registry to the verification page, and refreshes every
-registered operator in batches of 20, because every policy change resets counted owner capacity.
+ProxyAdmin owner, the root verifier's code, the Aragon permissions when governance is a DAO, and the
+operator history, then deploys `ZKPassportIdentityVerifier`, `OwnerIdentityRegistry` owned by the
+protocol owner, and a linked BondingRegistry implementation. Its governance batch upgrades
+BondingRegistry, sets the identity policy to the new registry with `required = false`, which
+publishes the registry to the verification page, and refreshes every registered operator in batches
+of 20, because every policy change resets counted owner capacity.
 
 `upgrade:identity:enforce` writes the batch that sets `required = true` and refreshes every
 operator. It refuses while fewer owners than the largest committee needs have a credential that
-lasts to the end of the current window (`--force` overrides). `upgrade:identity:relax` is its
-rollback; during an admission pause, the identity rule at the pause cutoff stays until the admission
-policy changes too. `upgrade:identity:validate -- --required <true|false>` reads back the
-implementation, the registry owner and verifier, every verifier setting and the identifier
-namespace, the latest `IdentityPolicyUpdated` against the expected policy, and the owner capacity
-for the largest committee. Write each batch shortly before execution: an operator that deregisters
-after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch reverts with
-it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a paused,
-staged refresh. Execute each batch with a gas limit well above the estimate (for example 1.5 times).
-An estimate made at the timestamp of an earlier capacity change can fall short once the batch is
-mined in a later block, where the capacity checkpoints start new entries.
+lasts to the end of the capacity window of the latest execution (`--force` overrides). The latest
+execution is a week after the batch is written, or the date of `--execute-by`; the batch description
+names the deadline. `upgrade:identity:relax` is its rollback; during an admission pause, the
+identity rule at the pause cutoff stays until the admission policy changes too.
+`upgrade:identity:validate -- --required <true|false>` reads back the implementation, the registry
+owner and verifier, every verifier setting and the identifier namespace, the latest
+`IdentityPolicyUpdated` against the expected policy, and the owner capacity for the largest
+committee. It also refuses operators that registered after the batch was written and before it
+executed: the batch did not refresh them, so they stay uncounted. `--refresh-missing` refreshes them
+from the connected account (anyone may); run `validate` again after it. Like `prepare`, it reads the
+operator history from `--log-rpc`. Write each batch shortly before execution: an operator that
+deregisters after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch
+reverts with it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a
+paused, staged refresh. Execute each batch with a gas limit well above the estimate (for example 1.5
+times). An estimate made at the timestamp of an earlier capacity change can fall short once the
+batch is mined in a later block, where the capacity checkpoints start new entries.
 
 Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
 that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set

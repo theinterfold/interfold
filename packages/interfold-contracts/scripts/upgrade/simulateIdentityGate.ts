@@ -27,7 +27,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { readProofBundle } from "./identityProofFork";
+import { expectedIdentityId, readProofBundle } from "./identityProofFork";
 
 const PORT = Number(process.env.ANVIL_PORT ?? 18545);
 const RPC = `http://127.0.0.1:${PORT}`;
@@ -265,6 +265,11 @@ async function main() {
           data: registry.encodeFunctionData("identityOf", [bundle.owner]),
         }),
       );
+      if (identityId !== expectedIdentityId(bundle)) {
+        throw new Error(
+          `Registered identifier ${identityId} differs from the proof's ${expectedIdentityId(bundle)}`,
+        );
+      }
       console.log(
         `registered: identity ${identityId}, expires ${new Date(Number(expiresAt) * 1000).toISOString()}, gas ${receipt.gasUsed}`,
       );
