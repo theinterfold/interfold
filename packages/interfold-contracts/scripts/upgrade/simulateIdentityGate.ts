@@ -27,7 +27,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { expectedIdentityId, readProofBundle } from "./identityProofFork";
+import {
+  expectedExpiresAt,
+  expectedIdentityId,
+  readProofBundle,
+} from "./identityProofFork";
 
 const PORT = Number(process.env.ANVIL_PORT ?? 18545);
 const RPC = `http://127.0.0.1:${PORT}`;
@@ -268,6 +272,15 @@ async function main() {
       if (identityId !== expectedIdentityId(bundle)) {
         throw new Error(
           `Registered identifier ${identityId} differs from the proof's ${expectedIdentityId(bundle)}`,
+        );
+      }
+      const expectedExpiry = expectedExpiresAt(
+        bundle,
+        BigInt(identity.maxValidity),
+      );
+      if (BigInt(expiresAt) !== expectedExpiry) {
+        throw new Error(
+          `Registered expiry ${expiresAt} differs from the proof's ${expectedExpiry}`,
         );
       }
       console.log(

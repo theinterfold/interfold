@@ -73,6 +73,16 @@ export function expectedIdentityId(bundle: ProofBundle): string {
   );
 }
 
+/** The credential end: `validUntil`, or `maxValidity` after the proof date if that is earlier. */
+export function expectedExpiresAt(
+  bundle: ProofBundle,
+  maxValidity: bigint,
+): bigint {
+  const validUntil = BigInt(bundle.validUntil);
+  const cap = BigInt(bundle.proofDate) + maxValidity;
+  return validUntil < cap ? validUntil : cap;
+}
+
 async function requireAnvilMainnetFork(ethers: any): Promise<void> {
   const network = await ethers.provider.getNetwork();
   const client = String(
@@ -174,10 +184,7 @@ async function register(
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
   const [identityId, expiresAt] = await registry.identityOf(bundle.owner);
-  const proofDate = BigInt(bundle.proofDate);
-  const validUntil = BigInt(bundle.validUntil);
-  const expectedExpiry =
-    validUntil < proofDate + maxValidity ? validUntil : proofDate + maxValidity;
+  const expectedExpiry = expectedExpiresAt(bundle, maxValidity);
   if (identityId !== expectedIdentityId(bundle)) {
     throw new Error(
       `Identifier ${identityId} differs from the scoped nullifier's ${expectedIdentityId(bundle)}`,

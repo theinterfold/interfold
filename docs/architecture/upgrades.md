@@ -128,13 +128,14 @@ owner and verifier, every verifier setting and the identifier namespace, the lat
 `IdentityPolicyUpdated` against the expected policy, and the owner capacity for the largest
 committee. It also refuses operators that registered after the batch was written and before it
 executed: the batch did not refresh them, so they stay uncounted. `--refresh-missing` refreshes them
-from the connected account (anyone may); run `validate` again after it. Like `prepare`, it reads the
-operator history from `--log-rpc`. Write each batch shortly before execution: an operator that
-deregisters after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch
-reverts with it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a
-paused, staged refresh. Execute each batch with a gas limit well above the estimate (for example 1.5
-times). An estimate made at the timestamp of an earlier capacity change can fall short once the
-batch is mined in a later block, where the capacity checkpoints start new entries.
+from the connected account (anyone may); run `validate` again after it. The plan keeps the refresh
+list of the last written batch, so validate each batch before you write the next. Like `prepare`, it
+reads the operator history from `--log-rpc`. Write each batch shortly before execution: an operator
+that deregisters after the batch was written makes `refreshOperatorStatuses` revert, and the whole
+batch reverts with it, so write it again. One batch refreshes at most 200 operators; a larger pool
+needs a paused, staged refresh. Execute each batch with a gas limit well above the estimate (for
+example 1.5 times). An estimate made at the timestamp of an earlier capacity change can fall short
+once the batch is mined in a later block, where the capacity checkpoints start new entries.
 
 Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
 that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set

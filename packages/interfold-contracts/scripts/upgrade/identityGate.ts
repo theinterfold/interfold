@@ -341,14 +341,28 @@ async function registeredOperators(
       provider.getBlockNumber(),
     ),
   );
+  const toBlock = upToBlock ?? Math.min(...heads);
+  const scanned = Math.min(toBlock, ...heads);
   const added = await addedOperators(
     logProviders.length > 0 ? logProviders : [ethers.provider],
     deployment.ciphernodeRegistry,
     fromBlock,
-    Math.min(upToBlock ?? Number.MAX_SAFE_INTEGER, ...heads),
+    scanned,
   );
+  // Blocks past the head of a log RPC (a lagging RPC, or a fork's own blocks) come from the
+  // connected chain, so a bounded history has no gap.
+  if (scanned < toBlock) {
+    added.push(
+      ...(await addedOperators(
+        [ethers.provider],
+        deployment.ciphernodeRegistry,
+        scanned + 1,
+        toBlock,
+      )),
+    );
+  }
   const registered: string[] = [];
-  for (const operator of added) {
+  for (const operator of new Set(added)) {
     if (await bonding.isRegistered(operator)) registered.push(operator);
   }
   // A history that ends at an earlier block cannot match today's count.
