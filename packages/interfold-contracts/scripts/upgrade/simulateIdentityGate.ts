@@ -16,7 +16,7 @@
 //   4. check that `rotate-verifier` refuses an unchanged config and a changed identifier setting,
 //      then rotate to a verifier with another proof validity; credentials stay;
 //   5. with --proof, revoke the proof's identifier (refused without --force: too few owners stay);
-//      validate refuses the batch until it executes;
+//      validate refuses the batch until it executes, then finds the revocation;
 //   6. relax the policy (the rollback): the batch check passes it; execute it and validate again.
 //
 // Usage (from packages/interfold-contracts):
@@ -385,6 +385,12 @@ async function main() {
       );
       gas.push(
         ...(await executeIdentityBatch(provider, rotatedConfigJson, "revoke")),
+      );
+      // Once it executes, validate finds the revocation and stops only at the capacity.
+      mustRefuse(
+        GATE,
+        ["validate", ...rotatedArgs, "--required", "true"],
+        /bond owners are counted/,
       );
       const [cleared, expiry] = await identityOf(
         provider,
