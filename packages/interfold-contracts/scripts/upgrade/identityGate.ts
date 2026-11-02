@@ -12,16 +12,21 @@
 //             `required = false`, and refreshes every registered operator.
 //   enforce   The batch sets `required = true` and refreshes every registered operator.
 //   relax     The batch sets `required = false` and refreshes every registered operator (rollback).
+//   revoke    The batch revokes one identifier (--identity) and refreshes every registered operator.
 //   validate  Reads back the deployment against the plan, the policy, and the owner capacity.
 //
-// Every identity policy change resets counted owner capacity, so each batch refreshes all
-// registered operators in the same transaction. Without that, requests fail until a refresh.
+// Every identity policy change and every revocation resets counted owner capacity, so each batch
+// refreshes all registered operators in the same transaction. Without that, requests fail until a
+// refresh.
 import { ethers as ethersLib } from "ethers";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
-import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
+import {
+  BondingRegistry__factory as BondingRegistryFactory,
+  OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
+} from "../../types";
 import { assertAragonGovernancePreconditions } from "../protocol/actions";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { proxyAdminInterface } from "../protocol/constants";
@@ -66,6 +71,7 @@ import {
 } from "./v19Cutover";
 
 const bondingInterface = BondingRegistryFactory.createInterface();
+const registryInterface = OwnerIdentityRegistryFactory.createInterface();
 const ZERO_HASH = ethersLib.ZeroHash;
 /** Operators per `refreshOperatorStatuses` call, as in the v0.19 refresh. */
 export const REFRESH_BATCH = 20;
@@ -195,16 +201,44 @@ export function buildIdentityGateTransactions(
       ]),
     ),
   );
-  for (
-    let start = 0;
-    start < decisions.operators.length;
-    start += REFRESH_BATCH
-  ) {
+  return [
+    ...txs,
+    ...refreshTransactions(decisions.bondingRegistry, decisions.operators),
+  ];
+}
+
+/**
+ * The batch that revokes one identifier and then refreshes every operator. A revocation makes owner
+ * capacity read zero until refreshes count the owners again, so both go in one transaction.
+ */
+export function buildRevokeTransactions(decisions: {
+  bondingRegistry: string;
+  identityRegistry: string;
+  identityId: string;
+  operators: string[];
+}): SafeTransaction[] {
+  assertBatchSize(decisions.operators.length);
+  return [
+    safeTx(
+      decisions.identityRegistry,
+      registryInterface.encodeFunctionData("revoke", [decisions.identityId]),
+    ),
+    ...refreshTransactions(decisions.bondingRegistry, decisions.operators),
+  ];
+}
+
+/** `refreshOperatorStatuses` calls for every operator, REFRESH_BATCH at a time. */
+function refreshTransactions(
+  bondingRegistry: string,
+  operators: string[],
+): SafeTransaction[] {
+  const txs: SafeTransaction[] = [];
+  for (let start = 0; start < operators.length; start += REFRESH_BATCH) {
     txs.push(
       safeTx(
-        decisions.bondingRegistry,
+        bondingRegistry,
         bondingInterface.encodeFunctionData("refreshOperatorStatuses", [
-          decisions.operators.slice(start, start + REFRESH_BATCH),
+          operators.slice(start, start + REFRESH_BATCH),
         ]),
       ),
     );
@@ -393,8 +427,8 @@ async function registeredOperators(
 
 /**
  * The distinct owners that a refresh under a required policy would count until `deadline`: owners
- * of active operators whose credential lasts to it. The admission cooldown can still exclude some,
- * so `validate` checks the executed result.
+ * of active operators whose credential lasts to it, except `exclude`. The admission cooldown can
+ * still exclude some, so `validate` checks the executed result.
  */
 async function countableOwners(
   ethers: any,
@@ -402,6 +436,7 @@ async function countableOwners(
   plan: IdentityGatePlan,
   operators: string[],
   deadline: bigint,
+  exclude?: string,
 ): Promise<number> {
   const bonding = await ethers.getContractAt(
     "BondingRegistry",
@@ -415,10 +450,36 @@ async function countableOwners(
   for (const operator of operators) {
     if (!(await bonding.isActive(operator))) continue;
     const owner: string = await bonding.bondOwnerOf(operator);
+    if (exclude && sameAddress(owner, exclude)) continue;
     const [, expiresAt] = await registry.identityOf(owner);
     if (BigInt(expiresAt) >= deadline) owners.add(owner.toLowerCase());
   }
   return owners.size;
+}
+
+/** The latest IdentityPolicyUpdated: no policy log is older than the registry deployment. */
+async function latestPolicyLog(
+  ethers: any,
+  plan: IdentityGatePlan,
+): Promise<ethersLib.EventLog | undefined> {
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    plan.bondingRegistry,
+  );
+  const logs = await bonding.queryFilter(
+    bonding.filters.IdentityPolicyUpdated(),
+    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
+  );
+  return logs[logs.length - 1] as ethersLib.EventLog | undefined;
+}
+
+/** The largest committee's distinct-owner need. */
+function neededOwners(config: ProtocolConfigFile): bigint {
+  return requiredActiveOperators(
+    config.interfold.committeeThresholds,
+    config.chainId,
+    arg("sepolia-committee-size"),
+  );
 }
 
 /** Write the raw batch, and the Aragon Safe batch when governance is a DAO. */
@@ -594,11 +655,7 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
       operators,
       deadline,
     );
-    const needed = requiredActiveOperators(
-      config.interfold.committeeThresholds,
-      config.chainId,
-      arg("sepolia-committee-size"),
-    );
+    const needed = neededOwners(config);
     if (BigInt(countable) < needed && !hasFlag("force")) {
       throw new Error(
         `Only ${countable} owners have a credential that lasts to ${isoTime(deadline)}, the end of the capacity window of the latest execution; the largest committee needs ${needed}. Wait for more registrations, pass an earlier --execute-by, or pass --force`,
@@ -631,6 +688,77 @@ Identity ${stage} batch written
   registry:        ${plan.identityRegistry}
   operators:       ${operators.length}
   governance batch:${plan.batches[stage]} (${txs.length} transactions)${deadline !== undefined ? `\n  execute by:      ${isoTime(deadline)}` : ""}
+`);
+}
+
+/** Write the batch that revokes one identifier and refreshes every operator in the same transaction. */
+export async function revokeIdentity(): Promise<void> {
+  const { ethers } = await connect();
+  const { config, deployment } = loadContext();
+  await requireChain(ethers, config, deployment);
+  const plan = loadPlan(config, deployment);
+  await assertAragonGovernancePreconditions(ethers, config);
+  const identityId = arg("identity");
+  if (!identityId || !ethersLib.isHexString(identityId, 32)) {
+    throw new Error("Pass --identity <bytes32 identifier>");
+  }
+  const registry = await ethers.getContractAt(
+    "OwnerIdentityRegistry",
+    plan.identityRegistry,
+  );
+  // The protocol owner sends the revoke, so a call from it refuses an unknown or revoked identifier.
+  await registry.revoke.staticCall(identityId, { from: config.protocolOwner });
+  const owner: string = await registry.ownerOfIdentity(identityId);
+  const { operators, toBlock: writtenBlock } = await registeredOperators(
+    ethers,
+    deployment,
+  );
+  // Under a required policy the owner stops counting. Too few remaining owners would stop requests.
+  const policy = await latestPolicyLog(ethers, plan);
+  if (policy?.args.required) {
+    const block = await ethers.provider.getBlock("latest");
+    if (!block) throw new Error("Could not read the latest block");
+    const deadline = enforceDeadline(
+      BigInt(block.timestamp),
+      arg("execute-by"),
+    );
+    const countable = await countableOwners(
+      ethers,
+      deployment,
+      plan,
+      operators,
+      deadline,
+      owner,
+    );
+    const needed = neededOwners(config);
+    if (BigInt(countable) < needed && !hasFlag("force")) {
+      throw new Error(
+        `After the revocation, ${countable} owners have a credential that lasts to ${isoTime(deadline)}; the largest committee needs ${needed}. Requests would fail until more owners register. Relax the policy instead, or pass --force`,
+      );
+    }
+    console.log(`  owners that still count: ${countable} (needed ${needed})`);
+  }
+  const txs = buildRevokeTransactions({
+    bondingRegistry: deployment.bondingRegistryProxy,
+    identityRegistry: plan.identityRegistry,
+    identityId,
+    operators,
+  });
+  plan.batches.revoke = await writeBatch(
+    config,
+    "revoke",
+    txs,
+    `Revoke identity ${identityId} of ${owner}, and refresh every operator.`,
+  );
+  plan.refreshed = operators;
+  plan.writtenBlock = writtenBlock;
+  writeJson(planPath(config), plan);
+  console.log(`
+Identity revoke batch written
+  identity:        ${identityId} (owner ${owner})
+  operators:       ${operators.length}
+  governance batch:${plan.batches.revoke} (${txs.length} transactions)
+  next:            execute the batch, then run "identityGate.ts validate" with the current policy
 `);
 }
 
@@ -729,12 +857,7 @@ export async function validateIdentityGate(): Promise<void> {
     "BondingRegistry",
     plan.bondingRegistry,
   );
-  // No policy log is older than the registry, so the query starts at its deployment.
-  const logs = await bonding.queryFilter(
-    bonding.filters.IdentityPolicyUpdated(),
-    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
-  );
-  const latest = logs[logs.length - 1] as ethersLib.EventLog | undefined;
+  const latest = await latestPolicyLog(ethers, plan);
   if (!latest) {
     failures.push("BondingRegistry has emitted no IdentityPolicyUpdated");
   } else {
@@ -758,12 +881,21 @@ export async function validateIdentityGate(): Promise<void> {
       `${repoRelativePath(planPath(config))} has no writtenBlock; write the batch again with this script`,
     );
   }
+  // The last capacity reset: a policy change or a revocation.
+  const revocations = await registry.queryFilter(
+    registry.filters.IdentityRevoked(),
+    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
+  );
+  const lastReset = Math.max(
+    latest!.blockNumber,
+    revocations[revocations.length - 1]?.blockNumber ?? 0,
+  );
   const missing = await lateRegistrations(
     ethers.provider,
     deployment.ciphernodeRegistry,
     (operator) => bonding.isRegistered(operator),
     plan.writtenBlock,
-    latest!.blockNumber,
+    lastReset,
     plan.refreshed,
   );
   if (missing.length > 0) {
@@ -788,11 +920,7 @@ export async function validateIdentityGate(): Promise<void> {
     return;
   }
 
-  const required = requiredActiveOperators(
-    config.interfold.committeeThresholds,
-    config.chainId,
-    arg("sepolia-committee-size"),
-  );
+  const required = neededOwners(config);
   await assertRefreshedOwnerCapacity(bonding, required);
   console.log(`
 Identity gate valid
@@ -806,26 +934,18 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
-  const action = process.argv
-    .slice(2)
-    .find(
-      (value) =>
-        !value.startsWith("--") &&
-        ["prepare", "enforce", "relax", "validate"].includes(value),
-    );
-  const run =
-    action === "prepare"
-      ? prepareIdentityGate
-      : action === "enforce"
-        ? () => setIdentityRequirement(true)
-        : action === "relax"
-          ? () => setIdentityRequirement(false)
-          : action === "validate"
-            ? validateIdentityGate
-            : undefined;
+  const actions = new Map<string, () => Promise<void>>([
+    ["prepare", prepareIdentityGate],
+    ["enforce", () => setIdentityRequirement(true)],
+    ["relax", () => setIdentityRequirement(false)],
+    ["revoke", revokeIdentity],
+    ["validate", validateIdentityGate],
+  ]);
+  const action = process.argv.slice(2).find((value) => actions.has(value));
+  const run = action ? actions.get(action) : undefined;
   if (!run) {
     console.error(
-      "Usage: identityGate.ts prepare|enforce|relax|validate [options]",
+      `Usage: identityGate.ts ${[...actions.keys()].join("|")} [options]`,
     );
     process.exitCode = 1;
   } else {

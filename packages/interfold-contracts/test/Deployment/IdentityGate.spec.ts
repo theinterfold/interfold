@@ -17,6 +17,7 @@ import {
   MAX_BATCH_OPERATORS,
   REFRESH_BATCH,
   buildIdentityGateTransactions,
+  buildRevokeTransactions,
   capacityWindowEnd,
   enforceDeadline,
   identityGateSettings,
@@ -30,16 +31,24 @@ import {
   expectedIdentityId,
   readProofBundle,
 } from "../../scripts/upgrade/identityProofFork";
-import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
+import {
+  BondingRegistry__factory as BondingRegistryFactory,
+  OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
+} from "../../types";
 
 const bondingInterface = BondingRegistryFactory.createInterface();
+const registryInterface = OwnerIdentityRegistryFactory.createInterface();
 
 function addr(n: number): string {
   return ethersLib.getAddress(ethersLib.toBeHex(n, 20));
 }
 
 function decode(tx: { to: string; data: string }) {
-  for (const iface of [bondingInterface, proxyAdminInterface]) {
+  for (const iface of [
+    bondingInterface,
+    proxyAdminInterface,
+    registryInterface,
+  ]) {
     const parsed = iface.parseTransaction({ data: tx.data });
     if (parsed) return { to: tx.to, name: parsed.name, args: parsed.args };
   }
@@ -109,6 +118,38 @@ describe("identity gate rollout", function () {
       ]);
       expect([...txs[0].args]).to.deep.equal([addr(4), required]);
     }
+  });
+
+  it("revokes, then refreshes every operator in one batch", function () {
+    const identityId = ethersLib.id("document");
+    const txs = buildRevokeTransactions({
+      bondingRegistry: addr(1),
+      identityRegistry: addr(4),
+      identityId,
+      operators,
+    }).map(decode);
+    expect(txs[0].to).to.equal(addr(4));
+    expect(txs[0].name).to.equal("revoke");
+    expect([...txs[0].args]).to.deep.equal([identityId]);
+    expect(txs.slice(1).map((tx) => tx.name)).to.deep.equal([
+      "refreshOperatorStatuses",
+      "refreshOperatorStatuses",
+      "refreshOperatorStatuses",
+    ]);
+    expect(txs.slice(1).flatMap((tx) => [...tx.args[0]])).to.deep.equal(
+      operators,
+    );
+    const many = Array.from({ length: MAX_BATCH_OPERATORS + 1 }, (_, i) =>
+      addr(5_000 + i),
+    );
+    expect(() =>
+      buildRevokeTransactions({
+        bondingRegistry: addr(1),
+        identityRegistry: addr(4),
+        identityId,
+        operators: many,
+      }),
+    ).to.throw(/refresh in stages/);
   });
 
   it("refuses verifier settings that the constructor or the plan would get wrong", function () {

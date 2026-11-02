@@ -124,20 +124,24 @@ lasts to the end of the capacity window of the latest execution (`--force` overr
 execution is a week after the batch is written, or the date of `--execute-by`; the batch description
 names the deadline. `upgrade:identity:relax` is its rollback; during an admission pause, the
 identity rule at the pause cutoff stays until the admission policy changes too.
-`upgrade:identity:validate -- --required <true|false>` reads back the implementation, the registry
-owner, implementation, proxy admin and verifier, every verifier setting and the identifier
-namespace, the latest `IdentityPolicyUpdated` against the expected policy, and the owner capacity
-for the largest committee. It also refuses operators that registered after the batch was written and
-before it executed: the batch did not refresh them, so they stay uncounted. `--refresh-missing`
-refreshes them from the connected account (anyone may); run `validate` again after it. The plan
-keeps the refresh list of the last written batch, so validate each batch before you write the next.
-It reads those registrations from the connected RPC, from the block where the batch read its
-operator list. Write each batch shortly before execution: an operator that deregisters after the
-batch was written makes `refreshOperatorStatuses` revert, and the whole batch reverts with it, so
-write it again. One batch refreshes at most 200 operators; a larger pool needs a paused, staged
-refresh. Execute each batch with a gas limit well above the estimate (for example 1.5 times). An
-estimate made at the timestamp of an earlier capacity change can fall short once the batch is mined
-in a later block, where the capacity checkpoints start new entries.
+`upgrade:identity:revoke -- --identity <id>` writes the batch that revokes one identifier and
+refreshes every operator in the same transaction: a revocation makes owner capacity read zero until
+refreshes count the owners again, so a plain `revoke` call would stop requests. Under a required
+policy it refuses when too few owners would still count (`--force` overrides). Validate the executed
+batch with the current policy. `upgrade:identity:validate -- --required <true|false>` reads back the
+implementation, the registry owner, implementation, proxy admin and verifier, every verifier setting
+and the identifier namespace, the latest `IdentityPolicyUpdated` against the expected policy, and
+the owner capacity for the largest committee. It also refuses operators that registered after the
+batch was written and before it executed: the batch did not refresh them, so they stay uncounted.
+`--refresh-missing` refreshes them from the connected account (anyone may); run `validate` again
+after it. The plan keeps the refresh list of the last written batch, so validate each batch before
+you write the next. It reads those registrations from the connected RPC, from the block where the
+batch read its operator list. Write each batch shortly before execution: an operator that
+deregisters after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch
+reverts with it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a
+paused, staged refresh. Execute each batch with a gas limit well above the estimate (for example 1.5
+times). An estimate made at the timestamp of an earlier capacity change can fall short once the
+batch is mined in a later block, where the capacity checkpoints start new entries.
 
 Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
 that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
