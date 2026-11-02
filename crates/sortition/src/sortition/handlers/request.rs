@@ -73,7 +73,7 @@ impl Handler<EffectsEnabled> for Sortition {
 impl Sortition {
     /// Ranks this node for the request and dispatches the result. Under a required identity
     /// policy, it first reads which candidates the bonding registry finds eligible, so the owner
-    /// shortlist stays on; a failed read ranks every eligible operator.
+    /// shortlist stays on; a failed or stalled read ranks every eligible operator.
     pub(super) fn perform_sortition(
         &mut self,
         msg: TypedEvent<E3Requested>,

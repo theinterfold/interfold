@@ -292,7 +292,8 @@ flowchart LR
   - Shortlist N-plus-buffer distinct snapshot owners and retain their operators as backups
   - Submit the local node's best ticket if its owner is shortlisted and it has capacity
   - Under a required identity policy at T−1, rank only the operators that `eligibilityAt` finds
-    active; permit all eligible submissions when that read fails or owner history is incomplete
+    active; permit all eligible submissions when that read fails or stalls, or owner history is
+    incomplete
 - **On-Chain Integration**: Tickets submitted to contract for verification
 - **Committee Finalization**: After the window closes, the contract selects N distinct request-time
   bond owners. Each owner has at most one candidate. Existing requests from before the cap upgrade

@@ -107,12 +107,12 @@ history, turn the owner shortlist off and rank every eligible operator; Solidity
 snapshot owners. Under a required identity policy at T−1 (or at an admission pause cutoff, which the
 contract also checks), a full node first reads `eligibilityAt(operator, T−1)` for every candidate,
 and the shortlist ranks only the eligible operators, whose owners hold a credential. If that read
-fails, or the node has no chain access, the node turns the shortlist off: every eligible operator
-submits, and the ticket gas estimate fails for an operator whose owner has no credential, so it
-sends nothing. The node reads the policy history from its own log. Each startup also applies the
-policy logs that the log took in after the previous startup, so a node that ran an older release
-while the policy changed catches up when it upgrades again. Committee formation requires N distinct
-snapshot owners, not N submissions.
+fails or takes longer than 20 seconds, or the node has no chain access, the node turns the shortlist
+off: every eligible operator submits, and the ticket gas estimate fails for an operator whose owner
+has no credential, so it sends nothing. The node reads the policy history from its own log. Each
+startup also applies the policy logs that the log took in after the previous startup, so a node that
+ran an older release while the policy changed catches up when it upgrades again. Committee formation
+requires N distinct snapshot owners, not N submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an

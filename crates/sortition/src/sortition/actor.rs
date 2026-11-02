@@ -398,7 +398,8 @@ impl Sortition {
     }
 
     /// The eligibility read for a request under a required identity policy: the operators that
-    /// the admission rules leave at T-1. None when the policy does not apply or nothing can be read.
+    /// the admission rules leave at T-1, bounded in time. None when the policy does not apply or
+    /// nothing can be read.
     pub(super) fn eligibility_read(
         &self,
         request: &TypedEvent<E3Requested>,
@@ -424,7 +425,10 @@ impl Sortition {
             .keys()
             .filter_map(|address| address.parse().ok())
             .collect();
-        Some(reader(chain_id, operators, timepoint))
+        Some(eligibility::bounded(
+            reader(chain_id, operators, timepoint),
+            eligibility::ELIGIBILITY_READ_TIMEOUT,
+        ))
     }
 
     pub fn get_node_index(
