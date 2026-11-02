@@ -2,11 +2,13 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
   "mcp": {
-    "interfold-docs": {
-      "type": "local",
-      "command": ["pnpm", "--filter", "@interfold/mcp", "exec", "tsx", "src/index.ts"],
-      "enabled": true,
-      "timeout": 15000
+    "servers": {
+      "interfold-docs": {
+        "type": "local",
+        "command": ["node", "--import", "tsx", "packages/interfold-mcp/src/index.ts"],
+        "cwd": ".",
+        "timeout": { "startup": 15000 }
+      }
     }
   },
   "permission": {
