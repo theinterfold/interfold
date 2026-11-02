@@ -113,10 +113,15 @@ current 30-day capacity window. Before a deployment (no policy log), it makes a 
 planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
 the verifier parameters, and the evidence, so a fork test can replay it.
 
-Until a network has the identity upgrade, leave `IDENTITY_DEPLOY_BLOCK` unset. No policy log exists
-yet, so the panel reads only the latest 2,000 blocks, which public RPCs serve. After the upgrade,
-set `identityDeployBlock` in `src/lib/networks.ts` to the upgrade block, and use an RPC that serves
-logs from there: public RPCs such as publicnode keep only about a day of logs.
+Until a network has the identity upgrade, leave `IDENTITY_DEPLOY_BLOCK` and
+`IDENTITY_REGISTRY_ADDRESS` unset. No policy log exists yet, so the panel reads only the latest
+2,000 blocks, which public RPCs serve. When the upgrade batch has executed, set
+`identityDeployBlock` (the upgrade block) and `identityRegistry` (the OwnerIdentityRegistry proxy)
+in `src/lib/networks.ts`. With the registry set, registration needs no log history. The policy label
+still comes from the latest `IdentityPolicyUpdated` log, so production also needs an RPC that serves
+logs from the upgrade block (public RPCs such as publicnode keep only about a day); without one, the
+panel shows the policy as unknown. Owners register between the upgrade and the enforcement, so set
+both values and the RPC on the day of the upgrade.
 
 Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
@@ -151,6 +156,7 @@ default:
 - `DEPLOY_BLOCK` — first block to scan from (the Interfold deploy block).
 - `IDENTITY_DEPLOY_BLOCK` — first block of the identity policy scan (unset before the identity
   upgrade: the scan reads only recent blocks).
+- `IDENTITY_REGISTRY_ADDRESS` — the OwnerIdentityRegistry proxy (unset before the identity upgrade).
 - `COMPUTE_WINDOW`, `DECRYPTION_WINDOW` — E3 timeout windows in seconds.
 
 `vite.config.ts` stops the build when an override has no network scope (for example `VITE_RPC_URL`),

@@ -23,6 +23,7 @@ import {
   registrationDeadline,
   safeRegistrationBatch,
   type ProofResult,
+  policyFromLog,
   policyScanStart,
   RECENT_POLICY_BLOCKS,
 } from './identity'
@@ -156,4 +157,15 @@ test('the policy scan reads recent blocks until the network has the identity upg
   assert.equal(policyScanStart(null, 26_311_752n), 26_311_752n - RECENT_POLICY_BLOCKS)
   assert.equal(policyScanStart(null, 100n), 0n)
   assert.equal(policyScanStart(26_400_000n, 26_500_000n), 26_400_000n)
+})
+
+test('the policy log wins; the configured registry opens registration without one', () => {
+  const registry = '0x4444444444444444444444444444444444444444' as Address
+  const configured = '0x5555555555555555555555555555555555555555' as Address
+  const log = (address: Address, required: boolean) => ({ args: { registry: address, required, timepoint: 1_700n } })
+  assert.deepEqual(policyFromLog(log(registry, true), configured), { registry, required: true, timepoint: 1_700n })
+  // A log that clears the registry turns the gate off, whatever the profile says.
+  assert.equal(policyFromLog(log('0x0000000000000000000000000000000000000000', false), configured), null)
+  assert.deepEqual(policyFromLog(undefined, configured), { registry: configured, required: null, timepoint: null })
+  assert.equal(policyFromLog(undefined, null), null)
 })

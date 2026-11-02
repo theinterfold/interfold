@@ -36,6 +36,9 @@ export type NetworkProfile = {
   // First block of the identity policy scan: a block at or before the BondingRegistry upgrade that
   // added the policy. Empty until that upgrade: the panel then reads only recent blocks.
   identityDeployBlock: string
+  // The OwnerIdentityRegistry proxy. Empty until the identity upgrade. With it, registration works
+  // even when the RPC keeps no policy log; the policy then shows as unknown.
+  identityRegistry: string
   // Fee token metadata for formatting escrowed fees/rewards. Hardcoded per
   // deployment (like the addresses) rather than read on-chain at runtime.
   feeSymbol: string
@@ -64,6 +67,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     // and the CRISPProgram (11873424). A later value silently drops early registry events.
     deployBlock: '11873232',
     identityDeployBlock: '',
+    identityRegistry: '',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
@@ -86,6 +90,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     // All mainnet contracts were deployed in the same block.
     deployBlock: '25786403',
     identityDeployBlock: '',
+    identityRegistry: '',
     // USDS (0xdC035D45…384F) on the mainnet deployment.
     feeSymbol: 'USDS',
     feeDecimals: 18,
@@ -106,6 +111,7 @@ const SETTINGS = [
   'FEE_TOKEN_DECIMALS',
   'DEPLOY_BLOCK',
   'IDENTITY_DEPLOY_BLOCK',
+  'IDENTITY_REGISTRY_ADDRESS',
   'COMPUTE_WINDOW',
   'DECRYPTION_WINDOW',
 ] as const

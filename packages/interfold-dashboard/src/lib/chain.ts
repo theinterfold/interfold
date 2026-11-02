@@ -132,6 +132,11 @@ export const DEPLOY_BLOCK = BigInt(envStr('DEPLOY_BLOCK', NET.deployBlock))
 const identityDeployBlock = envStr('IDENTITY_DEPLOY_BLOCK', NET.identityDeployBlock)
 export const IDENTITY_DEPLOY_BLOCK: bigint | null = identityDeployBlock ? BigInt(identityDeployBlock) : null
 
+// The OwnerIdentityRegistry proxy, set after the identity upgrade. When the RPC keeps no policy log
+// (public RPCs keep about a day), registration still uses it (see fetchIdentityPolicy).
+const identityRegistry = envStr('IDENTITY_REGISTRY_ADDRESS', NET.identityRegistry)
+export const IDENTITY_REGISTRY: Address | null = identityRegistry ? (identityRegistry as Address) : null
+
 // E3 timeout windows (seconds), matching the deployment's timeoutConfig. Used to
 // decide whether an E3 is still genuinely active vs. expired without completing.
 export const TIMEOUTS = {
