@@ -177,9 +177,11 @@ registry setting, a public RPC (about a day of logs) loses the registration path
 the page shows the policy as unknown.
 
 `upgrade:identity:simulate` runs the whole rollout on an Anvil mainnet fork (`FORK_URL`, and
-`LOG_RPC_URL` for the operator history): prepare, execute as the protocol owner, and validate; with
-`--proof <file>`, register that owner; then check that `enforce` refuses too few verified owners,
-force it, read the capacity that is left, and relax it again.
+`LOG_RPC_URL` for the operator history), and executes every batch as governance sends it: prepare
+and validate; with `--proof <file>`, register that owner; check that `enforce` and its batch check
+refuse too few verified owners, then force it; check that `rotate-verifier` refuses an unchanged
+config and a changed identifier setting, then rotate and keep the credential; with a proof, revoke
+it (refused without `--force`); then relax, with a passing batch check, and validate.
 
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
