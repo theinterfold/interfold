@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::network::{NetworkId, NetworkProfile};
 use crate::paths_engine::PathsEngine;
 use alloy_primitives::Address;
 use anyhow::bail;
 use anyhow::Result;
-use e3_config::{NetworkId, NetworkProfile};
 use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

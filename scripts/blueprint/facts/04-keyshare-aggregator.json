@@ -189,7 +189,6 @@
       "depends_on": [
         "e3-committee",
         "e3-bfv-client",
-        "e3-config",
         "e3-committee-hash",
         "e3-data",
         "e3-crypto",

@@ -1,6 +1,6 @@
 # Releases, protocol cutovers, and rollback
 
-Owners: [release configuration](../../crates/config/protocol-release.toml),
+Owners: [release configuration](../../crates/ciphernode/config/protocol-release.toml),
 [upgrade tooling](../../packages/interfold-contracts/scripts/upgrade/),
 [storage preflight](../../crates/sync/src/sync/), and
 [node state commands](../../crates/entrypoint/src/nodes/). Follow

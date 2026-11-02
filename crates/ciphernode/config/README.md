@@ -1,10 +1,11 @@
 # e3-ciphernode-config
 
-Resolves ciphernode profiles and paths for runtime callers. The
-[CLI application loader](../../cli/README.md#configuration-loading) owns file discovery,
-YAML/environment/CLI precedence, and program settings. [EVM settings](../../evm/config/README.md)
-own chain and endpoint values; [network/release configuration](../../config/README.md) owns network
-identity and bootstrap policy. Resolving settings does not authenticate a chain, peer, or prover.
+Resolves ciphernode profiles, paths, network identity, and compiled release identity for runtime
+callers. The [CLI application loader](../../cli/README.md#configuration-loading) owns file
+discovery, YAML/environment/CLI precedence, and program settings.
+[EVM settings](../../evm/config/README.md) own chain and endpoint values. Resolving settings does
+not authenticate a chain, peer, or prover; runtime adapters still enforce chain identity, deployed
+releases, and peer compatibility.
 
 ## Resolve a named node
 
@@ -21,10 +22,22 @@ For operator examples use the
 [configuration reference](../../../docs/pages/reference/configuration.mdx) and
 [project template](../../../templates/default/README.md).
 
+## Network and release boundaries
+
+Network IDs distinguish deployments, not releases. Built-in IDs are fixed; custom networks require
+an explicit 32-byte ID. Protocol versions additionally scope P2P admission; node generation does not
+create a separate overlay.
+
+[`protocol-release.toml`](protocol-release.toml) is compiled into the node and read by contract
+deployment tooling. The release ID uses the exact workspace version, not the package name or path.
+Follow [upgrades](../../../docs/architecture/upgrades.md) before changing counters or release
+identity.
+
 ## Tests
 
-Run `cargo test --locked -p e3-ciphernode-config`. Inline tests cover node scoping/defaults and path
-derivation without starting a node or contacting RPCs. The
+Run `cargo test --locked -p e3-ciphernode-config`. Inline tests cover node scoping/defaults, paths,
+network profiles, and release identity without starting a node or contacting RPCs. Admission changes
+also need affected [network tests](../../net/README.md#tests). The
 [CLI executable tests](../../cli/tests/cli_configuration.rs) cover loaded-file paths and daemon
 selection; [entrypoint tests](../../entrypoint/README.md#tests) cover startup and durable-state
 safety. See [AGENTS.md](AGENTS.md) before changing identity or state locations.

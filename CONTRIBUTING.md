@@ -150,9 +150,10 @@ in "patch" releases before we begin working on that next breaking version.
 ### Protocol compatibility
 
 Changes to durable schemas, persisted types, event variants, gossip or sync wire formats, contract
-ABIs/storage, and `crates/config/protocol-release.toml` need an explicit compatibility decision for
-human review. This includes changes associated with `SCHEMA_VERSION`, `GOSSIP_WIRE_MAJOR`, and
-`SYNC_WIRE_MAJOR`; changing a fixture alone does not make old data compatible.
+ABIs/storage, and `crates/ciphernode/config/protocol-release.toml` need an explicit compatibility
+decision for human review. This includes changes associated with `SCHEMA_VERSION`,
+`GOSSIP_WIRE_MAJOR`, and `SYNC_WIRE_MAJOR`; changing a fixture alone does not make old data
+compatible.
 
 Describe whether the upgrade is rolling, drain-and-resync, or governance. State whether
 `protocol_version` or `node_generation` changes, and explain rollback. Use `!` when operators must

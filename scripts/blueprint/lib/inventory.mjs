@@ -83,7 +83,6 @@ export const LAYERS = {
   vocabulary: [
     'events',
     'ciphernode/config',
-    'config',
     'fhe-params',
     'zk/config',
     'zk/witness',

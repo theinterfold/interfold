@@ -22,7 +22,7 @@ pub use ciphernode::*;
 
 use actix::Addr;
 use derivative::Derivative;
-use e3_config::NetworkProfile;
+use e3_ciphernode_config::NetworkProfile;
 use e3_crypto::Cipher;
 #[cfg(feature = "test-helpers")]
 use e3_events::AggregateConfig;

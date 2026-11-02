@@ -16,7 +16,7 @@ use alloy::{
     providers::{Provider, WalletProvider},
 };
 use anyhow::{ensure, Context, Result};
-use e3_config::current_node_release;
+use e3_ciphernode_config::current_node_release;
 use e3_utils::{
     require_successful_receipt, retry_with_backoff, to_retry, RPC_RETRY_ATTEMPTS,
     RPC_RETRY_FIRST_DELAY_MS,

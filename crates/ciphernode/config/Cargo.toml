@@ -10,10 +10,11 @@ repository.workspace = true
 alloy-primitives.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
-e3-config.workspace = true
 e3-evm-config.workspace = true
+hex.workspace = true
 path-clean.workspace = true
 serde.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 figment.workspace = true

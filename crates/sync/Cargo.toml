@@ -12,7 +12,6 @@ anyhow.workspace = true
 bincode.workspace = true
 e3-events.workspace = true
 e3-data.workspace = true
-e3-config.workspace = true
 e3-request.workspace = true
 e3-utils.workspace = true
 serde.workspace = true
