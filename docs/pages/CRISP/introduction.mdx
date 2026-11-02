@@ -149,7 +149,7 @@ must confirm it before the commitment cutoff, on the page or on a later visit, o
 | Network             | Data availability                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Local chain (31337) | `mock`. The server keeps the bytes and completes both transactions in the same request. `availabilityFinalizationWindow` is 0. |
-| Sepolia             | Avail Turing. VectorX anchors the Avail data on Ethereum.                                                                      |
+| Sepolia             | `mock`, while Avail Turing is down. The server keeps the bytes, and the program uses `MockCrispDataAvailabilityVerifier`.      |
 | Ethereum mainnet    | Avail. VectorX anchors the Avail data on Ethereum.                                                                             |
 
 For contract addresses, see [Contract addresses](/reference/contracts).

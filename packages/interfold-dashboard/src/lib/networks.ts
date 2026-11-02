@@ -52,7 +52,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     explorer: 'https://sepolia.etherscan.io',
     interfold: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26',
     ciphernodeRegistry: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4',
-    crispProgram: '0xA9894A39061EC33f8550a2B63A66Be59fb9fa443',
+    crispProgram: '0x25Df8D3C04D67efb6198E215963d19a8d119ADFF',
     previousCrispPrograms: [],
     bondingRegistry: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
