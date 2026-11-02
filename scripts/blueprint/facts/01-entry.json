@@ -455,7 +455,7 @@
         "e3-sync",
         "e3-utils"
       ],
-      "tests": "Unit tests in src/ciphernode.rs, finalized_lifecycle.rs, recovery.rs and builder/ (startup, sortition, extensions, EVM and restart); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
+      "tests": "Unit tests in src/ciphernode.rs, finalized_lifecycle.rs, recovery.rs and src/ (startup, sortition, extensions, EVM and restart); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
       "unverified": [
         "Behaviour inside the extension crates (e3-keyshare, e3-aggregator, e3-request, e3-sync) was not read; only how this crate wires them."
       ]
