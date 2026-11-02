@@ -6,7 +6,7 @@
 
 use actix::Actor;
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_data::{DataStore, InMemStore, SledDb, SledStore};
 use e3_data::{Repositories, RepositoriesFactory};
 use e3_event_system::global_eventstore_cache::{get_shared_eventstore, EventStoreReader};
@@ -23,7 +23,7 @@ pub fn get_in_mem_store() -> DataStore {
     (&InMemStore::new(true).start()).into()
 }
 
-pub fn setup_datastore(config: &AppConfig, bus: &BusHandle<Disabled>) -> Result<DataStore> {
+pub fn setup_datastore(config: &NodeConfig, bus: &BusHandle<Disabled>) -> Result<DataStore> {
     let store: DataStore = if !config.use_in_mem_store() {
         get_sled_store(bus, &config.db_file())?
     } else {
@@ -33,7 +33,7 @@ pub fn setup_datastore(config: &AppConfig, bus: &BusHandle<Disabled>) -> Result<
 }
 
 /// Command helper to get a store
-pub fn get_repositories(config: &AppConfig) -> Result<Repositories> {
+pub fn get_repositories(config: &NodeConfig) -> Result<Repositories> {
     // We are probably in a socket command so get the shared store
     if let Some(store) = get_cached_store() {
         return Ok(store.repositories());
@@ -46,7 +46,7 @@ pub fn get_repositories(config: &AppConfig) -> Result<Repositories> {
 }
 
 /// Command helper to get an eventstore reader for reading events from the event store
-pub fn get_eventstore_reader(config: &AppConfig) -> Result<EventStoreReader> {
+pub fn get_eventstore_reader(config: &NodeConfig) -> Result<EventStoreReader> {
     // We are probably in a socket command so get the shared eventstore reader
     if let Some(es) = get_shared_eventstore() {
         return Ok(es);

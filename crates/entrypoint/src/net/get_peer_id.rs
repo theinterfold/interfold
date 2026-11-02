@@ -7,14 +7,14 @@
 use crate::helpers::datastore::get_repositories;
 use anyhow::Context;
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_net::NetRepositoryFactory;
 use libp2p::identity::ed25519;
 use libp2p::PeerId;
 use zeroize::Zeroizing;
 
-pub async fn execute(config: &AppConfig) -> Result<PeerId> {
+pub async fn execute(config: &NodeConfig) -> Result<PeerId> {
     let repositories = get_repositories(config)?;
     let cipher = Cipher::from_file(config.key_file()).await?;
     let encrypted = repositories

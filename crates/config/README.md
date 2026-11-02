@@ -2,46 +2,30 @@
 
 ## Purpose
 
-Resolves ciphernode profiles, paths, and network identity for runtime callers. Chain settings are
-owned by [e3-evm-config](../evm/config/README.md). The
-[CLI application loader](../cli/README.md#configuration-loading) owns file discovery,
-YAML/environment/CLI precedence, and program settings. Runtime adapters still check chain identity,
-deployed releases, and peer compatibility.
+Resolves network identity, bootstrap policy, and compiled node release identity. Node profiles and
+paths belong to [e3-ciphernode-config](../ciphernode/config/README.md); chain settings belong to
+[e3-evm-config](../evm/config/README.md). Runtime adapters still check chain identity, deployed
+releases, and peer compatibility.
 
 ## Map
 
-| Location                                                                 | Responsibility                                                          |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| [`app_config.rs`](src/app_config.rs)                                     | Node settings, named-node resolution, defaults, and resolved accessors. |
-| [`paths_engine.rs`](src/paths_engine.rs)                                 | Project/OS/named-node locations and path overrides.                     |
-| [`network.rs`](src/network.rs), [`node_release.rs`](src/node_release.rs) | Network and release identity.                                           |
+[`network.rs`](src/network.rs) resolves built-in/custom network IDs and bootstrap peers.
+[`node_release.rs`](src/node_release.rs) compiles [release counters](protocol-release.toml) and
+derives the release ID from the exact workspace version.
 
-Downstream startup consumes a scoped `AppConfig`; resolving settings alone does not contact or
-authenticate a chain, peer, or prover.
+Resolving settings alone does not contact or authenticate a chain or peer.
 
-## Resolve a named node
+## Network and release boundaries
 
-`UnscopedAppConfig::into_scoped(name)` resolves a selected node using OS directory defaults;
-`into_scoped_with_defaults` supports callers that need isolated directory roots. The CLI supplies
-merged settings and loaded-file metadata before scoping. Its default node name is `_default`.
+Network IDs distinguish deployments, not releases. Built-in IDs are fixed; custom networks require
+an explicit 32-byte ID. Release protocol versions additionally scope P2P admission. Node generation
+does not create a separate overlay.
 
-Use `AppConfig` accessors such as `key_file()`, `db_file()`, `log_file()`, `chains()`, and
-`network()` rather than joining paths to the process working directory. `paths_engine::PathsEngine`
-distinguishes project-local `.interfold` layouts, OS defaults, named nodes, and overrides; different
-path fields have different bases.
-
-## Related APIs
-
-- [EVM settings](../evm/config/README.md) supply chain, endpoint, authentication, and
-  contract-address values used by node profiles.
-- `NetworkProfile` resolves public/local network IDs and bootstrap peers.
-
-For operator configuration examples use the [root README](../../README.md) and
-[project template](../../templates/default/README.md).
+Follow [upgrades](../../docs/architecture/upgrades.md) before changing counters or release identity;
+the manifest is also read by contract deployment tooling.
 
 ## Tests
 
-Run `cargo test --locked -p e3-config`. Inline module tests cover node scoping/defaults, path
-derivation, network profiles, and release identity. They use local fixtures rather than starting a
-node or contacting configured RPCs. See [AGENTS.md](AGENTS.md) for changes that relocate identity or
-durable state.
+Run `cargo test --locked -p e3-config`. Inline tests cover network profiles and release identity
+without starting a node or contacting configured RPCs. Changes to admission also need affected
+[network tests](../net/README.md#tests). See [AGENTS.md](AGENTS.md) for identity/counter hazards.

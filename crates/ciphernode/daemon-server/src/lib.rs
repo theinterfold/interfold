@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{bail, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use serde::Serialize;
 use std::future::Future;
@@ -22,7 +22,7 @@ pub struct ServerInfo {
     pub port: u16,
 }
 
-pub async fn connect_daemon(maybe_config: Option<&AppConfig>) -> Option<ServerInfo> {
+pub async fn connect_daemon(maybe_config: Option<&NodeConfig>) -> Option<ServerInfo> {
     let config = maybe_config?;
     let port = config.ctrl_port();
     let url = format!("http://{}:{}", TCP_ADDRESS, port);

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{bail, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -46,7 +46,7 @@ pub fn ask_for_password(input: Option<Zeroizing<String>>) -> Result<Zeroizing<St
 
 pub async fn execute(
     out: Console,
-    config: &AppConfig,
+    config: &NodeConfig,
     input: Option<Zeroizing<String>>,
 ) -> Result<()> {
     log!(out, "Setting password...");

@@ -6,7 +6,7 @@
 
 use anyhow::*;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::Console;
 
 use crate::{helpers::read_secret_line, password_delete, password_set};
@@ -25,7 +25,7 @@ pub enum PasswordCommands {
     Delete,
 }
 
-pub async fn execute(out: Console, command: PasswordCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: PasswordCommands, config: &NodeConfig) -> Result<()> {
     match command {
         PasswordCommands::Set { password_stdin } => {
             let password = if password_stdin {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Tests for crates/ciphernode-entrypoint.sh: which state location the container uses.
 #
-# A mock `interfold` resolves paths the way crates/config/src/paths_engine.rs does:
+# A mock `interfold` resolves paths the way crates/ciphernode/config/src/paths_engine.rs does:
 # - an absolute key_file or db_file in the config wins;
 # - otherwise E3_CONFIG_DIR / E3_DATA_DIR, when set;
 # - otherwise the legacy directory beside the config file ($CONFIG_DIR/.interfold).

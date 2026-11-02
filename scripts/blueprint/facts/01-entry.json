@@ -12,11 +12,11 @@
       "one_line": "The `interfold` binary: parses commands, runs them locally, or forwards the allowed few to a node already running here.",
       "actors": [],
       "consumes": [
-        { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/cli/src/app_config.rs@44@pub fn load_config(" },
+        { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/cli/src/app_config.rs@46@pub fn load_config(" },
         {
           "name": "E3_-prefixed environment variables",
           "by": "load_config",
-          "ref": "crates/cli/src/app_config.rs@64@.merge(Env::prefixed(\"E3_\").split(\"__\"))"
+          "ref": "crates/cli/src/app_config.rs@66@.merge(Env::prefixed(\"E3_\").split(\"__\"))"
         }
       ],
       "emits": [],
@@ -24,7 +24,7 @@
         {
           "name": "interfold.config.yaml on disk: shared node and program settings",
           "where": "disk",
-          "ref": "crates/cli/src/app_config.rs@59@load_yaml_with_env(&resolved_config_path)"
+          "ref": "crates/cli/src/app_config.rs@61@load_yaml_with_env(&resolved_config_path)"
         },
         {
           "name": "installed binary at the resolved current-executable path; update replaces it, uninstall leaves configuration and node data intact",
@@ -41,22 +41,22 @@
         {
           "name": "ApplicationConfig",
           "what": "separate resolved node and program settings, passed directly to their consumers",
-          "ref": "crates/cli/src/app_config.rs@21@pub struct ApplicationConfig {"
+          "ref": "crates/cli/src/app_config.rs@23@pub struct ApplicationConfig {"
         },
         {
           "name": "Cli",
           "what": "clap parser: global flags (--config, -v, -q, --name, --otel) plus one subcommand",
-          "ref": "crates/cli/src/cli.rs@37@pub struct Cli {"
+          "ref": "crates/cli/src/cli.rs@59@pub struct Cli {"
         },
         {
           "name": "Commands",
           "what": "top-level commands, including node operations, program tooling, update, uninstall and rev",
-          "ref": "crates/cli/src/cli.rs@281@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@303@pub enum Commands {"
         },
         {
           "name": "RemoteCommand",
           "what": "the allow-list of commands that a running node accepts over its control port",
-          "ref": "crates/cli/src/cli.rs@457@pub enum RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@479@pub enum RemoteCommand {"
         },
         {
           "name": "CiphernodeCommands",
@@ -77,7 +77,7 @@
       "read_first": [
         {
           "why": "file discovery, YAML expansion, precedence, and named-node scoping",
-          "ref": "crates/cli/src/app_config.rs@44@pub fn load_config("
+          "ref": "crates/cli/src/app_config.rs@46@pub fn load_config("
         },
         {
           "why": "the entry point: parse, then forward to a running node or run locally",
@@ -85,15 +85,15 @@
         },
         {
           "why": "dispatch, including commands that run without config and start's setup path",
-          "ref": "crates/cli/src/cli.rs@89@pub async fn execute("
+          "ref": "crates/cli/src/cli.rs@111@pub async fn execute("
         },
         {
           "why": "the full command list",
-          "ref": "crates/cli/src/cli.rs@281@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@303@pub enum Commands {"
         },
         {
           "why": "what interfold start does before the node is built",
-          "ref": "crates/cli/src/start.rs@22@pub async fn execute(mut config: AppConfig"
+          "ref": "crates/cli/src/start.rs@22@pub async fn execute(mut config: NodeConfig"
         },
         {
           "why": "update: resolves latest, dev or an explicit release tag, downloads the platform archive and replaces the installed binary",
@@ -108,32 +108,32 @@
         {
           "pattern": "serde-derive",
           "note": "one flat file assembles settings owned by the node and program tooling",
-          "ref": "crates/cli/src/app_config.rs@29@#[serde(flatten)]"
+          "ref": "crates/cli/src/app_config.rs@31@#[serde(flatten)]"
         },
         {
           "pattern": "anyhow-context",
           "note": "a missing YAML file keeps its I/O error under a context message for setup dispatch",
-          "ref": "crates/cli/src/app_config.rs@59@.context(\"Configuration file not found\")"
+          "ref": "crates/cli/src/app_config.rs@61@.context(\"Configuration file not found\")"
         },
         {
           "pattern": "derive-macro",
           "note": "clap Parser derive builds the argument parser from the struct",
-          "ref": "crates/cli/src/cli.rs@33@#[derive(Parser, Clone, Debug)]"
+          "ref": "crates/cli/src/cli.rs@55@#[derive(Parser, Clone, Debug)]"
         },
         {
           "pattern": "serde-derive",
           "note": "RemoteCli is serialized to JSON for the control port",
-          "ref": "crates/cli/src/cli.rs@441@#[derive(Clone, Debug, Serialize, Deserialize)]"
+          "ref": "crates/cli/src/cli.rs@463@#[derive(Clone, Debug, Serialize, Deserialize)]"
         },
         {
           "pattern": "enum-match",
           "note": "the main dispatch: one arm per top-level command",
-          "ref": "crates/cli/src/cli.rs@213@match self.command {"
+          "ref": "crates/cli/src/cli.rs@235@match self.command {"
         },
         {
           "pattern": "trait-impl",
           "note": "TryFrom maps a Commands value to the remote allow-list or returns an error",
-          "ref": "crates/cli/src/cli.rs@472@impl TryFrom<Commands> for RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@510@impl TryFrom<Commands> for RemoteCommand {"
         },
         {
           "pattern": "closure",
@@ -157,7 +157,7 @@
         }
       ],
       "depends_on": [
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-console",
         "e3-ciphernode-builder",
         "e3-event-system",
@@ -176,10 +176,7 @@
         "e3-zk-prover"
       ],
       "tests": "Unit tests in src/ plus tests/cli_configuration.rs and tests/cli_secrets.rs; run: cargo test -p e3-cli",
-      "unverified": [
-        "Default control port and log file locations come from e3-config, which was not read.",
-        "crates/cli/scripts/openvm-compile.sh was not read."
-      ]
+      "unverified": ["crates/cli/scripts/openvm-compile.sh was not read."]
     },
     {
       "id": "e3-entrypoint",
@@ -242,7 +239,7 @@
       "read_first": [
         {
           "why": "the production startup: builder settings for the full and bootstrap roles",
-          "ref": "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool)"
+          "ref": "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool)"
         },
         {
           "why": "the single-instance lock, taken before any store is opened",
@@ -254,7 +251,7 @@
         },
         {
           "why": "the offline state check behind node validate",
-          "ref": "crates/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &AppConfig, repair: bool)"
+          "ref": "crates/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &NodeConfig, repair: bool)"
         }
       ],
       "rust_patterns": [
@@ -286,7 +283,7 @@
       ],
       "depends_on": [
         "e3-aggregator",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-ciphernode-builder",
         "e3-event-system",
         "e3-crypto",
@@ -624,7 +621,7 @@
       "read_first": [
         {
           "why": "the probe that decides whether a node is running",
-          "ref": "crates/ciphernode/daemon-server/src/lib.rs@25@pub async fn connect_daemon(maybe_config: Option<&AppConfig>)"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@25@pub async fn connect_daemon(maybe_config: Option<&NodeConfig>)"
         },
         {
           "why": "the server side: one task per connection, one command per request",
@@ -661,9 +658,9 @@
           "ref": "crates/ciphernode/daemon-server/src/lib.rs@38@pub async fn run_on_daemon<T: Serialize>("
         }
       ],
-      "depends_on": ["e3-console", "e3-config"],
+      "depends_on": ["e3-console", "e3-ciphernode-config"],
       "tests": "No tests in this crate (no test attributes in src/). Command: cargo test -p e3-daemon-server (runs nothing)",
-      "unverified": ["The default control port value is set in e3-config, which was not read."]
+      "unverified": []
     },
     {
       "id": "e3-console",

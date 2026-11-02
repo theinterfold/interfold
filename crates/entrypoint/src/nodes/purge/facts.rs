@@ -7,7 +7,7 @@
 //! What the purge targets and the node configurations hold. Reading them changes nothing.
 
 use anyhow::{anyhow, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, DirEntry};
@@ -151,7 +151,7 @@ pub(super) enum ConfigEntry {
     },
 }
 
-pub(super) async fn gather(targets: &PurgeTargets, nodes: &[AppConfig]) -> Result<Facts> {
+pub(super) async fn gather(targets: &PurgeTargets, nodes: &[NodeConfig]) -> Result<Facts> {
     let mut node_facts = Vec::with_capacity(nodes.len());
     for node in nodes {
         node_facts.push(node_facts_of(targets, node).await?);
@@ -163,7 +163,7 @@ pub(super) async fn gather(targets: &PurgeTargets, nodes: &[AppConfig]) -> Resul
     })
 }
 
-async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeFacts> {
+async fn node_facts_of(targets: &PurgeTargets, node: &NodeConfig) -> Result<NodeFacts> {
     let db_file = std::path::absolute(node.db_file())?;
     let lock = lock_path_for(&db_file);
     let lock_folder = lock.parent().map(Path::to_path_buf).unwrap_or_default();

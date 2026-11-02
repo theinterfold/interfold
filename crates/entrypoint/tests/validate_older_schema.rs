@@ -9,7 +9,7 @@
 use anyhow::Result;
 use commitlog::{CommitLog, LogOptions};
 use e3_ciphernode_builder::CiphernodeBuilder;
-use e3_config::{AppConfig, UnscopedAppConfig};
+use e3_ciphernode_config::{NodeConfig, UnscopedNodeConfig};
 use e3_crypto::Cipher;
 use e3_data::SledDb;
 use e3_entrypoint::helpers::datastore::get_eventstore_reader;
@@ -31,8 +31,8 @@ const SCHEMA_SEVEN_EVENTS: [&str; 2] = [
     include_str!("fixtures/decryption-key-schema7.hex"),
 ];
 
-fn node_config(root: &Path) -> Result<AppConfig> {
-    let config: UnscopedAppConfig = serde_yaml::from_str("node:\n  network: local\n")?;
+fn node_config(root: &Path) -> Result<NodeConfig> {
+    let config: UnscopedNodeConfig = serde_yaml::from_str("node:\n  network: local\n")?;
     config.into_scoped_with_defaults(
         "_default",
         &root.join("data"),
@@ -41,7 +41,7 @@ fn node_config(root: &Path) -> Result<AppConfig> {
     )
 }
 
-fn older_store(config: &AppConfig, fixture: &str, schema: Option<u32>) -> Result<PathBuf> {
+fn older_store(config: &NodeConfig, fixture: &str, schema: Option<u32>) -> Result<PathBuf> {
     let bytes = hex::decode(fixture.trim())?;
     assert!(InterfoldEvent::<Unsequenced>::from_bytes(&bytes).is_err());
     let mut db = SledDb::new(&config.db_file(), "datastore")?;

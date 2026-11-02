@@ -5,15 +5,15 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{anyhow, bail, Result};
+use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_config::AppConfig;
 use e3_entrypoint::nodes::purge::PurgeTargets;
 use std::env;
 use std::path::Path;
 
 /// Delete the data and configuration of the local node set.
 pub async fn execute(
-    config: &AppConfig,
+    config: &NodeConfig,
     config_file: Option<String>,
     yes: bool,
     allow_active_e3s: bool,
@@ -41,7 +41,7 @@ pub(crate) fn require_confirmation(yes: bool, folders: &str) -> Result<()> {
 /// Deletes the `.interfold` data and configuration folders in `dir`, with the checks of
 /// `e3_entrypoint::nodes::purge`.
 pub(crate) async fn purge(
-    config: &AppConfig,
+    config: &NodeConfig,
     config_file: Option<String>,
     dir: &Path,
     allow_active_e3s: bool,
@@ -52,7 +52,7 @@ pub(crate) async fn purge(
 
 /// The configuration of each node profile, including `_default` and the active one, loaded the
 /// way `nodes up` starts them.
-fn node_configs(config: &AppConfig, config_file: Option<String>) -> Result<Vec<AppConfig>> {
+fn node_configs(config: &NodeConfig, config_file: Option<String>) -> Result<Vec<NodeConfig>> {
     let mut names: Vec<&String> = config.nodes().keys().collect();
     names.sort();
     names

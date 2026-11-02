@@ -5,14 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{bail, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_crypto::{FilePasswordManager, PasswordManager};
 use zeroize::Zeroizing;
 
 use crate::helpers::rand::generate_random_bytes;
 
 /// Checks if the Keyfile already exists and fail with a constructive error
-pub async fn preflight(config: &AppConfig) -> Result<()> {
+pub async fn preflight(config: &NodeConfig) -> Result<()> {
     let key_file = config.key_file();
     let pm = FilePasswordManager::new(key_file);
 
@@ -30,7 +30,7 @@ pub async fn preflight(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-pub async fn execute(config: &AppConfig, input: Zeroizing<String>) -> Result<()> {
+pub async fn execute(config: &NodeConfig, input: Zeroizing<String>) -> Result<()> {
     let pw = Zeroizing::new(input.as_bytes().to_owned());
 
     execute_bytes(config, pw).await?;
@@ -38,7 +38,7 @@ pub async fn execute(config: &AppConfig, input: Zeroizing<String>) -> Result<()>
     Ok(())
 }
 
-pub async fn execute_bytes(config: &AppConfig, input: Zeroizing<Vec<u8>>) -> Result<()> {
+pub async fn execute_bytes(config: &NodeConfig, input: Zeroizing<Vec<u8>>) -> Result<()> {
     let key_file = config.key_file();
     let mut pm = FilePasswordManager::new(key_file);
 
@@ -51,7 +51,7 @@ pub async fn execute_bytes(config: &AppConfig, input: Zeroizing<Vec<u8>>) -> Res
     Ok(())
 }
 
-pub async fn autopassword(config: &AppConfig) -> Result<()> {
+pub async fn autopassword(config: &NodeConfig) -> Result<()> {
     let key_file = config.key_file();
     let pm = FilePasswordManager::new(key_file);
     if !pm.is_set() {

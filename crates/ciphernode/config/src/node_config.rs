@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::network::{NetworkId, NetworkProfile};
 use crate::paths_engine::PathsEngine;
 use alloy_primitives::Address;
 use anyhow::bail;
 use anyhow::Result;
+use e3_config::{NetworkId, NetworkProfile};
 use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -149,7 +149,7 @@ impl Default for NodeDefinition {
 
 /// Resolved settings for one ciphernode profile.
 #[derive(Debug, Serialize)]
-pub struct AppConfig {
+pub struct NodeConfig {
     /// The name of the node
     name: String,
     /// All the node definitions in the unscoped config
@@ -177,10 +177,10 @@ pub struct AppConfig {
     network: NetworkProfile,
 }
 
-impl AppConfig {
+impl NodeConfig {
     pub fn try_from_unscoped(
         name: &str,
-        config: UnscopedAppConfig,
+        config: UnscopedNodeConfig,
         default_data_dir: &PathBuf,
         default_config_dir: &PathBuf,
         cwd: &PathBuf,
@@ -244,7 +244,7 @@ impl AppConfig {
             config.custom_bb.as_ref(),
         );
         let found_config_file = config.found_config_file.clone();
-        Ok(AppConfig {
+        Ok(NodeConfig {
             name: name.to_owned(),
             nodes: config.nodes,
             chains: config.chains,
@@ -448,7 +448,7 @@ impl AppConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
-pub struct UnscopedAppConfig {
+pub struct UnscopedNodeConfig {
     /// The chains config
     chains: Vec<ChainConfig>,
     /// The base folder for interfold configuration defaults to `~/.config/interfold` on linux
@@ -471,10 +471,10 @@ pub struct UnscopedAppConfig {
     custom_bb: Option<PathBuf>,
 }
 
-impl UnscopedAppConfig {
+impl UnscopedNodeConfig {
     /// Convert to a scoped configuration using local OS based default configuration
-    pub fn into_scoped(self, name: &str) -> Result<AppConfig> {
-        AppConfig::try_from_unscoped(
+    pub fn into_scoped(self, name: &str) -> Result<NodeConfig> {
+        NodeConfig::try_from_unscoped(
             name,
             self,
             &OsDirs::data_dir(),
@@ -490,8 +490,8 @@ impl UnscopedAppConfig {
         default_data_dir: &PathBuf,
         default_config_dir: &PathBuf,
         cwd: &PathBuf,
-    ) -> Result<AppConfig> {
-        AppConfig::try_from_unscoped(name, self, default_data_dir, default_config_dir, cwd)
+    ) -> Result<NodeConfig> {
+        NodeConfig::try_from_unscoped(name, self, default_data_dir, default_config_dir, cwd)
     }
 }
 
@@ -559,7 +559,7 @@ nodes:
 "#;
         {
             // investigate default serialization
-            let unscoped: UnscopedAppConfig = serde_yaml::from_str(config_str).unwrap();
+            let unscoped: UnscopedNodeConfig = serde_yaml::from_str(config_str).unwrap();
             let config = unscoped
                 .into_scoped_with_defaults(
                     "_default",
@@ -581,7 +581,7 @@ nodes:
         };
         {
             // investigate ag serialization
-            let unscoped: UnscopedAppConfig = serde_yaml::from_str(config_str).unwrap();
+            let unscoped: UnscopedNodeConfig = serde_yaml::from_str(config_str).unwrap();
             let config = unscoped
                 .into_scoped_with_defaults(
                     "ag",
@@ -635,7 +635,7 @@ nodes:
 "#;
 
         for name in ["_default", "cn1"] {
-            let config: UnscopedAppConfig = serde_yaml::from_str(yaml)?;
+            let config: UnscopedNodeConfig = serde_yaml::from_str(yaml)?;
             let config = config.into_scoped_with_defaults(
                 name,
                 &PathBuf::from("/default/data"),
@@ -664,7 +664,7 @@ nodes:
             let home = std::env::var("HOME").unwrap_or_else(|_| "/home/testuser".to_string());
             jail.set_env("HOME", &home);
 
-            let config = UnscopedAppConfig::default()
+            let config = UnscopedNodeConfig::default()
                 .into_scoped("_default")
                 .map_err(|e| e.to_string())?;
 
@@ -698,7 +698,7 @@ node:
   multithread_reserve_threads: 2
   multithread_concurrent_jobs: 4
 "#;
-        let unscoped: UnscopedAppConfig = serde_yaml::from_str(config_str)?;
+        let unscoped: UnscopedNodeConfig = serde_yaml::from_str(config_str)?;
         let config = unscoped.into_scoped_with_defaults(
             "_default",
             &PathBuf::from("/default/data"),
@@ -712,7 +712,7 @@ node:
 
     #[test]
     fn test_multithread_defaults_are_two_jobs_and_two_reserved_threads() -> Result<()> {
-        let config = UnscopedAppConfig::default().into_scoped_with_defaults(
+        let config = UnscopedNodeConfig::default().into_scoped_with_defaults(
             "_default",
             &PathBuf::from("/default/data"),
             &PathBuf::from("/default/config"),
@@ -726,7 +726,7 @@ node:
 
     #[test]
     fn test_skip_proof_aggregation_defaults_off_and_can_be_enabled() -> Result<()> {
-        let configured: UnscopedAppConfig = serde_yaml::from_str(
+        let configured: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   skip_proof_aggregation: true
@@ -740,7 +740,7 @@ node:
         )?;
         assert!(configured.skip_proof_aggregation());
 
-        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+        let default = UnscopedNodeConfig::default().into_scoped_with_defaults(
             "_default",
             &PathBuf::from("/default/data"),
             &PathBuf::from("/default/config"),
@@ -752,7 +752,7 @@ node:
 
     #[test]
     fn test_startup_timeout_config_and_default() -> Result<()> {
-        let configured: UnscopedAppConfig = serde_yaml::from_str(
+        let configured: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   startup_timeout_secs: 42
@@ -772,7 +772,7 @@ node:
         assert_eq!(configured.max_buffered_net_events(), 321);
         assert_eq!(configured.max_buffered_net_bytes(), 654_321);
 
-        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+        let default = UnscopedNodeConfig::default().into_scoped_with_defaults(
             "_default",
             &PathBuf::from("/default/data"),
             &PathBuf::from("/default/config"),
@@ -787,7 +787,7 @@ node:
 
     #[test]
     fn test_bb_timeout_config_and_default() -> Result<()> {
-        let configured: UnscopedAppConfig = serde_yaml::from_str(
+        let configured: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   bb_timeout_secs: 90
@@ -801,7 +801,7 @@ node:
         )?;
         assert_eq!(configured.bb_timeout(), std::time::Duration::from_secs(90));
 
-        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+        let default = UnscopedNodeConfig::default().into_scoped_with_defaults(
             "_default",
             &PathBuf::from("/default/data"),
             &PathBuf::from("/default/config"),
@@ -816,7 +816,7 @@ node:
 
     #[test]
     fn test_zero_bb_timeout_is_rejected() -> Result<()> {
-        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+        let unscoped: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   bb_timeout_secs: 0
@@ -839,7 +839,7 @@ node:
 
     #[test]
     fn test_zero_startup_timeout_is_rejected() -> Result<()> {
-        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+        let unscoped: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   startup_timeout_secs: 0
@@ -861,7 +861,7 @@ node:
 
     #[test]
     fn test_zero_evm_buffer_limit_is_rejected() -> Result<()> {
-        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+        let unscoped: UnscopedNodeConfig = serde_yaml::from_str(
             r#"
 node:
   max_buffered_evm_events: 0
@@ -885,7 +885,7 @@ node:
     fn test_zero_network_buffer_limits_are_rejected() -> Result<()> {
         for field in ["max_buffered_net_events", "max_buffered_net_bytes"] {
             let yaml = format!("node:\n  {field}: 0\n");
-            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let unscoped: UnscopedNodeConfig = serde_yaml::from_str(&yaml)?;
             let error = unscoped
                 .into_scoped_with_defaults(
                     "_default",

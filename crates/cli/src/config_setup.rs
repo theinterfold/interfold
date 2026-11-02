@@ -16,8 +16,8 @@ use alloy::hex::FromHex;
 use alloy::primitives::{Address, FixedBytes};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Result};
+use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_config::AppConfig;
 use e3_evm_config::RPC;
 use std::fs;
 use std::path::PathBuf;
@@ -70,7 +70,7 @@ pub fn execute(
     address: &Address,
     config_dir: &PathBuf,
     network: &str,
-) -> Result<AppConfig> {
+) -> Result<NodeConfig> {
     let (network, chain_id, availability_rpc) = network_chain(network)?;
     fs::create_dir_all(config_dir)?;
 

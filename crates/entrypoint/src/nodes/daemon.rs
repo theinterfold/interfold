@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::*;
-use e3_config::{combine_unique, AppConfig, NodeDefinition};
+use e3_ciphernode_config::{combine_unique, NodeConfig, NodeDefinition};
 use std::sync::Arc;
 use std::{collections::HashMap, env};
 use tokio::sync::Mutex;
@@ -127,7 +127,7 @@ fn extract_commands(
 
 #[instrument(skip_all)]
 pub async fn execute(
-    config: &AppConfig,
+    config: &NodeConfig,
     exclude: Vec<String>,
     verbose: u8,
     maybe_config_string: Option<String>,

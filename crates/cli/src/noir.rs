@@ -6,7 +6,7 @@
 
 use anyhow::*;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_zk_prover::{BBPath, SetupStatus, ZkBackend};
 use std::path::PathBuf;
@@ -37,7 +37,7 @@ pub enum NoirCommands {
     },
 }
 
-pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: NoirCommands, config: &NodeConfig) -> Result<()> {
     let backend = ZkBackend::new(
         BBPath::new(config.bb_binary(), config.using_custom_bb()),
         config.circuits_dir(),

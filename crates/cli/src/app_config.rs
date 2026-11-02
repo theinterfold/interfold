@@ -8,7 +8,9 @@
 
 use crate::program_config::ProgramConfig;
 use anyhow::{Context, Result};
-use e3_config::{paths_engine::DEFAULT_CONFIG_NAME, AppConfig, OsDirs, UnscopedAppConfig};
+use e3_ciphernode_config::{
+    paths_engine::DEFAULT_CONFIG_NAME, NodeConfig, OsDirs, UnscopedNodeConfig,
+};
 use figment::{
     providers::{Env, Format, Serialized, Yaml},
     Figment,
@@ -19,7 +21,7 @@ use std::{env, fs, path::PathBuf};
 
 #[derive(Debug)]
 pub struct ApplicationConfig {
-    pub node: AppConfig,
+    pub node: NodeConfig,
     pub program: ProgramConfig,
 }
 
@@ -50,7 +52,7 @@ pub fn load_config(
     let loaded_yaml =
         load_yaml_with_env(&resolved_config_path).context("Configuration file not found")?;
 
-    let figment = Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
+    let figment = Figment::from(Serialized::defaults(&UnscopedNodeConfig::default()))
         .merge(Serialized::default("program", None::<ProgramConfig>))
         .merge(Yaml::string(&loaded_yaml))
         .merge(Env::prefixed("E3_").split("__"))
@@ -61,7 +63,7 @@ pub fn load_config(
         }));
 
     // Extract each owner directly to retain Figment's per-value key and source metadata.
-    let config: UnscopedAppConfig = figment.extract().context("Could not parse configuration")?;
+    let config: UnscopedNodeConfig = figment.extract().context("Could not parse configuration")?;
     let program: Option<ProgramConfig> = figment
         .extract_inner("program")
         .context("Could not parse configuration")?;

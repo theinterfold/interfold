@@ -1,0 +1,20 @@
+[package]
+name = "e3-ciphernode-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "E3 - Interfold Ciphernode Configuration"
+repository.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+e3-config.workspace = true
+e3-evm-config.workspace = true
+path-clean.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+figment.workspace = true
+serde_yaml.workspace = true

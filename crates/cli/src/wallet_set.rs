@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Password};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_entrypoint::wallet::set::validate_private_key;
 use zeroize::Zeroizing;
@@ -31,7 +31,7 @@ pub fn ask_for_private_key(given_key: Option<Zeroizing<String>>) -> Result<Zeroi
 
 pub async fn execute(
     out: Console,
-    config: &AppConfig,
+    config: &NodeConfig,
     private_key: Option<Zeroizing<String>>,
 ) -> Result<()> {
     let input = ask_for_private_key(private_key)?;

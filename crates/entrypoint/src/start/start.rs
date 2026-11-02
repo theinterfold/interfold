@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::{CiphernodeBuilder, CiphernodeHandle};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_utils::SharedRng;
 use e3_zk_prover::{BBPath, ZkBackend};
@@ -40,14 +40,14 @@ fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
 }
 
 /// Directory of the per-chain ingestion heartbeat files that `dappnode/healthcheck.sh` reads.
-pub fn ingestion_heartbeat_dir(config: &AppConfig) -> PathBuf {
+pub fn ingestion_heartbeat_dir(config: &NodeConfig) -> PathBuf {
     config.node_data_dir().join("ingestion")
 }
 
 /// Record that this start runs one chain reader per enabled chain, from now. After a startup
 /// grace, `dappnode/healthcheck.sh` requires a heartbeat from each, so a reader that never reaches
 /// its first successful read fails the check instead of passing as a node that is still starting.
-pub fn write_ingestion_expectation(config: &AppConfig) -> Result<()> {
+pub fn write_ingestion_expectation(config: &NodeConfig) -> Result<()> {
     let enabled_chains = config
         .chains()
         .iter()
@@ -67,7 +67,7 @@ pub fn write_ingestion_expectation(config: &AppConfig) -> Result<()> {
 /// send transactions, so it needs neither the prover's memory nor ETH. Its data directory is
 /// stamped as a bootstrap node's, and a full node refuses to start on it (and the reverse).
 #[instrument(name = "app", skip_all)]
-pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {
+pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
     write_ingestion_expectation(config)?;
 
@@ -108,7 +108,7 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
 }
 
 /// A full node builder with the prover backend and the compute scheduler of `config`.
-fn full_node(config: &AppConfig, rng: SharedRng, cipher: Arc<Cipher>) -> CiphernodeBuilder {
+fn full_node(config: &NodeConfig, rng: SharedRng, cipher: Arc<Cipher>) -> CiphernodeBuilder {
     let backend = ZkBackend::new(
         BBPath::new(config.bb_binary(), config.using_custom_bb()),
         config.circuits_dir(),
@@ -205,12 +205,12 @@ mod ingestion_expectation_tests {
         )
     }
 
-    fn scoped_config(dir: &std::path::Path, chains: &[String]) -> Result<AppConfig> {
+    fn scoped_config(dir: &std::path::Path, chains: &[String]) -> Result<NodeConfig> {
         let yaml = format!(
             "chains:\n{}nodes:\n  cn1:\n    network: local\n",
             chains.concat()
         );
-        let config: e3_config::UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+        let config: e3_ciphernode_config::UnscopedNodeConfig = serde_yaml::from_str(&yaml)?;
         config.into_scoped_with_defaults(
             "cn1",
             &dir.join("data"),
@@ -219,7 +219,7 @@ mod ingestion_expectation_tests {
         )
     }
 
-    fn expectation(config: &AppConfig) -> Result<String> {
+    fn expectation(config: &NodeConfig) -> Result<String> {
         Ok(std::fs::read_to_string(
             ingestion_heartbeat_dir(config).join(e3_evm::INGESTION_EXPECTATION_FILE),
         )?)

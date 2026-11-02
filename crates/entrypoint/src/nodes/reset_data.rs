@@ -18,7 +18,7 @@
 //! The chain cannot restore a key share.
 
 use anyhow::{bail, Context, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_data::{Repositories, RepositoriesFactory, SledDb};
 use e3_event_system::get_interfold_bus_handle;
 use e3_evm::EthPrivateKeyRepositoryFactory;
@@ -117,7 +117,7 @@ async fn restrict_permissions(_path: &Path) -> Result<()> {
 /// key/value store was cleared while the event log still holds events.
 ///
 /// The index is not always a trailing suffix: `log_file` is configurable per node
-/// (`AppConfig::log_file`), so `events.log` enumerates to `events.0.log`. The split below mirrors
+/// (`NodeConfig::log_file`), so `events.log` enumerates to `events.0.log`. The split below mirrors
 /// `enumerate_path` exactly; `matches_enumeration_of` is pinned to it by test.
 pub(crate) async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
@@ -213,7 +213,7 @@ async fn remove_if_present(path: &Path) -> Result<()> {
 /// Only such a store needs a reset. A missing or damaged store, a store without a marker, and a
 /// newer marker are not older, so the command leaves them for startup to handle. The check creates
 /// no store where none exists.
-pub fn stored_schema_is_older(config: &AppConfig) -> Result<bool> {
+pub fn stored_schema_is_older(config: &NodeConfig) -> Result<bool> {
     let db_file = config.db_file();
     if !matches!(store_presence(&db_file), StorePresence::Present) {
         return Ok(false);
@@ -234,7 +234,7 @@ pub fn stored_schema_is_older(config: &AppConfig) -> Result<bool> {
 ///
 /// The reset refuses, before it deletes anything, when this node holds key-share state for an E3
 /// that it has not seen complete. `allow_active_e3s` overrides that refusal.
-pub async fn execute(config: &AppConfig, allow_active_e3s: bool) -> Result<ResetOutcome> {
+pub async fn execute(config: &NodeConfig, allow_active_e3s: bool) -> Result<ResetOutcome> {
     let db_file = config.db_file();
     let log_file = config.log_file();
 
@@ -341,7 +341,7 @@ pub async fn execute(config: &AppConfig, allow_active_e3s: bool) -> Result<Reset
 }
 
 /// Write the identity into the rebuilt store and read it back before reporting success.
-async fn restore_identity(config: &AppConfig, identity: &PreservedIdentity) -> Result<()> {
+async fn restore_identity(config: &NodeConfig, identity: &PreservedIdentity) -> Result<()> {
     let bus = get_interfold_bus_handle()?;
     let store = setup_datastore(config, &bus)?;
     let repositories = store.repositories();
@@ -382,7 +382,7 @@ fn present(value: &Option<Vec<u8>>) -> &'static str {
     }
 }
 
-fn backup_path(config: &AppConfig) -> PathBuf {
+fn backup_path(config: &NodeConfig) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

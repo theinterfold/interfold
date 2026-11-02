@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::Console;
 use e3_daemon_server::start_daemon_server;
 use e3_events::NODE_SHUTDOWN_DEADLINE;
@@ -19,7 +19,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
+pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
     // Register signal listeners immediately at startup
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -164,7 +164,7 @@ pub fn launch_socket_server(ctrl_port: u16) {
 }
 
 pub async fn build_ciphernode(
-    config: &mut AppConfig,
+    config: &mut NodeConfig,
     peers: Vec<String>,
     bootstrap: bool,
 ) -> Result<CiphernodeHandle> {
