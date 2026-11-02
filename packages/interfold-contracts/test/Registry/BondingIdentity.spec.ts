@@ -6,6 +6,7 @@
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
+import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { OwnerIdentityRegistry } from "../../types";
 import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
@@ -19,10 +20,13 @@ const windowEnd = (timepoint: number) =>
 async function setup() {
   const ctx = await deployInterfoldSystem({ submissionWindow: 600 });
   const verifier = await ethers.deployContract("MockIdentityVerifier");
-  const identityRegistry = (await ethers.deployContract(
-    "OwnerIdentityRegistry",
-    [await ctx.owner.getAddress(), await verifier.getAddress()],
-  )) as unknown as OwnerIdentityRegistry;
+  const identityRegistry = (
+    await deployOwnerIdentityRegistry(
+      ethers,
+      await ctx.owner.getAddress(),
+      await verifier.getAddress(),
+    )
+  ).registry as unknown as OwnerIdentityRegistry;
   const signers = await ethers.getSigners();
   return { ...ctx, verifier, identityRegistry, newOwner: signers[11] };
 }

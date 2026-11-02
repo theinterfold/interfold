@@ -155,7 +155,10 @@ owner one seat.
 identifier stays reserved to its first owner through replacement, expiry, and revocation.
 Registration cannot shorten an existing expiry, so governance revokes first. Expiry and revocation
 keep earlier snapshot answers. `setVerifier` accepts any verifier: a replacement that derives other
-identifiers lets every registered credential claim a second owner, so it needs a new registry.
+identifiers lets every registered credential claim a second owner, so it needs a new registry. The
+registry runs behind a transparent proxy that governance administers. An upgrade keeps every
+credential and reservation, so identity recovery (for example, moving a credential to a new owner
+address) can be added later without every owner proving again.
 
 Every policy change resets counted owner capacity. Requests fail capacity closed until
 `refreshOperatorStatuses` counts the operators again, so refresh after each change. Under a required

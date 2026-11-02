@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 pragma solidity 0.8.28;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {
+    Ownable2StepUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {
     Checkpoints
 } from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
@@ -17,7 +18,13 @@ import {
 } from "../interfaces/IOwnerIdentityRegistry.sol";
 
 /// @notice Reserves uniqueness identifiers and checkpoints each owner's credential expiry.
-contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
+/// @dev Deployed behind a transparent proxy. An upgrade keeps every credential and reservation, so
+///      governance can add identity recovery (for example, moving a credential to a new owner
+///      address) without every owner proving again. Upgrades only append state variables.
+contract OwnerIdentityRegistry is
+    IOwnerIdentityRegistry,
+    Ownable2StepUpgradeable
+{
     using Checkpoints for Checkpoints.Trace208;
 
     struct Identity {
@@ -34,10 +41,17 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
     mapping(address owner => Checkpoints.Trace208 history) private _history;
     Checkpoints.Trace208 private _revocationCounts;
 
-    constructor(
+    /// @notice Locks the implementation; initialize via the proxy.
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Sets the governance owner and the first verifier (zero leaves registration closed).
+    function initialize(
         address initialOwner,
         address initialVerifier
-    ) Ownable(initialOwner) {
+    ) external initializer {
+        __Ownable_init(initialOwner);
         _setVerifier(initialVerifier);
     }
 

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { OwnerIdentityRegistry } from "../../types";
 import { ethers, networkHelpers } from "../fixtures";
 
@@ -15,13 +16,15 @@ const NEW_ID = ethers.id("renewed-document");
 async function setup() {
   const [governance, alice, bob] = await ethers.getSigners();
   const verifier = await ethers.deployContract("MockIdentityVerifier");
-  const registry = (await ethers.deployContract("OwnerIdentityRegistry", [
+  const deployed = await deployOwnerIdentityRegistry(
+    ethers,
     governance.address,
     await verifier.getAddress(),
-  ])) as unknown as OwnerIdentityRegistry;
+  );
+  const registry = deployed.registry as unknown as OwnerIdentityRegistry;
   const expiresAt = (await time.latest()) + 100;
   await verifier.setResult(alice.address, ID, expiresAt);
-  return { governance, alice, bob, verifier, registry, expiresAt };
+  return { governance, alice, bob, verifier, registry, expiresAt, deployed };
 }
 
 describe("OwnerIdentityRegistry", function () {
@@ -190,10 +193,13 @@ describe("OwnerIdentityRegistry", function () {
 
   it("accepts an unset initial verifier and uses two-step governance transfer", async function () {
     const { governance, alice } = await loadFixture(setup);
-    const registry = (await ethers.deployContract("OwnerIdentityRegistry", [
-      governance.address,
-      ethers.ZeroAddress,
-    ])) as unknown as OwnerIdentityRegistry;
+    const registry = (
+      await deployOwnerIdentityRegistry(
+        ethers,
+        governance.address,
+        ethers.ZeroAddress,
+      )
+    ).registry as unknown as OwnerIdentityRegistry;
     await expect(
       registry.connect(alice).register("0x"),
     ).to.be.revertedWithCustomError(registry, "VerifierNotSet");
@@ -201,5 +207,56 @@ describe("OwnerIdentityRegistry", function () {
     expect(await registry.owner()).to.equal(governance.address);
     await registry.connect(alice).acceptOwnership();
     expect(await registry.owner()).to.equal(alice.address);
+  });
+
+  it("initializes once through the proxy and never on the implementation", async function () {
+    const { governance, alice, registry, deployed } = await loadFixture(setup);
+    await expect(
+      registry.initialize(alice.address, ethers.ZeroAddress),
+    ).to.be.revertedWithCustomError(registry, "InvalidInitialization");
+    const implementation = await ethers.getContractAt(
+      "OwnerIdentityRegistry",
+      deployed.implementation,
+    );
+    await expect(
+      implementation.initialize(alice.address, ethers.ZeroAddress),
+    ).to.be.revertedWithCustomError(implementation, "InvalidInitialization");
+    expect(await registry.owner()).to.equal(governance.address);
+    const proxyAdmin = await ethers.getContractAt(
+      "ProxyAdmin",
+      deployed.proxyAdmin,
+    );
+    expect(await proxyAdmin.owner()).to.equal(governance.address);
+  });
+
+  it("keeps every credential and reservation through an upgrade", async function () {
+    const { governance, alice, bob, verifier, registry, expiresAt, deployed } =
+      await loadFixture(setup);
+    await registry.connect(alice).register("0x");
+    await verifier.setResult(bob.address, NEW_ID, expiresAt);
+    await registry.connect(bob).register("0x");
+    await registry.revoke(NEW_ID);
+    const before = await time.latest();
+
+    const next = await ethers.deployContract("OwnerIdentityRegistry");
+    const proxyAdmin = await ethers.getContractAt(
+      "ProxyAdmin",
+      deployed.proxyAdmin,
+    );
+    await proxyAdmin
+      .connect(governance)
+      .upgradeAndCall(deployed.proxy, await next.getAddress(), "0x");
+
+    expect(await registry.identityOf(alice.address)).to.deep.equal([
+      ID,
+      BigInt(expiresAt),
+    ]);
+    expect(await registry.ownerOfIdentity(ID)).to.equal(alice.address);
+    expect(await registry.isVerifiedAt(alice.address, before)).to.equal(true);
+    expect(await registry.ownerOfIdentity(NEW_ID)).to.equal(bob.address);
+    expect(await registry.isVerifiedAt(bob.address, before)).to.equal(false);
+    expect(await registry.revocationCountAt(before)).to.equal(1n);
+    expect(await registry.verifier()).to.equal(await verifier.getAddress());
+    expect(await registry.owner()).to.equal(governance.address);
   });
 });
