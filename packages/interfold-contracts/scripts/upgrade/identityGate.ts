@@ -341,7 +341,7 @@ export function identityGateSettings(
   return identity;
 }
 
-interface IdentityGatePlan {
+export interface IdentityGatePlan {
   name: string;
   chainId: number;
   bondingRegistry: string;
@@ -362,15 +362,27 @@ interface IdentityGatePlan {
   refreshed: string[];
   /** The last block that the operator list of the last written batch read. */
   writtenBlock: number;
+  /** Unix second by which a stage must execute: its count of owners holds until then. */
+  deadlines?: Record<string, string>;
   batches: Record<string, string>;
 }
 
-function planPath(config: ProtocolConfigFile): string {
+export function planPath(config: ProtocolConfigFile): string {
   return path.join(protocolDir, `${config.name}.identity-gate.json`);
 }
 
-function batchPath(config: ProtocolConfigFile, stage: string): string {
-  return path.join(protocolDir, `${config.name}.identity-${stage}.safe.json`);
+/** The raw batch of a stage and, with Aragon governance, the proposer Safe's builder batch. */
+export function identityBatchPaths(
+  config: ProtocolConfigFile,
+  stage: string,
+): { raw: string; safeBuilder: string } {
+  return {
+    raw: path.join(protocolDir, `${config.name}.identity-${stage}.safe.json`),
+    safeBuilder: governanceSafeBuilderPath({
+      ...config,
+      name: `${config.name}.identity-${stage}`,
+    }),
+  };
 }
 
 function loadContext() {
@@ -568,22 +580,16 @@ async function writeBatch(
   txs: SafeTransaction[],
   description: string,
 ): Promise<string> {
-  const file = batchPath(config, stage);
+  const files = identityBatchPaths(config, stage);
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} identity ${stage}`;
   batch.meta.description = description;
-  writeJson(file, batch);
+  writeJson(files.raw, batch);
   if (config.governance) {
     const safeBuilder = aragonAdminSafeBatch(config, txs);
     safeBuilder.meta.name = batch.meta.name;
     safeBuilder.meta.description = description;
-    writeJson(
-      governanceSafeBuilderPath({
-        ...config,
-        name: `${config.name}.identity-${stage}`,
-      }),
-      safeBuilder,
-    );
+    writeJson(files.safeBuilder, safeBuilder);
   }
   if (hasFlag("propose-safe")) {
     await proposeSafeBatch(
@@ -592,7 +598,7 @@ async function writeBatch(
       config.governance?.proposerSafe ?? config.safe,
     );
   }
-  return repoRelativePath(file);
+  return repoRelativePath(files.raw);
 }
 
 export async function prepareIdentityGate(): Promise<void> {
@@ -752,6 +758,9 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   );
   plan.refreshed = operators;
   plan.writtenBlock = writtenBlock;
+  plan.deadlines = { ...plan.deadlines };
+  if (deadline !== undefined) plan.deadlines[stage] = deadline.toString();
+  else delete plan.deadlines[stage];
   writeJson(planPath(config), plan);
   console.log(`
 Identity ${stage} batch written
@@ -842,7 +851,10 @@ export async function revokeIdentity(): Promise<void> {
     plan.identityRegistry,
   );
   // The protocol owner sends the revoke, so a call from it refuses an unknown or revoked identifier.
-  await registry.revoke.staticCall(identityId, { from: config.protocolOwner });
+  // The call goes through the provider: the signer may not stand in for another sender.
+  await (
+    registry.connect(ethers.provider) as typeof registry
+  ).revoke.staticCall(identityId, { from: config.protocolOwner });
   const owner: string = await registry.ownerOfIdentity(identityId);
   const { operators, toBlock: writtenBlock } = await registeredOperators(
     ethers,
@@ -850,13 +862,11 @@ export async function revokeIdentity(): Promise<void> {
   );
   // Under a required policy the owner stops counting. Too few remaining owners would stop requests.
   const policy = await latestPolicyLog(ethers, plan);
+  let deadline: bigint | undefined;
   if (policy?.args.required) {
     const block = await ethers.provider.getBlock("latest");
     if (!block) throw new Error("Could not read the latest block");
-    const deadline = enforceDeadline(
-      BigInt(block.timestamp),
-      arg("execute-by"),
-    );
+    deadline = enforceDeadline(BigInt(block.timestamp), arg("execute-by"));
     const countable = await countableOwners(
       ethers,
       deployment,
@@ -883,10 +893,13 @@ export async function revokeIdentity(): Promise<void> {
     config,
     "revoke",
     txs,
-    `Revoke identity ${identityId} of ${owner}, and refresh every operator.`,
+    `Revoke identity ${identityId} of ${owner}, and refresh every operator.${deadline !== undefined ? ` Execute by ${isoTime(deadline)}.` : ""}`,
   );
   plan.refreshed = operators;
   plan.writtenBlock = writtenBlock;
+  plan.deadlines = { ...plan.deadlines };
+  if (deadline !== undefined) plan.deadlines.revoke = deadline.toString();
+  else delete plan.deadlines.revoke;
   writeJson(planPath(config), plan);
   console.log(`
 Identity revoke batch written

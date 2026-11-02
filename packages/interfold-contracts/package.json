@@ -196,6 +196,7 @@
     "upgrade:identity:revoke": "tsx scripts/upgrade/identityGate.ts revoke",
     "upgrade:identity:rotate-verifier": "tsx scripts/upgrade/identityGate.ts rotate-verifier",
     "upgrade:identity:validate": "tsx scripts/upgrade/identityGate.ts validate",
+    "upgrade:identity:check": "tsx scripts/upgrade/identityBatchCheck.ts",
     "upgrade:identity:proof-fork": "tsx scripts/upgrade/identityProofFork.ts",
     "upgrade:identity:simulate": "tsx scripts/upgrade/simulateIdentityGate.ts",
     "upgrade:v19": "pnpm validate:upgrade && pnpm -w store:circuits verify-release && tsx scripts/upgrade/v19Cutover.ts prepare",

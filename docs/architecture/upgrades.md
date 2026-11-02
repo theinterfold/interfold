@@ -153,6 +153,14 @@ paused, staged refresh. Execute each batch with a gas limit well above the estim
 times). An estimate made at the timestamp of an earlier capacity change can fall short once the
 batch is mined in a later block, where the capacity checkpoints start new entries.
 
+Before the Safe signs a batch, run `upgrade:identity:check -- --network mainnet --stage <stage>`
+with `FORK_URL`. On a fresh Anvil fork, it sends the batch exactly as governance will (with Aragon,
+the proposer Safe calls the Admin plugin, which runs every action in one transaction), then checks
+that counted owner capacity covers the largest committee one second before the next block and that
+the transaction uses at most half the block gas limit. The fork includes everything that changed
+since the batch was written, such as late registrations and admission cooldowns. It refuses an
+`enforce` or `revoke` batch past the deadline in the plan.
+
 Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
 that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
 `CONFIRM_MAINNET_FORK=1`, and point the `mainnet` network at the fork with `RPC_URL` and a test
