@@ -53,7 +53,7 @@ These addresses come from `deployments/manifest.json` (chain ID 11155111), excep
 | `BondedVotes`                  | `0xfbd932BD297e9C7261A384925E78371C7B1FEc7a` | 12050190     | Voting power of locked and bonded FOLD                      |
 | `BfvPkVerifierRouter`          | `0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B` | 12050098     | Verifies the committee public key proofs                    |
 | `BfvDecryptionVerifierRouter`  | `0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E` | 12050099     | Verifies the decryption proofs                              |
-| `OpenVmBfvCiphertextVerifier`  | `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592` | 11873416     | Ciphertext verifier for BFV. It wraps a mock.               |
+| `OpenVmBfvCiphertextVerifier`  | `0x1F9d7c997D1aBB2970e07C6E50Ca641b7Fd2Df6E` | 12050650     | Ciphertext verifier for BFV. It wraps a mock.               |
 | `MockE3Program`                | `0xc4C83c3C94e9360C136f3cd022925b4979BD580b` | 12050024     | Test E3 program. The deployment registers it.               |
 | `Faucet`                       | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
@@ -280,8 +280,8 @@ with `E3ProgramNotAllowed`.
 ### Check the protocol ciphertext verifier
 
 Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
-`OpenVmBfvCiphertextVerifier` at `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592`. It wraps
-`MockOpenVmReceiptVerifier` at `0x00A49042e0550a272ED393dd324749c18C0c8e62`, which accepts every
+`OpenVmBfvCiphertextVerifier` at `0x1F9d7c997D1aBB2970e07C6E50Ca641b7Fd2Df6E`. It wraps
+`MockOpenVmReceiptVerifier` at `0x0E3B672A479818049D24AD11D88FCF858e503f1a`, which accepts every
 receipt. Read the verifier address:
 
 ```bash
