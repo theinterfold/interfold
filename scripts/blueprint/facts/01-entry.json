@@ -182,7 +182,7 @@
       "id": "e3-entrypoint",
       "documentation": [{ "title": "Running a ciphernode", "path": "docs/pages/operate/running.mdx" }],
       "kind": "crate",
-      "path": "crates/entrypoint",
+      "path": "crates/ciphernode/entrypoint",
       "one_line": "Operator-side library behind the node commands: starts a node from config, guards its data directory, and runs validation, purge and reset.",
       "actors": [],
       "consumes": [],
@@ -191,94 +191,94 @@
         {
           "name": "interfold.lock fence file in the node data directory",
           "where": "disk",
-          "ref": "crates/entrypoint/src/fence.rs@34@pub(crate) const LOCK_FILE_NAME"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@34@pub(crate) const LOCK_FILE_NAME"
         },
         {
           "name": "<key file>.store-record: every store path the node has started with",
           "where": "disk",
-          "ref": "crates/entrypoint/src/store_record.rs@21@pub const RECORD_SUFFIX"
+          "ref": "crates/ciphernode/entrypoint/src/store_record.rs@21@pub const RECORD_SUFFIX"
         },
         {
           "name": "child process table of a nodes set",
           "where": "memory",
-          "ref": "crates/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
         }
       ],
       "key_types": [
         {
           "name": "ProcessFence",
           "what": "exclusive OS lock on the data directory, released when dropped",
-          "ref": "crates/entrypoint/src/fence.rs@61@pub struct ProcessFence {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@61@pub struct ProcessFence {"
         },
         {
           "name": "ValidationReport",
           "what": "result of node validate: the checks in run order and whether any failed",
-          "ref": "crates/entrypoint/src/validate.rs@116@pub struct ValidationReport {"
+          "ref": "crates/ciphernode/entrypoint/src/validate.rs@116@pub struct ValidationReport {"
         },
         {
           "name": "PurgeTargets",
           "what": "the .interfold data and config folders that a purge would remove",
-          "ref": "crates/entrypoint/src/nodes/purge/mod.rs@71@pub struct PurgeTargets {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/purge/mod.rs@71@pub struct PurgeTargets {"
         },
         {
           "name": "ProcessManager",
           "what": "owns the child node processes of a nodes set",
-          "ref": "crates/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
         },
         {
           "name": "LaunchCommand",
           "what": "one child interfold start command built from a node profile",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@21@pub struct LaunchCommand {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@21@pub struct LaunchCommand {"
         },
         {
           "name": "Action",
           "what": "requests that the nodes set HTTP server accepts on POST /command",
-          "ref": "crates/entrypoint/src/nodes/nodes.rs@60@pub enum Action {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/nodes.rs@60@pub enum Action {"
         }
       ],
       "read_first": [
         {
           "why": "the production startup: builder settings for the full and bootstrap roles",
-          "ref": "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool)"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool)"
         },
         {
           "why": "the single-instance lock, taken before any store is opened",
-          "ref": "crates/entrypoint/src/fence.rs@88@pub fn acquire(db_path: &Path, node_name: &str) -> Result<Self> {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@88@pub fn acquire(db_path: &Path, node_name: &str) -> Result<Self> {"
         },
         {
           "why": "the nodes set: one child per profile, then the control server",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@129@pub async fn execute("
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@129@pub async fn execute("
         },
         {
           "why": "the offline state check behind node validate",
-          "ref": "crates/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &NodeConfig, repair: bool)"
+          "ref": "crates/ciphernode/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &NodeConfig, repair: bool)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "result-question-mark",
           "note": "startup rejects an unsupported proof-aggregation setting before any work",
-          "ref": "crates/entrypoint/src/start/start.rs@71@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@71@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a startup that exceeds its deadline is reported with context",
-          "ref": "crates/entrypoint/src/start/start.rs@29@.with_context(|| format!("
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@29@.with_context(|| format!("
         },
         {
           "pattern": "trait-impl",
           "note": "Drop releases the fence lock when the guard goes away",
-          "ref": "crates/entrypoint/src/fence.rs@67@impl Drop for ProcessFence {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@67@impl Drop for ProcessFence {"
         },
         {
           "pattern": "arc-shared",
           "note": "the process manager is shared by the HTTP server and the Ctrl+C handler",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@145@let process_manager = Arc::new(Mutex::new(ProcessManager::from(command_map)));"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@145@let process_manager = Arc::new(Mutex::new(ProcessManager::from(command_map)));"
         },
         {
           "pattern": "tokio-select",
           "note": "the nodes set runs its server until the server fails or Ctrl+C arrives",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@151@tokio::select! {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@151@tokio::select! {"
         }
       ],
       "depends_on": [
@@ -301,7 +301,7 @@
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/start.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",
+      "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/mod.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",
       "unverified": ["process_manager.rs (423 lines) and purge/plan.rs were only indexed, not traced line by line."]
     },
     {
@@ -429,7 +429,7 @@
         },
         {
           "why": "the production caller, with the settings for a full node",
-          "ref": "crates/entrypoint/src/start/start.rs@128@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@128@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
         }
       ],
       "rust_patterns": [

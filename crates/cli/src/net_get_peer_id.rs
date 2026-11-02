@@ -9,7 +9,7 @@ use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 
 pub async fn execute(out: &Console, config: &NodeConfig) -> Result<()> {
-    let peer_id = e3_entrypoint::net::get_peer_id::execute(config).await?;
+    let peer_id = e3_entrypoint::net::execute(config).await?;
     log!(out, "{}", peer_id);
     Ok(())
 }

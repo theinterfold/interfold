@@ -103,10 +103,10 @@ check_compose_shutdown_grace dappnode/docker-compose.yml
 check_compose_shutdown_grace deploy/docker-compose.yml
 
 # Keep the runtime rejection as well as Cargo feature containment.
-if ! grep -rq 'fn validate_proof_aggregation_mode' crates/entrypoint/src ||
-  ! grep -rEq 'validate_proof_aggregation_mode\(config' crates/entrypoint/src; then
+if ! grep -rq 'fn validate_proof_aggregation_mode' crates/ciphernode/entrypoint/src ||
+  ! grep -rEq 'validate_proof_aggregation_mode\(config' crates/ciphernode/entrypoint/src; then
   echo "check-repository: FAILED — validate_proof_aggregation_mode missing or no longer called"
-  echo "  in crates/entrypoint/src; production startup must reject proof-skipping mode."
+  echo "  in crates/ciphernode/entrypoint/src; production startup must reject proof-skipping mode."
   fail=1
 fi
 

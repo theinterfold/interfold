@@ -303,13 +303,13 @@
     "refs": [
       "crates/cli/src/cli.rs@236@Commands::Start { peers, bootstrap } => {",
       "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap).await?",
-      "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
-      "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
+      "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::execute(config, bootstrap).await?;",
+      "crates/ciphernode/entrypoint/src/start/mod.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "line_text": [
       "Commands::Start { peers, bootstrap } => {",
       "start::execute(config, peers, bootstrap).await?",
-      "let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
+      "let node = e3_entrypoint::start::execute(config, bootstrap).await?;",
       "pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "note": "The Start command calls the CLI start::execute, which calls e3_entrypoint's start::execute to build and start the node."

@@ -468,7 +468,7 @@ where
     // Detection of loose ends that cannot be locally re-driven is exposed offline and
     // non-destructively via `interfold node validate`, which cross-checks the persisted committee
     // slots against terminal events in the log and reports orphaned tickets. See
-    // `crates/entrypoint/src/validate.rs`.
+    // `crates/ciphernode/entrypoint/src/validate.rs`.
 
     // 5. Load the historical evm events to memory from all chains
     info!("Loading historical blockchain events...");

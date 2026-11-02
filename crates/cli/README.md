@@ -5,7 +5,7 @@
 The `interfold` executable manages ciphernode operation and application projects: setup,
 configuration/identity, full/bootstrap startup, multi-node processes, offline state checks, Noir
 artifacts, binary updates/removal, and program compilation/services. It delegates node lifecycle to
-[e3-entrypoint](../entrypoint/README.md) and composition to
+[e3-entrypoint](../ciphernode/entrypoint/README.md) and composition to
 [e3-ciphernode-builder](../ciphernode/builder/README.md).
 
 ## Map
@@ -68,7 +68,7 @@ project, then the [project runner workflow](../program-runner/README.md) for `co
 
 Some read commands route to the local daemon while a node runs; mutating/offline operations are
 deliberately restricted. Reset/purge commands can destroy identity and keyshares: read their
-`--help` and [entrypoint safety boundary](../entrypoint/README.md) before use.
+`--help` and [entrypoint safety boundary](../ciphernode/entrypoint/README.md) before use.
 
 Verbosity is WARN by default, INFO with `-v`, DEBUG with `-vv`, TRACE with `-vvv`, and ERROR with
 `--quiet`. `--otel <grpc-endpoint>` enables tracing export; see

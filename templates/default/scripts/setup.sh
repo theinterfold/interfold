@@ -26,7 +26,7 @@ pnpm compile
 # `test-only-skip-proof-aggregation` is compiled in unconditionally: it only lets the node honour
 # the opt-in `skip_proof_aggregation` setting, and with that setting unset the binary behaves
 # identically. `scripts/test_integration.sh` exports E3_NODES__CN*__SKIP_PROOF_AGGREGATION=true,
-# and without the feature every ciphernode exits at startup (crates/entrypoint/src/start/start.rs).
+# and without the feature every ciphernode exits at startup (crates/ciphernode/entrypoint/src/start/mod.rs).
 # Proof aggregation stays enabled by default for template users - that is the runtime setting, not
 # this build flag. Matches how CI builds the binary the template tests run against (ci.yml).
 #

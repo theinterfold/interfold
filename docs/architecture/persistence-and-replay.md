@@ -323,10 +323,10 @@ ceiling lives in `scripts/checks/repository-baselines.env`; retain both interim 
 the acknowledged pipeline work in #2266 is complete. These static checks do not prove runtime
 delivery or a successful shutdown. The remaining `do_send` sites include correctness paths; a
 call-count ceiling cannot establish safe delivery. Proof-skipping rejection is tested in
-[`start/start.rs`](../../crates/entrypoint/src/start/start.rs), but those unit tests exercise the
-validation function rather than the full startup path.
-[Schema tests](../../crates/entrypoint/tests/validate_older_schema.rs) check failure before
-recovery;
+[`start/mod.rs`](../../crates/ciphernode/entrypoint/src/start/mod.rs), but those unit tests exercise
+the validation function rather than the full startup path.
+[Schema tests](../../crates/ciphernode/entrypoint/tests/validate_older_schema.rs) check failure
+before recovery;
 [finalized reconciliation tests](../../crates/ciphernode/builder/src/finalized_lifecycle.rs) include
 bounded failed-batch retry.
 [Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs) include

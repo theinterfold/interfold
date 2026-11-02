@@ -17,4 +17,4 @@ capability crates own protocol decisions.
 
 Use the [README tests/prerequisites](README.md#tests). Use temporary node directories for
 fence/validate/purge regressions; never use an operator's populated state as a fixture. See
-[persistence](../../docs/architecture/persistence-and-replay.md) for cross-layer recovery limits.
+[persistence](../../../docs/architecture/persistence-and-replay.md) for cross-layer recovery limits.
