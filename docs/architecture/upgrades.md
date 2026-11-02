@@ -128,11 +128,21 @@ identity rule at the pause cutoff stays until the admission policy changes too.
 refreshes every operator in the same transaction: a revocation makes owner capacity read zero until
 refreshes count the owners again, so a plain `revoke` call would stop requests. Under a required
 policy it refuses when too few owners would still count (`--force` overrides). Validate the executed
-batch with the current policy. `upgrade:identity:validate -- --required <true|false>` reads back the
-implementation, the registry owner, implementation, proxy admin and verifier, every verifier setting
-and the identifier namespace, the latest `IdentityPolicyUpdated` against the expected policy, and
-the owner capacity for the largest committee. It also refuses operators that registered after the
-batch was written and before it executed: the batch did not refresh them, so they stay uncounted.
+batch with the current policy. When ZKPassport ships a new version, the app proves with it and the
+pinned verifier rejects those proofs, so owners cannot register or renew. Set the new
+`identity.zkPassportVersion` and run `upgrade:identity:rotate-verifier`: it deploys a verifier from
+the config and writes the batch that sets it on the registry, which keeps every credential and
+reservation. It refuses a change to the domain, scope, identifier type, or OPRF key hash, because
+those derive every identifier and one document could then verify a second owner. Rehearse it with a
+fresh phone proof (`upgrade:identity:proof-fork`) first. To close registration at once (for example,
+when ZKPassport's verifier is in doubt), governance calls `setVerifier(0)` on the registry;
+credentials stay valid, and `rotate-verifier` opens it again. `prepare` refuses to run again for a
+network that has a plan, because a second registry makes every owner prove again (`--new-registry`
+overrides). `upgrade:identity:validate -- --required <true|false>` reads back the implementation,
+the registry owner, implementation, proxy admin and verifier, every verifier setting and the
+identifier namespace, the latest `IdentityPolicyUpdated` against the expected policy, and the owner
+capacity for the largest committee. It also refuses operators that registered after the batch was
+written and before it executed: the batch did not refresh them, so they stay uncounted.
 `--refresh-missing` refreshes them from the connected account (anyone may); run `validate` again
 after it. The plan keeps the refresh list of the last written batch, so validate each batch before
 you write the next. It reads those registrations from the connected RPC, from the block where the

@@ -19,10 +19,12 @@ import {
   buildIdentityGateTransactions,
   buildRevokeTransactions,
   capacityWindowEnd,
+  changedIdentifierSettings,
   enforceDeadline,
   identityGateSettings,
   identityNamespace,
   lateRegistrations,
+  sameVerifierSettings,
   unrefreshedOperators,
 } from "../../scripts/upgrade/identityGate";
 import {
@@ -150,6 +152,31 @@ describe("identity gate rollout", function () {
         operators: many,
       }),
     ).to.throw(/refresh in stages/);
+  });
+
+  it("rotates a verifier only when its identifiers stay the same", function () {
+    const current = identityGateSettings(config({}));
+    const nextVersion = {
+      ...current,
+      zkPassportVersion: ethersLib.zeroPadValue("0x15", 32),
+    };
+    expect(changedIdentifierSettings(current, nextVersion)).to.deep.equal([]);
+    expect(sameVerifierSettings(current, nextVersion)).to.equal(false);
+    expect(
+      sameVerifierSettings(current, {
+        ...current,
+        oprfKeyHash: current.oprfKeyHash.toUpperCase().replace("0X", "0x"),
+      }),
+    ).to.equal(true);
+    expect(
+      changedIdentifierSettings(current, {
+        ...current,
+        domain: "other.example",
+        scope: "other-scope",
+        nullifierType: 1,
+        oprfKeyHash: ethersLib.id("key"),
+      }),
+    ).to.deep.equal(["domain", "scope", "identifier type", "OPRF key hash"]);
   });
 
   it("refuses verifier settings that the constructor or the plan would get wrong", function () {

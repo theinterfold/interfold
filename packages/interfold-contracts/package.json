@@ -194,6 +194,7 @@
     "upgrade:identity:enforce": "tsx scripts/upgrade/identityGate.ts enforce",
     "upgrade:identity:relax": "tsx scripts/upgrade/identityGate.ts relax",
     "upgrade:identity:revoke": "tsx scripts/upgrade/identityGate.ts revoke",
+    "upgrade:identity:rotate-verifier": "tsx scripts/upgrade/identityGate.ts rotate-verifier",
     "upgrade:identity:validate": "tsx scripts/upgrade/identityGate.ts validate",
     "upgrade:identity:proof-fork": "tsx scripts/upgrade/identityProofFork.ts",
     "upgrade:identity:simulate": "tsx scripts/upgrade/simulateIdentityGate.ts",

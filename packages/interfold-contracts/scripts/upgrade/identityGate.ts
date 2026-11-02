@@ -13,12 +13,16 @@
 //   enforce   The batch sets `required = true` and refreshes every registered operator.
 //   relax     The batch sets `required = false` and refreshes every registered operator (rollback).
 //   revoke    The batch revokes one identifier (--identity) and refreshes every registered operator.
+//   rotate-verifier
+//             Deploys a ZKPassportIdentityVerifier from the config (for example, a new ZKPassport
+//             version); the batch sets it on the registry. Identifier settings must not change.
 //   validate  Reads back the deployment against the plan, the policy, and the owner capacity.
 //
 // Every identity policy change and every revocation resets counted owner capacity, so each batch
 // refreshes all registered operators in the same transaction. Without that, requests fail until a
 // refresh.
 import { ethers as ethersLib } from "ethers";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -115,6 +119,38 @@ export function unrefreshedOperators(
 ): string[] {
   const seen = new Set(refreshed.map((operator) => operator.toLowerCase()));
   return registered.filter((operator) => !seen.has(operator.toLowerCase()));
+}
+
+/**
+ * The identifier settings that `next` changes. They derive every identifier, so a verifier with
+ * another value would let one document verify a second owner: that needs a new registry.
+ */
+export function changedIdentifierSettings(
+  current: IdentityGateConfig,
+  next: IdentityGateConfig,
+): string[] {
+  const changed: string[] = [];
+  if (current.domain !== next.domain) changed.push("domain");
+  if (current.scope !== next.scope) changed.push("scope");
+  if (Number(current.nullifierType) !== Number(next.nullifierType)) {
+    changed.push("identifier type");
+  }
+  if (current.oprfKeyHash.toLowerCase() !== next.oprfKeyHash.toLowerCase()) {
+    changed.push("OPRF key hash");
+  }
+  return changed;
+}
+
+/** Whether two verifier settings are the same (hex values in any case). */
+export function sameVerifierSettings(
+  a: IdentityGateConfig,
+  b: IdentityGateConfig,
+): boolean {
+  const norm = (value: unknown) =>
+    typeof value === "string" ? value.toLowerCase() : String(value);
+  return (Object.keys(a) as (keyof IdentityGateConfig)[]).every(
+    (key) => norm(a[key]) === norm(b[key]),
+  );
 }
 
 /**
@@ -482,6 +518,49 @@ function neededOwners(config: ProtocolConfigFile): bigint {
   );
 }
 
+/** Deploys a ZKPassportIdentityVerifier with `settings`; returns its address. */
+async function deployVerifier(
+  ethers: any,
+  settings: IdentityGateConfig,
+): Promise<string> {
+  const factory = await ethers.getContractFactory("ZKPassportIdentityVerifier");
+  const verifier = await factory.deploy(
+    settings.zkPassportRootVerifier,
+    settings.zkPassportVersion,
+    settings.domain,
+    settings.scope,
+    settings.nullifierType,
+    settings.oprfKeyHash,
+    settings.faceMatchRequired,
+    settings.proofValidity,
+    settings.maxValidity,
+  );
+  await verifier.waitForDeployment();
+  return deployedAddress(verifier);
+}
+
+/** The settings that a deployed ZKPassportIdentityVerifier fixes. */
+async function verifierSettings(
+  ethers: any,
+  address: string,
+): Promise<IdentityGateConfig> {
+  const verifier = await ethers.getContractAt(
+    "ZKPassportIdentityVerifier",
+    address,
+  );
+  return {
+    zkPassportRootVerifier: await verifier.ROOT_VERIFIER(),
+    zkPassportVersion: await verifier.VERSION(),
+    domain: await verifier.domain(),
+    scope: await verifier.scope(),
+    nullifierType: Number(await verifier.NULLIFIER_TYPE()),
+    oprfKeyHash: await verifier.OPRF_KEY_HASH(),
+    faceMatchRequired: await verifier.FACE_MATCH_REQUIRED(),
+    proofValidity: (await verifier.PROOF_VALIDITY()).toString(),
+    maxValidity: (await verifier.MAX_VALIDITY()).toString(),
+  };
+}
+
 /** Write the raw batch, and the Aragon Safe batch when governance is a DAO. */
 async function writeBatch(
   config: ProtocolConfigFile,
@@ -520,6 +599,12 @@ export async function prepareIdentityGate(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
+  // A second prepare deploys another registry, and the owners of the first would prove again.
+  if (fs.existsSync(planPath(config)) && !hasFlag("new-registry")) {
+    throw new Error(
+      `${repoRelativePath(planPath(config))} exists, so ${config.name} has an identity registry. For a new ZKPassport version, use rotate-verifier. Pass --new-registry only to replace the registry, which makes every owner prove again`,
+    );
+  }
   const settings = identityGateSettings(config);
   const [operator] = await ethers.getSigners();
   if (
@@ -552,22 +637,7 @@ export async function prepareIdentityGate(): Promise<void> {
   );
   assertBatchSize(operators.length);
 
-  const verifierFactory = await ethers.getContractFactory(
-    "ZKPassportIdentityVerifier",
-  );
-  const verifier = await verifierFactory.deploy(
-    settings.zkPassportRootVerifier,
-    settings.zkPassportVersion,
-    settings.domain,
-    settings.scope,
-    settings.nullifierType,
-    settings.oprfKeyHash,
-    settings.faceMatchRequired,
-    settings.proofValidity,
-    settings.maxValidity,
-  );
-  await verifier.waitForDeployment();
-  const identityVerifier = await deployedAddress(verifier);
+  const identityVerifier = await deployVerifier(ethers, settings);
 
   // Governance owns the registry and its proxy admin from the start: it revokes, replaces the
   // verifier, and can add recovery through an upgrade.
@@ -688,6 +758,71 @@ Identity ${stage} batch written
   registry:        ${plan.identityRegistry}
   operators:       ${operators.length}
   governance batch:${plan.batches[stage]} (${txs.length} transactions)${deadline !== undefined ? `\n  execute by:      ${isoTime(deadline)}` : ""}
+`);
+}
+
+/**
+ * Write the batch that replaces the registry's verifier, for example for a new ZKPassport version.
+ * Credentials and reservations stay; the settings that derive identifiers must not change.
+ */
+export async function rotateVerifier(): Promise<void> {
+  const { ethers } = await connect();
+  const { config, deployment } = loadContext();
+  await requireChain(ethers, config, deployment);
+  const plan = loadPlan(config, deployment);
+  await assertAragonGovernancePreconditions(ethers, config);
+  const settings = identityGateSettings(config);
+  await requireContract(
+    ethers.provider,
+    settings.zkPassportRootVerifier,
+    "ZKPassport root verifier",
+  );
+  const registry = await ethers.getContractAt(
+    "OwnerIdentityRegistry",
+    plan.identityRegistry,
+  );
+  const current: string = await registry.verifier();
+  // With registration closed (no verifier), the plan keeps the settings of the last verifier.
+  const currentSettings =
+    current === ethersLib.ZeroAddress
+      ? plan.settings
+      : await verifierSettings(ethers, current);
+  const changed = changedIdentifierSettings(currentSettings, settings);
+  if (changed.length > 0) {
+    throw new Error(
+      `The config changes the ${changed.join(", ")} of the verifier. These derive every identifier, so one document could verify a second owner. A rotation keeps them; another value needs a new registry`,
+    );
+  }
+  if (
+    current !== ethersLib.ZeroAddress &&
+    sameVerifierSettings(currentSettings, settings)
+  ) {
+    throw new Error(
+      `The config matches the current verifier ${current}; there is nothing to rotate`,
+    );
+  }
+  const verifier = await deployVerifier(ethers, settings);
+  const txs = [
+    safeTx(
+      plan.identityRegistry,
+      registryInterface.encodeFunctionData("setVerifier", [verifier]),
+    ),
+  ];
+  plan.batches["rotate-verifier"] = await writeBatch(
+    config,
+    "rotate-verifier",
+    txs,
+    `Replace the identity verifier with ${verifier} (ZKPassport version ${settings.zkPassportVersion}). Credentials stay valid.`,
+  );
+  plan.identityVerifier = verifier;
+  plan.settings = settings;
+  writeJson(planPath(config), plan);
+  console.log(`
+Identity verifier rotation written
+  verifier:        ${verifier} (replaces ${current})
+  version:         ${settings.zkPassportVersion}
+  governance batch:${plan.batches["rotate-verifier"]} (${txs.length} transaction)
+  next:            execute the batch, then run "identityGate.ts validate" with the current policy
 `);
 }
 
@@ -939,6 +1074,7 @@ if (
     ["enforce", () => setIdentityRequirement(true)],
     ["relax", () => setIdentityRequirement(false)],
     ["revoke", revokeIdentity],
+    ["rotate-verifier", rotateVerifier],
     ["validate", validateIdentityGate],
   ]);
   const action = process.argv.slice(2).find((value) => actions.has(value));
