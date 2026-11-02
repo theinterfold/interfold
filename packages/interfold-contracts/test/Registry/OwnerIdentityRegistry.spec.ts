@@ -261,5 +261,13 @@ describe("OwnerIdentityRegistry", function () {
     expect(await registry.revocationCountAt(before)).to.equal(1n);
     expect(await registry.verifier()).to.equal(await verifier.getAddress());
     expect(await registry.owner()).to.equal(governance.address);
+    // The revocation stays: the identifier can neither register again nor be revoked twice.
+    await expect(
+      registry.connect(bob).register("0x"),
+    ).to.be.revertedWithCustomError(registry, "IdentityIsRevoked");
+    await expect(registry.revoke(NEW_ID)).to.be.revertedWithCustomError(
+      registry,
+      "IdentityIsRevoked",
+    );
   });
 });
