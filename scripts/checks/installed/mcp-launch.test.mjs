@@ -10,8 +10,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-const root = fileURLToPath(new URL('../../', import.meta.url))
-const readConfig = (path) => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8'))
+const root = fileURLToPath(new URL('../../../', import.meta.url))
+const readConfig = (path) => JSON.parse(readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8'))
 const initialize = JSON.stringify({
   jsonrpc: '2.0',
   id: 1,

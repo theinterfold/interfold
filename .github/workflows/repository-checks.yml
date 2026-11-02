@@ -35,6 +35,21 @@ jobs:
       - name: Check committee configuration
         run: ./scripts/checks/committee.sh
 
+  installed:
+    name: Check launchers with installed dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - run: pnpm install --frozen-lockfile
+      # These tests launch workspace tools, so they cannot run in the dependency-free job above.
+      - name: Test checks that need installed dependencies
+        run: node --test scripts/checks/installed/*.test.mjs
+
   formatting:
     name: Check changed-file formatting
     runs-on: ubuntu-latest
