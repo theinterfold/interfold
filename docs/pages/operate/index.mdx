@@ -186,18 +186,18 @@ use.
 
 | Contract                                   | Address                                      | Deploy block |
 | ------------------------------------------ | -------------------------------------------- | ------------ |
-| Interfold                                  | `0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b` | 11873232     |
-| CiphernodeRegistry                         | `0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef` | 11873232     |
-| BondingRegistry                            | `0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2` | 11873232     |
-| SlashingManager                            | `0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d` | 11873232     |
-| E3RefundManager                            | `0xA60139169a7c901291070A8D57ef4aE816a7fe80` | 11873232     |
-| NodeReleaseRegistry                        | `0xD37c5143cd70EC70714409f2D475904563E20d69` | 11873232     |
-| BondedVotes                                | `0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb` | 11873269     |
-| InterfoldTicketToken (tFOLD)               | `0x3FBdF3d172866d80c872f165774B7515f6Babb8f` | 11873232     |
+| Interfold                                  | `0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26` | 12050100     |
+| CiphernodeRegistry                         | `0x895392D5782E78768A35B1aDfc5b0BD1faB259e4` | 12050100     |
+| BondingRegistry                            | `0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F` | 12050100     |
+| SlashingManager                            | `0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D` | 12050100     |
+| E3RefundManager                            | `0x272f3A25E30990A7C30b7B90a240e7afe4365349` | 12050100     |
+| NodeReleaseRegistry                        | `0xd6d7D4839985BFEB5d6440A1ECe594e288C128e6` | 12050100     |
+| BondedVotes                                | `0xfbd932BD297e9C7261A384925E78371C7B1FEc7a` | 12050190     |
+| InterfoldTicketToken (tFOLD)               | `0xE7cCF95F36131340bdAB122C4cc09787D28217e5` | 12050100     |
 | InterfoldToken (FOLD)                      | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     |
 | MockUSDC (fee token and ticket collateral) | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     |
 | Faucet                                     | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     |
-| MockE3Program                              | `0x449D73B60f930c7c50a50147046065C4D255B60b` | 11873232     |
+| MockE3Program                              | `0xc4C83c3C94e9360C136f3cd022925b4979BD580b` | 12050100     |
 
 `MockUSDC` is a test USDC with 6 decimals. Anyone can mint it. The `Faucet` sends 1000 FOLD and 1000
 USDC. `MockE3Program` is a test E3 program. The deployment registers it as its first E3 program.
@@ -206,8 +206,8 @@ The public key and decryption proofs use real verifiers:
 
 | Contract                    | Address                                      | Deploy block |
 | --------------------------- | -------------------------------------------- | ------------ |
-| BfvPkVerifierRouter         | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     |
-| BfvDecryptionVerifierRouter | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     |
+| BfvPkVerifierRouter         | `0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B` | 12050098     |
+| BfvDecryptionVerifierRouter | `0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E` | 12050099     |
 
 The ciphertext verifier for BFV is `OpenVmBfvCiphertextVerifier`. It wraps
 `MockOpenVmReceiptVerifier`, which accepts every receipt, so Sepolia does not verify compute proofs.

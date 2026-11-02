@@ -41,20 +41,20 @@ These addresses come from `deployments/manifest.json` (chain ID 11155111), excep
 
 | Contract                       | Address                                      | Deploy block | Role                                                        |
 | ------------------------------ | -------------------------------------------- | ------------ | ----------------------------------------------------------- |
-| `Interfold`                    | `0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b` | 11873232     | Requests, stages, fees, and outputs of each E3              |
-| `CiphernodeRegistry`           | `0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef` | 11873232     | `CiphernodeRegistryOwnable`: committees and committee keys  |
-| `BondingRegistry`              | `0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2` | 11873232     | Operator bonds and tickets                                  |
-| `SlashingManager`              | `0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d` | 11873232     | Slashing of ciphernodes that break protocol rules           |
+| `Interfold`                    | `0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26` | 12050100     | Requests, stages, fees, and outputs of each E3              |
+| `CiphernodeRegistry`           | `0x895392D5782E78768A35B1aDfc5b0BD1faB259e4` | 12050100     | `CiphernodeRegistryOwnable`: committees and committee keys  |
+| `BondingRegistry`              | `0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F` | 12050100     | Operator bonds and tickets                                  |
+| `SlashingManager`              | `0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D` | 12050100     | Slashing of ciphernodes that break protocol rules           |
 | `MockUSDC` (fee token)         | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     | Test USDC, 6 decimals. Anyone can mint it. It pays E3 fees. |
 | `InterfoldToken` (FOLD)        | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     | Governance and utility token. Operators bond FOLD.          |
-| `InterfoldTicketToken` (tFOLD) | `0x3FBdF3d172866d80c872f165774B7515f6Babb8f` | 11873232     | Non-transferable operator tickets for sortition             |
-| `E3RefundManager`              | `0xA60139169a7c901291070A8D57ef4aE816a7fe80` | 11873232     | Refunds for failed E3s                                      |
-| `NodeReleaseRegistry`          | `0xD37c5143cd70EC70714409f2D475904563E20d69` | 11873232     | The ciphernode releases that can join new E3s               |
-| `BondedVotes`                  | `0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb` | 11873269     | Voting power of locked and bonded FOLD                      |
-| `BfvPkVerifierRouter`          | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     | Verifies the committee public key proofs                    |
-| `BfvDecryptionVerifierRouter`  | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     | Verifies the decryption proofs                              |
+| `InterfoldTicketToken` (tFOLD) | `0xE7cCF95F36131340bdAB122C4cc09787D28217e5` | 12050100     | Non-transferable operator tickets for sortition             |
+| `E3RefundManager`              | `0x272f3A25E30990A7C30b7B90a240e7afe4365349` | 12050100     | Refunds for failed E3s                                      |
+| `NodeReleaseRegistry`          | `0xd6d7D4839985BFEB5d6440A1ECe594e288C128e6` | 12050100     | The ciphernode releases that can join new E3s               |
+| `BondedVotes`                  | `0xfbd932BD297e9C7261A384925E78371C7B1FEc7a` | 12050190     | Voting power of locked and bonded FOLD                      |
+| `BfvPkVerifierRouter`          | `0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B` | 12050098     | Verifies the committee public key proofs                    |
+| `BfvDecryptionVerifierRouter`  | `0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E` | 12050099     | Verifies the decryption proofs                              |
 | `OpenVmBfvCiphertextVerifier`  | `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592` | 11873416     | Ciphertext verifier for BFV. It wraps a mock.               |
-| `MockE3Program`                | `0x449D73B60f930c7c50a50147046065C4D255B60b` | 11873232     | Test E3 program. The deployment registers it.               |
+| `MockE3Program`                | `0xc4C83c3C94e9360C136f3cd022925b4979BD580b` | 12050100     | Test E3 program. The deployment registers it.               |
 | `Faucet`                       | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
 `MockUSDC` is a test token. Anyone can call its `mint` function. The deployment uses the same token
@@ -101,7 +101,7 @@ Set the same values in your shell for the `cast` commands, and add the Interfold
 
 ```bash
 source .env
-INTERFOLD_ADDRESS=0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b
+INTERFOLD_ADDRESS=0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26
 ```
 
 ### Get Sepolia USDC
@@ -129,8 +129,8 @@ Hardhat network name (`readDeploymentArgs`). Add a `sepolia` object next to `loc
   "localhost": { "...": "..." },
   "sepolia": {
     "Interfold": {
-      "address": "0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b",
-      "blockNumber": 11873232
+      "address": "0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26",
+      "blockNumber": 12050100
     }
   }
 }
@@ -149,14 +149,14 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b'
-        deploy_block: 11873232
+        address: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26'
+        deploy_block: 12050100
       ciphernode_registry:
-        address: '0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef'
-        deploy_block: 11873232
+        address: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4'
+        deploy_block: 12050100
       bonding_registry:
-        address: '0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2'
-        deploy_block: 11873232
+        address: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F'
+        deploy_block: 12050100
       fee_token:
         address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
         deploy_block: 11856062
