@@ -364,6 +364,8 @@ export interface IdentityGatePlan {
   writtenBlock: number;
   /** Unix second by which a stage must execute: its count of owners holds until then. */
   deadlines?: Record<string, string>;
+  /** The identifier that the last written batch revokes: validate requires its revocation. */
+  revoking?: string;
   batches: Record<string, string>;
 }
 
@@ -574,6 +576,10 @@ async function verifierSettings(
 }
 
 /** Write the raw batch, and the Aragon Safe batch when governance is a DAO. */
+/**
+ * Write the batch of a stage and return the file that governance executes: with Aragon governance,
+ * the proposer Safe's builder batch. The raw action file is then for review only.
+ */
 async function writeBatch(
   config: ProtocolConfigFile,
   stage: string,
@@ -598,17 +604,95 @@ async function writeBatch(
       config.governance?.proposerSafe ?? config.safe,
     );
   }
-  return repoRelativePath(files.raw);
+  return repoRelativePath(config.governance ? files.safeBuilder : files.raw);
+}
+
+/** The summary lines that name the batch files of a stage. */
+function batchLines(
+  config: ProtocolConfigFile,
+  stage: string,
+  transactions: number,
+): string {
+  const files = identityBatchPaths(config, stage);
+  const count = `${transactions} transaction${transactions === 1 ? "" : "s"}`;
+  if (!config.governance) {
+    return `  governance batch:${repoRelativePath(files.raw)} (${count})`;
+  }
+  return `  Safe batch:      ${repoRelativePath(files.safeBuilder)} (the proposer Safe imports this file)
+  DAO actions:     ${repoRelativePath(files.raw)} (${count}, for review only)`;
+}
+
+const PREPARE_DESCRIPTION =
+  "Upgrade BondingRegistry, publish the bond-owner identity registry without requiring it, and refresh every operator.";
+
+/**
+ * Write the prepare batch again for the contracts that the plan deployed, with the current
+ * operators. A batch reverts as a whole when an operator deregisters after it was written.
+ */
+async function rewritePrepare(
+  ethers: any,
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+): Promise<void> {
+  const plan = loadPlan(config, deployment);
+  if (
+    sameAddress(
+      await proxyImplementation(ethers, plan.bondingRegistry),
+      plan.bondingImplementation,
+    )
+  ) {
+    throw new Error(
+      "The prepare batch has executed: BondingRegistry runs the planned implementation. Validate it instead",
+    );
+  }
+  await assertAragonGovernancePreconditions(ethers, config);
+  const { operators, toBlock: writtenBlock } = await registeredOperators(
+    ethers,
+    deployment,
+  );
+  assertBatchSize(operators.length);
+  const txs = buildIdentityGateTransactions({
+    bondingRegistry: deployment.bondingRegistryProxy,
+    upgrade: {
+      proxyAdmin: config.bondingRegistryProxyAdmin,
+      implementation: plan.bondingImplementation,
+    },
+    identityRegistry: plan.identityRegistry,
+    required: false,
+    operators,
+  });
+  plan.batches.prepare = await writeBatch(
+    config,
+    "prepare",
+    txs,
+    PREPARE_DESCRIPTION,
+  );
+  plan.operators = operators.length;
+  plan.refreshed = operators;
+  plan.writtenBlock = writtenBlock;
+  delete plan.revoking;
+  writeJson(planPath(config), plan);
+  console.log(`
+Identity gate prepare batch written again
+  registry:        ${plan.identityRegistry}
+  implementation:  ${plan.bondingImplementation}
+  operators:       ${operators.length}
+${batchLines(config, "prepare", txs.length)}
+  next:            execute the batch, then run "identityGate.ts validate"
+`);
 }
 
 export async function prepareIdentityGate(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
+  if (fs.existsSync(planPath(config)) && hasFlag("rewrite")) {
+    return rewritePrepare(ethers, config, deployment);
+  }
   // A second prepare deploys another registry, and the owners of the first would prove again.
   if (fs.existsSync(planPath(config)) && !hasFlag("new-registry")) {
     throw new Error(
-      `${repoRelativePath(planPath(config))} exists, so ${config.name} has an identity registry. For a new ZKPassport version, use rotate-verifier. Pass --new-registry only to replace the registry, which makes every owner prove again`,
+      `${repoRelativePath(planPath(config))} exists, so ${config.name} has an identity registry. To write the prepare batch again for its contracts, pass --rewrite. For a new ZKPassport version, use rotate-verifier. Pass --new-registry only to replace the registry, which makes every owner prove again`,
     );
   }
   const settings = identityGateSettings(config);
@@ -673,7 +757,7 @@ export async function prepareIdentityGate(): Promise<void> {
     config,
     "prepare",
     txs,
-    "Upgrade BondingRegistry, publish the bond-owner identity registry without requiring it, and refresh every operator.",
+    PREPARE_DESCRIPTION,
   );
 
   const plan: IdentityGatePlan = {
@@ -701,7 +785,7 @@ Identity gate prepared
   registry:        ${identityRegistry} (proxy admin ${identity.proxyAdmin})
   implementation:  ${implementation}
   operators:       ${operators.length}
-  governance batch:${prepareBatch} (${txs.length} transactions)
+${batchLines(config, "prepare", txs.length)}
   next:            execute the batch, then run "identityGate.ts validate"
 `);
 }
@@ -758,6 +842,7 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   );
   plan.refreshed = operators;
   plan.writtenBlock = writtenBlock;
+  delete plan.revoking;
   plan.deadlines = { ...plan.deadlines };
   if (deadline !== undefined) plan.deadlines[stage] = deadline.toString();
   else delete plan.deadlines[stage];
@@ -766,7 +851,7 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
 Identity ${stage} batch written
   registry:        ${plan.identityRegistry}
   operators:       ${operators.length}
-  governance batch:${plan.batches[stage]} (${txs.length} transactions)${deadline !== undefined ? `\n  execute by:      ${isoTime(deadline)}` : ""}
+${batchLines(config, stage, txs.length)}${deadline !== undefined ? `\n  execute by:      ${isoTime(deadline)}` : ""}
 `);
 }
 
@@ -830,7 +915,7 @@ export async function rotateVerifier(): Promise<void> {
 Identity verifier rotation written
   verifier:        ${verifier} (replaces ${current})
   version:         ${settings.zkPassportVersion}
-  governance batch:${plan.batches["rotate-verifier"]} (${txs.length} transaction)
+${batchLines(config, "rotate-verifier", txs.length)}
   next:            execute the batch, then run "identityGate.ts validate" with the current policy
 `);
 }
@@ -897,6 +982,7 @@ export async function revokeIdentity(): Promise<void> {
   );
   plan.refreshed = operators;
   plan.writtenBlock = writtenBlock;
+  plan.revoking = identityId;
   plan.deadlines = { ...plan.deadlines };
   if (deadline !== undefined) plan.deadlines.revoke = deadline.toString();
   else delete plan.deadlines.revoke;
@@ -905,7 +991,7 @@ export async function revokeIdentity(): Promise<void> {
 Identity revoke batch written
   identity:        ${identityId} (owner ${owner})
   operators:       ${operators.length}
-  governance batch:${plan.batches.revoke} (${txs.length} transactions)
+${batchLines(config, "revoke", txs.length)}
   next:            execute the batch, then run "identityGate.ts validate" with the current policy
 `);
 }
@@ -1016,6 +1102,21 @@ export async function validateIdentityGate(): Promise<void> {
       expectedRequired === "true",
     );
   }
+  const revocations = await registry.queryFilter(
+    registry.filters.IdentityRevoked(),
+    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
+  );
+  // An unexecuted revoke batch leaves the policy and the capacity as they were. IdentityRevoked
+  // indexes the identifier as its second topic.
+  const revoking = plan.revoking?.toLowerCase();
+  if (
+    revoking &&
+    !revocations.some((log) => log.topics[2]?.toLowerCase() === revoking)
+  ) {
+    failures.push(
+      `the revoke batch has not executed: no IdentityRevoked for ${plan.revoking}`,
+    );
+  }
   if (failures.length > 0) {
     throw new Error(
       `Identity gate validation failed:\n  ${failures.join("\n  ")}`,
@@ -1030,10 +1131,6 @@ export async function validateIdentityGate(): Promise<void> {
     );
   }
   // The last capacity reset: a policy change or a revocation.
-  const revocations = await registry.queryFilter(
-    registry.filters.IdentityRevoked(),
-    Number(arg("policy-from-block") ?? plan.deployBlock ?? 0),
-  );
   const lastReset = Math.max(
     latest!.blockNumber,
     revocations[revocations.length - 1]?.blockNumber ?? 0,

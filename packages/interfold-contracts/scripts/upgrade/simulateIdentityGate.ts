@@ -8,13 +8,15 @@
 // as governance sends it: with Aragon, the proposer Safe calls the Admin plugin in one transaction.
 //
 //   1. prepare the gate with `identityGate.ts` against copies of the mainnet config and deployment,
-//      execute its batch, and validate it with the policy off;
+//      check that a second prepare is refused and that `--rewrite` writes the batch again for the
+//      same contracts (until it executes), execute its batch, and validate it with the policy off;
 //   2. with --proof, register the proof's bond owner against ZKPassport's mainnet verifier;
 //   3. check that `enforce` refuses while too few owners are verified, that the batch check refuses
 //      its payload, then force it, execute it, and read the owner capacity that it leaves;
 //   4. check that `rotate-verifier` refuses an unchanged config and a changed identifier setting,
 //      then rotate to a verifier with another proof validity; credentials stay;
 //   5. with --proof, revoke the proof's identifier (refused without --force: too few owners stay);
+//      validate refuses the batch until it executes;
 //   6. relax the policy (the rollback): the batch check passes it; execute it and validate again.
 //
 // Usage (from packages/interfold-contracts):
@@ -256,8 +258,15 @@ async function main() {
 
     log("1. prepare, execute, and validate with the policy off");
     mustPass(GATE, ["prepare", ...args]);
+    mustRefuse(GATE, ["prepare", ...args], /pass --rewrite/);
+    mustPass(GATE, ["prepare", ...args, "--rewrite"]);
     const gas = await executeIdentityBatch(provider, forkConfigJson, "prepare");
     mustPass(GATE, ["validate", ...args, "--required", "false"]);
+    mustRefuse(
+      GATE,
+      ["prepare", ...args, "--rewrite"],
+      /prepare batch has executed/,
+    );
     const plan = readJson(
       path.join(protocolDir, "mainnet-fork.identity-gate.json"),
     );
@@ -369,6 +378,11 @@ async function main() {
         identityId,
         "--force",
       ]);
+      mustRefuse(
+        GATE,
+        ["validate", ...rotatedArgs, "--required", "true"],
+        /revoke batch has not executed/,
+      );
       gas.push(
         ...(await executeIdentityBatch(provider, rotatedConfigJson, "revoke")),
       );
