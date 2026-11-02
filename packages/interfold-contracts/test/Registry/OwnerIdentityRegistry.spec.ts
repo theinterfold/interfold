@@ -239,13 +239,16 @@ describe("OwnerIdentityRegistry", function () {
     const before = await time.latest();
 
     const next = await ethers.deployContract("OwnerIdentityRegistry");
+    // Governance is the default signer and owns the proxy admin.
     const proxyAdmin = await ethers.getContractAt(
       "ProxyAdmin",
       deployed.proxyAdmin,
     );
-    await proxyAdmin
-      .connect(governance)
-      .upgradeAndCall(deployed.proxy, await next.getAddress(), "0x");
+    await proxyAdmin.upgradeAndCall(
+      deployed.proxy,
+      await next.getAddress(),
+      "0x",
+    );
 
     expect(await registry.identityOf(alice.address)).to.deep.equal([
       ID,
