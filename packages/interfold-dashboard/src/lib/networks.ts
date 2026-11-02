@@ -57,9 +57,9 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     bondingRegistry: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
     faucet: '0x1B4340A65BB669267BF5DE37385B139987C3F09c',
-    // Deploy block of the Interfold and the CiphernodeRegistry (12050100). A later value silently
-    // drops early registry events.
-    deployBlock: '12050100',
+    // Deploy block of the CiphernodeRegistry (12050030), the earlier of it and the Interfold. A later
+    // value silently drops early registry events.
+    deployBlock: '12050030',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
