@@ -33,6 +33,7 @@ import {
   repoRelativePath,
   writeJson,
 } from "../protocol/files";
+import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
 import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
@@ -52,6 +53,7 @@ import {
   loadConfig,
   requireContract,
 } from "../protocol/values";
+import { getProxyAdmin } from "../proxy";
 import { verifyRecordedDeployments } from "../sourceVerification";
 import {
   deployUpgradeImplementation,
@@ -277,6 +279,10 @@ interface IdentityGatePlan {
   bondingImplementation: string;
   libraries: Record<string, string | undefined>;
   identityRegistry: string;
+  /** The registry implementation behind the `identityRegistry` proxy. */
+  identityRegistryImplementation: string;
+  /** The proxy admin of the registry, owned by the protocol owner. */
+  identityRegistryProxyAdmin: string;
   identityVerifier: string;
   settings: IdentityGateConfig;
   /** Block of the registry deployment: no policy log is older. */
@@ -502,18 +508,16 @@ export async function prepareIdentityGate(): Promise<void> {
   await verifier.waitForDeployment();
   const identityVerifier = await deployedAddress(verifier);
 
-  // Governance owns the registry from the start: it revokes and replaces the verifier.
-  const registryFactory = await ethers.getContractFactory(
-    "OwnerIdentityRegistry",
-  );
-  const registry = await registryFactory.deploy(
+  // Governance owns the registry and its proxy admin from the start: it revokes, replaces the
+  // verifier, and can add recovery through an upgrade.
+  const identity = await deployOwnerIdentityRegistry(
+    ethers,
     config.protocolOwner,
     identityVerifier,
   );
-  await registry.waitForDeployment();
-  const identityRegistry = await deployedAddress(registry);
-  const deployBlock = (await registry.deploymentTransaction()!.wait())!
-    .blockNumber;
+  const identityRegistry = identity.proxy;
+  // No policy log is older: the batch that sets the policy runs after this block.
+  const deployBlock = await ethers.provider.getBlockNumber();
 
   const { implementation, ...libraries } = await deployUpgradeImplementation(
     ethers,
@@ -543,6 +547,8 @@ export async function prepareIdentityGate(): Promise<void> {
     bondingImplementation: implementation,
     libraries,
     identityRegistry,
+    identityRegistryImplementation: identity.implementation,
+    identityRegistryProxyAdmin: identity.proxyAdmin,
     identityVerifier,
     settings,
     deployBlock,
@@ -555,7 +561,7 @@ export async function prepareIdentityGate(): Promise<void> {
   console.log(`
 Identity gate prepared
   verifier:        ${identityVerifier}
-  registry:        ${identityRegistry}
+  registry:        ${identityRegistry} (proxy admin ${identity.proxyAdmin})
   implementation:  ${implementation}
   operators:       ${operators.length}
   governance batch:${prepareBatch} (${txs.length} transactions)
@@ -664,6 +670,25 @@ export async function validateIdentityGate(): Promise<void> {
     plan.identityRegistry,
   );
   expect("registry owner", await registry.owner(), config.protocolOwner);
+  expect(
+    "registry implementation",
+    await proxyImplementation(ethers, plan.identityRegistry),
+    plan.identityRegistryImplementation,
+  );
+  const registryAdmin = await getProxyAdmin(
+    ethers.provider,
+    plan.identityRegistry,
+  );
+  expect(
+    "registry proxy admin",
+    registryAdmin,
+    plan.identityRegistryProxyAdmin,
+  );
+  expect(
+    "registry proxy admin owner",
+    await (await ethers.getContractAt("ProxyAdmin", registryAdmin)).owner(),
+    config.protocolOwner,
+  );
   expect("registry verifier", await registry.verifier(), plan.identityVerifier);
   const verifier = await ethers.getContractAt(
     "ZKPassportIdentityVerifier",

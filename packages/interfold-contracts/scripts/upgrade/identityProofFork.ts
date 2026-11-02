@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 import type { OwnerIdentityRegistry } from "../../types";
 import { arg, connect } from "../protocol/cli";
 import { resolvePath } from "../protocol/files";
+import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
 import { deployedAddress } from "../protocol/values";
 
 const ZKPASSPORT_ROOT_VERIFIER = "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8";
@@ -157,13 +158,13 @@ async function register(
     maxValidity,
   );
   await verifier.waitForDeployment();
-  const registry = (await (
-    await ethers.getContractFactory("OwnerIdentityRegistry")
-  ).deploy(
-    await deployer.getAddress(),
-    await deployedAddress(verifier),
-  )) as unknown as OwnerIdentityRegistry;
-  await registry.waitForDeployment();
+  const registry = (
+    await deployOwnerIdentityRegistry(
+      ethers,
+      await deployer.getAddress(),
+      await deployedAddress(verifier),
+    )
+  ).registry as unknown as OwnerIdentityRegistry;
 
   // A proof for one owner must not register another.
   const stranger = ethersLib.Wallet.createRandom().address;
