@@ -351,6 +351,15 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   assert.match(late, /too old to register/)
 })
 
+test('an unknown policy still offers registration', () => {
+  const unknown = { registry: PROPOSED, required: null, timepoint: null }
+  const idle = renderToStaticMarkup(<IdentityView {...identityProps} policy={unknown} />)
+  assert.match(idle, /Unknown: this RPC keeps no policy history/)
+  assert.match(idle, />Create ZKPassport request</)
+  const ready = renderToStaticMarkup(<IdentityView {...identityProps} policy={unknown} request={{ phase: 'ready', bundle: bundle() }} />)
+  assert.match(ready, /<button class="btn btn--primary">Register the identity/)
+})
+
 test('a registry without a verifier shows the credential but takes no registration', () => {
   const closed = renderToStaticMarkup(<IdentityView {...identityProps} verifier={null} registrationClosed />)
   assert.match(closed, /takes no registration/)

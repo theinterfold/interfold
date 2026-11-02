@@ -26,6 +26,7 @@ import {
   policyFromLog,
   policyScanStart,
   RECENT_POLICY_BLOCKS,
+  resolveIdentityPolicy,
 } from './identity'
 
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -179,4 +180,17 @@ test('the policy log wins; the configured registry opens registration without on
   assert.equal(policyFromLog(log('0x0000000000000000000000000000000000000000', false), configured), null)
   assert.deepEqual(policyFromLog(undefined, configured), { registry: configured, required: null, timepoint: null })
   assert.equal(policyFromLog(undefined, null), null)
+})
+
+test('a failed policy log read falls back to the configured registry', async () => {
+  const registry = '0x4444444444444444444444444444444444444444' as Address
+  const configured = '0x5555555555555555555555555555555555555555' as Address
+  const pruned = async () => {
+    throw new Error('block range is too old')
+  }
+  assert.deepEqual(await resolveIdentityPolicy(pruned, configured), { registry: configured, required: null, timepoint: null })
+  // Without a configured registry the read error stays visible.
+  await assert.rejects(resolveIdentityPolicy(pruned, null), /block range is too old/)
+  const read = async () => ({ args: { registry, required: true, timepoint: 1_700n } })
+  assert.deepEqual(await resolveIdentityPolicy(read, configured), { registry, required: true, timepoint: 1_700n })
 })

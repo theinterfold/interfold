@@ -111,24 +111,38 @@ export function policyFromLog(latest: PolicyLog | undefined, configuredRegistry:
 }
 
 /**
+ * The policy from `readLatest`, the latest IdentityPolicyUpdated log. A failed read falls back to
+ * the configured registry: public RPCs keep about a day of logs, and registration needs none.
+ */
+export async function resolveIdentityPolicy(
+  readLatest: () => Promise<PolicyLog | undefined>,
+  configuredRegistry: Address | null,
+): Promise<IdentityPolicy | null> {
+  let latest: PolicyLog | undefined
+  try {
+    latest = await readLatest()
+  } catch (error) {
+    if (!configuredRegistry) throw error
+  }
+  return policyFromLog(latest, configuredRegistry)
+}
+
+async function readLatestPolicyLog(): Promise<PolicyLog | undefined> {
+  const head = await publicClient.getBlockNumber()
+  const logs = await getLogsChunked<PolicyLog>(
+    { address: CONTRACTS.BondingRegistry, event: IDENTITY_POLICY_UPDATED },
+    policyScanStart(IDENTITY_DEPLOY_BLOCK, head),
+    head,
+  )
+  return logs[logs.length - 1]
+}
+
+/**
  * The current identity policy: the latest IdentityPolicyUpdated log. Null before the first log, and
  * when the latest log clears the registry. A failed log read falls back to the configured registry.
  */
-export async function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
-  let latest: PolicyLog | undefined
-  try {
-    const head = await publicClient.getBlockNumber()
-    const logs = await getLogsChunked<PolicyLog>(
-      { address: CONTRACTS.BondingRegistry, event: IDENTITY_POLICY_UPDATED },
-      policyScanStart(IDENTITY_DEPLOY_BLOCK, head),
-      head,
-    )
-    latest = logs[logs.length - 1]
-  } catch (error) {
-    // Public RPCs keep about a day of logs. The configured registry needs none.
-    if (!IDENTITY_REGISTRY) throw error
-  }
-  return policyFromLog(latest, IDENTITY_REGISTRY)
+export function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
+  return resolveIdentityPolicy(readLatestPolicyLog, IDENTITY_REGISTRY)
 }
 
 /** The verifier settings, or null while the registry has no verifier (registration is closed). */
