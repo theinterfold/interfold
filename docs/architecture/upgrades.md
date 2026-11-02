@@ -146,10 +146,13 @@ that the verification page downloaded against ZKPassport's verifier on an Anvil 
 verifier with the proof's settings, checks that another owner is rejected, registers the bound
 owner, and checks the identifier and the expiry. The proof's version is the value for
 `identity.zkPassportVersion`; ZKPassport rejects a retired version ("Verifier not found"). The
-batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed. After
-the `prepare` batch executes, set `identityDeployBlock` for the network in
-`packages/interfold-dashboard/src/lib/networks.ts` to the upgrade block. Until then, the
-verification page reads only recent blocks for the policy.
+batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed. On the
+day the `prepare` batch executes, set `identityDeployBlock` (the upgrade block) and
+`identityRegistry` (the registry proxy) for the network in
+`packages/interfold-dashboard/src/lib/networks.ts`, and give the production dashboard an RPC that
+serves logs from the upgrade block. Owners register between `prepare` and `enforce`: without the
+registry setting, a public RPC (about a day of logs) loses the registration path; without the RPC,
+the page shows the policy as unknown.
 
 `upgrade:identity:simulate` runs the whole rollout on an Anvil mainnet fork (`FORK_URL`, and
 `LOG_RPC_URL` for the operator history): prepare, execute as the protocol owner, and validate; with
