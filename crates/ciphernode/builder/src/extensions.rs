@@ -394,7 +394,7 @@ mod tests {
             CiphernodeBuilder::bootstrap(e3_test_support::derive_shared_rng(1, 1), cipher.clone());
         let addr = Address::from([0xab; 20]).to_string();
         let repositories = Arc::new(store.repositories());
-        let (sortition, selector_state) = setup_sortition(&bus, &repositories, &addr).await?;
+        let (sortition, selector_state) = setup_sortition(&bus, &repositories, &addr, None).await?;
         let eventstore = system.eventstore_reader()?;
         let storage = Storage {
             chains: Chains::resolve(&[], &mut ProviderCache::new()).await?,

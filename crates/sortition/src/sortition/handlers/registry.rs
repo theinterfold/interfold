@@ -240,7 +240,7 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
     fn handle(
         &mut self,
         msg: TypedEvent<CommitteeRequested>,
-        _: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
@@ -271,7 +271,7 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
             .and_then(|recovery| recovery.pending_requests.get(&e3_id).cloned());
         if self.effects_enabled {
             if let Some(request) = pending {
-                self.perform_sortition(request);
+                self.perform_sortition(request, ctx);
             }
         }
     }

@@ -322,8 +322,10 @@ The actor builds the eligible set from its local node-state projection at $\tau$
 ### Owner shortlist
 
 The actor ranks every eligible operator by its best score, then by address. This order matches the
-capped contract. The first appearance of each owner in that order gives the owner rank. The actor
-keeps every operator of the first $L$ owners, where:
+capped contract. Under a required identity policy, the eligible operators are those that
+`eligibilityAt(operator, T−1)` finds active; when that read fails, the actor ranks every operator
+without the shortlist. The first appearance of each owner in that order gives the owner rank. The
+actor keeps every operator of the first $L$ owners, where:
 
 $$
 L = N + b(T, N), \qquad b(T, N) = (N - T) + m, \qquad

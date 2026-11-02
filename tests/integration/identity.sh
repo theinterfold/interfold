@@ -21,11 +21,12 @@ if [ "$status" -ne 0 ]; then
 fi
 
 # Five nodes also fit the normal owner shortlist (N plus a buffer), so a decrypted round alone does
-# not show that the nodes dropped it. Each node logs this marker when it submits without it.
+# not show that the nodes read the policy. Each node logs this marker when it ranks the operators
+# that eligibilityAt finds active (all five owners are verified).
 for n in 1 2 3 4 5; do
-  if ! grep -q "\[cn$n\].*sortition_identity_policy_all_candidates" "$LOG"; then
-    echo "cn$n did not submit without the owner shortlist" >&2
+  if ! grep -q "\[cn$n\].*sortition_identity_policy_eligible_shortlist" "$LOG"; then
+    echo "cn$n did not rank the eligible operators under the identity policy" >&2
     exit 1
   fi
 done
-echo "Every node submitted without the owner shortlist"
+echo "Every node ranked the eligible operators under the identity policy"

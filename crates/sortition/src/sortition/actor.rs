@@ -13,6 +13,7 @@ use crate::messages::{
 use crate::CiphernodeSelector;
 use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention, IdentityPolicyState};
 use actix::prelude::*;
+use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Result};
 use e3_committee::Committee;
 use e3_data::{AutoPersist, Persistable, Repository};
@@ -85,6 +86,11 @@ pub struct Sortition {
     /// E3s. Startup seeds the set from the lifecycle projection.
     finished_e3s: HashSet<E3id>,
     effects_enabled: bool,
+    /// Reads which candidates are eligible, so a required identity policy keeps the owner
+    /// shortlist. Without it (no chain access), such a request ranks every eligible operator.
+    eligibility: Option<EligibilityReader>,
+    /// Requests whose eligibility read is in flight.
+    reading_eligibility: HashSet<E3id>,
 }
 
 pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 1;
@@ -218,6 +224,7 @@ pub struct SortitionAttachParams<'a> {
     pub address: &'a str,
     pub submitted_e3s: HashSet<E3id>,
     pub finished_e3s: HashSet<E3id>,
+    pub eligibility: Option<EligibilityReader>,
 }
 
 impl Sortition {
@@ -236,7 +243,16 @@ impl Sortition {
             processed_requests: params.submitted_e3s,
             finished_e3s: params.finished_e3s,
             effects_enabled: false,
+            eligibility: None,
+            reading_eligibility: HashSet::new(),
         }
+    }
+
+    /// Under a required identity policy, rank only the candidates that `reader` finds eligible, so
+    /// the owner shortlist stays on. Without a reader, such a request ranks every eligible operator.
+    pub fn with_eligibility(mut self, reader: Option<EligibilityReader>) -> Self {
+        self.eligibility = reader;
+        self
     }
 
     #[instrument(name = "sortition_attach", skip_all)]
@@ -255,6 +271,7 @@ impl Sortition {
             address,
             submitted_e3s,
             finished_e3s,
+            eligibility,
         } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
         let mut node_state = node_state_store.load_or_default(HashMap::new()).await?;
@@ -305,6 +322,7 @@ impl Sortition {
             submitted_e3s,
             finished_e3s,
         })
+        .with_eligibility(eligibility)
         .start();
 
         // Subscribe to state-building events immediately (needed during EventStore replay)
@@ -367,6 +385,48 @@ impl Sortition {
         }
     }
 
+    /// Whether selection for the request at `snapshot` needs a verified bond owner: the policy at
+    /// T-1, or at the admission pause cutoff, which the contract also checks.
+    fn identity_required(&self, chain_id: u64, snapshot: SortitionSnapshot) -> Option<bool> {
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let admission = self.admission.get()?;
+        Some(self.identity_policy.get()?.required_for_selection(
+            chain_id,
+            timepoint,
+            admission.pause_cutoff(chain_id, timepoint),
+        ))
+    }
+
+    /// The eligibility read for a request under a required identity policy: the operators that
+    /// the admission rules leave at T-1. None when the policy does not apply or nothing can be read.
+    pub(super) fn eligibility_read(
+        &self,
+        request: &TypedEvent<E3Requested>,
+    ) -> Option<EligibilityFuture> {
+        let reader = self.eligibility.as_ref()?;
+        let chain_id = request.e3_id.chain_id();
+        let snapshot = self
+            .node_state
+            .get()?
+            .get(&chain_id)?
+            .sortition_snapshot(&request.e3_id)?;
+        if snapshot.request_block != request.request_block
+            || !self.identity_required(chain_id, snapshot)?
+        {
+            return None;
+        }
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let state_map = self.node_state.get()?;
+        let admission = self.admission.get()?;
+        let state = admission.filter(chain_id, timepoint, state_map.get(&chain_id)?);
+        let operators = state
+            .nodes
+            .keys()
+            .filter_map(|address| address.parse().ok())
+            .collect();
+        Some(reader(chain_id, operators, timepoint))
+    }
+
     pub fn get_node_index(
         &self,
         e3_id: E3id,
@@ -374,6 +434,7 @@ impl Sortition {
         chain_id: u64,
         snapshot: SortitionSnapshot,
         candidate_owners: usize,
+        eligible: Option<&HashSet<Address>>,
     ) -> Option<(u64, Option<u64>)> {
         let bus = self.bus.clone();
         let map = self.backends.get()?;
@@ -383,14 +444,27 @@ impl Sortition {
         let owners = self.bond_owners.get()?;
         let admission = self.admission.get()?;
         let timepoint = snapshot.request_block.checked_sub(1)?;
-        let state = admission.filter(chain_id, timepoint, state);
-        // The node does not know which owners hold a credential, so a required identity policy
-        // turns the owner shortlist off and every eligible node submits.
-        let owner_shortlist = !self.identity_policy.get()?.required_for_selection(
-            chain_id,
-            timepoint,
-            admission.pause_cutoff(chain_id, timepoint),
-        );
+        let mut state = admission.filter(chain_id, timepoint, state);
+        // Under a required identity policy, the shortlist ranks only the operators that the bonding
+        // registry found eligible at T-1. Without that read, the node cannot tell verified owners
+        // apart: it turns the shortlist off, and every eligible node submits.
+        let owner_shortlist = match (self.identity_required(chain_id, snapshot)?, eligible) {
+            (false, _) => true,
+            (true, Some(eligible)) => {
+                let filtered = state.retain_operators(eligible);
+                info!(
+                    chain_id,
+                    e3_id = %e3_id,
+                    timepoint,
+                    eligible_operators = filtered.nodes.len(),
+                    event = "sortition_identity_policy_eligible_shortlist",
+                    "The identity policy is required; ranking the eligible operators with the owner shortlist"
+                );
+                state = std::borrow::Cow::Owned(filtered);
+                true
+            }
+            (true, None) => false,
+        };
 
         backend
             .get_submission_index(
@@ -523,6 +597,10 @@ impl Sortition {
 
 #[path = "handlers/mod.rs"]
 mod handlers;
+
+#[path = "eligibility.rs"]
+mod eligibility;
+pub use eligibility::{EligibilityFuture, EligibilityReader};
 
 #[cfg(test)]
 mod tests {

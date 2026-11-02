@@ -315,6 +315,75 @@ mod tests {
     }
 
     #[test]
+    fn an_eligibility_read_keeps_the_shortlist_to_verified_owners() {
+        let mut backend = SortitionBackend::default();
+        let mut state = NodeStateStore::default();
+        let mut owners = BondOwnerState::default();
+        for i in 1..=5u8 {
+            let address = Address::from([i; 20]);
+            backend.add(address.to_string());
+            state.nodes.insert(
+                address.to_string(),
+                NodeState {
+                    ticket_balance: U256::from(10),
+                    active: true,
+                    ticket_balance_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: U256::from(10),
+                    }],
+                    active_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: true,
+                    }],
+                    ..Default::default()
+                },
+            );
+            owners
+                .record(
+                    &e3_events::BondOwnerSet {
+                        operator: address.to_string(),
+                        bond_owner: Address::from([i + 100; 20]).to_string(),
+                        chain_id: 1,
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        // The bonding registry found only the first two operators eligible (verified owners).
+        let eligible =
+            std::collections::HashSet::from([Address::from([1; 20]), Address::from([2; 20])]);
+        let state = state.retain_operators(&eligible);
+        let snapshot = SortitionSnapshot {
+            request_block: 10,
+            ticket_price: U256::from(10),
+        };
+        let submitting = backend
+            .nodes()
+            .into_iter()
+            .filter(|node| {
+                backend
+                    .get_submission_index(
+                        E3id::new("1", 1),
+                        Seed::from(U256::from(1)),
+                        node.clone(),
+                        1,
+                        &state,
+                        snapshot,
+                        2,
+                        &owners,
+                        true,
+                    )
+                    .unwrap()
+                    .is_some()
+            })
+            .map(|node| node.parse::<Address>().unwrap())
+            .collect::<Vec<_>>();
+        // Both verified owners fill the shortlist of two; no other operator submits.
+        assert_eq!(submitting.len(), 2);
+        assert!(submitting.iter().all(|node| eligible.contains(node)));
+    }
+
+    #[test]
     fn a_required_identity_policy_lets_every_eligible_node_submit() {
         let mut backend = SortitionBackend::default();
         let mut state = NodeStateStore::default();

@@ -14,7 +14,7 @@ use e3_events::BusHandle;
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
     AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
-    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory,
+    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory, EligibilityReader,
     FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState, NodeStateRepositoryFactory,
     Sortition, SortitionAttachParams, SortitionBackend, SortitionRecoveryRepositoryFactory,
     SortitionRepositoryFactory,
@@ -26,6 +26,7 @@ pub(super) async fn setup_sortition(
     bus: &BusHandle,
     repositories: &e3_data::Repositories,
     addr: &str,
+    eligibility: Option<EligibilityReader>,
 ) -> Result<(Addr<Sortition>, CiphernodeSelectorState)> {
     let lifecycle = repositories
         .e3_lifecycle()
@@ -78,6 +79,7 @@ pub(super) async fn setup_sortition(
             .filter_map(|(e3_id, ticket)| ticket.node.eq_ignore_ascii_case(addr).then_some(e3_id))
             .collect(),
         finished_e3s,
+        eligibility,
     })
     .await?;
     Ok((sortition, selector_state))
@@ -150,7 +152,7 @@ mod tests {
                 ..Default::default()
             })
             .await?;
-        let (sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+        let (sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
         sortition.send(EffectsEnabled::new()).await?;
         bus.flush_event_pipeline().await?;
         // Without the recovered intent, sortition would try to rank this request and fail
@@ -241,7 +243,7 @@ mod tests {
                 false,
             )
             .await?;
-            let (sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+            let (sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
             if !before_snapshot {
                 // Startup replays the log suffix before it enables effects.
                 sortition
@@ -387,7 +389,8 @@ mod tests {
                 false,
             )
             .await?;
-            let (_sortition, _) = setup_sortition(&bus, &repos, &operator.to_string()).await?;
+            let (_sortition, _) =
+                setup_sortition(&bus, &repos, &operator.to_string(), None).await?;
             if !before_snapshot {
                 // Replay delivers stored envelopes on a fresh bus without appending them again.
                 for event in events {
@@ -597,7 +600,7 @@ mod tests {
                 }
                 .into(),
             );
-            let (_sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+            let (_sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
 
             for (index, data) in events.into_iter().enumerate() {
                 let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -655,7 +658,7 @@ mod tests {
             ]))
             .await?;
 
-        let (_sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+        let (_sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
         system
             .buffer()?
             .send(e3_events::FlushPendingSnapshots)
