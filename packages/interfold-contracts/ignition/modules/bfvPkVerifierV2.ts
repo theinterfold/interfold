@@ -6,13 +6,13 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 import {
+  ACTIVE_BFV_COMMITTEE_N,
+  ACTIVE_BFV_PARAM_SET,
+  BFV_DKG_H,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
-  ACTIVE_BFV_PARAM_SET,
-  BFV_DKG_H,
-  ACTIVE_BFV_COMMITTEE_N,
   readVkRecursiveHash,
 } from "../../scripts/utils";
 import dkgAggregatorV2VerifierModule from "./dkgAggregatorV2Verifier";
