@@ -626,11 +626,14 @@ export const identityMockGate = task(
       const { bondingRegistry } = await deployAndSaveBondingRegistry({ hre });
       const verifier = await ethers.deployContract("MockIdentityVerifier");
       await verifier.waitForDeployment();
-      const registry = await ethers.deployContract("OwnerIdentityRegistry", [
+      const { deployOwnerIdentityRegistry } = await import(
+        "../scripts/protocol/identityRegistry"
+      );
+      const { registry } = await deployOwnerIdentityRegistry(
+        ethers,
         admin.address,
         await verifier.getAddress(),
-      ]);
-      await registry.waitForDeployment();
+      );
 
       // Past the end of the next 30-day capacity window, so every owner counts.
       const latest = await provider.getBlock("latest");
