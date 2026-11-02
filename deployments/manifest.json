@@ -112,8 +112,8 @@
           "deploy_block": 12050098
         },
         "OpenVmBfvCiphertextVerifier": {
-          "address": "0x1F9d7c997D1aBB2970e07C6E50Ca641b7Fd2Df6E",
-          "deploy_block": 12050650
+          "address": "0x86A4C3CF4026599ed521738cd534f1C0354f77fA",
+          "deploy_block": 12050706
         }
       }
     }

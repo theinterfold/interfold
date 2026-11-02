@@ -83,7 +83,7 @@ const ALLOWED: Record<string, string> = {
 
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
-  '0x8d88d6ed93acab8d580347ab7fec178efd3ef250': 'CRISPProgram, sepolia',
+  '0x25df8d3c04d67efb6198e215963d19a8d119adff': 'CRISPProgram, sepolia',
   '0x1ea4dbdec0f2f1e9235915847fc59ef4045eee28': 'CRISPProgram, mainnet',
   // The dashboard still lists the E3s of this earlier mainnet CRISP program.
   '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet, previous deployment',
@@ -91,13 +91,13 @@ const ALLOWED: Record<string, string> = {
   // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
   // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
   // and packages/crisp-contracts/deployed_contracts.json in the CRISP repository.
-  '0x0e3b672a479818049d24ad11d88fcf858e503f1a': 'MockOpenVmReceiptVerifier (CRISP), sepolia',
-  '0x2d78c7d1a0278be46d00637bb2f376df0361d878': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
-  '0x7e1b5a86671549c01f7c4a4ddc583790d1ed71d9': 'HonkVerifier (CRISP), sepolia',
-  '0x4c90773f3d770ed35f8516fea75831a9f5d7ab5f': 'OnchainHonkVerifier (CRISP), sepolia',
-  '0xe657279a7c6304c478328e0de920131388f6031e': 'MockVotingToken (CRISP), sepolia',
+  '0x226436d8a72357c7992896b37f0a2e00dcb6a341': 'MockOpenVmReceiptVerifier (CRISP), sepolia',
+  '0xb5cde772357c9db2d2515cf94daa0696c9a2fb17': 'MockCrispDataAvailabilityVerifier (CRISP), sepolia',
+  '0x0f5f300581273c7986095b76f1d718fe87031ff1': 'HonkVerifier (CRISP), sepolia',
+  '0x584f6b4f0ea4a1b0a94b7224cdfadb3fb5eea7d0': 'OnchainHonkVerifier (CRISP), sepolia',
+  '0xe7d5a0a91a616a78daf5753dbe2ea63edbb9f4f3': 'MockVotingToken (CRISP), sepolia',
   '0xd3a7998d9df56ce2218a26fdc36f3b27870b1b5f': 'BondedCheckpoints, sepolia',
-  '0x69b87c4b2389f562197d7bce1e2b3fb2f9db59f6': 'SelfRegistry (CRISP), sepolia',
+  '0x06fb4dee06483988cf0292691ef46a1e70f3057f': 'SelfRegistry (CRISP), sepolia',
   '0xb34a7998d3960d1e0a91b0cdcfb98d57d66dfea8': 'ChainlinkVrfRandomnessProvider, sepolia',
   '0xfbd932bd297e9c7261a384925e78371c7b1fec7a': 'BondedVotes, sepolia',
 
