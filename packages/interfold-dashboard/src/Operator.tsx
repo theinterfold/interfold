@@ -716,6 +716,7 @@ export default function Operator() {
               key={identityOwner}
               owner={identityOwner}
               wallet={connected ? wallet.address : null}
+              refreshOperator={registered ? operator : null}
               busy={busy}
               send={(key, call) => void run(key, () => write(call))}
               errFor={errFor}
@@ -1383,6 +1384,7 @@ export type IdentityService = {
 }
 
 const REGISTER_IDENTITY_KEY = 'registerIdentity'
+const REFRESH_AFTER_IDENTITY_KEY = 'refreshAfterIdentity'
 
 function identityService(verifier: VerifierConfig | null, previewFaceMatch: boolean): IdentityService {
   return verifier
@@ -1408,12 +1410,15 @@ function identityService(verifier: VerifierConfig | null, previewFaceMatch: bool
 function IdentityPanel({
   owner,
   wallet,
+  refreshOperator,
   busy,
   send,
   errFor,
 }: {
   owner: Address
   wallet: Address | null
+  /** A registered operator of this owner. A refresh of it counts the owner in the current window. */
+  refreshOperator: Address | null
   busy: string | null
   send: (key: string, call: ContractCall) => void
   errFor: (key: string) => ReactNode
@@ -1605,9 +1610,28 @@ function IdentityPanel({
         }
         downloadJson(
           `interfold-identity-safe-${owner}.json`,
-          safeRegistrationBatch(policy!.registry, owner, CHAIN.id, bundle.evidence, Date.now()),
+          safeRegistrationBatch(
+            policy!.registry,
+            owner,
+            CHAIN.id,
+            bundle.evidence,
+            Date.now(),
+            refreshOperator ? { bondingRegistry: CONTRACTS.BondingRegistry, operator: refreshOperator } : undefined,
+          ),
         )
       }}
+      refreshInBatch={refreshOperator !== null}
+      onRefresh={
+        refreshOperator && policy?.required
+          ? () =>
+              send(REFRESH_AFTER_IDENTITY_KEY, {
+                address: CONTRACTS.BondingRegistry,
+                abi: bondingRegistryAbi,
+                functionName: 'refreshOperatorStatus',
+                args: [refreshOperator],
+              })
+          : null
+      }
     />
   )
 }
@@ -1638,6 +1662,8 @@ export function IdentityView({
   onRegister,
   onDownloadProof,
   onDownloadSafe,
+  refreshInBatch = false,
+  onRefresh = null,
 }: {
   owner: Address
   policy: IdentityPolicy | null | undefined
@@ -1661,6 +1687,10 @@ export function IdentityView({
   onRegister: (bundle: ProofBundle) => void
   onDownloadProof: (bundle: ProofBundle) => void
   onDownloadSafe: (bundle: ProofBundle) => void
+  /** The Safe batch also refreshes a registered operator of the owner. */
+  refreshInBatch?: boolean
+  /** Refreshes a registered operator, so a verified owner counts in this window; null hides it. */
+  onRefresh?: (() => void) | null
 }) {
   const preview = policy === null
   const chain = boundChainName(CHAIN.id)
@@ -1753,6 +1783,8 @@ export function IdentityView({
               onRegister={onRegister}
               onDownloadProof={onDownloadProof}
               onDownloadSafe={onDownloadSafe}
+              refreshInBatch={refreshInBatch}
+              onRefresh={onRefresh}
               onRestart={onCancel}
             />
           ) : (
@@ -1845,6 +1877,8 @@ function IdentityProof({
   onRegister,
   onDownloadProof,
   onDownloadSafe,
+  refreshInBatch,
+  onRefresh,
   onRestart,
 }: {
   bundle: ProofBundle
@@ -1859,6 +1893,8 @@ function IdentityProof({
   onRegister: (bundle: ProofBundle) => void
   onDownloadProof: (bundle: ProofBundle) => void
   onDownloadSafe: (bundle: ProofBundle) => void
+  refreshInBatch: boolean
+  onRefresh: (() => void) | null
   onRestart: () => void
 }) {
   const validUntil = BigInt(bundle.validUntil)
@@ -1916,6 +1952,11 @@ function IdentityProof({
             Download the Safe transaction
           </button>
         )}
+        {!preview && !account.isContract && onRefresh && account.identity?.verifiedNow && (
+          <button className='btn btn--ghost' disabled={busy !== null} onClick={onRefresh}>
+            {busy === REFRESH_AFTER_IDENTITY_KEY ? 'Confirming…' : 'Count the owner now'}
+          </button>
+        )}
         <button className='btn btn--ghost' onClick={() => onDownloadProof(bundle)}>
           Download the proof (JSON)
         </button>
@@ -1924,6 +1965,7 @@ function IdentityProof({
         </button>
       </div>
       {errFor(REGISTER_IDENTITY_KEY)}
+      {errFor(REFRESH_AFTER_IDENTITY_KEY)}
       {!preview && !account.isContract && !canRegister && <Note>Connect the bond-owner wallet {shortAddr(owner)} to register.</Note>}
       {!preview && account.isContract && (
         <Note>
@@ -1931,12 +1973,24 @@ function IdentityProof({
           million gas.
         </Note>
       )}
-      {!preview && (
-        <Note>
-          The owner's operators count toward this window's request capacity after their next status refresh. Each node refreshes itself when
-          a window starts; to count now, use <strong>Refresh the status</strong> in Manage the position.
-        </Note>
-      )}
+      {!preview &&
+        (account.isContract && refreshInBatch ? (
+          <Note>The batch also refreshes the operator's status, so the owner counts toward this window's request capacity.</Note>
+        ) : (
+          <Note>
+            The owner's operators count toward this window's request capacity after their next status refresh. Each node refreshes itself
+            when a window starts;{' '}
+            {onRefresh ? (
+              <>
+                to count now, register and then use <strong>Count the owner now</strong>.
+              </>
+            ) : (
+              <>
+                to count now, use <strong>Refresh the status</strong> in Manage the position.
+              </>
+            )}
+          </Note>
+        ))}
     </div>
   )
 }

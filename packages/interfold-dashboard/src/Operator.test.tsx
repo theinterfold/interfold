@@ -327,6 +327,19 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   assert.doesNotMatch(safe, /Register the identity/)
   assert.match(safe, /Safe Transaction Builder/)
 
+  // A registered operator lets the owner count now: a button for a wallet, the batch for a Safe.
+  const verified = account({ identity: { identityId: word(1n), expiresAt: NOW + 200n * DAY, verifiedNow: true } })
+  const countNow = renderToStaticMarkup(<IdentityView {...identityProps} account={verified} request={ready} onRefresh={() => {}} />)
+  assert.match(countNow, />Count the owner now</)
+  assert.doesNotMatch(
+    renderToStaticMarkup(<IdentityView {...identityProps} request={ready} onRefresh={() => {}} />),
+    /Count the owner now<\/button>/,
+  )
+  const safeBatch = renderToStaticMarkup(
+    <IdentityView {...identityProps} account={account({ isContract: true })} request={ready} refreshInBatch />,
+  )
+  assert.match(safeBatch, /The batch also refreshes the operator/)
+
   // The verifier accepts one ZKPassport version.
   const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 232n)) } as const
   const mismatch = renderToStaticMarkup(<IdentityView {...identityProps} request={otherVersion} />)

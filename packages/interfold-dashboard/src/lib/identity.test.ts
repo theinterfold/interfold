@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, pad, toHex, type Address, type Hex } from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
-import { ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
+import { bondingRegistryAbi, ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
 import {
   CAPACITY_WINDOW,
   boundChainName,
@@ -112,6 +112,17 @@ test('a Safe batch registers the evidence from the bound Safe', () => {
   const call = decodeFunctionData({ abi: ownerIdentityRegistryAbi, data: batch.transactions[0].data })
   assert.equal(call.functionName, 'register')
   assert.deepEqual(call.args, [evidence])
+
+  // With a registered operator, the same batch counts the owner in this window.
+  const bonding = '0x6666666666666666666666666666666666666666' as Address
+  const operator = '0x7777777777777777777777777777777777777777' as Address
+  const counted = safeRegistrationBatch(REGISTRY, OWNER, 1, evidence, 1_700_000_000_000, { bondingRegistry: bonding, operator })
+  assert.equal(counted.transactions.length, 2)
+  assert.deepEqual(counted.transactions[0], batch.transactions[0])
+  assert.equal(counted.transactions[1].to, bonding)
+  const refresh = decodeFunctionData({ abi: bondingRegistryAbi, data: counted.transactions[1].data })
+  assert.equal(refresh.functionName, 'refreshOperatorStatus')
+  assert.deepEqual(refresh.args, [operator])
 })
 
 test('the downloaded bundle describes the proof that it carries', () => {

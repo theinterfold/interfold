@@ -277,24 +277,45 @@ export function encodeEvidence(params: SolidityVerifierParameters, validUntil: b
   )
 }
 
-/** A Safe Transaction Builder batch that registers the proof from the Safe that it binds. */
-export function safeRegistrationBatch(registry: Address, safe: Address, chainId: number, evidence: Hex, createdAt: number) {
+/**
+ * A Safe Transaction Builder batch that registers the proof from the Safe that it binds. With a
+ * registered operator of the Safe, the batch then refreshes its status, so the owner counts toward
+ * request capacity in the current window. The operator must stay registered: the batch is atomic.
+ */
+export function safeRegistrationBatch(
+  registry: Address,
+  safe: Address,
+  chainId: number,
+  evidence: Hex,
+  createdAt: number,
+  refresh?: { bondingRegistry: Address; operator: Address },
+) {
+  const transactions = [
+    {
+      to: registry,
+      value: '0',
+      data: encodeFunctionData({ abi: ownerIdentityRegistryAbi, functionName: 'register', args: [evidence] }),
+    },
+  ]
+  if (refresh) {
+    transactions.push({
+      to: refresh.bondingRegistry,
+      value: '0',
+      data: encodeFunctionData({ abi: bondingRegistryAbi, functionName: 'refreshOperatorStatus', args: [refresh.operator] }),
+    })
+  }
   return {
     version: '1.0',
     chainId: String(chainId),
     createdAt,
     meta: {
       name: 'Interfold bond-owner identity',
-      description: 'OwnerIdentityRegistry.register for this Safe. Execute it before the proof expires.',
+      description: refresh
+        ? 'OwnerIdentityRegistry.register for this Safe, then a status refresh of its operator. Execute it before the proof expires.'
+        : 'OwnerIdentityRegistry.register for this Safe. Execute it before the proof expires.',
       createdFromSafeAddress: safe,
     },
-    transactions: [
-      {
-        to: registry,
-        value: '0',
-        data: encodeFunctionData({ abi: ownerIdentityRegistryAbi, functionName: 'register', args: [evidence] }),
-      },
-    ],
+    transactions,
   }
 }
 
