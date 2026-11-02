@@ -46,9 +46,11 @@ connections.
 ## Gossip identity and overload
 
 Periodic retransmission uses a fresh transport delivery ID but the same embedded protocol event ID.
-Libp2p may transmit again; EventBus and stored-event identity still deduplicate the fact. Do not
-accept or forward IDs retained in the six-hour seen window. Stored-event retention is also bounded;
-rejected handoff releases its reservation and append failure stops the node.
+Libp2p may transmit again; EventBus and the six-hour seen window deduplicate the fact. Do not accept
+or forward IDs retained in that window. A copy that arrives after it is stored again at a new
+timestamp, and history replies serve every copy. The translator therefore gossips only events that
+this node created, never network events such as fetched history. Stored-event retention is also
+bounded; rejected handoff releases its reservation and append failure stops the node.
 
 Capacity follows four concurrent N=19/H=14 E3s with 2x margin plus retry bursts. Peers borrow idle
 capacity. At pressure a peer at fair share evicts its own oldest ID; a peer below share reclaims
@@ -73,20 +75,22 @@ events, `StartupBufferReleased` triggers storage flush before history replies vo
 ## Historical sync and coverage
 
 Startup peer history is bounded across **all aggregates, retries, and peer-list waits**: 512 pages,
-50,000 events, 128 MiB, and five minutes per attempt, without an operator override. Missing required
-sources or exhausted budget fails full-node startup; bootstrap explicitly permits absent peer
-history. After required sources exist, exhaustion while seeking optional coverage hints stops that
-extra search rather than discarding the collected sources. Reset can recover only still-available
-chain/peer facts, not a deleted secret share or every historical gossip event.
+50,000 events, 1 GiB downloaded, 128 MiB of kept history with each event counted once, and five
+minutes per attempt, without an operator override. Missing required sources or exhausted budget
+fails full-node startup; bootstrap explicitly permits absent peer history. After required sources
+exist, exhaustion while seeking optional coverage hints stops that extra search rather than
+discarding the collected sources. Reset can recover only still-available chain/peer facts, not a
+deleted secret share or every historical gossip event.
 
 Fetch an aggregate from two admitted sources when available, or its sole connected peer. Page each
-source from the requested timestamp and union by event ID with earliest time. Require
-payload-derived IDs, equal payloads for repeated IDs, advancing cursors, and no events before the
-requested boundary. Compare timestamp claims against retained local records and historical EVM
-inputs (including quarantined legacy records that still occupy timestamps). Different IDs/payload
-digests at one claimed timestamp fail rather than collide later in EventStore. The local claim scan
-is also bounded. Replace bad sources; give replaceable slow peers bounded opportunities so they
-cannot consume the entire attempt.
+source from the requested timestamp and union by event ID with earliest time. Check every served
+copy as its page arrives, and keep one copy of each event ID. Require payload-derived IDs, equal
+payloads for repeated IDs, advancing cursors, and no events before the requested boundary. Compare
+timestamp claims against retained local records and historical EVM inputs (including quarantined
+legacy records that still occupy timestamps). Different IDs/payload digests at one claimed timestamp
+fail rather than collide later in EventStore. The local claim scan is also bounded. Replace bad
+sources; give replaceable slow peers bounded opportunities so they cannot consume the entire
+attempt.
 
 History serving uses timestamp-index order, not physical log order: older remote timestamps can
 follow newer log records. Storage pages are count/decoded-byte bounded, admit one larger record for

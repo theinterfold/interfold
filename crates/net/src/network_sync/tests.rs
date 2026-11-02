@@ -1317,9 +1317,21 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
     assert!(started.elapsed() <= Duration::from_secs(5 * 60 + 1));
 }
 
+/// `events` checked as one page of a peer's history, and the events that the source keeps.
+fn checked_history(
+    history: &AggregateHistory,
+    events: Vec<InterfoldEvent<Unsequenced>>,
+    network: &NetworkPolicy,
+    latest_ts: u128,
+) -> anyhow::Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let mut source = SourceHistory::new(history, network);
+    source.add_page(events)?;
+    source.finish(latest_ts)
+}
+
 #[test]
 fn historical_sync_rejects_non_forwardable_remote_events() {
-    let error = validate_historical_events(
+    let error = checked_history(
         &AggregateHistory::new(AggregateId::new(0), 0, Default::default()),
         vec![remote_unsequenced(local_non_forwardable_event())],
         &NetworkPolicy::local_unrestricted(),
@@ -1339,7 +1351,7 @@ fn a_peer_history_reaches_the_node_as_network_events() {
     let served = local_forwardable_event("1234").clone_unsequenced();
     assert_eq!(served.source(), EventSource::Local);
 
-    let events = validate_historical_events(
+    let events = checked_history(
         &AggregateHistory::new(served.aggregate_id(), 0, Default::default()),
         vec![served],
         &NetworkPolicy::local_unrestricted(),
@@ -1355,7 +1367,7 @@ fn a_peer_history_reaches_the_node_as_network_events() {
 fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
-    let error = validate_historical_events(
+    let error = checked_history(
         &AggregateHistory::new(AggregateId::new(999), 0, Default::default()),
         vec![event],
         &NetworkPolicy::local_unrestricted(),
@@ -1384,7 +1396,7 @@ fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
     );
     let policy = NetworkPolicy::local_unrestricted();
     let check = |events| {
-        validate_historical_events(&history, events, &policy, u128::MAX)
+        checked_history(&history, events, &policy, u128::MAX)
             .map(|_| ())
             .map_err(|error| error.to_string())
     };
@@ -1399,6 +1411,168 @@ fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
     let relabeled = check(vec![received("label", 70)]).unwrap_err();
     assert!(relabeled.contains("this node's event"), "{relabeled}");
     check(vec![stored.clone(), received("e1", 40), received("e1", 41)]).unwrap();
+}
+
+/// Every copy that a peer serves is checked, also a later copy that the source drops for the
+/// earliest one.
+#[test]
+fn every_copy_of_an_event_is_checked() {
+    let stored = received("stored", 30);
+    let history = AggregateHistory::new(
+        AggregateId::new(1),
+        0,
+        Arc::new(HashMap::from([(
+            stored.ts(),
+            TimestampClaim::of(&stored).unwrap(),
+        )])),
+    );
+    let policy = NetworkPolicy::local_unrestricted();
+
+    let taken = checked_history(
+        &history,
+        vec![received("e1", 10), received("e1", 30)],
+        &policy,
+        u128::MAX,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(taken.contains("this node's event"), "{taken}");
+    let late = checked_history(
+        &history,
+        vec![received("e1", 10), received("e1", 40)],
+        &policy,
+        35,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(late.contains("clock-drift allowance"), "{late}");
+}
+
+/// A peer stores an event again each time that the event reaches it after the peer forgot it, and
+/// serves every copy. The node keeps the earliest copy of each event, and counts each event once
+/// against the history that it keeps, so the copies do not exhaust that limit.
+#[actix::test]
+async fn copies_that_peers_store_count_once_against_the_kept_history() {
+    let peer = |offset: u128| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![
+            received("e1", 10 + offset),
+            received("e2", 20 + offset),
+            received("e1", 30 + offset),
+            received("e2", 40 + offset),
+            received("e1", 50 + offset),
+            received("e2", 60 + offset),
+        ],
+        observed_from: Some(0),
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![peer(0), peer(1)];
+    let order = peers.iter().map(|peer| peer.peer).collect();
+    // Room for one copy of each of the two events, while both peers serve three copies of each.
+    let event_bytes = bincode::serialized_size(&received("e1", 10)).unwrap() as usize;
+    let mut budget = SyncFetchBudget::new(512, 50_000, usize::MAX, 2 * event_bytes);
+
+    let history = fetch_in_order_with(peers, order, &mut budget)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fetched_e3s(&history.into_events()),
+        vec![("e1".to_string(), 10), ("e2".to_string(), 20)]
+    );
+}
+
+/// Serve `peers` over a fake transport, and fetch the aggregate's history from them in their order
+/// with `budget`.
+async fn fetch_in_order_with(
+    peers: Vec<FakeHistoryPeer>,
+    order: Vec<PeerId>,
+    budget: &mut SyncFetchBudget,
+) -> anyhow::Result<AggregateHistory> {
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    spawn_fake_history_network(peers, commands_rx, events.clone());
+    fetch_history_from_peers(
+        &commands_tx,
+        &NetEventSubscriber::from(&events),
+        order,
+        AggregateHistory::new(AggregateId::new(1), 0, Default::default()),
+        budget,
+        &NetworkPolicy::local_unrestricted(),
+    )
+    .await
+}
+
+/// The history of e1, e2 and e3 from one peer. With `slow`, the peer answers that many pages and
+/// then falls silent.
+fn three_event_peer(slow: Option<(Duration, usize)>, fails: usize) -> FakeHistoryPeer {
+    FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e1", 10), received("e2", 20), received("e3", 30)],
+        observed_from: Some(0),
+        fails,
+        silent: 0,
+        slow,
+    }
+}
+
+/// A budget whose kept history holds e1, e2 and e3 once.
+fn room_for_three_events() -> SyncFetchBudget {
+    let event_bytes = bincode::serialized_size(&received("e1", 10)).unwrap() as usize;
+    SyncFetchBudget::new(512, 50_000, usize::MAX, 3 * event_bytes)
+}
+
+/// A source that fails after its first page leaves nothing kept, so healthy peers that serve the
+/// same history still fit the kept-history limit.
+#[tokio::test(start_paused = true)]
+async fn a_failed_source_no_longer_counts_against_the_kept_history() {
+    let peers = vec![
+        three_event_peer(Some((Duration::ZERO, 1)), 0),
+        three_event_peer(None, 0),
+        three_event_peer(None, 0),
+    ];
+    let order = peers.iter().map(|peer| peer.peer).collect();
+    let mut budget = room_for_three_events();
+
+    let history = fetch_in_order_with(peers, order, &mut budget)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fetched_e3s(&history.into_events()),
+        vec![
+            ("e1".to_string(), 10),
+            ("e2".to_string(), 20),
+            ("e3".to_string(), 30)
+        ]
+    );
+}
+
+/// An attempt that lacks a source drops the history of the source that served it, so a recovery
+/// round that fetches the same history again still fits the kept-history limit.
+#[tokio::test(start_paused = true)]
+async fn a_failed_attempt_no_longer_counts_against_the_kept_history() {
+    let served = three_event_peer(None, 0);
+    let failing = three_event_peer(None, usize::MAX);
+    let other = three_event_peer(None, 0);
+    let (served_id, failing_id, other_id) = (served.peer, failing.peer, other.peer);
+    let mut budget = room_for_three_events();
+
+    let first = fetch_in_order_with(
+        vec![served.clone(), failing],
+        vec![served_id, failing_id],
+        &mut budget,
+    )
+    .await;
+    assert!(first.is_err());
+    let retry = fetch_in_order_with(vec![served, other], vec![served_id, other_id], &mut budget)
+        .await
+        .unwrap();
+
+    assert_eq!(retry.len(), 3);
 }
 
 /// The node reads the IDs of its stored events in pages, up to the last one.
