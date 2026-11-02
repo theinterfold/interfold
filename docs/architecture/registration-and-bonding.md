@@ -163,17 +163,17 @@ batch that changes a policy or calls `revoke`. Under a required policy, capacity
 windows from Unix time zero: an owner counts only when its credential lasts to the end of the
 current window, so a short credential stays eligible but cannot make the count stale early. Capacity
 reads zero after the window end or a revocation until refreshes rebuild it. While the policy is
-required, each full node refreshes its own operator once in each window, within about 10 minutes of
-the window start, so no keeper is needed. During an admission pause, an operator also needs identity
-at the pause cutoff, so a later credential or policy change cannot widen the frozen pool. Owners
-renew before the window that their credential ends in, or they stop counting toward capacity; an
-owner who renews during a window counts after `interfold ciphernode activate` or at the next window.
-A required policy turns the Rust owner shortlist off, because the node does not know which owners
-hold a credential. Turn `required` on only when, for the largest committee size, enough distinct
-verified owners run a release that has the shortlist change and the self-refresh, are online, and
-are eligible; nodes on an older release keep the shortlist on and can skip seats. An identifier
-proves what its verifier proves (for a document verifier, one document rather than one person); it
-does not stop identity rental.
+required, each full node refreshes its own operator once in each window, about a block after the
+window starts, so no keeper is needed. During an admission pause, an operator also needs identity at
+the pause cutoff, so a later credential or policy change cannot widen the frozen pool. Owners renew
+before the window that their credential ends in, or they stop counting toward capacity; an owner who
+renews during a window counts after `interfold ciphernode activate` or at the next window. A
+required policy turns the Rust owner shortlist off, because the node does not know which owners hold
+a credential. Turn `required` on only when, for the largest committee size, enough distinct verified
+owners run a release that has the shortlist change and the self-refresh, are online, and are
+eligible; nodes on an older release keep the shortlist on and can skip seats. An identifier proves
+what its verifier proves (for a document verifier, one document rather than one person); it does not
+stop identity rental.
 
 `ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
 cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,

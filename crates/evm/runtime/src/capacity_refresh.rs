@@ -9,10 +9,11 @@
 //! Under a required identity policy, BondingRegistry counts bond owners for request admission in
 //! fixed windows. When a window ends, the count reads zero until operator refreshes rebuild it, and
 //! no view shows which owners the new count holds. So each full node refreshes its own operator
-//! once in each window. The node keeps the window in memory, so it refreshes once more after a
-//! restart. A sent refresh settles before the node sends another: a check waits while it is pending,
-//! takes its window from its block once mined, and sends again only if it reverted or left the
-//! mempool.
+//! once in each window. Checks run every interval and also right after each window boundary, so the
+//! count rebuilds about a block after it. The node keeps the window in memory, so it refreshes once
+//! more after a restart. A sent refresh settles before the node sends another: a check waits while
+//! it is pending, takes its window from its block once mined, and sends again only if it reverted
+//! or left the mempool.
 
 use crate::{
     contracts::IBondingRegistry,
@@ -41,6 +42,9 @@ const CAPACITY_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
 /// a node that restarts in a loop from sending a refresh at each start.
 const CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
+/// How long after a window boundary the boundary check runs, so that a block past it exists.
+const BOUNDARY_MARGIN: Duration = Duration::from_secs(15);
+
 /// The refresh writes the registry's activity and capacity checkpoints at `block.timestamp`, so it
 /// needs the same margin as the release acknowledgment.
 const REFRESH_GAS_MULTIPLIER: u64 = 2;
@@ -48,6 +52,16 @@ const REFRESH_GAS_MULTIPLIER: u64 = 2;
 /// Whether the node must refresh its operator at `timestamp`, given the window of its last refresh.
 fn refresh_due(required: bool, timestamp: u64, refreshed_window: Option<u64>) -> bool {
     required && refreshed_window != Some(timestamp / CAPACITY_WINDOW_SECS)
+}
+
+/// The wait before the next check: the interval, or less when the next window starts sooner. Capacity
+/// reads zero from the window start until refreshes rebuild it, so the check runs right after it.
+fn next_check_delay(timestamp: Option<u64>) -> Duration {
+    let Some(timestamp) = timestamp else {
+        return CHECK_INTERVAL;
+    };
+    let boundary = (timestamp / CAPACITY_WINDOW_SECS + 1) * CAPACITY_WINDOW_SECS;
+    (Duration::from_secs(boundary - timestamp) + BOUNDARY_MARGIN).min(CHECK_INTERVAL)
 }
 
 /// The refresh state of one chain between checks.
@@ -176,31 +190,36 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<Check> for Capacity
             .map(|(progress, result), actor, ctx| {
                 // Keep what the check learned even when a later step failed.
                 actor.progress = progress;
-                if let Err(error) = result {
-                    warn!(
-                        chain_id = actor.provider.chain_id(),
-                        "Could not refresh the operator for the owner capacity window: {error:#}"
-                    );
-                }
-                ctx.notify_later(Check, CHECK_INTERVAL);
+                let timestamp = match result {
+                    Ok(timestamp) => timestamp,
+                    Err(error) => {
+                        warn!(
+                            chain_id = actor.provider.chain_id(),
+                            "Could not refresh the operator for the owner capacity window: {error:#}"
+                        );
+                        None
+                    }
+                };
+                ctx.notify_later(Check, next_check_delay(timestamp));
             }),
         )
     }
 }
 
-/// Settle a sent refresh, then refresh the operator when its window is due.
+/// Settle a sent refresh, then refresh the operator when its window is due. Returns the chain time
+/// that the check read, if it got that far.
 async fn check<P>(
     provider: &EthProvider<P>,
     bonding_registry: Address,
     identity_policy: Recipient<IdentityPolicyRequiredAt>,
     progress: &mut Progress,
-) -> Result<()>
+) -> Result<Option<u64>>
 where
     P: Provider + WalletProvider + Clone + 'static,
 {
     if let Some(hash) = progress.pending {
         if !progress.settle(sent_state(provider, hash).await?) {
-            return Ok(());
+            return Ok(None);
         }
     }
     let timestamp = get_current_timestamp_from_provider(provider.clone()).await?;
@@ -211,14 +230,14 @@ where
         })
         .await??;
     if !refresh_due(required, timestamp, progress.refreshed_window) {
-        return Ok(());
+        return Ok(Some(timestamp));
     }
     // An unregistered operator sends nothing and keeps the window open, so a registration later in
     // the window gets its refresh at the next check.
     if let Some(hash) = send_refresh(provider, bonding_registry).await? {
         progress.pending = Some(hash);
     }
-    Ok(())
+    Ok(Some(timestamp))
 }
 
 /// Read where a sent refresh stands.
@@ -280,6 +299,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checks_right_after_the_next_window_starts() {
+        let start = 680 * CAPACITY_WINDOW_SECS;
+        // Far from a boundary, and before the first read: the interval.
+        assert_eq!(next_check_delay(Some(start + 1_000)), CHECK_INTERVAL);
+        assert_eq!(next_check_delay(Some(start)), CHECK_INTERVAL);
+        assert_eq!(next_check_delay(None), CHECK_INTERVAL);
+        // A minute before the next window: just after it starts.
+        assert_eq!(
+            next_check_delay(Some(start + CAPACITY_WINDOW_SECS - 60)),
+            Duration::from_secs(60) + BOUNDARY_MARGIN
+        );
+        // A stalled chain still waits at least the margin, so checks cannot spin.
+        assert_eq!(
+            next_check_delay(Some(start + CAPACITY_WINDOW_SECS - 1)),
+            Duration::from_secs(1) + BOUNDARY_MARGIN
+        );
+    }
 
     #[test]
     fn refreshes_once_in_each_window_under_a_required_policy() {
