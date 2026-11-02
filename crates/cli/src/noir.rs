@@ -8,7 +8,7 @@ use anyhow::*;
 use clap::Subcommand;
 use e3_config::AppConfig;
 use e3_console::{log, Console};
-use e3_zk_prover::{SetupStatus, ZkBackend};
+use e3_zk_prover::{BBPath, SetupStatus, ZkBackend};
 use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
@@ -38,7 +38,11 @@ pub enum NoirCommands {
 }
 
 pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) -> Result<()> {
-    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir());
+    let backend = ZkBackend::new(
+        BBPath::new(config.bb_binary(), config.using_custom_bb()),
+        config.circuits_dir(),
+        config.work_dir(),
+    );
 
     match command {
         NoirCommands::Status => {
@@ -309,7 +313,6 @@ async fn execute_setup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_config::BBPath;
     use e3_zk_prover::ZkConfig;
 
     #[cfg(unix)]
@@ -393,7 +396,7 @@ mod tests {
         ];
         let cli = Cli::try_parse_from(args).unwrap();
         let config = cli.load_config().unwrap();
-        let circuits = config.circuits_dir();
+        let circuits = config.node.circuits_dir();
         assert!(circuits.starts_with(temp.path()));
         fs::create_dir_all(&circuits).unwrap();
         fs::write(circuits.join("retained"), b"previous").unwrap();

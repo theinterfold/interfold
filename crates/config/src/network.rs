@@ -9,7 +9,7 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::chain_config::ChainConfig;
+use e3_evm_config::ChainConfig;
 
 pub const MAINNET_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap.interfold.network";
 pub const SEPOLIA_BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap-sepolia.interfold.network";
@@ -271,7 +271,7 @@ fn infer_name(chains: &[ChainConfig]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{contract::ContractAddresses, rpc::RpcAuth, Contract};
+    use e3_evm_config::{Contract, ContractAddresses, RpcAuth};
 
     fn chain(name: &str, chain_id: Option<u64>) -> ChainConfig {
         let contract =

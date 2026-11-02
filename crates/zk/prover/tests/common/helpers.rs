@@ -4,11 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_config::BBPath;
 #[allow(unused_imports)]
 pub use e3_test_support::find_bb;
 use e3_zk_config::CircuitName;
-use e3_zk_prover::{ZkBackend, ZkConfig};
+use e3_zk_prover::{BBPath, ZkBackend, ZkConfig};
 use std::{env, path::PathBuf};
 use tempfile::TempDir;
 use tokio::fs;

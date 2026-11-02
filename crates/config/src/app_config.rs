@@ -4,22 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::chain_config::ChainConfig;
-use crate::load_config::find_in_parent;
-use crate::load_config::resolve_config_path;
 use crate::network::{NetworkId, NetworkProfile};
 use crate::paths_engine::PathsEngine;
-use crate::paths_engine::DEFAULT_CONFIG_NAME;
-use crate::program_config::ProgramConfig;
-use crate::yaml::load_yaml_with_env;
 use alloy_primitives::Address;
 use anyhow::bail;
-use anyhow::Context;
 use anyhow::Result;
-use figment::{
-    providers::{Env, Format, Serialized, Yaml},
-    Figment,
-};
+use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::{collections::HashMap, env, path::PathBuf};
@@ -157,7 +147,7 @@ impl Default for NodeDefinition {
     }
 }
 
-/// The config actually used throughout the app
+/// Resolved settings for one ciphernode profile.
 #[derive(Debug, Serialize)]
 pub struct AppConfig {
     /// The name of the node
@@ -180,42 +170,11 @@ pub struct AppConfig {
     autopassword: bool,
     /// If a wallet has not been set autogenerate one on start
     autowallet: bool,
-    /// Program config
-    program: ProgramConfig,
     /// A custom bb implementation has been provided do not download and checksum a binary
     using_custom_bb: bool,
     /// Resolved P2P network identity. This value is derived from user configuration.
     #[serde(skip)]
     network: NetworkProfile,
-}
-
-#[derive(Debug, Clone)]
-pub enum BBPath {
-    Custom(PathBuf),
-    Default(PathBuf),
-}
-
-impl BBPath {
-    pub fn is_custom(&self) -> bool {
-        matches!(self, BBPath::Custom(_))
-    }
-
-    pub fn path(&self) -> PathBuf {
-        match self {
-            BBPath::Custom(p) => p.clone(),
-            BBPath::Default(p) => p.clone(),
-        }
-    }
-
-    /// Check the environment variable and if found use that otherwise use the given path
-    pub fn check(default_path: PathBuf) -> Result<Self> {
-        let bb_path = if let Ok(bb_path) = env::var("E3_CUSTOM_BB") {
-            BBPath::Custom(bb_path.into())
-        } else {
-            BBPath::Default(default_path)
-        };
-        Ok(bb_path)
-    }
 }
 
 impl AppConfig {
@@ -296,7 +255,6 @@ impl AppConfig {
             autopassword: node.autopassword,
             autowallet: node.autowallet,
             autonetkey: node.autonetkey,
-            program: config.program.unwrap_or_default(),
             using_custom_bb: config.custom_bb.is_some(),
             network,
         })
@@ -330,13 +288,12 @@ impl AppConfig {
     }
 
     /// Get the bb binary path
-    pub fn bb_binary(&self) -> BBPath {
-        let bb = self.paths.bb_binary();
-        if self.using_custom_bb {
-            BBPath::Custom(bb)
-        } else {
-            BBPath::Default(bb)
-        }
+    pub fn bb_binary(&self) -> PathBuf {
+        self.paths.bb_binary()
+    }
+
+    pub fn using_custom_bb(&self) -> bool {
+        self.using_custom_bb
     }
 
     /// Whether the config is changed from the default
@@ -442,10 +399,6 @@ impl AppConfig {
         self.autopassword
     }
 
-    pub fn program(&self) -> &ProgramConfig {
-        &self.program
-    }
-
     /// Get the optional dashboard port
     pub fn dashboard_port(&self) -> Option<u16> {
         self.node_def().dashboard_port
@@ -512,8 +465,6 @@ pub struct UnscopedAppConfig {
     nodes: HashMap<String, NodeDefinition>,
     /// Set the Open Telemetry collector grpc endpoint. Eg. 127.0.0.1:4317
     otel: Option<String>,
-    /// Program config
-    program: Option<ProgramConfig>,
     /// Path to custom bb binary. When this is set the bb binary is used will not be checksummed it
     /// is up to the node operator to ensure bb matches the version that exactly matches the
     /// application.
@@ -544,52 +495,6 @@ impl UnscopedAppConfig {
     }
 }
 
-/// Value struct for passing configuration from the cli to the configuration. A flag that was not
-/// given is not serialized, so the value from the file or from `E3_*` stays.
-#[derive(Default, Serialize, Deserialize, Clone, Debug)]
-struct CliOverrides {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub otel: Option<String>,
-    pub found_config_file: Option<PathBuf>,
-    pub using_custom_config: bool,
-}
-
-/// Load the config at the config_file or the default location if not provided
-pub fn load_config(
-    name: &str,
-    found_config_file: Option<String>,
-    otel: Option<String>,
-) -> Result<AppConfig> {
-    let found_config_file = found_config_file.map(PathBuf::from);
-    let resolved_config_path = resolve_config_path(
-        find_in_parent,            // finding strategy
-        env::current_dir()?,       // cwd
-        OsDirs::config_dir(),      // default config folder
-        DEFAULT_CONFIG_NAME,       // hardcoded now to interfold.config.yaml
-        found_config_file.clone(), // config file we have found to exist
-    );
-
-    let loaded_yaml =
-        load_yaml_with_env(&resolved_config_path).context("Configuration file not found")?;
-
-    let config: UnscopedAppConfig =
-        Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
-            .merge(Yaml::string(&loaded_yaml))
-            .merge(Env::prefixed("E3_").split("__"))
-            .merge(Serialized::defaults(&CliOverrides {
-                otel,
-                found_config_file: Some(resolved_config_path),
-                using_custom_config: found_config_file.is_some(),
-            }))
-            .extract()
-            .context("Could not parse configuration")?;
-
-    config.into_scoped(name).context(format!(
-        "Could not apply scope '{}' to configuration.",
-        name
-    ))
-}
-
 pub struct OsDirs;
 impl OsDirs {
     pub fn config_dir() -> PathBuf {
@@ -617,8 +522,6 @@ pub fn combine_unique<T: Eq + std::hash::Hash + Clone + Ord>(a: &[T], b: &[T]) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program_config::OpenVmConfig;
-    use crate::rpc::RpcAuth;
     use figment::Jail;
 
     #[test]
@@ -645,11 +548,6 @@ node:
   config_dir: "/myconfig/override"
   db_file: "./foo"
   quic_port: 1234
-
-program:
-  openvm:
-    prover_bin: "/deployment/bin/interfold-openvm-prover"
-    setup_dir: "/deployment/openvm"
 
 nodes:
   ag:
@@ -679,14 +577,6 @@ nodes:
                 PathBuf::from("/myconfig/override/_default/key")
             );
             assert_eq!(config.quic_port(), 1234);
-            assert_eq!(
-                config.program().openvm(),
-                Some(&OpenVmConfig {
-                    prover_bin: Some(PathBuf::from("/deployment/bin/interfold-openvm-prover")),
-                    setup_dir: Some(PathBuf::from("/deployment/openvm")),
-                    ..OpenVmConfig::default()
-                })
-            );
             assert!(config.peers().is_empty());
         };
         {
@@ -802,154 +692,6 @@ nodes:
     }
 
     #[test]
-    fn test_file_not_found() -> Result<()> {
-        let Err(err) = load_config("_default", Some("/nope".to_string()), None) else {
-            bail!("error expected");
-        };
-        let Some(e) = err.downcast_ref::<std::io::Error>() else {
-            bail!("io error expected");
-        };
-
-        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_config() {
-        Jail::expect_with(|jail| {
-            let home = format!("{}", jail.directory().to_string_lossy());
-            jail.set_env("HOME", &home);
-            jail.set_env("XDG_CONFIG_HOME", format!("{}/.config", home));
-
-            let expected_config_dir = OsDirs::config_dir();
-            let filename = expected_config_dir.join("interfold.config.yaml");
-            jail.create_dir(&expected_config_dir)?;
-            jail.create_file(
-                filename.clone(),
-                r#"
-chains:
-  - name: "hardhat"
-    rpc_url: "ws://localhost:8545"
-    rpc_auth:
-      type: "Basic"
-      credentials:
-        username: "testUser"
-        password: "testPassword"
-    contracts:
-      interfold: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-      ciphernode_registry:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 1764352873645
-      bonding_registry: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-"#,
-            )?;
-
-            let mut config = load_config("_default", None, None).map_err(|err| err.to_string())?;
-
-            let mut chain = config.chains().first().unwrap();
-
-            assert_eq!(chain.name, "hardhat");
-            assert_eq!(chain.rpc_url, "ws://localhost:8545");
-            assert_eq!(
-                chain.contracts.interfold.address_str(),
-                "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-            );
-            assert_eq!(
-                chain.contracts.ciphernode_registry.address_str(),
-                "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-            );
-            assert_eq!(
-                chain.rpc_auth,
-                RpcAuth::Basic {
-                    username: "testUser".to_string(),
-                    password: "testPassword".to_string(),
-                }
-            );
-            assert_eq!(chain.contracts.interfold.deploy_block(), None);
-            assert_eq!(
-                chain.contracts.ciphernode_registry.deploy_block(),
-                Some(1764352873645)
-            );
-
-            jail.create_file(
-                filename.clone(),
-                r#"
-chains:
-  - name: "hardhat"
-    rpc_url: "ws://localhost:8545"
-    contracts:
-      interfold: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-      ciphernode_registry:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 1764352873645
-      bonding_registry: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-"#,
-            )?;
-            config = load_config("_default", None, None).map_err(|err| err.to_string())?;
-            chain = config.chains().first().unwrap();
-
-            assert_eq!(chain.rpc_auth, RpcAuth::None);
-
-            jail.create_file(
-                filename,
-                r#"
-chains:
-  - name: "hardhat"
-    rpc_url: "ws://localhost:8545"
-    rpc_auth:
-      type: "Bearer"
-      credentials: "testToken"
-    contracts:
-      interfold: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-      ciphernode_registry:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 1764352873645
-      bonding_registry: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-"#,
-            )?;
-
-            config = load_config("_default", None, None).map_err(|err| err.to_string())?;
-            chain = config.chains().first().unwrap();
-            assert_eq!(chain.rpc_auth, RpcAuth::Bearer("testToken".to_string()));
-
-            Ok(())
-        });
-    }
-
-    /// `otel` comes from the `--otel` flag, else from `E3_OTEL`, else from the configuration file.
-    /// A flag that was not given leaves the others.
-    #[test]
-    fn otel_comes_from_the_flag_the_environment_or_the_file() {
-        Jail::expect_with(|jail| {
-            // An `E3_OTEL` of the shell that runs the test must not decide the first case.
-            jail.clear_env();
-            let home = format!("{}", jail.directory().to_string_lossy());
-            jail.set_env("HOME", &home);
-            jail.set_env("XDG_CONFIG_HOME", format!("{home}/.config"));
-            jail.create_file("interfold.config.yaml", "otel: \"http://from-yaml:4317\"\n")?;
-            let otel = |flag: Option<&str>| {
-                load_config(
-                    "_default",
-                    Some("interfold.config.yaml".to_string()),
-                    flag.map(str::to_string),
-                )
-                .map(|config| config.otel())
-                .map_err(|error| error.to_string())
-            };
-
-            assert_eq!(otel(None)?.as_deref(), Some("http://from-yaml:4317"));
-            jail.set_env("E3_OTEL", "http://from-env:4317");
-            assert_eq!(otel(None)?.as_deref(), Some("http://from-env:4317"));
-            assert_eq!(
-                otel(Some("http://from-flag:4317"))?.as_deref(),
-                Some("http://from-flag:4317")
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
     fn test_multithread_config() -> Result<()> {
         let config_str = r#"
 node:
@@ -1006,30 +748,6 @@ node:
         )?;
         assert!(!default.skip_proof_aggregation());
         Ok(())
-    }
-
-    #[test]
-    fn test_skip_proof_aggregation_can_be_enabled_for_named_node_via_env() {
-        Jail::expect_with(|jail| {
-            jail.set_env("E3_NODES__CN1__SKIP_PROOF_AGGREGATION", "true");
-
-            let config: UnscopedAppConfig =
-                Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
-                    .merge(Env::prefixed("E3_").split("__"))
-                    .extract()
-                    .map_err(|err| err.to_string())?;
-            let config = config
-                .into_scoped_with_defaults(
-                    "cn1",
-                    &PathBuf::from("/default/data"),
-                    &PathBuf::from("/default/config"),
-                    &PathBuf::from("/my/cwd"),
-                )
-                .map_err(|err| err.to_string())?;
-
-            assert!(config.skip_proof_aggregation());
-            Ok(())
-        });
     }
 
     #[test]
@@ -1182,63 +900,5 @@ node:
             );
         }
         Ok(())
-    }
-
-    #[test]
-    fn test_config_env_vars() {
-        Jail::expect_with(|jail| {
-            let home = format!("{}", jail.directory().to_string_lossy());
-            jail.set_env("HOME", &home);
-            jail.set_env("XDG_CONFIG_HOME", format!("{}/.config", home));
-            jail.set_env("TEST_RPC_URL_PORT", "8545");
-            jail.set_env("TEST_USERNAME", "envUser");
-            jail.set_env("TEST_PASSWORD", "envPassword");
-            jail.set_env(
-                "TEST_CONTRACT_ADDRESS",
-                "0x1234567890123456789012345678901234567890",
-            );
-
-            let expected_config_dir = OsDirs::config_dir();
-            let filename = expected_config_dir.join("interfold.config.yaml");
-            jail.create_dir(&expected_config_dir)?;
-            jail.create_file(
-                filename,
-                r#"
-chains:
-  - name: "hardhat"
-    rpc_url: "ws://test-endpoint:${TEST_RPC_URL_PORT}"
-    rpc_auth:
-      type: "Basic"
-      credentials:
-        username: "${TEST_USERNAME}"
-        password: "${TEST_PASSWORD}"
-    contracts:
-      interfold: "${TEST_CONTRACT_ADDRESS}"
-      ciphernode_registry:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 1764352873645
-      bonding_registry: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-"#,
-            )?;
-
-            let config = load_config("_default", None, None).map_err(|err| err.to_string())?;
-            let chain = config.chains().first().unwrap();
-
-            // Test that environment variables are properly substituted
-            assert_eq!(chain.rpc_url, "ws://test-endpoint:8545");
-            assert_eq!(
-                chain.rpc_auth,
-                RpcAuth::Basic {
-                    username: "envUser".to_string(),
-                    password: "envPassword".to_string(),
-                }
-            );
-            assert_eq!(
-                chain.contracts.interfold.address_str(),
-                "0x1234567890123456789012345678901234567890"
-            );
-
-            Ok(())
-        });
     }
 }

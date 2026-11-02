@@ -80,7 +80,7 @@ export const LAYERS = {
     'bfv-client',
   ],
   adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
-  vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts'],
+  vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts', 'evm/config'],
   foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
   validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
 }

@@ -4,10 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! OpenVM program execution configuration.
-//!
-//! Extracted from [`AppConfig`] — these types configure external program
-//! execution, not the ciphernode itself.
+//! Project compile/start settings, interpreted by the CLI's program tooling.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

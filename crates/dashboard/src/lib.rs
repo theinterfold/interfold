@@ -13,11 +13,11 @@ use actix_web::{
     middleware, web, App, HttpResponse, HttpServer, Responder,
 };
 use anyhow::{Context, Result};
-use e3_config::chain_config::ChainConfig;
 use e3_event_system::global_eventstore_cache::EventStoreReader;
 use e3_events::{
     AggregateId, CorrelationId, EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, SeqAgg,
 };
+use e3_evm_config::ChainConfig;
 use e3_logger::LogCollector;
 use e3_net::NetworkStatus;
 use e3_utils::actix::channel as actix_toolbox;

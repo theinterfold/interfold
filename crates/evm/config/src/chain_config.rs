@@ -7,10 +7,7 @@
 use std::hash::Hash;
 use std::time::Duration;
 
-use crate::{
-    contract::ContractAddresses,
-    rpc::{RpcAuth, RPC},
-};
+use crate::{ContractAddresses, RpcAuth, RPC};
 use anyhow::*;
 use e3_events::EvmEventConfigChain;
 use serde::{Deserialize, Serialize};
@@ -161,7 +158,7 @@ impl TryFrom<ChainConfig> for EvmEventConfigChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{contract::Contract, rpc::RpcAuth};
+    use crate::{Contract, RpcAuth};
 
     fn chain(rpc_url: &str) -> ChainConfig {
         let contract = || Contract::Full {

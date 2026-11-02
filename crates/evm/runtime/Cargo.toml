@@ -22,6 +22,7 @@ base64 = { workspace = true }
 bloom = { workspace = true }
 e3-bfv-client = { workspace = true }
 e3-config = { workspace = true }
+e3-evm-config.workspace = true
 e3-crypto = { workspace = true }
 e3-data = { workspace = true }
 e3-data-availability = { workspace = true, features = ["avail-read"] }

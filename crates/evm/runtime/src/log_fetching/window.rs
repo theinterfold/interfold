@@ -23,7 +23,7 @@
 //! provider, not of the block range that was requested, so a window that grew back would find the
 //! same cap again on the next call and pay one more failed request for each chunk.
 
-use e3_config::chain_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
+use e3_evm_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
 
 /// Widest `eth_getLogs` range the node asks for unless the chain configuration sets one.
 pub(crate) const MAX_LOG_WINDOW: u64 = DEFAULT_RPC_LOG_RANGE_BLOCKS;

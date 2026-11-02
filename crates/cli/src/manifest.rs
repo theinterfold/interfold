@@ -19,7 +19,7 @@
 //! attached to each GitHub release as `manifest.json`.
 
 use anyhow::{anyhow, Context, Result};
-use e3_config::{chain_config::ChainConfig, Contract};
+use e3_evm_config::{ChainConfig, Contract};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::time::Duration;

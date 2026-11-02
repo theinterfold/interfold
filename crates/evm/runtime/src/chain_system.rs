@@ -12,8 +12,8 @@ use crate::{
 use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
 use anyhow::{bail, Result};
-use e3_config::chain_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
+use e3_evm_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
 
 pub trait RouteFn: FnOnce(EvmEventProcessor) -> EvmEventProcessor + Send {}
 impl<F> RouteFn for F where F: FnOnce(EvmEventProcessor) -> EvmEventProcessor + Send {}

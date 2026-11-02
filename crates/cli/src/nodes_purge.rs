@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{anyhow, bail, Result};
+use e3_cli::app_config::load_config;
 use e3_config::AppConfig;
 use e3_entrypoint::nodes::purge::PurgeTargets;
 use std::env;
@@ -57,11 +58,13 @@ fn node_configs(config: &AppConfig, config_file: Option<String>) -> Result<Vec<A
     names
         .into_iter()
         .map(|name| {
-            e3_config::load_config(name, config_file.clone(), None).map_err(|error| {
-                anyhow!(
-                    "Could not load node profile `{name}`: {error:#}. The command deleted nothing."
-                )
-            })
+            load_config(name, config_file.clone(), None)
+                .map(|config| config.node)
+                .map_err(|error| {
+                    anyhow!(
+                        "Could not load node profile `{name}`: {error:#}. The command deleted nothing."
+                    )
+                })
         })
         .collect()
 }
@@ -81,7 +84,7 @@ mod tests {
             "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n  cn2:\n    network: local\n",
         )?;
         let config_file = Some(config_file.to_string_lossy().into_owned());
-        let config = e3_config::load_config("cn1", config_file.clone(), None)?;
+        let config = e3_cli::app_config::load_config("cn1", config_file.clone(), None)?.node;
 
         let names: Vec<String> = node_configs(&config, config_file)?
             .iter()

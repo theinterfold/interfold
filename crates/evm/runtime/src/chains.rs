@@ -8,8 +8,8 @@
 
 use crate::{helpers::ConcreteReadProvider, EthProvider, ProviderCache};
 use anyhow::Result;
-use e3_config::chain_config::ChainConfig;
 use e3_events::{AggregateConfig, AggregateId};
+use e3_evm_config::ChainConfig;
 use std::{collections::HashMap, time::Duration};
 
 /// An enabled chain, with its read provider and the chain ID that the provider reports.
@@ -156,11 +156,7 @@ mod tests {
     use super::{aggregate_delay, ensure_one_entry_per_chain, Chains};
     use crate::ProviderCache;
     use alloy::primitives::Address;
-    use e3_config::{
-        chain_config::ChainConfig,
-        contract::{Contract, ContractAddresses},
-        rpc::RpcAuth,
-    };
+    use e3_evm_config::{ChainConfig, Contract, ContractAddresses, RpcAuth};
     use std::time::Duration;
 
     fn chain_with_finalization_ms(finalization_ms: Option<u64>) -> ChainConfig {

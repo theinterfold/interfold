@@ -22,10 +22,11 @@ pub use ciphernode::*;
 
 use actix::Addr;
 use derivative::Derivative;
-use e3_config::{chain_config::ChainConfig, NetworkProfile};
+use e3_config::NetworkProfile;
 use e3_crypto::Cipher;
 #[cfg(feature = "test-helpers")]
 use e3_events::AggregateConfig;
+use e3_evm_config::ChainConfig;
 #[cfg(feature = "test-helpers")]
 use e3_keyshare::DkgTimingReader;
 use e3_multithread::{Multithread, MultithreadReport};

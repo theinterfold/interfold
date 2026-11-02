@@ -11,9 +11,21 @@
       "path": "crates/cli",
       "one_line": "The `interfold` binary: parses commands, runs them locally, or forwards the allowed few to a node already running here.",
       "actors": [],
-      "consumes": [],
+      "consumes": [
+        { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/cli/src/app_config.rs@44@pub fn load_config(" },
+        {
+          "name": "E3_-prefixed environment variables",
+          "by": "load_config",
+          "ref": "crates/cli/src/app_config.rs@64@.merge(Env::prefixed(\"E3_\").split(\"__\"))"
+        }
+      ],
       "emits": [],
       "state": [
+        {
+          "name": "interfold.config.yaml on disk: shared node and program settings",
+          "where": "disk",
+          "ref": "crates/cli/src/app_config.rs@59@load_yaml_with_env(&resolved_config_path)"
+        },
         {
           "name": "installed binary at the resolved current-executable path; update replaces it, uninstall leaves configuration and node data intact",
           "where": "disk",
@@ -27,6 +39,11 @@
       ],
       "key_types": [
         {
+          "name": "ApplicationConfig",
+          "what": "separate resolved node and program settings, passed directly to their consumers",
+          "ref": "crates/cli/src/app_config.rs@21@pub struct ApplicationConfig {"
+        },
+        {
           "name": "Cli",
           "what": "clap parser: global flags (--config, -v, -q, --name, --otel) plus one subcommand",
           "ref": "crates/cli/src/cli.rs@37@pub struct Cli {"
@@ -34,12 +51,12 @@
         {
           "name": "Commands",
           "what": "top-level commands, including node operations, program tooling, update, uninstall and rev",
-          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@281@pub enum Commands {"
         },
         {
           "name": "RemoteCommand",
           "what": "the allow-list of commands that a running node accepts over its control port",
-          "ref": "crates/cli/src/cli.rs@447@pub enum RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@457@pub enum RemoteCommand {"
         },
         {
           "name": "CiphernodeCommands",
@@ -59,16 +76,20 @@
       ],
       "read_first": [
         {
+          "why": "file discovery, YAML expansion, precedence, and named-node scoping",
+          "ref": "crates/cli/src/app_config.rs@44@pub fn load_config("
+        },
+        {
           "why": "the entry point: parse, then forward to a running node or run locally",
           "ref": "crates/cli/src/main.rs@72@pub async fn main() -> Result<()> {"
         },
         {
           "why": "dispatch, including commands that run without config and start's setup path",
-          "ref": "crates/cli/src/cli.rs@89@pub async fn execute(self, out: Console"
+          "ref": "crates/cli/src/cli.rs@89@pub async fn execute("
         },
         {
           "why": "the full command list",
-          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@281@pub enum Commands {"
         },
         {
           "why": "what interfold start does before the node is built",
@@ -85,6 +106,16 @@
       ],
       "rust_patterns": [
         {
+          "pattern": "serde-derive",
+          "note": "one flat file assembles settings owned by the node and program tooling",
+          "ref": "crates/cli/src/app_config.rs@29@#[serde(flatten)]"
+        },
+        {
+          "pattern": "anyhow-context",
+          "note": "a missing YAML file keeps its I/O error under a context message for setup dispatch",
+          "ref": "crates/cli/src/app_config.rs@59@.context(\"Configuration file not found\")"
+        },
+        {
           "pattern": "derive-macro",
           "note": "clap Parser derive builds the argument parser from the struct",
           "ref": "crates/cli/src/cli.rs@33@#[derive(Parser, Clone, Debug)]"
@@ -92,12 +123,12 @@
         {
           "pattern": "serde-derive",
           "note": "RemoteCli is serialized to JSON for the control port",
-          "ref": "crates/cli/src/cli.rs@431@#[derive(Clone, Debug, Serialize, Deserialize)]"
+          "ref": "crates/cli/src/cli.rs@441@#[derive(Clone, Debug, Serialize, Deserialize)]"
         },
         {
           "pattern": "enum-match",
           "note": "the main dispatch: one arm per top-level command",
-          "ref": "crates/cli/src/cli.rs@203@match self.command {"
+          "ref": "crates/cli/src/cli.rs@213@match self.command {"
         },
         {
           "pattern": "trait-impl",
@@ -135,6 +166,7 @@
         "e3-entrypoint",
         "e3-events",
         "e3-evm",
+        "e3-evm-config",
         "e3-logger",
         "e3-trbfv",
         "e3-fhe-params",
@@ -143,7 +175,7 @@
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "Unit tests in src/ (cli.rs, start.rs, update.rs, rev.rs, program_support.rs, helpers/, manifest.rs and others) and tests/cli_secrets.rs; run: cargo test -p e3-cli",
+      "tests": "Unit tests in src/ plus tests/cli_configuration.rs and tests/cli_secrets.rs; run: cargo test -p e3-cli",
       "unverified": [
         "Default control port and log file locations come from e3-config, which was not read.",
         "crates/cli/scripts/openvm-compile.sh was not read."
@@ -335,7 +367,7 @@
         {
           "name": "event log at log_file and sled key/value store at db_file (persisted mode)",
           "where": "disk",
-          "ref": "crates/ciphernode/builder/src/lib.rs@172@pub fn with_persistence(mut self, log_path: &PathBuf, kv_path: &PathBuf) -> Self {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@173@pub fn with_persistence(mut self, log_path: &PathBuf, kv_path: &PathBuf) -> Self {"
         },
         {
           "name": "correlation-ids file next to the event log",
@@ -357,7 +389,7 @@
         {
           "name": "CiphernodeBuilder",
           "what": "builder with one field per setting; build() returns the started handle",
-          "ref": "crates/ciphernode/builder/src/lib.rs@53@pub struct CiphernodeBuilder {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@54@pub struct CiphernodeBuilder {"
         },
         {
           "name": "CiphernodeHandle",
@@ -367,7 +399,7 @@
         {
           "name": "NodeProfile",
           "what": "private full/bootstrap choice; full carries the ZK backend, bootstrap installs no protocol extensions",
-          "ref": "crates/ciphernode/builder/src/lib.rs@86@enum NodeProfile {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@87@enum NodeProfile {"
         },
         {
           "name": "ProviderCache (e3-evm)",
@@ -400,14 +432,14 @@
         },
         {
           "why": "the production caller, with the settings for a full node",
-          "ref": "crates/entrypoint/src/start/start.rs@124@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
+          "ref": "crates/entrypoint/src/start/start.rs@128@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "builder-pattern",
           "note": "each with_* method takes self and returns it, so settings chain",
-          "ref": "crates/ciphernode/builder/src/lib.rs@158@pub fn with_name(mut self, name: &str) -> Self {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@159@pub fn with_name(mut self, name: &str) -> Self {"
         },
         {
           "pattern": "let-else",
@@ -417,12 +449,12 @@
         {
           "pattern": "arc-shared",
           "note": "the cipher is held in an Arc and cloned into the components that need it",
-          "ref": "crates/ciphernode/builder/src/lib.rs@61@cipher: Arc<Cipher>,"
+          "ref": "crates/ciphernode/builder/src/lib.rs@62@cipher: Arc<Cipher>,"
         },
         {
           "pattern": "enum-match",
           "note": "the profile selects full or bootstrap storage-role fencing",
-          "ref": "crates/ciphernode/builder/src/lib.rs@151@match self.profile {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@152@match self.profile {"
         },
         {
           "pattern": "tokio-select",
@@ -443,6 +475,7 @@
         "e3-event-system",
         "e3-events",
         "e3-evm",
+        "e3-evm-config",
         "e3-fhe",
         "e3-keyshare",
         "e3-logger",
@@ -564,7 +597,7 @@
           "ref": "crates/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
         }
       ],
-      "depends_on": ["e3-event-system", "e3-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
+      "depends_on": ["e3-event-system", "e3-evm-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
       "tests": "Unit tests in src/projection.rs and src/updates.rs; run: cargo test -p e3-dashboard",
       "unverified": [
         "assets/app.js (9175 lines) and app.css were not read, so the UI behaviour is not described.",

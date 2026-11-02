@@ -826,7 +826,7 @@ function ciphernode({ units }) {
         style: 'tagged',
         title: 'interfold.config.yaml',
         lines: ['chains · contracts · keys'],
-        drill: 'crate:e3-config',
+        drill: 'crate:e3-cli',
       },
       { id: 'evm', x: 360, y: 470, w: 300, h: 120, title: 'e3-evm', lines: ['decode logs · send txs'], mono: true, drill: 'crate:e3-evm' },
       {
@@ -941,7 +941,7 @@ function ciphernode({ units }) {
         ts: 'l',
         refs: [
           H('crates/entrypoint/src/start/start.rs', 90, 'CiphernodeBuilder::bootstrap(rng, cipher)'),
-          H('crates/entrypoint/src/start/start.rs', 124, 'CiphernodeBuilder::full(rng, cipher, backend)'),
+          H('crates/entrypoint/src/start/start.rs', 128, 'CiphernodeBuilder::full(rng, cipher, backend)'),
           ...ev('B21'),
         ],
       },

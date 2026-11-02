@@ -530,7 +530,7 @@ mod tests {
     use super::*;
     use crate::backend::DEFAULT_BB_TIMEOUT;
     use crate::test_utils::get_tempdir;
-    use e3_config::BBPath;
+    use crate::BBPath;
 
     #[test]
     fn test_prover_requires_bb() {

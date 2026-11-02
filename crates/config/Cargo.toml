@@ -10,16 +10,16 @@ repository.workspace = true
 alloy-primitives = { workspace = true }
 anyhow = { workspace = true }
 dirs = { workspace = true }
-e3-events = { workspace = true }
+e3-evm-config = { workspace = true }
 e3-fhe-params = { workspace = true }
-figment = { workspace = true }
 hex = { workspace = true }
 path-clean = { workspace = true }
 petname = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
-shellexpand = { workspace = true }
-tracing = { workspace = true }
 toml = { workspace = true }
 url = { workspace = true }
+
+[dev-dependencies]
+figment = { workspace = true }
