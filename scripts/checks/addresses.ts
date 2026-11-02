@@ -96,10 +96,10 @@ const ALLOWED: Record<string, string> = {
   '0x3d5d8c688545a3c336d373cc61e501211238226a': 'HonkVerifier (CRISP), sepolia',
   '0x97508380e92a92f2e02818ab493539f84d54c66b': 'OnchainHonkVerifier (CRISP), sepolia',
   '0x52c1ab7e5ee4a8f5ea1ad8d00971f2a7a49ae28c': 'MockVotingToken (CRISP), sepolia',
-  '0x4b4b85f007c241bd8bf22c951efe0f44d82ae6d1': 'BondedCheckpoints, sepolia',
+  '0xd3a7998d9df56ce2218a26fdc36f3b27870b1b5f': 'BondedCheckpoints, sepolia',
   '0x31de033af64f9955b729714d49c8bbf3b5f33847': 'SelfRegistry (CRISP), sepolia',
-  '0xea5a716afce9c7a4fd6808ca7b0db4dec40a9e1b': 'ChainlinkVrfRandomnessProvider, sepolia',
-  '0x1c721de6a736054dbe7e8fce99a68b76d4f603fb': 'BondedVotes, sepolia',
+  '0xb34a7998d3960d1e0a91b0cdcfb98d57d66dfea8': 'ChainlinkVrfRandomnessProvider, sepolia',
+  '0xfbd932bd297e9c7261a384925e78371c7b1fec7a': 'BondedVotes, sepolia',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish
   // it. Until then no check can tell a correct value here from a stale one.
