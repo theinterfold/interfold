@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { OwnerIdentityRegistry } from "../../types";
 import { ethers, networkHelpers } from "../fixtures";
 
@@ -69,10 +70,13 @@ async function setup() {
     "ZKPassportIdentityVerifier",
     verifierArgs,
   );
-  const registry = (await ethers.deployContract("OwnerIdentityRegistry", [
-    governance.address,
-    await verifier.getAddress(),
-  ])) as unknown as OwnerIdentityRegistry;
+  const registry = (
+    await deployOwnerIdentityRegistry(
+      ethers,
+      governance.address,
+      await verifier.getAddress(),
+    )
+  ).registry as unknown as OwnerIdentityRegistry;
   const { chainId } = await ethers.provider.getNetwork();
   return {
     owner,
