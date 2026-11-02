@@ -1446,6 +1446,23 @@ fn every_copy_of_an_event_is_checked() {
     .unwrap_err()
     .to_string();
     assert!(late.contains("clock-drift allowance"), "{late}");
+
+    // A source keeps its checks across pages: a later page cannot reuse a timestamp, or bring
+    // another payload under an event ID that an earlier page served.
+    let mut source = SourceHistory::new(&history, &policy);
+    source.add_page(vec![received("e1", 40)]).unwrap();
+    let shared = source
+        .add_page(vec![received("e2", 40)])
+        .unwrap_err()
+        .to_string();
+    assert!(shared.contains("at the same timestamp"), "{shared}");
+    let mut source = SourceHistory::new(&history, &policy);
+    source.add_page(vec![received("e1", 10)]).unwrap();
+    let relabeled = source
+        .add_page(vec![mislabeled("other", "e1", 20)])
+        .unwrap_err()
+        .to_string();
+    assert!(relabeled.contains("whose payload has ID"), "{relabeled}");
 }
 
 /// A peer stores an event again each time that the event reaches it after the peer forgot it, and
@@ -1471,8 +1488,7 @@ async fn copies_that_peers_store_count_once_against_the_kept_history() {
     let peers = vec![peer(0), peer(1)];
     let order = peers.iter().map(|peer| peer.peer).collect();
     // Room for one copy of each of the two events, while both peers serve three copies of each.
-    let event_bytes = bincode::serialized_size(&received("e1", 10)).unwrap() as usize;
-    let mut budget = SyncFetchBudget::new(512, 50_000, usize::MAX, 2 * event_bytes);
+    let mut budget = room_for_events(2);
 
     let history = fetch_in_order_with(peers, order, &mut budget)
         .await
@@ -1519,10 +1535,26 @@ fn three_event_peer(slow: Option<(Duration, usize)>, fails: usize) -> FakeHistor
     }
 }
 
-/// A budget whose kept history holds e1, e2 and e3 once.
-fn room_for_three_events() -> SyncFetchBudget {
+/// A budget whose kept history holds `count` events of the size of `received`'s.
+fn room_for_events(count: usize) -> SyncFetchBudget {
     let event_bytes = bincode::serialized_size(&received("e1", 10)).unwrap() as usize;
-    SyncFetchBudget::new(512, 50_000, usize::MAX, 3 * event_bytes)
+    SyncFetchBudget::new(512, 50_000, usize::MAX, count * event_bytes)
+}
+
+/// The fetch counts the history that it keeps: distinct events beyond the kept-history limit
+/// fail it.
+#[tokio::test(start_paused = true)]
+async fn history_beyond_the_kept_limit_fails_the_fetch() {
+    let peers = vec![three_event_peer(None, 0), three_event_peer(None, 0)];
+    let order = peers.iter().map(|peer| peer.peer).collect();
+    let mut budget = room_for_events(2);
+
+    let Err(error) = fetch_in_order_with(peers, order, &mut budget).await else {
+        panic!("the fetch kept history beyond its limit");
+    };
+
+    let error = format!("{error:#}");
+    assert!(error.contains("kept-history limit"), "{error}");
 }
 
 /// A source that fails after its first page leaves nothing kept, so healthy peers that serve the
@@ -1535,7 +1567,7 @@ async fn a_failed_source_no_longer_counts_against_the_kept_history() {
         three_event_peer(None, 0),
     ];
     let order = peers.iter().map(|peer| peer.peer).collect();
-    let mut budget = room_for_three_events();
+    let mut budget = room_for_events(3);
 
     let history = fetch_in_order_with(peers, order, &mut budget)
         .await
@@ -1559,7 +1591,7 @@ async fn a_failed_attempt_no_longer_counts_against_the_kept_history() {
     let failing = three_event_peer(None, usize::MAX);
     let other = three_event_peer(None, 0);
     let (served_id, failing_id, other_id) = (served.peer, failing.peer, other.peer);
-    let mut budget = room_for_three_events();
+    let mut budget = room_for_events(3);
 
     let first = fetch_in_order_with(
         vec![served.clone(), failing],

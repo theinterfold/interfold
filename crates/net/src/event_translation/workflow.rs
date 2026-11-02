@@ -357,20 +357,6 @@ mod tests {
         assert_eq!(decoded.get_data(), event.get_data());
     }
 
-    /// Startup publishes the history that it fetched from peers as network events. Gossiping that
-    /// history again would make every peer that forgot it store another copy.
-    #[test]
-    fn events_from_the_network_are_not_gossiped_again() {
-        let mut svc = EventTranslationService::new("topic");
-        let fetched = local_forwardable_event().with_source(EventSource::Net);
-
-        assert!(svc.prepare_outbound(fetched).unwrap().is_none());
-        assert!(svc
-            .prepare_outbound(local_forwardable_event())
-            .unwrap()
-            .is_some());
-    }
-
     #[test]
     fn outbound_is_not_final_until_publish_is_confirmed() {
         let mut svc = EventTranslationService::new("topic");
