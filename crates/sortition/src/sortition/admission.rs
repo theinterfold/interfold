@@ -125,6 +125,10 @@ impl AdmissionState {
 pub struct IdentityPolicyState {
     pub schema_version: u32,
     pub chains: HashMap<u64, Vec<StateCheckpoint<bool>>>,
+    /// Per chain, the journal sequence of the chain aggregate that the projection replayed through
+    /// at startup. The next startup replays the raw logs after it, so policy logs that a binary
+    /// without this projection ingested in between still count.
+    pub replayed: HashMap<u64, u64>,
 }
 
 impl Default for IdentityPolicyState {
@@ -132,6 +136,7 @@ impl Default for IdentityPolicyState {
         Self {
             schema_version: 1,
             chains: HashMap::new(),
+            replayed: HashMap::new(),
         }
     }
 }
@@ -152,6 +157,23 @@ impl IdentityPolicyState {
             change.timepoint,
             change.required,
         )
+    }
+
+    /// Records a replayed change unless the history already holds a later one. Returns whether the
+    /// change was new.
+    pub fn catch_up(&mut self, change: &IdentityPolicyChange) -> Result<bool> {
+        let latest = self
+            .chains
+            .get(&change.chain_id)
+            .and_then(|history| history.last());
+        if latest.is_some_and(|last| {
+            last.timepoint > change.timepoint
+                || (last.timepoint == change.timepoint && last.value == change.required)
+        }) {
+            return Ok(false);
+        }
+        self.record(change)?;
+        Ok(true)
     }
 
     /// Whether the policy at `timepoint` requires a verified bond owner.

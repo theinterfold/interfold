@@ -438,11 +438,112 @@ mod tests {
                 legacy_bytes,
                 bincode::serialize(&legacy_store.read().await?.unwrap())?
             );
+            // A second recovery keeps the projection; only its replay position can move forward.
             assert_eq!(
-                bincode::serialize(&identity)?,
-                bincode::serialize(&repos.sortition_identity_policy().read().await?.unwrap())?
+                bincode::serialize(&identity.chains)?,
+                bincode::serialize(
+                    &repos
+                        .sortition_identity_policy()
+                        .read()
+                        .await?
+                        .unwrap()
+                        .chains
+                )?
             );
         }
+        Ok(())
+    }
+
+    /// A binary without the identity projection (an older release run in between) takes in policy
+    /// logs without projecting them. The next startup of this binary still applies them.
+    #[actix::test]
+    async fn an_existing_identity_projection_catches_up_on_unprojected_logs() -> anyhow::Result<()>
+    {
+        use alloy::{
+            primitives::{keccak256, U256},
+            sol_types::SolValue,
+        };
+        use e3_events::{
+            AggregateConfig, AggregateId, EventConstructorWithTimestamp, EventSource,
+            EvmLogObserved, InterfoldEvent, Unsequenced,
+        };
+        use e3_sortition::SortitionRecoveryRepositoryFactory;
+        use e3_sync::SyncRepositoryFactory;
+
+        let aggregate = AggregateId::from_chain_id(Some(1));
+        let system = e3_event_system::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([
+                (aggregate, Duration::ZERO),
+                (AggregateId::from_chain_id(None), Duration::ZERO),
+            ])));
+        let bus = system.handle()?.enable("identity-catch-up");
+        let repos = e3_data::Repositories::from(system.store()?);
+        let policy_log = |timepoint: u64, required: bool, index: u128| {
+            let log = EvmLogObserved {
+                contract: "BondingRegistry".into(),
+                chain_id: 1,
+                e3_id: None,
+                event_name: "UnknownEvmLog".into(),
+                signature: None,
+                known: false,
+                topics: vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)").to_string()],
+                data: e3_utils::ArcBytes::from_bytes(
+                    &(U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
+                ),
+            };
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                log.into(),
+                None,
+                index,
+                Some(1),
+                EventSource::Evm,
+            )
+        };
+
+        // This binary starts with one enforcement in the journal.
+        bus.naked_dispatch_async(policy_log(30, true, 1)).await?;
+        bus.flush_event_pipeline().await?;
+        repos.aggregate_seq(aggregate).write_sync(&1).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let first = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(first.required_at(1, 35));
+        assert_eq!(first.replayed.get(&1), Some(&1));
+
+        // Another binary takes in the relaxation; the snapshot stays as it was.
+        bus.naked_dispatch_async(policy_log(40, false, 2)).await?;
+        bus.flush_event_pipeline().await?;
+        repos.aggregate_seq(aggregate).write_sync(&2).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let caught_up = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(caught_up.required_at(1, 35));
+        assert!(!caught_up.required_at(1, 45), "the relaxation must count");
+        assert_eq!(caught_up.replayed.get(&1), Some(&2));
+
+        // A third startup with nothing new keeps the projection.
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        assert_eq!(
+            bincode::serialize(&caught_up)?,
+            bincode::serialize(&repos.sortition_identity_policy().read().await?.unwrap())?
+        );
         Ok(())
     }
 

@@ -108,10 +108,10 @@ snapshot owners. A required identity policy at T−1 also turns the shortlist of
 does not know which owners hold a credential: every eligible operator submits, and the ticket gas
 estimate fails for an operator whose owner has no credential, so it sends nothing. During an
 admission pause, a policy that was required at the pause cutoff also turns the shortlist off, as the
-contract still checks identity at the cutoff. The node reads the policy history from its own log; a
-node that ran an older release while the policy changed, and then upgrades again, keeps the old
-history until its data is reset. Committee formation requires N distinct snapshot owners, not N
-submissions.
+contract still checks identity at the cutoff. The node reads the policy history from its own log.
+Each startup also applies the policy logs that the log took in after the previous startup, so a node
+that ran an older release while the policy changed catches up when it upgrades again. Committee
+formation requires N distinct snapshot owners, not N submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an
