@@ -1,0 +1,13 @@
+{
+  "preset": "secure-8192",
+  "committee": "minimum",
+  "commitments": {
+    "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x1aa19b5c1c7fe5b1c0a24b00fc9206eb0588079656d231a2497dcf21439e798d",
+    "bb-vk-hash/default/threshold/pk_aggregation": "0x06b8b089ed341146e56c7a3feca5458eaf002fe9471a473edc8d6f704a0cb608",
+    "bb-vk-hash/default/threshold/user_data_encryption": "0x16aefe1e3c4433e3598db743f9c5f54d8d70b1cff23f2e35058f42654d296d2b",
+    "bb-vk-hash/default/threshold/user_data_encryption_ct0": "0x25ebaddbef399171c13de5486c8706466844cfc157f55778d573ff03dc9137d3",
+    "bb-vk-hash/default/threshold/user_data_encryption_ct1": "0x27a7ae26f2ad3ceaf3554b143b231f1268a31e17e946de100344fa36f68fc627",
+    "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x21421f8db49049eda4376e13e850fa044fc8beb5f6ab77392623854fa8a502d2",
+    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x26f7389cc7edea0b307aae6e48870b263ef9c59b69dbc36b4df3111accacb820"
+  }
+}
