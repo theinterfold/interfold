@@ -110,6 +110,11 @@ The DAppNode Mainnet package uses UDP port `37173` for QUIC, and the Sepolia pac
 Cloud firewalls (for example, AWS security groups or GCP firewall rules) must allow inbound UDP on
 the QUIC port. Behind NAT, forward the same UDP port to the host.
 
+The node accepts at most 8 inbound connections from one IP address (for IPv6, from one /56 prefix).
+You do not need a firewall rule for this. If you add a per-source limit on the QUIC port, set it to
+8 or more, because several nodes can share one address. A firewall counts UDP flows, and one flow
+can carry more than one QUIC connection, so a firewall limit does not replace the node's limit.
+
 <Callout type='warning'>
   The control port accepts CLI commands for the running node. The node binds it to `127.0.0.1`. Do
   not forward or publish it.

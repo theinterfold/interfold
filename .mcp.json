@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "interfold-docs": {
-      "command": "pnpm",
-      "args": ["--filter", "@interfold/mcp", "exec", "tsx", "src/index.ts"]
+      "command": "node",
+      "args": ["--import", "tsx", "packages/interfold-mcp/src/index.ts"]
     }
   }
 }

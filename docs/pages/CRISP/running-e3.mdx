@@ -232,9 +232,13 @@ The local deployment uses the mock data-availability verifier, and `availability
 is 0. The CLI sets `start` to the latest block time plus `VOTING_START_BUFFER_SECONDS`.
 `CRISPProgram.validate` does no timing checks in this mode.
 
+The Sepolia program uses the mock verifier too, with `availabilityFinalizationWindow` set to 0,
+while Avail Turing is down. The server needs `DATA_AVAILABILITY_MODE=mock` and
+`ALLOW_SEPOLIA_MOCK_DATA_AVAILABILITY=true`.
+
 ### Avail networks
 
-On Sepolia and Ethereum mainnet, each round has three limits:
+On Ethereum mainnet, each round has three limits:
 
 | Limit   | Value                                                   | Rule                                                                                 |
 | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
