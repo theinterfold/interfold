@@ -208,8 +208,9 @@ in the CRISP repository.
 | MockVotingToken                   | `0xE7d5a0A91A616A78DAF5753DBe2eA63EdBB9f4F3` | 12050718     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0xE7d5a0A91A616A78DAF5753DBe2eA63EdBB9f4F3) |
 | SelfRegistry (CRISP)              | `0x06FB4dee06483988cf0292691Ef46A1e70F3057f` | 12050719     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x06FB4dee06483988cf0292691Ef46A1e70F3057f) |
 
-`CRISPProgram` and the Honk verifiers on Sepolia come from the CRISP deployment for the
-`@crisp-e3/sdk` 0.28.0 circuits. `availabilityFinalizationWindow` is 0.
+`CRISPProgram` and the Honk verifiers on Sepolia come from the CRISP deployment for the circuits of
+`@crisp-e3/sdk` 0.28.0 and 0.28.1. Use 0.28.1: with 0.28.0, proof generation fails in Chromium-based
+browsers. `availabilityFinalizationWindow` is 0.
 
 The fee token is `MockUSDC`, a test USDC with 6 decimals. Anyone can call its `mint` function. It is
 also the ticket collateral. To confirm it on-chain, call `feeToken()` on the `Interfold` contract.
