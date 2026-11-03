@@ -58,20 +58,20 @@
       "mocks": true,
       "contracts": {
         "interfold": {
-          "address": "0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b",
-          "deploy_block": 11873232
+          "address": "0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26",
+          "deploy_block": 12050035
         },
         "ciphernode_registry": {
-          "address": "0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef",
-          "deploy_block": 11873232
+          "address": "0x895392D5782E78768A35B1aDfc5b0BD1faB259e4",
+          "deploy_block": 12050030
         },
         "bonding_registry": {
-          "address": "0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2",
-          "deploy_block": 11873232
+          "address": "0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F",
+          "deploy_block": 12050022
         },
         "slashing_manager": {
-          "address": "0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d",
-          "deploy_block": 11873232
+          "address": "0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D",
+          "deploy_block": 12050027
         },
         "fee_token": {
           "address": "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B",
@@ -88,32 +88,32 @@
           "deploy_block": 11873112
         },
         "InterfoldTicketToken": {
-          "address": "0x3FBdF3d172866d80c872f165774B7515f6Babb8f",
-          "deploy_block": 11873232
+          "address": "0xE7cCF95F36131340bdAB122C4cc09787D28217e5",
+          "deploy_block": 12050025
         },
         "E3RefundManager": {
-          "address": "0xA60139169a7c901291070A8D57ef4aE816a7fe80",
-          "deploy_block": 11873232
+          "address": "0x272f3A25E30990A7C30b7B90a240e7afe4365349",
+          "deploy_block": 12050041
         },
         "NodeReleaseRegistry": {
-          "address": "0xD37c5143cd70EC70714409f2D475904563E20d69",
-          "deploy_block": 11873232
+          "address": "0xd6d7D4839985BFEB5d6440A1ECe594e288C128e6",
+          "deploy_block": 12050048
         },
         "MockE3Program": {
-          "address": "0x449D73B60f930c7c50a50147046065C4D255B60b",
-          "deploy_block": 11873232
+          "address": "0xc4C83c3C94e9360C136f3cd022925b4979BD580b",
+          "deploy_block": 12050024
         },
         "BfvDecryptionVerifierRouter": {
-          "address": "0x056a612851061f22341C08781a1Fc8f292AB1657",
-          "deploy_block": 11873231
+          "address": "0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E",
+          "deploy_block": 12050099
         },
         "BfvPkVerifierRouter": {
-          "address": "0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d",
-          "deploy_block": 11873230
+          "address": "0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B",
+          "deploy_block": 12050098
         },
         "OpenVmBfvCiphertextVerifier": {
-          "address": "0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592",
-          "deploy_block": 11873416
+          "address": "0x86A4C3CF4026599ed521738cd534f1C0354f77fA",
+          "deploy_block": 12050706
         }
       }
     }

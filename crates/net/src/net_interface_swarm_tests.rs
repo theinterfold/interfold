@@ -62,6 +62,35 @@ impl TestNode {
         *self.interface.swarm.local_peer_id()
     }
 
+    /// Put the node on `AddressTestTransport`, with a new identity. Returns the dial log.
+    fn use_address_test_transport(
+        &mut self,
+        incoming_ip: Option<Ipv4Addr>,
+    ) -> anyhow::Result<Arc<Mutex<Vec<Multiaddr>>>> {
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let dials = Arc::new(Mutex::new(Vec::new()));
+        let transport = AddressTestTransport {
+            inner: libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(&key)),
+            dials: dials.clone(),
+            incoming_ip,
+        }
+        .map(|(peer, connection), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(connection)))
+        .boxed();
+        self.interface.swarm = libp2p::Swarm::new(
+            transport,
+            super::create_behaviour(&key, &self.interface.network)
+                .map_err(|error| anyhow::anyhow!("{error}"))?,
+            key.public().to_peer_id(),
+            libp2p::swarm::Config::with_tokio_executor(),
+        );
+        self.interface
+            .swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&self.interface.topic)?;
+        Ok(dials)
+    }
+
     fn health(&mut self) -> &mut super::GossipSubscriptionHealth {
         &mut self.interface.swarm.behaviour_mut().gossip_health
     }
@@ -210,10 +239,12 @@ impl TestNode {
 }
 
 // Map documentation-range addresses to local QUIC sockets. The behaviour sees a public listener
-// and real Identify messages; the dial log records addresses before the transport maps them.
+// and real Identify messages; the dial log records addresses before the transport maps them. With
+// `incoming_ip`, incoming connections appear to come from that address.
 struct AddressTestTransport<T> {
     inner: T,
     dials: Arc<Mutex<Vec<Multiaddr>>>,
+    incoming_ip: Option<Ipv4Addr>,
 }
 
 fn with_ip(address: Multiaddr, ip: Ipv4Addr) -> Multiaddr {
@@ -257,6 +288,7 @@ impl<T: Transport + Unpin> Transport for AddressTestTransport<T> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<TransportEvent<Self::ListenerUpgrade, Self::Error>> {
+        let incoming_ip = self.incoming_ip;
         Pin::new(&mut self.get_mut().inner)
             .poll(cx)
             .map(|event| match event {
@@ -267,9 +299,150 @@ impl<T: Transport + Unpin> Transport for AddressTestTransport<T> {
                     listener_id,
                     listen_addr: with_ip(listen_addr, Ipv4Addr::new(203, 0, 113, 1)),
                 },
+                TransportEvent::Incoming {
+                    listener_id,
+                    upgrade,
+                    local_addr,
+                    send_back_addr,
+                } if incoming_ip.is_some() => TransportEvent::Incoming {
+                    listener_id,
+                    upgrade,
+                    local_addr,
+                    send_back_addr: with_ip(send_back_addr, incoming_ip.expect("checked")),
+                },
                 event => event,
             })
     }
+}
+
+/// One remote address holds at most `MAX_INBOUND_PER_ADDRESS_GROUP` inbound connections. The node
+/// refuses the next one before its handshake, and does not report the refusal as a network error.
+#[tokio::test]
+async fn an_address_over_its_inbound_limit_is_refused_without_an_error_report() -> anyhow::Result<()>
+{
+    use libp2p::swarm::NetworkBehaviour;
+
+    let mut node = TestNode::new()?;
+    let local: Multiaddr = "/ip4/0.0.0.0/udp/9091/quic-v1".parse()?;
+    let remote: Multiaddr = "/ip4/198.51.100.9/udp/4000/quic-v1".parse()?;
+    let behaviour = node.interface.swarm.behaviour_mut();
+    for id in 0..crate::inbound_ip_limits::MAX_INBOUND_PER_ADDRESS_GROUP {
+        behaviour.handle_pending_inbound_connection(
+            ConnectionId::new_unchecked(usize::MAX - id),
+            &local,
+            &remote,
+        )?;
+    }
+    let refused = ConnectionId::new_unchecked(usize::MAX - 100);
+    let cause = behaviour
+        .handle_pending_inbound_connection(refused, &local, &remote)
+        .expect_err("the address already holds its limit");
+    node.process(super::SwarmEvent::IncomingConnectionError {
+        connection_id: refused,
+        local_addr: local,
+        send_back_addr: remote,
+        error: libp2p::swarm::ListenError::Denied { cause },
+        peer_id: None,
+    })
+    .await?;
+
+    assert_eq!(node.interface.status.snapshot().last_error, None);
+    Ok(())
+}
+
+/// A QUIC peer that never sends Identify. Its connections stay open for the default idle timeout.
+fn silent_swarm() -> anyhow::Result<libp2p::Swarm<libp2p::swarm::dummy::Behaviour>> {
+    Ok(libp2p::SwarmBuilder::with_new_identity()
+        .with_tokio()
+        .with_quic()
+        .with_behaviour(|_| libp2p::swarm::dummy::Behaviour)?
+        .build())
+}
+
+/// When the inbound connections that wait for Identify are at their limit, a new one closes the
+/// oldest waiting connection of the address with the most waiting connections.
+#[tokio::test]
+async fn a_new_inbound_connection_closes_the_oldest_waiting_connection_of_the_busiest_address(
+) -> anyhow::Result<()> {
+    use libp2p::futures::StreamExt;
+
+    let mut node = TestNode::new()?;
+    node.use_address_test_transport(Some(Ipv4Addr::new(198, 51, 100, 9)))?;
+    let (_, address) = node.listen().await?;
+    let address = with_ip(address, Ipv4Addr::LOCALHOST);
+    for id in 1..crate::peer_admission::MAX_STAGED_INBOUND {
+        let pending = super::PeerAdmission::pending(
+            ConnectionId::new_unchecked(usize::MAX - id),
+            format!("/ip4/203.0.113.{id}/udp/1/quic-v1").parse()?,
+            "inbound",
+            1,
+        );
+        assert_eq!(node.admission.stage(PeerId::random(), pending), Ok(None));
+    }
+    let mut events = node.interface.event_tx.subscribe();
+
+    let mut first = silent_swarm()?;
+    first.dial(address.clone())?;
+    let first_connection = loop {
+        tokio::select! {
+            event = node.next_event() => {
+                let event = event?;
+                let established = match &event {
+                    super::SwarmEvent::ConnectionEstablished { peer_id, connection_id, .. }
+                        if peer_id == first.local_peer_id() => Some(*connection_id),
+                    _ => None,
+                };
+                node.process(event).await?;
+                if let Some(connection) = established {
+                    break connection;
+                }
+            }
+            _ = first.select_next_some() => {}
+        }
+    };
+    assert_eq!(
+        node.admission
+            .pending_connections(first.local_peer_id())
+            .len(),
+        1
+    );
+
+    let mut second = silent_swarm()?;
+    second.dial(address)?;
+    // Below the 10-second idle timeout, so only the limit closes the connection.
+    let deadline = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            event = node.next_event() => node.process(event?).await?,
+            event = first.select_next_some() => {
+                if matches!(event, libp2p::swarm::SwarmEvent::ConnectionClosed { .. }) {
+                    break;
+                }
+            }
+            _ = second.select_next_some() => {}
+            _ = &mut deadline => anyhow::bail!("the oldest waiting connection did not close"),
+        }
+    }
+
+    assert!(node
+        .admission
+        .pending_connections(first.local_peer_id())
+        .is_empty());
+    assert_eq!(
+        node.admission
+            .pending_connections(second.local_peer_id())
+            .len(),
+        1
+    );
+    let mut rejected = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let super::NetEvent::PeerRejected { connection_id, .. } = event {
+            rejected.push(connection_id);
+        }
+    }
+    assert_eq!(rejected, vec![first_connection]);
+    Ok(())
 }
 
 /// A node does not dial a loopback address on its own port, which another node can advertise for a
@@ -366,26 +539,7 @@ async fn a_mismatch_at_a_configured_fallback_drops_it() -> anyhow::Result<()> {
 async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result<()> {
     let mut node = TestNode::new()?;
     let mut remote = TestNode::new()?;
-    let key = libp2p::identity::Keypair::generate_ed25519();
-    let dials = Arc::new(Mutex::new(Vec::new()));
-    let transport = AddressTestTransport {
-        inner: libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(&key)),
-        dials: dials.clone(),
-    }
-    .map(|(peer, connection), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(connection)))
-    .boxed();
-    node.interface.swarm = libp2p::Swarm::new(
-        transport,
-        super::create_behaviour(&key, &node.interface.network)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
-        key.public().to_peer_id(),
-        libp2p::swarm::Config::with_tokio_executor(),
-    );
-    node.interface
-        .swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&node.interface.topic)?;
+    let dials = node.use_address_test_transport(None)?;
     node.listen().await?;
     assert!(super::should_filter_loopback(
         &node.interface.swarm,

@@ -1284,7 +1284,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee-hash"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "e3-openvm-host"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "e3-bfv-client",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "e3-openvm-types"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "bincode",
  "e3-compute-provider",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "num-bigint 0.5.1",
  "num-integer",
@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial-fhe"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "e3-polynomial",
  "fhe-math",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "e3-program-runner"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "e3-compute-provider",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "e3-program-server"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "actix-web",
  "alloy-primitives",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-config"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-witness"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3495,9 +3495,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "once_cell",
  "rustls-pki-types",
@@ -3517,9 +3517,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -4845,27 +4845,27 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+checksum = "cdb02c3132d251ab1606e9fc913a7da6c6ed08cc263df15edf082e1dc497d157"
 dependencies = [
  "zstd-safe",
 ]
 
 [[package]]
 name = "zstd-safe"
-version = "7.2.4"
+version = "7.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+checksum = "1c8ea04668f5de8d8d51051714ba560c9536519cadcdb8829bba4fe2ad159b03"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.0.16+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
 dependencies = [
  "cc",
  "pkg-config",

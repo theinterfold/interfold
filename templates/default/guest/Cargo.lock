@@ -1099,7 +1099,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee-hash"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "e3-openvm-types"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "bincode",
  "e3-compute-provider",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "num-bigint 0.5.1",
  "num-integer",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial-fhe"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "e3-polynomial",
  "fhe-math",
@@ -1221,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-config"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
@@ -1265,7 +1265,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-witness"
-version = "0.20.0-dev.2"
+version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "anyhow",
