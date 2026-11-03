@@ -170,6 +170,21 @@ describe("Bond-owner identity admission", function () {
     expect(await time.latest()).to.be.lessThan(end);
   });
 
+  it("counts an owner only when its credential lasts to the last second of the window", async function () {
+    const ctx = await loadFixture(setup);
+    const end = await startWindow();
+    await verify(ctx, ctx.operators[0], end - 1);
+    await verify(ctx, ctx.operators[1], end);
+    await verify(ctx, ctx.operators[2], end + WINDOW);
+    await ctx.bondingRegistry.setIdentityPolicy(
+      await ctx.identityRegistry.getAddress(),
+      true,
+    );
+    await refresh(ctx);
+    expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
+    expect(await capacity(ctx)).to.equal(2);
+  });
+
   it("keeps capacity fresh when governance revokes an identifier that its owner replaced", async function () {
     const ctx = await loadFixture(setup);
     const { id } = await verify(ctx);
@@ -193,6 +208,50 @@ describe("Bond-owner identity admission", function () {
     // No counted credential changed, so capacity needs no refresh.
     expect(await capacity(ctx)).to.equal(3);
     expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
+  });
+
+  it("keeps the identity policy at its ERC-7201 slots, which the dashboard reads", async function () {
+    const ctx = await loadFixture(setup);
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const base =
+      BigInt(
+        ethers.keccak256(
+          coder.encode(
+            ["uint256"],
+            [BigInt(ethers.id("interfold.storage.BondingIdentity")) - 1n],
+          ),
+        ),
+      ) & ~0xffn;
+    expect(base).to.equal(
+      0xc8753641d15ccfa7705fd1448b954f166a67eee148357f9bd69a050022902400n,
+    );
+    const registry = await ctx.identityRegistry.getAddress();
+    await ctx.bondingRegistry.setIdentityPolicy(registry, true);
+    const setAt = BigInt(await time.latest());
+    const bonding = await ctx.bondingRegistry.getAddress();
+    const word = async (slot: bigint) =>
+      BigInt(await ethers.provider.getStorage(bonding, slot));
+    // `policyVersions` (Trace208): the array length at the base slot, then checkpoints that hold
+    // the key in the low 48 bits and the version above it.
+    expect(await word(base)).to.equal(1n);
+    const checkpoint = await word(
+      BigInt(ethers.keccak256(coder.encode(["uint256"], [base]))),
+    );
+    expect(checkpoint & ((1n << 48n) - 1n)).to.equal(setAt);
+    const version = checkpoint >> 48n;
+    expect(version).to.equal(1n);
+    // `policies[version]`: the registry in the low 160 bits, `required` in the next byte.
+    const policy = await word(
+      BigInt(
+        ethers.keccak256(
+          coder.encode(["uint256", "uint256"], [version, base + 1n]),
+        ),
+      ),
+    );
+    expect(
+      ethers.getAddress(ethers.toBeHex(policy & ((1n << 160n) - 1n), 20)),
+    ).to.equal(registry);
+    expect((policy >> 160n) & 0xffn).to.equal(1n);
   });
 
   it("fails capacity closed after revocation and rebuilds only verified owners", async function () {
