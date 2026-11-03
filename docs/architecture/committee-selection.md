@@ -146,8 +146,8 @@ polling/skipping.
 
 Ticket submissions include `committeeDeadline`; `finalizeCommittee` requires strictly later time.
 Members schedule calls staggered by submission rank, 30 seconds apart and at most 20 steps (about 10
-minutes) after the deadline: without the shortlist, the rank also counts operators that never
-submit. The first successful transaction locks canonical on-chain order. It must finalize by
+minutes) after the deadline, because ranked members can stay silent (offline, or on an older
+release). The first successful transaction locks canonical on-chain order. It must finalize by
 `committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot buy more paid lifetime.
 Fewer than N submissions fails with supplier-paid `InsufficientCommitteeMembers`. Finalization
 snapshots every operator's reward recipient and retains its collateral obligation.

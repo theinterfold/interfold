@@ -36,10 +36,9 @@ const FINALIZATION_BUFFER_SECONDS: u64 = 1;
 /// The delay applies only while earlier members stay silent, so a larger value
 /// costs nothing when the first member finalizes.
 const FINALIZE_INTERVAL_SECONDS: u64 = 30;
-/// The last attempt step. Without the owner shortlist (incomplete owner history or a required
-/// identity policy), the submission rank also counts operators that never submit, such as the
-/// operators of unverified owners. The cap keeps a valid member's attempt about 10 minutes after
-/// the deadline at most, well inside the DKG window, however many such operators rank first.
+/// The last attempt step. Ranked members can stay silent at finalization, for example when they
+/// are offline or run an older release. The cap keeps a valid member's attempt about 10 minutes
+/// after the deadline at most, well inside the DKG window, however many silent members rank first.
 const MAX_FINALIZATION_STEPS: u64 = 20;
 const FINALIZATION_RPC_RETRY_SECONDS: u64 = 30;
 pub const COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION: u32 = 1;
