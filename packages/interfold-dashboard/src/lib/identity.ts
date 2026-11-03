@@ -6,26 +6,22 @@
 // Bond-owner identity behind the operator guide: the governance policy, the owner's credential, and
 // the evidence that OwnerIdentityRegistry.register takes for a ZKPassport proof.
 //
-// The policy has no view. The bonding registry emits IdentityPolicyUpdated(timepoint, registry,
-// required), and the latest log is the current policy. When the RPC keeps no such log, the registry
-// from the network profile still opens registration. The verifier's fixed settings (domain, scope,
+// The policy has no view, so the page reads it from the bonding registry's ERC-7201 storage. Three
+// storage reads need no log history, so any RPC serves them. The verifier's fixed settings (domain, scope,
 // ZKPassport version, identifier type) are read from the verifier itself, so the page follows the
 // deployment. Before a deployment, the page can still make a proof with the planned settings
 // (PREVIEW_SERVICE) and offer it as a download.
 
-import { encodeAbiParameters, encodeFunctionData, getAbiItem, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, getAbiItem, getAddress, keccak256, toHex, type Address, type Hex } from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
 import {
   CONTRACTS,
-  IDENTITY_DEPLOY_BLOCK,
-  IDENTITY_REGISTRY,
   bondingRegistryAbi,
   ownerIdentityRegistryAbi,
   publicClient,
   zkPassportIdentityVerifierAbi,
   zkPassportRootVerifierAbi,
 } from './chain'
-import { getLogsChunked } from './e3'
 
 export type ProofResult = RequestSuccess['proofs'][number]
 
@@ -45,15 +41,13 @@ export const PREVIEW_SERVICE = {
   maxValidity: 365n * 86_400n,
 } as const
 
-const IDENTITY_POLICY_UPDATED = getAbiItem({ abi: bondingRegistryAbi, name: 'IdentityPolicyUpdated' })
 const PROOF_VERIFICATION_PARAMS = getAbiItem({ abi: zkPassportRootVerifierAbi, name: 'verify' }).inputs[0]
 
 export type IdentityPolicy = {
   registry: Address
-  /** Null when no policy log was in reach and the registry comes from the network profile. */
-  required: boolean | null
-  /** Timestamp from which the policy applies; null with an unknown policy. */
-  timepoint: bigint | null
+  required: boolean
+  /** Timestamp from which the policy applies. */
+  timepoint: bigint
 }
 
 /** The settings that the deployed ZKPassportIdentityVerifier fixes for every proof. */
@@ -82,67 +76,39 @@ export type OwnerAccount = {
   identity: { identityId: Hex; expiresAt: bigint; verifiedNow: boolean } | null
 }
 
-/** Blocks that the policy scan reads before the network has the identity upgrade (about 6.7 hours). */
-export const RECENT_POLICY_BLOCKS = 2_000n
+/**
+ * ERC-7201 slot of the bonding registry's identity storage (`interfold.storage.BondingIdentity`).
+ * It holds `policyVersions` (a Trace208 of version checkpoints), then `policies` (version to policy).
+ */
+export const IDENTITY_STORAGE_SLOT = 0xc8753641d15ccfa7705fd1448b954f166a67eee148357f9bd69a050022902400n
+
+const word = (value: bigint): Hex => toHex(value, { size: 32 })
+const low = (value: bigint, bits: bigint) => value & ((1n << bits) - 1n)
 
 /**
- * First block of the policy scan. Without a configured block the network has no identity upgrade
- * yet, so no policy log exists and recent blocks give the same answer. Public RPCs keep only about a
- * day of logs, so a scan from the protocol deploy block would fail there.
+ * The current policy, from three reads of the bonding registry's storage: the number of policy
+ * versions, the latest checkpoint (key in the low 48 bits, version above it), and that version's
+ * policy (registry in the low 160 bits, `required` in the next byte). Null before the first policy
+ * and when the latest policy clears the registry.
  */
-export function policyScanStart(configured: bigint | null, head: bigint): bigint {
-  if (configured !== null) return configured
-  return head > RECENT_POLICY_BLOCKS ? head - RECENT_POLICY_BLOCKS : 0n
+export async function readIdentityPolicy(readSlot: (slot: Hex) => Promise<bigint>): Promise<IdentityPolicy | null> {
+  const versions = await readSlot(word(IDENTITY_STORAGE_SLOT))
+  if (versions === 0n) return null
+  const checkpoints = BigInt(keccak256(word(IDENTITY_STORAGE_SLOT)))
+  const checkpoint = await readSlot(word(checkpoints + versions - 1n))
+  const version = checkpoint >> 48n
+  const policySlot = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [version, IDENTITY_STORAGE_SLOT + 1n]))
+  const policy = await readSlot(policySlot)
+  const registry = getAddress(toHex(low(policy, 160n), { size: 20 }))
+  if (registry === ZERO_ADDRESS) return null
+  return { registry, required: low(policy >> 160n, 8n) === 1n, timepoint: low(checkpoint, 48n) }
 }
 
-/** The latest IdentityPolicyUpdated log, as the viem log decoder returns it. */
-export type PolicyLog = { args: { registry: Address; required: boolean; timepoint: bigint | number } }
-
-/**
- * The policy from the latest policy log: null when the log clears the registry. Without a log in
- * reach, the registry from the network profile still opens registration, with the policy unknown.
- */
-export function policyFromLog(latest: PolicyLog | undefined, configuredRegistry: Address | null): IdentityPolicy | null {
-  if (latest) {
-    if (latest.args.registry === ZERO_ADDRESS) return null
-    return { registry: latest.args.registry, required: latest.args.required, timepoint: BigInt(latest.args.timepoint) }
-  }
-  return configuredRegistry ? { registry: configuredRegistry, required: null, timepoint: null } : null
-}
-
-/**
- * The policy from `readLatest`, the latest IdentityPolicyUpdated log. A failed read falls back to
- * the configured registry: public RPCs keep about a day of logs, and registration needs none.
- */
-export async function resolveIdentityPolicy(
-  readLatest: () => Promise<PolicyLog | undefined>,
-  configuredRegistry: Address | null,
-): Promise<IdentityPolicy | null> {
-  let latest: PolicyLog | undefined
-  try {
-    latest = await readLatest()
-  } catch (error) {
-    if (!configuredRegistry) throw error
-  }
-  return policyFromLog(latest, configuredRegistry)
-}
-
-async function readLatestPolicyLog(): Promise<PolicyLog | undefined> {
-  const head = await publicClient.getBlockNumber()
-  const logs = await getLogsChunked<PolicyLog>(
-    { address: CONTRACTS.BondingRegistry, event: IDENTITY_POLICY_UPDATED },
-    policyScanStart(IDENTITY_DEPLOY_BLOCK, head),
-    head,
-  )
-  return logs[logs.length - 1]
-}
-
-/**
- * The current identity policy: the latest IdentityPolicyUpdated log. Null before the first log, and
- * when the latest log clears the registry. A failed log read falls back to the configured registry.
- */
+/** The current identity policy of the bonding registry. Null before the first policy. */
 export function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
-  return resolveIdentityPolicy(readLatestPolicyLog, IDENTITY_REGISTRY)
+  return readIdentityPolicy(async (slot) =>
+    BigInt((await publicClient.getStorageAt({ address: CONTRACTS.BondingRegistry, slot })) ?? '0x0'),
+  )
 }
 
 /** The verifier settings, or null while the registry has no verifier (registration is closed). */

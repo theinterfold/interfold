@@ -11,12 +11,10 @@ import { invalidBlockOverrides } from './networks'
 test('block overrides must be whole numbers on every network', () => {
   assert.deepEqual(
     invalidBlockOverrides({
-      VITE_MAINNET_DEPLOY_BLOCK: '26300000',
-      VITE_MAINNET_IDENTITY_DEPLOY_BLOCK: '26300000.0',
+      VITE_MAINNET_DEPLOY_BLOCK: '26300000.0',
       VITE_SEPOLIA_DEPLOY_BLOCK: ' ',
-      VITE_SEPOLIA_IDENTITY_DEPLOY_BLOCK: '-1',
     }),
-    ['VITE_SEPOLIA_IDENTITY_DEPLOY_BLOCK', 'VITE_MAINNET_IDENTITY_DEPLOY_BLOCK'],
+    ['VITE_MAINNET_DEPLOY_BLOCK'],
   )
   assert.deepEqual(invalidBlockOverrides({}), [])
 })

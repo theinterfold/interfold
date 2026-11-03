@@ -6,7 +6,17 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decodeAbiParameters, decodeFunctionData, getAbiItem, pad, toHex, type Address, type Hex } from 'viem'
+import {
+  decodeAbiParameters,
+  decodeFunctionData,
+  encodeAbiParameters,
+  getAbiItem,
+  keccak256,
+  pad,
+  toHex,
+  type Address,
+  type Hex,
+} from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
 import { bondingRegistryAbi, ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
 import {
@@ -23,10 +33,8 @@ import {
   registrationDeadline,
   safeRegistrationBatch,
   type ProofResult,
-  policyFromLog,
-  policyScanStart,
-  RECENT_POLICY_BLOCKS,
-  resolveIdentityPolicy,
+  IDENTITY_STORAGE_SLOT,
+  readIdentityPolicy,
 } from './identity'
 
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -165,32 +173,26 @@ test('a proof registers until it is too old or its credential ends', () => {
   assert.equal(registrationDeadline(1_000n, 600n, 1_200n), 1_200n)
 })
 
-test('the policy scan reads recent blocks until the network has the identity upgrade', () => {
-  assert.equal(policyScanStart(null, 26_311_752n), 26_311_752n - RECENT_POLICY_BLOCKS)
-  assert.equal(policyScanStart(null, 100n), 0n)
-  assert.equal(policyScanStart(26_400_000n, 26_500_000n), 26_400_000n)
-})
-
-test('the policy log wins; the configured registry opens registration without one', () => {
+test('the policy comes from the bonding registry storage', async () => {
   const registry = '0x4444444444444444444444444444444444444444' as Address
-  const configured = '0x5555555555555555555555555555555555555555' as Address
-  const log = (address: Address, required: boolean) => ({ args: { registry: address, required, timepoint: 1_700n } })
-  assert.deepEqual(policyFromLog(log(registry, true), configured), { registry, required: true, timepoint: 1_700n })
-  // A log that clears the registry turns the gate off, whatever the profile says.
-  assert.equal(policyFromLog(log('0x0000000000000000000000000000000000000000', false), configured), null)
-  assert.deepEqual(policyFromLog(undefined, configured), { registry: configured, required: null, timepoint: null })
-  assert.equal(policyFromLog(undefined, null), null)
-})
-
-test('a failed policy log read falls back to the configured registry', async () => {
-  const registry = '0x4444444444444444444444444444444444444444' as Address
-  const configured = '0x5555555555555555555555555555555555555555' as Address
-  const pruned = async () => {
-    throw new Error('block range is too old')
+  const slots = (versions: bigint, version: bigint, policy: bigint) => {
+    const checkpoints = BigInt(keccak256(word(IDENTITY_STORAGE_SLOT)))
+    const policySlot = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [version, IDENTITY_STORAGE_SLOT + 1n]))
+    const values = new Map<string, bigint>([
+      [word(IDENTITY_STORAGE_SLOT), versions],
+      [word(checkpoints + versions - 1n), (version << 48n) | 1_700n],
+      [policySlot, policy],
+    ])
+    return async (slot: Hex) => values.get(slot) ?? 0n
   }
-  assert.deepEqual(await resolveIdentityPolicy(pruned, configured), { registry: configured, required: null, timepoint: null })
-  // Without a configured registry the read error stays visible.
-  await assert.rejects(resolveIdentityPolicy(pruned, null), /block range is too old/)
-  const read = async () => ({ args: { registry, required: true, timepoint: 1_700n } })
-  assert.deepEqual(await resolveIdentityPolicy(read, configured), { registry, required: true, timepoint: 1_700n })
+  // The second version requires the registry: `required` sits in the byte above the address.
+  assert.deepEqual(await readIdentityPolicy(slots(2n, 2n, (1n << 160n) | BigInt(registry))), {
+    registry,
+    required: true,
+    timepoint: 1_700n,
+  })
+  assert.deepEqual(await readIdentityPolicy(slots(1n, 1n, BigInt(registry))), { registry, required: false, timepoint: 1_700n })
+  // A policy that clears the registry turns the gate off, and before the first policy there is none.
+  assert.equal(await readIdentityPolicy(slots(3n, 3n, 0n)), null)
+  assert.equal(await readIdentityPolicy(async () => 0n), null)
 })

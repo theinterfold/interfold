@@ -1733,14 +1733,8 @@ export function IdentityView({
             <dd>
               {preview ? (
                 <span className='dl__muted'>No identity registry on {NETWORK_NAME} yet</span>
-              ) : policy.required === null ? (
-                <span className='dl__muted'>Unknown: this RPC keeps no policy history</span>
               ) : policy.required ? (
-                policy.timepoint === null ? (
-                  'Yes'
-                ) : (
-                  `Yes, since ${fmtDay(policy.timepoint)}`
-                )
+                `Yes, since ${fmtDay(policy.timepoint)}`
               ) : (
                 'Not yet'
               )}

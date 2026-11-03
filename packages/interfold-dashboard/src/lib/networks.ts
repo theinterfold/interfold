@@ -33,12 +33,6 @@ export type NetworkProfile = {
   // Empty string = no faucet on this network (hides the operator-guide card).
   faucet: string
   deployBlock: string
-  // First block of the identity policy scan: a block at or before the BondingRegistry upgrade that
-  // added the policy. Empty until that upgrade: the panel then reads only recent blocks.
-  identityDeployBlock: string
-  // The OwnerIdentityRegistry proxy. Empty until the identity upgrade. With it, registration works
-  // even when the RPC keeps no policy log; the policy then shows as unknown.
-  identityRegistry: string
   // Fee token metadata for formatting escrowed fees/rewards. Hardcoded per
   // deployment (like the addresses) rather than read on-chain at runtime.
   feeSymbol: string
@@ -56,18 +50,16 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     name: 'Sepolia',
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
-    interfold: '0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b',
-    ciphernodeRegistry: '0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef',
-    crispProgram: '0xA9894A39061EC33f8550a2B63A66Be59fb9fa443',
+    interfold: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26',
+    ciphernodeRegistry: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4',
+    crispProgram: '0x25Df8D3C04D67efb6198E215963d19a8d119ADFF',
     previousCrispPrograms: [],
-    bondingRegistry: '0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2',
+    bondingRegistry: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
     faucet: '0x1B4340A65BB669267BF5DE37385B139987C3F09c',
-    // Deploy block of the Interfold and the CiphernodeRegistry (11873232), the earliest of those two
-    // and the CRISPProgram (11873424). A later value silently drops early registry events.
-    deployBlock: '11873232',
-    identityDeployBlock: '',
-    identityRegistry: '',
+    // Deploy block of the CiphernodeRegistry (12050030), the earlier of it and the Interfold. A later
+    // value silently drops early registry events.
+    deployBlock: '12050030',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
@@ -89,8 +81,6 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     faucet: '',
     // All mainnet contracts were deployed in the same block.
     deployBlock: '25786403',
-    identityDeployBlock: '',
-    identityRegistry: '',
     // USDS (0xdC035D45…384F) on the mainnet deployment.
     feeSymbol: 'USDS',
     feeDecimals: 18,
@@ -110,8 +100,6 @@ const SETTINGS = [
   'FEE_TOKEN_SYMBOL',
   'FEE_TOKEN_DECIMALS',
   'DEPLOY_BLOCK',
-  'IDENTITY_DEPLOY_BLOCK',
-  'IDENTITY_REGISTRY_ADDRESS',
   'COMPUTE_WINDOW',
   'DECRYPTION_WINDOW',
 ] as const
@@ -171,7 +159,7 @@ export function unscopedOverrideKeys(env: Env): string[] {
 // Block overrides that are not whole numbers, for example "26300000.0". The page reads
 // them with BigInt when it loads, so one bad value would stop the whole page.
 export function invalidBlockOverrides(env: Env): string[] {
-  const settings: Setting[] = ['DEPLOY_BLOCK', 'IDENTITY_DEPLOY_BLOCK']
+  const settings: Setting[] = ['DEPLOY_BLOCK']
   return NETWORK_KEYS.flatMap((network) => settings.map((setting) => overrideKey(network, setting))).filter((key) => {
     const value = env[key]?.trim()
     return value !== undefined && value !== '' && !/^\d+$/.test(value)
