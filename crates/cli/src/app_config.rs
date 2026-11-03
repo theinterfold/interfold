@@ -14,21 +14,13 @@ use figment::{
     Figment,
 };
 use path_clean::clean;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{env, fs, path::PathBuf};
 
 #[derive(Debug)]
 pub struct ApplicationConfig {
     pub node: AppConfig,
     pub program: ProgramConfig,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
-struct UnscopedApplicationConfig {
-    #[serde(flatten)]
-    node: UnscopedAppConfig,
-    program: Option<ProgramConfig>,
 }
 
 /// A flag that was not given leaves the file or environment value intact.
@@ -58,25 +50,28 @@ pub fn load_config(
     let loaded_yaml =
         load_yaml_with_env(&resolved_config_path).context("Configuration file not found")?;
 
-    let config: UnscopedApplicationConfig =
-        Figment::from(Serialized::defaults(&UnscopedApplicationConfig::default()))
-            .merge(Yaml::string(&loaded_yaml))
-            .merge(Env::prefixed("E3_").split("__"))
-            .merge(Serialized::defaults(&CliOverrides {
-                otel,
-                found_config_file: Some(resolved_config_path),
-                using_custom_config: found_config_file.is_some(),
-            }))
-            .extract()
-            .context("Could not parse configuration")?;
+    let figment = Figment::from(Serialized::defaults(&UnscopedAppConfig::default()))
+        .merge(Serialized::default("program", None::<ProgramConfig>))
+        .merge(Yaml::string(&loaded_yaml))
+        .merge(Env::prefixed("E3_").split("__"))
+        .merge(Serialized::defaults(&CliOverrides {
+            otel,
+            found_config_file: Some(resolved_config_path),
+            using_custom_config: found_config_file.is_some(),
+        }));
 
-    let node = config.node.into_scoped(name).context(format!(
+    // Extract each owner directly to retain Figment's per-value key and source metadata.
+    let config: UnscopedAppConfig = figment.extract().context("Could not parse configuration")?;
+    let program: Option<ProgramConfig> = figment
+        .extract_inner("program")
+        .context("Could not parse configuration")?;
+    let node = config.into_scoped(name).context(format!(
         "Could not apply scope '{}' to configuration.",
         name
     ))?;
     Ok(ApplicationConfig {
         node,
-        program: config.program.unwrap_or_default(),
+        program: program.unwrap_or_default(),
     })
 }
 
@@ -215,6 +210,60 @@ mod tests {
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
 
         Ok(())
+    }
+
+    #[test]
+    fn parse_error_retains_the_environment_key_and_source() {
+        Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("HOME", jail.directory().display().to_string());
+            jail.create_file("interfold.config.yaml", "{}")?;
+            jail.set_env("E3_OTEL", "4317");
+
+            let error =
+                load_config("_default", Some("interfold.config.yaml".into()), None).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("for key \"OTEL\""), "{message}");
+            assert!(
+                message.contains("`E3_` environment variable(s)"),
+                "{message}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn parse_error_retains_the_yaml_key_and_source() {
+        Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("HOME", jail.directory().display().to_string());
+            for (yaml, key) in [
+                ("node:\n  quic_port: nope\n", "default.node.quic_port"),
+                ("node:\n  unknown_profile_setting: true\n", "default.node"),
+                (
+                    r#"
+chains:
+  - name: hardhat
+    rpc_url: "ws://localhost:8545"
+    contracts:
+      interfold: "0x0000000000000000000000000000000000000001"
+      ciphernode_registry:
+        address: "0x0000000000000000000000000000000000000002"
+        deploy_block: nope
+      bonding_registry: "0x0000000000000000000000000000000000000003"
+"#,
+                    "default.chains.0.contracts.ciphernode_registry",
+                ),
+            ] {
+                jail.create_file("interfold.config.yaml", yaml)?;
+                let error = load_config("_default", Some("interfold.config.yaml".into()), None)
+                    .unwrap_err();
+                let message = format!("{error:#}");
+                assert!(message.contains(key), "{message}");
+                assert!(message.contains("YAML source string"), "{message}");
+            }
+            Ok(())
+        });
     }
 
     #[test]
