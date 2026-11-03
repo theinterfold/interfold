@@ -16,7 +16,8 @@
 //      that the batch check refuses its payload, then force it, execute it, and read the owner
 //      capacity that it leaves;
 //   4. check that `rotate-verifier` refuses an unchanged config and a changed identifier setting,
-//      then rotate to a verifier with another proof validity; credentials stay;
+//      then rotate to a verifier with another proof validity; credentials stay; with registration
+//      closed and no plan file, a changed identifier setting is still refused;
 //   5. with --proof, revoke the proof's identifier (refused without --force: too few owners stay);
 //      validate refuses the batch until it executes, then finds the revocation;
 //   6. relax the policy (the rollback) without the plan file, from the deployment record: the batch
@@ -67,6 +68,7 @@ const packageDir = path.resolve(
 const protocolDir = path.join(packageDir, "deploy", "protocol");
 const registryInterface = new ethers.Interface([
   "function register(bytes evidence)",
+  "function setVerifier(address newVerifier)",
   "function identityOf(address owner) view returns (bytes32 identityId, uint48 expiresAt)",
 ]);
 
@@ -368,6 +370,25 @@ async function main() {
       ["validate", ...rotatedArgs, "--required", "true", "--write-records"],
       /bond owners are counted/,
     );
+    // With registration closed and no plan file, the recorded verifier still guards the identifier
+    // settings, so a config with another domain cannot rotate.
+    const rotatedVerifier: string = readJson(planFile).identityVerifier;
+    const setVerifier = (verifier: string) =>
+      sendAs(
+        provider,
+        forkConfigJson.protocolOwner,
+        plan.identityRegistry,
+        registryInterface.encodeFunctionData("setVerifier", [verifier]),
+      );
+    await setVerifier(ethers.ZeroAddress);
+    fs.renameSync(planFile, `${planFile}.kept`);
+    mustRefuse(
+      GATE,
+      ["rotate-verifier", ...argsFor(otherDomainConfig)],
+      /derive every identifier/,
+    );
+    fs.renameSync(`${planFile}.kept`, planFile);
+    await setVerifier(rotatedVerifier);
     if (bundle && identityId) {
       const [kept] = await identityOf(
         provider,

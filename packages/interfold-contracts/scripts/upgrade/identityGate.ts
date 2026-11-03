@@ -86,6 +86,8 @@ export const REFRESH_BATCH = 20;
  * requests and refresh in stages instead.
  */
 export const MAX_BATCH_OPERATORS = 120;
+/** The stages whose batch refreshes every operator and records the refresh list. */
+const REFRESH_STAGES = ["prepare", "enforce", "relax", "revoke"];
 /** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
 export const CAPACITY_WINDOW = 30n * 86_400n;
 /** Time to execute an enforce batch when `--execute-by` is not given: the Safe signs it meanwhile. */
@@ -448,12 +450,14 @@ const sameAddress = (a: string, b: string) =>
 
 /**
  * A plan rebuilt from the tracked deployment record, for a checkout without the plan file. It has
- * written no batch yet.
+ * written no batch yet. Its settings come from the recorded verifier, not from the config:
+ * `rotate-verifier` compares the config with them, and the config may have changed.
  */
-function planFromRecords(
+async function planFromRecords(
+  ethers: any,
   config: ProtocolConfigFile,
   deployment: ProtocolDeployment,
-): IdentityGatePlan {
+): Promise<IdentityGatePlan> {
   const {
     ownerIdentityRegistry,
     ownerIdentityRegistryImplementation,
@@ -489,7 +493,7 @@ function planFromRecords(
     identityRegistryImplementation: ownerIdentityRegistryImplementation,
     identityRegistryProxyAdmin: ownerIdentityRegistryProxyAdmin,
     identityVerifier,
-    settings: identityGateSettings(config),
+    settings: await verifierSettings(ethers, identityVerifier),
     deployBlock: identityDeployBlock,
     operators: 0,
     refreshed: [],
@@ -529,12 +533,13 @@ function writeIdentityRecords(
  * The saved plan, refused when it belongs to another deployment. Without the plan file, the plan
  * comes from the tracked deployment record.
  */
-function loadPlan(
+async function loadPlan(
+  ethers: any,
   config: ProtocolConfigFile,
   deployment: ProtocolDeployment,
-): IdentityGatePlan {
+): Promise<IdentityGatePlan> {
   if (!fs.existsSync(planPath(config))) {
-    return planFromRecords(config, deployment);
+    return planFromRecords(ethers, config, deployment);
   }
   const plan = readJson<IdentityGatePlan>(planPath(config));
   if (
@@ -769,7 +774,7 @@ async function rewritePrepare(
   config: ProtocolConfigFile,
   deployment: ProtocolDeployment,
 ): Promise<void> {
-  const plan = loadPlan(config, deployment);
+  const plan = await loadPlan(ethers, config, deployment);
   if (
     sameAddress(
       await proxyImplementation(ethers, plan.bondingRegistry),
@@ -947,7 +952,7 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = loadPlan(config, deployment);
+  const plan = await loadPlan(ethers, config, deployment);
   await assertAragonGovernancePreconditions(ethers, config);
   const { operators, toBlock: writtenBlock } = await registeredOperators(
     ethers,
@@ -1015,7 +1020,7 @@ export async function rotateVerifier(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = loadPlan(config, deployment);
+  const plan = await loadPlan(ethers, config, deployment);
   await assertAragonGovernancePreconditions(ethers, config);
   const settings = identityGateSettings(config);
   await requireContract(
@@ -1077,7 +1082,7 @@ export async function revokeIdentity(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = loadPlan(config, deployment);
+  const plan = await loadPlan(ethers, config, deployment);
   await assertAragonGovernancePreconditions(ethers, config);
   const identityId = arg("identity");
   if (!identityId || !ethersLib.isHexString(identityId, 32)) {
@@ -1156,7 +1161,7 @@ export async function validateIdentityGate(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = loadPlan(config, deployment);
+  const plan = await loadPlan(ethers, config, deployment);
   const settings = identityGateSettings(config);
   const expectedRequired = arg("required");
   if (expectedRequired !== "true" && expectedRequired !== "false") {
@@ -1292,18 +1297,18 @@ export async function validateIdentityGate(): Promise<void> {
     latest!.blockNumber,
     revocations[revocations.length - 1]?.blockNumber ?? 0,
   );
-  // A plan rebuilt from the deployment record has written no batch, so it has no refresh list.
-  const missing =
-    Object.keys(plan.batches).length === 0
-      ? []
-      : await lateRegistrations(
-          ethers.provider,
-          deployment.ciphernodeRegistry,
-          (operator) => bonding.isRegistered(operator),
-          plan.writtenBlock,
-          lastReset,
-          plan.refreshed,
-        );
+  // Only a refresh batch has a refresh list. A plan rebuilt from the deployment record, or one
+  // that has only rotated the verifier since, has none.
+  const missing = !REFRESH_STAGES.some((stage) => plan.batches[stage])
+    ? []
+    : await lateRegistrations(
+        ethers.provider,
+        deployment.ciphernodeRegistry,
+        (operator) => bonding.isRegistered(operator),
+        plan.writtenBlock,
+        lastReset,
+        plan.refreshed,
+      );
   if (missing.length > 0) {
     if (!hasFlag("refresh-missing")) {
       throw new Error(
