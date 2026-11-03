@@ -252,9 +252,9 @@
     "id": "B20",
     "supported": true,
     "refs": [
-      "crates/sync/src/sync/service.rs@387@pub async fn sync_with_net_ready<F>(",
-      "crates/sync/src/sync/service.rs@434@let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;",
-      "crates/sync/src/replay_spool.rs@247@bus.event_bus().send(EventBusFanout(event)).await??;"
+      "crates/state/sync/src/service.rs@387@pub async fn sync_with_net_ready<F>(",
+      "crates/state/sync/src/service.rs@434@let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;",
+      "crates/state/sync/src/replay_spool.rs@247@bus.event_bus().send(EventBusFanout(event)).await??;"
     ],
     "line_text": [
       "pub async fn sync_with_net_ready<F>(",

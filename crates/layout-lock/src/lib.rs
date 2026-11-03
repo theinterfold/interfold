@@ -762,7 +762,7 @@ Each difference names its kind:
 two fields with the same encoding were swapped. A rename or a newtype still decodes: re-record the \
 fixture. A swap changes what stored data and messages mean: treat it as an encoding change.
 - encoding changed: a node on the previous release cannot read the new encoding. For a persisted \
-type, increase SCHEMA_VERSION (crates/sync/src/sync/schema_version.rs). For an event or a wire \
+type, increase SCHEMA_VERSION (crates/state/sync/src/schema_version.rs). For an event or a wire \
 message, also change the wire major (crates/net/src/network.rs) or protocol_version \
 (crates/ciphernode/config/protocol-release.toml), and name the upgrade class in the PR.
 - event ID changed: event identity changed, through a derived Hash or the toolchain's \

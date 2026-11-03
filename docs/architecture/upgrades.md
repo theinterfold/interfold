@@ -2,7 +2,7 @@
 
 Owners: [release configuration](../../crates/ciphernode/config/protocol-release.toml),
 [upgrade tooling](../../packages/interfold-contracts/scripts/upgrade/),
-[storage preflight](../../crates/sync/src/sync/), and
+[storage preflight](../../crates/state/sync/src/preflight.rs), and
 [node state commands](../../crates/ciphernode/entrypoint/src/nodes/). Follow
 [Protocol compatibility](../../CONTRIBUTING.md#protocol-compatibility) for human rollout approval.
 This is reference policy, not authorization to perform a release.

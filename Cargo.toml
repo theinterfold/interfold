@@ -45,7 +45,7 @@ members = [
   "crates/ciphernode/daemon-server",
   "crates/slashing",
   "crates/sortition",
-  "crates/sync",
+  "crates/state/sync",
   "crates/task-pool",
   "crates/test-support",
   "crates/tests",
@@ -128,7 +128,7 @@ e3-program-runner = { version = "0.20.0-dev.3", path = "./crates/program-runner"
 e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program-server" }
 e3-polynomial = { version = "0.20.0-dev.3", path = "./crates/polynomial" }
 e3-polynomial-fhe = { version = "0.20.0-dev.3", path = "./crates/polynomial/fhe-adapter" }
-e3-sync = { version = "0.20.0-dev.3", path = "./crates/sync" }
+e3-sync = { version = "0.20.0-dev.3", path = "./crates/state/sync" }
 e3-layout-lock = { version = "0.20.0-dev.3", path = "./crates/layout-lock" }
 e3-task-pool = { version = "0.20.0-dev.3", path = "./crates/task-pool" }
 e3-test-support = { path = "./crates/test-support" }

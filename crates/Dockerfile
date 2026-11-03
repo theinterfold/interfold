@@ -91,7 +91,7 @@ COPY crates/slashing/Cargo.toml ./slashing/Cargo.toml
 COPY crates/sortition/Cargo.toml ./sortition/Cargo.toml
 COPY crates/dashboard/Cargo.toml ./dashboard/Cargo.toml
 COPY crates/ciphernode/daemon-server/Cargo.toml ./ciphernode/daemon-server/Cargo.toml
-COPY crates/sync/Cargo.toml ./sync/Cargo.toml
+COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml
 COPY crates/test-support/Cargo.toml ./test-support/Cargo.toml
 COPY crates/task-pool/Cargo.toml ./task-pool/Cargo.toml
 COPY crates/tests/Cargo.toml ./tests/Cargo.toml

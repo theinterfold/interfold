@@ -258,137 +258,137 @@
       "id": "e3-sync",
       "documentation": [{ "title": "Replay and startup fences", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
-      "path": "crates/sync",
+      "path": "crates/state/sync",
       "one_line": "Restart catch-up: checks schema and role markers, replays the event log after snapshot cursors, merges chain and peer history, then re-enables effects.",
       "actors": [],
       "consumes": [
-        { "name": "NetReady", "by": "sync_with_net_ready", "ref": "crates/sync/src/sync/service.rs@489@net_ready.await?;" },
+        { "name": "NetReady", "by": "sync_with_net_ready", "ref": "crates/state/sync/src/service.rs@489@net_ready.await?;" },
         {
           "name": "HistoricalEvmEventsReceived",
           "by": "collect_historical_evm_events",
-          "ref": "crates/sync/src/sync/history.rs@8@mut receiver: Receiver<HistoricalEvmEventsReceived>,"
+          "ref": "crates/state/sync/src/history.rs@8@mut receiver: Receiver<HistoricalEvmEventsReceived>,"
         },
         {
           "name": "HistoricalNetSyncEventsReceived and HistoricalNetSyncFailed",
           "by": "fetch_peer_history",
-          "ref": "crates/sync/src/sync/service.rs@542@let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);"
+          "ref": "crates/state/sync/src/service.rs@542@let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);"
         },
         {
           "name": "EventStoreQueryResponse (SeqAgg replay pages)",
           "by": "ReplaySpool",
-          "ref": "crates/sync/src/replay_spool.rs@268@let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();"
+          "ref": "crates/state/sync/src/replay_spool.rs@268@let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();"
         }
       ],
       "emits": [
         {
           "name": "HistoricalEvmSyncStart",
           "by": "sync_with_net_ready",
-          "ref": "crates/sync/src/sync/service.rs@476@bus.publish_without_context(HistoricalEvmSyncStart::new(addr, evm_config.clone()))?;"
+          "ref": "crates/state/sync/src/service.rs@476@bus.publish_without_context(HistoricalEvmSyncStart::new(addr, evm_config.clone()))?;"
         },
         {
           "name": "HistoricalNetSyncStart",
           "by": "fetch_peer_history",
-          "ref": "crates/sync/src/sync/service.rs@544@HistoricalNetSyncStart::new(since)"
+          "ref": "crates/state/sync/src/service.rs@544@HistoricalNetSyncStart::new(since)"
         },
         {
           "name": "replayed EventStore events (EventBusFanout), then EventBusBarrier",
           "by": "ReplaySpool",
-          "ref": "crates/sync/src/replay_spool.rs@247@bus.event_bus().send(EventBusFanout(event)).await??;"
+          "ref": "crates/state/sync/src/replay_spool.rs@247@bus.event_bus().send(EventBusFanout(event)).await??;"
         },
         {
           "name": "EffectsEnabled",
           "by": "publish_reconciled_history",
-          "ref": "crates/sync/src/sync/service.rs@574@bus.publish_without_context(EffectsEnabled::new())?;"
+          "ref": "crates/state/sync/src/service.rs@574@bus.publish_without_context(EffectsEnabled::new())?;"
         },
         {
           "name": "SyncEffect",
           "by": "publish_reconciled_history",
-          "ref": "crates/sync/src/sync/service.rs@580@bus.publish_without_context(SyncEffect::new())?;"
+          "ref": "crates/state/sync/src/service.rs@580@bus.publish_without_context(SyncEffect::new())?;"
         },
         {
           "name": "SyncEnded",
           "by": "publish_reconciled_history",
-          "ref": "crates/sync/src/sync/service.rs@591@bus.publish_without_context(SyncEnded::new())?;"
+          "ref": "crates/state/sync/src/service.rs@591@bus.publish_without_context(SyncEnded::new())?;"
         }
       ],
       "state": [
         {
           "name": "schema version marker (u32)",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@44@fn schema_version(&self) -> Repository<u32> {"
+          "ref": "crates/state/sync/src/repo.rs@44@fn schema_version(&self) -> Repository<u32> {"
         },
         {
           "name": "node role marker (full or bootstrap)",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@48@fn node_role(&self) -> Repository<NodeRole> {"
+          "ref": "crates/state/sync/src/repo.rs@48@fn node_role(&self) -> Repository<NodeRole> {"
         },
         {
           "name": "per-aggregate cursors: sequence, block and HLC timestamp",
           "where": "disk",
-          "ref": "crates/sync/src/sync/state.rs@61@let seq_repo = repositories.aggregate_seq(aggregate_id);"
+          "ref": "crates/state/sync/src/state.rs@61@let seq_repo = repositories.aggregate_seq(aggregate_id);"
         },
         {
           "name": "request-router checkpoint with its replay cursors",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@40@fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {"
+          "ref": "crates/state/sync/src/repo.rs@40@fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {"
         },
         {
           "name": "replay spool: sorted runs in temporary files, deleted on every exit path",
           "where": "disk",
-          "ref": "crates/sync/src/replay_spool.rs@40@runs: Vec<NamedTempFile>,"
+          "ref": "crates/state/sync/src/replay_spool.rs@40@runs: Vec<NamedTempFile>,"
         },
         {
           "name": "historical EVM events collected before the merge",
           "where": "memory",
-          "ref": "crates/sync/src/sync/collect_history.rs@29@results: Vec<InterfoldEvent<Unsequenced>>,"
+          "ref": "crates/state/sync/src/collect_history.rs@29@results: Vec<InterfoldEvent<Unsequenced>>,"
         }
       ],
       "key_types": [
         {
           "name": "SyncRepositoryFactory",
           "what": "Typed repository keys for the schema, role, cursor and checkpoint records.",
-          "ref": "crates/sync/src/repo.rs@13@pub trait SyncRepositoryFactory {"
+          "ref": "crates/state/sync/src/repo.rs@13@pub trait SyncRepositoryFactory {"
         },
         {
           "name": "SnapshotMeta",
           "what": "Per-aggregate cursors, converted to the EVM start config and the net sync cursor.",
-          "ref": "crates/sync/src/sync/state.rs@39@pub struct SnapshotMeta {"
+          "ref": "crates/state/sync/src/state.rs@39@pub struct SnapshotMeta {"
         },
         {
           "name": "AggregateState",
           "what": "One aggregate's last sequence, block and HLC timestamp.",
-          "ref": "crates/sync/src/sync/state.rs@15@pub struct AggregateState {"
+          "ref": "crates/state/sync/src/state.rs@15@pub struct AggregateState {"
         },
         {
           "name": "ReplaySpool",
           "what": "Post-snapshot EventStore pages written to sorted runs, then merged by HLC for replay.",
-          "ref": "crates/sync/src/replay_spool.rs@39@pub(crate) struct ReplaySpool {"
+          "ref": "crates/state/sync/src/replay_spool.rs@39@pub(crate) struct ReplaySpool {"
         },
         {
           "name": "SyncPlanner",
           "what": "Pure rules: which events replay, which are skipped, the net sync cursor and the timestamp sort.",
-          "ref": "crates/sync/src/sync/workflow.rs@30@pub struct SyncPlanner;"
+          "ref": "crates/state/sync/src/workflow.rs@30@pub struct SyncPlanner;"
         },
         {
           "name": "NodeRole",
           "what": "Full or bootstrap; a data directory stamped for one role halts a start with the other.",
-          "ref": "crates/sync/src/sync/node_role.rs@18@pub enum NodeRole {"
+          "ref": "crates/state/sync/src/node_role.rs@18@pub enum NodeRole {"
         },
         {
           "name": "SCHEMA_VERSION",
           "what": "The on-disk schema version this binary accepts (8); an older or newer marker halts startup.",
-          "ref": "crates/sync/src/sync/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
+          "ref": "crates/state/sync/src/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
         },
         {
           "name": "HistoricalEvmCollector",
           "what": "Tracks which expected chains have reported their historical EVM events.",
-          "ref": "crates/sync/src/sync/collect_history.rs@26@pub struct HistoricalEvmCollector {"
+          "ref": "crates/state/sync/src/collect_history.rs@26@pub struct HistoricalEvmCollector {"
         }
       ],
       "read_first": [
         {
           "why": "The startup sequence in order: preflight, cursors, replay, history, then effects.",
-          "ref": "crates/sync/src/sync/service.rs@387@pub async fn sync_with_net_ready<F>("
+          "ref": "crates/state/sync/src/service.rs@387@pub async fn sync_with_net_ready<F>("
         },
         {
           "why": "The production caller: NetReady is armed before networking starts, then sync runs.",
@@ -396,51 +396,51 @@
         },
         {
           "why": "The schema check that runs before any state is written.",
-          "ref": "crates/sync/src/sync/preflight.rs@45@pub async fn preflight_schema_version("
+          "ref": "crates/state/sync/src/preflight.rs@45@pub async fn preflight_schema_version("
         },
         {
           "why": "The replay loop: fan-out of each merged event, then a barrier.",
-          "ref": "crates/sync/src/replay_spool.rs@235@pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {"
+          "ref": "crates/state/sync/src/replay_spool.rs@235@pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {"
         },
         {
           "why": "The replay filter: infrastructure events are never replayed.",
-          "ref": "crates/sync/src/sync/workflow.rs@34@pub fn classify_replay(event: &InterfoldEvent) -> ReplayDecision {"
+          "ref": "crates/state/sync/src/workflow.rs@34@pub fn classify_replay(event: &InterfoldEvent) -> ReplayDecision {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "async-await",
           "note": "The whole startup sequence is one async function that the builder awaits.",
-          "ref": "crates/sync/src/sync/service.rs@387@pub async fn sync_with_net_ready<F>("
+          "ref": "crates/state/sync/src/service.rs@387@pub async fn sync_with_net_ready<F>("
         },
         {
           "pattern": "tokio-select",
           "note": "Waits for the peer-history result or the fetch failure, whichever arrives first.",
-          "ref": "crates/sync/src/sync/service.rs@557@let received = tokio::select! {"
+          "ref": "crates/state/sync/src/service.rs@557@let received = tokio::select! {"
         },
         {
           "pattern": "let-else",
           "note": "Unwraps the expected event variant or fails with a message.",
-          "ref": "crates/sync/src/sync/service.rs@563@let InterfoldEventData::HistoricalNetSyncEventsReceived(event) = received.into_data() else {"
+          "ref": "crates/state/sync/src/service.rs@563@let InterfoldEventData::HistoricalNetSyncEventsReceived(event) = received.into_data() else {"
         },
         {
           "pattern": "enum-match",
           "note": "The schema decision is matched on the persisted version and the existing-state flag.",
-          "ref": "crates/sync/src/sync/schema_version.rs@61@match persisted {"
+          "ref": "crates/state/sync/src/schema_version.rs@61@match persisted {"
         },
         {
           "pattern": "iterator-chain",
           "note": "Folds the newest HLC timestamp per aggregate across the historical events.",
-          "ref": "crates/sync/src/sync/workflow.rs@102@.fold(BTreeMap::new(), |mut acc, e| {"
+          "ref": "crates/state/sync/src/workflow.rs@102@.fold(BTreeMap::new(), |mut acc, e| {"
         },
         {
           "pattern": "async-test",
           "note": "An async test on the actix runtime that publishes events and replays them.",
-          "ref": "crates/sync/src/replay_spool.rs@520@#[actix::test]"
+          "ref": "crates/state/sync/src/replay_spool.rs@520@#[actix::test]"
         }
       ],
       "depends_on": ["e3-events", "e3-data", "e3-request", "e3-utils"],
-      "tests": "Inline unit tests in replay_spool.rs, state.rs, workflow.rs, node_role.rs, schema_version.rs and collect_history.rs, plus crates/sync/src/sync/tests/ (gates, history, replay, role, schema). Run: cargo test -p e3-sync.",
+      "tests": "Inline unit tests in replay_spool.rs, state.rs, workflow.rs, node_role.rs, schema_version.rs and collect_history.rs, plus crates/state/sync/src/tests/ (gates, history, replay, role, schema). Run: cargo test -p e3-sync.",
       "unverified": [
         "Bootstrap and SnapshotLoaded in sync/service.rs derive actix Message but have no other reference in the snapshot, so their use is unverified.",
         "The writers of the aggregate cursors and of the request-router checkpoint are outside this crate and were not read.",
