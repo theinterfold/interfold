@@ -5,17 +5,19 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Combines C4a + C4b (two ZK Honk proofs using the same C4 binary).
+//!
+//! Each C4 is the final circuit of a limb chain and exposes the hash of its limb keys last. That
+//! hash enters this fold's key hash next to the C4 key, so the VK tree covers every limb circuit.
+//! The outputs keep the unchunked C4 layout `node_fold` reads.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::H;
 use lib::math::commitments::compute_vk_hash;
 
-/// C4 public IO: `expected_commitments` (flattened) + `agg_commit`.
-pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
-
-/// Two key-hash params + combined key hash + two C4-sized public vectors (a and b).
-pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
+/// C4 public IO: `expected_commitments` (flattened) + `agg_commit` + the limb chain's key tree.
+pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 2;
+pub global C4_KEY_TREE_IDX: u32 = C4_PUBLIC_LEN - 1;
 
 fn main(
     c4a_vk: UltraHonkVerificationKey,
@@ -30,7 +32,13 @@ fn main(
     verify_honk_proof(c4a_vk, c4a_proof, c4a_public, c4a_key_hash);
     verify_honk_proof(c4b_vk, c4b_proof, c4b_public, c4b_key_hash);
 
-    let vk_hashes = [c4a_key_hash, c4b_key_hash].as_vector();
+    let vk_hashes = [
+        c4a_key_hash,
+        c4a_public[C4_KEY_TREE_IDX],
+        c4b_key_hash,
+        c4b_public[C4_KEY_TREE_IDX],
+    ]
+        .as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut c4a_expected: [[Field; L_THRESHOLD]; H] = [[0; L_THRESHOLD]; H];

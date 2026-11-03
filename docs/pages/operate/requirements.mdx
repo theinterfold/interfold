@@ -69,6 +69,9 @@ When the memory limit is too small for one job, startup stops with this error:
 the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit
 ```
 
+The node proves its share-encryption (C3) proofs, a large batch of small proofs, up to four at a
+time inside that limit, each with a quarter of the threads. Every other job counts as one full job.
+
 The node never admits more jobs than the memory limit allows, also when you set a higher
 `multithread_concurrent_jobs`. You can set the value in the configuration file or with the
 `E3_NODE__MULTITHREAD_CONCURRENT_JOBS` environment variable.

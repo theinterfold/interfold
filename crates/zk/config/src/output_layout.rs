@@ -152,7 +152,8 @@ pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
 /// C4 — DKG share decryption.
-pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment")];
+/// The final C4 circuit also returns the hash of its limb keys after the aggregate commitment.
+pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment"), f("key_tree")];
 
 /// C5 — Public key aggregation.
 pub const PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("commitment")];

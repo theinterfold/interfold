@@ -41,7 +41,7 @@
     "supported": true,
     "refs": [
       "templates/default/client/src/utils/input.ts@44@functionName: 'publishInput'",
-      "templates/default/contracts/MyProgram.sol@89@function publishInput("
+      "templates/default/contracts/MyProgram.sol@90@function publishInput("
     ],
     "line_text": ["functionName: 'publishInput',", "function publishInput(uint256 e3Id, bytes memory data) external override {"],
     "note": "The starter client sends publishInput to the E3 program contract, and MyProgram.publishInput records the input commitment."
@@ -156,9 +156,9 @@
     "id": "A18",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@605@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@670@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1374@require(msg.sender == bondOwner"
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@620@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@685@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1389@require(msg.sender == bondOwner"
     ],
     "line_text": [
       ") external noExitInProgress(operator) onlyBondOwner(operator) {",
@@ -181,8 +181,8 @@
     "id": "A20",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": ["contract DkgAggregatorVerifier is", "contract DecryptionAggregatorVerifier is"],
     "note": "Both generated Honk verifier contracts are declared at line 3248 of their generated files."
@@ -190,7 +190,7 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk/prover/src/prover.rs@105@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@112@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
     "line_text": ["let mut child = StdCommand::new(bb)", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },

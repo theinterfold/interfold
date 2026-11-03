@@ -17,7 +17,9 @@
 // those checkpoints from source timestamps.
 // Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
 // Schema 8 authenticates complete DKG share and C4 bundles before slot admission.
-pub const SCHEMA_VERSION: u32 = 8;
+// Schema 9 stores a `NodesFoldStep` compute request with several node proofs and slots, and the
+// Large committee's events.
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]

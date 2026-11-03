@@ -222,7 +222,7 @@
         {
           "name": "PublicKeyAggregator",
           "role": "public-key state machine: verifies C1 proofs, aggregates the keyshares, proves C5, publishes PublicKeyAggregated",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@42@pub struct PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@43@pub struct PublicKeyAggregator {"
         },
         {
           "name": "ThresholdPlaintextAggregator",
@@ -370,7 +370,7 @@
         },
         {
           "why": "can_run_aggregation_effects decides which node runs the aggregation effects",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@139@fn can_run_aggregation_effects(&self) -> bool {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@140@fn can_run_aggregation_effects(&self) -> bool {"
         },
         {
           "why": "the decryption actor, which holds the decryption work",

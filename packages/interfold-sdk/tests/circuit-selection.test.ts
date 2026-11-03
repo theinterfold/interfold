@@ -23,6 +23,7 @@ describe('SDK circuit selection', () => {
       ['minimum', CommitteeSize.Minimum],
       ['micro', CommitteeSize.Micro],
       ['small', CommitteeSize.Small],
+      ['large', CommitteeSize.Large],
     ] as const) {
       expect(value).toBe(COMMITTEES[name].committeeSize)
     }

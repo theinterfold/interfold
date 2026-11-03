@@ -11,11 +11,12 @@ import { BfvDecryptionLayout } from "../lib/BfvDecryptionLayout.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 
 contract BfvProtocolHarness {
-    function committeeOrdinals() external pure returns (uint8[3] memory) {
+    function committeeOrdinals() external pure returns (uint8[4] memory) {
         return [
             uint8(IInterfold.CommitteeSize.Minimum),
             uint8(IInterfold.CommitteeSize.Micro),
-            uint8(IInterfold.CommitteeSize.Small)
+            uint8(IInterfold.CommitteeSize.Small),
+            uint8(IInterfold.CommitteeSize.Large)
         ];
     }
 

@@ -193,9 +193,9 @@ impl ThresholdPlaintextAggregator {
             .get()
             .ok_or(anyhow!("Could not get state"))?
             .try_into()?;
-        // C6Fold witness width is `T + 1` (same `T` as `threshold_m`). C7 is only proven for the
+        // The C6 column is `T + 1` wide (same `T` as `threshold_m`). C7 is only proven for the
         // first `T + 1` parties after sorting by party id (`handle_decrypted_shares_aggregation_proof`
-        // truncates); fold slot indices must stay in `0..T+1` and use that same party subset.
+        // truncates); C6 slot indices must stay in `0..T+1` and use that same party subset.
         let c6_total_slots = state.threshold_m as usize + 1;
         if honest_c6.len() < c6_total_slots {
             warn!(

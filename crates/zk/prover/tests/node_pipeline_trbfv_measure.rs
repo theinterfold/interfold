@@ -29,8 +29,9 @@ use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
+    generate_c3_chonk_chain, generate_sequential_nodes_fold,
     DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput, PkAggregationCircuit,
-    PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
+    PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit, ShareEncryptionCircuit,
 };
 use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -44,17 +45,32 @@ const NODE_LEAVES: &[CircuitName] = &[
     CircuitName::PkGeneration,
     CircuitName::SkShareComputation,
     CircuitName::ESmShareComputation,
+    // C2 is proven through these chunk circuits; the two names above are the final circuits.
+    CircuitName::SkShareComputationChain,
+    CircuitName::SkShareComputationChainLast,
+    CircuitName::ESmShareComputationChain,
+    CircuitName::ESmShareComputationChainLast,
     CircuitName::ShareEncryption,
+    // C4 is proven through its three limb circuits; `DkgShareDecryption` is the final circuit.
+    CircuitName::DkgShareDecryptionLimb0,
+    CircuitName::DkgShareDecryptionLimb1,
+    CircuitName::DkgShareDecryptionLimb2,
     CircuitName::DkgShareDecryption,
 ];
 
 const NODE_FOLDS: &[CircuitName] = &[
     CircuitName::C2abFold,
-    CircuitName::C3FoldKernel,
-    CircuitName::C3Fold,
+    CircuitName::C3ChonkApp,
+    CircuitName::C3ChonkInitKernel,
+    CircuitName::C3ChonkTailKernel,
+    CircuitName::C3ChonkHidingKernel,
+    CircuitName::C3ChonkTube,
+    CircuitName::C3ChonkAccumulate,
     CircuitName::C3abFold,
     CircuitName::C4abFold,
     CircuitName::NodeFold,
+    CircuitName::NodesFoldKernel,
+    CircuitName::NodesFold,
 ];
 
 #[tokio::test]
@@ -163,31 +179,61 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
     drop((share_sk, share_esm));
 
-    let (c3a_proofs, c3b_proofs, c3_slots) = phases.run("c3", || {
-        let (c3a, slots_a) = pipeline::prove_c3_set(
+    // `MEASURE_C3_POOL=1` proves C3 as a node's scheduler does: every C3 proof at once through a
+    // TaskPool of `MEASURE_POOL_THREADS` (14: 16 minus the default reserve) and `MEASURE_POOL_JOBS`
+    // (2, a 32 GB node) slots, four light proofs at a time.
+    let (c3a_proofs, c3b_proofs, c3_slots) = if pipeline::env_flag("MEASURE_C3_POOL") {
+        let env_usize = |name: &str, default: usize| {
+            std::env::var(name).map_or(default, |v| v.parse().expect(name))
+        };
+        let started = std::time::Instant::now();
+        let mut sets = pipeline::prove_c3_sets_pooled(
             &prover,
             PRESET,
             &committee,
-            &sk_inputs,
+            [
+                (&sk_inputs, DkgInputType::SecretKey, "c3a"),
+                (&esm_inputs, DkgInputType::SmudgingNoise, "c3b"),
+            ],
             &dkg_pk,
-            DkgInputType::SecretKey,
-            "c3a",
             &artifacts_dir,
-        );
-        let (c3b, slots_b) = pipeline::prove_c3_set(
-            &prover,
-            PRESET,
-            &committee,
-            &esm_inputs,
-            &dkg_pk,
-            DkgInputType::SmudgingNoise,
-            "c3b",
-            &artifacts_dir,
-        );
+            env_usize("MEASURE_POOL_THREADS", 14),
+            env_usize("MEASURE_POOL_JOBS", 2),
+        )
+        .await;
+        phases.record("c3", started.elapsed().as_secs_f64());
+        let (c3b, slots_b) = sets.pop().expect("C3b");
+        let (c3a, slots_a) = sets.pop().expect("C3a");
         assert_eq!(slots_a, slots_b);
         println!("STEP c3 proofs={}", c3a.len() + c3b.len());
         (c3a, c3b, slots_a)
-    });
+    } else {
+        phases.run("c3", || {
+            let (c3a, slots_a) = pipeline::prove_c3_set(
+                &prover,
+                PRESET,
+                &committee,
+                &sk_inputs,
+                &dkg_pk,
+                DkgInputType::SecretKey,
+                "c3a",
+                &artifacts_dir,
+            );
+            let (c3b, slots_b) = pipeline::prove_c3_set(
+                &prover,
+                PRESET,
+                &committee,
+                &esm_inputs,
+                &dkg_pk,
+                DkgInputType::SmudgingNoise,
+                "c3b",
+                &artifacts_dir,
+            );
+            assert_eq!(slots_a, slots_b);
+            println!("STEP c3 proofs={}", c3a.len() + c3b.len());
+            (c3a, c3b, slots_a)
+        })
+    };
 
     let (c4a_proof, c4b_proof) = phases.run("c4", || {
         let c4a = measure("c4a", || {
@@ -212,7 +258,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
     drop((c4a_data, c4b_data));
 
-    phases.run("node_folds", || {
+    let node_proof = phases.run("node_folds", || {
         pipeline::prove_node_fold(
             &prover,
             &NodeDkgFoldInput {
@@ -234,6 +280,231 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
 
     phases.finish();
+
+    // The aggregator's fold over `H` node proofs, outside the node's total. Copies of this node's
+    // proof give the same circuit cost; the fold does not compare rows, the DKG aggregator does.
+    if pipeline::env_flag("MEASURE_NODES_FOLD") {
+        let slots: Vec<u32> = (0..committee.h as u32).collect();
+        let nodes = vec![node_proof; committee.h];
+        measure("nodes_fold_chain", || {
+            generate_sequential_nodes_fold(
+                &prover,
+                &nodes,
+                &slots,
+                committee.h,
+                "measure-nodes-fold",
+                &artifacts_dir,
+            )
+        });
+    }
+}
+
+/// C3 Chonk stack size: proves one secret's C3 set once, then times the C3 chain for every app
+/// build listed in `MEASURE_C3_APPS` (comma-separated directories, each holding a built
+/// `c3_chonk_app.{json,vk_recursive,vk_recursive_hash}` with its own `C3_CHONK_LEAVES`). Needs
+/// `MEASURE_C3_STACKS=1`.
+#[tokio::test]
+async fn trbfv_c3_chonk_stack_measure() {
+    let Some((committee_size, committee_name)) = pipeline::gate(PRESET, Some("MEASURE_C3_STACKS"))
+    else {
+        return;
+    };
+    let apps: Vec<std::path::PathBuf> = std::env::var("MEASURE_C3_APPS")
+        .expect("MEASURE_C3_APPS lists the app builds to compare")
+        .split(',')
+        .map(std::path::PathBuf::from)
+        .collect();
+    pipeline::install_bb_trace();
+    let committee = committee_size.values();
+    let bb = find_bb().await.expect("bb");
+    let (backend, _temp) = setup_test_prover(&bb).await;
+    let prover = pipeline::prover(&backend);
+    let artifacts_dir = prover.resolve_artifacts_dir(PRESET, &committee_name);
+    pipeline::stage(
+        &backend,
+        &artifacts_dir,
+        &[CircuitName::ShareEncryption],
+        &[
+            CircuitName::C3ChonkApp,
+            CircuitName::C3ChonkInitKernel,
+            CircuitName::C3ChonkTailKernel,
+            CircuitName::C3ChonkHidingKernel,
+            CircuitName::C3ChonkTube,
+            CircuitName::C3ChonkAccumulate,
+        ],
+    )
+    .await;
+
+    let dkg_pk = prep("dkg key", || {
+        let (_, dkg_params) = build_pair_for_preset(PRESET).expect("DKG parameters");
+        let mut dkg_rng = rng();
+        PublicKey::new(&SecretKey::random(&dkg_params, &mut dkg_rng), &mut dkg_rng)
+    });
+    let sk_inputs = prep("own C2a inputs", || {
+        let (key_data, _, secret_key) =
+            node_fold_witness::pk_generation_sample_with_esi(PRESET, committee.clone())
+                .expect("key data");
+        let share_sk = node_fold_witness::share_computation_sk_from_pk(
+            PRESET,
+            committee.clone(),
+            &key_data,
+            &secret_key,
+        )
+        .expect("C2a data");
+        let config =
+            e3_zk_config::dkg::share_computation::Configs::for_preset(PRESET, committee_size)
+                .expect("C2 configuration");
+        ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
+    });
+    let (c3_proofs, c3_slots) = measure("c3_set", || {
+        Ok::<_, String>(pipeline::prove_c3_set(
+            &prover,
+            PRESET,
+            &committee,
+            &sk_inputs,
+            &dkg_pk,
+            DkgInputType::SecretKey,
+            "c3a",
+            &artifacts_dir,
+        ))
+    });
+    let total_slots = committee.n * PRESET.metadata().num_moduli;
+    println!(
+        "STEP c3 proofs={} total_slots={total_slots}",
+        c3_proofs.len()
+    );
+
+    let app_dir = backend
+        .circuits_dir
+        .join(&artifacts_dir)
+        .join("default")
+        .join(CircuitName::C3ChonkApp.dir_path());
+    for app in &apps {
+        let name = CircuitName::C3ChonkApp.as_str();
+        for (from, to) in [
+            ("json", "json"),
+            ("vk_recursive", "vk"),
+            ("vk_recursive_hash", "vk_hash"),
+        ] {
+            std::fs::copy(
+                app.join(format!("{name}.{from}")),
+                app_dir.join(format!("{name}.{to}")),
+            )
+            .unwrap_or_else(|e| panic!("stage {} app: {e}", app.display()));
+        }
+        let label = app
+            .file_name()
+            .map_or("app".into(), |n| n.to_string_lossy().into_owned());
+        measure(&format!("c3_chain {label}"), || {
+            generate_c3_chonk_chain(
+                &prover,
+                &c3_proofs,
+                &c3_slots,
+                total_slots,
+                &format!("measure-c3-{label}"),
+                &artifacts_dir,
+            )
+        });
+    }
+}
+
+/// C3 proving throughput: proves the same `MEASURE_C3_COUNT` (default 24) C3 slots with 1, 2 and 4
+/// proofs at a time, splitting `MEASURE_THREADS` (default 16) bb threads evenly between them. Needs
+/// `MEASURE_C3_CONCURRENCY=1`.
+#[tokio::test]
+async fn trbfv_c3_concurrency_measure() {
+    let Some((committee_size, committee_name)) =
+        pipeline::gate(PRESET, Some("MEASURE_C3_CONCURRENCY"))
+    else {
+        return;
+    };
+    let count: usize = std::env::var("MEASURE_C3_COUNT")
+        .map(|v| v.parse().expect("MEASURE_C3_COUNT"))
+        .unwrap_or(24);
+    let threads: usize = std::env::var("MEASURE_THREADS")
+        .map(|v| v.parse().expect("MEASURE_THREADS"))
+        .unwrap_or(16);
+    pipeline::install_bb_trace();
+    let committee = committee_size.values();
+    let bb = find_bb().await.expect("bb");
+    let (backend, _temp) = setup_test_prover(&bb).await;
+    let prover = pipeline::prover(&backend);
+    let artifacts_dir = prover.resolve_artifacts_dir(PRESET, &committee_name);
+    pipeline::stage(
+        &backend,
+        &artifacts_dir,
+        &[CircuitName::ShareEncryption],
+        &[],
+    )
+    .await;
+
+    let dkg_pk = prep("dkg key", || {
+        let (_, dkg_params) = build_pair_for_preset(PRESET).expect("DKG parameters");
+        let mut dkg_rng = rng();
+        PublicKey::new(&SecretKey::random(&dkg_params, &mut dkg_rng), &mut dkg_rng)
+    });
+    let sk_inputs = prep("own C2a inputs", || {
+        let (key_data, _, secret_key) =
+            node_fold_witness::pk_generation_sample_with_esi(PRESET, committee.clone())
+                .expect("key data");
+        let share_sk = node_fold_witness::share_computation_sk_from_pk(
+            PRESET,
+            committee.clone(),
+            &key_data,
+            &secret_key,
+        )
+        .expect("C2a data");
+        let config =
+            e3_zk_config::dkg::share_computation::Configs::for_preset(PRESET, committee_size)
+                .expect("C2 configuration");
+        ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
+    });
+    let slots_per_party = PRESET.metadata().num_moduli;
+    let config =
+        e3_zk_config::dkg::share_encryption::Configs::for_preset(PRESET).expect("C3 configuration");
+    let data: Vec<_> = prep("C3 witness data", || {
+        (slots_per_party..slots_per_party + count)
+            .map(|slot| {
+                node_fold_witness::share_encryption_for_slot(
+                    PRESET,
+                    &dkg_pk,
+                    &sk_inputs,
+                    slot,
+                    DkgInputType::SecretKey,
+                )
+                .expect("C3 witness data")
+            })
+            .collect()
+    });
+
+    for parallel in [1usize, 2, 4] {
+        let per_proof = (threads / parallel).max(1);
+        // Every bb process reads its thread count from the environment it inherits.
+        std::env::set_var("HARDWARE_CONCURRENCY", per_proof.to_string());
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(parallel)
+            .build()
+            .expect("pool");
+        let label = format!("c3_x{parallel}_t{per_proof}");
+        measure(&label, || {
+            pool.install(|| {
+                use rayon::prelude::*;
+                data.par_iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        ShareEncryptionCircuit.prove(
+                            &prover,
+                            &config,
+                            d,
+                            &format!("measure-{label}-{i}"),
+                            &artifacts_dir,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+        });
+    }
+    std::env::set_var("HARDWARE_CONCURRENCY", threads.to_string());
 }
 
 /// Threshold decryption on the trBFV preset: the node's C6, and with `MEASURE_AGGREGATOR=1` the
@@ -260,7 +531,14 @@ async fn trbfv_decryption_measure() {
         &[CircuitName::ThresholdShareDecryption]
     };
     let folds: &[CircuitName] = if aggregator {
-        &[CircuitName::C6FoldKernel, CircuitName::C6Fold]
+        &[
+            CircuitName::C6ChonkApp,
+            CircuitName::C6ChonkInitKernel,
+            CircuitName::C6ChonkTailKernel,
+            CircuitName::C6ChonkHidingKernel,
+            CircuitName::C6ChonkTube,
+            CircuitName::C6ChonkRoot,
+        ]
     } else {
         &[]
     };

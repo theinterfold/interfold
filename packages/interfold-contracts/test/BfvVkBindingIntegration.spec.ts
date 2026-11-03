@@ -445,7 +445,7 @@ describe("BfvVkBindingIntegration", function () {
       const immediateC6Hash = readVkRecursiveHash(
         path.join(
           repoRoot,
-          "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
+          "circuits/bin/recursive_aggregation/c6_chonk_root/target/c6_chonk_root.vk_recursive_hash",
         ),
       );
       expect(immediateNodesHash).not.to.equal(expectedNodesFoldKeyHash);

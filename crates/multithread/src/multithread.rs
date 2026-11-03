@@ -186,6 +186,34 @@ impl Multithread {
     }
 }
 
+/// Light jobs that may share the slot one full job takes.
+const LIGHT_JOBS_PER_SLOT: u32 = 4;
+
+/// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
+/// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
+/// batch faster than one at a time on every thread. Every other job takes a whole slot and every
+/// thread, as before.
+fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
+    let light = matches!(
+        request,
+        ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_))
+    );
+    weight(light, pool.capacity_units(), pool.threads())
+}
+
+/// A light job takes a quarter of all admission units, so at most four run at once, and a
+/// quarter of the threads.
+fn weight(light: bool, capacity_units: u32, threads: usize) -> (u32, Option<usize>) {
+    if light {
+        (
+            (capacity_units / LIGHT_JOBS_PER_SLOT).max(1),
+            Some((threads / LIGHT_JOBS_PER_SLOT as usize).max(1)),
+        )
+    } else {
+        (e3_task_pool::SLOT_UNITS, None)
+    }
+}
+
 fn task_group(scope: &str, e3_id: &E3id) -> String {
     e3_task_pool::scoped_task_group(scope, e3_id)
 }
@@ -229,6 +257,17 @@ fn ended_task_groups(scope: &str, event: &InterfoldEventData) -> Vec<String> {
 #[cfg(test)]
 mod task_group_tests {
     use super::*;
+
+    #[test]
+    fn at_most_four_light_jobs_share_the_pool_and_full_jobs_keep_every_thread() {
+        // Two full slots of four units on 16 threads: a light job takes two units and 4 threads.
+        assert_eq!(weight(true, 8, 16), (2, Some(4)));
+        // One slot: four light jobs of one unit each.
+        assert_eq!(weight(true, 4, 16), (1, Some(4)));
+        // A tiny machine still gives each light job a unit and a thread.
+        assert_eq!(weight(true, 2, 2), (1, Some(1)));
+        assert_eq!(weight(false, 8, 16), (e3_task_pool::SLOT_UNITS, None));
+    }
 
     #[test]
     fn a_failure_ends_protocol_work_and_the_request_end_ends_accusation_work() {
@@ -566,6 +605,7 @@ async fn handle_compute_request_event(
     let task_group = request_task_group(&task_scope, &msg);
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
+    let (units, light_job_threads) = job_weight(&request_snapshot.request, &pool);
     let retries_local_worker_failures =
         is_zk || is_retryable_trbfv_request(&request_snapshot.request);
     let mut attempt = 1usize;
@@ -582,15 +622,22 @@ async fn handle_compute_request_event(
         } else {
             zk_prover.clone()
         };
+        let prover_for_worker = match light_job_threads {
+            Some(threads) => {
+                prover_for_worker.map(|prover| Arc::new(prover.with_bb_threads(threads)))
+            }
+            None => prover_for_worker,
+        };
         let request_for_worker = request_snapshot.clone();
         let report_for_worker = report.clone();
         let rng_for_worker = rng.clone();
         let cipher_for_worker = cipher.clone();
         let pool_result = pool
-            .spawn_in_group(
+            .spawn_in_group_weighted(
                 task_group.clone(),
                 job_name.clone(),
                 TaskTimeouts::default(),
+                units,
                 move || {
                     handle_compute_request(
                         rng_for_worker,

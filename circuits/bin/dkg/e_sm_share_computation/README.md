@@ -2,9 +2,9 @@
 
 Correct Threshold Smudging Noise Share Computation (**Circuit 2b**). Verifies the expected secret
 commitment, checks secret consistency (`y[i][j][0] == e_sm[j][i]` per modulus), performs range
-checks (`y` in `[0, q_j)`), and checks that the shares lie on a degree-`T` polynomial: their
-`(T+1)`-th finite differences vanish modulo `q_j`. Commits computed party shares for downstream
-aggregation.
+checks (`y` in `[0, q_j)`), and checks the shares lie on a degree-`T` polynomial with `(T + 1)`-th
+finite differences over windows of `T + 2` consecutive values. Commits computed party shares for
+downstream aggregation.
 
 |           |                                                                                           |
 | --------- | ----------------------------------------------------------------------------------------- |

@@ -19,12 +19,13 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
+use lib::math::nodes_fold::NODES_FOLD_LEAVES;
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
 /// Must match `nodes_fold::NODES_FOLD_PUBLIC_LEN` (pub params + flattened `H` node-fold rows).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 5 + (H * NODE_FOLD_PUBLIC_LEN);
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + NODES_FOLD_LEAVES + (H * NODE_FOLD_PUBLIC_LEN);
 
 /// Flattened `node_fold` return tuple length (key hash + pks + share grids + agg commits).
 pub global NODE_FOLD_RETURN_PUBLIC_LEN: u32 =

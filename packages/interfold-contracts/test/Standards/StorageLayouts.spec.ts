@@ -130,6 +130,30 @@ describe("storage layout validation", function () {
     }
   });
 
+  it("allows a persisted enum to append a member", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const before = emptyMetadata();
+    before.enums["Example.Stage"] = ["Requested", "Complete"];
+    const after = emptyMetadata();
+    after.enums["Example.Stage"] = ["Requested", "Complete", "Failed"];
+
+    expect(diffLayouts("Example", layout, layout, before, after)).to.deep.equal(
+      [],
+    );
+  });
+
+  it("rejects removing a persisted enum member", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const before = emptyMetadata();
+    before.enums["Example.Stage"] = ["Requested", "Complete"];
+    const after = emptyMetadata();
+    after.enums["Example.Stage"] = ["Requested"];
+
+    expect(diffLayouts("Example", layout, layout, before, after)).to.include(
+      "Example: persisted enum Example.Stage member order changed.",
+    );
+  });
+
   it("extracts enum definitions without treating array wrappers as enums", function () {
     expect(
       persistedEnumName({

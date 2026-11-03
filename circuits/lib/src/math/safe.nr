@@ -38,7 +38,7 @@ global RATE: u32 = 3;
 global CAPACITY: u32 = 1;
 
 /// Total state size (rate + capacity) in field elements.
-global STATE_SIZE: u32 = RATE + CAPACITY;
+pub global STATE_SIZE: u32 = RATE + CAPACITY;
 
 /// IO Pattern encoding constants (from SAFE spec 2.3).
 ///
@@ -218,6 +218,84 @@ impl<let L: u32> SafeSponge<L> {
     }
 }
 
+/// The state a sponge for `io_pattern` and `domain_separator` starts its first ABSORB from, with
+/// absorb position 0.
+pub fn initial_state<let L: u32>(
+    io_pattern: [u32; L],
+    domain_separator: [u8; 64],
+) -> [Field; STATE_SIZE] {
+    let mut state = [0; STATE_SIZE];
+    state[0] = compute_tag(io_pattern, domain_separator);
+    state
+}
+
+/// Continues one ABSORB from a carried `(state, absorb_pos)` and returns the new pair.
+///
+/// The absorb loop reads nothing but the state and the absorb position, and `compute_tag` merges
+/// consecutive ABSORB words, so absorbing a stream piece by piece from the carried pair gives the
+/// same sponge as one [`SafeSponge::absorb`] of the whole stream. This lets a commitment span
+/// several proofs. The IO pattern is not checked here; [`squeeze_one_after_absorb`] checks it.
+pub fn absorb_from(
+    state: [Field; STATE_SIZE],
+    absorb_pos: u32,
+    input: [Field],
+) -> ([Field; STATE_SIZE], u32) {
+    let mut state = state;
+    let mut absorb_pos = absorb_pos;
+    for i in 0..input.len() {
+        if absorb_pos == RATE {
+            state = poseidon2_permutation(state);
+            absorb_pos = 0;
+        }
+        state[absorb_pos + CAPACITY] = state[absorb_pos + CAPACITY] + input[i];
+        absorb_pos += 1;
+    }
+    (state, absorb_pos)
+}
+
+/// [`absorb_from`] for a pair carried across a block boundary: `absorb_pos` is 0 (a fresh sponge)
+/// or `RATE` (a whole number of blocks absorbed so far).
+///
+/// A witness `absorb_pos` would make every element's permutation conditional, so the circuit would
+/// compute one permutation per element. Here only the first block's permutation depends on it;
+/// every later position is known when the circuit is compiled.
+pub fn absorb_from_block_boundary(
+    state: [Field; STATE_SIZE],
+    absorb_pos: u32,
+    input: [Field],
+) -> ([Field; STATE_SIZE], u32) {
+    assert((absorb_pos == 0) | (absorb_pos == RATE), "absorb position must be a block boundary");
+    // With nothing to absorb, `absorb_from` would leave a pending permutation pending.
+    assert(input.len() != 0, "nothing to absorb");
+    let permuted = poseidon2_permutation(state);
+    let mut state = if absorb_pos == RATE { permuted } else { state };
+    let mut pos: u32 = 0;
+    for i in 0..input.len() {
+        if pos == RATE {
+            state = poseidon2_permutation(state);
+            pos = 0;
+        }
+        state[pos + CAPACITY] = state[pos + CAPACITY] + input[i];
+        pos += 1;
+    }
+    (state, pos)
+}
+
+/// Squeezes the single digest of `io_pattern = [ABSORB | total, 1]` from the pair an
+/// [`absorb_from`] chain ended on. The caller fixes `total` by how much it absorbed.
+pub fn squeeze_one_after_absorb(
+    io_pattern: [u32; 2],
+    state: [Field; STATE_SIZE],
+    absorb_pos: u32,
+) -> Field {
+    assert((io_pattern[0] & ABSORB_FLAG) != 0, "Expected ABSORB operation");
+    let mut sponge =
+        SafeSponge { state, tag: 0, absorb_pos, squeeze_pos: RATE, io_pattern, io_count: 1 };
+    let digests = sponge.squeeze();
+    sponge.finish();
+    digests[0]
+}
+
 /// Computes a unique tag for a sponge instance based on its IO pattern and domain separator.
 /// The tag is used to ensure that distinct instances behave like distinct functions.
 ///
@@ -363,6 +441,46 @@ fn test_safe_hashing() {
 
     assert(output2.len() == 1);
     assert(output2[0] != 0);
+}
+
+#[test]
+fn absorbing_in_pieces_from_a_carried_state_matches_one_absorb() {
+    let domain_separator = [
+        0x41, 0x42, 0x43, 0x44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
+    let elements = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9];
+    let io_pattern = [0x80000000 | 13, 1];
+
+    let mut sponge = SafeSponge::start(io_pattern, domain_separator);
+    sponge.absorb(elements.as_vector());
+    let expected = sponge.squeeze()[0];
+    sponge.finish();
+
+    // Pieces of 2, 7 and 4 cross permutation boundaries at different absorb positions.
+    let (state, pos) = absorb_from(
+        initial_state(io_pattern, domain_separator),
+        0,
+        [3, 1].as_vector(),
+    );
+    let (state, pos) = absorb_from(state, pos, [4, 1, 5, 9, 2, 6, 5].as_vector());
+    let (state, pos) = absorb_from(state, pos, [3, 5, 8, 9].as_vector());
+    assert(squeeze_one_after_absorb(io_pattern, state, pos) == expected);
+
+    // A different split of the same stream gives the same digest; a different stream does not.
+    let (state, pos) = absorb_from(
+        initial_state(io_pattern, domain_separator),
+        0,
+        elements.as_vector(),
+    );
+    assert(squeeze_one_after_absorb(io_pattern, state, pos) == expected);
+    let (state, pos) = absorb_from(
+        initial_state(io_pattern, domain_separator),
+        0,
+        [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 8].as_vector(),
+    );
+    assert(squeeze_one_after_absorb(io_pattern, state, pos) != expected);
 }
 
 #[test]

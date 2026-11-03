@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 use super::ZkBackend;
 
 /// Known committee subdirectories in per-committee circuit release layouts (v0.2.0+).
-const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small"];
+const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small", "large"];
 
 /// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
 const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];

@@ -15,11 +15,11 @@ DIRS=(
   "lib"
   "bin/config"
   "bin/recursive_aggregation/c2ab_fold"
-  "bin/recursive_aggregation/c3_fold"
-  "bin/recursive_aggregation/c3_fold_kernel"
-  "bin/recursive_aggregation/c6_fold"
-  "bin/recursive_aggregation/c6_fold_kernel"
   "bin/recursive_aggregation/c3ab_fold"
+  "bin/recursive_aggregation/c3_chonk_tube"
+  "bin/recursive_aggregation/c3_chonk_accumulate"
+  "bin/recursive_aggregation/c6_chonk_tube"
+  "bin/recursive_aggregation/c6_chonk_root"
   "bin/recursive_aggregation/c4ab_fold"
   "bin/recursive_aggregation/node_fold"
   "bin/recursive_aggregation/nodes_fold"
@@ -28,6 +28,7 @@ DIRS=(
   "bin/recursive_aggregation/decryption_aggregator"
   "bin/dkg"
   "bin/threshold"
+  "bin/chonk"
 )
 
 for dir in "${DIRS[@]}"; do

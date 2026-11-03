@@ -27,7 +27,7 @@ use crate::math::safe::SafeSponge;
 /// # Safety
 /// - Asserts `nibble_bits + 4 <= 254` to avoid mod-p wrap on BN254.
 /// - Ensures at least one limb fits: `group >= 1`.
-fn packing_layout<let BIT: u32>() -> (u32, u32) {
+pub fn packing_layout<let BIT: u32>() -> (u32, u32) {
     // Ceil BIT up to the next multiple of 4 (nibble alignment).
     let nibble_bits = ((BIT + 3) / 4) * 4;
 

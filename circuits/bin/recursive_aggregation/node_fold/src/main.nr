@@ -14,29 +14,33 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 use lib::math::commitments::compute_vk_hash;
 
-pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+/// C2's public inputs as `c2ab_fold` passes them on: without the key tree, which it hashes into
+/// its key hash. The C2 proof itself has one field more (`c2ab_fold::C2_PUBLIC_LEN`).
+pub global C2_FOLDED_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_FOLDED_LEN);
 /// One slot per (party, threshold-modulus) pair - must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN`.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
 /// Prefix (two inner key hashes + combined hash) before six `C3_SLOTS` columns in `c3ab_fold` public IO.
 pub global C3AB_PREFIX_LEN: u32 = C3AB_FOLD_PUBLIC_LEN - (6 * C3_SLOTS);
-pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
-pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
+/// C4's public inputs as `c4ab_fold` passes them on, likewise without the key tree
+/// (`c4ab_fold::C4_PUBLIC_LEN` is one field more).
+pub global C4_FOLDED_LEN: u32 = (H * L_THRESHOLD) + 1;
+pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_FOLDED_LEN);
 
 /// Key-hash prefix length in `c2ab_fold` / `c4ab_fold` flattened public IO.
-pub global C2AB_PREFIX_LEN: u32 = C2AB_FOLD_PUBLIC_LEN - (2 * C2_PUBLIC_LEN);
-pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_PUBLIC_LEN);
+pub global C2AB_PREFIX_LEN: u32 = C2AB_FOLD_PUBLIC_LEN - (2 * C2_FOLDED_LEN);
+pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_FOLDED_LEN);
 
 /// Inner C2 / C4 column offsets inside `c2ab_public` / `c4ab_public`
 /// (parallel to `NF_*` in `dkg_aggregator`; keep in sync).
 pub global C2A_INNER_START: u32 = C2AB_PREFIX_LEN;
-pub global C2B_INNER_START: u32 = C2AB_PREFIX_LEN + C2_PUBLIC_LEN;
+pub global C2B_INNER_START: u32 = C2AB_PREFIX_LEN + C2_FOLDED_LEN;
 pub global C2A_SHARES_START: u32 = C2A_INNER_START + 1;
 pub global C2B_SHARES_START: u32 = C2B_INNER_START + 1;
 
 pub global C4A_INNER_START: u32 = C4AB_PREFIX_LEN;
-pub global C4B_INNER_START: u32 = C4AB_PREFIX_LEN + C4_PUBLIC_LEN;
+pub global C4B_INNER_START: u32 = C4AB_PREFIX_LEN + C4_FOLDED_LEN;
 pub global SK_AGG_INDEX: u32 = C4A_INNER_START + (H * L_THRESHOLD);
 pub global ESM_AGG_INDEX: u32 = C4B_INNER_START + (H * L_THRESHOLD);
 
@@ -129,7 +133,7 @@ fn main(
     let c1_pk = c1_public[1];
 
     // Same-party C1 to C2: `c2ab_public` lays out two full C2 public vectors after a 3-field
-    // prefix (`C2AB_FOLD_PUBLIC_LEN` = 3 + 2 * `C2_PUBLIC_LEN`). For each inner C2 block, index 0
+    // prefix (`C2AB_FOLD_PUBLIC_LEN` = 3 + 2 * `C2_FOLDED_LEN`). For each inner C2 block, index 0
     // is `expected_secret_commitment`; these equal C1's sk- and e_sm-side public inputs [0] and [2].
     assert(c1_public[0] == c2ab_public[C2A_INNER_START]);
     assert(c1_public[2] == c2ab_public[C2B_INNER_START]);
@@ -140,7 +144,7 @@ fn main(
     // and msg_b[j*L+l] == c2b_shares[j][l]. The node's own slot is intentionally not
     // C3-encrypted; it is bound through the C4 plaintext/decryption path instead.
     // c3ab layout: key-hash prefix, then pk_a, msg_a, ct_a, pk_b, msg_b, ct_b (`C3_SLOTS` each).
-    // c2ab layout: see `C2AB_PREFIX_LEN` / `C2_PUBLIC_LEN`.
+    // c2ab layout: see `C2AB_PREFIX_LEN` / `C2_FOLDED_LEN`.
     for j in 0..N_PARTIES {
         for l in 0..L_THRESHOLD {
             if party_id != (j as Field) {

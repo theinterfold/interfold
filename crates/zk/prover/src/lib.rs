@@ -7,6 +7,7 @@
 mod actor_system;
 mod actors;
 mod backend;
+mod chonk;
 mod circuits;
 mod config;
 mod dkg_attestation_bundle;
@@ -29,15 +30,16 @@ pub use actors::{
 pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
-pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
-pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
+pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
+pub use circuits::aggregation::c6_chonk::generate_c6_chonk_root;
 pub use circuits::aggregation::node_dkg_fold::{
     prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_node_dkg_fold,
     DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming, NodeDkgFoldInput,
     NodeDkgFoldProveResult,
 };
 pub use circuits::aggregation::nodes_fold_accumulator::{
-    generate_nodes_fold_step, generate_sequential_nodes_fold,
+    generate_nodes_fold_step, generate_sequential_nodes_fold, nodes_fold_step_len,
+    NODES_FOLD_LEAVES,
 };
 pub use circuits::dkg::pk::PkCircuit;
 pub use circuits::dkg::share_computation::ShareComputationCircuit;
