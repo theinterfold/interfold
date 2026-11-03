@@ -195,6 +195,13 @@ export interface ProtocolDeployment {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  /** The bond-owner identity gate, from `upgrade:identity:validate --write-records`. */
+  ownerIdentityRegistry?: string;
+  ownerIdentityRegistryImplementation?: string;
+  ownerIdentityRegistryProxyAdmin?: string;
+  identityVerifier?: string;
+  /** Block of the identity registry deployment: no identity policy log is older. */
+  identityDeployBlock?: number;
   nodeReleaseRegistry: string;
   bondedCheckpoints: string;
   /**

@@ -9,15 +9,18 @@
 //
 //   1. prepare the gate with `identityGate.ts` against copies of the mainnet config and deployment,
 //      check that a second prepare is refused and that `--rewrite` writes the batch again for the
-//      same contracts (until it executes), execute its batch, and validate it with the policy off;
+//      same contracts (until it executes), execute its batch, validate it with the policy off and
+//      write the deployment record, and check that a prepare without the plan file is refused;
 //   2. with --proof, register the proof's bond owner against ZKPassport's mainnet verifier;
-//   3. check that `enforce` refuses while too few owners are verified, that the batch check refuses
-//      its payload, then force it, execute it, and read the owner capacity that it leaves;
+//   3. check that `enforce` refuses without --nodes-upgraded and while too few owners are verified,
+//      that the batch check refuses its payload, then force it, execute it, and read the owner
+//      capacity that it leaves;
 //   4. check that `rotate-verifier` refuses an unchanged config and a changed identifier setting,
 //      then rotate to a verifier with another proof validity; credentials stay;
 //   5. with --proof, revoke the proof's identifier (refused without --force: too few owners stay);
 //      validate refuses the batch until it executes, then finds the revocation;
-//   6. relax the policy (the rollback): the batch check passes it; execute it and validate again.
+//   6. relax the policy (the rollback) without the plan file, from the deployment record: the batch
+//      check passes it; execute it and validate again.
 //
 // Usage (from packages/interfold-contracts):
 //   FORK_URL=<mainnet RPC> LOG_RPC_URL=<RPCs> tsx scripts/upgrade/simulateIdentityGate.ts \
@@ -261,15 +264,24 @@ async function main() {
     mustRefuse(GATE, ["prepare", ...args], /pass --rewrite/);
     mustPass(GATE, ["prepare", ...args, "--rewrite"]);
     const gas = await executeIdentityBatch(provider, forkConfigJson, "prepare");
-    mustPass(GATE, ["validate", ...args, "--required", "false"]);
+    mustPass(GATE, [
+      "validate",
+      ...args,
+      "--required",
+      "false",
+      "--write-records",
+    ]);
     mustRefuse(
       GATE,
       ["prepare", ...args, "--rewrite"],
       /prepare batch has executed/,
     );
-    const plan = readJson(
-      path.join(protocolDir, "mainnet-fork.identity-gate.json"),
-    );
+    const planFile = path.join(protocolDir, "mainnet-fork.identity-gate.json");
+    const plan = readJson(planFile);
+    // Without the plan file, the chain still shows the policy, so no second registry replaces it.
+    fs.renameSync(planFile, `${planFile}.kept`);
+    mustRefuse(GATE, ["prepare", ...args], /already has an identity policy/);
+    fs.renameSync(`${planFile}.kept`, planFile);
     console.log(`owner capacity: ${await capacity()}`);
 
     let identityId: string | undefined;
@@ -309,8 +321,13 @@ async function main() {
     }
 
     log("3. enforce: refused with too few verified owners, then forced");
-    mustRefuse(GATE, ["enforce", ...args], /owners have a credential/);
-    mustPass(GATE, ["enforce", ...args, "--force"]);
+    mustRefuse(GATE, ["enforce", ...args, "--force"], /--nodes-upgraded/);
+    mustRefuse(
+      GATE,
+      ["enforce", ...args, "--nodes-upgraded"],
+      /owners have a credential/,
+    );
+    mustPass(GATE, ["enforce", ...args, "--nodes-upgraded", "--force"]);
     mustRefuse(
       CHECK,
       ["--stage", "enforce", "--network", "mainnet", "--config", forkConfig],
@@ -344,10 +361,11 @@ async function main() {
         "rotate-verifier",
       )),
     );
-    // The verifier reads back; only the low capacity of the forced policy still refuses.
+    // The verifier reads back and goes into the deployment record; only the low capacity of the
+    // forced policy still refuses.
     mustRefuse(
       GATE,
-      ["validate", ...rotatedArgs, "--required", "true"],
+      ["validate", ...rotatedArgs, "--required", "true", "--write-records"],
       /bond owners are counted/,
     );
     if (bundle && identityId) {
@@ -406,8 +424,10 @@ async function main() {
     }
 
     log(
-      "6. relax (the rollback): check the exact payload, execute, and validate",
+      "6. relax (the rollback) from the deployment record: check the exact payload, execute, and validate",
     );
+    // Another checkout has no plan file: the plan comes from the deployment record.
+    fs.rmSync(planFile);
     mustPass(GATE, ["relax", ...rotatedArgs]);
     mustPass(
       CHECK,

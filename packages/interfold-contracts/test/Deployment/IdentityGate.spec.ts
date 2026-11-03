@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { proxyAdminInterface } from "../../scripts/protocol/constants";
+import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
   CAPACITY_WINDOW,
@@ -23,6 +24,7 @@ import {
   enforceDeadline,
   identityGateSettings,
   identityNamespace,
+  identityPolicyOf,
   lateRegistrations,
   sameVerifierSettings,
   unrefreshedOperators,
@@ -37,6 +39,7 @@ import {
   BondingRegistry__factory as BondingRegistryFactory,
   OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
 } from "../../types";
+import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const bondingInterface = BondingRegistryFactory.createInterface();
 const registryInterface = OwnerIdentityRegistryFactory.createInterface();
@@ -341,6 +344,31 @@ describe("identity gate rollout", function () {
     expect(unrefreshedOperators([addr(0xabc1)], [])).to.deep.equal([
       addr(0xabc1),
     ]);
+  });
+
+  it("reads the current identity policy from BondingRegistry storage", async function () {
+    const ctx = await deployInterfoldSystem({});
+    const bonding = await ctx.bondingRegistry.getAddress();
+    expect(await identityPolicyOf(ethers.provider, bonding)).to.equal(null);
+    const { proxy: registry } = await deployOwnerIdentityRegistry(
+      ethers,
+      await ctx.owner.getAddress(),
+      ethersLib.ZeroAddress,
+    );
+    await ctx.bondingRegistry.setIdentityPolicy(registry, false);
+    const at = BigInt(await networkHelpers.time.latest());
+    expect(await identityPolicyOf(ethers.provider, bonding)).to.deep.equal({
+      registry,
+      required: false,
+      timepoint: at,
+    });
+    await ctx.bondingRegistry.setIdentityPolicy(registry, true);
+    expect(
+      (await identityPolicyOf(ethers.provider, bonding))?.required,
+    ).to.equal(true);
+    // Clearing the registry turns the gate off.
+    await ctx.bondingRegistry.setIdentityPolicy(ethersLib.ZeroAddress, false);
+    expect(await identityPolicyOf(ethers.provider, bonding)).to.equal(null);
   });
 
   it("reads late registrations from the connected chain only", async function () {

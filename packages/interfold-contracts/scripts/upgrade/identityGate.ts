@@ -81,9 +81,11 @@ const ZERO_HASH = ethersLib.ZeroHash;
 export const REFRESH_BATCH = 20;
 /**
  * The batch refreshes every operator in one governance transaction, so its gas grows with the
- * operator count. Above this count, pause requests and refresh in stages instead.
+ * operator count: about 77k gas each. With a gas limit of 1.5 times the estimate, 120 operators
+ * stay under the 16,777,216 gas cap of one transaction (EIP-7825). Above this count, pause
+ * requests and refresh in stages instead.
  */
-export const MAX_BATCH_OPERATORS = 200;
+export const MAX_BATCH_OPERATORS = 120;
 /** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
 export const CAPACITY_WINDOW = 30n * 86_400n;
 /** Time to execute an enforce batch when `--execute-by` is not given: the Safe signs it meanwhile. */
@@ -198,6 +200,54 @@ export function identityNamespace(domain: string, scope: string): string {
       [IDENTITY_TAG, domain, scope],
     ),
   );
+}
+
+/** ERC-7201 slot of BondingRegistry's identity storage (`interfold.storage.BondingIdentity`). */
+export const IDENTITY_STORAGE_SLOT =
+  0xc8753641d15ccfa7705fd1448b954f166a67eee148357f9bd69a050022902400n;
+
+/**
+ * The current identity policy of a BondingRegistry, read from its storage, because the policy has
+ * no view: the number of versions, the latest checkpoint (key in the low 48 bits, version above),
+ * and that version's policy (registry in the low 160 bits, `required` in the next byte). Null
+ * before the first policy and when the latest policy clears the registry.
+ */
+export async function identityPolicyOf(
+  provider: ethersLib.Provider,
+  bondingRegistry: string,
+): Promise<{ registry: string; required: boolean; timepoint: bigint } | null> {
+  const read = async (slot: bigint) =>
+    BigInt(await provider.getStorage(bondingRegistry, slot));
+  const coder = ethersLib.AbiCoder.defaultAbiCoder();
+  const versions = await read(IDENTITY_STORAGE_SLOT);
+  if (versions === 0n) return null;
+  const checkpoint = await read(
+    BigInt(
+      ethersLib.keccak256(coder.encode(["uint256"], [IDENTITY_STORAGE_SLOT])),
+    ) +
+      versions -
+      1n,
+  );
+  const version = checkpoint >> 48n;
+  const policy = await read(
+    BigInt(
+      ethersLib.keccak256(
+        coder.encode(
+          ["uint256", "uint256"],
+          [version, IDENTITY_STORAGE_SLOT + 1n],
+        ),
+      ),
+    ),
+  );
+  const registry = ethersLib.getAddress(
+    ethersLib.toBeHex(policy & ((1n << 160n) - 1n), 20),
+  );
+  if (registry === ethersLib.ZeroAddress) return null;
+  return {
+    registry,
+    required: ((policy >> 160n) & 0xffn) === 1n,
+    timepoint: checkpoint & ((1n << 48n) - 1n),
+  };
 }
 
 export interface IdentityGateDecisions {
@@ -396,11 +446,96 @@ function loadContext() {
 const sameAddress = (a: string, b: string) =>
   a.toLowerCase() === b.toLowerCase();
 
-/** The saved plan, refused when it belongs to another deployment. */
+/**
+ * A plan rebuilt from the tracked deployment record, for a checkout without the plan file. It has
+ * written no batch yet.
+ */
+function planFromRecords(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+): IdentityGatePlan {
+  const {
+    ownerIdentityRegistry,
+    ownerIdentityRegistryImplementation,
+    ownerIdentityRegistryProxyAdmin,
+    identityVerifier,
+    identityDeployBlock,
+  } = deployment;
+  if (
+    !ownerIdentityRegistry ||
+    !ownerIdentityRegistryImplementation ||
+    !ownerIdentityRegistryProxyAdmin ||
+    !identityVerifier ||
+    identityDeployBlock === undefined
+  ) {
+    throw new Error(
+      `${repoRelativePath(planPath(config))} is missing, and ${repoRelativePath(deploymentPath(config))} records no identity gate. Run prepare, or run validate --write-records where the plan is`,
+    );
+  }
+  return {
+    name: config.name,
+    chainId: config.chainId,
+    bondingRegistry: deployment.bondingRegistryProxy,
+    bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
+    bondingImplementation: deployment.bondingRegistryImplementation,
+    libraries: {
+      assetLibrary: deployment.bondingAssetLib,
+      eligibilityLibrary: deployment.bondingEligibilityLib,
+      slashingLibrary: deployment.bondingSlashingLib,
+      registrationLibrary: deployment.bondingRegistrationLib,
+      ownershipLibrary: deployment.bondingOwnershipLib,
+    },
+    identityRegistry: ownerIdentityRegistry,
+    identityRegistryImplementation: ownerIdentityRegistryImplementation,
+    identityRegistryProxyAdmin: ownerIdentityRegistryProxyAdmin,
+    identityVerifier,
+    settings: identityGateSettings(config),
+    deployBlock: identityDeployBlock,
+    operators: 0,
+    refreshed: [],
+    writtenBlock: identityDeployBlock,
+    batches: {},
+  };
+}
+
+/** Copy the identity contracts of the plan into the tracked deployment record. */
+function writeIdentityRecords(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+  plan: IdentityGatePlan,
+): void {
+  const libraries = plan.libraries;
+  deployment.bondingRegistryImplementation = plan.bondingImplementation;
+  deployment.bondingAssetLib =
+    libraries.assetLibrary ?? deployment.bondingAssetLib;
+  deployment.bondingEligibilityLib =
+    libraries.eligibilityLibrary ?? deployment.bondingEligibilityLib;
+  deployment.bondingSlashingLib =
+    libraries.slashingLibrary ?? deployment.bondingSlashingLib;
+  deployment.bondingRegistrationLib =
+    libraries.registrationLibrary ?? deployment.bondingRegistrationLib;
+  deployment.bondingOwnershipLib =
+    libraries.ownershipLibrary ?? deployment.bondingOwnershipLib;
+  deployment.ownerIdentityRegistry = plan.identityRegistry;
+  deployment.ownerIdentityRegistryImplementation =
+    plan.identityRegistryImplementation;
+  deployment.ownerIdentityRegistryProxyAdmin = plan.identityRegistryProxyAdmin;
+  deployment.identityVerifier = plan.identityVerifier;
+  deployment.identityDeployBlock = plan.deployBlock;
+  writeJson(deploymentPath(config), deployment);
+}
+
+/**
+ * The saved plan, refused when it belongs to another deployment. Without the plan file, the plan
+ * comes from the tracked deployment record.
+ */
 function loadPlan(
   config: ProtocolConfigFile,
   deployment: ProtocolDeployment,
 ): IdentityGatePlan {
+  if (!fs.existsSync(planPath(config))) {
+    return planFromRecords(config, deployment);
+  }
   const plan = readJson<IdentityGatePlan>(planPath(config));
   if (
     plan.name !== config.name ||
@@ -689,7 +824,17 @@ export async function prepareIdentityGate(): Promise<void> {
   if (fs.existsSync(planPath(config)) && hasFlag("rewrite")) {
     return rewritePrepare(ethers, config, deployment);
   }
-  // A second prepare deploys another registry, and the owners of the first would prove again.
+  // A second prepare deploys another registry, and the owners of the first would prove again. The
+  // chain shows a policy even where this checkout has no plan.
+  const existing = await identityPolicyOf(
+    ethers.provider,
+    deployment.bondingRegistryProxy,
+  );
+  if (existing && !hasFlag("new-registry")) {
+    throw new Error(
+      `BondingRegistry already has an identity policy for the registry ${existing.registry}. Write later batches from its plan or its deployment record. Pass --new-registry only to replace the registry, which makes every owner prove again`,
+    );
+  }
   if (fs.existsSync(planPath(config)) && !hasFlag("new-registry")) {
     throw new Error(
       `${repoRelativePath(planPath(config))} exists, so ${config.name} has an identity registry. To write the prepare batch again for its contracts, pass --rewrite. For a new ZKPassport version, use rotate-verifier. Pass --new-registry only to replace the registry, which makes every owner prove again`,
@@ -792,6 +937,13 @@ ${batchLines(config, "prepare", txs.length)}
 
 /** Write the batch that switches the requirement on (`enforce`) or off (`relax`). */
 export async function setIdentityRequirement(required: boolean): Promise<void> {
+  // Nodes without the identity release keep the old owner shortlist and never refresh their own
+  // operator, so requests would fail at the next window end. --force does not skip this.
+  if (required && !hasFlag("nodes-upgraded")) {
+    throw new Error(
+      "Before the policy is required, most nodes must run a release that reads candidate eligibility and refreshes its own operator in each capacity window. Confirm that, then pass --nodes-upgraded",
+    );
+  }
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
@@ -941,6 +1093,9 @@ export async function revokeIdentity(): Promise<void> {
     registry.connect(ethers.provider) as typeof registry
   ).revoke.staticCall(identityId, { from: config.protocolOwner });
   const owner: string = await registry.ownerOfIdentity(identityId);
+  // Revoking a replaced identifier leaves the owner's current credential, and capacity, as they are.
+  const [currentId] = await registry.identityOf(owner);
+  const current = String(currentId).toLowerCase() === identityId.toLowerCase();
   const { operators, toBlock: writtenBlock } = await registeredOperators(
     ethers,
     deployment,
@@ -958,7 +1113,7 @@ export async function revokeIdentity(): Promise<void> {
       plan,
       operators,
       deadline,
-      owner,
+      current ? owner : undefined,
     );
     const needed = neededOwners(config);
     if (BigInt(countable) < needed && !hasFlag("force")) {
@@ -1122,6 +1277,8 @@ export async function validateIdentityGate(): Promise<void> {
       `Identity gate validation failed:\n  ${failures.join("\n  ")}`,
     );
   }
+  // The contracts match the plan, so record them; the capacity checks below concern operators.
+  if (hasFlag("write-records")) writeIdentityRecords(config, deployment, plan);
 
   // An operator that registered after the batch read its operator list, and before the batch
   // executed, is not in its refresh, so the policy change left it uncounted. Anyone may refresh it.
@@ -1135,14 +1292,18 @@ export async function validateIdentityGate(): Promise<void> {
     latest!.blockNumber,
     revocations[revocations.length - 1]?.blockNumber ?? 0,
   );
-  const missing = await lateRegistrations(
-    ethers.provider,
-    deployment.ciphernodeRegistry,
-    (operator) => bonding.isRegistered(operator),
-    plan.writtenBlock,
-    lastReset,
-    plan.refreshed,
-  );
+  // A plan rebuilt from the deployment record has written no batch, so it has no refresh list.
+  const missing =
+    Object.keys(plan.batches).length === 0
+      ? []
+      : await lateRegistrations(
+          ethers.provider,
+          deployment.ciphernodeRegistry,
+          (operator) => bonding.isRegistered(operator),
+          plan.writtenBlock,
+          lastReset,
+          plan.refreshed,
+        );
   if (missing.length > 0) {
     if (!hasFlag("refresh-missing")) {
       throw new Error(
@@ -1172,6 +1333,7 @@ Identity gate valid
   registry:  ${plan.identityRegistry}
   required:  ${latest!.args.required}
   capacity:  at least ${required} counted owners
+  records:   ${hasFlag("write-records") ? "updated" : "unchanged (pass --write-records to update them)"}
 `);
 }
 

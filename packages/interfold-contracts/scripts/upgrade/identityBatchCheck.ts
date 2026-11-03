@@ -25,6 +25,9 @@ import { executeIdentityBatch, ownerCapacity, startFork } from "./identityFork";
 import { type IdentityGatePlan, planPath } from "./identityGate";
 import { requiredActiveOperators } from "./v19Cutover";
 
+/** The gas cap of one transaction (EIP-7825). */
+const TRANSACTION_GAS_CAP = 16_777_216n;
+
 export async function checkIdentityBatch(): Promise<void> {
   const forkUrl = process.env.FORK_URL;
   if (!forkUrl) throw new Error("Set FORK_URL to an RPC of the network");
@@ -72,6 +75,13 @@ Identity ${stage} batch replayed
     if (largest * 2n > block!.gasLimit) {
       failures.push(
         `a transaction used ${largest} gas, more than half the block gas limit ${block!.gasLimit}; split the batch`,
+      );
+    }
+    // Governance sends the batch with a gas limit about 1.5 times the estimate, and one
+    // transaction may use at most 16,777,216 gas (EIP-7825).
+    if (largest * 3n > TRANSACTION_GAS_CAP * 2n) {
+      failures.push(
+        `a transaction used ${largest} gas; with a 1.5x gas limit it passes the ${TRANSACTION_GAS_CAP} gas cap of one transaction (EIP-7825), so split the batch`,
       );
     }
     if (failures.length > 0) {
