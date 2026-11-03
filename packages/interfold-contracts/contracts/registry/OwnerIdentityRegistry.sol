@@ -47,6 +47,7 @@ contract OwnerIdentityRegistry is
     }
 
     /// @notice Sets the governance owner and the first verifier (zero leaves registration closed).
+    /// @dev A nonzero verifier must have code, as in `setVerifier`.
     function initialize(
         address initialOwner,
         address initialVerifier
@@ -136,6 +137,9 @@ contract OwnerIdentityRegistry is
     }
 
     function _setVerifier(address newVerifier) private {
+        // An address without code would make every registration revert.
+        if (newVerifier != address(0) && newVerifier.code.length == 0)
+            revert VerifierHasNoCode(newVerifier);
         verifier = newVerifier;
         emit VerifierUpdated(newVerifier);
     }

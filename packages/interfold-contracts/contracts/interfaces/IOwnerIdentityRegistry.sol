@@ -23,6 +23,7 @@ interface IOwnerIdentityRegistry {
     error IdentityExpired(bytes32 identityId, uint48 expiresAt);
     error IdentityExpiryReduced(uint48 currentExpiry, uint48 expiresAt);
     error UnknownIdentity(bytes32 identityId);
+    error VerifierHasNoCode(address verifier);
 
     /// @notice Registers or renews the caller's credential through the configured verifier.
     /// @dev The caller is the bond owner. A Safe owner calls this from the Safe. A replacement
@@ -37,6 +38,8 @@ interface IOwnerIdentityRegistry {
 
     /// @notice Governance sets the verifier for future registrations. Existing identities keep
     ///         their expiry.
+    /// @dev The verifier must be a contract, or the zero address to close registration. The
+    ///      registry cannot check that the contract implements `verify`.
     function setVerifier(address verifier) external;
 
     /// @notice Whether `owner` held a valid identity at `timepoint`, read from the checkpoint

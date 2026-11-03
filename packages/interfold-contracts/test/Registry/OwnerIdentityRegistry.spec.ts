@@ -193,6 +193,13 @@ describe("OwnerIdentityRegistry", function () {
     ).to.be.revertedWithCustomError(registry, "VerifierNotSet");
   });
 
+  it("refuses a verifier address without code", async function () {
+    const { alice, registry } = await loadFixture(setup);
+    await expect(registry.setVerifier(alice.address))
+      .to.be.revertedWithCustomError(registry, "VerifierHasNoCode")
+      .withArgs(alice.address);
+  });
+
   it("accepts an unset initial verifier and uses two-step governance transfer", async function () {
     const { governance, alice } = await loadFixture(setup);
     const registry = (
