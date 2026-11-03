@@ -21,10 +21,11 @@ use e3_event_system::EventSystem;
 use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
-    ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
-    PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, Unsubscribe,
-    VerificationKind, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    ComputeResponseKind, ConfigurationUpdated, CorrelationId, DkgFoldAttestationContextEstablished,
+    E3Requested, E3id, EventSource, EventType, InterfoldEvent, InterfoldEventData,
+    OperatorActivationChanged, PlaintextAggregated, ProofType, Seed, TakeEvents,
+    TicketBalanceUpdated, Unsubscribe, VerificationKind, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -1047,6 +1048,62 @@ where
     }
 }
 
+/// [`wait_for_history_match`] over several nodes: the first node whose history contains a match.
+///
+/// A progress-deadline failover moves aggregation to the next committee party, and the demoted party
+/// finishes the work it already started, so an aggregator publication can land on any committee
+/// member. Callers pass the members that can hold the aggregator role.
+async fn wait_for_history_match_any<F>(
+    nodes: &CiphernodeSystem,
+    node_indices: &[usize],
+    description: &str,
+    total_timeout: Duration,
+    matches: F,
+) -> Result<(usize, CiphernodeHistory)>
+where
+    F: Fn(&InterfoldEventData) -> bool,
+{
+    let start = Instant::now();
+    loop {
+        for &node_index in node_indices {
+            let history = nodes.get_history(node_index).await?;
+            if history.iter().any(|event| matches(event.get_data())) {
+                return Ok((node_index, history));
+            }
+        }
+        if start.elapsed() >= total_timeout {
+            bail!(
+                "Timed out after {:?} while waiting for {description} on any of nodes {node_indices:?}",
+                start.elapsed()
+            );
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Committee members that held the aggregator role for `e3_id`: each one recorded an
+/// `AggregatorChanged` naming itself active.
+async fn aggregator_role_nodes(
+    nodes: &CiphernodeSystem,
+    node_indices: &[usize],
+    e3_id: &E3id,
+) -> Result<Vec<usize>> {
+    let mut held = Vec::new();
+    for &node_index in node_indices {
+        let history = nodes.get_history(node_index).await?;
+        if history.iter().any(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::AggregatorChanged(data)
+                    if data.e3_id == *e3_id && data.is_aggregator
+            )
+        }) {
+            held.push(node_index);
+        }
+    }
+    Ok(held)
+}
+
 /// Wall seconds between first `start_when` and last `end_when` event in `history` (HLC physical time).
 fn history_wall_seconds_between<F1, F2>(
     history: &[InterfoldEvent],
@@ -1118,6 +1175,22 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("PublicKeyAggregated")
         }
         _ => None,
+    }
+}
+
+/// Whether a compute request belongs to the public-key phase: node folds, DKG aggregation, and
+/// share-proof checks of anything but C6 decryption shares.
+fn is_key_phase_request(request: &ComputeRequestKind) -> bool {
+    match request {
+        ComputeRequestKind::Zk(
+            ZkRequest::NodeDkgFold { .. } | ZkRequest::DkgAggregation { .. },
+        ) => true,
+        ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(request)) => request
+            .party_proofs
+            .iter()
+            .flat_map(|party| &party.signed_proofs)
+            .any(|signed| signed.payload.proof_type != ProofType::C6ThresholdShareDecryption),
+        _ => false,
     }
 }
 
@@ -2005,6 +2078,28 @@ async fn test_trbfv_actor() -> Result<()> {
         )
         .await
         .map_err(|e| anyhow::anyhow!("FAILURE on node 0 pubkey flow: {e}"))?;
+    // Every connected committee member can end up holding the aggregator role: the expected one
+    // first, then the rest in committee order, which is the failover order.
+    let mut aggregator_candidates = vec![active_aggregator_index];
+    for address in &committee {
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        if Some(node_index) != offline_node_index && !aggregator_candidates.contains(&node_index) {
+            aggregator_candidates.push(node_index);
+        }
+    }
+    // A progress-deadline failover moves the aggregator role during the public-key phase. The
+    // promoted party takes over the work that is still open and the demoted one finishes what it
+    // started, so the flow's events are spread over the parties that held the role.
+    let pubkey_aggregator_nodes =
+        aggregator_role_nodes(&nodes, &aggregator_candidates, &e3_id).await?;
+    let pubkey_failover = pubkey_aggregator_nodes
+        .iter()
+        .any(|&node_index| node_index != active_aggregator_index);
+    if pubkey_failover {
+        println!(
+            "Public-key aggregation failed over: the role was held by nodes {pubkey_aggregator_nodes:?}"
+        );
+    }
     let actual_types = h.event_types();
     println!("node 0 >> {:?}", actual_types);
 
@@ -2069,7 +2164,19 @@ async fn test_trbfv_actor() -> Result<()> {
             "active aggregator marked the E3 failed despite selecting an available DKG roster"
         );
     }
-    let accepted_rosters: Vec<Vec<u64>> = active_aggregator_history
+    // Under a failover, the parties that held the role between them recorded the flow.
+    let mut role_events: Vec<InterfoldEvent> = Vec::new();
+    if pubkey_failover {
+        for &node_index in &pubkey_aggregator_nodes {
+            role_events.extend(nodes.get_history(node_index).await?.iter().cloned());
+        }
+    }
+    let roster_source: &[InterfoldEvent] = if pubkey_failover {
+        &role_events
+    } else {
+        &active_aggregator_history
+    };
+    let accepted_rosters: Vec<Vec<u64>> = roster_source
         .iter()
         .filter_map(|event| match event.get_data() {
             InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
@@ -2124,7 +2231,6 @@ async fn test_trbfv_actor() -> Result<()> {
         .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
         .collect();
     assert_eq!(selected_addresses, pk_agg.honest_committee_addresses);
-    let active_aggregator_pubkey_history_len = active_aggregator_history.len();
     let mut expected_active_aggregator_pubkey_events = vec![
         "CommitteeFinalized",
         "CiphernodeSelected",
@@ -2141,40 +2247,118 @@ async fn test_trbfv_actor() -> Result<()> {
     // by each committee member and gossiped in parallel with the active aggregator's own
     // C1→C5 verification flow, so their positions relative to the C1→C5 sub-sequence are
     // non-deterministic. Compare as a multiset plus boundary events rather than strict order.
-    let active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
-        publickey_aggregator_marker(data, &e3_id)
-    });
-    let keyshare_count = active_aggregator_pubkey_events
-        .iter()
-        .filter(|&&event| event == "KeyshareCreated")
-        .count();
-    assert!(
-        (committee_h..=threshold_n).contains(&keyshare_count),
-        "Active aggregator received {keyshare_count} keyshares; expected at least the selected H={committee_h} and at most N={threshold_n}"
-    );
-    let mut actual_sorted = active_aggregator_pubkey_events.clone();
-    actual_sorted
-        .retain(|event| *event != "DKGRecursiveAggregationComplete" && *event != "KeyshareCreated");
-    let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
-    actual_sorted.sort();
-    expected_sorted.sort();
-    assert_eq!(
-        actual_sorted, expected_sorted,
-        "Active aggregator public-key flow: event multiset mismatch"
-    );
-    assert_eq!(
-        active_aggregator_pubkey_events.first().copied(),
-        Some("CommitteeFinalized"),
-        "Active aggregator: first event must be CommitteeFinalized"
-    );
-    assert_eq!(
-        active_aggregator_pubkey_events.last().copied(),
-        Some("PublicKeyAggregated"),
-        "Active aggregator: last event must be PublicKeyAggregated"
-    );
+    if !pubkey_failover {
+        let active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
+            publickey_aggregator_marker(data, &e3_id)
+        });
+        let keyshare_count = active_aggregator_pubkey_events
+            .iter()
+            .filter(|&&event| event == "KeyshareCreated")
+            .count();
+        assert!(
+            (committee_h..=threshold_n).contains(&keyshare_count),
+            "Active aggregator received {keyshare_count} keyshares; expected at least the selected H={committee_h} and at most N={threshold_n}"
+        );
+        let mut actual_sorted = active_aggregator_pubkey_events.clone();
+        actual_sorted.retain(|event| {
+            *event != "DKGRecursiveAggregationComplete" && *event != "KeyshareCreated"
+        });
+        let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
+        actual_sorted.sort();
+        expected_sorted.sort();
+        assert_eq!(
+            actual_sorted, expected_sorted,
+            "Active aggregator public-key flow: event multiset mismatch"
+        );
+        assert_eq!(
+            active_aggregator_pubkey_events.first().copied(),
+            Some("CommitteeFinalized"),
+            "Active aggregator: first event must be CommitteeFinalized"
+        );
+        assert_eq!(
+            active_aggregator_pubkey_events.last().copied(),
+            Some("PublicKeyAggregated"),
+            "Active aggregator: last event must be PublicKeyAggregated"
+        );
+    } else {
+        // The role moved, so no one party saw the whole flow. Every expected event must still
+        // have happened, at least as often as the single-aggregator flow emits it, on the parties
+        // that held the role. Per-node events (selection, role changes, gossip) are left out.
+        let per_node = [
+            "CommitteeFinalized",
+            "CiphernodeSelected",
+            "AggregatorChanged",
+            "KeyshareCreated",
+            "DKGRecursiveAggregationComplete",
+        ];
+        let observed = project_history(&role_events, |data| {
+            publickey_aggregator_marker(data, &e3_id)
+        });
+        let mut expected_counts: HashMap<&str, usize> = HashMap::new();
+        for event in &expected_active_aggregator_pubkey_events {
+            if !per_node.contains(event) {
+                *expected_counts.entry(event).or_default() += 1;
+            }
+        }
+        for (event, expected) in expected_counts {
+            let seen = observed.iter().filter(|&&e| e == event).count();
+            assert!(
+                seen >= expected,
+                "public-key flow after failover: {event} seen {seen} times on the role holders, expected at least {expected}"
+            );
+        }
+        // Repeated work is tolerated, a second publication is not: a demoted and a promoted
+        // aggregator both publishing the key is the failure a failover must not produce. Peers
+        // forward the event, so only a holder's own publication counts. Event IDs cannot tell
+        // two publications apart, since identical content hashes to the same ID.
+        let publishes_key = |event: &InterfoldEvent| {
+            event.source() == EventSource::Local
+                && publickey_aggregator_marker(event.get_data(), &e3_id)
+                    == Some("PublicKeyAggregated")
+        };
+        let published = role_events
+            .iter()
+            .filter(|event| publishes_key(event))
+            .count();
+        assert_eq!(
+            published, 1,
+            "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
+        );
+        for &node_index in &pubkey_aggregator_nodes {
+            let holder_history = nodes.get_history(node_index).await?;
+            let holder_events = project_history(&holder_history, |data| {
+                publickey_aggregator_marker(data, &e3_id)
+            });
+            let keyshare_count = holder_events
+                .iter()
+                .filter(|&&event| event == "KeyshareCreated")
+                .count();
+            assert!(
+                (committee_h..=threshold_n).contains(&keyshare_count),
+                "Role holder {node_index} received {keyshare_count} keyshares; expected at least H={committee_h} and at most N={threshold_n}"
+            );
+            assert_eq!(
+                holder_events.first().copied(),
+                Some("CommitteeFinalized"),
+                "Role holder {node_index}: first event must be CommitteeFinalized"
+            );
+            // A demoted holder can still finish work after a peer forwards it the key.
+            if holder_history.iter().any(publishes_key) {
+                // Gossip can deliver keyshares and folds after publication.
+                let flow_end = holder_events.iter().copied().rfind(|event| {
+                    *event != "KeyshareCreated" && *event != "DKGRecursiveAggregationComplete"
+                });
+                assert_eq!(
+                    flow_end,
+                    Some("PublicKeyAggregated"),
+                    "Role holder {node_index}: publishing the key must end its public-key flow"
+                );
+            }
+        }
+    }
 
     if let Some(secs) = history_wall_seconds_between(
-        &active_aggregator_history,
+        roster_source,
         |d| {
             matches!(
                 d,
@@ -2409,23 +2593,33 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // PlaintextAggregated is a local publication intent and is not gossiped. Wait for it on the
     // active aggregator, then inspect the observer for the shared ciphertext and decryption shares.
+    // The plaintext phase has its own failover round, and a party demoted in the public-key phase
+    // is skipped for it, so the plaintext aggregator can be any connected committee member.
     println!(
-        "[bench-progress] waiting for PlaintextAggregated on active aggregator node {active_aggregator_index}"
+        "[bench-progress] waiting for PlaintextAggregated on the aggregator (expected node {active_aggregator_index})"
     );
-    let active_aggregator_history = wait_for_history_match(
+    let (plaintext_aggregator_index, active_aggregator_history) = wait_for_history_match_any(
         &nodes,
-        active_aggregator_index,
-        active_aggregator_pubkey_history_len,
+        &aggregator_candidates,
         "PlaintextAggregated",
         plaintext_flow_timeout,
         |data| matches!(data, InterfoldEventData::PlaintextAggregated(event) if event.e3_id == e3_id),
     )
         .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "FAILURE on active aggregator node {active_aggregator_index} plaintext flow: {e}"
+        .map_err(|e| anyhow::anyhow!("FAILURE in the plaintext flow: {e}"))?;
+    if plaintext_aggregator_index != active_aggregator_index {
+        println!("Plaintext aggregation ran on node {plaintext_aggregator_index} after a failover");
+    }
+    // The plaintext flow starts at this party's first view of the ciphertext.
+    let plaintext_start = active_aggregator_history
+        .iter()
+        .position(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::CiphertextOutputPublished(data) if data.e3_id == e3_id
             )
-        })?;
+        })
+        .context("plaintext aggregator never saw CiphertextOutputPublished")?;
 
     let observer_history = nodes.get_history(0).await?;
     let actual_types = project_history(&observer_history, |data| match data {
@@ -2464,13 +2658,42 @@ async fn test_trbfv_actor() -> Result<()> {
         "collector: expected DecryptionshareCreated from {decryption_shares_required}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
         unique_ds_parties.len()
     );
-    println!(
-        "[bench-progress] PlaintextAggregated observed on active aggregator node {active_aggregator_index}"
-    );
+    println!("[bench-progress] PlaintextAggregated observed on node {plaintext_aggregator_index}");
 
+    // After a public-key failover, the parties that held the aggregator role can start or finish
+    // key-phase work (node folds, DKG aggregation, share-proof checks) after the ciphertext is
+    // published. That work is not part of the plaintext flow, so leave out the compute requests and
+    // responses that belong to a key-phase request.
+    let key_phase_work: HashSet<CorrelationId> = if pubkey_failover {
+        active_aggregator_history
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ComputeRequest(request)
+                    if request.e3_id == e3_id && is_key_phase_request(&request.request) =>
+                {
+                    Some(request.correlation_id)
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        HashSet::new()
+    };
     let active_aggregator_plaintext_events = project_history(
-        &active_aggregator_history[active_aggregator_pubkey_history_len..],
-        |data| plaintext_aggregator_marker(data, &e3_id),
+        &active_aggregator_history[plaintext_start..],
+        |data| match data {
+            InterfoldEventData::ComputeRequest(request)
+                if key_phase_work.contains(&request.correlation_id) =>
+            {
+                None
+            }
+            InterfoldEventData::ComputeResponse(response)
+                if key_phase_work.contains(&response.correlation_id) =>
+            {
+                None
+            }
+            _ => plaintext_aggregator_marker(data, &e3_id),
+        },
     );
 
     // C6 head layout:
@@ -2492,8 +2715,7 @@ async fn test_trbfv_actor() -> Result<()> {
         pre_svd.iter().all(|e| *e == "DecryptionshareCreated"),
         "active aggregator: only DecryptionshareCreated allowed between CiphertextOutputPublished and ShareVerificationDispatched, got {pre_svd:?}"
     );
-    let unique_ds_parties_agg: HashSet<u64> = active_aggregator_history
-        [active_aggregator_pubkey_history_len..]
+    let unique_ds_parties_agg: HashSet<u64> = active_aggregator_history[plaintext_start..]
         .iter()
         .take_while(|e| {
             !matches!(
@@ -2603,7 +2825,7 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     if let Some(secs) = history_wall_seconds_between(
-        &active_aggregator_history[active_aggregator_pubkey_history_len..],
+        &active_aggregator_history[plaintext_start..],
         |d| {
             matches!(
                 d,

@@ -312,7 +312,9 @@ encrypted to it. For the full encrypt and submit flow, see
 The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
 them with the `insecure-64` preset and the `minimum` committee
 (`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
-(`noir-recursive-no-zk`), not a Solidity verifier.
+(`noir-recursive-no-zk`), not a Solidity verifier. A `noir-recursive-no-zk` proof is not zero
+knowledge, so keep it on the client: verify it inside your own circuit there (as the CRISP fold
+does) and publish only that circuit's proof.
 
 In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
 It fails with one of these codes when the stamp does not match:

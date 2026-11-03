@@ -9,12 +9,13 @@
 //! See `UserDataEncryptionCt0` for the circuit contract.
 
 use crate::math::commitments::compute_multiple_polynomial_commitment;
+use crate::math::commitments::compute_multiple_polynomial_commitment_checked;
 use crate::math::commitments::compute_single_polynomial_commitment;
 use crate::math::commitments::compute_user_data_encryption_ct0_challenge;
 use crate::math::commitments::DS_CIPHERTEXT;
 use crate::math::commitments::DS_PK_AGGREGATION;
 use crate::math::commitments::DS_USER_DATA_ENCRYPTION_COMMITMENT;
-use crate::math::helpers::flatten;
+use crate::math::helpers::flatten_exact_width;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for user-data encryption ct0 (P3).
@@ -24,7 +25,8 @@ pub struct Configs<let N: u32, let L: u32> {
     /// Bound for the lifted error polynomial (e0) coefficients
     pub e0_bound: Field,
     pub u_bound: Field,
-    /// Bounds on `r`, the quotient of the mod-`q` reduction.
+    /// Bounds on `r`, the quotient of the mod-`q` reduction, that honest witnesses meet. The circuit
+    /// checks the power-of-two window `[-2^BIT_R, 2^BIT_R)` that covers them.
     pub r_bounds: [Field; L],
     pub k1_low_bound: Field,
     pub k1_up_bound: Field,
@@ -46,8 +48,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 
 /// User-data encryption ct0 (P3).
 ///
-/// **Role:** Prove the first ciphertext leg and publish `pk0`, `ct0`, `k1`, and `u` commitments
-/// for the wrapper and ct1 circuit.
+/// **Role:** Prove the first ciphertext leg and publish `pk0`, `ct0`, `k1`, and `u` commitments.
+/// In the `user_data_encryption` circuit this leg runs first and bounds the `u` ct1 shares.
 ///
 /// **Consumes:** Threshold PK from C5 (`pk0is` witness path).
 ///
@@ -83,29 +85,39 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Bounds every value the reduced identity is checked over.
     ///
     /// The identity is verified at one random point, so each coefficient needs a bound for the field
-    /// equality to imply the integer one. `pk0is` / `ct0is` are centered residues mod `q_i`, and `r`
-    /// is the prover-supplied reduction quotient.
+    /// equality to imply the integer one.
+    /// - `ct0is` are exact centred residues mod `q_i`, `e0` and `k1` exact to their bounds, and `u`
+    ///   ternary (`u_bound` is 1).
+    /// - `pk0is` gets no range check here: `generate_commitments` opens it with the checked packing,
+    ///   which bounds every coefficient by its slot (`[-2^nb, 15 * 2^nb)` for `nb` = `BIT_PK` rounded
+    ///   up to a nibble, under `2^64` at secure-8192, enough to rule out wrap-around) and makes the
+    ///   commitment injective. The commitment is anchored to C5's, which bounds the key
+    ///   to the exact centred window, so the opened key is C5's.
+    /// - `r` only needs to stay small. With every other term exactly bounded, the integer identity
+    ///   fixes `r = (ct0 - pk0 * u - e0 - k0 * k1) / q_i`, so a window `[-2^BIT_R, 2^BIT_R)` that
+    ///   covers `r_bounds` and keeps `q_i * r` far below the field modulus pins it as well as the
+    ///   exact bound did.
     fn check_range_bounds(self) {
-        self.u.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
+        assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
+        self.u.assert_ternary();
         self.e0.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
         self.k1.range_check_2bounds::<BIT_K>(self.configs.k1_up_bound, self.configs.k1_low_bound);
 
         for i in 0..L {
             let half = (self.configs.qis[i] - 1) / 2;
-            self.pk0is[i].range_check_2bounds::<BIT_PK>(half, half);
             self.ct0is[i].range_check_2bounds::<BIT_CT>(half, half);
-            self.r[i].range_check_2bounds::<BIT_R>(
-                self.configs.r_bounds[i],
-                self.configs.r_bounds[i],
-            );
+            self.r[i].range_check_signed_power_of_two::<BIT_R>();
         }
     }
 
     fn generate_commitments(self) -> (Field, Field, Field, Field) {
-        // `check_range_bounds` bounds all four vectors, so the plain packing is already injective and
-        // the digit asserts would be redundant.
-        let pk0_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_PK>(self.pk0is, DS_PK_AGGREGATION);
+        // `check_range_bounds` bounds `ct0is`, `k1` and `u`, so their plain packing is injective.
+        // `pk0is` is opened with the checked packing instead: each digit fits its slot, so the opening
+        // is unique and the key is the one C5 bounded and committed.
+        let pk0_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_PK>(
+            self.pk0is,
+            DS_PK_AGGREGATION,
+        );
         let ct0_commitment =
             compute_multiple_polynomial_commitment::<N, L, BIT_CT>(self.ct0is, DS_CIPHERTEXT);
         let k1_commitment = compute_single_polynomial_commitment::<N, BIT_K>(
@@ -129,10 +141,20 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ) -> [Field] {
         let mut payload = [pk0_commitment, ct0_commitment, k1_commitment, u_commitment].as_vector();
 
-        payload = flatten::<_, _, BIT_E0>(payload, [self.e0]);
-        // `r` replaces `e0is`, `r1is` and `r2is` in the transcript, and it is bounded, so the plain
-        // packing stays injective.
-        payload = flatten::<_, _, BIT_R>(payload, self.r);
+        // `check_range_bounds` holds `e0 + e0_bound` in `[0, 2 * e0_bound]`, which fits
+        // `BIT_E0 + 1` bits, so packing it at exactly that width is injective.
+        let e0_bound = self.configs.e0_bound;
+        payload = flatten_exact_width::<N, BIT_E0 + 1, _>(payload, |j| {
+            self.e0.coefficients[j] + e0_bound
+        });
+        // `r` replaces `e0is`, `r1is` and `r2is` in the transcript. `check_range_bounds` holds
+        // `r + 2^BIT_R` in `[0, 2^(BIT_R + 1))`, so packing it at exactly that width is injective.
+        let shift = 2.pow_32(BIT_R as Field);
+        for i in 0..L {
+            payload = flatten_exact_width::<N, BIT_R + 1, _>(payload, |j| {
+                self.r[i].coefficients[j] + shift
+            });
+        }
 
         compute_user_data_encryption_ct0_challenge::<L>(payload)
     }
@@ -158,6 +180,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         }
 
         holds
+    }
+
+    /// The `u` this leg constrains and commits.
+    pub(crate) fn u(self) -> Polynomial<N> {
+        self.u
     }
 
     /// Returns `(pk0_commitment, ct0_commitment, k1_commitment, u_commitment)`.

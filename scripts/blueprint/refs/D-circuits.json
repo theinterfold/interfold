@@ -148,13 +148,13 @@
     "id": "D12",
     "supported": true,
     "refs": [
-      "circuits/bin/config/src/main.nr@22@use lib::configs::secure::dkg::{",
-      "circuits/bin/config/src/main.nr@34@use lib::configs::secure::threshold::{",
+      "circuits/bin/config/src/main.nr@21@use lib::configs::secure::dkg::{",
+      "circuits/bin/config/src/main.nr@33@use lib::configs::secure::threshold::{",
       "circuits/bin/config/src/main.nr@88@fn main() {",
-      "circuits/bin/config/src/main.nr@128@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@207@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@603@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@606@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@126@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@159@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@567@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure::dkg::{",

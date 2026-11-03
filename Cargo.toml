@@ -33,7 +33,6 @@ members = [
   "crates/net",
   "crates/openvm-host",
   "crates/openvm-types",
-  "crates/parity-matrix",
   "crates/polynomial",
   "crates/polynomial/fhe-adapter",
   "crates/program-runner",
@@ -141,7 +140,6 @@ e3-zk-config = { version = "0.20.0-dev.3", path = "./crates/zk/config" }
 e3-zk-build = { path = "./crates/zk/build" }
 e3-zk-witness = { version = "0.20.0-dev.3", path = "./crates/zk/witness" }
 e3-zk-samples = { path = "./crates/zk/samples" }
-e3-parity-matrix = { version = "0.20.0-dev.3", path = "./crates/parity-matrix" }
 
 actix = "=0.13.5"
 actix-web = "=4.11.0"

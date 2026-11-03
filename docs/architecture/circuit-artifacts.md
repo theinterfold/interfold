@@ -10,9 +10,9 @@ Owners: [Rust circuit builder](../../crates/zk/build/),
 ## Generated configuration and pair identity
 
 Use `pnpm build:circuits --committee <name> [--preset <preset>]` and `pnpm check:committee`. Do not
-hand-edit generated default/active selectors, parity matrices, C1/C2 bounds, generated TS/Solidity
-constants, verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts.
-Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
+hand-edit generated default/active selectors, C1/C2 bounds, generated TS/Solidity constants,
+verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts. Canonical
+committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
 preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
 `pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,

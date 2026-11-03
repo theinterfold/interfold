@@ -59,7 +59,7 @@ export const LAYERS = {
   workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk/prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
   adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
   vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts'],
-  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
+  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
   validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
 }
 
@@ -253,12 +253,7 @@ export const CIRCUITS = [
   { id: 'C3 share_encryption', path: 'circuits/bin/dkg/share_encryption', phase: 'dkg' },
   { id: 'C4 share_decryption', path: 'circuits/bin/dkg/share_decryption', phase: 'dkg' },
   { id: 'C5 pk_aggregation', path: 'circuits/bin/threshold/pk_aggregation', phase: 'dkg' },
-  {
-    id: 'P3 user_data_encryption',
-    path: 'circuits/bin/threshold/user_data_encryption',
-    phase: 'input',
-    extra: ['circuits/bin/threshold/user_data_encryption_ct0', 'circuits/bin/threshold/user_data_encryption_ct1'],
-  },
+  { id: 'P3 user_data_encryption', path: 'circuits/bin/threshold/user_data_encryption', phase: 'input' },
   { id: 'C6 share_decryption', path: 'circuits/bin/threshold/share_decryption', phase: 'decrypt' },
   { id: 'C7 decrypted_shares_aggregation', path: 'circuits/bin/threshold/decrypted_shares_aggregation', phase: 'decrypt' },
   { id: 'Recursive aggregation', path: 'circuits/bin/recursive_aggregation', phase: 'fold' },

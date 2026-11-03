@@ -4,9 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Same IO as [`nodes_fold`](../nodes_fold/src/main.nr) but **only** verifies the inner `node_fold`
-//! proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps the real `nodes_fold`
-//! circuit, which always runs `verify_honk_proof_non_zk` on the accumulator (see `nodes_fold`).
+//! Same IO as [`nodes_fold`](../nodes_fold/src/main.nr) but **only** verifies the inner `node_fold` proof. It
+//! proves the chain's first leaf on its own: its proof carries that leaf's row and is the
+//! accumulator the first `nodes_fold` step verifies (with `is_first_step`, under this circuit's key).
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;

@@ -475,8 +475,8 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         write(root, path, "changed");
         assert_ne!(hash(), before, "{path}");
     }
-    let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure.nr");
-    let updates = vec![(parity.clone(), "generated parity\n".to_owned())];
+    let generated = root.join("circuits/lib/src/configs/committee/micro/generated.nr");
+    let updates = vec![(generated.clone(), "generated source\n".to_owned())];
     let projected = identity::source_hash_with_updates(
         root,
         &opts,
@@ -486,10 +486,10 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     )
     .unwrap();
     assert!(
-        !parity.exists(),
+        !generated.exists(),
         "projected identity published a missing source"
     );
-    fs::write(&parity, &updates[0].1).unwrap();
+    fs::write(&generated, &updates[0].1).unwrap();
     assert_eq!(
         hash(),
         projected,
@@ -697,7 +697,7 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
 }
 
 #[test]
-fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
+fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -708,15 +708,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
-    // The same material renders parity files, bound updates, and Solidity's deployed hashes.
-    for committee in [
-        CiphernodesCommitteeSize::Minimum,
-        CiphernodesCommitteeSize::Micro,
-        CiphernodesCommitteeSize::Small,
-    ] {
-        let parity = configuration::parity_files(committee, &params).unwrap();
-        assert_eq!(parity.len(), 2);
-    }
+    // The same material renders bound updates and Solidity's deployed hashes.
     let material = params.get(BfvPreset::InsecureThreshold64);
     let bounds = configuration::bound_updates(
         root,

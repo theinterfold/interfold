@@ -362,7 +362,7 @@
       "id": "e3-zk-config",
       "kind": "crate",
       "path": "crates/zk/config",
-      "one_line": "Static circuit identity/variants, BFV configuration, bounds, parity, Noir rendering, and public-input layouts, without witnesses or samples.",
+      "one_line": "Static circuit identity/variants, BFV configuration, bounds, Noir rendering, and public-input layouts, without witnesses or samples.",
       "documentation": [{ "title": "Configuration and proof interfaces", "path": "docs/architecture/proof-statements.md" }],
       "actors": [],
       "consumes": [],
@@ -390,7 +390,7 @@
           "ref": "crates/zk/config/src/circuit.rs@104@CircuitName::PkBfv => \"pk\","
         }
       ],
-      "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe", "e3-parity-matrix"],
+      "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe"],
       "tests": "cargo test --locked -p e3-zk-config; pnpm test:circuit-build covers generated-source consumers.",
       "unverified": []
     },

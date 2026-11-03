@@ -31,8 +31,8 @@ YAML/Compose validator (aliases and other valid duration notations are not suppo
 
 Run commands from the repository root after `pnpm install --frozen-lockfile` for TypeScript checks
 and formatting. Cargo manifest checks need Python 3.11+ or `tomli`; the shell checks need Bash.
-`check:bindings` requires `pnpm evm:build` first. Committee parity comparison additionally needs the
-Rust generator and Nargo; the command reports when that comparison is skipped.
+`check:bindings` requires `pnpm evm:build` first. Generated committee comparison additionally needs
+the Rust generator and Nargo; the command reports when that comparison is skipped.
 
 Until the acknowledged event pipeline in
 [#2266](https://github.com/theinterfold/interfold/issues/2266) is complete, retain the send-count

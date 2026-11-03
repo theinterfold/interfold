@@ -4,10 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Same IO as [`c6_fold`](../c6_fold/src/main.nr) but **only** verifies the inner
-//! `ThresholdShareDecryption` proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps
-//! the real `c6_fold` circuit, which always runs `verify_honk_proof_non_zk` on the accumulator (see
-//! `c6_fold`).
+//! Same IO as [`c6_fold`](../c6_fold/src/main.nr) but **only** verifies the inner `ThresholdShareDecryption` proof. It
+//! proves the chain's first leaf on its own: its proof carries that leaf's row and is the
+//! accumulator the first `c6_fold` step verifies (with `is_first_step`, under this circuit's key).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
