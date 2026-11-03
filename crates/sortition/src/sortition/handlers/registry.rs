@@ -257,6 +257,8 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
             self.bus.with_ec(&ec).err(EType::Sortition, error);
             return;
         }
+        self.committee_deadlines
+            .insert(e3_id.clone(), msg.committee_deadline);
 
         if let Err(error) = self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.seeds.insert(e3_id.clone(), msg.seed);

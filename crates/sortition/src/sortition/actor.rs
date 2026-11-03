@@ -28,7 +28,10 @@ use e3_events::{
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, instrument, warn};
 
 /// Events that build sortition state. The actor subscribes to them when it attaches, so that
@@ -91,6 +94,9 @@ pub struct Sortition {
     eligibility: Option<EligibilityReader>,
     /// Requests whose eligibility read is in flight.
     reading_eligibility: HashSet<E3id>,
+    /// Ticket deadlines of the requests that this process saw requested. An eligibility read must
+    /// leave time to submit before the deadline.
+    committee_deadlines: HashMap<E3id, u64>,
 }
 
 pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 1;
@@ -245,6 +251,7 @@ impl Sortition {
             effects_enabled: false,
             eligibility: None,
             reading_eligibility: HashSet::new(),
+            committee_deadlines: HashMap::new(),
         }
     }
 
@@ -398,8 +405,9 @@ impl Sortition {
     }
 
     /// The eligibility read for a request under a required identity policy: the operators that
-    /// the admission rules leave at T-1, bounded in time. None when the policy does not apply or
-    /// nothing can be read.
+    /// the admission rules leave at T-1. The read must end in time to submit the ticket. None when
+    /// the policy does not apply, nothing can be read, or no time is left; after a restart this
+    /// process does not know the deadline of an open request, so it ranks without the shortlist.
     pub(super) fn eligibility_read(
         &self,
         request: &TypedEvent<E3Requested>,
@@ -425,10 +433,18 @@ impl Sortition {
             .keys()
             .filter_map(|address| address.parse().ok())
             .collect();
+        let deadline = *self.committee_deadlines.get(&request.e3_id)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let limit = eligibility::read_limit(deadline, now)?;
         Some(eligibility::bounded(
             reader(chain_id, operators, timepoint),
-            eligibility::ELIGIBILITY_READ_TIMEOUT,
+            limit,
         ))
+    }
+
+    /// Forget the request's ticket deadline once its sortition ends.
+    pub(super) fn forget_committee_deadline(&mut self, e3_id: &E3id) {
+        self.committee_deadlines.remove(e3_id);
     }
 
     pub fn get_node_index(

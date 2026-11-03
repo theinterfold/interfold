@@ -106,8 +106,10 @@ operator-count cutoff must not discard necessary owners. If any eligible operato
 history, turn the owner shortlist off and rank every eligible operator; Solidity still rejects zero
 snapshot owners. Under a required identity policy at T−1 (or at an admission pause cutoff, which the
 contract also checks), a full node first reads `eligibilityAt(operator, T−1)` for every candidate,
-and the shortlist ranks only the eligible operators, whose owners hold a credential. If that read
-fails or takes longer than 20 seconds, or the node has no chain access, the node turns the shortlist
+and the shortlist ranks only the eligible operators, whose owners hold a credential. The read must
+end within 20 seconds and at least 20 seconds before the ticket deadline. If it fails or runs out of
+time, the node does not know the deadline (a request still open at a restart), the policy history is
+unknown (its startup replay failed), or the node has no chain access, the node turns the shortlist
 off: every eligible operator submits, and the ticket gas estimate fails for an operator whose owner
 has no credential, so it sends nothing. The node reads the policy history from its own log. Each
 startup also applies the policy logs that the log took in after the previous startup, so a node that

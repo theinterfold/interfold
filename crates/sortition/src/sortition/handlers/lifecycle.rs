@@ -76,6 +76,7 @@ impl Handler<TypedEvent<E3Failed>> for Sortition {
                 Ok(recovery)
             })?;
             self.processed_requests.remove(&msg.e3_id);
+            self.forget_committee_deadline(&msg.e3_id);
             Ok(())
         })
     }
@@ -100,6 +101,7 @@ impl Handler<TypedEvent<E3StageChanged>> for Sortition {
                         Ok(recovery)
                     })?;
                     self.processed_requests.remove(&msg.e3_id);
+                    self.forget_committee_deadline(&msg.e3_id);
                 }
                 _ => {
                     // Non-terminal stages, no action needed
@@ -130,6 +132,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
                 Ok(recovery)
             })?;
             self.processed_requests.remove(&msg.e3_id);
+            self.forget_committee_deadline(&msg.e3_id);
             Ok(())
         })
     }
