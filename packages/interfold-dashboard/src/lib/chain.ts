@@ -143,3 +143,8 @@ export const faucetAbi = Faucet__factory.abi
 export const ownerIdentityRegistryAbi = IOwnerIdentityRegistry__factory.abi
 export const zkPassportIdentityVerifierAbi = ZKPassportIdentityVerifier__factory.abi
 export const zkPassportRootVerifierAbi = IZKPassportVerifier__factory.abi
+// `register` also reverts with the verifier's errors, so the call's ABI lists them to decode them.
+export const identityRegisterAbi = [
+  ...ownerIdentityRegistryAbi,
+  ...zkPassportIdentityVerifierAbi.filter((item) => item.type === 'error'),
+] as const

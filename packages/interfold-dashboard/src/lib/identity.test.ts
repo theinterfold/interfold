@@ -18,7 +18,7 @@ import {
   type Hex,
 } from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
-import { bondingRegistryAbi, ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
+import { bondingRegistryAbi, identityRegisterAbi, ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
 import {
   CAPACITY_WINDOW,
   boundChainName,
@@ -34,6 +34,7 @@ import {
   safeRegistrationBatch,
   type ProofResult,
   IDENTITY_STORAGE_SLOT,
+  proofBinding,
   readIdentityPolicy,
 } from './identity'
 
@@ -195,4 +196,19 @@ test('the policy comes from the bonding registry storage', async () => {
   // A policy that clears the registry turns the gate off, and before the first policy there is none.
   assert.equal(await readIdentityPolicy(slots(3n, 3n, 0n)), null)
   assert.equal(await readIdentityPolicy(async () => 0n), null)
+})
+
+test('the binding check reads the owner and chain from the proof', () => {
+  const proofs = [
+    { name: 'compare_expiry_evm', committedInputs: { compare_expiry_evm: { minDateTimestamp: 1, maxDateTimestamp: 0 } } },
+    { name: 'outer_evm_count_6', proof: '0x02', committedInputs: { bind_evm: { data: { user_address: OWNER, chain: 'ethereum' } } } },
+  ] as unknown as ProofResult[]
+  assert.deepEqual(proofBinding(proofs), { owner: OWNER, chain: 'ethereum' })
+  assert.equal(proofBinding(proofs.slice(0, 1)), null)
+})
+
+test('a registration that the verifier rejects shows the error name', () => {
+  const errors = identityRegisterAbi.filter((item) => item.type === 'error').map((item) => item.name)
+  assert.ok(errors.includes('WrongBinding'))
+  assert.ok(errors.includes('IdentityInUse'))
 })

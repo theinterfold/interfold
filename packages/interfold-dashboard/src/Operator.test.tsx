@@ -9,10 +9,18 @@ import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Address } from 'viem'
 import { CommitteeRewardsView, IdentityView, ManagePosition, positionActions, ticketBurnAmount, type IdentityService } from './Operator'
-import { CONTRACTS, E3Stage, FEE_TOKEN } from './lib/chain'
+import { CHAIN, CONTRACTS, E3Stage, FEE_TOKEN } from './lib/chain'
 import type { BondingConfig, OperatorStatus } from './lib/bonding'
 import { claimPlan, summarizeRewards, type CommitteeSeat, type SeatStatus } from './lib/rewards'
-import { buildProofBundle, dateInput, identityStatusText, parseDateInput, type OwnerAccount, type VerifierConfig } from './lib/identity'
+import {
+  boundChainName,
+  buildProofBundle,
+  dateInput,
+  identityStatusText,
+  parseDateInput,
+  type OwnerAccount,
+  type VerifierConfig,
+} from './lib/identity'
 import { pad, toHex, type Hex } from 'viem'
 
 const OPERATOR = '0x1111111111111111111111111111111111111111' as Address
@@ -205,7 +213,7 @@ function account(overrides: Partial<OwnerAccount> = {}): OwnerAccount {
   return { now: NOW, isContract: false, identity: { identityId: word(0n), expiresAt: 0n, verifiedNow: false }, ...overrides }
 }
 
-function bundle(version: Hex = VERSION) {
+function bundle(version: Hex = VERSION, boundTo: Address = OWNER) {
   return buildProofBundle({
     success: {
       proofs: [
@@ -213,7 +221,11 @@ function bundle(version: Hex = VERSION) {
           name: 'compare_expiry_evm',
           committedInputs: { compare_expiry_evm: { minDateTimestamp: Number(NOW + 400n * DAY), maxDateTimestamp: 0 } },
         },
-        { name: 'outer_evm_count_5', proof: '0x02' },
+        {
+          name: 'outer_evm_count_5',
+          proof: '0x02',
+          committedInputs: { bind_evm: { data: { user_address: boundTo, chain: boundChainName(CHAIN.id) } } },
+        },
       ],
       result: {},
     },
@@ -353,7 +365,7 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
 
 test('a registry without a verifier shows the credential but takes no registration', () => {
   const closed = renderToStaticMarkup(<IdentityView {...identityProps} verifier={null} registrationClosed />)
-  assert.match(closed, /takes no registration/)
+  assert.match(closed, /cannot register with the identity registry/)
   assert.match(closed, /Not verified/)
   assert.doesNotMatch(closed, /Create ZKPassport request/)
 })
@@ -384,7 +396,8 @@ test('a proof that the verifier would reject cannot register, and an equal expir
   const same = account({ identity: { identityId: word(1n), expiresAt: ends, verifiedNow: true } })
   assert.match(renderToStaticMarkup(<IdentityView {...identityProps} account={same} request={ready(proof)} />), register)
 
-  const otherOwner = { ...bundle(), owner: PROPOSED }
+  // The proof itself binds another owner.
+  const otherOwner = bundle(VERSION, PROPOSED)
   const moved = renderToStaticMarkup(<IdentityView {...identityProps} request={ready(otherOwner)} />)
   assert.match(moved, /bound to another owner or network/)
   assert.match(moved, disabled)

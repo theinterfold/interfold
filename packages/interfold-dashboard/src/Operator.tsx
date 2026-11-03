@@ -25,8 +25,9 @@ import {
   bondingRegistryAbi,
   e3RefundManagerAbi,
   faucetAbi,
+  identityRegisterAbi,
   interfoldAbi,
-  ownerIdentityRegistryAbi,
+  publicClient,
 } from './lib/chain'
 import {
   PREVIEW_SERVICE,
@@ -40,6 +41,7 @@ import {
   fetchVerifierConfig,
   fmtDay,
   identityStatusText,
+  proofBinding,
   outerEvmProof,
   parseDateInput,
   registrationDeadline,
@@ -719,6 +721,7 @@ export default function Operator() {
               refreshOperator={registered ? operator : null}
               busy={busy}
               send={(key, call) => void run(key, () => write(call))}
+              reportError={(key, error) => setTxError({ key, message: walletErrorMessage(error) })}
               errFor={errFor}
             />
           )}
@@ -1413,6 +1416,7 @@ function IdentityPanel({
   refreshOperator,
   busy,
   send,
+  reportError,
   errFor,
 }: {
   owner: Address
@@ -1421,6 +1425,8 @@ function IdentityPanel({
   refreshOperator: Address | null
   busy: string | null
   send: (key: string, call: ContractCall) => void
+  /** Show an error under the action of `key`. */
+  reportError: (key: string, error: unknown) => void
   errFor: (key: string) => ReactNode
 }) {
   const [reload, setReload] = useState(0)
@@ -1505,7 +1511,8 @@ function IdentityPanel({
           },
         }
       : loaded
-  // A published registry without a verifier keeps its credentials, but takes no registration.
+  // A published registry without a verifier, or with a verifier that is not ZKPassport's, keeps its
+  // credentials, but this page cannot register with it.
   const registrationClosed = Boolean(policy) && verifier === null
   // Until the owner types a date, the field offers the longest credential that the verifier allows.
   const validUntilValue = validUntilInput ?? (current ? dateInput(current.now + service.maxValidity) : '')
@@ -1597,15 +1604,28 @@ function IdentityPanel({
       onRegister={(bundle) =>
         send(REGISTER_IDENTITY_KEY, {
           address: policy!.registry,
-          abi: ownerIdentityRegistryAbi,
+          abi: identityRegisterAbi,
           functionName: 'register',
           args: [bundle.evidence],
         })
       }
       onDownloadProof={(bundle) => downloadJson(`interfold-identity-proof-${owner}.json`, bundle)}
-      onDownloadSafe={(bundle) => {
+      onDownloadSafe={async (bundle) => {
         if (BigInt(Math.floor(Date.now() / 1000)) > proofDeadline(bundle, service)) {
           setRequest({ phase: 'failed', message: 'The proof is too old to register. Create a new request.' })
+          return
+        }
+        try {
+          // The Safe sends `register`, so check the call from the Safe before the batch goes out.
+          await publicClient.simulateContract({
+            account: owner,
+            address: policy!.registry,
+            abi: identityRegisterAbi,
+            functionName: 'register',
+            args: [bundle.evidence],
+          })
+        } catch (error) {
+          reportError(REGISTER_IDENTITY_KEY, error)
           return
         }
         downloadJson(
@@ -1762,7 +1782,10 @@ export function IdentityView({
           {!chain ? (
             <Note kind='warn'>ZKPassport does not verify proofs on {NETWORK_NAME}.</Note>
           ) : registrationClosed ? (
-            <Note>The identity registry has no verifier at the moment, so it takes no registration. Credentials it issued stay valid.</Note>
+            <Note>
+              This page cannot register with the identity registry now: it has no verifier, or its verifier is not a ZKPassport verifier.
+              Credentials it issued stay valid.
+            </Note>
           ) : request.phase === 'ready' ? (
             <IdentityProof
               bundle={request.bundle}
@@ -1895,8 +1918,9 @@ function IdentityProof({
   const proofDate = BigInt(bundle.proofDate)
   const ends = credentialEnd(validUntil, proofDate, service.maxValidity)
   const deadline = proofDeadline(bundle, service)
-  // The panel requested this binding; a proof for another owner or chain would only revert.
-  const bound = sameAddress(bundle.owner, owner) && bundle.chainId === CHAIN.id
+  // A proof bound to another owner or chain would only revert. Read the binding from the proof.
+  const binding = proofBinding(bundle.proofs)
+  const bound = binding !== null && sameAddress(binding.owner, owner) && binding.chain === boundChainName(CHAIN.id)
   const versionMatches = !verifier || bundle.version.toLowerCase() === verifier.version.toLowerCase()
   const keyMatches =
     !verifier ||

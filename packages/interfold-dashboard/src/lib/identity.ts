@@ -12,7 +12,19 @@
 // deployment. Before a deployment, the page can still make a proof with the planned settings
 // (PREVIEW_SERVICE) and offer it as a download.
 
-import { encodeAbiParameters, encodeFunctionData, getAbiItem, getAddress, keccak256, toHex, type Address, type Hex } from 'viem'
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  encodeAbiParameters,
+  encodeFunctionData,
+  getAbiItem,
+  getAddress,
+  keccak256,
+  toHex,
+  type Address,
+  type Hex,
+} from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
 import {
   CONTRACTS,
@@ -111,7 +123,18 @@ export function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
   )
 }
 
-/** The verifier settings, or null while the registry has no verifier (registration is closed). */
+/** Whether `error` is a contract call that reverted or returned no data, not a network failure. */
+export function isContractRevert(error: unknown): boolean {
+  return (
+    error instanceof BaseError &&
+    error.walk((cause) => cause instanceof ContractFunctionRevertedError || cause instanceof ContractFunctionZeroDataError) !== null
+  )
+}
+
+/**
+ * The verifier settings, or null while this page cannot register: the registry has no verifier, or
+ * its verifier is not a ZKPassport verifier.
+ */
 export async function fetchVerifierConfig(registry: Address): Promise<VerifierConfig | null> {
   const address = (await (publicClient.readContract as any)({
     address: registry,
@@ -120,16 +143,24 @@ export async function fetchVerifierConfig(registry: Address): Promise<VerifierCo
   })) as Address
   if (address === ZERO_ADDRESS) return null
   const read = (functionName: string) => (publicClient.readContract as any)({ address, abi: zkPassportIdentityVerifierAbi, functionName })
-  const [domain, scope, version, nullifierType, oprfKeyHash, faceMatchRequired, proofValidity, maxValidity] = await Promise.all([
-    read('domain'),
-    read('scope'),
-    read('VERSION'),
-    read('NULLIFIER_TYPE'),
-    read('OPRF_KEY_HASH'),
-    read('FACE_MATCH_REQUIRED'),
-    read('PROOF_VALIDITY'),
-    read('MAX_VALIDITY'),
-  ])
+  let settings
+  try {
+    settings = await Promise.all([
+      read('domain'),
+      read('scope'),
+      read('VERSION'),
+      read('NULLIFIER_TYPE'),
+      read('OPRF_KEY_HASH'),
+      read('FACE_MATCH_REQUIRED'),
+      read('PROOF_VALIDITY'),
+      read('MAX_VALIDITY'),
+    ])
+  } catch (error) {
+    // Another kind of verifier has none of these reads.
+    if (isContractRevert(error)) return null
+    throw error
+  }
+  const [domain, scope, version, nullifierType, oprfKeyHash, faceMatchRequired, proofValidity, maxValidity] = settings
   return {
     address,
     domain,
@@ -190,6 +221,18 @@ export function capacityWindowEnd(timestamp: bigint): bigint {
 export function boundChainName(chainId: number): 'ethereum' | 'ethereum_sepolia' | null {
   if (chainId === 1) return 'ethereum'
   if (chainId === 11_155_111) return 'ethereum_sepolia'
+  return null
+}
+
+/** The owner and chain that the proof binds, from its `bind_evm` committed inputs. */
+export function proofBinding(proofs: readonly ProofResult[]): { owner: string; chain: string } | null {
+  for (const proof of proofs) {
+    const data = (proof.committedInputs as { bind_evm?: { data?: { user_address?: unknown; chain?: unknown } } } | undefined)?.bind_evm
+      ?.data
+    if (typeof data?.user_address === 'string' && typeof data.chain === 'string') {
+      return { owner: data.user_address, chain: data.chain }
+    }
+  }
   return null
 }
 
