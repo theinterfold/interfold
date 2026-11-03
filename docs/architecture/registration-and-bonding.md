@@ -154,24 +154,26 @@ owner one seat.
 `IIdentityVerifier`, which must bind the credential to that owner, and checkpoints the result. Each
 identifier stays reserved to its first owner through replacement, expiry, and revocation.
 Registration cannot shorten an existing expiry, so governance revokes first. Expiry and revocation
-keep earlier snapshot answers. `setVerifier` accepts any verifier: a replacement that derives other
-identifiers lets every registered credential claim a second owner, so it needs a new registry. The
-registry runs behind a transparent proxy that governance administers. An upgrade keeps every
-credential and reservation, so identity recovery (for example, moving a credential to a new owner
-address) can be added later without every owner proving again.
+keep earlier snapshot answers. `setVerifier` accepts any verifier contract: a replacement that
+derives other identifiers lets every registered credential claim a second owner, so it needs a new
+registry. The registry runs behind a transparent proxy that governance administers. An upgrade keeps
+every credential and reservation, so identity recovery (for example, moving a credential to a new
+owner address) can be added later without every owner proving again.
 
 Every policy change resets counted owner capacity. Requests fail capacity closed until
-`refreshOperatorStatuses` counts the operators again, so refresh after each change. Under a required
-policy, capacity covers fixed 30-day windows: an owner counts only when its credential lasts to the
-end of the current window, so a short credential stays eligible but cannot make the count stale
-early. After the window end, or after a revocation of a current credential, capacity reads zero
-until the next refresh. It then counts only the owners of refreshed operators until every operator
-is refreshed, so it can only undercount; a keeper refreshes at each window end. During an admission
-pause, an operator also needs identity at the pause cutoff, so a later credential or policy change
-cannot widen the frozen pool. Owners renew before the window that their credential ends in, or they
-stop counting toward capacity. Rust does not apply the identity policy to its owner shortlist yet,
-so enabling `required` before a node release that does would make verified nodes misjudge selection.
-An identifier proves what its verifier proves (for a document verifier, one document rather than one
+`refreshOperatorStatuses` counts the operators again, so governance refreshes every operator in the
+batch that changes a policy or calls `revoke`. Under a required policy, capacity covers fixed 30-day
+windows: an owner counts only when its credential lasts to the end of the current window, so a short
+credential stays eligible but cannot make the count stale early. After the window end, or after a
+revocation of a current credential, capacity reads zero until the next refresh. It then counts only
+the owners of refreshed operators until every operator is refreshed, so it can only undercount. Any
+account can call `refreshOperatorStatuses`, and someone must call it for every operator after each
+window end, or requests can fail for lack of counted owners. During an admission pause, an operator
+also needs identity at the pause cutoff, so a later credential or policy change cannot widen the
+frozen pool. Owners renew before the window that their credential ends in, or they stop counting
+toward capacity. Rust does not apply the identity policy to its owner shortlist yet, so enabling
+`required` before a node release that does would make verified nodes misjudge selection. An
+identifier proves what its verifier proves (for a document verifier, one document rather than one
 person); it does not stop identity rental.
 
 ## Deactivation and exit
