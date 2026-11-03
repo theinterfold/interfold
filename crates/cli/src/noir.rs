@@ -103,12 +103,12 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
     log!(out, "Barretenberg (bb):");
     log!(out, "  Path: {}", backend.bb_binary.display());
     if let Some(ref v) = version_info.bb_version {
-        log!(out, "  Version: {}", v);
+        log!(out, "  Recorded version: {}", v);
     }
     if backend.bb_binary.exists() {
-        log!(out, "  Installed");
+        log!(out, "  Binary exists");
     } else {
-        log!(out, "  Not installed");
+        log!(out, "  Binary missing");
     }
 
     log!(out, "");
@@ -131,12 +131,12 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             .unwrap_or("not pinned")
     );
     if let Some(ref v) = version_info.circuits_version {
-        log!(out, "  Version: {}", v);
+        log!(out, "  Recorded version: {}", v);
     }
     if backend.circuits_dir.exists() {
-        log!(out, "  Installed");
+        log!(out, "  Directory exists");
     } else {
-        log!(out, "  Not installed");
+        log!(out, "  Directory missing");
     }
 
     log!(out, "");
@@ -152,8 +152,10 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             log!(out, "Status: Barretenberg needs update");
             log!(
                 out,
-                "  Installed: {}",
-                installed.as_deref().unwrap_or("not installed")
+                "  Reported version: {}",
+                installed
+                    .as_deref()
+                    .unwrap_or("unavailable (binary missing or cannot run)")
             );
             log!(out, "  Required: {}", required);
             log!(out, "\nRun `interfold noir setup` to update");
@@ -163,6 +165,9 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             required,
         } => {
             log!(out, "Status: Circuits need update");
+            if installed.as_deref() == Some(required.as_str()) {
+                log!(out, "  Recorded circuit artifacts are missing or invalid");
+            }
             log!(
                 out,
                 "  Installed: {}",
@@ -312,7 +317,7 @@ mod tests {
     async fn setup_requires_explicit_archive_subset() {
         use crate::cli::Cli;
         use clap::Parser;
-        use e3_zk_prover::VersionInfo;
+        use e3_zk_prover::{CircuitInfo, VersionInfo};
         use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, process::Command};
 
         assert!(Cli::try_parse_from([
@@ -393,8 +398,17 @@ mod tests {
         fs::create_dir_all(&circuits).unwrap();
         fs::write(circuits.join("retained"), b"previous").unwrap();
         let version_file = circuits.parent().unwrap().join("version.json");
+        let mut circuit_files = std::collections::HashMap::new();
+        circuit_files.insert(
+            "retained".into(),
+            CircuitInfo {
+                file: "retained".into(),
+                checksum: "fixture-checksum".into(),
+            },
+        );
         VersionInfo {
             circuits_version: Some("previous".into()),
+            circuits: circuit_files,
             ..Default::default()
         }
         .save(&version_file)

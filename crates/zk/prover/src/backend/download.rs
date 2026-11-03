@@ -96,7 +96,32 @@ async fn locate_manifest_artifact(
     Err(ZkError::CircuitNotFound(rel_path.to_string()))
 }
 
+/// Accept nonempty relative paths with only normal components.
+fn is_plain_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+}
+
 impl ZkBackend {
+    /// Check the exact artifact paths selected during installation.
+    pub(super) fn circuits_files_exist(&self, version_info: &VersionInfo) -> bool {
+        if version_info.circuits.is_empty() {
+            warn!("circuit artifact inventory is missing");
+            return false;
+        }
+        version_info.circuits.iter().all(|(key, circuit)| {
+            let valid = is_plain_relative_path(key)
+                && is_plain_relative_path(&circuit.file)
+                && self.circuits_dir.join(&circuit.file).is_file();
+            if !valid {
+                warn!(artifact = %circuit.file, "recorded circuit artifact is missing or invalid");
+            }
+            valid
+        })
+    }
+
     /// Resolve a `checksums.json` entry to an on-disk path (legacy flat or per-committee layout).
     pub async fn locate_manifest_artifact(
         &self,
@@ -436,20 +461,21 @@ async fn verify_circuits_dir(
     let mut verified_paths = HashSet::new();
 
     for (rel_path, expected_hash) in &manifest.files {
-        if rel_path.is_empty()
-            || Path::new(rel_path)
-                .components()
-                .any(|part| !matches!(part, Component::Normal(_)))
-        {
+        if !is_plain_relative_path(rel_path) {
             return Err(invalid_circuit_archive_path(Path::new(rel_path)));
         }
         let path = locate_manifest_artifact(circuits_dir, rel_path, expected_hash).await?;
+        let installed_file = path
+            .strip_prefix(circuits_dir)
+            .expect("resolved artifact is inside circuits directory")
+            .to_string_lossy()
+            .replace('\\', "/");
         verified_paths.insert(path);
 
         circuit_infos.insert(
             rel_path.clone(),
             CircuitInfo {
-                file: rel_path.clone(),
+                file: installed_file,
                 checksum: expected_hash.clone(),
             },
         );
@@ -736,17 +762,23 @@ mod tests {
     }
 
     async fn seed_installation(backend: &ZkBackend) -> Vec<u8> {
+        let mut circuits = HashMap::new();
         for configuration in ["insecure-64/minimum", "secure-8192/small"] {
-            write_file(
-                &backend.circuits_dir,
-                &format!("{configuration}/default/dkg/pk/pk.json"),
-                b"previous-circuit",
+            let file = format!("{configuration}/default/dkg/pk/pk.json");
+            write_file(&backend.circuits_dir, &file, b"previous-circuit");
+            circuits.insert(
+                file.clone(),
+                CircuitInfo {
+                    file,
+                    checksum: "fixture-checksum".into(),
+                },
             );
         }
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         VersionInfo {
             bb_version: Some("5.1.0".into()),
             circuits_version: Some("previous".into()),
+            circuits,
             last_updated: Some("previous-installation".into()),
             ..Default::default()
         }
@@ -1153,6 +1185,46 @@ mod tests {
         let version = backend.load_version_info().await;
         assert_eq!(version.circuits_version.as_deref(), Some("candidate"));
         assert_eq!(version.circuits.len(), expected_files);
+    }
+
+    #[tokio::test]
+    async fn local_archive_records_selected_legacy_committee_path() {
+        let temp = TempDir::new().unwrap();
+        let backend = test_backend(&temp);
+        let legacy = "insecure-64/default/dkg/pk/pk.json";
+        let selected = "insecure-64/small/default/dkg/pk/pk.json";
+        let mut manifest = fixture_manifest(b"circuit");
+        manifest.remove(selected);
+        manifest.insert(legacy.into(), sha256_hex(b"small"));
+        let archive_path = temp.path().join("circuits.tar.gz");
+        fs::write(
+            &archive_path,
+            circuit_archive_with_manifest(
+                b"circuit",
+                Some(manifest),
+                &[(
+                    "circuits/insecure-64/small/default/dkg/pk/pk.json",
+                    b"small",
+                )],
+                &[selected],
+            ),
+        )
+        .unwrap();
+        backend
+            .install_circuits_archive(&archive_path, true)
+            .await
+            .unwrap();
+        let info = backend.load_version_info().await;
+        assert_eq!(info.circuits[legacy].file, selected);
+        assert!(backend.circuits_files_exist(&info));
+
+        fs::remove_file(backend.circuits_dir.join(selected)).unwrap();
+        // A different committee's artifact cannot replace the installed one.
+        assert!(backend
+            .circuits_dir
+            .join("insecure-64/minimum/default/dkg/pk/pk.json")
+            .is_file());
+        assert!(!backend.circuits_files_exist(&info));
     }
 
     #[tokio::test]
