@@ -94,11 +94,13 @@ contract OwnerIdentityRegistry is
         // with nothing new revoked.
         if (_revoked[identityId]) revert IdentityIsRevoked(identityId);
         _revoked[identityId] = true;
-        _revocationCounts.push(
-            SafeCast.toUint48(block.timestamp),
-            _revocationCounts.latest() + 1
-        );
+        // Only the owner's current credential can count toward capacity. A replaced identifier
+        // stays reserved and revoked, but its revocation leaves capacity as it is.
         if (_identities[identityOwner].identityId == identityId) {
+            _revocationCounts.push(
+                SafeCast.toUint48(block.timestamp),
+                _revocationCounts.latest() + 1
+            );
             delete _identities[identityOwner];
             _history[identityOwner].push(SafeCast.toUint48(block.timestamp), 0);
         }

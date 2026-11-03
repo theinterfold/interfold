@@ -164,14 +164,15 @@ Every policy change resets counted owner capacity. Requests fail capacity closed
 `refreshOperatorStatuses` counts the operators again, so refresh after each change. Under a required
 policy, capacity covers fixed 30-day windows: an owner counts only when its credential lasts to the
 end of the current window, so a short credential stays eligible but cannot make the count stale
-early. Capacity reads zero after the window end or a revocation until refreshes rebuild it; a keeper
-refreshes at each window end. During an admission pause, an operator also needs identity at the
-pause cutoff, so a later credential or policy change cannot widen the frozen pool. Owners renew
-before the window that their credential ends in, or they stop counting toward capacity. Rust does
-not apply the identity policy to its owner shortlist yet, so enabling `required` before a node
-release that does would make verified nodes misjudge selection. An identifier proves what its
-verifier proves (for a document verifier, one document rather than one person); it does not stop
-identity rental.
+early. After the window end, or after a revocation of a current credential, capacity reads zero
+until the next refresh. It then counts only the owners of refreshed operators until every operator
+is refreshed, so it can only undercount; a keeper refreshes at each window end. During an admission
+pause, an operator also needs identity at the pause cutoff, so a later credential or policy change
+cannot widen the frozen pool. Owners renew before the window that their credential ends in, or they
+stop counting toward capacity. Rust does not apply the identity policy to its owner shortlist yet,
+so enabling `required` before a node release that does would make verified nodes misjudge selection.
+An identifier proves what its verifier proves (for a document verifier, one document rather than one
+person); it does not stop identity rental.
 
 ## Deactivation and exit
 

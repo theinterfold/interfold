@@ -105,6 +105,8 @@ describe("OwnerIdentityRegistry", function () {
       NEW_ID,
       BigInt(expiresAt + 1000),
     ]);
+    // Alice had replaced ID, so no counted credential changed.
+    expect(await registry.revocationCountAt(await time.latest())).to.equal(0);
     expect(
       await registry.isVerifiedAt(alice.address, await time.latest()),
     ).to.equal(true);

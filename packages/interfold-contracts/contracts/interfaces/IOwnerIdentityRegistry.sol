@@ -46,7 +46,8 @@ interface IOwnerIdentityRegistry {
         uint256 timepoint
     ) external view returns (bool);
 
-    /// @notice The number of governance revocations at a timestamp, used to invalidate capacity.
+    /// @notice The number of governance revocations of a current credential at a timestamp, used to
+    ///         invalidate capacity. Revoking a replaced identifier does not count.
     function revocationCountAt(
         uint256 timepoint
     ) external view returns (uint256);

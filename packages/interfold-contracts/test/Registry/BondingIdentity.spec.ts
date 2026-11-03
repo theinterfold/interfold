@@ -170,6 +170,31 @@ describe("Bond-owner identity admission", function () {
     expect(await time.latest()).to.be.lessThan(end);
   });
 
+  it("keeps capacity fresh when governance revokes an identifier that its owner replaced", async function () {
+    const ctx = await loadFixture(setup);
+    const { id } = await verify(ctx);
+    await verify(ctx, ctx.operators[1]);
+    await verify(ctx, ctx.operators[2]);
+    const owner = await ctx.operators[0].getAddress();
+    await ctx.verifier.setResult(
+      owner,
+      ethers.id("renewed-document"),
+      (await time.latest()) + 3 * WINDOW,
+    );
+    await ctx.identityRegistry.connect(ctx.operators[0]).register("0x");
+    await ctx.bondingRegistry.setIdentityPolicy(
+      await ctx.identityRegistry.getAddress(),
+      true,
+    );
+    await refresh(ctx);
+    expect(await capacity(ctx)).to.equal(3);
+    await ctx.identityRegistry.revoke(id);
+    await time.increase(1);
+    // No counted credential changed, so capacity needs no refresh.
+    expect(await capacity(ctx)).to.equal(3);
+    expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
+  });
+
   it("fails capacity closed after revocation and rebuilds only verified owners", async function () {
     const ctx = await loadFixture(setup);
     const { id } = await verify(ctx);
