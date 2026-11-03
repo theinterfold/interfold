@@ -25,7 +25,7 @@ use alloy::{
     primitives::{Address, TxHash},
     providers::{Provider, WalletProvider},
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use e3_events::{
     prelude::*, BusHandle, EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData, Shutdown,
 };
@@ -44,6 +44,9 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// How long after a window boundary the boundary check runs, so that a block past it exists.
 const BOUNDARY_MARGIN: Duration = Duration::from_secs(15);
+/// The longest one check may take. A stalled RPC call then fails the check, and the next check
+/// still runs.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 /// The refresh writes the registry's activity and capacity checkpoints at `block.timestamp`, so it
 /// needs the same margin as the release acknowledgment.
@@ -182,8 +185,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<Check> for Capacity
         let mut progress = self.progress;
         Box::pin(
             async move {
-                let result =
-                    check(&provider, bonding_registry, identity_policy, &mut progress).await;
+                let result = tokio::time::timeout(
+                    CHECK_TIMEOUT,
+                    check(&provider, bonding_registry, identity_policy, &mut progress),
+                )
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("the check took longer than {CHECK_TIMEOUT:?}")));
                 (progress, result)
             }
             .into_actor(self)
