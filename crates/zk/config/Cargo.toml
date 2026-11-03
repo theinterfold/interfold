@@ -7,6 +7,7 @@ description = "Static BFV circuit configuration and protocol layouts"
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
 e3-committee.workspace = true

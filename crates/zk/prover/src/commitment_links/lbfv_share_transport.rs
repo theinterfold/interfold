@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! Pure commitment validation for validated l-BFV share transport documents.
+
+use anyhow::{ensure, Result};
+use e3_events::{
+    LbfvAcceptedPartyCommitments, LbfvKeyShareDocument, LbfvKeyShareDocumentRole, ProofIdentity,
+    ProofType, SignedProofPayload,
+};
+use e3_fhe_params::BfvPreset;
+use e3_zk_witness::validate_lbfv_serialized_share_commitments;
+
+/// Recompute all PK, RLK d0, and RLK d2 row commitments from two documents.
+///
+/// The caller must first validate both transport documents. This function does not validate
+/// signatures, verify proofs, or access the DHT.
+pub fn validate_lbfv_key_share_document_commitments_dynamic(
+    preset: BfvPreset,
+    public_key: &LbfvKeyShareDocument,
+    rlk: &LbfvKeyShareDocument,
+) -> Result<LbfvAcceptedPartyCommitments> {
+    ensure!(
+        public_key.role() == LbfvKeyShareDocumentRole::PublicKey,
+        "l-BFV commitment input has the wrong public-key role"
+    );
+    ensure!(
+        rlk.role() == LbfvKeyShareDocumentRole::RelinearizationKey,
+        "l-BFV commitment input has the wrong RLK role"
+    );
+    let (public_key_context, public_key_share, public_key_proofs) = (
+        public_key.context(),
+        public_key.share(),
+        public_key.signed_row_proofs(),
+    );
+    let (rlk_context, rlk_share, rlk_proofs) =
+        (rlk.context(), rlk.share(), rlk.signed_row_proofs());
+    ensure!(
+        public_key_context == rlk_context,
+        "l-BFV PK and RLK document contexts do not match"
+    );
+    let row_count = e3_fhe_params::lbfv_row_count(preset)
+        .ok_or_else(|| anyhow::anyhow!("selected preset does not support l-BFV"))?;
+    let public_key_row_signals =
+        ordered_row_signals(public_key_proofs, ProofType::LbfvPkGeneration, row_count)?;
+    let rlk_row_signals = ordered_row_signals(rlk_proofs, ProofType::RlkGeneration, row_count)?;
+    let commitments = validate_lbfv_serialized_share_commitments(
+        preset,
+        public_key_share,
+        rlk_share,
+        &public_key_row_signals,
+        &rlk_row_signals,
+    )?;
+
+    Ok(LbfvAcceptedPartyCommitments {
+        party_id: public_key.context().party_id,
+        pk_generation_commitments: commitments.pk_generation_commitments,
+        rlk_d0_commitments: commitments.rlk_d0_commitments,
+        rlk_d2_commitments: commitments.rlk_d2_commitments,
+    })
+}
+
+fn ordered_row_signals(
+    proofs: &[SignedProofPayload],
+    proof_type: ProofType,
+    row_count: usize,
+) -> Result<Vec<&[u8]>> {
+    ensure!(
+        proofs.len() == row_count,
+        "l-BFV proof bundle has {} rows; expected {row_count}",
+        proofs.len()
+    );
+    proofs
+        .iter()
+        .enumerate()
+        .map(|(row, signed)| {
+            ensure!(
+                signed.payload.proof_type == proof_type,
+                "l-BFV row proof has the wrong proof type"
+            );
+            ensure!(
+                proof_type.identity(&signed.payload.proof, Some(row_count))?
+                    == (ProofIdentity {
+                        proof_type,
+                        instance: row as u32,
+                    }),
+                "l-BFV row proof is not in its canonical position"
+            );
+            Ok(signed.payload.proof.public_signals.as_ref())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_events::{E3id, Proof, ProofPayload};
+    use e3_utils::ArcBytes;
+    use e3_zk_witness::FIELD_BYTE_LEN;
+
+    fn row_proofs(
+        proof_type: ProofType,
+    ) -> [SignedProofPayload; ProofType::LBFV_ROW_INSTANCES as usize] {
+        std::array::from_fn(|row| {
+            let circuit = proof_type.circuit_names()[0];
+            let input_layout = circuit.input_layout();
+            let field_count = input_layout.field_count().unwrap()
+                + circuit.output_layout().field_count().unwrap();
+            let mut public_signals = vec![0u8; field_count * FIELD_BYTE_LEN];
+            let row_index = 3; // row_index is the fourth public input.
+            public_signals[row_index * FIELD_BYTE_LEN + 28..(row_index + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(&(row as u32).to_be_bytes());
+
+            SignedProofPayload {
+                payload: ProofPayload {
+                    e3_id: E3id::new("1", 1),
+                    proof_type,
+                    proof: Proof::new(
+                        circuit,
+                        ArcBytes::from_bytes(&[1]),
+                        ArcBytes::from_bytes(&public_signals),
+                    ),
+                },
+                signature: ArcBytes::from_bytes(&[]),
+            }
+        })
+    }
+
+    #[test]
+    fn ordered_rows_require_the_expected_family_and_position() {
+        let mut proofs = row_proofs(ProofType::LbfvPkGeneration);
+        let row_count = ProofType::LBFV_ROW_INSTANCES as usize;
+        assert_eq!(
+            ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count)
+                .unwrap()
+                .len(),
+            row_count
+        );
+
+        proofs[0].payload.proof_type = ProofType::RlkGeneration;
+        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count).is_err());
+
+        let mut proofs = row_proofs(ProofType::LbfvPkGeneration);
+        proofs.swap(0, 1);
+        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count).is_err());
+    }
+}

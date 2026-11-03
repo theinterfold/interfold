@@ -614,7 +614,8 @@ mod tests {
         }
 
         let nonce = provider.provider().get_transaction_count(sender).await?;
-        for invalid in [Vec::new(), vec![0; 524_289]] {
+        let oversized = vec![0; e3_data_availability::public_key::MAX_PUBLIC_KEY_BYTES + 1];
+        for invalid in [Vec::new(), oversized] {
             assert!(publish_committee_public_key_to_registry(
                 provider.clone(),
                 address,

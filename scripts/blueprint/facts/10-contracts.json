@@ -1493,7 +1493,7 @@
       "tests": "packages/interfold-contracts/test/BfvPkVerifier.spec.ts, test/BfvDecryptionVerifier.spec.ts, test/BfvVerifierRouter.spec.ts and test/BfvVkBindingIntegration.spec.ts; run with pnpm evm:test (README.md line 77)",
       "unverified": [
         "The contract names DkgAggregatorVerifier and DecryptionAggregatorVerifier come from the file names; their declarations lie past line 40 of the generated files, which were not read.",
-        "Generated Honk variants also exist under verifiers/bfv/honk/insecure-64 and secure-8192; they were not read.",
+        "Generated Honk variants also exist under verifiers/bfv/honk/insecure and secure-8192; they were not read.",
         "Which verifier builds are registered on-chain (setPkVerifier, setDecryptionVerifier) is set at deploy time and is not in the snapshot."
       ]
     },

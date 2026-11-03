@@ -239,13 +239,16 @@ impl ThresholdKeyshare {
                 pre_dishonest,
                 params_preset: self.share_enc_preset,
                 committee_size,
+                lbfv_context: None,
+                verification_id: None,
             },
             ec,
         )?;
         Ok(())
     }
 
-    /// Publish KeyshareCreated (Exchange #4) with pk_share and signed C1 proof.
+    /// Publish KeyshareCreated (Exchange #4) with pk_share and, on the trBFV path, the signed C1
+    /// proof.
     pub(in crate::actors::threshold_keyshare) fn publish_keyshare_created(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -273,7 +276,16 @@ impl ThresholdKeyshare {
             Ok(recovery)
         })?;
 
-        if signed_pk_generation_proof.is_none() {
+        if !self.lbfv_bundle_ready()? {
+            warn!(
+                "Deferring KeyshareCreated for party {} E3 {} until the l-BFV bundle is ready",
+                party_id, e3_id
+            );
+            self.pending.keyshare_publish = true;
+            return Ok(());
+        }
+
+        if signed_pk_generation_proof.is_none() && self.proves_c1() {
             warn!(
                 "Deferring KeyshareCreated for party {} E3 {} — C1 proof not stored yet (PkGenerationProofSigned race)",
                 party_id, e3_id

@@ -156,12 +156,12 @@ Publicly verifiable threshold BFV (PV-TBFV) adds a ZK proof to each sensitive st
 the proofs without the private values. The DKG part is publicly verifiable DKG (PVDKG). The steps
 form four phases:
 
-| Phase                      | What happens                                                       | Circuits                                                       |
-| -------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
-| P1: Key generation         | Members make keys and shares, encrypt the shares, and decrypt them | C0, C1, C2a, C2b, C3a, C3b, C4a, C4b                           |
-| P2: Public key aggregation | The aggregator adds the H roster contributions into one key        | C5                                                             |
-| P3: User encryption        | A data provider proves that an input is a valid BFV encryption     | `user_data_encryption` (one circuit for both ciphertext parts) |
-| P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                         |
+| Phase                      | What happens                                                       | Circuits                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| P1: Key generation         | Members make keys and shares, encrypt the shares, and decrypt them | C0, C1, C2a, C2b, C3a, C3b, C4a, C4b                                                                                                 |
+| P2: Public key aggregation | The aggregator adds the H roster contributions into one key        | C5                                                                                                                                   |
+| P3: User encryption        | A data provider proves that an input is a valid BFV encryption     | `user_data_encryption` (trBFV keys; one circuit for both ciphertext parts) or the `user_data_encryption_chunked` family (l-BFV keys) |
+| P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                                                                                               |
 
 The FHE computation runs between P3 and P4. The compute provider proves it with its own proof system
 (the OpenVM zkVM in the current code), not with these circuits.
@@ -257,23 +257,27 @@ cannot substitute another circuit within the proof tree.
 Two BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
 set for the individual keys. The values come from `crates/fhe-params/src/constants.rs`.
 
-| Preset        | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
-| ------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
-| `insecure-64` |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
-| `secure-8192` |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| Preset         | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
+| -------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
+| `insecure`     |          0 |              128 |                    3 |                   100 |        128 |              2 |
+| `secure-8192`  |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| `secure-16384` |          3 |            16384 |                    5 |                 1,000 |      16384 |              2 |
 
-`insecure-64` is for development and tests only. The code marks it as not for production. The
+Parameter set 4 selects the l-BFV protocol path with the same insecure degree-128 parameters as
+index 0. The identical tuple does not make its proof shape interchangeable with trBFV.
+
+`insecure` is for development and tests only. The code marks it as not for production. The
 deployment script refuses to deploy it on a chain that is not a known test or local chain.
 
 ### Presets by chain
 
 `ActiveCryptoConfig.sol` selects the supported presets from `block.chainid`:
 
-| Chain            | Chain ID    | Presets                      | Committee sizes in the circuit build |
-| ---------------- | ----------- | ---------------------------- | ------------------------------------ |
-| Ethereum mainnet | 1           | `secure-8192`                | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
-| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Chain            | Chain ID    | Presets                                   | Committee sizes in the circuit build |
+| ---------------- | ----------- | ----------------------------------------- | ------------------------------------ |
+| Ethereum mainnet | 1           | `secure-8192`                             | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | `insecure`, `secure-8192`, `secure-16384` | Registered routes only               |
+| Local            | 31337, 1337 | `insecure`, `secure-8192`, `secure-16384` | Registered routes only               |
 
 Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and

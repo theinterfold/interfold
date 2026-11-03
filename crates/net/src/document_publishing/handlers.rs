@@ -79,6 +79,9 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                     self.bus.err(EType::DocumentPublishing, error);
                 }
             }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(data) => {
+                ctx.notify(TypedEvent::new(data, ec))
+            }
             _ => (),
         }
     }
@@ -250,6 +253,26 @@ impl Handler<ReplicateDocument> for DocumentPublisher {
     }
 }
 
+impl Handler<TypedEvent<LbfvKeyShareDocumentFetchRequested>> for DocumentPublisher {
+    type Result = ResponseFuture<()>;
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentFetchRequested>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let tx = self.tx.clone();
+        let rx = self.rx.clone();
+        let bus = self.bus.clone();
+        let (request, ec) = msg.into_components();
+        trap_fut(
+            EType::IO,
+            &bus.with_ec(&ec),
+            handle_lbfv_document_fetch_requested(tx, rx, bus, request, ec),
+        )
+    }
+}
+
 /// Receiving DocumentPublishedNotification from libp2p. The fetch runs in the actor context, so
 /// the network receive loop does not wait for it.
 impl Handler<DocumentPublishedNotification> for DocumentPublisher {
@@ -273,6 +296,15 @@ impl Handler<DocumentIngress> for DocumentPublisher {
         let now = chrono::Utc::now();
         if !notification_is_valid(&msg, now) {
             debug!("Ignored an invalid or expired document notification");
+            return;
+        }
+        // l-BFV key-share documents are fetched only through the manifest-bound
+        // `LbfvKeyShareDocumentFetchRequested` path, never from a generic notification.
+        if matches!(msg.meta.kind, e3_events::DocumentKind::LbfvKeyShare) {
+            debug!(
+                e3_id = %msg.meta.e3_id,
+                "Ignoring generic l-BFV DHT document notification"
+            );
             return;
         }
         // The document is published at the notification's time, which the clock refuses beyond its

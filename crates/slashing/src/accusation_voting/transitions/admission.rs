@@ -160,12 +160,18 @@ impl AccusationVoting {
     pub(super) fn admit_own_replayed_accusation(
         &self,
         accusation: &ProofFailureAccusation,
-    ) -> Option<(Address, ProofType)> {
+    ) -> Option<(Address, ProofIdentity)> {
         (!self.effects_enabled
             && accusation.e3_id == self.e3_id
             && accusation.accuser == self.my_address
             && self.verify_accusation_signature(accusation))
-        .then_some((accusation.accused, accusation.proof_type))
+        .then_some((
+            accusation.accused,
+            ProofIdentity {
+                proof_type: accusation.proof_type,
+                instance: accusation.proof_instance,
+            },
+        ))
     }
 
     /// A peer's accusation. Its signature binds the addresses, not `accused_party_id`, so the

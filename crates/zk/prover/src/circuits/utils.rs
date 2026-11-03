@@ -16,6 +16,35 @@ use noirc_abi::{input_parser::InputValue, InputMap};
 
 const FIELD_SIZE: usize = 32;
 
+/// Matches `bb_proof_verification::RECURSIVE_ZK_PROOF_LENGTH` (`UltraHonkZKProof`).
+#[allow(dead_code)]
+pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 458;
+
+/// Converts raw ZK proof bytes to field strings for `UltraHonkZKProof` witness input.
+///
+/// Barretenberg often emits fewer than [`ULTRA_HONK_ZK_PROOF_FIELD_COUNT`] 32-byte limbs; the Noir
+/// type is a fixed-width array, so shorter proofs are zero-padded at the end.
+#[allow(dead_code)]
+pub fn zk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
+    let need = ULTRA_HONK_ZK_PROOF_FIELD_COUNT * FIELD_SIZE;
+    if bytes.len() > need {
+        return Err(ZkError::InvalidInput(format!(
+            "zk proof bytes length {} exceeds fixed width {}",
+            bytes.len(),
+            need
+        )));
+    }
+    if !bytes.len().is_multiple_of(FIELD_SIZE) {
+        return Err(ZkError::InvalidInput(format!(
+            "zk proof bytes length must be multiple of {FIELD_SIZE}, got {}",
+            bytes.len()
+        )));
+    }
+    let mut buf = bytes.to_vec();
+    buf.resize(need, 0);
+    bytes_to_field_strings(&buf)
+}
+
 /// Converts raw proof/public-signal bytes (32-byte big-endian chunks) to hex-encoded field strings.
 pub fn bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
     if !bytes.len().is_multiple_of(FIELD_SIZE) {
@@ -59,15 +88,24 @@ fn generate_recursive_witness(
     input: &impl serde::Serialize,
     artifacts_dir: &str,
 ) -> Result<Vec<u8>, ZkError> {
+    let json =
+        serde_json::to_value(input).map_err(|e| ZkError::SerializationError(e.to_string()))?;
+    let input_map = inputs_json_to_input_map(&json)?;
+
+    generate_recursive_witness_from_input_map(prover, circuit_name, input_map, artifacts_dir)
+}
+
+fn generate_recursive_witness_from_input_map(
+    prover: &ZkProver,
+    circuit_name: CircuitName,
+    input_map: InputMap,
+    artifacts_dir: &str,
+) -> Result<Vec<u8>, ZkError> {
     let recursive_dir = prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir);
     let circuit_path = recursive_dir
         .join(circuit_name.dir_path())
         .join(format!("{}.json", circuit_name.as_str()));
     let compiled = CompiledCircuit::from_file(&circuit_path)?;
-
-    let json =
-        serde_json::to_value(input).map_err(|e| ZkError::SerializationError(e.to_string()))?;
-    let input_map = inputs_json_to_input_map(&json)?;
 
     let witness_gen = WitnessGenerator::new();
     witness_gen.generate_witness(&compiled, input_map)

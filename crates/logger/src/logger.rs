@@ -465,6 +465,7 @@ mod tests {
                 accused_party_id: 9,
                 accused_address: accused,
                 proof_type: ProofType::C1PkGeneration,
+                proof_instance: 0,
                 data_hash: [0u8; 32],
                 evidence: Bytes::new(),
             });

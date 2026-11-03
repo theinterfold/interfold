@@ -51,6 +51,7 @@ e3-zk-config = { workspace = true }
 fhe-util = { workspace = true }
 num-bigint = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

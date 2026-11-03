@@ -40,6 +40,9 @@ pub struct GuestHeader {
     pub domain: ComputeDomain,
     /// The encoded BFV parameters.
     pub params: Vec<u8>,
+    /// The published committee key. For an l-BFV committee it is the key envelope, which the
+    /// guest binds to `domain.committee_public_key_hash` before it reads the relinearization key.
+    pub committee_key: Vec<u8>,
     /// Each input's on-chain index, in tree order. Its length is the round's input count.
     pub indices: Vec<u64>,
     /// What the E3 program published with each input: empty, or one entry per input.
@@ -241,6 +244,7 @@ mod tests {
         let header = GuestHeader {
             domain: domain(),
             params: vec![1, 2, 3],
+            committee_key: vec![4, 5],
             indices: vec![10, 11],
             published: vec![
                 PublishedData {
@@ -253,6 +257,7 @@ mod tests {
         let mut bytes = header.encode().unwrap();
         let decoded = GuestHeader::decode(&bytes).unwrap();
         assert_eq!(decoded.domain, header.domain);
+        assert_eq!(decoded.committee_key, header.committee_key);
         assert_eq!(decoded.indices, header.indices);
         assert_eq!(decoded.published.len(), 2);
 

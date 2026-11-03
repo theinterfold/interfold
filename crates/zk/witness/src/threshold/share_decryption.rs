@@ -120,6 +120,13 @@ impl Inputs {
         let ct0 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[0]);
         let ct1 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[1]);
 
+        crate::encoding::verify_crt_shapes(
+            &[&ct0, &ct1, &data.s, &data.e, &data.d_share],
+            moduli.len(),
+            n as usize,
+        )
+        .map_err(|e| WitnessError::Other(format!("C6 CRT shape mismatch: {e}")))?;
+
         // Perform the main computation logic
         #[allow(clippy::type_complexity)]
         let results: Vec<(

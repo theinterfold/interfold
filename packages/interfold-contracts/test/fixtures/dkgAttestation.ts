@@ -43,6 +43,62 @@ export function encodeMockDkgProofForAttestation(
   );
 }
 
+/** Encode a V2 l-BFV public-input shape used by fold attestations. */
+export function encodeMockDkgV2ProofForAttestation(
+  pkCommitment: string,
+  committeeHash: string,
+  partyIds: number[],
+  skCommits: string[],
+  esmCommits: string[],
+  lbfvRows = 6,
+): string {
+  if (
+    partyIds.length !== 2 ||
+    skCommits.length !== 2 ||
+    esmCommits.length !== 2
+  ) {
+    throw new Error("V2 attestation fixtures require two honest parties");
+  }
+  const publicInputs: string[] = Array.from(
+    { length: 39 + 3 * partyIds.length + 3 * lbfvRows },
+    () => ethers.ZeroHash,
+  );
+  const toLimbs = (hash: string): [string, string] => {
+    const value = BigInt(hash);
+    return [
+      ethers.toBeHex(value >> 128n, 32),
+      ethers.toBeHex(value & ((1n << 128n) - 1n), 32),
+    ];
+  };
+  const acceptedSetHash = ethers.keccak256(
+    ethers.solidityPacked(
+      ["bytes32", "uint32", "uint32", "uint32"],
+      [
+        ethers.id("interfold.lbfv.accepted-party-set:v1"),
+        2,
+        partyIds[0],
+        partyIds[1],
+      ],
+    ),
+  );
+  const [committeeHi, committeeLo] = toLimbs(committeeHash);
+  const [acceptedSetHi, acceptedSetLo] = toLimbs(acceptedSetHash);
+  publicInputs[27] = pkCommitment;
+  publicInputs[3] = committeeHi;
+  publicInputs[4] = committeeLo;
+  publicInputs[32] = acceptedSetHi;
+  publicInputs[33] = acceptedSetLo;
+  for (let i = 0; i < partyIds.length; i++) {
+    publicInputs[1 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
+    publicInputs[23 + i] = skCommits[i];
+    publicInputs[25 + i] = esmCommits[i];
+  }
+  return ethers.AbiCoder.defaultAbiCoder().encode(
+    ["bytes", "bytes32[]"],
+    ["0x", publicInputs],
+  );
+}
+
 /** Sign one EIP-712 fold-attestation tuple. */
 export async function signFoldAttestation(
   signer: Signer,

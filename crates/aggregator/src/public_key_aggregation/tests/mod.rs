@@ -6,15 +6,19 @@
 
 use super::*;
 use crate::test_support::get_common_setup;
-use alloy::primitives::Address;
-use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
+use crate::LBFV_PUBLICATION_SCHEMA_VERSION;
+use crate::{LbfvContributionRepositoryFactory, PublicKeyRepositoryFactory};
+use alloy::primitives::{Address, B256};
+use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repositories, Repository};
 use e3_events::EventConstructorWithTimestamp;
 use e3_events::{
-    ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector, ProofPayload, ProofType,
-    Seed, TakeEvents, Unsequenced, ZkError,
+    CommitteeMemberExpelled, ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector,
+    LbfvKeyShareDocumentFetchFailureClass, LbfvKeyShareDocumentRole, ProofPayload, ProofType, Seed,
+    TakeEvents, Unsequenced, ZkError,
 };
 use e3_zk_config::CircuitName;
 use std::collections::{BTreeSet, HashMap};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -31,6 +35,24 @@ fn dummy_proof(circuit: CircuitName) -> Proof {
         ArcBytes::from_bytes(&[1]),
         ArcBytes::from_bytes(&[2]),
     )
+}
+
+fn lbfv_publication(e3_id: E3id) -> LbfvPublicKeyAggregated {
+    let mut key_envelope = Vec::from(*b"IFLBFVKE");
+    key_envelope.extend_from_slice(&3_u16.to_be_bytes());
+    key_envelope.extend_from_slice(&0_u32.to_be_bytes());
+    key_envelope.extend_from_slice(&1_u32.to_be_bytes());
+    key_envelope.push(1);
+    LbfvPublicKeyAggregated {
+        pubkey: ArcBytes::from_bytes(&key_envelope),
+        e3_id,
+        nodes: OrderedSet::from_iter(["node".to_owned()]),
+        committee_addresses: vec![Address::repeat_byte(1)],
+        honest_committee_addresses: vec![Address::repeat_byte(1)],
+        pk_commitment: [7; 32],
+        dkg_aggregator_v2_proof: dummy_proof(CircuitName::DkgAggregatorV2),
+        dkg_attestation_bundle: Some(ArcBytes::from_bytes(&[6])),
+    }
 }
 
 fn generating_c5_state(correlation_id: CorrelationId) -> PublicKeyAggregatorState {
@@ -53,6 +75,18 @@ fn generating_c5_state(correlation_id: CorrelationId) -> PublicKeyAggregatorStat
         nodes_fold_completed_slots: 0,
         nodes_fold_step_correlation: None,
     }
+}
+
+/// The aggregation state that the l-BFV path enters: it proves no C5.
+fn lbfv_generating_state(correlation_id: CorrelationId) -> PublicKeyAggregatorState {
+    let mut state = generating_c5_state(correlation_id);
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        c5_proof_pending, ..
+    } = &mut state
+    {
+        *c5_proof_pending = None;
+    }
+    state
 }
 
 fn complete_state() -> PublicKeyAggregatorState {
@@ -85,7 +119,7 @@ async fn build_public_key_aggregator_with_committee(
     E3id,
 )> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let aggregator = PublicKeyAggregator::new(
@@ -93,10 +127,15 @@ async fn build_public_key_aggregator_with_committee(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: e3_data::Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -227,10 +266,15 @@ fn micro_aggregator(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -248,6 +292,7 @@ fn c1_verified(
         e3_id: e3_id.clone(),
         kind: VerificationKind::PkGenerationProofs,
         dishonest_parties,
+        verification_id: None,
     };
     TypedEvent::new(verified.clone(), test_ctx(verified))
 }
@@ -275,7 +320,7 @@ async fn c5_proof_requested(
 #[actix::test]
 async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -321,10 +366,15 @@ fn booted_micro_aggregator(
             fhe: fhe.clone(),
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery,
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -339,7 +389,7 @@ fn booted_micro_aggregator(
 async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_restart() -> Result<()>
 {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -384,7 +434,7 @@ async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_rest
 #[actix::test]
 async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -438,7 +488,7 @@ async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Resul
 #[actix::test]
 async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -461,7 +511,7 @@ async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3(
 #[actix::test]
 async fn a_demoted_aggregator_stops_its_work_once_a_key_is_published() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let mut state = generating_c5_state(CorrelationId::new());
@@ -488,7 +538,7 @@ async fn a_demoted_aggregator_stops_its_work_once_a_key_is_published() -> Result
 #[actix::test]
 async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -515,7 +565,7 @@ async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()
 #[actix::test]
 async fn demoted_aggregator_resumes_its_key_proof_after_restart() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let mut state = generating_c5_state(CorrelationId::new());
@@ -531,6 +581,148 @@ async fn demoted_aggregator_resumes_its_key_proof_after_restart() -> Result<()> 
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
 
     assert!(c5_proof_requested(&history, &e3_id).await?);
+    Ok(())
+}
+
+#[actix::test]
+async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let publication = lbfv_publication(e3_id.clone());
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: Some(test_state(LbfvPublicKeyPublicationStateV1 {
+                schema_version: LBFV_PUBLICATION_SCHEMA_VERSION,
+                e3_id: e3_id.clone(),
+                pending: Some(publication.clone()),
+            })),
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(complete_state()),
+    );
+
+    let mut aggregator = aggregator;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    assert!(matches!(
+        next_event(&history).await?.into_data(),
+        InterfoldEventData::LbfvPublicKeyAggregated(event) if event == publication
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn secure_16384_waits_for_both_operational_keys() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::fixture;
+
+    let fixture = fixture();
+    let e3_id = fixture.state.e3_id.clone();
+    let initial_state = lbfv_generating_state(CorrelationId::new());
+    let aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: Some(test_state(aggregation)),
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(initial_state),
+    );
+    aggregator.try_publish_complete()?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
+    assert!(aggregator.lbfv_aggregation_state()?.is_some_and(|state| {
+        state.operational_public_key.is_none() && state.operational_rlk.is_none()
+    }));
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::fixture;
+
+    let fixture = fixture();
+    let e3_id = fixture.state.e3_id.clone();
+    let mut aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
+    aggregation.fail("worker failed")?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: Some(test_state(aggregation)),
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(generating_c5_state(CorrelationId::new())),
+    );
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    assert!(matches!(
+        next_event(&history).await?.into_data(),
+        InterfoldEventData::E3Failed(event)
+            if event.e3_id == e3_id
+                && event.failed_at_stage == E3Stage::CommitteeFinalized
+                && event.reason == FailureReason::DKGInvalidShares
+    ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
     Ok(())
 }
 
@@ -722,7 +914,7 @@ async fn expelling_a_selected_roster_member_fails_the_dkg_immediately() -> Resul
 #[actix::test]
 async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let party_id = 2;
@@ -746,10 +938,15 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -997,6 +1194,925 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod redrive;
+
+#[actix::test]
+async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{bundle, fixture};
+
+    let fixture = fixture();
+    let (_, _, manifest) = bundle(&fixture, 0);
+    let mut collection = fixture.state.clone();
+    collection.admit_manifest(&manifest)?;
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let collection = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: fixture.state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(collection),
+            repositories,
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            fixture
+                .state
+                .committee
+                .iter()
+                .enumerate()
+                .map(|(party_id, address)| (party_id as u64, address.to_string()))
+                .collect(),
+        )),
+    );
+
+    aggregator.dispatch_c1_verification(&[], &[], test_ctx(EffectsEnabled::new()))?;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::ShareVerificationDispatched(dispatch)
+            if dispatch.kind == VerificationKind::PkGenerationProofs
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn secure_16384_publishes_inputs_ready_after_a_durable_quorum() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
+
+    let fixture = fixture();
+    let pending_collection = fixture.state.clone();
+    let mut quorum_collection = pending_collection.clone();
+    complete_party(&mut quorum_collection, &fixture, 0);
+    complete_party(&mut quorum_collection, &fixture, 2);
+    quorum_collection.mark_ready(vec![0, 2])?;
+    let submissions = fixture
+        .state
+        .committee
+        .iter()
+        .enumerate()
+        .map(|(party_id, address)| {
+            (
+                party_id as u64,
+                address.to_string(),
+                ArcBytes::from_bytes(&[party_id as u8]),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: fixture.state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(test_state(pending_collection)),
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(PublicKeyAggregatorState::VerifyingC1 {
+            c1_proofs: vec![None; submissions.len()],
+            submission_order: submissions,
+            threshold_m: 1,
+            circuit_committee_n: 3,
+            circuit_committee_h: 2,
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes: fixture
+                .state
+                .committee
+                .iter()
+                .enumerate()
+                .map(|(party_id, address)| (party_id as u64, address.to_string()))
+                .collect(),
+        }),
+    );
+    let ec = test_ctx(EffectsEnabled::new());
+
+    aggregator.publish_inputs_ready(ec.clone())?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+
+    aggregator.replace_lbfv_collection(quorum_collection);
+    aggregator.publish_inputs_ready(ec)?;
+    assert!(matches!(
+        next_event(&history).await?.into_data(),
+        InterfoldEventData::AggregationInputsReady(data)
+            if data.e3_id == fixture.state.e3_id
+                && data.phase == AggregationPhase::PublicKey
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn secure_16384_waits_for_the_selected_roster_before_sealing_a_quorum() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
+
+    let fixture = fixture();
+    let mut collection = fixture.state.clone();
+    complete_party(&mut collection, &fixture, 1);
+    complete_party(&mut collection, &fixture, 2);
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let selected_roster = BTreeSet::from([0, 2]);
+    let mut state = PublicKeyAggregatorState::init(
+        3,
+        1,
+        Seed([0; 32]),
+        collection
+            .committee
+            .iter()
+            .enumerate()
+            .map(|(party_id, address)| (party_id as u64, address.to_string()))
+            .collect(),
+    );
+    for party_id in [2, 1] {
+        state = PublicKeyAggregation::add_keyshare(
+            state,
+            ArcBytes::from_bytes(&[party_id as u8]),
+            collection.committee[party_id].to_string(),
+            party_id as u64,
+            None,
+            Some(&selected_roster),
+        )?;
+    }
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: collection.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState {
+                selected_roster: Some(selected_roster),
+                ..Default::default()
+            }),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(state),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
+                is_aggregator: true,
+            },
+            ec,
+        ))
+        .await?;
+    actix::clock::sleep(Duration::from_millis(50)).await;
+
+    let persisted = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .read()
+        .await?
+        .expect("l-BFV collection");
+    assert!(matches!(
+        persisted.verification,
+        crate::LbfvContributionVerificationStateV1::Collecting
+    ));
+    assert!(!history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .any(|event| matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{bundle, fixture};
+
+    let fixture = fixture();
+    let (public_key, rlk, manifest) = bundle(&fixture, 0);
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&fixture.state.e3_id)
+        .write_sync(&fixture.state)
+        .await?;
+    let (state, _) = repositories
+        .persist_publickey_lbfv_manifest(&fixture.state, &manifest)
+        .await?;
+    let (state, _) = repositories
+        .persist_publickey_lbfv_document(&state, &public_key)
+        .await?;
+    let (state, _) = repositories
+        .persist_publickey_lbfv_document(&state, &rlk)
+        .await?;
+    assert_eq!(
+        state.parties[&0].status,
+        crate::LbfvPartyContributionStatusV1::DocumentsDurable
+    );
+    let loaded = repositories
+        .publickey_lbfv_collection(&state.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: false,
+        },
+        test_state(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order: vec![(
+                0,
+                state.committee[0].to_string(),
+                ArcBytes::from_bytes(&[0]),
+            )],
+            threshold_m: 1,
+            circuit_committee_n: 3,
+            circuit_committee_h: 2,
+            c1_proofs: vec![None],
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes: state
+                .committee
+                .iter()
+                .enumerate()
+                .map(|(party_id, address)| (party_id as u64, address.to_string()))
+                .collect(),
+        }),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(
+            e3_events::InterfoldEvent::<e3_events::Unsequenced>::new_with_timestamp(
+                EffectsEnabled::new().into(),
+                Some(ec.clone()),
+                ec.ts(),
+                ec.block(),
+                e3_events::EventSource::Local,
+            )
+            .into_sequenced(ec.seq()),
+        )
+        .await?;
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: state.e3_id.clone(),
+                active_party_id: None,
+                is_aggregator: false,
+            },
+            ec,
+        ))
+        .await?;
+
+    assert_eq!(
+        repositories
+            .publickey_lbfv_collection(&state.e3_id)
+            .read()
+            .await?
+            .expect("l-BFV collection")
+            .parties[&0]
+            .status,
+        crate::LbfvPartyContributionStatusV1::InvalidData
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_redrives_due_lbfv_fetches() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{bundle, fixture};
+
+    let fixture = fixture();
+    let (_, _, manifest) = bundle(&fixture, 0);
+    let mut state = fixture.state.clone();
+    state.admit_manifest(&manifest)?;
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&state.e3_id)
+        .write_sync(&state)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&state.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories,
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            HashMap::new(),
+        )),
+    );
+
+    aggregator.publish_due_lbfv_fetches(test_ctx(EffectsEnabled::new()))?;
+
+    let first = next_event(&history).await?.into_data();
+    let second = next_event(&history).await?.into_data();
+    assert!(matches!(
+        first,
+        InterfoldEventData::LbfvKeyShareDocumentFetchRequested(_)
+    ));
+    assert!(matches!(
+        second,
+        InterfoldEventData::LbfvKeyShareDocumentFetchRequested(_)
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn lbfv_retry_timer_dispatches_without_another_event() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{bundle, failure, fixture};
+
+    let fixture = fixture();
+    let (_, _, manifest) = bundle(&fixture, 0);
+    let mut state = fixture.state.clone();
+    state.admit_manifest(&manifest)?;
+    let retry_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_add(1);
+    for role in [
+        LbfvKeyShareDocumentRole::PublicKey,
+        LbfvKeyShareDocumentRole::RelinearizationKey,
+    ] {
+        let unavailable = failure(
+            &state,
+            0,
+            role,
+            1,
+            LbfvKeyShareDocumentFetchFailureClass::Unavailable,
+            Some(retry_at),
+        );
+        state.record_fetch_failure(&unavailable)?;
+    }
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&state.e3_id)
+        .write_sync(&state)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&state.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories,
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: false,
+        },
+        test_state(PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            HashMap::new(),
+        )),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(
+            e3_events::InterfoldEvent::<e3_events::Unsequenced>::new_with_timestamp(
+                EffectsEnabled::new().into(),
+                Some(ec.clone()),
+                ec.ts(),
+                ec.block(),
+                e3_events::EventSource::Local,
+            )
+            .into_sequenced(ec.seq()),
+        )
+        .await?;
+
+    actix::clock::sleep(Duration::from_millis(1_200)).await;
+
+    for _ in 0..2 {
+        assert!(matches!(
+            next_event(&history).await?.into_data(),
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(request)
+                if request.request().attempt == 2
+        ));
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
+
+    let fixture = fixture();
+    let mut collection = fixture.state.clone();
+    for party_id in 0..3 {
+        complete_party(&mut collection, &fixture, party_id);
+    }
+    collection.mark_ready(vec![0, 1])?;
+    collection.mark_verification_dispatched()?;
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let submissions = fixture
+        .state
+        .committee
+        .iter()
+        .enumerate()
+        .map(|(party_id, address)| {
+            (
+                party_id as u64,
+                address.to_string(),
+                ArcBytes::from_bytes(&[party_id as u8]),
+            )
+        })
+        .collect::<Vec<_>>();
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: collection.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: false,
+        },
+        test_state(PublicKeyAggregatorState::VerifyingC1 {
+            c1_proofs: vec![None; submissions.len()],
+            submission_order: submissions,
+            threshold_m: 1,
+            circuit_committee_n: 3,
+            circuit_committee_h: 2,
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes: fixture
+                .state
+                .committee
+                .iter()
+                .enumerate()
+                .map(|(party_id, address)| (party_id as u64, address.to_string()))
+                .collect(),
+        }),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(
+            e3_events::InterfoldEvent::<e3_events::Unsequenced>::new_with_timestamp(
+                CommitteeMemberExpelled {
+                    e3_id: collection.e3_id.clone(),
+                    node: collection.committee[1],
+                    reason: [7; 32],
+                    active_count_after: 2,
+                    party_id: None,
+                }
+                .into(),
+                Some(ec.clone()),
+                ec.ts(),
+                ec.block(),
+                e3_events::EventSource::Local,
+            )
+            .into_sequenced(ec.seq()),
+        )
+        .await?;
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: collection.e3_id.clone(),
+                active_party_id: None,
+                is_aggregator: false,
+            },
+            ec,
+        ))
+        .await?;
+
+    let persisted = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .read()
+        .await?
+        .expect("l-BFV collection");
+    assert_eq!(
+        persisted.parties[&1].status,
+        crate::LbfvPartyContributionStatusV1::Excluded
+    );
+    assert!(matches!(
+        persisted.verification,
+        crate::LbfvContributionVerificationStateV1::Ready { ref party_ids }
+            if party_ids == &[0, 2]
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
+
+    let fixture = fixture();
+    let mut collection = fixture.state.clone();
+    for party_id in 0..3 {
+        complete_party(&mut collection, &fixture, party_id);
+    }
+    collection.mark_ready(vec![0, 1])?;
+    collection.mark_verification_dispatched()?;
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let submissions = collection
+        .committee
+        .iter()
+        .enumerate()
+        .map(|(party_id, address)| {
+            (
+                party_id as u64,
+                address.to_string(),
+                ArcBytes::from_bytes(&[party_id as u8]),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: collection.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        test_state(PublicKeyAggregatorState::VerifyingC1 {
+            c1_proofs: vec![None; submissions.len()],
+            submission_order: submissions,
+            threshold_m: 1,
+            circuit_committee_n: 3,
+            circuit_committee_h: 2,
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes: collection
+                .committee
+                .iter()
+                .enumerate()
+                .map(|(party_id, address)| (party_id as u64, address.to_string()))
+                .collect(),
+        }),
+    )
+    .start();
+    let completion = ShareVerificationComplete {
+        e3_id: collection.e3_id.clone(),
+        kind: VerificationKind::LbfvGenerationProofs,
+        verification_id: Some(B256::repeat_byte(0xff)),
+        dishonest_parties: BTreeSet::new(),
+    };
+    let ec = test_ctx(completion.clone());
+    actor.send(TypedEvent::new(completion, ec.clone())).await?;
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
+                is_aggregator: true,
+            },
+            ec,
+        ))
+        .await?;
+
+    assert!(matches!(
+        repositories
+            .publickey_lbfv_collection(&collection.e3_id)
+            .read()
+            .await?
+            .expect("l-BFV collection")
+            .verification,
+        crate::LbfvContributionVerificationStateV1::Dispatched { .. }
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{
+        accepted_commitments, complete_party, fixture,
+    };
+    use fhe::{bfv::SecretKey, mbfv::PublicKeyShare};
+    use fhe_traits::Serialize;
+
+    let fixture = fixture();
+    let mut collection = fixture.state.clone();
+    for party_id in 0..3 {
+        complete_party(&mut collection, &fixture, party_id);
+    }
+    collection.mark_ready(vec![0, 2])?;
+    collection.mark_verification_dispatched()?;
+    collection.seal(vec![accepted_commitments(0), accepted_commitments(2)])?;
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let mut random = rand::rng();
+    let mut submissions = Vec::new();
+    let mut c1_proofs = Vec::new();
+    let mut canonical_party_nodes = HashMap::new();
+    for (party_id, address) in fixture.state.committee.iter().enumerate() {
+        let secret = SecretKey::random(&fhe.params, &mut random);
+        let share = PublicKeyShare::new(&secret, fhe.crp.clone(), &mut random)?;
+        let bytes = ArcBytes::from_bytes(&share.to_bytes());
+        submissions.push((party_id as u64, address.to_string(), bytes));
+        c1_proofs.push(None);
+        canonical_party_nodes.insert(party_id as u64, address.to_string());
+    }
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: collection.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
+            effects_enabled: false,
+        },
+        test_state(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order: submissions,
+            threshold_m: 1,
+            circuit_committee_n: 3,
+            circuit_committee_h: 2,
+            c1_proofs,
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes,
+        }),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    aggregator
+        .send(
+            e3_events::InterfoldEvent::<e3_events::Unsequenced>::new_with_timestamp(
+                EffectsEnabled::new().into(),
+                Some(ec.clone()),
+                ec.ts(),
+                ec.block(),
+                e3_events::EventSource::Local,
+            )
+            .into_sequenced(ec.seq()),
+        )
+        .await?;
+    aggregator
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
+                is_aggregator: true,
+            },
+            ec,
+        ))
+        .await?;
+
+    assert!(matches!(
+        repositories.publickey(&collection.e3_id).read().await?,
+        Some(PublicKeyAggregatorState::GeneratingC5Proof {
+            honest_party_ids,
+            dishonest_parties,
+            ..
+        }) if honest_party_ids == BTreeSet::from([0, 2]) && dishonest_parties.is_empty()
+    ));
+    // The l-BFV path proves no C5.
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::PkAggregationProofPending(_)
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn concurrent_document_roles_do_not_overwrite_sidecar_updates() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{bundle, fixture};
+
+    let fixture = fixture();
+    let (public_key, rlk, manifest) = bundle(&fixture, 0);
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&fixture.state.e3_id)
+        .write_sync(&fixture.state)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&fixture.state.e3_id)
+        .load()
+        .await?;
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: fixture.state.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
+            effects_enabled: false,
+        },
+        test_state(PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            HashMap::new(),
+        )),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(TypedEvent::new(
+            e3_events::LbfvKeyShareManifestPublished { manifest },
+            ec.clone(),
+        ))
+        .await?;
+    let (pk_result, rlk_result) = futures::join!(
+        actor.send(TypedEvent::new(public_key.clone(), ec.clone())),
+        actor.send(TypedEvent::new(rlk.clone(), ec.clone()))
+    );
+    pk_result?;
+    rlk_result?;
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: fixture.state.e3_id.clone(),
+                active_party_id: None,
+                is_aggregator: false,
+            },
+            ec,
+        ))
+        .await?;
+
+    let state = repositories
+        .publickey_lbfv_collection(&fixture.state.e3_id)
+        .read()
+        .await?
+        .expect("collection sidecar");
+    assert!(state.parties[&0]
+        .public_key_fetch
+        .as_ref()
+        .is_some_and(|fetch| fetch.artifact_durable));
+    assert!(state.parties[&0]
+        .relinearization_key_fetch
+        .as_ref()
+        .is_some_and(|fetch| fetch.artifact_durable));
+    assert_eq!(
+        state.parties[&0].status,
+        crate::LbfvPartyContributionStatusV1::DocumentsDurable
+    );
+    assert!(
+        repositories
+            .publickey_lbfv_document(&fixture.state.e3_id, &public_key.content_hash)
+            .has()
+            .await
+    );
+    assert!(
+        repositories
+            .publickey_lbfv_document(&fixture.state.e3_id, &rlk.content_hash)
+            .has()
+            .await
+    );
+    Ok(())
+}
 
 /// A failed E3's aggregation does not resume after a restart: the stage change that ends it comes
 /// before `EffectsEnabled`, and the actor stops.

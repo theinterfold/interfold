@@ -81,6 +81,7 @@ fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         num_honest_parties: 0,
         num_moduli: 0,
         own_plaintext_idx: Some(0),
+        recipient_party_id: 0,
         own_share_raw: Some(sensitive()),
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: BfvPreset::default(),
@@ -101,6 +102,7 @@ fn pending(sk: usize, esm: usize) -> PendingThresholdProofs {
         E3id::new("1", 1),
         full_share(),
         ec(),
+        true,
         sk,
         esm,
         vec![1, 2, 3],
@@ -219,6 +221,54 @@ fn threshold_plan_assigns_canonical_seqs() {
         plan[5].kind,
         ThresholdProofKind::ESmShareEncryption { .. }
     ));
+}
+
+#[test]
+fn lbfv_threshold_plan_proves_no_c1() {
+    let enc = |recipient: usize, row: usize, esi: usize| share_encryption_req(recipient, row, esi);
+    let mut c1_request = pk_generation_req();
+    c1_request.params_preset = BfvPreset::InsecureThresholdLbfv;
+    let plan = plan_threshold_dispatch(
+        c1_request,
+        share_computation_req(),
+        share_computation_req(),
+        vec![enc(2, 0, 0)],
+        vec![enc(2, 0, 0)],
+    );
+    let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
+    assert_eq!(seqs, vec![2, 3, 4, 5]);
+    assert!(plan
+        .iter()
+        .all(|item| !matches!(item.request, ZkRequest::PkGeneration(_))));
+
+    let mut p = PendingThresholdProofs::new(
+        E3id::new("1", 1),
+        full_share(),
+        ec(),
+        false,
+        1,
+        1,
+        vec![1, 2, 3],
+    );
+    assert_eq!(p.total_expected(), 4);
+    p.store_proof(&ThresholdProofKind::SkShareComputation, proof(2));
+    p.store_proof(&ThresholdProofKind::ESmShareComputation, proof(3));
+    p.store_proof(
+        &ThresholdProofKind::SkShareEncryption {
+            recipient_party_id: 2,
+            row_index: 0,
+        },
+        proof(4),
+    );
+    p.store_proof(
+        &ThresholdProofKind::ESmShareEncryption {
+            esi_index: 0,
+            recipient_party_id: 2,
+            row_index: 0,
+        },
+        proof(5),
+    );
+    assert!(p.is_complete());
 }
 
 #[test]

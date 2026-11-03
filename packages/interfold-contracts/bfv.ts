@@ -37,7 +37,9 @@ function preset(name: string) {
 
 export const BFV_PRESETS = {
   "insecure-64": preset("insecure-64"),
+  insecure: preset("insecure"),
   "secure-8192": preset("secure-8192"),
+  "secure-16384": preset("secure-16384"),
 };
 
 const { decryptionAggregator, ...dimensions } = config.zk;

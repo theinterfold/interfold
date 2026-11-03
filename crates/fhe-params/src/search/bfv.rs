@@ -1003,8 +1003,8 @@ pub fn construct_qi_second_param(
 
 /// Validate second parameter set with simplified noise bounds.
 ///
-/// For the second set, uses B_Enc = B (simpler bound) and checks 2*B_C < Δ.
-/// Also validates that all qi are more than one bit larger than k_plain.
+/// For the second set, uses B_Enc = B (simpler bound), B_C = B_fresh + r_k(q), and checks
+/// 2*B_C < Δ. Also validates that all qi are more than one bit larger than k_plain.
 pub fn finalize_second_param(
     bfv_search_config: &BfvSearchConfig,
     d: u64,
@@ -1032,7 +1032,9 @@ pub fn finalize_second_param(
         * BigUint::from(bfv_search_config.b)
         * BigUint::from(bfv_search_config.b_chi);
     let b_fresh = &benc + &term_d_bbchi + &term_d_bbchi;
-    let b_c = b_fresh.clone(); // B_C = B_fresh
+    // The q mod k remainder is part of the centered-RNS scaling error. With k = max qi of the
+    // first set it can dominate B_fresh, so the second set must not discard it.
+    let b_c = &b_fresh + &rkq_big;
 
     let lhs = &b_c << 1; // 2*B_C
     let lhs_log2 = log2_big(&lhs);
@@ -1145,17 +1147,68 @@ mod tests {
 
         // The search's smudging bound is the one fhe.rs computes for the built preset.
         let preset = crate::presets::BfvPreset::SecureThreshold8192;
-        let sm_config = fhe::trbfv::SmudgingBoundCalculatorConfig::new(
+        let fhe_b_sm = crate::smudging::calculate_smudging_bound(
             crate::presets::BfvParamSet::from(preset).build_arc(),
             config.n as usize,
             config.z as usize,
+            config.mult_depth,
             preset.lambda().unwrap(),
         )
         .unwrap();
-        let fhe_b_sm = fhe::trbfv::SmudgingBoundCalculator::new(sm_config)
-            .calculate_sm_bound()
-            .unwrap();
         assert_eq!(first.b_sm_min, fhe_b_sm);
+    }
+
+    #[test]
+    fn search_reproduces_secure_16384_presets() {
+        use crate::constants::secure_16384;
+        use crate::search::utils::variance_cbd_str;
+
+        let config = preset_config(crate::presets::BfvPreset::SecureThreshold16384);
+        assert_eq!(config.mult_depth, 3);
+        let first = bfv_search(&config).expect("secure-16384 threshold set must be feasible");
+        assert_eq!(first.d, secure_16384::DEGREE as u64);
+        assert_eq!(first.qi_values(), secure_16384::threshold::MODULI);
+        assert_eq!(
+            first.k_plain_eff,
+            secure_16384::threshold::PLAINTEXT_MODULUS as u128
+        );
+
+        let second = bfv_search_second_param(&config, &first)
+            .expect("secure-16384 DKG set must be feasible");
+        assert_eq!(second.qi_values(), secure_16384::dkg::MODULI);
+        assert_eq!(
+            second.k_plain_eff,
+            secure_16384::dkg::PLAINTEXT_MODULUS as u128
+        );
+        assert_eq!(
+            variance_cbd_str(config.b),
+            secure_16384::dkg::ERROR1_VARIANCE
+        );
+    }
+
+    #[test]
+    fn search_reproduces_insecure_128_presets() {
+        use crate::constants::insecure;
+        use crate::search::utils::{variance_cbd_str, variance_uniform_sym};
+
+        let config = preset_config(crate::presets::BfvPreset::InsecureThresholdLbfv);
+        let first = bfv_search(&config).expect("insecure-128 threshold set must be feasible");
+        assert_eq!(first.d, insecure::DEGREE as u64);
+        assert_eq!(first.qi_values(), insecure::threshold::MODULI);
+        assert_eq!(
+            first.k_plain_eff,
+            insecure::threshold::PLAINTEXT_MODULUS as u128
+        );
+        assert_eq!(
+            variance_uniform_sym(&first.benc_min).to_str_radix(10),
+            insecure::threshold::ERROR1_VARIANCE
+        );
+
+        let second = bfv_search_second_param(&config, &first)
+            .expect("insecure-128 DKG set must be feasible");
+        assert_eq!(second.qi_values(), insecure::dkg::MODULI);
+        assert_eq!(second.k_plain_eff, insecure::dkg::PLAINTEXT_MODULUS as u128);
+        assert_eq!(variance_cbd_str(config.b), insecure::dkg::ERROR1_VARIANCE);
     }
 
     #[test]

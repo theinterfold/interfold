@@ -173,8 +173,18 @@ mod tests {
 
     #[test]
     fn input_layout_share_encryption() {
-        let layout = CircuitName::ShareEncryption.input_layout();
-        assert_eq!(layout.field_count(), Some(2));
+        // C3 has 2 public inputs: expected_pk_commitment, expected_message_commitment.
+        assert_eq!(
+            CircuitName::ShareEncryption.input_layout().field_count(),
+            Some(2)
+        );
+        // The chunked C3 also exposes party_idx and mod_idx.
+        assert_eq!(
+            CircuitName::ShareEncryptionChunked
+                .input_layout()
+                .field_count(),
+            Some(4)
+        );
     }
 
     #[test]
@@ -187,12 +197,90 @@ mod tests {
     }
 
     #[test]
+    fn rlk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 256];
+        signals[127] = 3;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
+        signals[192..224].copy_from_slice(&[0x33; 32]);
+        signals[224..256].copy_from_slice(&[0x44; 32]);
+        let proof = make_proof(CircuitName::RlkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(&*proof.extract_output("r_commitment").unwrap(), &[0x22; 32]);
+        assert_eq!(
+            &*proof.extract_output("d0_commitment").unwrap(),
+            &[0x33; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("d2_commitment").unwrap(),
+            &[0x44; 32]
+        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
+    }
+
+    #[test]
+    fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 192];
+        signals[127] = 2;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
+        let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("pk_commitment").unwrap(),
+            &[0x22; 32]
+        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
+    }
+
+    #[test]
+    fn rlk_aggregation_layout_tracks_row_component_and_commitment() {
+        let mut signals = vec![0u8; 320];
+        signals[191] = 4;
+        signals[223] = 1;
+        signals[288..320].copy_from_slice(&[0x55; 32]);
+        let proof = make_proof(CircuitName::RlkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(proof.extract_input("component").unwrap()[31], 1);
+        assert_eq!(
+            &*proof.extract_output("agg_commitment").unwrap(),
+            &[0x55; 32]
+        );
+    }
+
+    #[test]
+    fn lbfv_pk_aggregation_layout_tracks_row_and_tail_commitment() {
+        let mut signals = vec![0u8; 288];
+        signals[191] = 4;
+        signals[256..288].copy_from_slice(&[0x77; 32]);
+        let proof = make_proof(CircuitName::LbfvPkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("pk_agg_commitment").unwrap(),
+            &[0x77; 32]
+        );
+        assert_eq!(proof.circuit.input_layout().field_count(), Some(6));
+    }
+
+    #[test]
     fn extract_input_from_share_encryption() {
-        // C3: 2 pub inputs at HEAD + ct_commitment return at tail
-        let mut signals = vec![0u8; 96];
+        // C3: four public inputs at the head and ct_commitment at the tail.
+        let mut signals = vec![0u8; 160];
         signals[0..32].copy_from_slice(&[0xAA; 32]); // expected_pk_commitment
         signals[32..64].copy_from_slice(&[0xBB; 32]); // expected_message_commitment
-        signals[64..96].copy_from_slice(&[0xCC; 32]); // ct_commitment
+        signals[128..160].copy_from_slice(&[0xCC; 32]); // ct_commitment
 
         let proof = make_proof(CircuitName::ShareEncryption, &signals);
         assert_eq!(

@@ -260,6 +260,16 @@ through `AsBytesSerde`. A readable JSON value does not establish binary-layout c
 
 ## Schemas and validation
 
+l-BFV work also uses versioned sidecars: `//threshold_keyshare_lbfv_generation/v1/{e3_id}` retains
+the encrypted seed and completed publication bundle; `//publickey_lbfv_collection/v1/` retains
+manifests, content-addressed documents, attempts, absolute retries, candidate IDs and sealed
+commitments; `//publickey_lbfv_aggregation/v1/` retains accepted contribution documents and both
+operational keys before final-proof dispatch; `//publickey_lbfv_publication/v1/` retains the local
+publication intent before emission. Publication schema 2 rejects pending version-2 key envelopes.
+Persist one immutable aggregation failure before publishing it; recovery of that failure must not
+resume rows, folds, final proofs, or publication. Terminal cleanup does not erase old secret-bearing
+protocol-event records from historical logs.
+
 Persisted snapshots/events are positional bincode; gossip embeds bincode in a versioned envelope.
 Only some types have per-type versions (for example BondOwnerState). Until a tested per-type
 migration exists, every incompatible persisted layout/event variant change, even an added field,
@@ -277,9 +287,9 @@ framing, or opaque encoded/encrypted contents (SharedSecret shares, fhe.rs keys 
 Rewriting a fixture does not raise a version; review must connect the diff to schema or wire
 rollout. Rust type compatibility is not a migration strategy.
 
-`BfvPreset` also persists enum discriminants. Under schema 8, variants 0 and 1 mean the degree-64
-insecure presets. Degree-512 stores used those same positions and marker, so preflight cannot detect
-the changed meaning. Testnet nodes must reset state against a fresh testnet stack, as
+`BfvPreset` also persists enum discriminants. Under schema 8, variants 0 and 1 mean the degree-128
+insecure presets. Older degree-512/degree-64 stores reused those positions, so preflight cannot
+detect the changed meaning. Testnet nodes must reset state against a fresh testnet stack, as
 [upgrades](upgrades.md#insecure-testnet-preset-reset) describes. Future changes to a persisted
 discriminant's parameters require a schema increase or an explicit, coordinated reset requirement.
 

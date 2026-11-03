@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use lib::configs::default::{H, N_PARTIES};
+use lib::configs::default::threshold::{
+    GADGET_DIM, L, LBFV_CRS_ROW_COMMITMENTS, N, PK_AGGREGATION_BIT_PK, PK_AGGREGATION_CONFIGS,
+    PK_GENERATION_BIT_PK,
+};
+use lib::core::threshold::lbfv_pk_aggregation::packed_lbfv_pk_aggregation;
+use lib::core::threshold::lbfv_proof_domain::{
+    LbfvAcceptedPartySet, LbfvProofSession, validate_aggregation_statement,
+};
+
+/// Aggregate one row of `H` threshold l-BFV public-key contributions.
+fn main(
+    session_id_hi: pub Field,
+    session_id_lo: pub Field,
+    aggregator_party_id: pub u32,
+    accepted_party_set_hash_hi: pub Field,
+    accepted_party_set_hash_lo: pub Field,
+    row_index: pub u32,
+    expected_pk_generation_commitments: pub [Field; H],
+    pk0_carriers: [[[Field; N / 4]; L]; H],
+) -> pub Field {
+    // Opens the pk0 commitments lbfv_pk_generation made, so the digit widths must agree.
+    assert(PK_AGGREGATION_BIT_PK == PK_GENERATION_BIT_PK);
+    validate_aggregation_statement::<N_PARTIES, GADGET_DIM>(
+        LbfvProofSession { session_id_hi, session_id_lo },
+        aggregator_party_id,
+        LbfvAcceptedPartySet {
+            hash_hi: accepted_party_set_hash_hi,
+            hash_lo: accepted_party_set_hash_lo,
+        },
+        row_index,
+    );
+    // The parties' pk0 rows arrive as the carriers lbfv_pk_generation packed into their row
+    // commitments; their centred sum is derived in-circuit (see `math::packed_sum`).
+    packed_lbfv_pk_aggregation::<N, H, L, PK_AGGREGATION_BIT_PK>(
+        PK_AGGREGATION_CONFIGS.qis,
+        row_index,
+        LBFV_CRS_ROW_COMMITMENTS[row_index],
+        expected_pk_generation_commitments,
+        pk0_carriers,
+    )
+}

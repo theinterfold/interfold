@@ -23,6 +23,8 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 };
 #[derive(Debug, Clone)]
 pub struct Configs {
+    pub preset: BfvPreset,
+    pub chunk_size: usize,
     pub params: Arc<BfvParameters>,
     /// Plaintext modulus (as usize).
     pub t: usize,
@@ -255,7 +257,9 @@ impl ScaledQuotient {
 }
 impl Configs {
     pub fn new(dkg_params: &Arc<BfvParameters>) -> Result<Self, ConfigError> {
-        crate::parameters::matching_preset(dkg_params, ParameterType::DKG)?;
+        let preset = crate::parameters::matching_preset(dkg_params, ParameterType::DKG)?
+            .threshold_counterpart()
+            .ok_or_else(|| ConfigError::Other("DKG preset has no threshold counterpart".into()))?;
 
         let moduli = dkg_params.moduli().to_vec();
         let t = dkg_params.plaintext();
@@ -290,6 +294,10 @@ impl Configs {
         );
 
         Ok(Configs {
+            preset,
+            chunk_size: dkg_params
+                .degree()
+                .min(crate::chunks::DEFAULT_C2_CHUNK_SIZE),
             params: dkg_params.clone(),
             t: t as usize,
             q_mod_t,
@@ -415,6 +423,8 @@ impl Configs {
 
 pub global N: u32 = {};
 pub global L: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 pub global QIS: [Field; L] = [{}];
 pub global PLAINTEXT_MODULUS: Field = {};
 pub global Q_MOD_T: Field = {};
@@ -488,6 +498,8 @@ pub global {}_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
 "#,
             configs.params.degree(),
             configs.params.moduli().len(),
+            configs.chunk_size,
+            configs.params.degree() / configs.chunk_size,
             qis_str,
             configs.t,
             configs.q_mod_t,
@@ -577,11 +589,37 @@ pub global {}_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
 }
 
 impl Configs {
+    pub fn with_chunk_size(mut self, chunk_size: usize) -> Result<Self, ConfigError> {
+        if chunk_size == 0 || !self.params.degree().is_multiple_of(chunk_size) {
+            return Err(ConfigError::Other(format!(
+                "C3 chunk size {chunk_size} must divide polynomial degree {}",
+                self.params.degree()
+            )));
+        }
+        self.chunk_size = chunk_size;
+        Ok(self)
+    }
+
+    pub fn with_preset(mut self, preset: BfvPreset) -> Result<Self, ConfigError> {
+        let requested =
+            e3_fhe_params::BfvParamSet::from(preset.dkg_counterpart().unwrap_or(preset));
+        if self.params.degree() != requested.degree
+            || self.params.plaintext() != requested.plaintext_modulus
+            || self.params.moduli() != requested.moduli
+        {
+            return Err(ConfigError::Other(
+                "DKG parameters do not match the requested preset".into(),
+            ));
+        }
+        self.preset = preset.threshold_counterpart().unwrap_or(preset);
+        Ok(self)
+    }
+
     pub fn for_preset(preset: BfvPreset) -> Result<Self, ConfigError> {
         let (_, dkg_params) = preset
             .build_pair()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
-        Self::new(&dkg_params)
+        Self::new(&dkg_params)?.with_preset(preset)
     }
 }
 
@@ -654,7 +692,12 @@ mod scaled_quotient_tests {
     }
 
     #[test]
-    fn insecure_identities_hold_exactly() {
-        assert_identities_hold_exactly(BfvPreset::InsecureThreshold64);
+    fn insecure_is_excluded_rather_than_approximated() {
+        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold);
+        assert_eq!(moduli.len(), 2);
+        assert!(
+            !sq.available,
+            "the insecure set must use the direct quotient path"
+        );
     }
 }

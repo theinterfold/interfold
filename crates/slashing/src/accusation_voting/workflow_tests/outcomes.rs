@@ -182,6 +182,7 @@ fn a_restored_accusation_keeps_its_votes_and_its_timeout() {
             accused_address: accused.address(),
             accused_party_id: 1,
             proof_type: ProofType::C1PkGeneration,
+            proof_instance: 0,
             data_hash: [7; 32],
             evidence: Bytes::from(vec![0x11; 32]),
         },

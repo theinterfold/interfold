@@ -20,6 +20,7 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 };
 #[derive(Debug, Clone)]
 pub struct Configs {
+    pub preset: BfvPreset,
     pub params: Arc<BfvParameters>,
     pub threshold_params: Arc<BfvParameters>,
     pub bits: Bits,
@@ -50,6 +51,7 @@ impl Configs {
         let bits = Bits::new(threshold_params, dkg_params);
 
         Ok(Configs {
+            preset: threshold,
             params: dkg_params.clone(),
             threshold_params: threshold_params.clone(),
 
@@ -95,10 +97,17 @@ pub global {}_BIT_AGG: u32 = {};
 }
 
 impl Configs {
+    pub fn with_preset(mut self, preset: BfvPreset) -> Result<Self, ConfigError> {
+        crate::parameters::require_threshold_preset(preset, &self.threshold_params)?;
+        self.preset = preset;
+        Ok(self)
+    }
+
     pub fn for_preset(preset: BfvPreset) -> Result<Self, ConfigError> {
         let (threshold_params, dkg_params) = preset
             .build_pair()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
-        Self::new(&threshold_params, &dkg_params)
+        Self::new(&threshold_params, &dkg_params)?
+            .with_preset(preset.threshold_counterpart().unwrap_or(preset))
     }
 }

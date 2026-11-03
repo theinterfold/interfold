@@ -9,13 +9,13 @@ load_template_dev_config() {
   TEMPLATE_ROOT="$(_template_dev_config_root)"
   INTERFOLD_REPO_ROOT="$(cd "${TEMPLATE_ROOT}/../.." && pwd)"
 
-  BFV_PRESET="${BFV_PRESET:-insecure-64}"
+  BFV_PRESET="${BFV_PRESET:-insecure}"
   COMMITTEE="${COMMITTEE:-minimum}"
 
   case "$BFV_PRESET" in
-    insecure-64 | secure-8192) ;;
+    insecure | secure-8192 | secure-16384) ;;
     *)
-      echo "Invalid BFV_PRESET='${BFV_PRESET}' (use insecure-64 or secure-8192)" >&2
+      echo "Invalid BFV_PRESET='${BFV_PRESET}' (use insecure, secure-8192, or secure-16384)" >&2
       exit 1
       ;;
   esac

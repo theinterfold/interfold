@@ -45,6 +45,8 @@ pub struct AccusationQuorumReached {
     pub accused: Address,
     /// Which proof type was disputed.
     pub proof_type: ProofType,
+    /// Row index for a multirow proof type. Singleton proof types use zero.
+    pub proof_instance: u32,
     /// Votes from nodes that agreed the proof is bad.
     ///
     /// There is no `votes_against` companion: the gossip protocol no longer

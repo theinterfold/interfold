@@ -18,12 +18,18 @@ import {
   bfvDecDomainIndices,
   bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
+  bfvPkV2PublicInputLayout,
   committeeHashFromLimbs,
+  getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
+  getBfvV2VkBindingHashPaths,
   getBfvVkCommitments,
   getRepoRoot,
+  readVkRecursiveHash,
 } from "./utils";
 
-const CANONICAL_BFV_PRESET = "insecure-64";
+const CANONICAL_BFV_PRESET = "insecure";
 const CANONICAL_BFV_COMMITTEE: BfvCommittee = "minimum";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),
@@ -161,6 +167,8 @@ function readBenchmarkCommittee(foldedArtifact?: unknown): BfvCommittee {
 function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
   const preset = readBenchmarkPreset(foldedArtifact);
   const committee = readBenchmarkCommittee(foldedArtifact);
+  // Each artifact pair has one on-chain parameter set: insecure-64 is trBFV (0), insecure is
+  // l-BFV (4).
   const config = TESTNET_BFV_CONFIGS.find(
     (candidate) =>
       candidate.preset === preset && candidate.committee === committee,
@@ -177,7 +185,10 @@ function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
  * Resolve the verifier directory for one preset and committee pair.
  * Generate an isolated copy only when the committed pair is unavailable.
  */
-function ensureHonkVerifierContractDir(config: ActiveBfvConfig): string {
+function ensureHonkVerifierContractDir(
+  config: ActiveBfvConfig,
+  useV2Dkg: boolean,
+): string {
   const isCanonical =
     config.preset === CANONICAL_BFV_PRESET &&
     config.committee === CANONICAL_BFV_COMMITTEE;
@@ -185,7 +196,7 @@ function ensureHonkVerifierContractDir(config: ActiveBfvConfig): string {
     ? COMMITTED_HONK_DIR
     : path.join(COMMITTED_HONK_DIR, config.preset, config.committee);
   const verifierNames = [
-    "DkgAggregatorVerifier.sol",
+    useV2Dkg ? "DkgAggregatorV2Verifier.sol" : "DkgAggregatorVerifier.sol",
     "DecryptionAggregatorVerifier.sol",
   ];
   if (
@@ -209,7 +220,9 @@ function ensureHonkVerifierContractDir(config: ActiveBfvConfig): string {
     [
       "generate:verifiers",
       "--circuits",
-      "dkg_aggregator,decryption_aggregator",
+      useV2Dkg
+        ? "dkg_aggregator_v2,decryption_aggregator"
+        : "dkg_aggregator,decryption_aggregator",
       "--no-compile",
       "--write",
       "--preset",
@@ -241,7 +254,10 @@ function honkContractSource(honkDir: string, name: string): string {
 async function deployHonkAggregator(
   ethersLib: Awaited<ReturnType<typeof network.connect>>["ethers"],
   honkDir: string,
-  contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
+  contractName:
+    | "DkgAggregatorVerifier"
+    | "DkgAggregatorV2Verifier"
+    | "DecryptionAggregatorVerifier",
 ): Promise<string> {
   const solSource = honkContractSource(honkDir, contractName);
   const libraryPrefix = `project/${solSource}:`;
@@ -344,14 +360,6 @@ async function main() {
 
   const { ethers } = await network.connect();
   const [benchmarkSigner] = await ethers.getSigners();
-  // The DKG verifier still receives the committee context directly. The
-  // decryption verifier receives the E3 ID for DKG-anchor lookup plus the
-  // domain limbs carried by the folded proof.
-  const benchmarkE3Id = 1n;
-  const benchmarkCommitteeRoot = BigInt(
-    ethers.id("benchmark-gas-committee-root"),
-  );
-  const benchmarkSortedNodes = [benchmarkSigner.address];
 
   let dkgProofHex: string | undefined;
   let dkgPublicHex: string | undefined;
@@ -422,19 +430,56 @@ async function main() {
   );
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
-  const {
-    nodesFold: expectedNodesFoldKeyHash,
-    c5: expectedC5KeyHash,
-    c6Fold: expectedC6FoldKeyHash,
-    c7: expectedC7KeyHash,
-  } = getBfvVkCommitments(benchmarkConfig);
+  const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 6 : 3;
+  const v2Layout = bfvPkV2PublicInputLayout(benchmarkConfig.h, lbfvRows);
+  const useV2Dkg = dkgPublicInputs.length === v2Layout.length;
+  const commitments = getBfvVkCommitments(benchmarkConfig);
+  const expectedNodesFoldKeyHash = useV2Dkg
+    ? readVkRecursiveHash(
+        getBfvV2SubCircuitVkHashPaths(benchmarkConfig).nodesFold,
+        benchmarkConfig,
+      )
+    : commitments.nodesFold!;
+  const pkPaths = getBfvPkSubCircuitVkHashPaths(benchmarkConfig);
+  // C5 exists only on the trBFV path; the l-BFV route pins the C2 chunks and VK bindings.
+  const expectedC5KeyHash = useV2Dkg ? undefined : commitments.c5;
+  const expectedSkC2ChunkKeyHash = useV2Dkg
+    ? readVkRecursiveHash(pkPaths.skC2Chunk, benchmarkConfig)
+    : undefined;
+  const expectedESmC2ChunkKeyHash = useV2Dkg
+    ? readVkRecursiveHash(pkPaths.esmC2Chunk, benchmarkConfig)
+    : undefined;
+  const expectedVkBinding = useV2Dkg
+    ? getBfvPkVkBindingHashPaths(benchmarkConfig).map((filePath) =>
+        readVkRecursiveHash(filePath, benchmarkConfig),
+      )
+    : [];
+  const expectedV2VkBinding = useV2Dkg
+    ? getBfvV2VkBindingHashPaths(benchmarkConfig).map((filePath) =>
+        readVkRecursiveHash(filePath, benchmarkConfig),
+      )
+    : [];
+  const { c6Fold: expectedC6FoldKeyHash, c7: expectedC7KeyHash } = commitments;
 
   if (
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||
-    dkgPublicInputs[1] !== expectedC5KeyHash
+    (useV2Dkg
+      ? dkgPublicInputs[v2Layout.skC2ChunkKeyHash] !==
+          expectedSkC2ChunkKeyHash ||
+        dkgPublicInputs[v2Layout.esmC2ChunkKeyHash] !==
+          expectedESmC2ChunkKeyHash ||
+        expectedVkBinding.some(
+          (value, index) =>
+            dkgPublicInputs[v2Layout.legacyVkBindingStart + index] !== value,
+        ) ||
+        expectedV2VkBinding.some(
+          (value, index) =>
+            dkgPublicInputs[v2Layout.v2VkBindingStart + index] !== value,
+        )
+      : dkgPublicInputs[1] !== expectedC5KeyHash)
   ) {
     throw new Error(
-      "DKG aggregator publicInputs[0..1] do not match the nodes VK-tree anchor and C5 VK hash",
+      "DKG aggregator public inputs do not match the nodes VK-tree anchor, C5, C2 chunk, or VK-binding hashes",
     );
   }
   if (
@@ -448,7 +493,7 @@ async function main() {
 
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
-  const honkDir = ensureHonkVerifierContractDir(benchmarkConfig);
+  const honkDir = ensureHonkVerifierContractDir(benchmarkConfig, useV2Dkg);
   if (
     benchmarkConfig.preset !== CANONICAL_BFV_PRESET ||
     benchmarkConfig.committee !== CANONICAL_BFV_COMMITTEE
@@ -461,7 +506,7 @@ async function main() {
   const dkgAggAddress = await deployHonkAggregator(
     ethers,
     honkDir,
-    "DkgAggregatorVerifier",
+    useV2Dkg ? "DkgAggregatorV2Verifier" : "DkgAggregatorVerifier",
   );
   const decAggAddress = await deployHonkAggregator(
     ethers,
@@ -469,31 +514,106 @@ async function main() {
     "DecryptionAggregatorVerifier",
   );
 
-  const bfvPk = await (
-    await ethers.getContractFactory("BfvPkVerifier")
-  ).deploy(
-    dkgAggAddress,
-    expectedNodesFoldKeyHash,
-    expectedC5KeyHash,
-    benchmarkConfig.h,
-  );
-  await bfvPk.waitForDeployment();
-
   const dkgEncodedProof = abiCoder.encode(
     ["bytes", "bytes32[]"],
     [dkgProofHex, dkgPublicInputs],
   );
+  const dkgCommitteeHashIndices = useV2Dkg
+    ? v2Layout.committeeHash
+    : bfvDkgCommitteeHashIndices(benchmarkConfig.h);
   requirePublicInputLen(
     "dkg_aggregator committee_hash",
     dkgPublicInputs,
-    bfvDkgCommitteeHashIndices(benchmarkConfig.h).lo + 1,
+    dkgCommitteeHashIndices.lo + 1,
   );
-  const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
-  const dkgCommitteeHashIndices = bfvDkgCommitteeHashIndices(benchmarkConfig.h);
+  const pkCommitment = useV2Dkg
+    ? dkgPublicInputs[v2Layout.pkCommitment]
+    : dkgPublicInputs[dkgPublicInputs.length - 1];
   const dkgCommitteeHash = committeeHashFromLimbs(
     dkgPublicInputs[dkgCommitteeHashIndices.hi],
     dkgPublicInputs[dkgCommitteeHashIndices.lo],
   );
+  const registry = await (
+    await ethers.getContractFactory("MockCiphernodeRegistry")
+  ).deploy();
+  await registry.waitForDeployment();
+
+  const replayContext = (
+    foldedDoc as {
+      replay_context?: {
+        chain_id?: number;
+        e3_id?: string;
+        interfold?: string;
+        committee_root?: string;
+        committee_addresses?: string[];
+      };
+    }
+  )?.replay_context;
+  const benchmarkE3Id = BigInt(replayContext?.e3_id ?? "1");
+  const benchmarkCommitteeRoot = BigInt(
+    replayContext?.committee_root ?? ethers.id("benchmark-gas-committee-root"),
+  );
+  const benchmarkSortedNodes = replayContext?.committee_addresses ?? [
+    benchmarkSigner.address,
+  ];
+
+  let bfvPk: any;
+  if (useV2Dkg) {
+    if (
+      replayContext?.chain_id === undefined ||
+      !replayContext.interfold ||
+      !replayContext.committee_addresses
+    ) {
+      throw new Error(
+        "V2 DKG gas replay requires replay_context from test_trbfv_actor",
+      );
+    }
+    const chain = await ethers.provider.getNetwork();
+    if (chain.chainId !== BigInt(replayContext.chain_id)) {
+      throw new Error(
+        `V2 DKG proof is bound to chain ${replayContext.chain_id}, but the replay network uses chain ${chain.chainId}`,
+      );
+    }
+
+    const mockInterfold = await (
+      await ethers.getContractFactory("MockBfvV2Interfold")
+    ).deploy(benchmarkConfig.paramSet);
+    await mockInterfold.waitForDeployment();
+    const mockInterfoldCode = await ethers.provider.getCode(
+      await mockInterfold.getAddress(),
+    );
+    await ethers.provider.send("hardhat_setCode", [
+      replayContext.interfold,
+      mockInterfoldCode,
+    ]);
+    await registry.setInterfold(replayContext.interfold);
+
+    bfvPk = await (
+      await ethers.getContractFactory("BfvPkVerifierV2")
+    ).deploy(
+      dkgAggAddress,
+      await registry.getAddress(),
+      benchmarkConfig.paramSet,
+      benchmarkConfig.h,
+      benchmarkConfig.n,
+      expectedNodesFoldKeyHash,
+      expectedSkC2ChunkKeyHash,
+      expectedESmC2ChunkKeyHash,
+      expectedVkBinding,
+      expectedV2VkBinding,
+    );
+  } else {
+    bfvPk = await (
+      await ethers.getContractFactory("BfvPkVerifier")
+    ).deploy(
+      dkgAggAddress,
+      expectedNodesFoldKeyHash,
+      expectedC5KeyHash!,
+      benchmarkConfig.h,
+    );
+  }
+  await bfvPk.waitForDeployment();
+
   const dkgOk = await bfvPk.verify.staticCall(
     benchmarkE3Id,
     benchmarkCommitteeRoot,
@@ -515,11 +635,6 @@ async function main() {
     dkgCommitteeHash,
     dkgEncodedProof,
   );
-
-  const registry = await (
-    await ethers.getContractFactory("MockCiphernodeRegistry")
-  ).deploy();
-  await registry.waitForDeployment();
 
   const bfvDec = await (
     await ethers.getContractFactory("BfvDecryptionVerifier")
@@ -598,6 +713,7 @@ async function main() {
       dec: Number(decGas),
     },
     source: "benchmark_raw_artifacts",
+    dkg_layout: useV2Dkg ? "v2" : "legacy",
     bfv_preset: benchmarkConfig.preset,
     bfv_committee: benchmarkConfig.committee,
   };

@@ -9,7 +9,10 @@ import { BFV_ENCRYPTION_SCHEME_ID, BFV_PRESETS } from "../bfv.js";
 import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
-import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import {
+  deployAndSaveBfvPkVerifier,
+  deployAndSaveBfvPkVerifierV2,
+} from "./deployAndSave/bfvPkVerifier";
 import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
 import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
@@ -32,11 +35,12 @@ import { encodeBfvParams } from "./protocol/values";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
-  ACTIVE_BFV_PARAM_SET,
   ACTIVE_BFV_PRESET,
   BFV_DKG_H,
   committeeThresholdsForChain,
+  isLbfvParamSet,
   isLocalDeploymentChain,
+  localBfvParamSet,
   send,
 } from "./utils";
 
@@ -44,7 +48,7 @@ import {
  * Default timeout configuration (in seconds)
  */
 const DEFAULT_TIMEOUT_CONFIG = {
-  dkgWindow: 7200,
+  dkgWindow: 21_600,
   computeWindow: 86400,
   decryptionWindow: 3600,
 };
@@ -104,7 +108,7 @@ export const deployInterfold = async (
     process.env.ENABLE_ZK_VERIFICATION === "true" || withZKVerification;
 
   // H-23: refuse to deploy test mocks (MockUSDC / MockE3ProgramHarness) and the
-  // `insecure64` BFV preset on any chain that is not a recognised local /
+  // `insecure` BFV preset on any chain that is not a recognised local /
   // test network. Override via `ALLOW_MOCKS_ON_PRODUCTION=true` only for
   // explicit dry-runs.
   if (shouldDeployMocks) {
@@ -122,7 +126,7 @@ export const deployInterfold = async (
       process.env.ALLOW_MOCKS_ON_PRODUCTION !== "true"
     ) {
       throw new Error(
-        `Refusing to deploy mocks / insecure64 BFV preset on chainId ${chainId}. ` +
+        `Refusing to deploy mocks / insecure BFV preset on chainId ${chainId}. ` +
           `Set ALLOW_MOCKS_ON_PRODUCTION=true to override (H-23).`,
       );
     }
@@ -570,7 +574,7 @@ export const deployInterfold = async (
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
+  const activeParamSet = localBfvParamSet();
   const activeParams = encodeBfvParams(
     BFV_PRESETS[ACTIVE_BFV_PRESET].threshold,
   );
@@ -749,10 +753,20 @@ export const deployInterfold = async (
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvPkVerifier and registering for prod...");
-    const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
-    const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+    let bfvPkVerifierAddress: string;
+    // The l-BFV parameter sets (3 and 4) use the V2 DKG aggregation wrapper.
+    if (isLbfvParamSet(localBfvParamSet())) {
+      const { bfvPkVerifierV2 } = await deployAndSaveBfvPkVerifierV2(
+        hre,
+        ciphernodeRegistryAddress,
+      );
+      bfvPkVerifierAddress = await bfvPkVerifierV2.getAddress();
+    } else {
+      const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
+      bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+      deployedBfvPkVerifier = bfvPkVerifier;
+    }
     expectedPkVerifier = bfvPkVerifierAddress;
-    deployedBfvPkVerifier = bfvPkVerifier;
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       await send(

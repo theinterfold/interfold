@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use crate::{artifacts, identity, vk_tree, Request};
+use crate::{artifacts, identity, policy, vk_tree, Request};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::Path, process::Command};
@@ -15,6 +15,20 @@ const LEAVES: &[&str] = &[
     "threshold/decrypted_shares_aggregation",
     "threshold/user_data_encryption",
 ];
+// The l-BFV path proves C7 with the wide aggregation circuit and has no nodes-fold tree.
+const LBFV_LEAVES: &[&str] = &["threshold/decrypted_shares_aggregation_wide"];
+
+/// The leaf circuits a pair's archive builds, in catalogue order.
+fn leaves(preset: &str) -> Vec<&'static str> {
+    let mut leaves = Vec::new();
+    if policy::has_trbfv(preset) {
+        leaves.extend(LEAVES);
+    }
+    if policy::has_lbfv(preset) {
+        leaves.extend(LBFV_LEAVES);
+    }
+    leaves
+}
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,7 +60,7 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
         "Artifact stamp does not identify {preset}/{committee}"
     );
     let mut commitments = BTreeMap::new();
-    for circuit in LEAVES {
+    for circuit in leaves(preset) {
         let name = circuit.rsplit('/').next().unwrap();
         let path = pair
             .join("default")
@@ -54,8 +68,10 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
             .join(format!("{name}.vk_hash"));
         commitments.insert(format!("bb-vk-hash/default/{circuit}"), hash_file(&path)?);
     }
-    // Use the existing ordered SAFE implementation, including repeated descendants.
-    for (name, value) in vk_tree::hashes(&pair)? {
+    // Use the existing ordered SAFE implementation, including repeated descendants. Only trBFV
+    // archives build the nodes-fold tree and only l-BFV archives the C3 chain; every archive
+    // builds the C6 tree.
+    for (name, value) in vk_tree::anchors(&pair, preset)? {
         let path = pair
             .join("default/recursive_aggregation")
             .join(name)
@@ -220,13 +236,7 @@ pub fn qualify(root: &Path, request: &Request) -> Result<()> {
                     hash.display()
                 );
                 if variant == "evm" && circuit.group == "recursive_aggregation" {
-                    let base =
-                        root.join("packages/interfold-contracts/contracts/verifiers/bfv/honk");
-                    let base = if preset == "insecure-64" && committee == "minimum" {
-                        base
-                    } else {
-                        base.join(&preset).join(&committee)
-                    };
+                    let base = crate::honk_verifier_dir(root, &preset, &committee);
                     let filename = if circuit.name == "dkg_aggregator" {
                         "DkgAggregatorVerifier.sol"
                     } else {
@@ -253,6 +263,7 @@ pub fn qualify(root: &Path, request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_fhe_params::BfvPreset;
 
     fn seed(root: &Path, output: &Path) -> std::path::PathBuf {
         let pair = output.join("insecure-64/minimum");
@@ -306,13 +317,21 @@ mod tests {
         )
         .unwrap();
         generate(root, &output).unwrap();
-        check(root, &crate::tests::request()).unwrap();
+        check(
+            root,
+            &crate::tests::request_for(BfvPreset::InsecureThreshold64),
+        )
+        .unwrap();
         let path = output.join("insecure-64/minimum/vk-commitments.json");
         let mut stored: Pair = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         stored.commitments.clear();
         write_changed(&path, &stored).unwrap();
         let before = crate::tests::snapshot(root);
-        assert!(check(root, &crate::tests::request()).is_err());
+        assert!(check(
+            root,
+            &crate::tests::request_for(BfvPreset::InsecureThreshold64)
+        )
+        .is_err());
         assert_eq!(crate::tests::snapshot(root), before);
         let source = fs::read(root.join(MANIFEST)).unwrap();
         invalidate(&output.join("insecure-64/minimum")).unwrap();
@@ -339,7 +358,7 @@ mod tests {
         artifacts::checksums(&output).unwrap();
 
         let before = crate::tests::snapshot(root);
-        let mut request = crate::tests::request();
+        let mut request = crate::tests::request_for(BfvPreset::InsecureThreshold64);
         request.operation = "prepare-vk-commitments".parse().unwrap();
         crate::execute(root, &request).unwrap();
         let after = crate::tests::snapshot(root);

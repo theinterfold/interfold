@@ -13,7 +13,7 @@
 //! [`CommitmentConsistencyCheckComplete`]. Only parties that pass the consistency
 //! check proceed to ZK verification.
 
-use crate::{CorrelationId, E3id, ProofType, VerificationKind};
+use crate::{CorrelationId, E3id, ProofIdentity, ProofType, VerificationKind};
 use alloy::primitives::{Address, Bytes};
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
@@ -27,13 +27,13 @@ use std::collections::BTreeSet;
 pub struct PartyProofData {
     pub party_id: u64,
     pub address: Address,
-    /// Each entry is a `(proof_type, public_signals, data_hash, proof_data)` tuple
+    /// Each entry is a `(proof_identity, public_signals, data_hash, proof_data)` tuple
     /// from a signed proof. The `data_hash` is `keccak256(abi.encode(proof.data,
     /// public_signals))` — used for the accusation protocol if a consistency
     /// violation is detected. The `proof_data` (raw `proof.data` bytes) is forwarded
     /// alongside so the on-chain slashing contract can recompute the dataHash from
     /// the evidence preimage `abi.encode(proof_data, public_signals)`.
-    pub proofs: Vec<(ProofType, ArcBytes, [u8; 32], ArcBytes)>,
+    pub proofs: Vec<(ProofIdentity, ArcBytes, [u8; 32], ArcBytes)>,
 }
 
 /// Published by [`ShareVerificationActor`] after ECDSA validation, before ZK.
@@ -79,6 +79,8 @@ pub struct CommitmentConsistencyViolation {
     pub accused_address: Address,
     /// The proof type (source side) whose commitment value doesn't match.
     pub proof_type: ProofType,
+    /// Row index for a multirow proof type. Singleton proof types use zero.
+    pub proof_instance: u32,
     /// `keccak256(abi.encode(proof.data, public_signals))` of the accused party's
     /// proof — matches the data_hash used by the accusation protocol.
     pub data_hash: [u8; 32],

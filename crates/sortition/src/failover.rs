@@ -315,33 +315,6 @@ mod tests {
         Committee::new(vec!["0xa".into(), "0xb".into(), "0xc".into()])
     }
 
-    #[test]
-    fn selection_preserves_party_order_and_combines_skip_sets() {
-        let c = Committee::new(vec!["0xBbB".into(), "0xccc".into(), "0xaaa".into()]);
-        assert_eq!(active_aggregator_party_id(&c, &[]), Some(0));
-        assert!(effective_aggregator(&c, "0xBBB", &[], &[]));
-        assert!(!effective_aggregator(&c, "0xbbb", &[], &[0]));
-        assert!(effective_aggregator(&c, "0xCCC", &[], &[0]));
-        assert!(effective_aggregator(&c, "0xaaa", &[0], &[1]));
-        assert_eq!(active_aggregator_party_id(&c, &[0, 1]), Some(2));
-        assert_eq!(active_aggregator_party_id(&c, &[0, 1, 2]), None);
-        assert!(!effective_aggregator(&c, "0xaaa", &[0, 1, 2], &[]));
-        assert_eq!(
-            aggregator_standbys(&c, &[], 10),
-            vec![
-                (0, "0xBbB".into()),
-                (1, "0xccc".into()),
-                (2, "0xaaa".into()),
-            ]
-        );
-        assert_eq!(aggregator_standbys(&c, &[0], 1), vec![(1, "0xccc".into())]);
-        assert!(aggregator_standbys(&c, &[], 0).is_empty());
-        assert_eq!(
-            active_aggregator_party_id(&Committee::new(vec![]), &[]),
-            None
-        );
-    }
-
     /// The public-key phase waits for node fold proofs, so its budget can be longer than the
     /// other phases' budget, also after a promotion.
     #[test]
@@ -384,6 +357,33 @@ mod tests {
             &policy,
         );
         assert_eq!(state.rounds[&id].deadline_unix_secs, 2_060);
+    }
+
+    #[test]
+    fn selection_preserves_party_order_and_combines_skip_sets() {
+        let c = Committee::new(vec!["0xBbB".into(), "0xccc".into(), "0xaaa".into()]);
+        assert_eq!(active_aggregator_party_id(&c, &[]), Some(0));
+        assert!(effective_aggregator(&c, "0xBBB", &[], &[]));
+        assert!(!effective_aggregator(&c, "0xbbb", &[], &[0]));
+        assert!(effective_aggregator(&c, "0xCCC", &[], &[0]));
+        assert!(effective_aggregator(&c, "0xaaa", &[0], &[1]));
+        assert_eq!(active_aggregator_party_id(&c, &[0, 1]), Some(2));
+        assert_eq!(active_aggregator_party_id(&c, &[0, 1, 2]), None);
+        assert!(!effective_aggregator(&c, "0xaaa", &[0, 1, 2], &[]));
+        assert_eq!(
+            aggregator_standbys(&c, &[], 10),
+            vec![
+                (0, "0xBbB".into()),
+                (1, "0xccc".into()),
+                (2, "0xaaa".into()),
+            ]
+        );
+        assert_eq!(aggregator_standbys(&c, &[0], 1), vec![(1, "0xccc".into())]);
+        assert!(aggregator_standbys(&c, &[], 0).is_empty());
+        assert_eq!(
+            active_aggregator_party_id(&Committee::new(vec![]), &[]),
+            None
+        );
     }
 
     #[test]

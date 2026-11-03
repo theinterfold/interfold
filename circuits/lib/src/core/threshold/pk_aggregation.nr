@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_pk_aggregation_commitment, compute_threshold_pk_commitment_checked,
+    compute_pk_aggregation_commitment, compute_pk_aggregation_commitment_with_pk1_commitment,
+    compute_threshold_pk_commitment_checked,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -157,7 +158,7 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
         }
     }
 
-    /// Returns `commit(pk0_agg, crp)` for P3 (`user_data_encryption_ct0` / `ct1`).
+    /// Returns `commit(pk0_agg, crp)` for P3 (`user_data_encryption`).
     pub fn execute(self) -> Field {
         // Step 1: Pin every opened coefficient to a single centered residue. Must run before the
         // commitment check, which is only binding for bounded coefficients.
@@ -173,6 +174,28 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
 
         // Step 4: Commit to (pk0_agg, crp). crp is the circuit-constant CRS a used as pk1_agg.
         compute_pk_aggregation_commitment::<N, L, BIT_PK>(self.pk0_agg, self.crp)
+    }
+}
+
+impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L, BIT_PK> {
+    /// [`PkAggregation::execute`] for the l-BFV path, where `crp` is a fixed CRS row whose
+    /// commitment is a generated constant, and each party's `pk0` is committed in the l-BFV row
+    /// form rather than C1's. Returns the same value as `execute` would with that row as `crp`,
+    /// without hashing the row in-circuit. `self.crp` and `expected_threshold_pk_commitments` are
+    /// not read.
+    ///
+    /// The caller MUST already have opened every `pk0[i]` against its expected commitment with a
+    /// checked (injective) packing of values its creator bounded; that opening is what transfers
+    /// the centered bound `verify_pk_for_basis` relies on.
+    pub fn execute_opened_with_crp_commitment(self, crp_commitment: Field) -> Field {
+        self.verify_pk_ranges();
+        for basis_idx in 0..L {
+            self.verify_pk_for_basis(self.pk0, self.pk0_agg, basis_idx);
+        }
+        compute_pk_aggregation_commitment_with_pk1_commitment::<N, L, BIT_PK>(
+            self.pk0_agg,
+            crp_commitment,
+        )
     }
 }
 

@@ -53,6 +53,8 @@ pub(crate) struct PendingThresholdProofs {
     pub(crate) e3_id: E3id,
     pub(crate) full_share: Arc<ThresholdShare>,
     pub(crate) ec: EventContext<Sequenced>,
+    /// Whether this E3 proves C1. The l-BFV path does not.
+    pub(crate) expects_pk_generation: bool,
     pub(crate) pk_generation_proof: Option<Proof>,
     pub(crate) sk_share_computation_proof: Option<Proof>,
     pub(crate) e_sm_share_computation_proof: Option<Proof>,
@@ -71,6 +73,7 @@ impl PendingThresholdProofs {
         e3_id: E3id,
         full_share: Arc<ThresholdShare>,
         ec: EventContext<Sequenced>,
+        expects_pk_generation: bool,
         expected_sk_enc_count: usize,
         expected_e_sm_enc_count: usize,
         recipient_party_ids: Vec<u64>,
@@ -79,6 +82,7 @@ impl PendingThresholdProofs {
             e3_id,
             full_share,
             ec,
+            expects_pk_generation,
             pk_generation_proof: None,
             sk_share_computation_proof: None,
             e_sm_share_computation_proof: None,
@@ -91,7 +95,7 @@ impl PendingThresholdProofs {
     }
 
     pub(crate) fn is_complete(&self) -> bool {
-        self.pk_generation_proof.is_some()
+        (self.pk_generation_proof.is_some() || !self.expects_pk_generation)
             && self.sk_share_computation_proof.is_some()
             && self.e_sm_share_computation_proof.is_some()
             && self.sk_share_encryption_proofs.len() == self.expected_sk_enc_count
@@ -124,7 +128,9 @@ impl PendingThresholdProofs {
     }
 
     pub(crate) fn total_expected(&self) -> usize {
-        3 + self.expected_sk_enc_count + self.expected_e_sm_enc_count
+        2 + usize::from(self.expects_pk_generation)
+            + self.expected_sk_enc_count
+            + self.expected_e_sm_enc_count
     }
 
     pub(crate) fn total_received(&self) -> usize {

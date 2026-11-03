@@ -178,7 +178,13 @@ impl AccusationVoting {
 
         let evidence = self
             .received_data
-            .get(&(pending.accusation.accused, pending.accusation.proof_type))
+            .get(&(
+                pending.accusation.accused,
+                ProofIdentity {
+                    proof_type: pending.accusation.proof_type,
+                    instance: pending.accusation.proof_instance,
+                },
+            ))
             .map(|d| d.evidence.clone())
             .unwrap_or_default();
         Some((
@@ -187,6 +193,7 @@ impl AccusationVoting {
                 accuser: pending.accusation.accuser,
                 accused: pending.accusation.accused,
                 proof_type: pending.accusation.proof_type,
+                proof_instance: pending.accusation.proof_instance,
                 votes_for: pending.votes_for,
                 outcome,
                 evidence,
@@ -219,7 +226,13 @@ impl AccusationVoting {
 
         let evidence = self
             .received_data
-            .get(&(pending.accusation.accused, pending.accusation.proof_type))
+            .get(&(
+                pending.accusation.accused,
+                ProofIdentity {
+                    proof_type: pending.accusation.proof_type,
+                    instance: pending.accusation.proof_instance,
+                },
+            ))
             .map(|d| d.evidence.clone())
             .unwrap_or_default();
         actions.push(VoteAction::PublishQuorum {
@@ -228,6 +241,7 @@ impl AccusationVoting {
                 accuser: pending.accusation.accuser,
                 accused: pending.accusation.accused,
                 proof_type: pending.accusation.proof_type,
+                proof_instance: pending.accusation.proof_instance,
                 votes_for: pending.votes_for,
                 outcome,
                 evidence,

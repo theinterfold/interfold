@@ -13,6 +13,31 @@ import {
 const commitment = `0x${"11".repeat(32)}`;
 const publisherA = `0x${"aa".repeat(20)}`;
 const publisherB = `0x${"bb".repeat(20)}`;
+const publicKeyChunkBytes = 90 * 1024;
+const maxPublicKeyBytes = 16 * 1024 * 1024;
+const secure16384KeyEnvelopeBytes = 7_833_906;
+
+function allChunksFor(
+  publicKey: Uint8Array,
+  publisher = publisherA,
+): CommitteePublicKeyChunk[] {
+  const candidateHash = keccak256(publicKey);
+  const chunkCount = Math.ceil(publicKey.length / publicKeyChunkBytes);
+  return Array.from({ length: chunkCount }, (_, chunkIndex) => ({
+    publisher,
+    candidateHash,
+    pkCommitment: commitment,
+    chunkIndex,
+    chunkCount,
+    totalLength: publicKey.length,
+    chunk: hexlify(
+      publicKey.slice(
+        chunkIndex * publicKeyChunkBytes,
+        (chunkIndex + 1) * publicKeyChunkBytes,
+      ),
+    ),
+  }));
+}
 
 function chunksFor(
   first: Uint8Array,
@@ -44,7 +69,7 @@ function chunksFor(
 }
 
 describe("committee public-key task assembly", function () {
-  const first = new Uint8Array(90 * 1024).fill(0x11);
+  const first = new Uint8Array(publicKeyChunkBytes).fill(0x11);
   const second = new Uint8Array([0x22, 0x33]);
 
   it("reassembles complete chunks in any arrival order", function () {
@@ -52,6 +77,36 @@ describe("committee public-key task assembly", function () {
     const result = assembleUniqueCommitteePublicKey(chunks, commitment);
 
     expect(hexlify(result)).to.equal(concat([first, second]));
+  });
+
+  it("reassembles the secure-16384 key envelope in 86 chunks", function () {
+    const keyEnvelope = new Uint8Array(secure16384KeyEnvelopeBytes).fill(0x44);
+    const chunks = allChunksFor(keyEnvelope).reverse();
+
+    expect(chunks).to.have.length(86);
+    const result = assembleUniqueCommitteePublicKey(chunks, commitment);
+    expect(result).to.have.length(secure16384KeyEnvelopeBytes);
+    expect(result[0]).to.equal(0x44);
+    expect(result.at(-1)).to.equal(0x44);
+  });
+
+  it("accepts 16 MiB and rejects one additional byte", function () {
+    const publicKey = new Uint8Array(maxPublicKeyBytes).fill(0x33);
+    const chunks = allChunksFor(publicKey);
+
+    expect(chunks).to.have.length(183);
+    const result = assembleUniqueCommitteePublicKey(chunks, commitment);
+    expect(result).to.have.length(maxPublicKeyBytes);
+    expect(result[0]).to.equal(0x33);
+    expect(result.at(-1)).to.equal(0x33);
+
+    const oversized = chunks.map((chunk) => ({
+      ...chunk,
+      totalLength: maxPublicKeyBytes + 1,
+    }));
+    expect(() =>
+      assembleUniqueCommitteePublicKey(oversized, commitment),
+    ).to.throw("No complete committee public-key candidate");
   });
 
   it("rejects incomplete and corrupted candidates", function () {

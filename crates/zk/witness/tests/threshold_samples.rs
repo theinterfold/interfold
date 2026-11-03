@@ -10,7 +10,7 @@ mod decrypted_shares_aggregation {
 
     #[test]
     fn an_extra_polynomial_or_party_id_is_refused() {
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Small).unwrap();
         let sample =
             e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&config, preset)
@@ -43,7 +43,7 @@ mod decrypted_shares_aggregation {
 
     #[test]
     fn test_full_computation_with_sample() {
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let committee = CiphernodesCommitteeSize::Small.values();
         let configs = Configs::for_preset(preset, CiphernodesCommitteeSize::Small).unwrap();
         let input =

@@ -367,6 +367,7 @@ mod tests {
             votes_for: Vec::new(),
             outcome: e3_events::AccusationOutcome::AccusedFaulted,
             evidence: alloy::primitives::Bytes::new(),
+            proof_instance: 0,
         }
     }
 

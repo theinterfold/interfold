@@ -3,11 +3,12 @@
 //! Stream the canonical honest-party NodeFold accumulator.
 
 use super::super::*;
+use e3_events::NodesFoldV2StepRequest;
 
 impl PublicKeyAggregator {
-    /// Dispatch the next [`ZkRequest::NodesFoldStep`] when the proofs of every slot it takes
-    /// ([`nodes_fold_step_len`]) are buffered and no step is in flight. When all H slots are done,
-    /// calls [`try_dispatch_dkg_aggregation`].
+    /// Dispatch the next [`ZkRequest::NodesFoldStep`] (l-BFV: [`ZkRequest::NodesFoldV2Step`]) when
+    /// the proofs of every slot it takes ([`Self::nodes_fold_step_slots`]) are buffered and no step
+    /// is in flight. When all H slots are done, calls [`try_dispatch_dkg_aggregation`].
     pub(in crate::actors::publickey_aggregator) fn try_dispatch_nodes_fold_step(
         &mut self,
         ec: &EventContext<Sequenced>,
@@ -43,7 +44,7 @@ impl PublicKeyAggregator {
 
         // A step takes the next slots in canonical order, so it waits for each of their proofs;
         // folding one slot at a time waited the same way, one slot at a time.
-        let len = nodes_fold_step_len(next_slot as usize, total_slots);
+        let len = self.nodes_fold_step_slots(next_slot as usize, total_slots);
         let mut inner_proofs = Vec::with_capacity(len);
         for party_id in honest_party_ids.iter().skip(next_slot as usize).take(len) {
             let Some(Some(inner_proof)) = dkg_node_proofs.get(party_id) else {
@@ -55,29 +56,45 @@ impl PublicKeyAggregator {
         let prior_accumulator = nodes_fold_accumulator.clone();
 
         let corr = CorrelationId::new();
+        let v2 = self.is_lbfv();
+        let request = if v2 {
+            ZkRequest::NodesFoldV2Step(NodesFoldV2StepRequest {
+                inner_proof: inner_proofs.swap_remove(0),
+                prior_accumulator,
+                slot_index: next_slot,
+                total_slots,
+                e3_id: self.e3_id.to_string(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            })
+        } else {
+            ZkRequest::NodesFoldStep(NodesFoldStepRequest {
+                inner_proofs,
+                prior_accumulator,
+                slot_indices,
+                total_slots,
+                e3_id: self.e3_id.to_string(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            })
+        };
         self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-                    inner_proofs,
-                    prior_accumulator,
-                    slot_indices,
-                    total_slots,
-                    e3_id: self.e3_id.to_string(),
-                    params_preset: self.params_preset,
-                    committee_size: self.committee_size,
-                }),
-                corr,
-                self.e3_id.clone(),
-            ),
+            ComputeRequest::zk(request, corr, self.e3_id.clone()),
             ec.clone(),
         )?;
 
         info!(
-            "PublicKeyAggregator: dispatched NodesFoldStep slots={}..{}/{} for E3 {}",
+            "PublicKeyAggregator: dispatched {} slots={}..{}/{} for E3 {} correlation={}",
+            if v2 {
+                "NodesFoldV2Step"
+            } else {
+                "NodesFoldStep"
+            },
             next_slot,
             next_slot as usize + len,
             total_slots,
-            self.e3_id
+            self.e3_id,
+            corr
         );
 
         self.state.try_mutate(ec, |state| {
@@ -123,7 +140,20 @@ impl PublicKeyAggregator {
                 nodes_fold_step_correlation: Some(corr),
             })
         })?;
+        if self.is_lbfv() {
+            self.note_lbfv_aggregation_dispatch(corr, ec);
+        }
         Ok(())
+    }
+
+    /// Slots one step folds from `next_slot`: [`nodes_fold_step_len`] for the trBFV `nodes_fold`,
+    /// one for the l-BFV `nodes_fold_v2`.
+    fn nodes_fold_step_slots(&self, next_slot: usize, total_slots: usize) -> usize {
+        if self.is_lbfv() {
+            1
+        } else {
+            nodes_fold_step_len(next_slot, total_slots)
+        }
     }
 
     /// Handle a completed [`ZkResponse::NodesFoldStep`]: advance the accumulator and dispatch
@@ -149,9 +179,10 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
-        // The step in flight took exactly the slots `nodes_fold_step_len` gives for this point.
+        // The step in flight took exactly the slots `nodes_fold_step_slots` gives for this point.
         let completed = nodes_fold_completed_slots
-            + nodes_fold_step_len(*nodes_fold_completed_slots as usize, honest_party_ids.len())
+            + self
+                .nodes_fold_step_slots(*nodes_fold_completed_slots as usize, honest_party_ids.len())
                 as u32;
         let Some(ec) = last_ec.clone() else {
             return Err(anyhow::anyhow!(

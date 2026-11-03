@@ -8,8 +8,9 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { BfvProtocol } from "./BfvProtocol.sol";
 
-// Mainnet supports secure BFV with minimum, micro, and small committees. Sepolia and local chains
-// support insecure and secure BFV with every committee size.
+// Mainnet supports secure-8192 with all committees. Sepolia and local chains additionally
+// support insecure trBFV (degree 64), insecure l-BFV (degree 128), and secure-16384 with all
+// committees.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID =
         BfvProtocol.ENCRYPTION_SCHEME_ID;
@@ -25,6 +26,20 @@ library ActiveCryptoConfig {
     uint8 internal constant SECURE_PARAM_SET = BfvProtocol.SECURE_PARAM_SET;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         BfvProtocol.SECURE_PARAM_SET_HASH;
+
+    bytes32 internal constant SECURE_16384_CONFIG_ID =
+        BfvProtocol.SECURE_16384_CONFIG_ID;
+    uint8 internal constant SECURE_16384_PARAM_SET =
+        BfvProtocol.SECURE_16384_PARAM_SET;
+    bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
+        BfvProtocol.SECURE_16384_PARAM_SET_HASH;
+
+    bytes32 internal constant INSECURE_LBFV_CONFIG_ID =
+        BfvProtocol.INSECURE_LBFV_CONFIG_ID;
+    uint8 internal constant INSECURE_LBFV_PARAM_SET =
+        BfvProtocol.INSECURE_LBFV_PARAM_SET;
+    bytes32 internal constant INSECURE_LBFV_PARAM_SET_HASH =
+        BfvProtocol.INSECURE_LBFV_PARAM_SET_HASH;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE =
         BfvProtocol.MINIMUM_COMMITTEE_SIZE;
@@ -78,6 +93,8 @@ library ActiveCryptoConfig {
     ) internal pure returns (bytes32) {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
+        if (paramSet == SECURE_16384_PARAM_SET) return SECURE_16384_CONFIG_ID;
+        if (paramSet == INSECURE_LBFV_PARAM_SET) return INSECURE_LBFV_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -92,7 +109,10 @@ library ActiveCryptoConfig {
     function isParamSetSupported(uint8 paramSet) internal view returns (bool) {
         if (isTestnetOrLocal()) {
             return
-                paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
+                paramSet == INSECURE_PARAM_SET ||
+                paramSet == SECURE_PARAM_SET ||
+                paramSet == SECURE_16384_PARAM_SET ||
+                paramSet == INSECURE_LBFV_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -105,6 +125,33 @@ library ActiveCryptoConfig {
             committeeSize == MICRO_COMMITTEE_SIZE ||
             committeeSize == SMALL_COMMITTEE_SIZE ||
             committeeSize == LARGE_COMMITTEE_SIZE;
+    }
+
+    function validateParamSetCommittee(
+        uint8 paramSet,
+        uint8 committeeSize
+    ) internal pure {
+        // Pair policy mirrors scripts/circuits/build-pairs.json.
+        // The large committee exists only on the trBFV parameter sets.
+        if (paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET) {
+            if (
+                committeeSize == MINIMUM_COMMITTEE_SIZE ||
+                committeeSize == MICRO_COMMITTEE_SIZE ||
+                committeeSize == SMALL_COMMITTEE_SIZE ||
+                committeeSize == LARGE_COMMITTEE_SIZE
+            ) return;
+        }
+        if (
+            paramSet == INSECURE_LBFV_PARAM_SET ||
+            paramSet == SECURE_16384_PARAM_SET
+        ) {
+            if (
+                committeeSize == MINIMUM_COMMITTEE_SIZE ||
+                committeeSize == MICRO_COMMITTEE_SIZE ||
+                committeeSize == SMALL_COMMITTEE_SIZE
+            ) return;
+        }
+        revert IInterfold.UnsupportedCryptoConfig();
     }
 
     function committeeParams(
@@ -149,7 +196,11 @@ library ActiveCryptoConfig {
             revert IInterfold.UnsupportedCryptoConfig();
         bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
             ? INSECURE_PARAM_SET_HASH
-            : SECURE_PARAM_SET_HASH;
+            : paramSet == INSECURE_LBFV_PARAM_SET
+                ? INSECURE_LBFV_PARAM_SET_HASH
+                : paramSet == SECURE_PARAM_SET
+                    ? SECURE_PARAM_SET_HASH
+                    : SECURE_16384_PARAM_SET_HASH;
         if (paramSetHash != expectedHash)
             revert IInterfold.UnsupportedCryptoConfig();
     }

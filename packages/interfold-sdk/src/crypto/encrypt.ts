@@ -80,7 +80,7 @@ export async function encryptNumberAndGenProof(
   presetName: ThresholdBfvParamsPresetName,
 ): Promise<VerifiableEncryptionResult> {
   const { circuitInputs, encryptedData } = await encryptNumberAndGenInputs(data, pk, presetName)
-  const proof = await generateProof(circuitInputs)
+  const proof = await generateProof(circuitInputs, presetName)
   return { encryptedData, proof }
 }
 
@@ -106,6 +106,6 @@ export async function encryptVectorAndGenProof(
   presetName: ThresholdBfvParamsPresetName,
 ): Promise<VerifiableEncryptionResult> {
   const { circuitInputs, encryptedData } = await encryptVectorAndGenInputs(data, pk, presetName)
-  const proof = await generateProof(circuitInputs)
+  const proof = await generateProof(circuitInputs, presetName)
   return { encryptedData, proof }
 }

@@ -177,7 +177,7 @@ fn plan_c1_dispatch_splits_proofs_and_missing() {
 #[test]
 fn select_honest_set_fails_below_circuit_h() {
     let e3_id = E3id::new("1", 1);
-    let honest = vec![(0u64, "n0".to_string(), ks(1), None)];
+    let honest = vec![(0u64, "n0".to_string(), ks(1), ())];
     let sel = PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 1, 1);
     assert!(matches!(sel, HonestSelection::Fail));
 }
@@ -198,10 +198,10 @@ fn select_honest_set_caps_to_circuit_h_and_sorts() {
     let e3_id = E3id::new("1", 1);
     // 4 honest, circuit_h = 3 -> cap to lowest-3 party_ids {0,1,2}, sorted ascending.
     let honest = vec![
-        (3u64, "n3".to_string(), ks(4), None),
-        (1u64, "n1".to_string(), ks(2), None),
-        (0u64, "n0".to_string(), ks(1), None),
-        (2u64, "n2".to_string(), ks(3), None),
+        (3u64, "n3".to_string(), ks(4), ()),
+        (1u64, "n1".to_string(), ks(2), ()),
+        (0u64, "n0".to_string(), ks(1), ()),
+        (2u64, "n2".to_string(), ks(3), ()),
     ];
     let sel = PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 1, 4);
     match sel {
@@ -222,9 +222,9 @@ fn select_honest_set_fails_when_at_or_below_threshold_m() {
     let e3_id = E3id::new("1", 1);
     // 3 honest, circuit_h = 3 but threshold_m = 3 -> len <= m -> Fail.
     let honest = vec![
-        (0u64, "n0".to_string(), ks(1), None),
-        (1u64, "n1".to_string(), ks(2), None),
-        (2u64, "n2".to_string(), ks(3), None),
+        (0u64, "n0".to_string(), ks(1), ()),
+        (1u64, "n1".to_string(), ks(2), ()),
+        (2u64, "n2".to_string(), ks(3), ()),
     ];
     let sel = PublicKeyAggregation::select_honest_set(&e3_id, honest, &BTreeSet::new(), 3, 3, 3);
     assert!(matches!(sel, HonestSelection::Fail));

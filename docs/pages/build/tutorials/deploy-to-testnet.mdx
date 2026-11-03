@@ -19,11 +19,11 @@ program contract. At the end, your program is on Sepolia, the owner of the Inter
 register it, and your server and client use the testnet.
 
 <Callout type='warning'>
-  Do not submit real private data on Sepolia. The `insecure-64` preset is not secure. The public
-  key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext
-  verifier wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. See [Check the protocol
-  ciphertext verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`,
-  the `Faucet`, `MockE3Program`, and `MockOpenVmReceiptVerifier`. The manifest marks Sepolia with
+  Do not submit real private data on Sepolia. The `insecure` preset is not secure. The public key,
+  decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext verifier
+  wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. See [Check the protocol ciphertext
+  verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`, the
+  `Faucet`, `MockE3Program`, and `MockOpenVmReceiptVerifier`. The manifest marks Sepolia with
   `mocks: true`.
 </Callout>
 
@@ -359,7 +359,7 @@ sdkInstance = InterfoldSDK.create({
     feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
   chain: sepolia,
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -393,12 +393,12 @@ export $(interfold print-env --vite --chain sepolia)
 pnpm dev
 ```
 
-The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD_64` by default
+The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD` by default
 (`VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME`). Keep the two values in agreement. Sepolia accepts the
-param sets 0 (`insecure-64`) and 2 (`secure-8192`) when registered. Do not submit private data with
-the insecure preset. Version-7 mainnet requests use index 2; index 1 remains for older E3s. The SDK
-does not include secure-8192 proof circuits. Compile matching circuits for secure proofs; see
-[SDK encryption proofs](/build/sdk#encryption-proofs).
+param sets 0 (`insecure`), 2 (`secure-8192`), and 3 (`secure-16384`) when registered. Do not submit
+private data with the insecure preset. Mainnet requests use index 2. Index 1 is retired and remains
+for older E3s. The SDK does not include secure-8192 proof circuits. Compile matching circuits for
+secure proofs; see [SDK encryption proofs](/build/sdk#encryption-proofs).
 
 ### Request an E3
 

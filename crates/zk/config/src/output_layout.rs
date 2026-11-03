@@ -13,6 +13,7 @@
 //! hard-coding byte offsets.
 
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 pub use crate::constants::FIELD_BYTE_LEN;
 
@@ -151,15 +152,154 @@ pub const PK_BFV_OUTPUTS: &[OutputField] = &[f("pk_commitment")];
 pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
+/// l-BFV public-key generation for one gadget row.
+pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("pk_commitment")];
+
+/// Retired l-BFV public-key limb proof; kept for the retired `LbfvPkGenerationLimb` circuit name.
+pub const LBFV_PK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("eek_commitment"),
+    f("pk_limb_commitment"),
+];
+
+/// Threshold l-BFV public-key aggregation for one gadget row.
+pub const LBFV_PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("pk_agg_commitment")];
+
+/// l-BFV relinearization-key generation for one row.
+pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("d0_commitment"),
+    f("d2_commitment"),
+];
+
+/// Retired RLK limb proof; kept for the retired `RlkGenerationLimb` circuit name.
+pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("e0_commitment"),
+    f("e2_commitment"),
+    f("d0_limb_commitment"),
+    f("d2_limb_commitment"),
+];
+
+/// l-BFV relinearization-key aggregation for one component (`d0` or `d2`) of one gadget row.
+pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("agg_commitment")];
+
 /// C4 — DKG share decryption.
 /// The final C4 circuit also returns the hash of its limb keys after the aggregate commitment.
 pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment"), f("key_tree")];
+
+/// C4 on the l-BFV path: the chunked circuit returns only the aggregate commitment.
+pub const DKG_SHARE_DECRYPTION_CHUNKED_OUTPUTS: &[OutputField] = &[f("commitment")];
 
 /// C5 — Public key aggregation.
 pub const PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("commitment")];
 
 /// C6 — Threshold share decryption (prefix commitment to `d`, per CRT limb).
 pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment")];
+
+/// Number of legacy recursive verification-key bindings in `dkg_aggregator_v2`.
+pub const DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN: usize = 15;
+
+/// Number of V2 recursive verification-key bindings in `dkg_aggregator_v2`.
+pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 11;
+
+/// Exact public-signal positions for `dkg_aggregator_v2`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DkgAggregatorV2PublicLayout {
+    pub nodes_fold_key_hash: usize,
+    pub party_ids: Range<usize>,
+    pub committee_hash_hi: usize,
+    pub committee_hash_lo: usize,
+    pub legacy_vk_binding: Range<usize>,
+    pub legacy_key_hash: usize,
+    pub c2a_chunk_hash: usize,
+    pub c2b_chunk_hash: usize,
+    pub sk_agg_commitments: Range<usize>,
+    pub esm_agg_commitments: Range<usize>,
+    pub key_envelope_commitment: usize,
+    pub v2_key_hash: usize,
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub aggregate_pk_commitments: Range<usize>,
+    pub aggregate_d0_commitments: Range<usize>,
+    pub aggregate_d2_commitments: Range<usize>,
+    pub v2_vk_binding: Range<usize>,
+    pub field_count: usize,
+}
+
+impl DkgAggregatorV2PublicLayout {
+    /// Build the layout for one compiled committee and l-BFV row count.
+    pub fn new(committee_h: usize, lbfv_row_count: usize) -> Self {
+        let party_ids = 1..1 + committee_h;
+        let committee_hash_hi = party_ids.end;
+        let committee_hash_lo = committee_hash_hi + 1;
+        let legacy_vk_binding =
+            committee_hash_lo + 1..committee_hash_lo + 1 + DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN;
+
+        let legacy_key_hash = legacy_vk_binding.end;
+        let c2a_chunk_hash = legacy_key_hash + 1;
+        let c2b_chunk_hash = c2a_chunk_hash + 1;
+        let sk_agg_commitments = c2b_chunk_hash + 1..c2b_chunk_hash + 1 + committee_h;
+        let esm_agg_commitments = sk_agg_commitments.end..sk_agg_commitments.end + committee_h;
+        let key_envelope_commitment = esm_agg_commitments.end;
+        let v2_key_hash = key_envelope_commitment + 1;
+        let session_id_hi = v2_key_hash + 1;
+        let session_id_lo = session_id_hi + 1;
+        let aggregator_party_id = session_id_lo + 1;
+        let accepted_party_set_hash_hi = aggregator_party_id + 1;
+        let accepted_party_set_hash_lo = accepted_party_set_hash_hi + 1;
+        let aggregate_pk_commitments =
+            accepted_party_set_hash_lo + 1..accepted_party_set_hash_lo + 1 + lbfv_row_count;
+        let aggregate_d0_commitments =
+            aggregate_pk_commitments.end..aggregate_pk_commitments.end + lbfv_row_count;
+        let aggregate_d2_commitments =
+            aggregate_d0_commitments.end..aggregate_d0_commitments.end + lbfv_row_count;
+        let v2_vk_binding = aggregate_d2_commitments.end
+            ..aggregate_d2_commitments.end + DKG_AGGREGATOR_V2_VK_BINDING_LEN;
+
+        Self {
+            nodes_fold_key_hash: 0,
+            party_ids,
+            committee_hash_hi,
+            committee_hash_lo,
+            legacy_vk_binding,
+            legacy_key_hash,
+            c2a_chunk_hash,
+            c2b_chunk_hash,
+            sk_agg_commitments,
+            esm_agg_commitments,
+            key_envelope_commitment,
+            v2_key_hash,
+            session_id_hi,
+            session_id_lo,
+            aggregator_party_id,
+            accepted_party_set_hash_hi,
+            accepted_party_set_hash_lo,
+            aggregate_pk_commitments,
+            aggregate_d0_commitments,
+            aggregate_d2_commitments,
+            field_count: v2_vk_binding.end,
+            v2_vk_binding,
+        }
+    }
+
+    /// Extract the key-envelope commitment from an exact-shape public statement.
+    pub fn extract_key_envelope_commitment<'a>(
+        &self,
+        public_signals: &'a [u8],
+    ) -> Option<&'a [u8]> {
+        if public_signals.len() != self.field_count.checked_mul(FIELD_BYTE_LEN)? {
+            return None;
+        }
+        let start = self.key_envelope_commitment.checked_mul(FIELD_BYTE_LEN)?;
+        public_signals.get(start..start + FIELD_BYTE_LEN)
+    }
+}
 
 // ── Per-circuit input field constants ───────────────────────────────────────
 
@@ -168,6 +308,137 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("expected_pk_commitment"),
     f("expected_message_commitment"),
 ];
+
+/// C3 on the l-BFV path — the chunked circuit also exposes the share's party and modulus index.
+pub const SHARE_ENCRYPTION_CHUNKED_INPUTS: &[OutputField] = &[
+    f("expected_pk_commitment"),
+    f("expected_message_commitment"),
+    f("party_idx"),
+    f("mod_idx"),
+];
+
+/// Public l-BFV relinearization-key generation domain and row identity.
+pub const RLK_GENERATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+];
+
+/// Public inputs of the retired RLK limb proof.
+pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+    f("limb_index"),
+];
+
+/// Public l-BFV public-key generation domain and row identity.
+pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+];
+
+/// Public inputs of the retired l-BFV public-key limb proof.
+pub const LBFV_PK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+    f("limb_index"),
+];
+
+/// Public domain, accepted party-set hash, and row for public-key aggregation.
+pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("aggregator_party_id"),
+    f("accepted_party_set_hash_hi"),
+    f("accepted_party_set_hash_lo"),
+    f("row_index"),
+];
+
+/// Public domain, accepted party-set hash, row, and component (0 = `d0`, 1 = `d2`) for RLK
+/// aggregation.
+pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("aggregator_party_id"),
+    f("accepted_party_set_hash_hi"),
+    f("accepted_party_set_hash_lo"),
+    f("row_index"),
+    f("component"),
+];
+
+/// Exact field positions for one l-BFV public-key aggregation statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LbfvPkAggregationPublicLayout {
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub row_index: usize,
+    pub expected_pk_generation_commitments: Range<usize>,
+    pub pk_agg_commitment: usize,
+    pub field_count: usize,
+}
+
+impl LbfvPkAggregationPublicLayout {
+    pub fn new(committee_h: usize) -> Self {
+        let expected_pk_generation_commitments = 6..6 + committee_h;
+        let pk_agg_commitment = expected_pk_generation_commitments.end;
+        Self {
+            session_id_hi: 0,
+            session_id_lo: 1,
+            aggregator_party_id: 2,
+            accepted_party_set_hash_hi: 3,
+            accepted_party_set_hash_lo: 4,
+            row_index: 5,
+            expected_pk_generation_commitments,
+            pk_agg_commitment,
+            field_count: pk_agg_commitment + 1,
+        }
+    }
+}
+
+/// Exact field positions for one RLK aggregation statement: one component of one gadget row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RlkAggregationPublicLayout {
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub row_index: usize,
+    pub component: usize,
+    /// Each accepted party's generation commitment for this row's component.
+    pub expected_commitments: Range<usize>,
+    pub agg_commitment: usize,
+    pub field_count: usize,
+}
+
+impl RlkAggregationPublicLayout {
+    pub fn new(committee_h: usize) -> Self {
+        let expected_commitments = 7..7 + committee_h;
+        let agg_commitment = expected_commitments.end;
+        Self {
+            session_id_hi: 0,
+            session_id_lo: 1,
+            aggregator_party_id: 2,
+            accepted_party_set_hash_hi: 3,
+            accepted_party_set_hash_lo: 4,
+            row_index: 5,
+            component: 6,
+            expected_commitments,
+            agg_commitment,
+            field_count: agg_commitment + 1,
+        }
+    }
+}
 
 /// Describes the public input layout of a circuit.
 ///
@@ -182,6 +453,14 @@ pub enum CircuitInputLayout {
 }
 
 impl CircuitInputLayout {
+    /// Position of a named input field at the head of the public signals.
+    pub fn field_index(&self, name: &str) -> Option<usize> {
+        match self {
+            Self::Fixed { fields } => fields.iter().position(|field| field.name == name),
+            Self::None => None,
+        }
+    }
+
     /// Number of fixed input fields, or `None` for void layouts.
     pub fn field_count(&self) -> Option<usize> {
         match self {
@@ -195,11 +474,7 @@ impl CircuitInputLayout {
     /// Input fields sit at the **beginning** of `public_signals`.
     /// This method indexes from the head (offset = idx * FIELD_BYTE_LEN).
     pub fn extract_field<'a>(&self, public_signals: &'a [u8], name: &str) -> Option<&'a [u8]> {
-        let fields = match self {
-            CircuitInputLayout::Fixed { fields } => fields,
-            _ => return None,
-        };
-        let idx = fields.iter().position(|f| f.name == name)?;
+        let idx = self.field_index(name)?;
         let offset = idx * FIELD_BYTE_LEN;
         if public_signals.len() < offset + FIELD_BYTE_LEN {
             return None;
@@ -251,7 +526,7 @@ mod tests {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
         };
-        // C1 has no pub inputs, only 3 outputs = 96 bytes total
+        // C1 has no pub inputs, only 3 outputs = 96 bytes total.
         let mut signals = vec![0u8; 96];
         signals[0..32].copy_from_slice(&[0x11; 32]); // sk_commitment
         signals[32..64].copy_from_slice(&[0x22; 32]); // pk_commitment
@@ -300,13 +575,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_from_dynamic_circuit_returns_none() {
-        let layout = CircuitOutputLayout::Dynamic;
-        let signals = vec![0u8; 256];
-        assert!(layout.extract_field(&signals, "anything").is_none());
-    }
-
-    #[test]
     fn signals_too_short_returns_none() {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
@@ -327,6 +595,13 @@ mod tests {
         );
         assert_eq!(CircuitOutputLayout::None.field_count(), Some(0));
         assert_eq!(CircuitOutputLayout::Dynamic.field_count(), None);
+    }
+
+    #[test]
+    fn extract_from_dynamic_circuit_returns_none() {
+        let layout = CircuitOutputLayout::Dynamic;
+        let signals = vec![0u8; 256];
+        assert!(layout.extract_field(&signals, "anything").is_none());
     }
 
     #[test]
@@ -457,5 +732,53 @@ mod tests {
             Some(2)
         );
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
+    }
+
+    #[test]
+    fn lbfv_aggregation_layouts_name_exact_dynamic_ranges() {
+        let pk = LbfvPkAggregationPublicLayout::new(2);
+        assert_eq!(pk.expected_pk_generation_commitments, 6..8);
+        assert_eq!(pk.pk_agg_commitment, 8);
+        assert_eq!(pk.field_count, 9);
+
+        let rlk = RlkAggregationPublicLayout::new(2);
+        assert_eq!(rlk.component, RLK_AGGREGATION_INPUTS.len() - 1);
+        assert_eq!(rlk.expected_commitments, 7..9);
+        assert_eq!(rlk.agg_commitment, 9);
+        assert_eq!(rlk.field_count, 10);
+    }
+
+    #[test]
+    fn dkg_aggregator_v2_layout_tracks_dynamic_commitment_position() {
+        let secure_minimum = DkgAggregatorV2PublicLayout::new(2, 5);
+        assert_eq!(secure_minimum.party_ids, 1..3);
+        assert_eq!(secure_minimum.legacy_vk_binding, 5..20);
+        assert_eq!(secure_minimum.sk_agg_commitments, 23..25);
+        assert_eq!(secure_minimum.esm_agg_commitments, 25..27);
+        assert_eq!(secure_minimum.key_envelope_commitment, 27);
+        assert_eq!(secure_minimum.aggregate_pk_commitments, 34..39);
+        assert_eq!(secure_minimum.v2_vk_binding, 49..60);
+        assert_eq!(secure_minimum.field_count, 60);
+
+        let insecure_micro = DkgAggregatorV2PublicLayout::new(5, 3);
+        assert_eq!(insecure_micro.key_envelope_commitment, 36);
+        assert_eq!(insecure_micro.field_count, 63);
+    }
+
+    /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.
+    #[test]
+    fn c7_void_output_extract_field_returns_none() {
+        let layout = CircuitOutputLayout::None;
+        let signals = vec![0u8; 256];
+        assert!(layout.extract_field(&signals, "d_commitment").is_none());
+    }
+
+    /// C7 has no named return fields.
+    #[test]
+    fn c7_void_output_extract_all_returns_empty() {
+        let layout = CircuitOutputLayout::None;
+        let signals = vec![0u8; 256];
+        assert_eq!(layout.field_count(), Some(0));
+        assert!(layout.extract_field(&signals, "commitment").is_none());
     }
 }

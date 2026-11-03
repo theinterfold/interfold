@@ -17,6 +17,7 @@ circuits/
 │       ├── core/threshold/    # Shared logic: C1, C5, P3, C6, C7
 │       └── math/              # Polynomials, SAFE, commitments, modular arithmetic
 ├── bin/
+│   ├── chonk/                 # trBFV C3 and C6 Chonk stacks (app and kernel circuits)
 │   ├── config/                # Deployment-time consistency checks on presets
 │   ├── dkg/                   # DKG packages and C2 proof pipeline
 │   ├── threshold/             # TrBFV, user encryption, threshold decryption
@@ -44,32 +45,40 @@ how phases, commitments, and circuit IDs line up end to end, read
 [Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
 [`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
-**C2** uses **inner** recursive proofs plus an optional **wrapper**: `sk_share_computation`
-(**C2a**) and `e_sm_share_computation` (**C2b**) prove the Shamir-share computation; the wrapper
-`recursive_aggregation/wrapper/dkg/share_computation` (`CircuitName::ShareComputation`) re-verifies
-a single inner C2 proof at a time and compresses public inputs for folding / aggregation. Gossip and
-threshold signing use the **inner** proof; the wrapper is produced separately when node proof
-aggregation is enabled.
+**C2** runs over chunk proofs on both paths. On the trBFV path, `sk_share_computation_chain` /
+`e_sm_share_computation_chain` (and their `_last` circuits) prove the Shamir-share computation one
+coefficient chunk at a time, and `sk_share_computation` (**C2a**) / `e_sm_share_computation`
+(**C2b**) verify the chain and open C1's secret. On the l-BFV path, `sk_share_computation_chunk`
+(**C2a**) and `esm_share_computation_chunk` (**C2b**) prove one chunk each, `c2_chunk_batch` groups
+chunk proofs, and the type-bound finalizer circuits reconstruct the root commitments used by the
+remaining fold pipeline. Gossip and threshold signing use one terminal C2 proof per type.
 
 ### DKG (`bin/dkg/`)
 
-| Path                     | ID  | `CircuitName`         | Role                                          |
-| ------------------------ | --- | --------------------- | --------------------------------------------- |
-| `pk`                     | C0  | `PkBfv`               | Commit to individual BFV public key           |
-| `sk_share_computation`   | C2a | `SkShareComputation`  | Secret-key track Shamir shares (`y`)          |
-| `e_sm_share_computation` | C2b | `ESmShareComputation` | Smudging-noise track Shamir shares (`y`)      |
-| `share_encryption`       | C3  | `ShareEncryption`     | BFV encryption of shares under recipient keys |
-| `share_decryption`       | C4  | `DkgShareDecryption`  | Decrypt shares; aggregate; commitments for P4 |
+| Path                                            | ID  | `CircuitName`                            | Role                                                   |
+| ----------------------------------------------- | --- | ---------------------------------------- | ------------------------------------------------------ |
+| `pk`                                            | C0  | `PkBfv`                                  | Commit to individual BFV public key                    |
+| `sk_share_computation`                          | C2a | `SkShareComputation`                     | trBFV: verifies the secret-key chunk chain             |
+| `e_sm_share_computation`                        | C2b | `ESmShareComputation`                    | trBFV: verifies the smudging-noise chunk chain         |
+| `sk_share_computation_chain`, `_chain_last`     | C2a | `SkShareComputationChain`, `…ChainLast`  | trBFV: secret-key Shamir-share coefficient chunk       |
+| `e_sm_share_computation_chain`, `_chain_last`   | C2b | `ESmShareComputationChain`, `…ChainLast` | trBFV: smudging-noise Shamir-share coefficient chunk   |
+| `sk_share_computation_chunk`                    | C2a | `SkShareComputationChunk`                | l-BFV: secret-key Shamir-share coefficient chunk (`y`) |
+| `esm_share_computation_chunk`                   | C2b | `ESmShareComputationChunk`               | l-BFV: smudging-noise coefficient chunk (`y`)          |
+| `share_encryption`                              | C3  | `ShareEncryption`                        | BFV encryption of shares under recipient keys          |
+| `share_decryption`                              | C4  | `DkgShareDecryption`                     | Decrypt shares; aggregate; commitments for P4          |
+| `share_decryption_limb_0`, `_limb_1`, `_limb_2` | C4  | `DkgShareDecryptionLimb0` … `Limb2`      | trBFV: C4 for one CRT limb                             |
 
 ### Threshold (`bin/threshold/`)
 
-| Path                           | ID  | `CircuitName`                | Role                                              |
-| ------------------------------ | --- | ---------------------------- | ------------------------------------------------- |
-| `pk_generation`                | C1  | `PkGeneration`               | Threshold public-key contribution                 |
-| `pk_aggregation`               | C5  | `PkAggregation`              | Aggregate contributions into threshold public key |
-| `user_data_encryption`         | P3  | —                            | User ciphertext: both legs over one `u`           |
-| `share_decryption`             | C6  | `ThresholdShareDecryption`   | Partial decryption share                          |
-| `decrypted_shares_aggregation` | C7  | `DecryptedSharesAggregation` | Combine shares; CRT; decode                       |
+| Path                                                                   | ID         | `CircuitName`                | Role                                                                                              |
+| ---------------------------------------------------------------------- | ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `pk_generation`                                                        | C1         | `PkGeneration`               | Threshold public-key contribution                                                                 |
+| `pk_aggregation`                                                       | C5         | `PkAggregation`              | Aggregate contributions into threshold public key                                                 |
+| `user_data_encryption`                                                 | P3         | —                            | trBFV user ciphertext: both legs over one `u` in one circuit                                      |
+| `user_data_encryption_chunked`                                         | P3 wrapper | —                            | l-BFV user ciphertext: verifies the chunked ct0 and ct1 legs, shared `u` root                     |
+| `user_data_encryption_ct0_chunked`, `user_data_encryption_ct1_chunked` | P3         | —                            | l-BFV leg top-level circuits over `ct*_chunk_main`, `ct*_pk_ct_commit`, `ct*_eval_chunk_identity` |
+| `share_decryption`                                                     | C6         | `ThresholdShareDecryption`   | Partial decryption share                                                                          |
+| `decrypted_shares_aggregation`                                         | C7         | `DecryptedSharesAggregation` | Combine shares; CRT; decode                                                                       |
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
@@ -96,7 +105,7 @@ From the repository root:
 ```bash
 pnpm build:circuits                # compile circuits, verification keys, artifacts
 pnpm noir:lint                    # nargo fmt --check; nargo check (skipped if nargo absent)
-pnpm noir:test                    # nargo test: lib, decryption_aggregator, dkg_aggregator and node_fold (3 preset/committee pairs); nargo execute: config
+pnpm noir:test                    # every package with Noir tests, l-BFV presets and committee matrix; nargo execute: config
 ```
 
 Pin **nargo** and **bb** to the versions in `crates/zk/prover` and `versions.json`. For local work,

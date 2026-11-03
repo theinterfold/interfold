@@ -2,8 +2,8 @@
 
 `bfv_protocol.json` contains exact ABI bytes, parameter hashes, and configuration IDs for current
 threshold presets and the indexer's historical v1 parameter sets. The current records use registry
-indices 0 and 2. Historical records retain their original indices 0 and 1; they are not current
-runtime presets.
+indices 0, 2, 3, and 4. Historical records retain their original indices 0 and 1; they are not
+current runtime presets.
 
 The vectors were calculated independently with ethers v6 `AbiCoder`, `id`, and `keccak256`:
 

@@ -32,8 +32,11 @@ export function validateCommitteeSize(value: number | CommitteeSize): CommitteeS
 }
 
 export enum ParamSet {
-  Insecure64 = 0,
+  /** Insecure l-BFV preset (N=128). Test-only; not cryptographically secure. */
+  Insecure = 0,
+  // 1 is retired: no preset uses it.
   Secure8192 = 2,
+  Secure16384 = 3,
 }
 
 export interface E3 {

@@ -6,7 +6,12 @@ import {
   activeBfvConfigForChain,
   bfvConfigsForChain,
   bfvDecExpectedPublicInputsLen,
+  bfvPkExpectedPublicInputsLen,
+  bfvPkV2PublicInputLayout,
+  getBfvV2SubCircuitVkHashPaths,
   getBfvVkCommitments,
+  isLbfvParamSet,
+  readVkRecursiveHash,
 } from "../utils";
 
 export function equalAddress(
@@ -73,6 +78,11 @@ export async function validateBfvRoutes(
     "BfvDecryptionVerifierRouter",
     installed.decryptionVerifier,
   );
+  equalAddress(
+    await pkRouter.ciphernodeRegistry(),
+    installed.registry,
+    "PK router registry",
+  );
   equalValue(await pkRouter.h(), verifierDefault.h, "PK router default h");
   equalValue(
     await decryptionRouter.threshold(),
@@ -103,10 +113,29 @@ export async function validateBfvRoutes(
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    equalAddress(pkRoute[0], recorded.pkVerifier, `PK route ${index}`);
+    // Parameter sets 3 and 4 run the l-BFV path, which the V2 PK verifier and aggregator serve.
+    const isV2 = isLbfvParamSet(expected.paramSet);
+    const expectedPkVerifier = isV2
+      ? recorded.pkVerifierV2
+      : recorded.pkVerifier;
+    if (!expectedPkVerifier) {
+      throw new Error(`Recorded BFV route ${index} is missing its V2 verifier`);
+    }
+    equalAddress(pkRoute[0], expectedPkVerifier, `PK route ${index}`);
+    equalValue(
+      pkRoute[3],
+      expected.paramSet,
+      `PK route ${index} parameter set`,
+    );
     equalValue(
       pkRoute[1],
-      3 * expected.h + 6,
+      // secure-16384 compiles six l-BFV rows, one per CRT modulus; insecure compiles three.
+      isV2
+        ? bfvPkV2PublicInputLayout(
+            expected.h,
+            expected.preset === "secure-16384" ? 6 : 3,
+          ).length
+        : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
     );
     equalAddress(
@@ -121,8 +150,8 @@ export async function validateBfvRoutes(
     );
 
     const pkVerifier = await ethers.getContractAt(
-      "BfvPkVerifier",
-      recorded.pkVerifier,
+      isV2 ? "BfvPkVerifierV2" : "BfvPkVerifier",
+      expectedPkVerifier,
     );
     const decryptionVerifier = await ethers.getContractAt(
       "BfvDecryptionVerifier",
@@ -134,11 +163,26 @@ export async function validateBfvRoutes(
       expected.t,
       `decryption route ${index} threshold`,
     );
+    const expectedDkgAggregator = isV2
+      ? recorded.dkgAggregatorV2Verifier
+      : recorded.dkgAggregatorVerifier;
+    if (!expectedDkgAggregator) {
+      throw new Error(
+        `Recorded BFV route ${index} is missing its DKG aggregator verifier`,
+      );
+    }
     equalAddress(
       await pkVerifier.circuitVerifier(),
-      recorded.dkgAggregatorVerifier,
+      expectedDkgAggregator,
       `PK route ${index} aggregator`,
     );
+    if (isV2) {
+      equalAddress(
+        await pkVerifier.ciphernodeRegistry(),
+        installed.registry,
+        `PK route ${index} registry`,
+      );
+    }
     equalAddress(
       await decryptionVerifier.circuitVerifier(),
       recorded.decryptionAggregatorVerifier,
@@ -152,10 +196,21 @@ export async function validateBfvRoutes(
     const commitments = getBfvVkCommitments(expected);
     equalValue(
       pkRoute[2],
-      commitments.nodesFold,
+      isV2
+        ? readVkRecursiveHash(
+            getBfvV2SubCircuitVkHashPaths(expected).nodesFold,
+            expected,
+          )
+        : commitments.nodesFold,
       `PK route ${index} nodes-fold VK`,
     );
-    equalValue(pkRoute[3], commitments.c5, `PK route ${index} C5 VK`);
+    if (!isV2) {
+      equalValue(
+        await pkVerifier.expectedC5KeyHash(),
+        commitments.c5,
+        `PK route ${index} C5 VK`,
+      );
+    }
     equalValue(
       decryptionRoute[2],
       commitments.c6Fold,

@@ -10,6 +10,7 @@ use fhe::bfv::BfvParameters;
 use fhe_math::zq::Modulus;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
+use num_traits::ToPrimitive;
 use thiserror::Error;
 
 /// Errors from computing the k0_i batch of modular inverses.
@@ -59,11 +60,26 @@ pub fn calculate_bit_width(bound: &BigUint) -> u32 {
     bound.bits().max(1) as u32
 }
 
-/// Return the bit width of centered ring coefficients.
-pub fn compute_modulus_bit(params: &BfvParameters) -> u32 {
+/// Return the bit width of centered coefficients under a DKG key, which no circuit sums packed.
+pub fn compute_dkg_modulus_bit(params: &BfvParameters) -> u32 {
     let moduli = params.moduli();
     let bound = moduli.iter().copied().max().unwrap().saturating_sub(1) / 2;
     (u64::BITS - bound.leading_zeros()).max(1)
+}
+
+/// Return the bit width of centered threshold ring coefficients.
+///
+/// This width also sets the nibble-aligned packing layout. A width on a nibble boundary would pack
+/// centered values narrower than the canonical shares, one bit wider, and leave the aggregation
+/// circuits too small a carry for the committee, so it takes the next bit. Circuits still range
+/// check against the exact bound.
+pub fn compute_modulus_bit(params: &BfvParameters) -> u32 {
+    let bit = compute_dkg_modulus_bit(params);
+    if bit.is_multiple_of(4) {
+        bit + 1
+    } else {
+        bit
+    }
 }
 
 /// Return max_l bits(q_l - 1) for native CRT coefficients in [0, q_l).
@@ -79,6 +95,26 @@ pub fn compute_native_crt_coeff_bit(moduli: &[u64]) -> u32 {
 pub fn compute_msg_bit(params: &BfvParameters) -> u32 {
     let bound = params.plaintext().saturating_sub(1);
     (u64::BITS - bound.leading_zeros()).max(1)
+}
+
+/// Return the absolute coefficient bound of the BFV error sampler for `variance`.
+///
+/// Variances up to 16 use the centered binomial sampler with bound `2 * variance`. Larger
+/// variances use the uniform sampler, whose bound `b` is the smallest with `b * (b + 1) >= 3 * variance`.
+pub fn error_sampler_bound(variance: &BigUint) -> BigUint {
+    if let Some(value) = variance.to_u64().filter(|value| *value <= 16) {
+        return BigUint::from(2 * value);
+    }
+
+    let target = BigUint::from(3u32) * variance;
+    let mut bound = target.sqrt();
+    while &bound * (&bound + 1u32) < target {
+        bound += 1u32;
+    }
+    while bound > 0u32.into() && (&bound - 1u32) * &bound >= target {
+        bound -= 1u32;
+    }
+    bound
 }
 
 #[cfg(test)]
@@ -148,6 +184,18 @@ mod tests {
     }
 
     #[test]
+    fn centered_and_canonical_widths_share_a_packing_nibble() {
+        for preset in crate::BfvPreset::PAIR_PRESETS {
+            let (threshold, _) = crate::build_pair_for_preset(preset).unwrap();
+            assert_eq!(
+                compute_modulus_bit(&threshold).div_ceil(4),
+                compute_native_crt_coeff_bit(threshold.moduli()).div_ceil(4),
+                "{preset:?}"
+            );
+        }
+    }
+
+    #[test]
     fn calculate_bit_width_handles_zero_and_positive_bounds() {
         for (bound, expected) in [(0u32, 1), (1, 1), (2, 2), (3, 2), (4, 3), (7, 3), (8, 4)] {
             assert_eq!(calculate_bit_width(&BigUint::from(bound)), expected);
@@ -173,5 +221,17 @@ mod tests {
         ] {
             assert_eq!(compute_native_crt_coeff_bit(&moduli), expected);
         }
+    }
+
+    #[test]
+    fn error_sampler_bound_matches_cbd_and_uniform_variance_rules() {
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(16u32)),
+            BigUint::from(32u32)
+        );
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(13_334u32)),
+            BigUint::from(200u32)
+        );
     }
 }

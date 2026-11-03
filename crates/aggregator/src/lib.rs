@@ -14,6 +14,8 @@
 mod actors;
 mod domain;
 pub mod ext;
+#[path = "public_key_aggregation/lbfv_aggregation_state.rs"]
+pub mod lbfv_aggregation_state;
 mod repo;
 #[cfg(test)]
 mod test_support;
@@ -25,4 +27,6 @@ pub use actors::{
     PublicKeyAggregatorState, ThresholdPlaintextAggregatorRecoveryState,
     ThresholdPlaintextAggregatorState, VerifyingC6,
 };
+pub use domain::lbfv_contribution_collection::*;
+pub use lbfv_aggregation_state::*;
 pub use repo::*;

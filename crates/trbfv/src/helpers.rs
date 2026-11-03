@@ -7,11 +7,8 @@
 use crate::shares::ShamirShare;
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
+use fhe::bfv::{self, BfvParameters, SecretKey};
 use fhe::mbfv::PublicKeyShare;
-use fhe::{
-    bfv::{self, BfvParameters, SecretKey},
-    trbfv::{Lambda, SmudgingBoundCalculator, SmudgingBoundCalculatorConfig},
-};
 use fhe_math::rq::{Ntt, Poly, PowerBasis, RepresentationTag};
 use fhe_traits::DeserializeWithContext;
 use fhe_traits::Serialize as FheSerialize;
@@ -22,11 +19,18 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
+use zeroize::Zeroize;
 
 /// Simple serialization wrapper for SecretKey coefficients.
 #[derive(SerdeSerialize, SerdeDeserialize)]
 struct SecretKeyData {
     coeffs: Box<[i64]>,
+}
+
+impl Drop for SecretKeyData {
+    fn drop(&mut self) {
+        self.coeffs.zeroize();
+    }
 }
 
 /// Serialize a BFV SecretKey to bytes.
@@ -77,11 +81,16 @@ pub fn calculate_error_size(
     params: Arc<bfv::BfvParameters>,
     n: usize,
     num_ciphertexts: usize,
-    lambda: Lambda,
+    mult_depth: u32,
+    lambda: usize,
 ) -> Result<BigUint> {
-    let config = SmudgingBoundCalculatorConfig::new(params, n, num_ciphertexts, lambda)?;
-    let calculator = SmudgingBoundCalculator::new(config);
-    Ok(calculator.calculate_sm_bound()?)
+    Ok(e3_fhe_params::calculate_smudging_bound(
+        params,
+        n,
+        num_ciphertexts,
+        mult_depth,
+        lambda,
+    )?)
 }
 
 pub fn stringify_poly<R: RepresentationTag>(name: &str, poly: &Poly<R>) -> String {

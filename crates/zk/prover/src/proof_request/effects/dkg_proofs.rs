@@ -2,7 +2,7 @@
 
 //! Dispatch C0 and threshold-share proof work and route compute results.
 
-use crate::utils::total_expected_for;
+use crate::utils::{proves_c1, total_expected_for};
 
 use super::*;
 
@@ -87,6 +87,7 @@ impl ProofRequestActor {
             e3_id.clone(),
             msg.full_share.clone(),
             ec.clone(),
+            proves_c1(msg.proof_request.params_preset),
             sk_enc_count,
             e_sm_enc_count,
             msg.recipient_party_ids,

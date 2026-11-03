@@ -4,16 +4,35 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Public IO layout for [`CircuitName::NodeFold`] (must stay aligned with `node_fold/src/main.nr`).
+//! Public IO layout of the node fold proofs (must stay aligned with the `node_fold`,
+//! `node_fold_chunked` and `node_fold_v2` mains). The trBFV path's [`CircuitName::NodeFold`] ends
+//! with the SK/ESM aggregate commitments. The l-BFV path's [`CircuitName::NodeFoldChunked`] folds
+//! no C1: it drops C1's key hash and public key, adds two C2 chunk hashes after the key hash, and
+//! ends with the C2a secret root and a recursive VK manifest after the commitments.
+//! [`CircuitName::NodeFoldV2`] wraps it behind a prefix.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
 use e3_events::{DkgFoldAggCommits, Proof};
 use e3_zk_config::CircuitName;
 
+/// `generation_key_hash`, `node_fold_key_hash`, `party_id`.
+pub const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 3;
+
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
     11 + n + 2 * (n + h) * l
+}
+
+/// Total public field count for `node_fold_chunked`: `node_fold`'s without C1's key hash and
+/// public key, plus the two C2 chunk hashes, the C2a secret root and the VK manifest.
+pub fn node_fold_chunked_public_field_count(n: usize, h: usize, l: usize) -> usize {
+    node_fold_public_field_count(n, h, l) - 2 + 4
+}
+
+/// Total public field count for the V2 node fold.
+pub fn node_fold_v2_public_field_count(n: usize, h: usize, l: usize) -> usize {
+    NODE_FOLD_V2_PUBLIC_PREFIX_LEN + node_fold_chunked_public_field_count(n, h, l) + 3 + (3 * l)
 }
 
 fn field_hex_to_bytes32(field: &str) -> Result<[u8; 32], ZkError> {
@@ -44,24 +63,38 @@ pub fn extract_node_fold_agg_commits(
     committee_h: usize,
     n_moduli: usize,
 ) -> Result<(u64, DkgFoldAggCommits), ZkError> {
-    if proof.circuit != CircuitName::NodeFold {
-        return Err(ZkError::InvalidInput(format!(
-            "expected NodeFold proof, got {}",
-            proof.circuit
-        )));
-    }
+    // (party_id index, field count, sk commitment index); the ESM commitment follows the SK one.
+    let chunked = node_fold_chunked_public_field_count(committee_n, committee_h, n_moduli);
+    let (party_idx, expected, sk_commitment_idx) = match proof.circuit {
+        CircuitName::NodeFold => {
+            let count = node_fold_public_field_count(committee_n, committee_h, n_moduli);
+            (0, count, count - 2)
+        }
+        CircuitName::NodeFoldChunked => (0, chunked, chunked - 4),
+        CircuitName::NodeFoldV2 => (
+            NODE_FOLD_V2_PUBLIC_PREFIX_LEN,
+            node_fold_v2_public_field_count(committee_n, committee_h, n_moduli),
+            NODE_FOLD_V2_PUBLIC_PREFIX_LEN + chunked - 4,
+        ),
+        other => {
+            return Err(ZkError::InvalidInput(format!(
+                "expected a node fold proof, got {other}"
+            )))
+        }
+    };
     let fields = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    let expected = node_fold_public_field_count(committee_n, committee_h, n_moduli);
     if fields.len() != expected {
         return Err(ZkError::InvalidInput(format!(
-            "NodeFold public field count {} != expected {} (n={committee_n}, h={committee_h}, l={n_moduli})",
+            "{} public field count {} != expected {} (n={committee_n}, h={committee_h}, l={n_moduli})",
+            proof.circuit,
             fields.len(),
             expected
         )));
     }
-    let party_id = field_hex_to_u64(&fields[0])?;
-    let sk_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 2])?;
-    let esm_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 1])?;
+    let party_id = field_hex_to_u64(&fields[party_idx])?;
+    let esm_commitment_idx = sk_commitment_idx + 1;
+    let sk_agg_commit = field_hex_to_bytes32(&fields[sk_commitment_idx])?;
+    let esm_agg_commit = field_hex_to_bytes32(&fields[esm_commitment_idx])?;
     Ok((
         party_id,
         DkgFoldAggCommits {
@@ -106,5 +139,78 @@ mod tests {
         assert_eq!(party_id, 2);
         assert_eq!(commits.sk_agg_commit, [0x11; 32]);
         assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+    }
+
+    #[test]
+    fn extracts_legacy_commitments_from_the_v2_prefix() {
+        let n = 3usize;
+        let h = 2usize;
+        let l = 5usize;
+        let legacy_field_count = node_fold_chunked_public_field_count(n, h, l);
+        let field_count = node_fold_v2_public_field_count(n, h, l);
+
+        let mut fields = vec![[0u8; 32]; field_count];
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN][31] = 2;
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 4] = [0x11; 32];
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 3] = [0x22; 32];
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 2] = [0x55; 32]; // C2a root
+        fields[field_count - 3] = [0x33; 32];
+        fields[field_count - 2] = [0x44; 32];
+
+        let mut public_signals = Vec::with_capacity(field_count * 32);
+        for field in fields {
+            public_signals.extend_from_slice(&field);
+        }
+
+        let proof = Proof::new(
+            CircuitName::NodeFoldV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        let (party_id, commits) =
+            extract_node_fold_agg_commits(&proof, n, h, l).expect("extract should succeed");
+        assert_eq!(party_id, 2);
+        assert_eq!(commits.sk_agg_commit, [0x11; 32]);
+        assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+    }
+
+    #[test]
+    fn extracts_commitments_before_the_chunked_manifest() {
+        let (n, h, l) = (3usize, 2usize, 3usize);
+        let field_count = node_fold_chunked_public_field_count(n, h, l);
+        let mut fields = vec![[0u8; 32]; field_count];
+        fields[0][31] = 1;
+        fields[field_count - 4] = [0x11; 32];
+        fields[field_count - 3] = [0x22; 32];
+        fields[field_count - 2] = [0x44; 32]; // C2a secret root
+        fields[field_count - 1] = [0x33; 32]; // VK manifest
+        let public_signals = fields.into_iter().flatten().collect::<Vec<_>>();
+        let proof = Proof::new(
+            CircuitName::NodeFoldChunked,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        let (party_id, commits) =
+            extract_node_fold_agg_commits(&proof, n, h, l).expect("extract should succeed");
+        assert_eq!(party_id, 1);
+        assert_eq!(commits.sk_agg_commit, [0x11; 32]);
+        assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+
+        // The same signals under the trBFV circuit name have the wrong length.
+        let proof = Proof::new(
+            CircuitName::NodeFold,
+            ArcBytes::from_bytes(&[]),
+            proof.public_signals.clone(),
+        );
+        assert!(extract_node_fold_agg_commits(&proof, n, h, l).is_err());
+    }
+
+    #[test]
+    fn v2_field_count_uses_the_preset_row_count() {
+        assert_eq!(node_fold_chunked_public_field_count(3, 2, 5), 66);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 61);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 87);
     }
 }

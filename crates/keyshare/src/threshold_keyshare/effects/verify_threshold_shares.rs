@@ -186,6 +186,8 @@ impl ThresholdKeyshare {
             pre_dishonest,
             params_preset: self.share_enc_preset,
             committee_size,
+            lbfv_context: None,
+            verification_id: None,
         });
         let dispatch_id = EventId::hash(&dispatch);
         self.bus.publish(dispatch, ec.clone())?;

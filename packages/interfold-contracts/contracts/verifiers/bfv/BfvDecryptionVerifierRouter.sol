@@ -6,6 +6,7 @@
 pragma solidity 0.8.28;
 
 import { IDecryptionVerifier } from "../../interfaces/IDecryptionVerifier.sol";
+import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 import { BfvProtocol } from "../../lib/BfvProtocol.sol";
 import { BfvDecryptionLayout } from "../../lib/BfvDecryptionLayout.sol";
 
@@ -14,27 +15,48 @@ interface IBfvDecryptionVerifierRoute is IDecryptionVerifier {
     function expectedC7KeyHash() external view returns (bytes32);
 }
 
-/// @notice Dispatches BFV decryption proofs to the verifier that matches their VK anchors.
+/// @notice Dispatches BFV decryption proofs to the verifier that matches the E3 parameter set and
+///         VK anchors. The trBFV and l-BFV paths prove C7 with different circuits, so a route
+///         accepts only E3s on its own parameter set.
 contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
     error EmptyVerifierRoutes();
+    error InvalidRegistry(address registry);
+    error InvalidRouteParamSets();
     error InvalidVerifierRoute(address verifier);
+    error ParamSetRouteMismatch(uint8 paramSet);
 
     struct Route {
         IBfvDecryptionVerifierRoute verifier;
         uint256 expectedPublicInputsLen;
         bytes32 expectedC6FoldKeyHash;
         bytes32 expectedC7KeyHash;
+        uint8 expectedParamSet;
     }
 
     /// @notice Default reconstruction threshold used by Interfold verifier admission checks.
     uint256 public immutable override threshold;
 
+    /// @notice Registry used to resolve the parameter set frozen for an E3.
+    ICiphernodeRegistry public immutable ciphernodeRegistry;
+
     Route[] private routes;
 
-    constructor(address[] memory verifiers, uint256 defaultThreshold) {
+    constructor(
+        address _ciphernodeRegistry,
+        address[] memory verifiers,
+        uint8[] memory expectedParamSets,
+        uint256 defaultThreshold
+    ) {
+        if (_ciphernodeRegistry.code.length == 0) {
+            revert InvalidRegistry(_ciphernodeRegistry);
+        }
         if (verifiers.length == 0 || defaultThreshold == 0) {
             revert EmptyVerifierRoutes();
         }
+        if (verifiers.length != expectedParamSets.length) {
+            revert InvalidRouteParamSets();
+        }
+        ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
         threshold = defaultThreshold;
 
         for (uint256 i = 0; i < verifiers.length; ++i) {
@@ -53,7 +75,8 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
                     expectedPublicInputsLen: BfvDecryptionLayout
                         .publicInputsLength(routeThreshold),
                     expectedC6FoldKeyHash: route.expectedC6FoldKeyHash(),
-                    expectedC7KeyHash: route.expectedC7KeyHash()
+                    expectedC7KeyHash: route.expectedC7KeyHash(),
+                    expectedParamSet: expectedParamSets[i]
                 })
             );
         }
@@ -72,7 +95,8 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             address verifier,
             uint256 expectedPublicInputsLen,
             bytes32 expectedC6FoldKeyHash,
-            bytes32 expectedC7KeyHash
+            bytes32 expectedC7KeyHash,
+            uint8 expectedParamSet
         )
     {
         Route storage route = routes[index];
@@ -80,7 +104,8 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             address(route.verifier),
             route.expectedPublicInputsLen,
             route.expectedC6FoldKeyHash,
-            route.expectedC7KeyHash
+            route.expectedC7KeyHash,
+            route.expectedParamSet
         );
     }
 
@@ -93,17 +118,34 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
         bytes32 ciphertextCommitment,
         bytes calldata proof
     ) external view override returns (bool success) {
-        (bytes memory rawProof, bytes32[] memory publicInputs) = abi.decode(
+        IBfvDecryptionVerifierRoute verifier = _selectVerifier(e3Id, proof);
+        return
+            verifier.verify(
+                e3Id,
+                decryptionDomain,
+                plaintextOutputHash,
+                committeeHash,
+                ciphertextCommitment,
+                proof
+            );
+    }
+
+    function _selectVerifier(
+        uint256 e3Id,
+        bytes calldata proof
+    ) private view returns (IBfvDecryptionVerifierRoute) {
+        (, bytes32[] memory publicInputs) = abi.decode(
             proof,
             (bytes, bytes32[])
         );
-        rawProof;
 
         if (publicInputs.length <= BfvProtocol.DEC_C7_KEY_HASH_IDX) {
             revert InvalidPublicInputsLength();
         }
 
+        uint8 paramSet = ciphernodeRegistry.interfold().getE3(e3Id).paramSet;
         bool lengthMatched;
+        bool anchorsMatched;
         for (uint256 i = 0; i < routes.length; ++i) {
             Route storage route = routes[i];
             if (publicInputs.length != route.expectedPublicInputsLen) {
@@ -118,17 +160,14 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             ) {
                 continue;
             }
-            return
-                route.verifier.verify(
-                    e3Id,
-                    decryptionDomain,
-                    plaintextOutputHash,
-                    committeeHash,
-                    ciphertextCommitment,
-                    proof
-                );
+            anchorsMatched = true;
+            if (paramSet != route.expectedParamSet) {
+                continue;
+            }
+            return route.verifier;
         }
 
+        if (anchorsMatched) revert ParamSetRouteMismatch(paramSet);
         if (lengthMatched) revert VkHashMismatch();
         revert InvalidPublicInputsLength();
     }

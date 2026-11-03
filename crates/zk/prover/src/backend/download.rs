@@ -25,8 +25,42 @@ const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small", "large"];
 /// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
 const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 
-// Release validation and installation use the same per-configuration inventory.
+// Release validation and installation use the same per-configuration inventory: the circuits
+// that both protocol paths use, plus the circuits of each path that the preset directory serves.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
+const REQUIRED_TRBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-trbfv.json");
+const REQUIRED_LBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-lbfv.json");
+
+/// Whether the preset artifact directory `preset_dir` serves an l-BFV preset.
+fn is_lbfv_preset_dir(preset_dir: &str) -> bool {
+    e3_fhe_params::BfvPreset::PAIR_PRESETS
+        .iter()
+        .any(|preset| e3_fhe_params::supports_lbfv(*preset) && preset.artifacts_dir() == preset_dir)
+}
+
+/// Whether the preset artifact directory `preset_dir` serves only l-BFV presets (secure-16384).
+fn is_lbfv_only_preset_dir(preset_dir: &str) -> bool {
+    is_lbfv_preset_dir(preset_dir)
+        && e3_fhe_params::BfvPreset::PAIR_PRESETS
+            .iter()
+            .filter(|preset| preset.artifacts_dir() == preset_dir)
+            .all(|preset| e3_fhe_params::supports_lbfv(*preset))
+}
+
+/// The artifacts every pair of `preset_dir` must contain.
+fn required_artifacts(preset_dir: &str) -> Vec<&'static str> {
+    let inventory = |json: &'static str| -> Vec<&'static str> {
+        serde_json::from_str(json).expect("invalid required circuit artifact inventory")
+    };
+    let mut required = inventory(REQUIRED_ARTIFACTS);
+    if !is_lbfv_only_preset_dir(preset_dir) {
+        required.extend(inventory(REQUIRED_TRBFV_ARTIFACTS));
+    }
+    if is_lbfv_preset_dir(preset_dir) {
+        required.extend(inventory(REQUIRED_LBFV_ARTIFACTS));
+    }
+    required
+}
 
 fn supported_configurations() -> Vec<(&'static str, &'static str)> {
     serde_json::from_str(include_str!("../../supported-configurations.json"))
@@ -455,8 +489,6 @@ async fn verify_circuits_dir(
         );
     }
 
-    let required: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
-        .expect("invalid required circuit artifact inventory");
     let mut configurations: HashSet<PathBuf> = required_configurations
         .iter()
         .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
@@ -476,7 +508,13 @@ async fn verify_circuits_dir(
         }
     }
     for configuration in configurations {
-        for artifact in &required {
+        let preset_dir = configuration
+            .strip_prefix(circuits_dir)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .and_then(|component| component.as_os_str().to_str())
+            .unwrap_or_default();
+        for artifact in required_artifacts(preset_dir) {
             let path = configuration.join(artifact);
             if !path.is_file() {
                 return Err(ZkError::CircuitNotFound(
@@ -627,12 +665,11 @@ mod tests {
     }
 
     fn fixture_artifacts() -> Vec<String> {
-        let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
         supported_configurations()
             .into_iter()
             .flat_map(|(preset, committee)| {
-                artifacts
-                    .iter()
+                required_artifacts(preset)
+                    .into_iter()
                     .map(move |artifact| format!("{preset}/{committee}/{artifact}"))
             })
             .collect()
@@ -736,7 +773,7 @@ mod tests {
     }
 
     async fn seed_installation(backend: &ZkBackend) -> Vec<u8> {
-        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
+        for configuration in ["insecure/minimum", "secure-8192/small"] {
             write_file(
                 &backend.circuits_dir,
                 &format!("{configuration}/default/dkg/pk/pk.json"),
@@ -758,7 +795,7 @@ mod tests {
 
     fn assert_installation_unchanged(backend: &ZkBackend, version: &[u8]) {
         assert_eq!(fs::read(backend.version_file()).unwrap(), version);
-        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
+        for configuration in ["insecure/minimum", "secure-8192/small"] {
             assert_eq!(
                 fs::read(
                     backend
@@ -777,7 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_complete_manifest() {
-        let rel_path = "insecure-64/minimum/default/dkg/pk/pk.vk";
+        let rel_path = "insecure/minimum/default/dkg/pk/pk.vk";
         let valid_manifest = fixture_manifest(b"circuit");
         let mut uncovered = valid_manifest.clone();
         uncovered.remove(rel_path);
@@ -835,10 +872,10 @@ mod tests {
     #[tokio::test]
     async fn download_rejects_artifacts_omitted_from_archive_and_manifest() {
         for omitted in [
-            "insecure-64/minimum/default/dkg/pk/pk.vk",
-            "insecure-64/minimum/recursive/threshold/share_decryption/share_decryption.json",
-            "insecure-64/minimum/evm/recursive_aggregation/dkg_aggregator/dkg_aggregator.vk",
-            "insecure-64/minimum/default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
+            "insecure/minimum/default/dkg/pk/pk.vk",
+            "insecure/minimum/recursive/threshold/share_decryption/share_decryption.json",
+            "insecure/minimum/evm/recursive_aggregation/dkg_aggregator/dkg_aggregator.vk",
+            "insecure/minimum/default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
         ] {
             let temp = TempDir::new().unwrap();
             let mut backend = test_backend(&temp);
@@ -866,35 +903,41 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_all_release_configurations() {
-        let temp = TempDir::new().unwrap();
-        let mut backend = test_backend(&temp);
-        let previous_version = seed_installation(&backend).await;
-        let mut manifest = fixture_manifest(b"circuit");
-        let artifacts = fixture_artifacts();
-        let omitted: Vec<&str> = artifacts
-            .iter()
-            .filter(|path| path.starts_with("secure-8192/small/"))
-            .map(String::as_str)
-            .collect();
-        for path in &omitted {
-            manifest.remove(*path);
+        for missing_pair in [
+            "secure-8192/small/",
+            "secure-16384/micro/",
+            "secure-16384/small/",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let mut backend = test_backend(&temp);
+            let previous_version = seed_installation(&backend).await;
+            let mut manifest = fixture_manifest(b"circuit");
+            let artifacts = fixture_artifacts();
+            let omitted: Vec<&str> = artifacts
+                .iter()
+                .filter(|path| path.starts_with(missing_pair))
+                .map(String::as_str)
+                .collect();
+            for path in &omitted {
+                manifest.remove(*path);
+            }
+            let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
+            backend
+                .config
+                .circuits_checksums
+                .insert("candidate".into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+
+            assert!(
+                matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with(missing_pair)),
+                "{result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
         }
-        let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
-        backend
-            .config
-            .circuits_checksums
-            .insert("candidate".into(), sha256_hex(&archive));
-        let (url, server) = serve_archive(archive).await;
-        backend.config.circuits_download_url = url;
-
-        let result = backend.download_circuits().await;
-        server.await.unwrap();
-
-        assert!(
-            matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with("secure-8192/small/")),
-            "{result:?}"
-        );
-        assert_installation_unchanged(&backend, &previous_version);
     }
 
     #[tokio::test]
@@ -931,7 +974,7 @@ mod tests {
             fs::read(
                 backend
                     .circuits_dir
-                    .join("insecure-64/minimum/default/dkg/pk/pk.json")
+                    .join("insecure/minimum/default/dkg/pk/pk.json")
             )
             .unwrap(),
             b"circuit"
@@ -979,7 +1022,7 @@ mod tests {
             fs::read(
                 backend
                     .circuits_dir
-                    .join("insecure-64/minimum/default/dkg/pk/pk.json")
+                    .join("insecure/minimum/default/dkg/pk/pk.json")
             )
             .unwrap(),
             b"previous-circuit"
@@ -1086,7 +1129,7 @@ mod tests {
         );
         assert_eq!(fs::read(backend.version_file()).unwrap(), previous_version);
         let recovery_dir = staging_dir.unwrap();
-        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
+        for configuration in ["insecure/minimum", "secure-8192/small"] {
             assert_eq!(
                 fs::read(recovery_dir.join(format!(
                     "previous-circuits/{configuration}/default/dkg/pk/pk.json"
@@ -1098,6 +1141,40 @@ mod tests {
         assert_eq!(
             fs::read(recovery_dir.join("previous-circuits/installed.txt")).unwrap(),
             b"installed"
+        );
+    }
+
+    #[test]
+    fn each_preset_dir_requires_the_artifacts_of_the_paths_it_serves() {
+        let inventory =
+            |json: &'static str| -> Vec<&'static str> { serde_json::from_str(json).unwrap() };
+        let shared = inventory(REQUIRED_ARTIFACTS);
+        let trbfv = inventory(REQUIRED_TRBFV_ARTIFACTS);
+        let lbfv = inventory(REQUIRED_LBFV_ARTIFACTS);
+        assert!(!shared.is_empty() && !trbfv.is_empty() && !lbfv.is_empty());
+        let both = [shared.clone(), trbfv.clone(), lbfv.clone()].concat();
+        assert_eq!(required_artifacts("insecure"), both);
+        assert_eq!(
+            required_artifacts("secure-8192"),
+            [shared.clone(), trbfv].concat()
+        );
+        assert_eq!(required_artifacts("secure-16384"), [shared, lbfv].concat());
+        let c5 = "default/threshold/pk_aggregation/pk_aggregation.json";
+        assert!(required_artifacts("insecure").contains(&c5));
+        assert!(required_artifacts("secure-8192").contains(&c5));
+        assert!(!required_artifacts("secure-16384").contains(&c5));
+        // Secure-16384 proves C7 with the wide circuit only; the bounded C7 does not hold there.
+        let narrow_c7 =
+            "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.json";
+        let wide_c7 =
+            "default/threshold/decrypted_shares_aggregation_wide/decrypted_shares_aggregation_wide.json";
+        assert!(!required_artifacts("secure-16384").contains(&narrow_c7));
+        assert!(required_artifacts("secure-16384").contains(&wide_c7));
+        assert!(required_artifacts("insecure").contains(&narrow_c7));
+        assert_eq!(
+            both.iter().collect::<HashSet<_>>().len(),
+            both.len(),
+            "an artifact is listed in more than one inventory"
         );
     }
 
@@ -1119,7 +1196,7 @@ mod tests {
         let artifacts = fixture_artifacts();
         let omitted: Vec<&str> = artifacts
             .iter()
-            .filter(|path| !path.starts_with("insecure-64/minimum/"))
+            .filter(|path| !path.starts_with("insecure/minimum/"))
             .map(String::as_str)
             .collect();
         for path in &omitted {
@@ -1144,7 +1221,7 @@ mod tests {
         backend
             .install_circuits_archive_for_configurations(
                 &archive_path,
-                &[("insecure-64", "minimum")],
+                &[("insecure", "minimum")],
                 true,
             )
             .await
@@ -1164,11 +1241,11 @@ mod tests {
 
         let installed_circuit = backend
             .circuits_dir
-            .join("insecure-64/minimum/default/dkg/pk/pk.json");
+            .join("insecure/minimum/default/dkg/pk/pk.json");
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         write_file(
             &backend.circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             b"previous-circuit",
         );
 
@@ -1192,7 +1269,7 @@ mod tests {
         let artifacts = fixture_artifacts();
         let omitted: Vec<&str> = artifacts
             .iter()
-            .filter(|path| !path.starts_with("insecure-64/minimum/"))
+            .filter(|path| !path.starts_with("insecure/minimum/"))
             .map(String::as_str)
             .collect();
         for path in &omitted {
@@ -1200,7 +1277,7 @@ mod tests {
         }
         let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
         fs::write(&archive_path, &archive).unwrap();
-        let configurations = [("insecure-64", "minimum")];
+        let configurations = [("insecure", "minimum")];
         let pinned_to = |digest: String, dir: &TempDir| {
             let base_dir = dir.path().join("noir");
             ZkBackend::with_config(
@@ -1275,13 +1352,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
-        write_file(circuits_dir, "insecure-64/default/dkg/pk/pk.json", contents);
+        write_file(circuits_dir, "insecure/default/dkg/pk/pk.json", contents);
         let hash = sha256_hex(contents);
 
-        let path =
-            locate_manifest_artifact(circuits_dir, "insecure-64/default/dkg/pk/pk.json", &hash)
-                .await
-                .unwrap();
+        let path = locate_manifest_artifact(circuits_dir, "insecure/default/dkg/pk/pk.json", &hash)
+            .await
+            .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), contents);
     }
@@ -1294,23 +1370,16 @@ mod tests {
         let small = b"small";
         write_file(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             minimum,
         );
-        write_file(
-            circuits_dir,
-            "insecure-64/small/default/dkg/pk/pk.json",
-            small,
-        );
+        write_file(circuits_dir, "insecure/small/default/dkg/pk/pk.json", small);
         let small_hash = sha256_hex(small);
 
-        let path = locate_manifest_artifact(
-            circuits_dir,
-            "insecure-64/default/dkg/pk/pk.json",
-            &small_hash,
-        )
-        .await
-        .unwrap();
+        let path =
+            locate_manifest_artifact(circuits_dir, "insecure/default/dkg/pk/pk.json", &small_hash)
+                .await
+                .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), small);
     }
@@ -1322,14 +1391,14 @@ mod tests {
         let contents = b"minimum";
         write_file(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             contents,
         );
         let hash = sha256_hex(contents);
 
         let path = locate_manifest_artifact(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             &hash,
         )
         .await

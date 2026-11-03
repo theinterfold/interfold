@@ -6,7 +6,9 @@
 
 //! Static circuit configuration and public-input layout contracts.
 
+pub mod chunks;
 pub mod circuit;
+pub mod committee;
 pub mod constants;
 pub mod dkg;
 pub mod field;

@@ -36,6 +36,7 @@ fn c6_completion(
     let result = ShareVerificationComplete {
         e3_id: aggregator.e3_id.clone(),
         kind: VerificationKind::ThresholdDecryptionProofs,
+        verification_id: None,
         dishonest_parties,
     };
     let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -220,7 +221,7 @@ fn test_ciphertexts() -> Vec<ArcBytes> {
     use std::sync::LazyLock;
     static CIPHERTEXTS: LazyLock<Vec<ArcBytes>> = LazyLock::new(|| {
         let (params, _) =
-            e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+            e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         let key = PublicKey::new(&SecretKey::random(&params, &mut rng), &mut rng);
         [1u64, 2]
@@ -247,7 +248,7 @@ fn share_with_matching_commitment(
     use fhe_math::rq::{Poly, PowerBasis};
     use fhe_traits::Serialize;
 
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThreshold;
     let (params, _) = e3_fhe_params::build_pair_for_preset(preset).unwrap();
     let poly = Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
     let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
@@ -306,14 +307,14 @@ async fn build_plaintext_aggregator_with_role(
     E3id,
 )> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let aggregator = ThresholdPlaintextAggregator::new(
         ThresholdPlaintextAggregatorParams {
             bus: bus.clone(),
             sortition: start_sortition(&bus),
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
             proof_aggregation_enabled,
             initial_is_aggregator,

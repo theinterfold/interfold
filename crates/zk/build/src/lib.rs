@@ -5,7 +5,9 @@ mod bindings;
 mod configuration;
 mod identity;
 mod layouts;
+mod lbfv;
 pub mod metadata;
+mod policy;
 mod toolchain;
 mod vk_commitments;
 mod vk_tree;
@@ -25,6 +27,58 @@ use std::{
 };
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small", "large"];
+// The presets a build can select. Both insecure protocol labels share the degree-128 artifact and
+// Noir module identity; `InsecureThreshold64` is the degree-64 trBFV set.
+const BUILD_PRESETS: [BfvPreset; 5] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::InsecureThreshold,
+    BfvPreset::InsecureThresholdLbfv,
+    BfvPreset::SecureThreshold8192,
+    BfvPreset::SecureThreshold16384,
+];
+// One preset per artifact archive and Noir configuration module.
+const ARTIFACT_PRESETS: [BfvPreset; 4] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::InsecureThreshold,
+    BfvPreset::SecureThreshold8192,
+    BfvPreset::SecureThreshold16384,
+];
+// The `large` committee serves the trBFV presets only; the l-BFV presets have no smudging widths
+// for it.
+#[cfg(test)]
+const TRBFV_ARTIFACT_PRESETS: [BfvPreset; 2] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::SecureThreshold8192,
+];
+
+/// The artifact presets whose circuits are built for `committee`.
+#[cfg(test)]
+fn committee_presets(committee: CiphernodesCommitteeSize) -> &'static [BfvPreset] {
+    if committee == CiphernodesCommitteeSize::Large {
+        &TRBFV_ARTIFACT_PRESETS
+    } else {
+        &ARTIFACT_PRESETS
+    }
+}
+
+/// Whether `committee` has the shared smudging-width module, which only the l-BFV presets need.
+fn committee_has_smudging(committee: CiphernodesCommitteeSize) -> bool {
+    committee != CiphernodesCommitteeSize::Large
+}
+
+// The development/CI pair whose Honk verifiers occupy `honk/` itself; other pairs coexist below it
+// as `honk/<preset>/<committee>/`. `scripts/circuits/verifiers.ts` pins the same pair.
+const CANONICAL_VERIFIER_PAIR: [&str; 2] = ["insecure", "minimum"];
+
+/// The directory that holds a pair's generated Honk Solidity verifiers.
+fn honk_verifier_dir(root: &Path, preset: &str, committee: &str) -> PathBuf {
+    let base = root.join("packages/interfold-contracts/contracts/verifiers/bfv/honk");
+    if [preset, committee] == CANONICAL_VERIFIER_PAIR {
+        base
+    } else {
+        base.join(preset).join(committee)
+    }
+}
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
     let path = root.join("scripts/circuits/build-pairs.json");
@@ -274,7 +328,7 @@ impl Request {
     }
     pub fn selected_pairs(&self, root: &Path) -> Result<Vec<[String; 2]>> {
         if let PresetSelection::Single(preset) = self.preset {
-            if !BfvPreset::PAIR_PRESETS.contains(&preset) {
+            if !BUILD_PRESETS.contains(&preset) {
                 bail!("Unsupported build preset: {preset:?}");
             }
         }
@@ -372,21 +426,29 @@ impl fmt::Display for CommitteeSelection {
 fn preset(value: &str) -> Result<BfvPreset> {
     match value {
         "insecure-64" => Ok(BfvPreset::InsecureThreshold64),
+        "insecure" => Ok(BfvPreset::InsecureThreshold),
+        "insecure-lbfv" => Ok(BfvPreset::InsecureThresholdLbfv),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
+        "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
         _ => bail!("Select one supported preset, not {value}"),
     }
 }
 fn tier(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold64 => "insecure",
-        BfvPreset::SecureThreshold8192 => "secure",
+        BfvPreset::InsecureThreshold64
+        | BfvPreset::InsecureThreshold
+        | BfvPreset::InsecureThresholdLbfv
+        | BfvPreset::SecureThreshold8192
+        | BfvPreset::SecureThreshold16384 => preset.noir_config_module(),
         _ => unreachable!("build selects threshold presets"),
     }
 }
 fn preset_name(preset: BfvPreset) -> &'static str {
     match preset {
         BfvPreset::InsecureThreshold64 => "insecure-64",
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
         BfvPreset::SecureThreshold8192 => "secure-8192",
+        BfvPreset::SecureThreshold16384 => "secure-16384",
         _ => unreachable!("build selects threshold presets"),
     }
 }

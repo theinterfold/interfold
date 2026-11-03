@@ -36,6 +36,12 @@ impl AccusationVoting {
             }
         };
 
+        // Only multirow proof types (l-BFV row proofs) carry a non-zero proof instance.
+        if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
+            warn!("Ignoring accusation with an invalid proof instance");
+            return;
+        }
+
         let accusation_id = Self::accusation_id(&accusation);
 
         // Peers that detect the same fault accuse with their own windows; converge on the latest.
@@ -45,7 +51,11 @@ impl AccusationVoting {
         }
 
         // Determine our position based on our local verification state.
-        let key = (accusation.accused, accusation.proof_type);
+        let identity = ProofIdentity {
+            proof_type: accusation.proof_type,
+            instance: accusation.proof_instance,
+        };
+        let key = (accusation.accused, identity);
         let our_data_hash = if let Some(received) = self.received_data.get(&key) {
             if received.verification_passed {
                 info!(
@@ -151,7 +161,8 @@ impl AccusationVoting {
                     accusation_id,
                     data_hash,
                     accused: key.0,
-                    proof_type: key.1,
+                    proof_type: key.1.proof_type,
+                    proof_instance: key.1.instance,
                     evidence,
                 },
             );

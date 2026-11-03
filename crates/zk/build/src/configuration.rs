@@ -41,25 +41,31 @@ impl PresetMaterial {
     }
 }
 
-/// The parameter material for both supported presets of one operation. Every renderer reuses it;
+/// The parameter material for supported presets of one operation. Every renderer reuses it;
 /// nothing rebuilds a preset pair inside an operation.
 pub struct OperationParams {
+    insecure64: PresetMaterial,
     insecure: PresetMaterial,
     secure: PresetMaterial,
+    secure16384: PresetMaterial,
 }
 
 impl OperationParams {
     pub fn both() -> Result<Self> {
         Ok(Self {
-            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
+            insecure64: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
+            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold)?,
             secure: PresetMaterial::new(BfvPreset::SecureThreshold8192)?,
+            secure16384: PresetMaterial::new(BfvPreset::SecureThreshold16384)?,
         })
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
-        if preset == BfvPreset::InsecureThreshold64 {
-            &self.insecure
-        } else {
-            &self.secure
+        match preset {
+            BfvPreset::InsecureThreshold64 => &self.insecure64,
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => &self.insecure,
+            BfvPreset::SecureThreshold8192 => &self.secure,
+            BfvPreset::SecureThreshold16384 => &self.secure16384,
+            _ => unreachable!("build selects threshold presets"),
         }
     }
 }
@@ -143,6 +149,14 @@ pub const BOUND_SOURCES: &[(&str, &str)] = &[
     ("dkg.nr", "SHARE_COMPUTATION_"),
 ];
 
+// The chunk grid belongs to the module generator, not committee-dependent C2 bounds.
+pub const CHUNK_GLOBALS: &[&str] = &[
+    "SHARE_COMPUTATION_CHUNK_SIZE",
+    "SHARE_COMPUTATION_N_CHUNKS",
+    "SHARE_COMPUTATION_CHUNKS_PER_BATCH",
+    "SHARE_COMPUTATION_N_BATCHES",
+];
+
 /// Find the complete declaration, including arrays and formatted multi-line values.
 pub fn declarations(source: &str) -> BTreeMap<String, String> {
     let regex = Regex::new(r"(?m)^pub global ([A-Z0-9_]+):").unwrap();
@@ -184,6 +198,9 @@ pub fn replace_declarations(
     let mut updated = original.to_string();
     let mut count = 0;
     for (name, declaration) in &fresh {
+        if CHUNK_GLOBALS.contains(&name.as_str()) {
+            continue;
+        }
         if !name.starts_with(prefix) && !common.contains(&name.as_str()) {
             continue;
         }
@@ -205,7 +222,7 @@ pub fn replace_declarations(
             bail!("No {prefix} constants generated");
         }
         for name in old.keys().filter(|name| name.starts_with(prefix)) {
-            if !fresh.contains_key(name) {
+            if !CHUNK_GLOBALS.contains(&name.as_str()) && !fresh.contains_key(name) {
                 bail!("{name} is not generated; remove it or generate it");
             }
         }
@@ -311,9 +328,12 @@ pub fn preset_updates(
         ),
         (
             "threshold.nr",
+            // The chunked globals share this prefix, so one strict pass owns both families.
             "USER_DATA_ENCRYPTION_",
             vec![],
-            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?,
+            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?
+                + &threshold::user_data_encryption_chunked::Configs::new(&material.threshold)?
+                    .render()?,
         ),
         (
             "threshold.nr",
@@ -357,8 +377,9 @@ pub fn preset_updates(
         declarations(&threshold_source.3)["THRESHOLD_SHARE_DECRYPTION_BIT_SK"].clone();
     let mut pending = BTreeMap::new();
     for (file, prefix, common, mut generated) in sources {
-        // Only the secure preset exposes these legacy public search globals.
-        if prefix == "PARAMS_SEARCH_" && preset == BfvPreset::InsecureThreshold64 {
+        // Only secure-8192 derives these legacy public search globals from its search recipe; the
+        // insecure and secure-16384 values are reviewed declarations, not recipe outputs.
+        if prefix == "PARAMS_SEARCH_" && preset != BfvPreset::SecureThreshold8192 {
             continue;
         }
         let path = root
@@ -398,7 +419,88 @@ pub fn preset_updates(
             replace_declarations(&text, &generated, prefix, &common, true)?,
         );
     }
+    let threshold_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("threshold.nr");
+    let additional = super::lbfv::threshold_constants(preset, &material.threshold, committee)?;
+    let mut text = pending
+        .remove(&threshold_path)
+        .context("threshold configuration")?;
+    for prefix in ["LBFV_PK_GENERATION_", "RLK_GENERATION_", "RLK_AGGREGATION_"] {
+        text = replace_declarations(&text, &additional, prefix, &[], false)?;
+    }
+    pending.insert(threshold_path, text);
+    let dkg_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("dkg.nr");
+    let mut text = pending.remove(&dkg_path).context("DKG configuration")?;
+    let old = declarations(&text);
+    for (name, generated) in declarations(&super::lbfv::chunk_grid(material.threshold.degree())) {
+        let current = old
+            .get(&name)
+            .with_context(|| format!("Missing chunk-grid declaration {name}"))?;
+        if compact(current) != compact(&generated) {
+            text = text.replacen(current, &generated, 1);
+        }
+    }
+    pending.insert(dkg_path, text);
+    pending.extend(super::lbfv::public_randomness(
+        root,
+        preset,
+        &material.threshold,
+    )?);
     Ok(pending.into_iter().collect())
+}
+
+/// The committee's shared smudging widths, if it has them.
+pub fn smudging_files(
+    committee: CiphernodesCommitteeSize,
+    params: &OperationParams,
+) -> Result<Vec<(PathBuf, String)>> {
+    if !super::committee_has_smudging(committee) {
+        return Ok(Vec::new());
+    }
+    // Only the residue width: the smudging bound itself exceeds the field at secure-16384, and the
+    // circuits read it from the preset configuration (C1's bound or the C2b split).
+    let mut smudging = format!("{HEADER}//\n// AUTO-GENERATED by `smudging_files`. DO NOT EDIT BY HAND.\n// Regenerate with `pnpm build:circuits --committee {committee}`.\n//\n// C1 and C2b must use the same smudging-noise width as Rust witness generation.\n\n");
+    for preset in super::ARTIFACT_PRESETS {
+        let label = tier(preset).to_uppercase();
+        let config = threshold::pk_generation::Configs::new(
+            preset,
+            &params.get(preset).threshold,
+            committee,
+        )?;
+        smudging.push_str(&format!(
+            "pub global {label}_E_SM_BIT: u32 = {};\n",
+            config.bits.e_sm_bit
+        ));
+    }
+    Ok(vec![(
+        PathBuf::from(format!("{committee}/smudging.nr")),
+        smudging,
+    )])
+}
+
+/// `committee::active` for `committee`: it re-exports the smudging widths, if the committee has them.
+fn active_committee_source(committee: CiphernodesCommitteeSize) -> String {
+    let mut exports = String::new();
+    if super::committee_has_smudging(committee) {
+        let mut names: Vec<_> = super::ARTIFACT_PRESETS
+            .iter()
+            .map(|preset| format!("{}_E_SM_BIT", tier(*preset).to_uppercase()))
+            .collect();
+        // Sorted, as `nargo fmt` orders the imports.
+        names.sort_unstable();
+        exports.push_str(&format!(
+            "\npub use crate::configs::committee::@committee@::smudging::{{\n    {},\n}};\n",
+            names.join(", ")
+        ));
+    }
+    include_str!("../templates/committee_active.nr.in")
+        .replace("@exports@", &exports)
+        .replace("@committee@", &committee.to_string())
 }
 
 /// Pending generated selection files. Preparation reads sources but does not publish them.
@@ -461,11 +563,17 @@ pub fn prepare_selection(
         ),
         (
             root.join("circuits/lib/src/configs/committee/active.nr"),
-            include_str!("../templates/committee_active.nr.in")
-                .replace("@committee@", &committee.to_string()),
+            active_committee_source(committee),
         ),
     ];
     updates.extend(bindings::noir_sources(root));
+    for (relative, content) in smudging_files(committee, &params)? {
+        updates.push((
+            root.join("circuits/lib/src/configs/committee")
+                .join(relative),
+            content,
+        ));
+    }
     updates.extend(preset_updates(root, preset, committee, params.get(preset))?);
     Ok(Selection {
         noir: updates,
@@ -560,14 +668,24 @@ fn all_sources(root: &Path) -> Result<Selection> {
     let mut sources: BTreeMap<_, _> = selection.noir.into_iter().collect();
     // An unselected preset retains its canonical development declarations. Pair-specific checks
     // stage the requested committee instead of comparing all pairs with this one live library.
-    for preset in BfvPreset::PAIR_PRESETS {
-        let committee = if preset == active_preset {
+    // One preset per configuration directory: both insecure labels share `insecure`.
+    for preset in super::ARTIFACT_PRESETS {
+        let committee = if tier(preset) == tier(active_preset) {
             active_committee
         } else {
             CiphernodesCommitteeSize::Minimum
         };
         for (path, contents) in preset_updates(root, preset, committee, params.get(preset))? {
             sources.insert(path, contents);
+        }
+    }
+    for committee in CiphernodesCommitteeSize::ALL {
+        for (relative, contents) in smudging_files(committee, &params)? {
+            sources.insert(
+                root.join("circuits/lib/src/configs/committee")
+                    .join(relative),
+                contents,
+            );
         }
     }
     selection.noir = sources.into_iter().collect();

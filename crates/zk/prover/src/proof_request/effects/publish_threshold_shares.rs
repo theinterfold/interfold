@@ -13,14 +13,16 @@ impl ProofRequestActor {
         let party_id = pending.full_share.party_id;
         let ec = &pending.ec;
 
-        // Sign C1 (PkGeneration)
-        let Some(signed_pk_gen) = self.sign_proof(
-            e3_id,
-            ProofType::C1PkGeneration,
-            pending.pk_generation_proof.expect("checked"),
-        ) else {
-            error!("Failed to sign the local C1 proof; pending work is preserved");
-            return false;
+        // Sign C1 (PkGeneration). The l-BFV path proves no C1.
+        let signed_pk_gen = match pending.pk_generation_proof {
+            Some(proof) => {
+                let Some(signed) = self.sign_proof(e3_id, ProofType::C1PkGeneration, proof) else {
+                    error!("Failed to sign the local C1 proof; pending work is preserved");
+                    return false;
+                };
+                Some(signed)
+            }
+            None => None,
         };
 
         // Sign C2a (SkShareComputation)
@@ -75,15 +77,17 @@ impl ProofRequestActor {
         );
 
         // Publish local proof events for the node's own state tracking
-        if let Err(err) = self.bus.publish(
-            PkGenerationProofSigned {
-                e3_id: e3_id.clone(),
-                party_id,
-                signed_proof: signed_pk_gen,
-            },
-            ec.clone(),
-        ) {
-            error!("Failed to publish PkGenerationProofSigned: {err}");
+        if let Some(signed_pk_gen) = signed_pk_gen {
+            if let Err(err) = self.bus.publish(
+                PkGenerationProofSigned {
+                    e3_id: e3_id.clone(),
+                    party_id,
+                    signed_proof: signed_pk_gen,
+                },
+                ec.clone(),
+            ) {
+                error!("Failed to publish PkGenerationProofSigned: {err}");
+            }
         }
 
         if let Err(err) = self.bus.publish(

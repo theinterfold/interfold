@@ -75,6 +75,20 @@ impl Inputs {
             ));
         }
 
+        let dropped_non_zero = data
+            .message_vec
+            .iter()
+            .enumerate()
+            .skip(max_msg_non_zero_coeffs)
+            .filter(|(_, v)| **v != 0)
+            .count();
+        if dropped_non_zero > 0 {
+            return Err(WitnessError::Other(format!(
+                "message_vec has {} non-zero coefficient(s) at index >= MAX_MSG_NON_ZERO_COEFFS ({}); they would be silently dropped by truncation",
+                dropped_non_zero, max_msg_non_zero_coeffs
+            )));
+        }
+
         // The circuit takes exactly T+1 shares and T+1 party IDs, and the Lagrange weights pair
         // them by position. One polynomial more would copy into the witness unpaired and make it
         // the wrong shape; one party ID more would weight a share that does not exist.
@@ -86,14 +100,14 @@ impl Inputs {
                 threshold + 1
             )));
         }
-        if data.reconstructing_parties.len() != threshold + 1 {
+        let reconstructing_parties = &data.reconstructing_parties;
+        if reconstructing_parties.len() != threshold + 1 {
             return Err(WitnessError::Other(format!(
                 "reconstructing_parties.len() {} != threshold + 1 ({}); one party ID per polynomial",
-                data.reconstructing_parties.len(),
+                reconstructing_parties.len(),
                 threshold + 1
             )));
         }
-
         // Distinct ordered IDs in [1, N] have nonzero differences smaller than every
         // supported prime CRT modulus, so the in-circuit Lagrange denominators are invertible.
         if data

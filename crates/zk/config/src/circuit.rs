@@ -2,9 +2,14 @@
 
 //! Static circuit identity, prover variants, and public-signal layout selection.
 
-use crate::{
-    CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS, PK_AGGREGATION_OUTPUTS,
-    PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
+use crate::output_layout::{
+    CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_CHUNKED_OUTPUTS,
+    DKG_SHARE_DECRYPTION_OUTPUTS, LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS,
+    LBFV_PK_GENERATION_INPUTS, LBFV_PK_GENERATION_LIMB_INPUTS, LBFV_PK_GENERATION_LIMB_OUTPUTS,
+    LBFV_PK_GENERATION_OUTPUTS, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS,
+    RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS,
+    RLK_GENERATION_LIMB_INPUTS, RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS,
+    SHARE_ENCRYPTION_CHUNKED_INPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
     THRESHOLD_SHARE_DECRYPTION_INPUTS, THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
@@ -52,90 +57,159 @@ impl fmt::Display for CircuitVariant {
 }
 
 /// Circuit identifiers for ZK proofs.
+///
+/// Bincode encodes this enum by variant order. Do not reorder variants.
+/// Add new circuits at the end. Keep retired circuits for compatibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CircuitName {
     /// BFV public key proof (C0).
-    PkBfv,
+    PkBfv = 0,
     /// TrBFV public key share proof (C1).
-    PkGeneration,
-    /// Sk share computation inner proof (C2a, recursive).
-    SkShareComputation,
-    /// E_SM share computation inner proof (C2b, recursive).
-    ESmShareComputation,
+    PkGeneration = 1,
+    /// Single-proof SK share computation (C2a) on the trBFV path.
+    SkShareComputation = 2,
+    /// Single-proof ESM share computation (C2b) on the trBFV path.
+    ESmShareComputation = 3,
     /// Share encryption proof (C3).
-    ShareEncryption,
+    ShareEncryption = 4,
     /// DKG share decryption proof (C4).
-    DkgShareDecryption,
+    DkgShareDecryption = 5,
     /// Public key aggregation proof (C5).
-    PkAggregation,
+    PkAggregation = 6,
     /// Decryption share proof (C6).
-    ThresholdShareDecryption,
+    ThresholdShareDecryption = 7,
     /// Decrypted shares aggregation proof (C7).
-    DecryptedSharesAggregation,
+    DecryptedSharesAggregation = 8,
     /// Retired sequential C3 fold; C3 runs over Chonk. Kept so stored encodings keep their indices.
-    C3Fold,
+    C3Fold = 9,
     /// Retired `c3_fold` kernel. Kept so stored encodings keep their indices.
-    C3FoldKernel,
+    C3FoldKernel = 10,
     /// Retired sequential C6 fold; C6 runs over Chonk, and the C6 tree anchor keeps this name's
     /// artifact path. Kept so stored encodings keep their indices.
-    C6Fold,
+    C6Fold = 11,
     /// Retired `c6_fold` kernel. Kept so stored encodings keep their indices.
-    C6FoldKernel,
+    C6FoldKernel = 12,
     /// Ad-hoc recursive aggregation: C2a + C2b.
-    C2abFold,
+    C2abFold = 13,
     /// Ad-hoc: final sk C3 Chonk accumulator + final e_sm C3 Chonk accumulator.
-    C3abFold,
+    C3abFold = 14,
     /// Ad-hoc: C4a + C4b.
-    C4abFold,
+    C4abFold = 15,
     /// Per-node DKG fold (C0..C4 links).
-    NodeFold,
+    NodeFold = 16,
     /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
-    NodesFold,
+    NodesFold = 17,
     /// First step of a [`CircuitName::NodesFold`] chain: proves the first node proofs and starts the
     /// accumulator (same ABI; it verifies no accumulator).
-    NodesFoldKernel,
+    NodesFoldKernel = 18,
     /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
-    DkgAggregator,
+    DkgAggregator = 19,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
-    DecryptionAggregator,
+    DecryptionAggregator = 20,
     /// Chunked C2a: a chunk other than the last (non-ZK, verified by the final C2 circuit).
-    SkShareComputationChain,
+    SkShareComputationChain = 21,
     /// Chunked C2a: the last chunk.
-    SkShareComputationChainLast,
+    SkShareComputationChainLast = 22,
     /// Chunked C2b: a chunk other than the last.
-    ESmShareComputationChain,
+    ESmShareComputationChain = 23,
     /// Chunked C2b: the last chunk.
-    ESmShareComputationChainLast,
+    ESmShareComputationChainLast = 24,
     /// Chunked C4: CRT limb 0 (non-ZK, verified by the final C4 circuit).
-    DkgShareDecryptionLimb0,
+    DkgShareDecryptionLimb0 = 25,
     /// Chunked C4: CRT limb 1.
-    DkgShareDecryptionLimb1,
+    DkgShareDecryptionLimb1 = 26,
     /// Chunked C4: CRT limb 2.
-    DkgShareDecryptionLimb2,
+    DkgShareDecryptionLimb2 = 27,
     /// C3 Chonk stack app: verifies a batch of C3 proofs and writes their rows.
-    C3ChonkApp,
+    C3ChonkApp = 28,
     /// C3 Chonk stack kernel that verifies the app.
-    C3ChonkInitKernel,
+    C3ChonkInitKernel = 29,
     /// C3 Chonk stack kernel that verifies the init kernel.
-    C3ChonkTailKernel,
+    C3ChonkTailKernel = 30,
     /// C3 Chonk stack kernel that verifies the tail kernel and ends the stack.
-    C3ChonkHidingKernel,
+    C3ChonkHidingKernel = 31,
     /// Rollup proof of one C3 Chonk stack's Chonk proof.
-    C3ChonkTube,
+    C3ChonkTube = 32,
     /// Rollup proof merging a C3 Chonk accumulator or tube with a tube.
-    C3ChonkAccumulate,
+    C3ChonkAccumulate = 33,
     /// C6 Chonk stack app: verifies a decryption's `T + 1` C6 proofs and writes their columns.
-    C6ChonkApp,
+    C6ChonkApp = 34,
     /// C6 Chonk stack kernel that verifies the app.
-    C6ChonkInitKernel,
+    C6ChonkInitKernel = 35,
     /// C6 Chonk stack kernel that verifies the init kernel.
-    C6ChonkTailKernel,
+    C6ChonkTailKernel = 36,
     /// C6 Chonk stack kernel that verifies the tail kernel and ends the stack.
-    C6ChonkHidingKernel,
+    C6ChonkHidingKernel = 37,
     /// Rollup proof of the C6 Chonk stack's Chonk proof.
-    C6ChonkTube,
+    C6ChonkTube = 38,
     /// Closes the C6 tube's IPA claim; the decryption aggregator verifies it.
-    C6ChonkRoot,
+    C6ChonkRoot = 39,
+    /// SK coefficient-range proof used by the root-committed chunk pipeline.
+    SkShareComputationChunk = 40,
+    /// ESM coefficient-range proof used by the root-committed chunk pipeline.
+    ESmShareComputationChunk = 41,
+    /// Recursive batch of C2 chunk proofs.
+    C2ChunkBatch = 42,
+    /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
+    SkC2ChunkFinalize = 43,
+    /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
+    ESmC2ChunkFinalize = 44,
+    /// Combines type-bound terminal C2a and C2b chunk proofs.
+    C2abChunkFold = 45,
+    /// Row-level l-BFV relinearization-key generation proof.
+    RlkGeneration = 46,
+    /// Row-level l-BFV relinearization-key aggregation proof.
+    RlkAggregation = 47,
+    /// Row-level l-BFV public-key generation proof.
+    LbfvPkGeneration = 48,
+    /// Row-level threshold l-BFV public-key aggregation proof.
+    LbfvPkAggregation = 49,
+    /// Retired: the l-BFV relinearization-key row is proved directly by `RlkGeneration`; kept so
+    /// later variants keep their encoding.
+    RlkGenerationLimb = 50,
+    /// Secure-16384 fold of the five l-BFV generation rows.
+    LbfvGenerationFold = 51,
+    /// Genesis accumulator for [`CircuitName::LbfvGenerationFold`].
+    LbfvGenerationFoldKernel = 52,
+    /// Secure-16384 per-node fold with l-BFV generation commitments.
+    NodeFoldV2 = 53,
+    /// Secure-16384 cross-node fold with l-BFV generation commitments.
+    NodesFoldV2 = 54,
+    /// Genesis accumulator for [`CircuitName::NodesFoldV2`].
+    NodesFoldV2Kernel = 55,
+    /// Secure-16384 fold of the five l-BFV aggregation rows.
+    LbfvAggregationFold = 56,
+    /// Genesis accumulator for [`CircuitName::LbfvAggregationFold`].
+    LbfvAggregationFoldKernel = 57,
+    /// Secure-16384 DKG aggregator with l-BFV commitments.
+    DkgAggregatorV2 = 58,
+    /// Retired: the l-BFV public-key row is proved directly by `LbfvPkGeneration`; kept so later
+    /// variants keep their encoding.
+    LbfvPkGenerationLimb = 59,
+    /// Retired: the l-BFV path proves no C1; the row proofs bind `sk` and the C2b chunk leaves
+    /// bound `e_sm`. Kept so later variants keep their encoding.
+    PkGenerationChunked = 60,
+    /// C3 on the l-BFV path: commits the share as a chunk root keyed by party and modulus.
+    ShareEncryptionChunked = 61,
+    /// C4 on the l-BFV path: opens the decrypted shares against chunk-root commitments.
+    DkgShareDecryptionChunked = 62,
+    /// Retired sequential C3 fold over [`CircuitName::ShareEncryptionChunked`] proofs; the l-BFV
+    /// path proves C3 over Chonk. Kept so stored encodings keep their indices.
+    C3FoldChunked = 63,
+    /// Retired `c3_fold_chunked` kernel. Kept so stored encodings keep their indices.
+    C3FoldKernelChunked = 64,
+    /// [`CircuitName::C3abFold`] over the l-BFV C3 Chonk accumulators, with the VK manifest that
+    /// `dkg_aggregator_v2` binds.
+    C3abFoldChunked = 65,
+    /// Per-node DKG fold of the l-BFV path's C0..C4 proofs.
+    NodeFoldChunked = 66,
+    /// C7 for the l-BFV path, whose ciphertext modulus is wider than the bounded C7 supports.
+    DecryptedSharesAggregationWide = 67,
+    /// C4ab fold on the l-BFV path: its chunked C4 proofs expose no limb-key tree.
+    C4abFoldChunked = 68,
+    /// [`CircuitName::C3ChonkApp`] over [`CircuitName::ShareEncryptionChunked`] proofs, each bound
+    /// to its slot's party and modulus.
+    C3ChonkAppChunked = 69,
 }
 
 impl CircuitName {
@@ -181,28 +255,70 @@ impl CircuitName {
             CircuitName::C6ChonkHidingKernel => "c6_chonk_hiding_kernel",
             CircuitName::C6ChonkTube => "c6_chonk_tube",
             CircuitName::C6ChonkRoot => "c6_chonk_root",
+            CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
+            CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
+            CircuitName::C2ChunkBatch => "c2_chunk_batch",
+            CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
+            CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
+            CircuitName::C2abChunkFold => "c2ab_chunk_fold",
+            CircuitName::RlkGeneration => "rlk_generation",
+            CircuitName::RlkAggregation => "rlk_aggregation",
+            CircuitName::LbfvPkGeneration => "lbfv_pk_generation",
+            CircuitName::LbfvPkAggregation => "lbfv_pk_aggregation",
+            CircuitName::RlkGenerationLimb => "rlk_generation_limb",
+            CircuitName::LbfvGenerationFold => "lbfv_generation_fold",
+            CircuitName::LbfvGenerationFoldKernel => "lbfv_generation_fold_kernel",
+            CircuitName::NodeFoldV2 => "node_fold_v2",
+            CircuitName::NodesFoldV2 => "nodes_fold_v2",
+            CircuitName::NodesFoldV2Kernel => "nodes_fold_v2_kernel",
+            CircuitName::LbfvAggregationFold => "lbfv_aggregation_fold",
+            CircuitName::LbfvAggregationFoldKernel => "lbfv_aggregation_fold_kernel",
+            CircuitName::DkgAggregatorV2 => "dkg_aggregator_v2",
+            CircuitName::LbfvPkGenerationLimb => "lbfv_pk_generation_limb",
+            CircuitName::PkGenerationChunked => "pk_generation_chunked",
+            CircuitName::ShareEncryptionChunked => "share_encryption_chunked",
+            CircuitName::DkgShareDecryptionChunked => "share_decryption_chunked",
+            CircuitName::C3FoldChunked => "c3_fold_chunked",
+            CircuitName::C3FoldKernelChunked => "c3_fold_kernel_chunked",
+            CircuitName::C3abFoldChunked => "c3ab_fold_chunked",
+            CircuitName::NodeFoldChunked => "node_fold_chunked",
+            CircuitName::DecryptedSharesAggregationWide => "decrypted_shares_aggregation_wide",
+            CircuitName::C4abFoldChunked => "c4ab_fold_chunked",
+            CircuitName::C3ChonkAppChunked => "c3_chonk_app_chunked",
         }
     }
 
     pub fn group(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputation => "dkg",
-            CircuitName::ESmShareComputation => "dkg",
-            CircuitName::SkShareComputationChain
+            CircuitName::SkShareComputation
+            | CircuitName::ESmShareComputation
+            | CircuitName::SkShareComputationChunk
+            | CircuitName::ESmShareComputationChunk
+            | CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
             | CircuitName::ESmShareComputationChainLast
+            | CircuitName::ShareEncryption
+            | CircuitName::ShareEncryptionChunked
+            | CircuitName::DkgShareDecryption
             | CircuitName::DkgShareDecryptionLimb0
             | CircuitName::DkgShareDecryptionLimb1
-            | CircuitName::DkgShareDecryptionLimb2 => "dkg",
-            CircuitName::ShareEncryption => "dkg",
-            CircuitName::DkgShareDecryption => "dkg",
-            CircuitName::PkGeneration => "threshold",
+            | CircuitName::DkgShareDecryptionLimb2
+            | CircuitName::DkgShareDecryptionChunked => "dkg",
+            CircuitName::PkGeneration | CircuitName::PkGenerationChunked => "threshold",
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
-            CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::DecryptedSharesAggregation
+            | CircuitName::DecryptedSharesAggregationWide => "threshold",
+            CircuitName::RlkGeneration
+            | CircuitName::RlkAggregation
+            | CircuitName::LbfvPkGeneration
+            | CircuitName::LbfvPkGenerationLimb
+            | CircuitName::LbfvPkAggregation
+            | CircuitName::RlkGenerationLimb => "threshold",
             CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkAppChunked
             | CircuitName::C3ChonkInitKernel
             | CircuitName::C3ChonkTailKernel
             | CircuitName::C3ChonkHidingKernel
@@ -212,6 +328,10 @@ impl CircuitName {
             | CircuitName::C6ChonkHidingKernel => "chonk",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkBatch
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -225,7 +345,20 @@ impl CircuitName {
             | CircuitName::C3ChonkTube
             | CircuitName::C3ChonkAccumulate
             | CircuitName::C6ChonkTube
-            | CircuitName::C6ChonkRoot => "recursive_aggregation",
+            | CircuitName::C6ChonkRoot
+            | CircuitName::LbfvGenerationFold
+            | CircuitName::LbfvGenerationFoldKernel
+            | CircuitName::NodeFoldV2
+            | CircuitName::NodesFoldV2
+            | CircuitName::NodesFoldV2Kernel
+            | CircuitName::LbfvAggregationFold
+            | CircuitName::LbfvAggregationFoldKernel
+            | CircuitName::DkgAggregatorV2
+            | CircuitName::C3FoldChunked
+            | CircuitName::C3FoldKernelChunked
+            | CircuitName::C3abFoldChunked
+            | CircuitName::NodeFoldChunked
+            | CircuitName::C4abFoldChunked => "recursive_aggregation",
         }
     }
 
@@ -241,14 +374,40 @@ impl CircuitName {
             CircuitName::PkBfv => CircuitOutputLayout::Fixed {
                 fields: PK_BFV_OUTPUTS,
             },
-            CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
-                fields: PK_GENERATION_OUTPUTS,
+            CircuitName::PkGeneration | CircuitName::PkGenerationChunked => {
+                CircuitOutputLayout::Fixed {
+                    fields: PK_GENERATION_OUTPUTS,
+                }
+            }
+            CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPkGenerationLimb => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_LIMB_OUTPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_OUTPUTS,
+            },
+            CircuitName::RlkGeneration => CircuitOutputLayout::Fixed {
+                fields: RLK_GENERATION_OUTPUTS,
+            },
+            CircuitName::RlkGenerationLimb => CircuitOutputLayout::Fixed {
+                fields: RLK_GENERATION_LIMB_OUTPUTS,
+            },
+            CircuitName::RlkAggregation => CircuitOutputLayout::Fixed {
+                fields: RLK_AGGREGATION_OUTPUTS,
             },
             CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
                 CircuitOutputLayout::Dynamic
             }
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
+                CircuitOutputLayout::None
+            }
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
+            },
+            CircuitName::DkgShareDecryptionChunked => CircuitOutputLayout::Fixed {
+                fields: DKG_SHARE_DECRYPTION_CHUNKED_OUTPUTS,
             },
             CircuitName::PkAggregation => CircuitOutputLayout::Fixed {
                 fields: PK_AGGREGATION_OUTPUTS,
@@ -256,12 +415,19 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption => CircuitOutputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
             },
-            CircuitName::ShareEncryption => CircuitOutputLayout::Fixed {
-                fields: SHARE_ENCRYPTION_OUTPUTS,
-            },
-            CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
+            CircuitName::ShareEncryption | CircuitName::ShareEncryptionChunked => {
+                CircuitOutputLayout::Fixed {
+                    fields: SHARE_ENCRYPTION_OUTPUTS,
+                }
+            }
+            CircuitName::DecryptedSharesAggregation
+            | CircuitName::DecryptedSharesAggregationWide => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkBatch
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -272,6 +438,19 @@ impl CircuitName {
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
             | CircuitName::DecryptionAggregator
+            | CircuitName::LbfvGenerationFold
+            | CircuitName::LbfvGenerationFoldKernel
+            | CircuitName::NodeFoldV2
+            | CircuitName::NodesFoldV2
+            | CircuitName::NodesFoldV2Kernel
+            | CircuitName::LbfvAggregationFold
+            | CircuitName::LbfvAggregationFoldKernel
+            | CircuitName::DkgAggregatorV2
+            | CircuitName::C3FoldChunked
+            | CircuitName::C3FoldKernelChunked
+            | CircuitName::C3abFoldChunked
+            | CircuitName::NodeFoldChunked
+            | CircuitName::C4abFoldChunked
             | CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
@@ -280,6 +459,7 @@ impl CircuitName {
             | CircuitName::DkgShareDecryptionLimb1
             | CircuitName::DkgShareDecryptionLimb2
             | CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkAppChunked
             | CircuitName::C3ChonkInitKernel
             | CircuitName::C3ChonkTailKernel
             | CircuitName::C3ChonkHidingKernel
@@ -294,11 +474,32 @@ impl CircuitName {
         }
     }
 
-    /// Public input layout for C3 and C6 circuits (fields at the start of public_signals).
+    /// Public input layout for circuits with tracked fields at the start of public_signals.
     pub fn input_layout(&self) -> CircuitInputLayout {
         match self {
+            CircuitName::LbfvPkGeneration => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_INPUTS,
+            },
+            CircuitName::LbfvPkGenerationLimb => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_LIMB_INPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_INPUTS,
+            },
+            CircuitName::RlkGeneration => CircuitInputLayout::Fixed {
+                fields: RLK_GENERATION_INPUTS,
+            },
+            CircuitName::RlkGenerationLimb => CircuitInputLayout::Fixed {
+                fields: RLK_GENERATION_LIMB_INPUTS,
+            },
+            CircuitName::RlkAggregation => CircuitInputLayout::Fixed {
+                fields: RLK_AGGREGATION_INPUTS,
+            },
             CircuitName::ShareEncryption => CircuitInputLayout::Fixed {
                 fields: SHARE_ENCRYPTION_INPUTS,
+            },
+            CircuitName::ShareEncryptionChunked => CircuitInputLayout::Fixed {
+                fields: SHARE_ENCRYPTION_CHUNKED_INPUTS,
             },
             CircuitName::ThresholdShareDecryption => CircuitInputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_INPUTS,

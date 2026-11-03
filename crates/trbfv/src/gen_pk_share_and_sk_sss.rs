@@ -12,18 +12,20 @@ use crate::{
 };
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_fhe_params::LambdaConfig;
+use e3_fhe_params::{generate_smudging_error, LambdaConfig};
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
     mbfv::{CommonRandomPoly, PublicKeyShare},
-    trbfv::{ShareManager, TRBFV},
+    trbfv::ShareManager,
 };
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::Serialize as FheSerialize;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use tracing::info;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GenPkShareAndSkSssRequest {
@@ -36,6 +38,8 @@ pub struct GenPkShareAndSkSssRequest {
     pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
+    /// Multiplicative depth for l-BFV smudging noise computation.
+    pub mult_depth: u32,
 }
 
 struct InnerRequest {
@@ -43,6 +47,7 @@ struct InnerRequest {
     pub crp: CommonRandomPoly,
     pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
+    pub mult_depth: u32,
 }
 
 impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
@@ -55,6 +60,7 @@ impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
             crp,
             lambda: value.lambda,
             num_ciphertexts: value.num_ciphertexts,
+            mult_depth: value.mult_depth,
         })
     }
 }
@@ -126,29 +132,40 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         num_ciphernodes, threshold
     );
     let sk_share = SecretKey::random(&params, rng);
-    let (pk_share, intermediates) =
-        PublicKeyShare::new_with_intermediates(&sk_share, crp.clone(), rng)?;
+    let (pk0_share, _, mut sk_poly, error) =
+        PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
+    sk_poly.zeroize();
+    let error = Zeroizing::new(error);
+    let pk0_share_raw = ArcBytes::from_bytes(&pk0_share.to_bytes());
+    let pk_share = PublicKeyShare::deserialize(&pk0_share_raw, &params, crp)?;
 
     // Generate smudging noise
-    let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
-    let share_manager_for_esm =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, 0, lambda, rng)?;
-    let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
+    let esi_coeffs = generate_smudging_error(
+        params.clone(),
+        num_ciphernodes as usize,
+        req.num_ciphertexts,
+        req.mult_depth,
+        lambda,
+        rng,
+    )?;
+    let e_sm_rns = Poly::<PowerBasis>::from_bigints(&esi_coeffs, params.context_at_level(0)?)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
-    let pk0_share_raw = ArcBytes::from_bytes(&pk_share.to_bytes());
-    let eek_raw = ArcBytes::from_bytes(&intermediates.error().to_bytes());
+    let eek_raw = ArcBytes::from_bytes(&error.to_bytes());
 
-    let mut share_manager =
+    let share_manager =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
 
     let sk_poly = share_manager.coeffs_to_poly_level0(sk_share.coeffs.clone().as_ref())?;
     let sk_raw = ArcBytes::from_bytes(&sk_poly.to_bytes());
 
-    info!("gen_pk_share_and_sk_sss:generate_secret_shares_from_poly...");
-    let sk_sss = SharedSecret::from(share_manager.generate_secret_shares_from_poly(sk_poly, rng)?);
+    info!("gen_pk_share_and_sk_sss:generate_secret_key_shares...");
+    let sk_sss = SharedSecret::from(
+        share_manager
+            .generate_secret_key_shares(sk_poly, rng)?
+            .into_transport(),
+    );
 
     (
         InnerResponse {

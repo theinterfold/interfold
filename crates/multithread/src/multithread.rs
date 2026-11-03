@@ -484,7 +484,7 @@ mod task_group_tests {
         let zk_request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 e3_utils::ArcBytes::default(),
-                BfvPreset::InsecureThreshold64,
+                BfvPreset::InsecureThreshold,
                 CiphernodesCommitteeSize::Minimum,
             )),
             e3_events::CorrelationId::new(),

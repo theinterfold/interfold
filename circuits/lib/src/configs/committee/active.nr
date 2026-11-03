@@ -21,3 +21,7 @@ pub global N_PARTIES: u32 = crate::configs::committee::minimum::N_PARTIES;
 pub global T: u32 = crate::configs::committee::minimum::T;
 /// Honest-party count expected during the DKG (`H <= N_PARTIES`).
 pub global H: u32 = crate::configs::committee::minimum::H;
+
+pub use crate::configs::committee::minimum::smudging::{
+    INSECURE_64_E_SM_BIT, INSECURE_E_SM_BIT, SECURE_16384_E_SM_BIT, SECURE_8192_E_SM_BIT,
+};

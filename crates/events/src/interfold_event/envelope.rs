@@ -464,6 +464,7 @@ mod tests {
                 e3_id: E3id::new("1", 1),
                 kind: kind.clone(),
                 dishonest_parties: Default::default(),
+                verification_id: None,
             }
             .into();
             let make_result = |batch: &str, ts| {

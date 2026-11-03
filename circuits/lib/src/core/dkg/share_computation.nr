@@ -309,7 +309,8 @@ pub fn check_range_bounds<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SH
 /// Bounds: the caller range-checks the shares to `[0, q_j)`. The secret column is below `2 q_j` in
 /// magnitude because the final C2 circuit opens C1's secret through a checked commitment and checks
 /// the chunks absorbed that same secret into their chain digest
-/// (`lib::core::dkg::share_computation_chain`). The weights sum to
+/// (`lib::core::dkg::share_computation_chain`); the l-BFV `*_share_computation_chunk` circuits
+/// instead commit their secret chunk for the l-BFV aggregation to bind. The weights sum to
 /// `2^(T + 1)` in absolute value, so a window's integer sum lies in `(-2^(T + 2) q_j, 2^(T + 2) q_j)`;
 /// the offset `2^(T + 2) q_j` makes it non-negative and its quotient below `2^(T + 3)`. Every term stays
 /// far below the field prime, so the field equation `sum + offset == quotient * q_j` is the integer
@@ -349,6 +350,25 @@ pub fn verify_shamir_finite_differences<let N: u32, let L: u32, let N_PARTIES: u
                 q_j.assert_zero_mod_bounded::<T + 3>(sum);
             }
         }
+    }
+}
+
+/// The centered representative of a residue `coefficient` modulo `q`: `coefficient` itself, or
+/// `coefficient - q`. The prover supplies the choice; the relation below pins the result to one of
+/// those two values, which agree modulo `q`. Callers rely only on that residue class (the l-BFV
+/// C2b leaf ties it to the bounded lifted noise); nothing downstream opens the choice itself.
+pub fn centered_residue(coefficient: Field, q: Field) -> Field {
+    // Safety: the assertion below constrains the hint to `coefficient` or `coefficient - q`.
+    let centered = unsafe { __centered_residue(coefficient, q) };
+    assert((coefficient - centered) * (coefficient - centered - q) == 0);
+    centered
+}
+
+unconstrained fn __centered_residue(coefficient: Field, q: Field) -> Field {
+    if (coefficient as u64) > (((q - 1) / 2) as u64) {
+        coefficient - q
+    } else {
+        coefficient
     }
 }
 
@@ -415,4 +435,12 @@ fn test_finite_differences_reject_a_degree_above_t() {
 fn test_finite_differences_reject_a_corrupted_last_share() {
     // The last window alone covers party N_PARTIES.
     verify_shamir_finite_differences::<1, 1, 4, 2>(TEST_Q, [[[60, 53, 29, 85, 28]]]);
+}
+
+#[test]
+fn test_centered_residue_maps_residues_to_the_centered_range() {
+    assert(centered_residue(5, 97) == 5);
+    assert(centered_residue(48, 97) == 48);
+    assert(centered_residue(49, 97) == 49 - 97);
+    assert(centered_residue(96, 97) == -1);
 }

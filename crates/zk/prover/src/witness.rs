@@ -140,10 +140,12 @@ mod tests {
         let config = Configs::for_preset(BfvPreset::SecureThreshold8192).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&config.params).unwrap();
-        let (ct, material) = sample
-            .public_key
-            .try_encrypt_with_intermediates(&sample.plaintext, &mut rand::rng())
-            .unwrap();
+        let (ct, material) = e3_zk_witness::encrypt_with_intermediates(
+            &sample.public_key,
+            &sample.plaintext,
+            &mut rand::rng(),
+        )
+        .unwrap();
         let inputs = Inputs::compute(&config, &sample, &ct, &material).unwrap();
         let json = inputs.to_json();
         let generator = WitnessGenerator::new();

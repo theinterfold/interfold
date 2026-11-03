@@ -8,6 +8,7 @@
 
 use crate::encoding::{fhe_poly_first_limb_centered, fhe_poly_to_crt_centered};
 use crate::negacyclic::negacyclic_mul_exact;
+use crate::EncryptionIntermediates;
 use crate::WitnessError;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::utils::compute_modulus_bit;
@@ -21,7 +22,6 @@ use e3_zk_config::threshold::user_data_encryption::Configs;
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;
 use fhe::bfv::Encoding;
-use fhe::bfv::EncryptionIntermediates;
 use fhe::bfv::Plaintext;
 use fhe::bfv::PublicKey;
 use fhe::bfv::SecretKey;
@@ -282,9 +282,8 @@ pub fn encrypt_and_prepare(
     data: &UserDataEncryptionCircuitData,
 ) -> Result<(Ciphertext, Inputs), WitnessError> {
     crate::validation::parameters("public_key", &data.public_key.params, &config.params)?;
-    let (ciphertext, intermediates) = data
-        .public_key
-        .try_encrypt_with_intermediates(&data.plaintext, &mut rand::rng())?;
+    let (ciphertext, intermediates) =
+        crate::encrypt_with_intermediates(&data.public_key, &data.plaintext, &mut rand::rng())?;
     let inputs = Inputs::compute(config, data, &ciphertext, &intermediates)?;
     Ok((ciphertext, inputs))
 }

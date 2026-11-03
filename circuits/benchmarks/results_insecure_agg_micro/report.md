@@ -16,7 +16,7 @@ Settings for this benchmark run (integration test + Nargo circuit benches on the
 | Setting                                               | Value                                        |
 | ----------------------------------------------------- | -------------------------------------------- |
 | Benchmark mode                                        | `insecure`                                   |
-| BFV preset (artifacts)                                | `insecure-512`                               |
+| BFV preset (artifacts)                                | `insecure`                                   |
 | BFV preset (enum)                                     | `InsecureThreshold512`                       |
 | λ (smudging / error)                                  | 2                                            |
 | Nodes spawned (builder)                               | 20                                           |
@@ -28,6 +28,9 @@ Settings for this benchmark run (integration test + Nargo circuit benches on the
 | CPU cores (host)                                      | 14                                           |
 | `dkg_fold_attestation_verifier` (EIP-712)             | `0x7969c5eD335650692Bc04293B07F5BF2e7A673C0` |
 | Verbose logging (`run_benchmarks.sh --verbose`)       | true                                         |
+
+The recorded enum name is `InsecureThreshold512`. The current Rust variant for this preset is
+`InsecureThreshold`.
 
 ### Hardware & software (Nargo / Barretenberg host)
 

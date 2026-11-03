@@ -8,6 +8,7 @@ import { expect } from "chai";
 import {
   buildMockDkgAttestationFixtureData,
   deployInterfoldSystem,
+  encodeMockDkgV2ProofForAttestation,
   ethers,
   networkHelpers,
 } from "../fixtures";
@@ -61,6 +62,70 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1, 2]);
     expect(skAggCommits).to.deep.equal(skCommits);
     expect(esmAggCommits).to.deep.equal(esmCommits);
+  });
+
+  it("verifies a secure-16384 V2 bundle", async function () {
+    const { owner, mockRegistry, verifier, operators } =
+      await loadFixture(setup);
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators.slice(0, 2),
+      e3Id,
+      ethers.id(`pk-v2-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
+  // 3 * 16 + 6 = 54 public inputs, the same length as an insecure l-BFV V2 statement with h = 2.
+  it("does not classify a sixteen-party trBFV statement as V2", async function () {
+    const { owner, mockRegistry, verifier } = await loadFixture(setup);
+    const signers = await ethers.getSigners();
+    const fixture = await buildMockDkgAttestationFixtureData(
+      signers.slice(2, 18),
+      e3Id,
+      ethers.id(`pk-legacy-h16-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((operator) => operator.addr),
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      fixture.proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds).to.have.length(16);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
   it("rejects a bundle signed for another registry", async function () {

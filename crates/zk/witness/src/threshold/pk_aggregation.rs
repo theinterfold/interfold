@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let (threshold_params, _) = build_pair_for_preset(preset).unwrap();
 
         let config = Configs::new(
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(
             modulus_bound,
             BigUint::from(
-                (e3_fhe_params::constants::insecure_64::threshold::MODULI
+                (e3_fhe_params::constants::insecure::threshold::MODULI
                     .iter()
                     .max()
                     .unwrap()

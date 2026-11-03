@@ -8,6 +8,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+alloy-primitives.workspace = true
+e3-committee-hash.workspace = true
 e3-zk-witness.workspace = true
 e3-zk-config.workspace = true
 e3-committee.workspace = true
@@ -22,4 +24,6 @@ num-bigint.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
+toml.workspace = true
 num-traits.workspace = true

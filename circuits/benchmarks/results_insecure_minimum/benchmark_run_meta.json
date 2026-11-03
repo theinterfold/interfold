@@ -1,11 +1,11 @@
 {
   "benchmark_mode": "insecure",
-  "bfv_preset_subdir": "insecure-512",
+  "bfv_preset_subdir": "insecure",
   "committee": "minimum",
   "proof_aggregation": true,
   "multithread_jobs": 13,
   "verbose": true,
-  "nodes_spawned": 20,
+  "nodes_spawned": 7,
   "committee_size_n": 3,
   "committee_size_h": 2,
   "committee_threshold_t": 1,

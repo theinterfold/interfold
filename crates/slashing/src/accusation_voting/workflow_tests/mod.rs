@@ -102,6 +102,7 @@ fn insert_pending(
         accused,
         accused_party_id: 1,
         proof_type: ProofType::C1PkGeneration,
+        proof_instance: 0,
         data_hash,
         issued_at: deadline.saturating_sub(VALIDITY),
         deadline,

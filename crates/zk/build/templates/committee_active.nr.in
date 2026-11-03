@@ -21,3 +21,4 @@ pub global N_PARTIES: u32 = crate::configs::committee::@committee@::N_PARTIES;
 pub global T: u32 = crate::configs::committee::@committee@::T;
 /// Honest-party count expected during the DKG (`H <= N_PARTIES`).
 pub global H: u32 = crate::configs::committee::@committee@::H;
+@exports@

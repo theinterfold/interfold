@@ -17,6 +17,8 @@ clap.workspace = true
 e3-committee.workspace = true
 e3-safe.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
 e3-zk-config.workspace = true
 e3-zk-witness.workspace = true
 fhe.workspace = true

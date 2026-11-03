@@ -9,6 +9,6 @@
 // Committee size (N_PARTIES / T / H) is routed through `committee::active`,
 // which the Rust circuit builder regenerates atomically with this file.
 pub use super::committee::active::{H, N_PARTIES, T};
-pub use super::insecure::dkg;
-pub use super::insecure::threshold;
+pub use super::insecure_64::dkg;
+pub use super::insecure_64::threshold;
 pub use super::protocol::MAX_MSG_NON_ZERO_COEFFS;

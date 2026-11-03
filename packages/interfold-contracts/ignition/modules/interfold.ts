@@ -15,7 +15,7 @@ export default buildModule("Interfold", (m) => {
   const feeTokenDecimals = m.getParameter("feeTokenDecimals", 6);
   const initialE3Program = m.getParameter("initialE3Program");
   const timeoutConfig = m.getParameter("timeoutConfig", {
-    dkgWindow: 7200,
+    dkgWindow: 21600,
     computeWindow: 86400,
     decryptionWindow: 3600,
   });

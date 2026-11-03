@@ -13,10 +13,11 @@ export default buildModule("BfvPkVerifier", (m) => {
 
   const { nodesFold: nodesFoldKeyHash, c5: c5KeyHash } = getBfvVkCommitments();
 
+  // `BfvPkVerifier` serves the trBFV path, which always pins the nodes-fold tree and C5.
   const bfvPkVerifier = m.contract("BfvPkVerifier", [
     dkgAggregatorVerifier,
-    nodesFoldKeyHash,
-    c5KeyHash,
+    nodesFoldKeyHash!,
+    c5KeyHash!,
     BFV_DKG_H,
   ]);
 

@@ -20,6 +20,7 @@ export default defineConfig([
     '**/.cargo/**',
     '**/.interfold/**',
     '.claude/worktrees/**',
+    '.worktrees/**',
     '**/test-results/**',
     '**/playwright-report/**',
     // Generated WASM bindings

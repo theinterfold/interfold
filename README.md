@@ -99,7 +99,7 @@ The separate `pnpm sdk:test:proofs` suite prepares a proof and rejects tampered 
 
 Before `pnpm rust:test:proofs` or the full `pnpm test`, prepare the matching insecure-minimum inner
 and recursive circuits with
-`pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built`. Proof substitution
+`pnpm build:circuits --preset insecure --committee minimum --skip-if-built`. Proof substitution
 tests additionally need pinned nargo on PATH. Before `pnpm rust:test:slashing`, run `pnpm evm:build`
 and provide Anvil. The named proof/slashing suites fail when prerequisites are missing; ordinary
 Rust runs leave these expensive tests ignored. A successful fast suite is not evidence that they

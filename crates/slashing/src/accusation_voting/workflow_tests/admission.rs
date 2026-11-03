@@ -53,6 +53,7 @@ fn accusation_from_failure(
         deadline: issued_at + VALIDITY,
         signed_payload: forwarded.then(|| failure.signed_payload.clone()),
         signature: ArcBytes::default(),
+        proof_instance: 0,
     };
     let sig = accuser
         .sign_message_sync(&AccusationVoting::accusation_digest(&accusation))
@@ -259,6 +260,7 @@ fn local_self_accusations_are_ignored() {
                             proof_type: failure.proof_type,
                             data_hash: failure.data_hash,
                             evidence: Bytes::from(vec![0x11; 32]),
+                            proof_instance: 0,
                         },
                         &ctx(),
                     )
@@ -440,6 +442,58 @@ fn a_replayed_failure_is_accused_once_effects_run_unless_the_log_holds_the_accus
         .collect();
     assert_eq!(accused, vec![third.address()]);
     assert_eq!(v.pending[&by_peer_id].accusation.accuser, peer.address());
+}
+
+#[test]
+fn replay_defers_and_restores_each_lbfv_proof_instance_independently() {
+    let me = signer(1);
+    let accused = signer(2);
+    let committee = vec![me.address(), accused.address(), signer(3).address()];
+    let mut voting = voting_with(&me, committee.clone(), 1, 2);
+    voting.params_preset = e3_fhe_params::BfvPreset::InsecureThresholdLbfv;
+    voting.hold_accusations_until_effects();
+    for row in [0, 1, 0] {
+        assert!(voting
+            .on_consistency_violation(
+                CommitmentConsistencyViolation {
+                    e3_id: voting.e3_id.clone(),
+                    accused_party_id: 1,
+                    accused_address: accused.address(),
+                    proof_type: ProofType::LbfvPkGeneration,
+                    proof_instance: row,
+                    data_hash: [row as u8; 32],
+                    evidence: Bytes::from(vec![row as u8]),
+                },
+                &ctx()
+            )
+            .is_empty());
+    }
+    let actions = voting.on_effects_enabled();
+    let instances = actions
+        .iter()
+        .filter_map(|action| match action {
+            VoteAction::PublishAccusation { accusation, .. } => Some(accusation.proof_instance),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(instances, vec![0, 1]);
+
+    let snapshot = voting.snapshot();
+    assert_eq!(snapshot.pending.len(), 2);
+    let mut restored = voting_with(&me, committee, 1, 2);
+    restored.params_preset = voting.params_preset;
+    restored.restore(snapshot).unwrap();
+    for row in [0, 1] {
+        let key = (
+            accused.address(),
+            ProofIdentity {
+                proof_type: ProofType::LbfvPkGeneration,
+                instance: row,
+            },
+        );
+        assert!(restored.accused_proofs.contains(&key));
+        assert_eq!(restored.received_data[&key].data_hash, [row as u8; 32]);
+    }
 }
 
 /// A held failure is skipped only when this node has voted on the matching peer accusation. A peer

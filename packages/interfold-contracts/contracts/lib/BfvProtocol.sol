@@ -22,6 +22,18 @@ library BfvProtocol {
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3;
 
+    bytes32 internal constant SECURE_16384_CONFIG_ID =
+        0x9318179273216fd60351e8cdf0380dab2143b53f34f4962f60348c556b5b29d5;
+    uint8 internal constant SECURE_16384_PARAM_SET = 3;
+    bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
+        0x1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3;
+
+    bytes32 internal constant INSECURE_LBFV_CONFIG_ID =
+        0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495;
+    uint8 internal constant INSECURE_LBFV_PARAM_SET = 4;
+    bytes32 internal constant INSECURE_LBFV_PARAM_SET_HASH =
+        0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258;
+
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
     uint32 internal constant MINIMUM_H = 2;

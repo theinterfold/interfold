@@ -76,6 +76,8 @@ impl ThresholdPlaintextAggregator {
             pre_dishonest: BTreeSet::new(),
             params_preset: self.params_preset,
             committee_size: self.committee_size,
+            lbfv_context: None,
+            verification_id: None,
         }
     }
 

@@ -32,7 +32,17 @@ impl Provable for DecryptedSharesAggregationCircuit {
         CircuitName::DecryptedSharesAggregation
     }
 
+    fn resolve_circuit_name(&self, config: &Self::Config, _input: &Self::Input) -> CircuitName {
+        if e3_fhe_params::is_lbfv_path(config.preset) {
+            CircuitName::DecryptedSharesAggregationWide
+        } else {
+            CircuitName::DecryptedSharesAggregation
+        }
+    }
     fn valid_circuits(&self) -> Vec<CircuitName> {
-        vec![CircuitName::DecryptedSharesAggregation]
+        vec![
+            CircuitName::DecryptedSharesAggregation,
+            CircuitName::DecryptedSharesAggregationWide,
+        ]
     }
 }

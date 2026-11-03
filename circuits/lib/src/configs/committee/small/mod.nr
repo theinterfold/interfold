@@ -9,3 +9,5 @@
 pub global N_PARTIES: u32 = 19;
 pub global T: u32 = 9;
 pub global H: u32 = 14;
+
+pub mod smudging;

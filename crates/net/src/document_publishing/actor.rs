@@ -21,9 +21,10 @@ use crate::{
 use actix::prelude::*;
 use anyhow::{Context, Result};
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta, DocumentReceived,
-    E3Stage, E3id, EType, EventSource, EventStoreQueryBy, EventType, InterfoldEvent,
-    InterfoldEventData, PartyId, PublishDocumentRequested, SeqAgg, TypedEvent,
+    prelude::*, trap, trap_fut, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta,
+    DocumentReceived, E3Stage, E3id, EType, EventSource, EventStoreQueryBy, EventType,
+    InterfoldEvent, InterfoldEventData, LbfvKeyShareDocumentFetchRequested, PartyId,
+    PublishDocumentRequested, SeqAgg, TypedEvent,
 };
 use e3_utils::ArcBytes;
 use e3_utils::NotifySync;
@@ -268,6 +269,8 @@ impl DocumentPublisher {
                 | InterfoldEventData::ThresholdShareCreated(_)
                 | InterfoldEventData::EncryptionKeyCreated(_)
                 | InterfoldEventData::DecryptionKeyShared(_)
+                | InterfoldEventData::LbfvKeyShareDocumentCreated(_)
+                | InterfoldEventData::LbfvKeyShareDocumentFetchRequested(_)
         )
     }
 
@@ -636,7 +639,10 @@ use effects::{
     announce_stored_document, bind_to_candidate, replicate_document, store_document_locally,
     DocumentMetadataMismatch,
 };
-pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+pub use effects::{
+    handle_document_published_notification, handle_lbfv_document_fetch_requested,
+    handle_publish_document_requested,
+};
 use recovery::read_logged_document;
 pub use recovery::recover_document_state;
 

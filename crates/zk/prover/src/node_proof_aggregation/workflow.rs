@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 
 use e3_committee::CiphernodesCommitteeSize;
 
+use crate::utils::{proves_c1, C1_SEQ};
+
 use e3_events::{
     CorrelationId, EventContext, NodeDkgFoldRequest, Proof, Sequenced, ShareEncryptionProofRequest,
 };
@@ -58,29 +60,49 @@ impl DkgProofCollectionState {
         }
     }
 
-    /// True once every `seq` in `0..total_expected` has been buffered.
+    /// Whether the fold takes a proof at `seq`. The l-BFV path has no C1 proof.
+    fn expects_seq(&self, seq: usize) -> bool {
+        seq != C1_SEQ || proves_c1(self.meta.params_preset)
+    }
+
+    /// True once every expected `seq` in `0..total_expected` has been buffered.
     pub(crate) fn is_ready(&self) -> bool {
-        let n = self.meta.total_expected;
-        self.buffer.len() == n && (0..n).all(|i| self.buffer.contains_key(&i))
+        (0..self.meta.total_expected)
+            .filter(|seq| self.expects_seq(*seq))
+            .all(|seq| self.buffer.contains_key(&seq))
     }
 
     /// Assemble the [`NodeDkgFoldRequest`] from the buffered inner proofs.
     ///
     /// Callers must ensure [`is_ready`](Self::is_ready) is `true` first; this
     /// method panics if any expected `seq` is missing.
-    pub(crate) fn build_fold_request(&self) -> NodeDkgFoldRequest {
+    pub(crate) fn build_fold_request(&self) -> Result<NodeDkgFoldRequest, String> {
         let meta = &self.meta;
         let c3_total_slots = meta.committee_n * meta.n_moduli;
         let slots_a: Vec<u32> = meta
             .sk_share_encryption_requests
             .iter()
-            .map(|r| r.c3_slot_index(meta.n_moduli))
-            .collect();
+            .map(|r| {
+                r.c3_slot_index(meta.n_moduli).ok_or_else(|| {
+                    format!(
+                        "C3a slot does not fit u32: recipient={}, row={}, moduli={}",
+                        r.recipient_party_id, r.row_index, meta.n_moduli
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
         let slots_b: Vec<u32> = meta
             .e_sm_share_encryption_requests
             .iter()
-            .map(|r| r.c3_slot_index(meta.n_moduli))
-            .collect();
+            .map(|r| {
+                r.c3_slot_index(meta.n_moduli).ok_or_else(|| {
+                    format!(
+                        "C3b slot does not fit u32: recipient={}, row={}, moduli={}",
+                        r.recipient_party_id, r.row_index, meta.n_moduli
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
         let sk = meta.sk_enc_count;
         let esm = meta.e_sm_enc_count;
@@ -92,7 +114,7 @@ impl DkgProofCollectionState {
         };
 
         let c0_proof = get(0);
-        let c1_proof = get(1);
+        let c1_proof = self.expects_seq(C1_SEQ).then(|| get(C1_SEQ));
         let c2a_proof = get(2);
         let c2b_proof = get(3);
         let mut c3a_inner_proofs = Vec::with_capacity(sk);
@@ -107,7 +129,7 @@ impl DkgProofCollectionState {
         let c4a_proof = get(c4a_seq);
         let c4b_proof = get(c4a_seq + 1);
 
-        NodeDkgFoldRequest {
+        Ok(NodeDkgFoldRequest {
             c0_proof,
             c1_proof,
             c2a_proof,
@@ -122,7 +144,7 @@ impl DkgProofCollectionState {
             party_id: meta.party_id,
             params_preset: meta.params_preset,
             committee_size: meta.committee_size,
-        }
+        })
     }
 }
 
@@ -145,7 +167,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 2,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }
     }
@@ -191,9 +213,9 @@ mod tests {
             state.buffer.insert(seq, dummy_proof(seq as u8));
         }
         assert!(state.is_ready());
-        let req = state.build_fold_request();
+        let req = state.build_fold_request().unwrap();
         assert_eq!(req.c0_proof, dummy_proof(0));
-        assert_eq!(req.c1_proof, dummy_proof(1));
+        assert_eq!(req.c1_proof, Some(dummy_proof(1)));
         assert_eq!(req.c2a_proof, dummy_proof(2));
         assert_eq!(req.c2b_proof, dummy_proof(3));
         assert_eq!(req.c3a_inner_proofs, vec![dummy_proof(4)]);
@@ -203,5 +225,26 @@ mod tests {
         assert_eq!(req.c4b_proof, dummy_proof(7));
         assert_eq!(req.party_id, 7);
         assert_eq!(req.c3_total_slots, 3 * 2);
+    }
+
+    #[test]
+    fn lbfv_fold_request_leaves_the_c1_slot_empty() {
+        let mut lbfv_meta = meta(1, 1);
+        lbfv_meta.params_preset = e3_fhe_params::BfvPreset::InsecureThresholdLbfv;
+        let mut state = DkgProofCollectionState::new(lbfv_meta, BTreeMap::new(), ec());
+        for seq in (0..8).filter(|seq| *seq != 1) {
+            state.buffer.insert(seq, dummy_proof(seq as u8));
+        }
+        assert!(state.is_ready());
+        let req = state.build_fold_request().unwrap();
+        assert_eq!(req.c1_proof, None);
+        assert_eq!(req.c2a_proof, dummy_proof(2));
+        assert_eq!(req.c4b_proof, dummy_proof(7));
+
+        // The trBFV path still waits for its C1 proof.
+        let mut trbfv = DkgProofCollectionState::new(meta(1, 1), state.buffer.clone(), ec());
+        assert!(!trbfv.is_ready());
+        trbfv.buffer.insert(1, dummy_proof(1));
+        assert!(trbfv.is_ready());
     }
 }

@@ -22,6 +22,7 @@ hex = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
+strum = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
@@ -31,11 +32,13 @@ e3-trbfv = { workspace = true }
 e3-utils = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-zk-config = { workspace = true }
+e3-zk-witness = { workspace = true }
 
 [features]
 test-helpers = [] # opt-in event constructors for consumer tests
 
 [dev-dependencies]
+e3-zk-samples = { workspace = true }
 serde_json.workspace = true
 proptest = { workspace = true }
 e3-events = { workspace = true, features = ["test-helpers"] }

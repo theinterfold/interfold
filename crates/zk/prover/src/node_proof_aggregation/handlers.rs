@@ -21,6 +21,9 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
             InterfoldEventData::ThresholdSharePending(data) => {
                 self.handle_threshold_share_pending(TypedEvent::new(data, ec));
             }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(data) => {
+                self.handle_lbfv_document(TypedEvent::new(data, ec));
+            }
             InterfoldEventData::DKGInnerProofReady(data) => {
                 self.handle_inner_proof_ready(TypedEvent::new(data, ec));
             }
@@ -148,8 +151,17 @@ impl NodeProofAggregator {
 
     pub(super) fn handle_compute_response(&mut self, msg: TypedEvent<ComputeResponse>) {
         let (msg, _ec) = msg.into_components();
-        if let ComputeResponseKind::Zk(ZkResponse::NodeDkgFold(resp)) = msg.response {
-            self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+        match msg.response {
+            ComputeResponseKind::Zk(ZkResponse::LbfvGenerationFold(resp)) => {
+                self.handle_generation_fold_response(&msg.correlation_id, resp.proof);
+            }
+            ComputeResponseKind::Zk(ZkResponse::NodeDkgFold(resp)) => {
+                self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+            }
+            ComputeResponseKind::Zk(ZkResponse::NodeDkgFoldV2(resp)) => {
+                self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+            }
+            _ => {}
         }
     }
 

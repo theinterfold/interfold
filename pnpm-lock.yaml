@@ -464,6 +464,9 @@ importers:
       '@interfold/config':
         specifier: workspace:*
         version: link:../interfold-config
+      '@interfold/user-data-encryption-prover':
+        specifier: workspace:*
+        version: link:../user-data-encryption-prover
       concurrently:
         specifier: ^9.1.2
         version: 9.2.4
@@ -479,6 +482,15 @@ importers:
       vite-plugin-dts:
         specifier: ^4.5.3
         version: 4.5.4(@types/node@22.7.5)(rollup@4.62.3)(typescript@5.8.3)(vite@6.4.3(@types/node@22.7.5)(jiti@1.21.7)(tsx@4.20.6)(yaml@2.8.2))
+
+  packages/user-data-encryption-prover:
+    dependencies:
+      '@aztec-foundation/bb.js':
+        specifier: 6.0.0
+        version: 6.0.0
+      '@noir-lang/noir_js':
+        specifier: 1.0.0-rc.3
+        version: 1.0.0-rc.3
 
   templates/default:
     dependencies:

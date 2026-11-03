@@ -27,7 +27,7 @@ mod tests {
     #[test]
     fn test_generate_pk_sample() {
         let config =
-            e3_zk_config::dkg::pk::Configs::for_preset(BfvPreset::InsecureThreshold64).unwrap();
+            e3_zk_config::dkg::pk::Configs::for_preset(BfvPreset::InsecureThreshold).unwrap();
         let sample = generate(&config.params).unwrap();
 
         assert_eq!(sample.c.len(), 2);

@@ -339,7 +339,9 @@ impl ZkProver {
             .join(next_bb_work_subdir(&format!("prove_{}", circuit.as_str())));
         let witness_path = job_dir.join("witness.gz");
         let output_dir = job_dir.join("out");
-        let _job_dir_guard = prepare_job_dir(&job_dir)?;
+
+        fs::create_dir_all(&job_dir)?;
+        let _job_dir_guard = JobDirGuard(job_dir.clone());
 
         fs::write(&witness_path, witness_data)?;
 
@@ -519,6 +521,7 @@ impl ZkProver {
         let out_dir = job_dir.join("out");
         let _job_dir_guard = prepare_job_dir(&job_dir)?;
         fs::create_dir_all(&out_dir)?;
+        let _job_dir_guard = JobDirGuard(job_dir.clone());
 
         let proof_path = job_dir.join("proof");
         let public_inputs_path = out_dir.join("public_inputs");
@@ -600,7 +603,7 @@ mod tests {
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
         let prover = ZkProver::new(&backend);
 
-        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64");
+        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
     }
 
@@ -788,7 +791,7 @@ mod tests {
         let circuit = CircuitName::PkBfv;
         for variant in [CircuitVariant::Default, CircuitVariant::Recursive] {
             let circuit_dir = prover
-                .circuits_dir(variant, "insecure-64")
+                .circuits_dir(variant, "insecure")
                 .join(circuit.dir_path());
             fs::create_dir_all(&circuit_dir).unwrap();
             fs::write(
@@ -801,7 +804,7 @@ mod tests {
 
         let started = Instant::now();
         let error = prover
-            .generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64")
+            .generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure")
             .unwrap_err();
 
         let message = format!("{error}");
@@ -817,7 +820,7 @@ mod tests {
         );
         let started = Instant::now();
         let error = prover
-            .verify_proof(&proof, "e3-1", 1, "insecure-64")
+            .verify_proof(&proof, "e3-1", 1, "insecure")
             .unwrap_err();
         let message = format!("{error}");
         assert!(message.contains("was killed after"), "{message}");

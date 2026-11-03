@@ -11,13 +11,14 @@ pub(crate) struct C1Dispatch {
     pub no_proof_parties: Vec<u64>,
 }
 
-/// Outcome of [`PublicKeyAggregation::select_honest_set`].
-pub(crate) enum HonestSelection {
-    /// Too few honest parties cleared C1 — caller must fail the E3.
+/// Outcome of [`PublicKeyAggregation::select_honest_set`]. `T` is the per-party proof that the
+/// path carries with each entry: the C1 proof on trBFV, nothing on l-BFV.
+pub(crate) enum HonestSelection<T> {
+    /// Too few honest parties cleared verification — caller must fail the E3.
     Fail,
     /// Enough honest parties — proceed to aggregation with this honest set.
     Proceed {
-        honest_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
+        honest_entries: Vec<(u64, String, ArcBytes, T)>,
         honest_party_ids: BTreeSet<u64>,
     },
 }
@@ -145,14 +146,14 @@ impl PublicKeyAggregation {
     /// Sorts the honest entries by real `party_id`, fails closed when fewer than `circuit_h`
     /// parties cleared C1, caps the honest set to the `circuit_h` lowest `party_id`s, and
     /// fails again if `<= threshold_m` parties remain. Logging mirrors the original handler.
-    pub(crate) fn select_honest_set(
+    pub(crate) fn select_honest_set<T>(
         e3_id: &E3id,
-        mut honest_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
+        mut honest_entries: Vec<(u64, String, ArcBytes, T)>,
         dishonest_parties: &BTreeSet<u64>,
         circuit_h: usize,
         threshold_m: usize,
         collected: usize,
-    ) -> HonestSelection {
+    ) -> HonestSelection<T> {
         // Sort by real party_id ascending so honest_keyshares / honest_nodes /
         // honest_party_ids all share the same ordering used by NodeFold rows
         // and by the circuit's slot indexing in `dkg_aggregator.nr`.

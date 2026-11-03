@@ -185,12 +185,72 @@ pub fn decode_bfv_params_arc(bytes: &[u8]) -> Result<Arc<BfvParameters>, Encodin
     Ok(Arc::new(decode_bfv_params(bytes)?))
 }
 
+/// The circuit identity in every current BFV configuration ID.
+///
+/// It is [`INTERFOLD_BFV_VERSION`], which `BfvProtocol.sol` and the TypeScript bindings are
+/// generated from.
+#[cfg(feature = "abi-encoding")]
+pub const CIRCUIT_VERSION_LABEL: &[u8] = INTERFOLD_BFV_VERSION.as_bytes();
+
+/// The on-chain configuration ID for ABI-encoded BFV parameters under the current circuit identity.
+///
+/// The E3 request's `cryptoConfigId` and the l-BFV proof session both use this value, and
+/// `BfvPkVerifierV2` rebuilds the session from `ActiveCryptoConfig.configIdForParamSet`.
+#[cfg(feature = "abi-encoding")]
+pub fn crypto_config_id(encoded_params: &[u8]) -> alloy_primitives::B256 {
+    crypto_config_id_with_label(encoded_params, CIRCUIT_VERSION_LABEL)
+}
+
+/// `keccak256(abi.encode(keccak256("fhe.rs:BFV"), keccak256(params), keccak256(label)))`.
+///
+/// Use [`crypto_config_id`] for current requests; an explicit label is only for historical
+/// configurations.
+#[cfg(feature = "abi-encoding")]
+pub fn crypto_config_id_with_label(
+    encoded_params: &[u8],
+    circuit_version_label: &[u8],
+) -> alloy_primitives::B256 {
+    use alloy_primitives::keccak256;
+    // `abi.encode` of three `bytes32` values is their 96-byte concatenation.
+    let mut preimage = [0u8; 96];
+    preimage[..32].copy_from_slice(bfv_encryption_scheme_id().as_slice());
+    preimage[32..64].copy_from_slice(keccak256(encoded_params).as_slice());
+    preimage[64..].copy_from_slice(keccak256(circuit_version_label).as_slice());
+    keccak256(preimage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::insecure_64;
+    use crate::constants::insecure;
     use crate::presets::BfvPreset;
     use std::str::FromStr;
+
+    /// Each on-chain index selects the preset whose configuration ID the independent protocol
+    /// fixture pins for that index.
+    #[cfg(feature = "abi-encoding")]
+    #[test]
+    fn on_chain_parameter_sets_match_the_protocol_fixture() {
+        use crate::presets::BfvParamSet;
+
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bfv_protocol.json")).unwrap();
+        for (param_set, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+            let vector = fixture["vectors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|vector| vector["paramSet"] == param_set && vector["preset"].is_string())
+                .unwrap_or_else(|| panic!("no current vector for parameter set {param_set}"));
+            assert_eq!(vector["preset"], preset.name());
+            let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
+            assert_eq!(
+                crypto_config_id(&params).to_string(),
+                vector["cryptoConfigId"].as_str().unwrap(),
+                "parameter set {param_set}"
+            );
+        }
+    }
 
     #[cfg(feature = "abi-encoding")]
     #[test]
@@ -216,9 +276,9 @@ mod tests {
         use crate::builder::build_bfv_params;
 
         // Use insecure DKG preset constants for testing arbitrary parameter encoding
-        let degree = insecure_64::DEGREE;
-        let plaintext_modulus = insecure_64::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_64::dkg::MODULI;
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure::dkg::MODULI;
 
         let params = build_bfv_params(degree, plaintext_modulus, moduli, None);
         let encoded = encode_bfv_params(&params);
@@ -230,7 +290,7 @@ mod tests {
         // Verify error1_variance is preserved (defaults to 10 for standard BFV)
         assert_eq!(
             decoded.get_error1_variance(),
-            &num_bigint::BigUint::from_str(insecure_64::dkg::ERROR1_VARIANCE).unwrap()
+            &num_bigint::BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
         );
         assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
     }
@@ -240,7 +300,7 @@ mod tests {
     fn test_encode_decode_arc_roundtrip() {
         use crate::presets::BfvParamSet;
 
-        let preset = BfvPreset::InsecureThreshold64;
+        let preset = BfvPreset::InsecureThreshold;
         let param_set: BfvParamSet = preset.into();
         let params = param_set.build_arc();
 

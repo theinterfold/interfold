@@ -36,6 +36,11 @@ use serde::Serialize;
 
 /// Input to the share-encryption circuit: plaintext, ciphertext, public key, and encryption randomness.
 pub struct ShareEncryptionCircuitData {
+    pub dkg_input_type: e3_zk_config::DkgInputType,
+    pub committee: e3_committee::CiphernodesCommittee,
+    pub party_idx: u32,
+    pub mod_idx: u32,
+    pub chunk_size: u32,
     /// Plaintext (encoded share row).
     pub plaintext: Plaintext,
     /// Ciphertext (encryption under public_key).
@@ -56,6 +61,11 @@ pub struct ShareEncryptionCircuitData {
 /// that the ciphertext and commitments match the public inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inputs {
+    /// Whether these inputs are for `share_encryption_chunked` (the l-BFV path), which also takes
+    /// `party_idx` and `mod_idx`.
+    pub chunked: bool,
+    pub party_idx: u32,
+    pub mod_idx: u32,
     /// Public key and ciphertext polynomials in CRT form (per modulus).
     pub pk0is: CrtPolynomial,
     pub pk1is: CrtPolynomial,
@@ -285,9 +295,56 @@ impl Inputs {
         let pk_bit = config.bits.pk_bit;
         let msg_bit = config.bits.msg_bit;
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
-        let msg_commitment = compute_share_encryption_commitment_from_message(&message, msg_bit);
+        // The trBFV C3 binds the share to C2's single commitment; the l-BFV path's chunked C2
+        // commits each share as a chunk root keyed by (party, modulus) (`share_encryption_chunked`).
+        let canonical = e3_zk_config::committee::canonical_committee_for_circuit(&data.committee)
+            .map_err(|e| WitnessError::Other(e.to_string()))?;
+        let threshold_preset = config
+            .preset
+            .threshold_counterpart()
+            .unwrap_or(config.preset);
+        let threshold_l = e3_fhe_params::BfvParamSet::from(threshold_preset)
+            .moduli
+            .len();
+        if data.party_idx as usize >= canonical.n || data.mod_idx as usize >= threshold_l {
+            return Err(WitnessError::Other(
+                "C3 recipient or threshold CRT row is out of range".into(),
+            ));
+        }
+        let chunked = e3_fhe_params::is_lbfv_path(config.preset);
+        if chunked && data.chunk_size == 0 {
+            return Err(WitnessError::Sample(
+                "C3 chunk size must be greater than zero".to_string(),
+            ));
+        }
+        if chunked
+            && !message
+                .coefficients()
+                .len()
+                .is_multiple_of(data.chunk_size as usize)
+        {
+            return Err(WitnessError::Sample(format!(
+                "C3 chunk size {} must divide message degree {}",
+                data.chunk_size,
+                message.coefficients().len()
+            )));
+        }
+        let msg_commitment = if chunked {
+            compute_sc_party_share_root_commitment(
+                data.party_idx as usize,
+                data.mod_idx as usize,
+                &message,
+                msg_bit,
+                data.chunk_size as usize,
+            )
+        } else {
+            compute_share_encryption_commitment_from_message(&message, msg_bit)
+        };
 
         Ok(Inputs {
+            chunked,
+            party_idx: data.party_idx,
+            mod_idx: data.mod_idx,
             pk0is,
             pk1is,
             ct0is,
@@ -306,7 +363,7 @@ impl Inputs {
 
     // Used as input for Nargo execution.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
             "pk1is": crt_polynomial_to_toml_json(&self.pk1is),
             "ct0is": crt_polynomial_to_toml_json(&self.ct0is),
@@ -320,6 +377,13 @@ impl Inputs {
             "z": crt_polynomial_to_toml_json(&self.z),
             "expected_pk_commitment": self.pk_commitment.to_string(),
             "expected_message_commitment": self.msg_commitment.to_string(),
-        })
+        });
+        if self.chunked {
+            json["party_idx"] = serde_json::json!(self.party_idx);
+            json["mod_idx"] = serde_json::json!(self.mod_idx);
+        }
+        json
     }
 }
+
+use crate::compute_sc_party_share_root_commitment;

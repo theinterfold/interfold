@@ -495,6 +495,7 @@ pub fn prove_c3_set(
             share_inputs,
             slot,
             input_type,
+            committee.clone(),
         )
         .expect("C3 witness data");
         proofs.push(measure(&format!("{tag}[{slot}]"), || {
@@ -551,6 +552,7 @@ pub async fn prove_c3_sets_pooled(
                 share_inputs,
                 slot,
                 input_type,
+                committee.clone(),
             )
             .expect("C3 witness data");
             let (pool, light, config, dir) = (
@@ -665,6 +667,8 @@ pub fn external_c4_ciphertexts(
 /// `handle_dkg_share_decryption_proof` does), every other honest sender a ciphertext row.
 pub fn c4_data(
     preset: BfvPreset,
+    committee: &CiphernodesCommittee,
+    dkg_input_type: DkgInputType,
     dkg_sk: &SecretKey,
     own_inputs: &ShareComputationInputs,
     honest_ciphertexts: HonestCiphertexts,
@@ -690,6 +694,12 @@ pub fn c4_data(
         })
         .collect();
     ShareDecryptionCircuitData {
+        dkg_input_type,
+        committee: committee.clone(),
+        recipient_party_id: PARTY_ID as u64,
+        // Only the l-BFV chunked C4 reads the C2 chunk size.
+        chunk_size: e3_zk_config::chunks::c2_chunk_size(threshold_params.degree(), committee.n)
+            as u32,
         secret_key: dkg_sk.clone(),
         honest_ciphertexts,
         own_plaintext_share,
@@ -697,13 +707,18 @@ pub fn c4_data(
 }
 
 /// The production node fold: C2ab || C3a chain || C3b chain, then C3ab, C4ab, and the node fold.
-pub fn prove_node_fold(prover: &ZkProver, input: &NodeDkgFoldInput, artifacts_dir: &str) -> Proof {
+pub fn prove_node_fold(
+    prover: &ZkProver,
+    input: &NodeDkgFoldInput,
+    artifacts_dir: &str,
+    preset: BfvPreset,
+) -> Proof {
     note(
         "node_dkg_fold runs c2ab || c3a chain || c3b chain concurrently (rayon::join, as in production); \
          its per-proof times are the BB lines (c3_chonk_tube*, c3_chonk_accumulate*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
     );
     let result = measure("node_dkg_fold", || {
-        prove_node_dkg_fold(prover, input, "measure-node-fold", artifacts_dir)
+        prove_node_dkg_fold(prover, input, "measure-node-fold", artifacts_dir, preset)
     });
     print_steps("node_dkg_fold", &result.step_timings);
     result.proof
