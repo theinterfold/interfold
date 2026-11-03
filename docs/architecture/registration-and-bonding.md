@@ -186,9 +186,12 @@ The proof must be bound to the registering owner and `block.chainid`, show an ex
 after the evidence's `validUntil`, and include strict FaceMatch when configured. The credential ends
 at `validUntil`, or `MAX_VALIDITY` after the proof date if that is earlier. The identifier hashes
 the scoped nullifier with the domain and scope, so it belongs to one document; a second document or
-a renewed one gives a new identifier. ZKPassport's admin keys control its verifier, helper,
-certificate registry, and OPRF key without delay. When ZKPassport retires the pinned version,
-registration and renewal revert until governance sets a verifier for the new version.
+a renewed one gives a new identifier. A non-salted identifier comes from document data and the
+scope, so the issuing state, which holds that data, can compute it and link it to the person. A
+salted identifier avoids that, but it depends on ZKPassport's OPRF key. ZKPassport's admin keys
+control its verifier, helper, certificate registry, and OPRF key without delay. When ZKPassport
+retires the pinned version, registration and renewal revert until governance sets a verifier for the
+new version.
 
 ## Deactivation and exit
 
