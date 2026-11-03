@@ -435,7 +435,7 @@
         },
         {
           "why": "real use: E3Context implements Checkpoint over its repository",
-          "ref": "crates/request/src/context.rs@199@impl Checkpoint for E3Context {"
+          "ref": "crates/state/request/src/context.rs@199@impl Checkpoint for E3Context {"
         }
       ],
       "rust_patterns": [

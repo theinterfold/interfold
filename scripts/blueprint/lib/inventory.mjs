@@ -68,7 +68,7 @@ export const LAYERS = {
     'openvm-prover',
   ],
   workflows: [
-    'request',
+    'state/request',
     'sortition',
     'keyshare',
     'aggregator',
