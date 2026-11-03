@@ -95,10 +95,9 @@ earlier refund manager recorded are not listed. The amounts use the `FEE_TOKEN_*
 can require each bond owner to prove one identity document with ZKPassport (`OwnerIdentityRegistry`
 and `ZKPassportIdentityVerifier`). The page:
 
-1. Reads the policy from the latest `IdentityPolicyUpdated` log of the bonding registry (it has no
-   view). Then it reads the verifier's fixed settings (domain, scope, ZKPassport version, identifier
-   type, FaceMatch, proof validity, maximum validity) and the owner's credential (`identityOf`,
-   `isVerifiedAt`).
+1. Reads the policy from the bonding registry's storage (it has no view). Then it reads the
+   verifier's fixed settings (domain, scope, ZKPassport version, identifier type, FaceMatch, proof
+   validity, maximum validity) and the owner's credential (`identityOf`, `isVerifiedAt`).
 2. Creates a ZKPassport request with `@zkpassport/sdk` in `compressed-evm` mode. The document must
    be valid until a chosen date, and the proof binds the bond owner and the chain. The SDK and the
    QR code load only when the owner asks for a proof.
