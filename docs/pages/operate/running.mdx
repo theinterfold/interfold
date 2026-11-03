@@ -88,8 +88,8 @@ chains:
   <Tabs.Tab unmount={false}>
 
 <Callout type='info'>
-  E3 requests on Sepolia stay paused until operators that run the 0.19.0 release register. Run that
-  release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
+  E3 requests on Sepolia stay paused until operators that run the 0.20.0-dev.3 release register. Run
+  that release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
 </Callout>
 
 ```yaml filename="interfold.config.yaml"
@@ -106,17 +106,17 @@ chains:
       rpc_url: 'https://turing-rpc.avail.so/rpc'
     contracts:
       interfold:
-        address: '0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b'
-        deploy_block: 11873232
+        address: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26'
+        deploy_block: 12050035
       ciphernode_registry:
-        address: '0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef'
-        deploy_block: 11873232
+        address: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4'
+        deploy_block: 12050030
       bonding_registry:
-        address: '0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2'
-        deploy_block: 11873232
+        address: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F'
+        deploy_block: 12050022
       slashing_manager:
-        address: '0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d'
-        deploy_block: 11873232
+        address: '0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D'
+        deploy_block: 12050027
       fee_token:
         address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
         deploy_block: 11856062
@@ -127,6 +127,10 @@ chains:
 
   </Tabs.Tab>
 </Tabs>
+
+While Avail Turing is down, the Sepolia CRISP program uses a mock data-availability verifier. Nodes
+that serve it use `data_availability: { mode: mock_http, rpc_url: <CRISP server>/availability }`
+instead of the Avail block above.
 
 The node applies these rules when it loads the file:
 
@@ -507,7 +511,7 @@ The command downloads `manifest.json` from the latest GitHub release and compare
 Example output for a current Sepolia entry:
 
 ```text
-Deployment manifest: release v0.19.0-test.3
+Deployment manifest: release v0.20.0-dev.3
 sepolia: up to date
   note  sepolia is a mock deployment - proofs are accepted without being verified
 ```
@@ -516,8 +520,8 @@ Example output for a stale entry:
 
 ```text
 sepolia:
-  STALE interfold: config has 0xc5DD9418…, published is 0xBD5B6D1a…
-  warn  ciphernode_registry: deploy_block 11855915, published is 11873232
+  STALE interfold: config has 0xc5DD9418…, published is 0xb35EE9ed…
+  warn  ciphernode_registry: deploy_block 11855915, published is 12050030
   note  sepolia is a mock deployment - proofs are accepted without being verified
 ```
 
