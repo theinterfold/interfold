@@ -165,21 +165,30 @@ impl IdentityPolicyState {
         )
     }
 
-    /// Records a replayed change unless the history already holds a later one. Returns whether the
-    /// change was new.
+    /// Records a replayed change in its place in the history. A live log can arrive between a
+    /// failed replay and the next one, so an older change goes before newer checkpoints. A change
+    /// at an existing timepoint replaces it, as a later log in the same block does. Returns whether
+    /// the history changed.
     pub fn catch_up(&mut self, change: &IdentityPolicyChange) -> Result<bool> {
-        let latest = self
-            .chains
-            .get(&change.chain_id)
-            .and_then(|history| history.last());
-        if latest.is_some_and(|last| {
-            last.timepoint > change.timepoint
-                || (last.timepoint == change.timepoint && last.value == change.required)
-        }) {
-            return Ok(false);
+        let history = self.chains.entry(change.chain_id).or_default();
+        let index = history.partition_point(|entry| entry.timepoint < change.timepoint);
+        match history.get_mut(index) {
+            Some(entry) if entry.timepoint == change.timepoint => {
+                let changed = entry.value != change.required;
+                entry.value = change.required;
+                Ok(changed)
+            }
+            _ => {
+                history.insert(
+                    index,
+                    StateCheckpoint {
+                        timepoint: change.timepoint,
+                        value: change.required,
+                    },
+                );
+                Ok(true)
+            }
         }
-        self.record(change)?;
-        Ok(true)
     }
 
     /// Whether the policy at `timepoint` requires a verified bond owner. A chain with an unknown
@@ -269,6 +278,24 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_replay_places_a_missed_change_before_a_live_one() {
+        let mut state = IdentityPolicyState::default();
+        let change = |timepoint, required| IdentityPolicyChange {
+            chain_id: 1,
+            timepoint,
+            required,
+        };
+        state.record(&change(10, false)).unwrap();
+        // A failed replay missed the enforcement at 20; a live relaxation at 30 arrived meanwhile.
+        state.record(&change(30, false)).unwrap();
+        assert!(state.catch_up(&change(20, true)).unwrap());
+        assert!(!state.catch_up(&change(30, false)).unwrap());
+        assert!(!state.required_at(1, 15));
+        assert!(state.required_at(1, 25));
+        assert!(!state.required_at(1, 35));
     }
 
     #[test]

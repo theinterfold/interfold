@@ -562,6 +562,15 @@ mod tests {
         assert!(unknown.required_at(1, 45));
         assert_eq!(unknown.replayed.get(&1), Some(&2));
 
+        // A live log arrives before the next startup, after the missed ones.
+        let mut live = repos.sortition_identity_policy().read().await?.unwrap();
+        live.record(&e3_events::IdentityPolicyChange {
+            chain_id: 1,
+            timepoint: 70,
+            required: true,
+        })?;
+        repos.sortition_identity_policy().write_sync(&live).await?;
+
         // Once the log serves the range, the next startup applies it and knows the policy again.
         bus.naked_dispatch_async(policy_log(50, true, 3)).await?;
         bus.naked_dispatch_async(policy_log(60, false, 4)).await?;
@@ -578,6 +587,7 @@ mod tests {
         assert!(!known.required_at(1, 45));
         assert!(known.required_at(1, 55));
         assert!(!known.required_at(1, 65));
+        assert!(known.required_at(1, 75));
         assert_eq!(known.replayed.get(&1), Some(&4));
         Ok(())
     }
