@@ -15,7 +15,7 @@ builder or protocol orchestration crates.
 - Shared store/reader caches retain their first instance; only production composition opts into
   them.
 
-[Persistence contracts](../../docs/architecture/persistence-and-replay.md) describe fences and
-current limits; [upgrades](../../docs/architecture/upgrades.md) governs layout/path changes. Use the
-[README tests/prerequisites](README.md#tests). Persistence changes need the disk-backed path;
+[Persistence contracts](../../../docs/architecture/persistence-and-replay.md) describe fences and
+current limits; [upgrades](../../../docs/architecture/upgrades.md) governs layout/path changes. Use
+the [README tests/prerequisites](README.md#tests). Persistence changes need the disk-backed path;
 in-memory composition is not a disk-crash test.

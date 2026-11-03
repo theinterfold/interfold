@@ -3,8 +3,8 @@
 ## Purpose
 
 Runtime assembly of the event bus, per-aggregate event stores, sequencer, snapshot buffer, and data
-store. [e3-events](../events/README.md) owns their messages/types and pipeline behavior;
-[e3-data](../data/README.md) provides storage implementations. This crate wires them without
+store. [e3-events](../../events/README.md) owns their messages/types and pipeline behavior;
+[e3-data](../storage/README.md) provides storage implementations. This crate wires them without
 requiring a full ciphernode.
 
 ## Map
@@ -64,8 +64,8 @@ Both in-memory and persisted assembly connect the aggregate router to that same 
 event with no configured store therefore reports fatal storage failure without a panic or dispatch
 to another aggregate. The CLI or library caller must monitor the watch to stop its process.
 
-For production lifecycle/replay use [CiphernodeBuilder](../ciphernode/builder/README.md) and the
-[persistence contract](../../docs/architecture/persistence-and-replay.md).
+For production lifecycle/replay use [CiphernodeBuilder](../../ciphernode/builder/README.md) and the
+[persistence contract](../../../docs/architecture/persistence-and-replay.md).
 
 ## Tests
 

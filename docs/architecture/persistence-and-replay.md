@@ -1,10 +1,10 @@
 # Persistence, replay, and shutdown
 
-Owners: [event system](../../crates/event-system/), [events](../../crates/events/),
-[data](../../crates/data/), [request router](../../crates/request/), [sync](../../crates/sync/), and
-[ciphernode builder](../../crates/ciphernode/builder/). [Design principles](design-principles.md)
-describe the direction; owner-local documentation describes implementation boundaries. Neither makes
-an unimplemented durability guarantee true.
+Owners: [event system](../../crates/state/event-system/), [events](../../crates/events/),
+[data](../../crates/state/storage/), [request router](../../crates/request/),
+[sync](../../crates/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
+[Design principles](design-principles.md) describe the direction; owner-local documentation
+describes implementation boundaries. Neither makes an unimplemented durability guarantee true.
 
 Here **durable** means flushed to disk. EventStore flushes appended events before dispatch.
 `Persistable::try_mutate` only enqueues a snapshot write; durability arrives when its batch flushes.
@@ -247,7 +247,7 @@ logged.
 
 ## Storage representations and decoding
 
-The data crate's [in-memory store](../../crates/data/src/in_mem_kv_store.rs) uses
+The data crate's [in-memory store](../../crates/state/storage/src/in_mem_kv_store.rs) uses
 [`e3-hamt`](../../crates/hamt/) to share unchanged nodes between immutable map versions. Here
 "persistent" describes the data structure, not a disk flush. Its exported dump remains a
 bincode-encoded ordered map; changing the live structure does not authorize changing those bytes.

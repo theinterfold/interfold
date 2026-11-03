@@ -895,7 +895,7 @@ function ciphernode({ units }) {
         style: 'tagged',
         title: 'sled',
         lines: ['actor state', 'Repository · Persistable'],
-        ref: 'crates/data/src/repository.rs@74@self.store.write(value)',
+        ref: 'crates/state/storage/src/repository.rs@74@self.store.write(value)',
       },
       {
         id: 'bus',

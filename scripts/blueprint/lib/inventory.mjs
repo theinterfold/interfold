@@ -79,7 +79,7 @@ export const LAYERS = {
     'trbfv',
     'bfv-client',
   ],
-  adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
+  adapters: ['evm/runtime', 'net', 'sync', 'state/event-system', 'state/storage', 'data-availability', 'logger'],
   vocabulary: [
     'events',
     'ciphernode/config',

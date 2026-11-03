@@ -13,5 +13,5 @@ Maintain persistence mechanisms here, with typed repository keys owned by capabi
   implementations. A memory-only regression cannot establish crash/flush guarantees.
 
 Use the [README test map](README.md#tests), including temporary-directory log/blob tests for durable
-I/O changes. Consult [persistence](../../docs/architecture/persistence-and-replay.md) and
-[upgrades](../../docs/architecture/upgrades.md) before changing formats or locations.
+I/O changes. Consult [persistence](../../../docs/architecture/persistence-and-replay.md) and
+[upgrades](../../../docs/architecture/upgrades.md) before changing formats or locations.

@@ -106,6 +106,6 @@ scenario to run. In-memory startup tests and persisted restart scenarios exercis
 ## Related documentation
 
 - [Entrypoint](../entrypoint/README.md): production startup and process management.
-- [Event system](../../event-system/README.md): lower-level event runtime assembly.
+- [Event system](../../state/event-system/README.md): lower-level event runtime assembly.
 - [Slashing](../../../docs/architecture/slashing.md): chain-specific manager resolution.
 - [AGENTS.md](AGENTS.md): conventions and constraints for changing this crate.

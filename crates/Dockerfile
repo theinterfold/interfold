@@ -56,10 +56,10 @@ COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
 COPY crates/crypto/Cargo.toml ./crypto/Cargo.toml
-COPY crates/data/Cargo.toml ./data/Cargo.toml
+COPY crates/state/storage/Cargo.toml ./state/storage/Cargo.toml
 COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
 COPY crates/ciphernode/entrypoint/Cargo.toml ./ciphernode/entrypoint/Cargo.toml
-COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
+COPY crates/state/event-system/Cargo.toml ./state/event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
 COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
 COPY crates/evm/config/Cargo.toml ./evm/config/Cargo.toml
