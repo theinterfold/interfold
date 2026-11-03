@@ -12,6 +12,7 @@ import type {
 } from "./protocol/types";
 import { feeAssetConfig } from "./protocol/values";
 import {
+  activeBfvConfigForChain,
   isLocalDeploymentChain,
   storeDeploymentArgs,
   updateE3Config,
@@ -244,24 +245,10 @@ export function syncProtocolDeploymentRecords(
     "BondedCheckpoints",
     opts.chain,
   );
-  // Absent until `--action activate-voting`, which cannot run before the Safe batch configures the
-  // registry the constructor validates against.
-  if (deployment.bondedVotes) {
-    storeDeploymentArgs(
-      {
-        address: deployment.bondedVotes,
-        blockNumber,
-        constructorArgs: {
-          token: config.fold,
-          votesSource: config.escrowVotesAdapter ?? config.fold,
-          checkpoints: deployment.bondedCheckpoints,
-          excludedAccounts: config.bondedVotesExcludedAccounts ?? [],
-        },
-      },
-      "BondedVotes",
-      opts.chain,
-    );
-  }
+  // `BondedVotes` is not deployed here: `--action activate-voting` deploys it once the governance
+  // batch has configured the registry, and records it with `syncBondedVotesRecord`.
+
+  syncVerifierRouterRecords(config, deployment, opts.chain);
 
   const interfoldInitData = interfaces.interfold.encodeFunctionData(
     "initialize",
@@ -415,6 +402,75 @@ export function syncProtocolDeploymentRecords(
       MockUSDC: "fee_token",
     });
   }
+}
+
+/**
+ * Records `BondedVotes`, which `--action activate-voting` deploys after the governance batch, so
+ * it cannot be recorded with the rest of the protocol by `syncProtocolDeploymentRecords`.
+ * `opts.blockNumber` is the block that deployed it.
+ */
+export function syncBondedVotesRecord(
+  config: ProtocolConfigFile,
+  deployment: Required<
+    Pick<ProtocolDeployment, "bondedVotes" | "bondedCheckpoints">
+  >,
+  opts: SyncOptions,
+): void {
+  storeDeploymentArgs(
+    {
+      address: deployment.bondedVotes,
+      blockNumber: maybeBlock(opts.blockNumber),
+      constructorArgs: {
+        token: config.fold,
+        votesSource: config.escrowVotesAdapter ?? config.fold,
+        checkpoints: deployment.bondedCheckpoints,
+        excludedAccounts: config.bondedVotesExcludedAccounts ?? [],
+      },
+    },
+    "BondedVotes",
+    opts.chain,
+  );
+}
+
+/**
+ * Records the public-key and decryption routers. The deployment only creates them when it serves
+ * more than one BFV route; with one route `pkVerifier` and `decryptionVerifier` are the route's
+ * own verifiers, and a supplied verifier is not this deployment's to record.
+ */
+function syncVerifierRouterRecords(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+  chain: string,
+): void {
+  const routes = deployment.bfvVerifierRoutes ?? [];
+  if (routes.length < 2) return;
+  const blocks = deployment.bfvVerifierRouterBlocks;
+  if (!blocks) throw new Error("The routers' deployment blocks are missing");
+  const { h, t } = activeBfvConfigForChain(config.chainId);
+  storeDeploymentArgs(
+    {
+      address: deployment.pkVerifier!,
+      blockNumber: blocks.pkVerifier,
+      constructorArgs: {
+        verifiers: routes.map((route) => route.pkVerifier),
+        defaultH: h,
+      },
+    },
+    "BfvPkVerifierRouter",
+    chain,
+  );
+  storeDeploymentArgs(
+    {
+      address: deployment.decryptionVerifier!,
+      blockNumber: blocks.decryptionVerifier,
+      constructorArgs: {
+        verifiers: routes.map((route) => route.decryptionVerifier),
+        defaultThreshold: t,
+      },
+    },
+    "BfvDecryptionVerifierRouter",
+    chain,
+  );
 }
 
 export function syncSaleInfraRecords(

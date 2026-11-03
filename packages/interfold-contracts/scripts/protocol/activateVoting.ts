@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { connect } from "./cli";
+import { syncBondedVotesRecord } from "../deploymentRecords";
+import { connect, networkName } from "./cli";
 import { deploymentPath, readJson, writeJson } from "./files";
 import type { ProtocolDeployment } from "./types";
 import {
   checkExcludedAccounts,
   deployedAddress,
+  deploymentBlock,
   loadConfig,
   requireContract,
 } from "./values";
@@ -21,6 +23,9 @@ import {
  * adapter from before the exclusion list, or one with a different list, is refused, not reused.
  * Replacing it moves the address that governance and CRISP rounds read, so the operator clears the
  * record on purpose.
+ *
+ * The new adapter is recorded in `deployed_contracts.json` with its constructor arguments and
+ * deploy block, as `--action deploy` records the rest of the protocol.
  *
  * Nothing here needs a Safe transaction: `BondedVotes` has no owner and no privileged functions.
  */
@@ -95,8 +100,20 @@ export async function actionActivateVoting(): Promise<void> {
     excludedAccounts,
   );
   await bondedVotes.waitForDeployment();
-  deployment.bondedVotes = await deployedAddress(bondedVotes);
+  const bondedVotesAddress = await deployedAddress(bondedVotes);
+  deployment.bondedVotes = bondedVotesAddress;
   writeJson(deploymentPath(config), deployment);
+  syncBondedVotesRecord(
+    config,
+    {
+      bondedVotes: bondedVotesAddress,
+      bondedCheckpoints: deployment.bondedCheckpoints,
+    },
+    {
+      chain: networkName(),
+      blockNumber: await deploymentBlock(bondedVotes),
+    },
+  );
 
   console.log(`
 Bonded voting activated

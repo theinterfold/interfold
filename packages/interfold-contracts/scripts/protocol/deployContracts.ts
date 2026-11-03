@@ -11,10 +11,15 @@ import { deployNodeReleaseRegistry } from "./nodeRelease";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import { deployRandomnessProvider } from "./randomness";
-import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
+import type {
+  ProtocolConfigFile,
+  ProtocolContracts,
+  ProtocolDeployResult,
+} from "./types";
 import {
   assertMockDeploymentAllowed,
   deployedAddress,
+  deploymentBlock,
   feeAssetConfig,
   timeoutConfig,
 } from "./values";
@@ -359,6 +364,7 @@ export async function deployBfvVerifierRoutes(
 
   let pkVerifier = routes[0].pkVerifier;
   let decryptionVerifier = routes[0].decryptionVerifier;
+  let bfvVerifierRouterBlocks: ProtocolContracts["bfvVerifierRouterBlocks"];
   if (routes.length > 1) {
     const pkRouterFactory = await ethers.getContractFactory(
       "BfvPkVerifierRouter",
@@ -379,6 +385,10 @@ export async function deployBfvVerifierRoutes(
     );
     await decryptionRouter.waitForDeployment();
     decryptionVerifier = await deployedAddress(decryptionRouter);
+    bfvVerifierRouterBlocks = {
+      pkVerifier: await deploymentBlock(pkRouter),
+      decryptionVerifier: await deploymentBlock(decryptionRouter),
+    };
   }
 
   return {
@@ -390,6 +400,7 @@ export async function deployBfvVerifierRoutes(
     dkgVerifierRelationsLib: routes[0].dkgVerifierRelationsLib,
     decryptionVerifierRelationsLib: routes[0].decryptionVerifierRelationsLib,
     bfvVerifierRoutes: routes,
+    bfvVerifierRouterBlocks,
   };
 }
 

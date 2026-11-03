@@ -189,6 +189,11 @@ export interface ProtocolDeployment {
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
+  /**
+   * The blocks that deployed the routers, which `pkVerifier` and `decryptionVerifier` are only
+   * when the deployment serves more than one BFV route.
+   */
+  bfvVerifierRouterBlocks?: { pkVerifier: number; decryptionVerifier: number };
   ciphertextVerifier?: string;
   crispProgram?: string;
   dataAvailabilityVerifier?: string;
@@ -371,6 +376,11 @@ export interface ProtocolContracts {
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
+  /**
+   * The blocks that deployed the routers, which `pkVerifier` and `decryptionVerifier` are only
+   * when the deployment serves more than one BFV route.
+   */
+  bfvVerifierRouterBlocks?: { pkVerifier: number; decryptionVerifier: number };
   ciphertextVerifier?: string;
   initialE3Program: string;
 }
