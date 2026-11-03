@@ -547,6 +547,38 @@ mod tests {
             bincode::serialize(&caught_up)?,
             bincode::serialize(&repos.sortition_identity_policy().read().await?.unwrap())?
         );
+
+        // A startup that cannot replay the log does not know the policy, so it reads as required.
+        repos.aggregate_seq(aggregate).write_sync(&4).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let unknown = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(unknown.unknown.contains(&1));
+        assert!(unknown.required_at(1, 45));
+        assert_eq!(unknown.replayed.get(&1), Some(&2));
+
+        // Once the log serves the range, the next startup applies it and knows the policy again.
+        bus.naked_dispatch_async(policy_log(50, true, 3)).await?;
+        bus.naked_dispatch_async(policy_log(60, false, 4)).await?;
+        bus.flush_event_pipeline().await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let known = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(known.unknown.is_empty());
+        assert!(!known.required_at(1, 45));
+        assert!(known.required_at(1, 55));
+        assert!(!known.required_at(1, 65));
+        assert_eq!(known.replayed.get(&1), Some(&4));
         Ok(())
     }
 

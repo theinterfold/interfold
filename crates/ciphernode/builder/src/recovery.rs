@@ -77,9 +77,17 @@ async fn catch_up_identity_policy(
     {
         Ok(recovered) => recovered,
         Err(error) => {
-            // The log cannot serve the range (for example, a snapshot ahead of it). Keep the
-            // projection as it is; the next startup tries again.
-            warn!("Could not replay the event log for the identity policy: {error:#}");
+            // The log cannot serve the range (for example, a snapshot ahead of it). The history can
+            // miss a change, so the policy reads as required until the next startup replays it.
+            warn!(
+                "Could not replay the event log for the identity policy; it counts as required \
+                 until a replay succeeds: {error:#}"
+            );
+            identity.unknown.extend(&chains);
+            repositories
+                .sortition_identity_policy()
+                .write_sync(identity)
+                .await?;
             return Ok(());
         }
     };
@@ -92,6 +100,7 @@ async fn catch_up_identity_policy(
     for chain_id in &chains {
         let aggregate = AggregateId::from_chain_id(Some(*chain_id));
         identity.replayed.insert(*chain_id, end_cursors[&aggregate]);
+        identity.unknown.remove(chain_id);
     }
     repositories
         .sortition_identity_policy()

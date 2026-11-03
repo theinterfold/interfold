@@ -11,7 +11,10 @@ use alloy::primitives::Address;
 use anyhow::{ensure, Result};
 use e3_events::{AdmissionChange, AdmissionPolicy, AdmissionUpdated, IdentityPolicyChange};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ChainAdmission {
@@ -118,9 +121,8 @@ impl AdmissionState {
 /// The bond-owner identity policy of each chain: whether a request at a timestamp requires a
 /// verified bond owner.
 ///
-/// The node does not track owner credentials. When the policy at T-1 is required, selection turns
-/// the owner shortlist off, so that every eligible node submits and the contract rejects the tickets
-/// of unverified owners.
+/// The node does not track owner credentials. When the policy at T-1 is required, selection asks
+/// the bonding registry which candidates are eligible, or turns the owner shortlist off.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentityPolicyState {
     pub schema_version: u32,
@@ -129,6 +131,9 @@ pub struct IdentityPolicyState {
     /// at startup. The next startup replays the raw logs after it, so policy logs that a binary
     /// without this projection ingested in between still count.
     pub replayed: HashMap<u64, u64>,
+    /// Chains whose startup replay failed. Their history can miss a change, so the policy reads as
+    /// required until a replay succeeds: selection then asks the bonding registry.
+    pub unknown: HashSet<u64>,
 }
 
 impl Default for IdentityPolicyState {
@@ -137,6 +142,7 @@ impl Default for IdentityPolicyState {
             schema_version: 1,
             chains: HashMap::new(),
             replayed: HashMap::new(),
+            unknown: HashSet::new(),
         }
     }
 }
@@ -176,11 +182,14 @@ impl IdentityPolicyState {
         Ok(true)
     }
 
-    /// Whether the policy at `timepoint` requires a verified bond owner.
+    /// Whether the policy at `timepoint` requires a verified bond owner. A chain with an unknown
+    /// history reads as required.
     pub fn required_at(&self, chain_id: u64, timepoint: u64) -> bool {
-        self.chains
-            .get(&chain_id)
-            .is_some_and(|history| at(history, timepoint))
+        self.unknown.contains(&chain_id)
+            || self
+                .chains
+                .get(&chain_id)
+                .is_some_and(|history| at(history, timepoint))
     }
 
     /// Whether selection at `timepoint` needs a verified bond owner. During an admission pause, the
