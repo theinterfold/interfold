@@ -140,6 +140,42 @@ preserves other pooled liabilities. Decimal checks establish scale, not market v
 Fee-token/raw-price configuration is separate and atomic; `setRandomnessFlatFee` changes only its
 nonzero raw-unit charge.
 
+## Owner identity
+
+`setIdentityPolicy(registry,required)` (owner only) checkpoints an identity policy in its own
+namespace and emits `IdentityPolicyUpdated`; those events are the policy history, and no view
+returns it. An unset or disabled policy requires no identity. A required policy needs a deployed
+`OwnerIdentityRegistry`: `eligibilityAt(operator,T−1)` then also requires
+`isVerifiedAt(bondOwnerAt(operator,T−1),T−1)`, and owner transfers check identity before they move
+counted capacity. One verified owner may fund many operators; the selection cap still gives each
+owner one seat.
+
+`OwnerIdentityRegistry.register(evidence)` passes the caller as the owner to the governance-set
+`IIdentityVerifier`, which must bind the credential to that owner, and checkpoints the result. Each
+identifier stays reserved to its first owner through replacement, expiry, and revocation.
+Registration cannot shorten an existing expiry, so governance revokes first. Expiry and revocation
+keep earlier snapshot answers. `setVerifier` accepts any verifier contract: a replacement that
+derives other identifiers lets every registered credential claim a second owner, so it needs a new
+registry. The registry runs behind a transparent proxy that governance administers. An upgrade keeps
+every credential and reservation, so identity recovery (for example, moving a credential to a new
+owner address) can be added later without every owner proving again.
+
+Every policy change resets counted owner capacity. Requests fail capacity closed until
+`refreshOperatorStatuses` counts the operators again, so governance refreshes every operator in the
+batch that changes a policy or calls `revoke`. Under a required policy, capacity covers fixed 30-day
+windows: an owner counts only when its credential lasts to the end of the current window, so a short
+credential stays eligible but cannot make the count stale early. After the window end, or after a
+revocation of a current credential, capacity reads zero until the next refresh. It then counts only
+the owners of refreshed operators until every operator is refreshed, so it can only undercount. Any
+account can call `refreshOperatorStatuses`, and someone must call it for every operator after each
+window end, or requests can fail for lack of counted owners. During an admission pause, an operator
+also needs identity at the pause cutoff, so a later credential or policy change cannot widen the
+frozen pool. Owners renew before the window that their credential ends in, or they stop counting
+toward capacity. Rust does not apply the identity policy to its owner shortlist yet, so enabling
+`required` before a node release that does would make verified nodes misjudge selection. An
+identifier proves what its verifier proves (for a document verifier, one document rather than one
+person); it does not stop identity rental.
+
 ## Deactivation and exit
 
 Removing tickets or unbonding can make an operator inactive without removing its IMT leaf.
@@ -188,9 +224,12 @@ routes drain. Default-admin handover uses the two-day `AccessControlDefaultAdmin
   [admission tests](../../packages/interfold-contracts/test/Registry/BondingAdmission.spec.ts),
   [ticket tests](../../packages/interfold-contracts/test/Token/InterfoldTicketToken.spec.ts), and
   [exit queue tests](../../packages/interfold-contracts/test/Registry/ExitQueueLib.spec.ts) own
-  financial and authorization behavior. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs)
-  own process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets`
-  as relevant.
+  financial and authorization behavior.
+  [Identity tests](../../packages/interfold-contracts/test/Registry/BondingIdentity.spec.ts) and
+  [registry tests](../../packages/interfold-contracts/test/Registry/OwnerIdentityRegistry.spec.ts)
+  own the identity gate and credential history.
+  [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own process argument exposure. Run
+  `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as relevant.
 - [EVM event decoding](../../crates/evm/runtime/src/bonding_registry/events.rs) tests typed owner,
   policy, and activity projection inputs. Those tests do not establish complete restart or migration
   behavior.

@@ -18,6 +18,7 @@ import {
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
+import { BondingIdentityLib } from "./BondingIdentityLib.sol";
 import { BondingAssetLib } from "./BondingAssetLib.sol";
 import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 
@@ -62,7 +63,7 @@ library BondingOwnershipLib {
             operator,
             block.timestamp,
             BondingAdmissionLib.policyAt(block.timestamp)
-        );
+        ) && BondingIdentityLib.allows(operator, block.timestamp);
         BondOwnerCapacityLib.transfer(
             operator,
             allowed ? newOwner : address(0)
