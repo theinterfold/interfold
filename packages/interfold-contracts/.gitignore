@@ -58,3 +58,8 @@ pnpm-lock.yaml
 
 # Benchmark-generated Honk verifiers (secure-8192 etc.; not committed)
 contracts/verifiers/bfv/honk/.benchmark/
+
+# Identity gate rollout output: governance batches and the plan stay local.
+deploy/protocol/*.identity-*.safe.json
+deploy/protocol/*.identity-*.governance.safe-builder.json
+deploy/protocol/*.identity-gate.json

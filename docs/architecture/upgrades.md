@@ -106,6 +106,101 @@ fork. It overwrites the `mainnet` entry of the checkout's
 `packages/crisp-contracts/deployed_contracts.json` with the fork's addresses, passes that file as
 `--crisp-deployments`, and restores the file when it ends.
 
+`upgrade:identity` (`scripts/upgrade/identityGate.ts prepare`) rolls out the
+[owner identity](registration-and-bonding.md#owner-identity) gate. It reads the `identity` section
+of the protocol config (ZKPassport root verifier, version, domain, scope, identifier type, OPRF key
+hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It checks the
+ProxyAdmin owner, the root verifier's code, the Aragon permissions when governance is a DAO, and the
+operator history, then deploys `ZKPassportIdentityVerifier`, `OwnerIdentityRegistry` behind a
+transparent proxy (the protocol owner owns the registry and its proxy admin), and a linked
+BondingRegistry implementation. Its governance batch upgrades BondingRegistry, sets the identity
+policy to the new registry with `required = false`, which publishes the registry to the verification
+page, and refreshes every registered operator in batches of 20, because every policy change resets
+counted owner capacity.
+
+`upgrade:identity:enforce` writes the batch that sets `required = true` and refreshes every
+operator. It refuses while fewer owners than the largest committee needs have a credential that
+lasts to the end of the capacity window of the latest execution (`--force` overrides). The latest
+execution is a week after the batch is written, or the date of `--execute-by`; the batch description
+names the deadline. It also needs `--nodes-upgraded`, which `--force` does not replace: first
+confirm that most nodes run a release that reads candidate eligibility and refreshes its own
+operator in each window, because older nodes keep the old shortlist and never refresh.
+`upgrade:identity:relax` is its rollback; during an admission pause, the identity rule at the pause
+cutoff stays until the admission policy changes too. `upgrade:identity:revoke -- --identity <id>`
+writes the batch that revokes one identifier and refreshes every operator in the same transaction: a
+revocation makes owner capacity read zero until refreshes count the owners again, so a plain
+`revoke` call would stop requests. Under a required policy it refuses when too few owners would
+still count (`--force` overrides). Revoking an identifier that its owner already replaced leaves
+capacity as it is. Validate the executed batch with the current policy. When ZKPassport ships a new
+version, the app proves with it and the pinned verifier rejects those proofs, so owners cannot
+register or renew. Set the new `identity.zkPassportVersion` and run
+`upgrade:identity:rotate-verifier`: it deploys a verifier from the config and writes the batch that
+sets it on the registry, which keeps every credential and reservation. It refuses a change to the
+domain, scope, identifier type, or OPRF key hash, because those derive every identifier and one
+document could then verify a second owner. Rehearse it with a fresh phone proof
+(`upgrade:identity:proof-fork`) first. To close registration at once (for example, when ZKPassport's
+verifier is in doubt), governance calls `setVerifier(0)` on the registry; credentials stay valid,
+and `rotate-verifier` opens it again. `prepare` refuses to run again for a network that has a plan,
+because a second registry makes every owner prove again (`--new-registry` overrides); until its
+batch executes, `prepare --rewrite` writes that batch again for the contracts in the plan. It also
+refuses when BondingRegistry already has an identity policy, which it reads from storage, so a
+checkout without the plan cannot replace the registry by mistake.
+`upgrade:identity:validate -- --required <true|false>` reads back the implementation, the registry
+owner, implementation, proxy admin and verifier, every verifier setting and the identifier
+namespace, the latest `IdentityPolicyUpdated` against the expected policy, the `IdentityRevoked`
+event of a revoke batch, and the owner capacity for the largest committee. It also refuses operators
+that registered after the batch was written and before it executed: the batch did not refresh them,
+so they stay uncounted. `--refresh-missing` refreshes them from the connected account (anyone may);
+run `validate` again after it. The plan keeps the refresh list of the last written batch, so
+validate each batch before you write the next. After the prepare batch (and after a verifier
+rotation), `validate --write-records` copies the identity contracts into the tracked deployment
+record (`deploy/protocol/<name>.deployment.json`). A checkout without the plan file rebuilds the
+plan from that record, so `relax` and the other batches work from any checkout. It reads those
+registrations from the connected RPC, from the block where the batch read its operator list. Write
+each batch shortly before execution: an operator that deregisters after the batch was written makes
+`refreshOperatorStatuses` revert, and the whole batch reverts with it, so write it again
+(`prepare --rewrite` for the prepare batch). One batch refreshes at most 120 operators: each costs
+about 77k gas, and with a 1.5 times gas limit the transaction must stay under the 16,777,216 gas cap
+of one transaction (EIP-7825). A larger pool needs a paused, staged refresh. Execute each batch with
+a gas limit well above the estimate (for example 1.5 times). An estimate made at the timestamp of an
+earlier capacity change can fall short once the batch is mined in a later block, where the capacity
+checkpoints start new entries.
+
+Before the Safe signs a batch, run `upgrade:identity:check -- --network mainnet --stage <stage>`
+with `FORK_URL`. On a fresh Anvil fork, it sends the batch exactly as governance will (with Aragon,
+the proposer Safe calls the Admin plugin, which runs every action in one transaction), then checks
+that counted owner capacity covers the largest committee one second before the next block and that
+the transaction uses at most half the block gas limit and, with a 1.5 times gas limit, stays under
+the gas cap of one transaction. The fork includes everything that changed since the batch was
+written, such as late registrations and admission cooldowns. It refuses an `enforce` or `revoke`
+batch past the deadline in the plan.
+
+Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
+that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
+`CONFIRM_MAINNET_FORK=1`, and point the `mainnet` network at the fork with `RPC_URL` and a test
+`PRIVATE_KEY`; the script refuses any chain that is not an Anvil mainnet fork. It deploys the
+verifier with the proof's settings, checks that another owner is rejected, registers the bound
+owner, and checks the identifier and the expiry. The proof's version is the value for
+`identity.zkPassportVersion`; ZKPassport rejects a retired version ("Verifier not found"). The
+batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed. With
+Aragon governance, the proposer Safe imports `<name>.identity-<stage>.governance.safe-builder.json`;
+`<name>.identity-<stage>.safe.json` lists the DAO actions for review only, because its owner-only
+calls revert when the Safe sends them. The verification page reads the policy from BondingRegistry
+storage, so it needs no setting for the upgrade. After the registry's mainnet deployment, add
+`OwnerIdentityRegistry` to `UPGRADEABLE_CONTRACTS` in
+`packages/interfold-contracts/scripts/storageLayouts.ts` and run `pnpm snapshot:storage-layouts`
+from that build, so `validate:upgrade` checks later registry upgrades.
+
+`upgrade:identity:simulate` runs the whole rollout on an Anvil mainnet fork (`FORK_URL`, and
+`LOG_RPC_URL` for the operator history), and executes every batch as governance sends it: prepare
+and validate with `--write-records` (a second `prepare` is refused, also without the plan file, and
+`--rewrite` writes the batch again); with `--proof <file>`, register that owner; check that
+`enforce` refuses without `--nodes-upgraded`, that it and its batch check refuse too few verified
+owners, then force it; check that `rotate-verifier` refuses an unchanged config and a changed
+identifier setting, then rotate and keep the credential; with a proof, revoke it (refused without
+`--force`, and `validate` refuses the batch until it executes); then relax from the deployment
+record without the plan file, with a passing batch check, and validate.
+
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
