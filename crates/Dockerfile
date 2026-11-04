@@ -54,7 +54,6 @@ COPY crates/ciphernode/config/Cargo.toml ./ciphernode/config/Cargo.toml
 COPY crates/compute-provider/Cargo.toml ./compute-provider/Cargo.toml
 COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml
-COPY crates/config/Cargo.toml ./config/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
 COPY crates/crypto/Cargo.toml ./crypto/Cargo.toml
 COPY crates/data/Cargo.toml ./data/Cargo.toml

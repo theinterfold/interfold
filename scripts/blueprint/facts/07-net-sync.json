@@ -246,7 +246,7 @@
           "ref": "crates/net/src/network_sync/effects/fetch_history.rs@190@let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())"
         }
       ],
-      "depends_on": ["e3-crypto", "e3-config", "e3-data", "e3-utils", "e3-events"],
+      "depends_on": ["e3-crypto", "e3-ciphernode-config", "e3-data", "e3-utils", "e3-events"],
       "tests": "Unit tests inside crates/net/src (cargo test -p e3-net). Integration tests in crates/net/tests (cargo test -p e3-net --test network_isolation, --test configured_peer_reconnect, --test peer_id_mismatch). The Docker scenario is crates/net/tests/run.sh.",
       "unverified": [
         "No Kademlia bootstrap query runs in non-test code. Discovery uses configured addresses and Identify-admitted connections; random-walk discovery was not traced.",
@@ -439,7 +439,7 @@
           "ref": "crates/sync/src/replay_spool.rs@520@#[actix::test]"
         }
       ],
-      "depends_on": ["e3-events", "e3-data", "e3-config", "e3-request", "e3-utils"],
+      "depends_on": ["e3-events", "e3-data", "e3-request", "e3-utils"],
       "tests": "Inline unit tests in replay_spool.rs, state.rs, workflow.rs, node_role.rs, schema_version.rs and collect_history.rs, plus crates/sync/src/sync/tests/ (gates, history, replay, role, schema). Run: cargo test -p e3-sync.",
       "unverified": [
         "Bootstrap and SnapshotLoaded in sync/service.rs derive actix Message but have no other reference in the snapshot, so their use is unverified.",

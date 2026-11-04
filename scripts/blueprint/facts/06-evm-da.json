@@ -369,7 +369,7 @@
         "e3-committee",
         "e3-request",
         "e3-bfv-client",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-crypto",
         "e3-data",
         "e3-data-availability",

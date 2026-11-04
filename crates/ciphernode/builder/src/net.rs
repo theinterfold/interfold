@@ -9,7 +9,7 @@
 use super::{startup::Storage, CiphernodeBuilder};
 use crate::NetInterfaceKind;
 use anyhow::Result;
-use e3_config::NetworkProfile;
+use e3_ciphernode_config::NetworkProfile;
 use e3_data::RepositoriesFactory;
 use e3_events::{AggregateId, BusHandle, E3id};
 use e3_evm::Chains;

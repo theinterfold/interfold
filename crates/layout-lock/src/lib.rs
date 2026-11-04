@@ -764,7 +764,7 @@ fixture. A swap changes what stored data and messages mean: treat it as an encod
 - encoding changed: a node on the previous release cannot read the new encoding. For a persisted \
 type, increase SCHEMA_VERSION (crates/sync/src/sync/schema_version.rs). For an event or a wire \
 message, also change the wire major (crates/net/src/network.rs) or protocol_version \
-(crates/config/protocol-release.toml), and name the upgrade class in the PR.
+(crates/ciphernode/config/protocol-release.toml), and name the upgrade class in the PR.
 - event ID changed: event identity changed, through a derived Hash or the toolchain's \
 DefaultHasher. Treat it as a protocol change.
 - renamed or replaced, same encoding: a variant of one enum has a new name, or another variant took \

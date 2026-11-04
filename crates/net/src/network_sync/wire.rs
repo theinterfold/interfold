@@ -312,7 +312,7 @@ mod tests {
     use super::fixtures::{assert_locked_bytes, unsequenced_event};
     use super::*;
     use crate::domain::net_event_batch::{BatchCursor, EventBatch, FetchEventsSince};
-    use e3_config::NetworkProfile;
+    use e3_ciphernode_config::NetworkProfile;
     use e3_events::AggregateId;
 
     // The locked wire bytes for gossip wire 5 and sync wire 4.

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use anyhow::{ensure, Result};
-use e3_config::{current_node_release, NetworkId, NetworkProfile};
+use e3_ciphernode_config::{current_node_release, NetworkId, NetworkProfile};
 use e3_events::{E3id, Event, EventContextAccessors, InterfoldEvent, SeqState};
 use libp2p::{identify::Info, StreamProtocol};
 use sha2::{Digest, Sha256};

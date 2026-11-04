@@ -74,6 +74,5 @@ zeroize = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-e3-config = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 serde_yaml = { workspace = true }

@@ -14,7 +14,7 @@ use crate::{
     events::{IncomingRequest, NetCommand},
 };
 use actix::{Actor, Context as ActixContext, Handler, Message, MessageResult};
-use e3_config::NetworkProfile;
+use e3_ciphernode_config::NetworkProfile;
 use e3_event_system::EventSystem;
 use e3_events::{
     AggregateConfig, DecryptionshareCreated, DkgCoordination, DkgCoordinationKind, DkgDealer,

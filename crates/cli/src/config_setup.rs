@@ -131,14 +131,14 @@ mod tests {
     use super::execute;
     use alloy::primitives::Address;
     use anyhow::Result;
-    use e3_config::SEPOLIA_BOOTSTRAP_PEER;
+    use e3_ciphernode_config::SEPOLIA_BOOTSTRAP_PEER;
     use e3_evm_config::DataAvailabilityMode;
     use std::fs;
 
     #[test]
     fn generated_config_uses_the_sepolia_profile_bootstrap() -> Result<()> {
         let dir = std::env::temp_dir().join(format!(
-            "e3-config-setup-test-{}-{}",
+            "e3-cli-config-setup-test-{}-{}",
             std::process::id(),
             line!()
         ));

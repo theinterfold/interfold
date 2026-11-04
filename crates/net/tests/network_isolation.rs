@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use e3_config::NetworkProfile;
+use e3_ciphernode_config::NetworkProfile;
 use e3_net::events::NetEvent;
 use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
 use tokio::time::{sleep, timeout};

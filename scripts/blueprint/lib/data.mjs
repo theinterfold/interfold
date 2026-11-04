@@ -236,8 +236,7 @@ export function loadData() {
   // Reverse dependencies, so a crate can show who uses it.
   for (const u of Object.values(units)) if (u.deps) for (const d of u.deps) if (units[d]) (units[d].usedBy ||= []).push(u.id)
 
-  // Match a facts unit by exact id, then by path, then by a normalized name when only one unit has
-  // it (the `e3-config` crate and the `config` circuit share a normalized name).
+  // Match a facts unit by exact id, then by path, then by an unambiguous normalized name.
   const norm = (s) =>
     String(s || '')
       .toLowerCase()

@@ -5,15 +5,15 @@ assemble and operate a ciphernode. Each remains an independently importable pack
 Cargo workspace; this directory is not a package or nested workspace.
 
 - [builder](builder/README.md) composes full/bootstrap nodes and recovery.
-- [config](config/README.md) resolves node profiles and paths for runtime callers.
+- [config](config/README.md) resolves node profiles, paths, and network/release identity.
 - [daemon-server](daemon-server/README.md) provides loopback CLI control transport.
 - [multithread](multithread/README.md) coordinates node compute admission and replay/retry policy.
 
-Network/release [identity](../config/README.md), the [CLI](../cli/README.md), CLI-owned
-[initializer](../init/README.md), and process-fenced [entrypoint](../entrypoint/README.md) currently
-remain at their flat locations. Generic [task-pool](../task-pool/README.md),
-[console](../console/README.md), and [filesystem](../fs/README.md) capabilities remain separate
-roots rather than becoming node-specific utilities.
+The [CLI](../cli/README.md), CLI-owned [initializer](../init/README.md), and process-fenced
+[entrypoint](../entrypoint/README.md) currently remain at their flat locations. Generic
+[task-pool](../task-pool/README.md), [console](../console/README.md), and
+[filesystem](../fs/README.md) capabilities remain separate roots rather than becoming node-specific
+utilities.
 
 Checkout-relative paths for this family's members start with `crates/ciphernode/`. Use the
 [workspace setup](../README.md#setup-and-checks) and each member's checks. Startup ordering and

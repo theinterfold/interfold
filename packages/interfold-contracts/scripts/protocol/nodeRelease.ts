@@ -80,7 +80,7 @@ function unsignedInteger(source: string, name: string): number {
 /** Read the node release from the release files of the Interfold monorepo at `root`. */
 export function readRepoNodeRelease(root: string): CurrentNodeRelease {
   const source = fs.readFileSync(
-    path.join(root, "crates/config/protocol-release.toml"),
+    path.join(root, "crates/ciphernode/config/protocol-release.toml"),
     "utf8",
   );
   const rootPackage = JSON.parse(

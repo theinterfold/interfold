@@ -3631,8 +3631,8 @@ dependencies = [
  "bincode",
  "derivative",
  "e3-aggregator",
+ "e3-ciphernode-config",
  "e3-committee",
- "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-event-system",
@@ -3666,12 +3666,13 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "dirs 5.0.1",
- "e3-config",
  "e3-evm-config",
  "figment",
+ "hex",
  "path-clean",
  "serde",
  "serde_yaml",
+ "toml",
 ]
 
 [[package]]
@@ -3688,7 +3689,6 @@ dependencies = [
  "dirs 5.0.1",
  "e3-ciphernode-builder",
  "e3-ciphernode-config",
- "e3-config",
  "e3-console",
  "e3-crypto",
  "e3-daemon-server",
@@ -3781,18 +3781,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-config"
-version = "0.20.0-dev.3"
-dependencies = [
- "alloy-primitives",
- "anyhow",
- "e3-evm-config",
- "hex",
- "serde",
- "toml",
-]
-
-[[package]]
 name = "e3-console"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -3863,7 +3851,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "commitlog",
- "e3-config",
  "e3-events",
  "e3-hamt",
  "e3-utils",
@@ -4008,8 +3995,8 @@ dependencies = [
  "bincode",
  "bloom",
  "e3-bfv-client",
+ "e3-ciphernode-config",
  "e3-committee",
- "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-data-availability",
@@ -4197,7 +4184,6 @@ dependencies = [
  "e3-bfv-client",
  "e3-committee",
  "e3-committee-hash",
- "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-event-system",
@@ -4283,7 +4269,7 @@ dependencies = [
  "bincode",
  "chrono",
  "derivative",
- "e3-config",
+ "e3-ciphernode-config",
  "e3-crypto",
  "e3-data",
  "e3-event-system",
@@ -4401,7 +4387,6 @@ dependencies = [
  "e3-bfv-client",
  "e3-committee",
  "e3-committee-hash",
- "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-events",
@@ -4475,7 +4460,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-committee",
- "e3-config",
  "e3-data",
  "e3-event-system",
  "e3-events",
@@ -4499,7 +4483,6 @@ dependencies = [
  "actix",
  "anyhow",
  "bincode",
- "e3-config",
  "e3-data",
  "e3-event-system",
  "e3-events",
@@ -4550,7 +4533,6 @@ dependencies = [
  "e3-bfv-test-support",
  "e3-ciphernode-builder",
  "e3-committee",
- "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-event-system",

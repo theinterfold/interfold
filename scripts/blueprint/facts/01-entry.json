@@ -467,7 +467,7 @@
       "depends_on": [
         "e3-aggregator",
         "e3-crypto",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-data",
         "e3-event-system",
         "e3-events",

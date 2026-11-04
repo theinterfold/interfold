@@ -19,11 +19,11 @@ install it. You can also reset the node state when a release changes the storage
 
 Each release has three values. Only the two compatibility values decide eligibility.
 
-| Value              | Where it is defined                         | Increases when                                                             |
-| ------------------ | ------------------------------------------- | -------------------------------------------------------------------------- |
-| Release version    | The workspace version, for example `0.18.0` | Every release. `interfold --version` prints it.                            |
-| `protocol_version` | `crates/config/protocol-release.toml`       | Contracts, events, cryptography, or protocol behavior become incompatible. |
-| `node_generation`  | `crates/config/protocol-release.toml`       | Every operator must install a node-only fix.                               |
+| Value              | Where it is defined                              | Increases when                                                             |
+| ------------------ | ------------------------------------------------ | -------------------------------------------------------------------------- |
+| Release version    | The workspace version, for example `0.18.0`      | Every release. `interfold --version` prints it.                            |
+| `protocol_version` | `crates/ciphernode/config/protocol-release.toml` | Contracts, events, cryptography, or protocol behavior become incompatible. |
+| `node_generation`  | `crates/ciphernode/config/protocol-release.toml` | Every operator must install a node-only fix.                               |
 
 The release ID is `keccak256("interfold.node.release:v1:" + version)`. The node records it on-chain,
 but the ID does not decide eligibility.
