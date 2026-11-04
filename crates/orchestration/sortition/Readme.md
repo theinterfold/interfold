@@ -6,7 +6,7 @@
 finalized committees, coordinates committee-finalization attempts, and derives this node's
 party/aggregator roles. Contracts finalize membership; DKG and aggregation are downstream consumers.
 The walkthrough below places selection in the larger E3 lifecycle; the
-[selection domain](../../docs/architecture/committee-selection.md) owns the cross-component rules
+[selection domain](../../../docs/architecture/committee-selection.md) owns the cross-component rules
 and limits.
 
 Ordered membership/lookup belongs to `e3-committee`. The free functions in
@@ -15,31 +15,31 @@ not reorder members or renumber finalized slots.
 
 ## Map
 
-| Location                                                                                                                                                                                       | Responsibility                                                        |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`sortition/actor.rs`](src/sortition/actor.rs), [`sortition/handlers/`](src/sortition/handlers)                                                                                                | Registry/request projection and ticket dispatch.                      |
-| [`sortition/node_registry.rs`](src/sortition/node_registry.rs), [`sortition/admission.rs`](src/sortition/admission.rs), [`sortition/bond_owners.rs`](src/sortition/bond_owners.rs)             | Historical eligibility, policy, and request-time owners.              |
-| [`sortition/selection_backend.rs`](src/sortition/selection_backend.rs), [`sortition/ticket_selection.rs`](src/sortition/ticket_selection.rs), [`sortition/ticket.rs`](src/sortition/ticket.rs) | Owner shortlist, score/rank calculation, and canonical ticket digest. |
-| [`ciphernode_selection/`](src/ciphernode_selection), [`failover.rs`](src/failover.rs)                                                                                                          | Finalized party roles and readiness-gated aggregator failover.        |
-| [`committee_finalization/`](src/committee_finalization)                                                                                                                                        | Separate node-wide finalization actor, chain-time input and recovery. |
-| [`messages.rs`](src/messages.rs), [`repo.rs`](src/repo.rs)                                                                                                                                     | Query/delivery messages and typed persistence.                        |
+| Location                                                                                                                           | Responsibility                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [`actor.rs`](src/actor.rs), [`handlers/`](src/handlers)                                                                            | Registry/request projection and ticket dispatch.                      |
+| [`node_registry.rs`](src/node_registry.rs), [`admission.rs`](src/admission.rs), [`bond_owners.rs`](src/bond_owners.rs)             | Historical eligibility, policy, and request-time owners.              |
+| [`selection_backend.rs`](src/selection_backend.rs), [`ticket_selection.rs`](src/ticket_selection.rs), [`ticket.rs`](src/ticket.rs) | Owner shortlist, score/rank calculation, and canonical ticket digest. |
+| [`ciphernode_selection/`](src/ciphernode_selection), [`failover.rs`](src/failover.rs)                                              | Finalized party roles and readiness-gated aggregator failover.        |
+| [`committee_finalization/`](src/committee_finalization)                                                                            | Separate node-wide finalization actor, chain-time input and recovery. |
+| [`messages.rs`](src/messages.rs), [`repo.rs`](src/repo.rs)                                                                         | Query/delivery messages and typed persistence.                        |
 
 ## Runtime integration
 
 `Sortition::attach(SortitionAttachParams { ... }).await` restores repositories/backend and
 subscribes to registry/request events. Full nodes pass an `EligibilityReader`; the
-[EVM adapter](../evm/runtime/src/eligibility.rs) reads `eligibilityAt` for every candidate at T−1
+[EVM adapter](../../evm/runtime/src/eligibility.rs) reads `eligibilityAt` for every candidate at T−1
 with a fresh provider. Under a required identity policy, selection then ranks only the eligible
 operators; without a reader, or after a failed read, it ranks every eligible operator.
 `CiphernodeSelector::attach` restores local party/aggregator roles. The
-[builder caller](../ciphernode/builder/src/sortition.rs) shows their combined setup,
-including committee reconciliation and pending ticket intents. Consumers query the actor with
-messages such as `GetNodesForE3`; they do not rerun selection from current balances.
+[builder caller](../../ciphernode/builder/src/sortition.rs) shows their combined setup, including
+committee reconciliation and pending ticket intents. Consumers query the actor with messages such as
+`GetNodesForE3`; they do not rerun selection from current balances.
 
 Full nodes also attach
 `CommitteeFinalizer::attach_with_recovery(bus, repository, chain_time_reader)` at the existing
-[startup boundary](../ciphernode/builder/src/startup.rs). The `CommitteeChainTimeReader` reads
-latest block time for the request's chain; the [EVM adapter](../evm/runtime/src/chain_time.rs)
+[startup boundary](../../ciphernode/builder/src/startup.rs). The `CommitteeChainTimeReader` reads
+latest block time for the request's chain; the [EVM adapter](../../evm/runtime/src/chain_time.rs)
 creates a fresh provider per attempt. The actor retains deadline/rank, effects gating and
 cancellation. It remains separate from `Sortition`, and bootstrap does not attach it. Recovery keeps
 its original store key and schema despite the ownership move.
@@ -435,11 +435,11 @@ completion cannot reserve that E3's capacity again.
 ## Tests
 
 Run `cargo test --locked -p e3-sortition` from the root with the
-[system prerequisites](../tests/README.md#prerequisites-and-assurance). Inline modules test score
+[system prerequisites](../../tests/README.md#prerequisites-and-assurance). Inline modules test score
 vectors, historical owners/admission, capacity reservations, and phase-specific failover. Actor
 cases cover role restoration/promotion. On-chain ticket acceptance and owner caps are covered by the
-[contract suite](../../packages/interfold-contracts/README.md), separately from local decisions. See
-[AGENTS.md](AGENTS.md) for selection/snapshot changes.
+[contract suite](../../../packages/interfold-contracts/README.md), separately from local decisions.
+See [AGENTS.md](AGENTS.md) for selection/snapshot changes.
 
 `cargo test --locked -p e3-sortition --lib committee_finalizer` covers formation timing, retries,
 cancellation, production sync replay, and reopening a pre-refactor snapshot at the original disk

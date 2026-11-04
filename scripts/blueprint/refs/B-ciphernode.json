@@ -99,7 +99,7 @@
   {
     "id": "B8",
     "supported": true,
-    "refs": ["crates/sortition/src/ciphernode_selection/handlers.rs@233@CiphernodeSelected {"],
+    "refs": ["crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@233@CiphernodeSelected {"],
     "line_text": ["CiphernodeSelected {"],
     "note": "On CommitteeFinalized, the selector publishes CiphernodeSelected when this node is in the finalized committee."
   },
@@ -145,9 +145,9 @@
     "id": "B13",
     "supported": true,
     "refs": [
-      "crates/slashing/src/accusation_voting/effects/apply_actions.rs@37@self.bus.publish(quorum, ec)",
-      "crates/slashing/src/accusation_voting/transitions/vote.rs@226@quorum: AccusationQuorumReached {",
-      "crates/slashing/src/accusation_voting/actor.rs@100@pub struct AccusationManager {"
+      "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@37@self.bus.publish(quorum, ec)",
+      "crates/orchestration/slashing/src/accusation_voting/transitions/vote.rs@226@quorum: AccusationQuorumReached {",
+      "crates/orchestration/slashing/src/accusation_voting/actor.rs@100@pub struct AccusationManager {"
     ],
     "line_text": [
       "if let Err(err) = self.bus.publish(quorum, ec) {",

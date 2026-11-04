@@ -61,7 +61,8 @@ verification runs off the actor runtime through that pool, preserving serial res
 These arguments are required: callers must not create an independent production verification pool.
 The [builder wiring](../../ciphernode/builder/src/extensions.rs) shows hydration before
 effect-enabled replay. Operators normally use the [CLI Noir commands](../../cli/src/noir.rs), not
-manual actor construction. Slashing implementation lives in [e3-slashing](../../slashing/README.md).
+manual actor construction. Slashing implementation lives in
+[e3-slashing](../../orchestration/slashing/README.md).
 
 `Provable::Config` carries each circuit's concrete configuration into preparation. Workers build it
 from their existing BFV parameter owner; C6/C7 reuse it across ciphertext indices. User encryption

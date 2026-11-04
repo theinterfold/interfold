@@ -20,6 +20,6 @@ IDs.
   request context, absolute deadline, rank stagger, effects gating and cancellation. Time-reader
   adapters must create a fresh provider per attempt; this crate must not depend on EVM.
 
-See [selection](../../docs/architecture/committee-selection.md) and
-[DKG](../../docs/architecture/dkg.md). Use the [README tests](Readme.md#tests); on-chain
+See [selection](../../../docs/architecture/committee-selection.md) and
+[DKG](../../../docs/architecture/dkg.md). Use the [README tests](Readme.md#tests); on-chain
 score/owner-cap behavior also needs the contract suite.

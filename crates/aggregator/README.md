@@ -32,9 +32,9 @@ Use the extensions in `e3_aggregator::ext` with an `e3_request::E3RouterBuilder`
 The [ciphernode wiring](../ciphernode/builder/src/extensions.rs) shows registration through
 `with_recipient`, including the FHE dependency. Consumers do not construct the private
 public-key/plaintext actor modules directly. Committee formation is owned by
-[sortition](../sortition/Readme.md#runtime-integration), not aggregation. Canonical-key inputs come
-from the shared `e3_request::canonical_key` authority; local aggregation results do not create a
-second authority.
+[sortition](../orchestration/sortition/Readme.md#runtime-integration), not aggregation.
+Canonical-key inputs come from the shared `e3_request::canonical_key` authority; local aggregation
+results do not create a second authority.
 
 Aggregation follows the canonical roster and active/standby roles, not the fastest arriving shares.
 Plaintext reconstruction needs T+1 valid roster shares. Local aggregation results are publication

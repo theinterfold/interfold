@@ -6,21 +6,21 @@
 
 //! Compatibility view of pure sortition modules stored by capability.
 
-#[path = "sortition/admission.rs"]
+#[path = "admission.rs"]
 pub mod admission;
-#[path = "sortition/selection_backend.rs"]
+#[path = "selection_backend.rs"]
 pub mod backends;
-#[path = "sortition/bond_owners.rs"]
+#[path = "bond_owners.rs"]
 pub mod bond_owners;
 #[path = "failover.rs"]
 pub mod failover;
-#[path = "sortition/finalized_committee_retention.rs"]
+#[path = "finalized_committee_retention.rs"]
 mod finalized_committee_retention;
-#[path = "sortition/node_registry.rs"]
+#[path = "node_registry.rs"]
 pub mod node_registry;
-#[path = "sortition/ticket.rs"]
+#[path = "ticket.rs"]
 pub mod ticket;
-#[path = "sortition/ticket_selection.rs"]
+#[path = "ticket_selection.rs"]
 pub mod ticket_sortition;
 
 pub use admission::*;

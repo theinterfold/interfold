@@ -97,5 +97,5 @@ HAMT is 0.58x the cost
 Run `cargo test --locked -p e3-hamt` from the root without external services. Inline tests cover
 insert/lookup/removal, retaining earlier maps, and equivalence with a `BTreeMap` over operation
 sequences. The laptop timing above is historical context, not a repository benchmark target or
-correctness claim. [Sortition](../sortition/Readme.md) owns snapshot use; [AGENTS.md](AGENTS.md)
-covers structural-sharing changes.
+correctness claim. [Sortition](../orchestration/sortition/Readme.md) owns snapshot use;
+[AGENTS.md](AGENTS.md) covers structural-sharing changes.

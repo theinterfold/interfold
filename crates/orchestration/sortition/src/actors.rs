@@ -10,7 +10,7 @@
 mod ciphernode_selector;
 #[path = "committee_finalization/actor.rs"]
 mod committee_finalizer;
-#[path = "sortition/actor.rs"]
+#[path = "actor.rs"]
 mod sortition;
 
 pub use ciphernode_selector::*;

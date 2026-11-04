@@ -87,8 +87,8 @@ COPY crates/program-server/Cargo.toml ./program-server/Cargo.toml
 COPY crates/state/request/Cargo.toml ./state/request/Cargo.toml
 COPY crates/safe/Cargo.toml ./safe/Cargo.toml
 COPY crates/sdk/Cargo.toml ./sdk/Cargo.toml
-COPY crates/slashing/Cargo.toml ./slashing/Cargo.toml
-COPY crates/sortition/Cargo.toml ./sortition/Cargo.toml
+COPY crates/orchestration/slashing/Cargo.toml ./orchestration/slashing/Cargo.toml
+COPY crates/orchestration/sortition/Cargo.toml ./orchestration/sortition/Cargo.toml
 COPY crates/dashboard/Cargo.toml ./dashboard/Cargo.toml
 COPY crates/ciphernode/daemon-server/Cargo.toml ./ciphernode/daemon-server/Cargo.toml
 COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml

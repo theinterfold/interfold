@@ -69,17 +69,17 @@ enforces it.
 
 ## Source map
 
-| Component                        | Source                                                                                                    |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Committee state and entry points | `packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol`                           |
-| Seed, ticket checks, owner cap   | `packages/interfold-contracts/contracts/lib/RegistrySortitionLib.sol`                                     |
-| Randomness provider              | `contracts/interfaces/IRandomnessProvider.sol`, `contracts/randomness/ChainlinkVrfRandomnessProvider.sol` |
-| Owner history and capacity       | `contracts/lib/BondingOwnershipLib.sol`, `contracts/lib/BondOwnerCapacityLib.sol`                         |
-| Score and owner shortlist (Rust) | `crates/sortition/src/sortition/ticket.rs`, `ticket_selection.rs`, `selection_backend.rs`                 |
-| Sortition actor                  | `crates/sortition/src/sortition/actor.rs`, `handlers/request.rs`                                          |
-| Party IDs and failover           | `crates/sortition/src/ciphernode_selection/`, `crates/sortition/src/failover.rs`                          |
-| Finalization timers              | `crates/sortition/src/committee_finalization/actor.rs`                                                    |
-| Randomness reader                | `crates/evm/runtime/src/randomness_provider/actor.rs`                                                     |
+| Component                        | Source                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Committee state and entry points | `packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol`                              |
+| Seed, ticket checks, owner cap   | `packages/interfold-contracts/contracts/lib/RegistrySortitionLib.sol`                                        |
+| Randomness provider              | `contracts/interfaces/IRandomnessProvider.sol`, `contracts/randomness/ChainlinkVrfRandomnessProvider.sol`    |
+| Owner history and capacity       | `contracts/lib/BondingOwnershipLib.sol`, `contracts/lib/BondOwnerCapacityLib.sol`                            |
+| Score and owner shortlist (Rust) | `crates/orchestration/sortition/src/ticket.rs`, `ticket_selection.rs`, `selection_backend.rs`                |
+| Sortition actor                  | `crates/orchestration/sortition/src/actor.rs`, `handlers/request.rs`                                         |
+| Party IDs and failover           | `crates/orchestration/sortition/src/ciphernode_selection/`, `crates/orchestration/sortition/src/failover.rs` |
+| Finalization timers              | `crates/orchestration/sortition/src/committee_finalization/actor.rs`                                         |
+| Randomness reader                | `crates/evm/runtime/src/randomness_provider/actor.rs`                                                        |
 
 ## Sortition seed
 

@@ -107,9 +107,8 @@ mod tests {
 
     #[test]
     fn ingestion_time_history_is_readable_but_not_trusted() {
-        let bytes =
-            alloy::hex::decode(include_str!("../../tests/fixtures/bond-owners-v1.hex").trim())
-                .unwrap();
+        let bytes = alloy::hex::decode(include_str!("../tests/fixtures/bond-owners-v1.hex").trim())
+            .unwrap();
         let state: BondOwnerState = bincode::deserialize(&bytes).unwrap();
         assert!(state.validate().is_err());
         assert!(state.chains.is_empty());
@@ -118,9 +117,8 @@ mod tests {
 
     #[test]
     fn version_two_fixture_remains_readable() {
-        let bytes =
-            alloy::hex::decode(include_str!("../../tests/fixtures/bond-owners-v2.hex").trim())
-                .unwrap();
+        let bytes = alloy::hex::decode(include_str!("../tests/fixtures/bond-owners-v2.hex").trim())
+            .unwrap();
         let state: BondOwnerState = bincode::deserialize(&bytes).unwrap();
         state.validate().unwrap();
         assert!(state.chains.is_empty());
