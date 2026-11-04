@@ -413,7 +413,7 @@
         {
           "name": "SCHEMA_VERSION",
           "what": "u32 = 8, defined in e3-sync: the on-disk format guard that the node checks before the EventStores open",
-          "ref": "crates/sync/src/sync/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
+          "ref": "crates/state/sync/src/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
         }
       ],
       "read_first": [

@@ -14,8 +14,8 @@ decision owner. Keep planning independent from adapters when changing the existi
 - Network recovery has one cumulative startup budget. Failure to obtain required history must not
   become an unannounced partial resync; bootstrap's optional peer-history policy is explicit.
 
-[Persistence](../../docs/architecture/persistence-and-replay.md) and
-[network history](../../docs/architecture/network-delivery.md#historical-sync-and-coverage) own the
-cross-layer contract. Use the [README test map/prerequisites](README.md#tests). Recovery changes
+[Persistence](../../../docs/architecture/persistence-and-replay.md) and
+[network history](../../../docs/architecture/network-delivery.md#historical-sync-and-coverage) own
+the cross-layer contract. Use the [README test map/prerequisites](README.md#tests). Recovery changes
 need the affected paged replay and gate histories; full replay/hydration equivalence remains
 unproven.

@@ -2,7 +2,7 @@
 
 Owners: [event system](../../crates/state/event-system/), [events](../../crates/events/),
 [data](../../crates/state/storage/), [request router](../../crates/request/),
-[sync](../../crates/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
+[sync](../../crates/state/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
 [Design principles](design-principles.md) describe the direction; owner-local documentation
 describes implementation boundaries. Neither makes an unimplemented durability guarantee true.
 
@@ -305,8 +305,8 @@ deleting identity or already matching history. It is not generic repair for comm
   before admission remain memory-only. Collector and slash-fallback clocks are not injected.
 - Checker snapshot failure and terminal DKG snapshot publication remain unacknowledged; C4
   roster-fixed writes can be stale after restart. [DKG](dkg.md) retains exact failure windows.
-- `sync/state.rs` reads repositories; document workflow and keyshare timeout policy read wall clock,
-  exceptions to the target pure-workflow boundary. Do not widen them.
+- `e3-sync`'s `state.rs` reads repositories; document workflow and keyshare timeout policy read wall
+  clock, exceptions to the target pure-workflow boundary. Do not widen them.
 - Chain nonce serialization is in memory; only slash submissions have a durable intent record beyond
   replay-derived publication work. Other transactions rely on preflight. Chain confirmation depth
   supplies no general reorg rollback. Cancellation ownership remains uneven across crates.

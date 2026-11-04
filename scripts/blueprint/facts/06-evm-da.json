@@ -340,7 +340,7 @@
         },
         {
           "why": "restart: the block cursor saved with the snapshot replaces the deploy block",
-          "ref": "crates/sync/src/sync/state.rs@65@let block = block_repo.read().await?.unwrap_or(deploy_block);"
+          "ref": "crates/state/sync/src/state.rs@65@let block = block_repo.read().await?.unwrap_or(deploy_block);"
         }
       ],
       "rust_patterns": [

@@ -6,7 +6,7 @@
 
 //! Compatibility view of the effectful sync service.
 
-#[path = "sync/service.rs"]
+#[path = "service.rs"]
 mod sync;
 
 pub use sync::*;
