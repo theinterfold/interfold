@@ -4,5 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-#[allow(clippy::module_inception)]
+pub mod actor_panics;
+pub mod fence;
+pub mod helpers;
+pub mod net;
+pub mod nodes;
+pub mod password;
 pub mod start;
+pub mod store_record;
+pub mod validate;
+pub mod wallet;

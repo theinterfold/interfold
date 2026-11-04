@@ -24,7 +24,7 @@ function repositoryFixture(t) {
   const startup =
     'fn validate_proof_aggregation_mode(skip: bool) {}\n' +
     'fn execute(config: Config) { validate_proof_aggregation_mode(config.skip_proof_aggregation()); }\n'
-  write('crates/entrypoint/src/start.rs', startup)
+  write('crates/ciphernode/entrypoint/src/start.rs', startup)
   write('crates/Dockerfile', 'COPY crates/core/Cargo.toml crates/core/Cargo.toml\n')
   const compose = (seconds) => `services:\n  node:\n    image: node\n    stop_grace_period: ${seconds}s\n`
   write('dappnode/docker-compose.yml', compose(61))
@@ -72,7 +72,7 @@ test('repository checks reject a missing startup proof guard or its configuratio
     startup.replace('fn validate_proof_aggregation_mode(skip: bool) {}\n', ''),
     startup.replace('validate_proof_aggregation_mode(config.skip_proof_aggregation());', ''),
   ]) {
-    write('crates/entrypoint/src/start.rs', source)
+    write('crates/ciphernode/entrypoint/src/start.rs', source)
     const result = run()
     assert.equal(result.status, 1, result.stdout + result.stderr)
     assert.match(result.stdout, /validate_proof_aggregation_mode missing or no longer called/)

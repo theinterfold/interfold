@@ -171,7 +171,7 @@ pub async fn build_ciphernode(
     // add cli peers to the config
     config.add_peers(peers)?;
 
-    let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;
+    let node = e3_entrypoint::start::execute(config, bootstrap).await?;
 
     Ok(node)
 }

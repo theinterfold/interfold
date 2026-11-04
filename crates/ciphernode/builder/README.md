@@ -4,8 +4,7 @@
 
 Library composition root for a ciphernode: it connects storage, chain adapters, networking, request
 routing, and protocol capabilities. It is not an executable; normal operators use the
-[CLI](../../cli/README.md), whose [entrypoint](../../entrypoint/README.md) also owns process
-fencing.
+[CLI](../../cli/README.md), whose [entrypoint](../entrypoint/README.md) also owns process fencing.
 
 Production startup and the in-process test harness use the same builder. It returns a
 `CiphernodeHandle` once the node has completed startup recovery and reached live-source readiness.
@@ -56,8 +55,8 @@ Persisted directories are role-stamped: full and bootstrap nodes cannot reuse ea
 
 ## Configure and start
 
-The production recipe is [entrypoint startup](../../entrypoint/src/start/start.rs): seed a
-`SharedRng`, load the password-backed `Cipher`, choose a profile, then configure:
+The production recipe is [entrypoint startup](../entrypoint/src/start/mod.rs): seed a `SharedRng`,
+load the password-backed `Cipher`, choose a profile, then configure:
 
 - `with_chains(&[ChainConfig])` and `with_network(profile, peers, quic_port)`;
 - `with_persistence(&log_path, &kv_path)` (otherwise storage is in memory);
@@ -106,7 +105,7 @@ scenario to run. In-memory startup tests and persisted restart scenarios exercis
 
 ## Related documentation
 
-- [Entrypoint](../../entrypoint/README.md): production startup and process management.
+- [Entrypoint](../entrypoint/README.md): production startup and process management.
 - [Event system](../../event-system/README.md): lower-level event runtime assembly.
 - [Slashing](../../../docs/architecture/slashing.md): chain-specific manager resolution.
 - [AGENTS.md](AGENTS.md): conventions and constraints for changing this crate.

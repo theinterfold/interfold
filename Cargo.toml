@@ -14,7 +14,7 @@ members = [
   "crates/crypto",
   "crates/data",
   "crates/data-availability",
-  "crates/entrypoint",
+  "crates/ciphernode/entrypoint",
   "crates/event-system",
   "crates/events",
   "crates/evm/runtime",
@@ -103,7 +103,7 @@ e3-request = { version = "0.20.0-dev.3", path = "./crates/request" }
 e3-sdk = { version = "0.20.0-dev.3", path = "./crates/sdk" }
 e3-cli = { version = "0.20.0-dev.3", path = "./crates/cli" }
 e3-committee-hash = { version = "0.20.0-dev.3", path = "./crates/committee-hash" }
-e3-entrypoint = { version = "0.20.0-dev.3", path = "./crates/entrypoint" }
+e3-entrypoint = { version = "0.20.0-dev.3", path = "./crates/ciphernode/entrypoint" }
 e3-init = { version = "0.20.0-dev.3", path = "./crates/init" }
 e3-event-system = { version = "0.20.0-dev.3", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.3", path = "./crates/events" }

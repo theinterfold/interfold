@@ -940,8 +940,8 @@ function ciphernode({ units }) {
         fs: 'r',
         ts: 'l',
         refs: [
-          H('crates/entrypoint/src/start/start.rs', 90, 'CiphernodeBuilder::bootstrap(rng, cipher)'),
-          H('crates/entrypoint/src/start/start.rs', 128, 'CiphernodeBuilder::full(rng, cipher, backend)'),
+          H('crates/ciphernode/entrypoint/src/start/mod.rs', 90, 'CiphernodeBuilder::bootstrap(rng, cipher)'),
+          H('crates/ciphernode/entrypoint/src/start/mod.rs', 128, 'CiphernodeBuilder::full(rng, cipher, backend)'),
           ...ev('B21'),
         ],
       },

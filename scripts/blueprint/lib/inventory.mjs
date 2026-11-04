@@ -45,7 +45,7 @@ const lines = (p) => readFileSync(p, 'utf8').split('\n')
 export const LAYERS = {
   entry: [
     'cli',
-    'entrypoint',
+    'ciphernode/entrypoint',
     'ciphernode/builder',
     'dashboard',
     'ciphernode/daemon-server',

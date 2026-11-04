@@ -39,5 +39,5 @@ Run `cargo test --locked -p e3-ciphernode-config`. Inline tests cover node scopi
 network profiles, and release identity without starting a node or contacting RPCs. Admission changes
 also need affected [network tests](../../net/README.md#tests). The
 [CLI executable tests](../../cli/tests/cli_configuration.rs) cover loaded-file paths and daemon
-selection; [entrypoint tests](../../entrypoint/README.md#tests) cover startup and durable-state
-safety. See [AGENTS.md](AGENTS.md) before changing identity or state locations.
+selection; [entrypoint tests](../entrypoint/README.md#tests) cover startup and durable-state safety.
+See [AGENTS.md](AGENTS.md) before changing identity or state locations.

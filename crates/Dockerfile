@@ -58,7 +58,7 @@ COPY crates/console/Cargo.toml ./console/Cargo.toml
 COPY crates/crypto/Cargo.toml ./crypto/Cargo.toml
 COPY crates/data/Cargo.toml ./data/Cargo.toml
 COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
-COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
+COPY crates/ciphernode/entrypoint/Cargo.toml ./ciphernode/entrypoint/Cargo.toml
 COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
 COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
@@ -105,7 +105,7 @@ COPY crates/zk/witness/Cargo.toml ./zk/witness/Cargo.toml
 COPY crates/zk/samples/Cargo.toml ./zk/samples/Cargo.toml
 COPY crates/zk/benchmarks/Cargo.toml ./zk/benchmarks/Cargo.toml
 
-RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./entrypoint/build.rs
+RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./ciphernode/entrypoint/build.rs
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./cli/build.rs
 RUN for d in ./*/ ./*/*/ ; do \
         if [ -f "$d/Cargo.toml" ]; then \

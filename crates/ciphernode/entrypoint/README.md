@@ -24,20 +24,20 @@ runtime. Offline commands inspect state under the same ownership fences.
 
 ## Usage
 
-Use [the CLI](../cli/README.md) for `interfold start`, `interfold nodes --help`, or
+Use [the CLI](../../cli/README.md) for `interfold start`, `interfold nodes --help`, or
 `interfold node validate --help`. Library callers use the exported operation modules in
-[`lib.rs`](src/lib.rs); [`start/start.rs`](src/start/start.rs) is the configured builder recipe. Do
-not invoke reset/purge on a populated directory merely to try the API: those commands are
-destructive and can refuse active keyshare or pending slash state.
+[`lib.rs`](src/lib.rs); [`start/mod.rs`](src/start/mod.rs) is the configured builder recipe. Do not
+invoke reset/purge on a populated directory merely to try the API: those commands are destructive
+and can refuse active keyshare or pending slash state.
 
 ## Process and state ownership
 
 Start acquires the process fence and opens/decrypts the intended identity before constructing the
 node. Bootstrap and full roles cannot reuse one populated directory: their reader sets share chain
-cursors. [Persistence](../../docs/architecture/persistence-and-replay.md) owns role/schema
+cursors. [Persistence](../../../docs/architecture/persistence-and-replay.md) owns role/schema
 admission, and
-[upgrades](../../docs/architecture/upgrades.md#controlled-state-reset-never-directory-deletion) owns
-identity-preserving reset and the limits of purge/store discovery.
+[upgrades](../../../docs/architecture/upgrades.md#controlled-state-reset-never-directory-deletion)
+owns identity-preserving reset and the limits of purge/store discovery.
 
 `node validate` is read-only by default. Repair is limited to verified uncommitted tails and derived
 membership/history mismatches, not indexed corruption, unknown schemas, or recovery of lost secrets.
@@ -57,7 +57,7 @@ automatically.
 ## Tests
 
 Use `cargo test --locked -p e3-entrypoint` with the
-[system prerequisites](../tests/README.md#prerequisites-and-assurance); schema/startup tests may
+[system prerequisites](../../tests/README.md#prerequisites-and-assurance); schema/startup tests may
 need Foundry/Anvil. Inline tests cover fencing, child cleanup, validation, and identity setup. The
 [`tests/`](tests) targets exercise purge/reset guards and old/corrupt snapshot/schema cases. The
 integration suite owns multi-process restart/shutdown scenarios. Supervisor cleanup tests do not
