@@ -15,7 +15,7 @@ already-filtered set of shares.
   to introduce an aggregation-specific cache or weaken chain-authority recovery tests. Canonical key
   publication ends DKG removals even for an incomplete standby.
 
-See [DKG](../../docs/architecture/dkg.md) and
-[decryption](../../docs/architecture/threshold-decryption.md). Use the
+See [DKG](../../../docs/architecture/dkg.md) and
+[decryption](../../../docs/architecture/threshold-decryption.md). Use the
 [README test map and prerequisites](README.md#tests). Phase/recovery changes need the affected
 standby, demotion, and restart histories; local mocks do not establish recursive proof validity.

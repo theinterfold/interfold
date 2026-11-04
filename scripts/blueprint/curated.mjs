@@ -1015,7 +1015,7 @@ function ciphernode({ units }) {
         fa: (860 - 470) / 820,
         refs: [
           H(
-            'crates/aggregator/src/public_key_aggregation/handlers.rs',
+            'crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs',
             142,
             'impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator',
           ),
@@ -1053,7 +1053,7 @@ function ciphernode({ units }) {
         label: 'creates actors\nper E3',
         refs: [
           'crates/orchestration/keyshare/src/ext.rs@66@InterfoldEventData::CiphernodeSelected',
-          'crates/aggregator/src/ext.rs@98@InterfoldEventData::CiphernodeSelected',
+          'crates/orchestration/aggregator/src/ext.rs@98@InterfoldEventData::CiphernodeSelected',
           'crates/orchestration/slashing/src/accusation_manager_ext.rs@211@InterfoldEventData::CommitteeFinalized',
         ],
       },

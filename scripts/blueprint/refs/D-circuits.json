@@ -196,11 +196,11 @@
     "id": "D14",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
-      "crates/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
-      "crates/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
-      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
-      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
+      "crates/orchestration/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
+      "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
+      "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
+      "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
+      "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
       "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"
     ],
     "line_text": [
@@ -217,10 +217,10 @@
     "id": "D15",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@18@AggregationProofPending {",
-      "crates/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@20@DecryptedSharesAggregationProofRequest {",
-      "crates/aggregator/src/plaintext_aggregation/handlers.rs@193@if !self.can_continue_aggregation_effects() {",
-      "crates/aggregator/src/plaintext_aggregation/workflow.rs@38@GeneratingC7Proof",
+      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@18@AggregationProofPending {",
+      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@20@DecryptedSharesAggregationProofRequest {",
+      "crates/orchestration/aggregator/src/plaintext_aggregation/handlers.rs@193@if !self.can_continue_aggregation_effects() {",
+      "crates/orchestration/aggregator/src/plaintext_aggregation/workflow.rs@38@GeneratingC7Proof",
       "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@135@ZkRequest::DecryptedSharesAggregation(msg.proof_request)"
     ],
     "line_text": [

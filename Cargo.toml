@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "crates/aggregator",
+  "crates/orchestration/aggregator",
   "crates/bfv-client",
   "crates/bfv-test-support",
   "crates/ciphernode/builder",
@@ -87,7 +87,7 @@ description = "E3 — Encrypted Execution Environments"
 repository = "https://github.com/theinterfold/interfold"
 
 [workspace.dependencies]
-e3-aggregator = { version = "0.20.0-dev.3", path = "./crates/aggregator" }
+e3-aggregator = { version = "0.20.0-dev.3", path = "./crates/orchestration/aggregator" }
 e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv-client" }
 e3-bfv-test-support = { path = "./crates/bfv-test-support" }
 e3-committee = { version = "0.20.0-dev.3", path = "./crates/committee" }

@@ -10,6 +10,9 @@ is not a package or nested workspace, and the grouping does not merge their stat
   aggregator roles.
 - [keyshare](keyshare/README.md) (package `e3-keyshare`) runs this node's DKG participation and
   share lifecycle, then produces its decryption shares, with durable recovery.
+- [aggregator](aggregator/README.md) (package `e3-aggregator`) assembles the committee public key
+  and combines decryption shares into the plaintext, folding the related proofs; EVM writers publish
+  the results.
 - [slashing](slashing/README.md) (package `e3-slashing`) admits accusations, forms votes toward
   quorum, and checks commitment consistency across proofs.
 

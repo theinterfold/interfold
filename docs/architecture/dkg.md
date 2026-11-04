@@ -6,7 +6,7 @@ signs protocol messages; delegated collateral ownership does not change that ide
 Owners: [keyshare](../../crates/orchestration/keyshare/src/),
 [proof requests](../../crates/zk/prover/src/proof_request/),
 [share verification](../../crates/zk/prover/src/share_verification/),
-[public-key aggregation](../../crates/aggregator/src/public_key_aggregation/), and the
+[public-key aggregation](../../crates/orchestration/aggregator/src/public_key_aggregation/), and the
 [registry](../../packages/interfold-contracts/contracts/registry/).
 [Proof statements](proof-statements.md) owns arithmetic and recursive trust;
 [threshold decryption](threshold-decryption.md) owns C6/C7.

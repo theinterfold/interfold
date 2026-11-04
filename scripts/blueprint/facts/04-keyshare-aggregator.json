@@ -215,33 +215,33 @@
         { "title": "Plaintext aggregation", "path": "docs/architecture/threshold-decryption.md" }
       ],
       "kind": "crate",
-      "path": "crates/aggregator",
+      "path": "crates/orchestration/aggregator",
       "one_line": "Combines committee members' keyshares into the E3 public key and decryption shares into the plaintext, then publishes both.",
       "actors": [
         {
           "name": "PublicKeyAggregator",
           "role": "public-key state machine: verifies C1 proofs, aggregates the keyshares, proves C5, publishes PublicKeyAggregated",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@42@pub struct PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@42@pub struct PublicKeyAggregator {"
         },
         {
           "name": "ThresholdPlaintextAggregator",
           "role": "decryption state machine: verifies C6 shares, runs the TrBFV threshold decryption, proves C7, publishes PlaintextAggregated",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
         },
         {
           "name": "KeyshareCreatedFilterBuffer",
           "role": "holds KeyshareCreated until CommitteeFinalized arrives, then forwards only the finalized committee's keyshares",
-          "ref": "crates/aggregator/src/public_key_aggregation/keyshare_buffer.rs@18@pub struct KeyshareCreatedFilterBuffer {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/keyshare_buffer.rs@18@pub struct KeyshareCreatedFilterBuffer {"
         },
         {
           "name": "DecryptionshareCreatedBuffer",
           "role": "forwards DecryptionshareCreated to the plaintext aggregator and drops parties already expelled or excluded",
-          "ref": "crates/aggregator/src/plaintext_aggregation/decryption_share_buffer.rs@14@pub struct DecryptionshareCreatedBuffer {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/decryption_share_buffer.rs@14@pub struct DecryptionshareCreatedBuffer {"
         },
         {
           "name": "DeferredPlaintextAggregator",
           "role": "holds saved state and a history range until chain authority permits recovery, then starts the plaintext aggregator",
-          "ref": "crates/aggregator/src/ext.rs@715@struct DeferredPlaintextAggregator {"
+          "ref": "crates/orchestration/aggregator/src/ext.rs@715@struct DeferredPlaintextAggregator {"
         },
         {
           "name": "CiphernodeSelector (e3-sortition, outside this crate)",
@@ -263,121 +263,121 @@
         {
           "name": "KeyshareCreated",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@142@impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@142@impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {"
         },
         {
           "name": "ShareVerificationComplete",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@181@impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@181@impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {"
         },
         {
           "name": "PkAggregationProofSigned",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@200@impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@200@impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {"
         },
         {
           "name": "AggregatorChanged",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
         },
         {
           "name": "CommitteeFinalized",
           "by": "KeyshareCreatedFilterBuffer",
-          "ref": "crates/aggregator/src/public_key_aggregation/keyshare_buffer.rs@118@InterfoldEventData::CommitteeFinalized(data) => {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/keyshare_buffer.rs@118@InterfoldEventData::CommitteeFinalized(data) => {"
         },
         {
           "name": "DecryptionshareCreated",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/handlers.rs@89@impl Handler<TypedEvent<DecryptionshareCreated>> for ThresholdPlaintextAggregator {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/handlers.rs@89@impl Handler<TypedEvent<DecryptionshareCreated>> for ThresholdPlaintextAggregator {"
         },
         {
           "name": "ComputeResponse",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/handlers.rs@186@impl Handler<TypedEvent<ComputeResponse>> for ThresholdPlaintextAggregator {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/handlers.rs@186@impl Handler<TypedEvent<ComputeResponse>> for ThresholdPlaintextAggregator {"
         }
       ],
       "emits": [
         {
           "name": "PublicKeyAggregated",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {"
         },
         {
           "name": "ShareVerificationDispatched (C1)",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@140@ShareVerificationDispatched {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@140@ShareVerificationDispatched {"
         },
         {
           "name": "PkAggregationProofPending (C5)",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {"
         },
         {
           "name": "ShareVerificationDispatched (C6)",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@67@fn c6_verification_request("
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@67@fn c6_verification_request("
         },
         {
           "name": "ComputeRequest (TrBFV CalculateThresholdDecryption)",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@315@let request = ComputeRequest::trbfv("
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@315@let request = ComputeRequest::trbfv("
         },
         {
           "name": "AggregationProofPending (C7)",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@18@AggregationProofPending {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@18@AggregationProofPending {"
         },
         {
           "name": "PlaintextAggregated",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {"
         }
       ],
       "state": [
         {
           "name": "PublicKeyAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@42@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
+          "ref": "crates/orchestration/aggregator/src/repo.rs@42@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
         },
         {
           "name": "ThresholdPlaintextAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@24@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
+          "ref": "crates/orchestration/aggregator/src/repo.rs@24@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
         },
         {
           "name": "registered committee (topNodes) for decryption, read from the chain",
           "where": "chain",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@79@committee_addresses: Vec<Address>,"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/actor.rs@79@committee_addresses: Vec<Address>,"
         }
       ],
       "key_types": [
         {
           "name": "PublicKeyAggregatorState",
           "what": "public-key phases from Collecting through VerifyingC1 and GeneratingC5Proof to Complete",
-          "ref": "crates/aggregator/src/public_key_aggregation/state.rs@36@pub enum PublicKeyAggregatorState {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/state.rs@36@pub enum PublicKeyAggregatorState {"
         },
         {
           "name": "ThresholdPlaintextAggregatorState",
           "what": "decryption phases: Collecting, VerifyingC6, Computing, GeneratingC7Proof, Complete",
-          "ref": "crates/aggregator/src/plaintext_aggregation/state.rs@96@pub enum ThresholdPlaintextAggregatorState {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/state.rs@96@pub enum ThresholdPlaintextAggregatorState {"
         }
       ],
       "read_first": [
         {
           "why": "where the active-aggregator flag from AggregatorChanged is stored for the E3's actors",
-          "ref": "crates/aggregator/src/ext.rs@55@pub struct AggregatorRoleExtension {"
+          "ref": "crates/orchestration/aggregator/src/ext.rs@55@pub struct AggregatorRoleExtension {"
         },
         {
           "why": "can_run_aggregation_effects decides which node runs the aggregation effects",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@139@fn can_run_aggregation_effects(&self) -> bool {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@139@fn can_run_aggregation_effects(&self) -> bool {"
         },
         {
           "why": "the decryption actor, which holds the decryption work",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
+          "ref": "crates/orchestration/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
         },
         {
           "why": "crate surface: aggregation recovery/state types and repositories are public; key/plaintext actors stay crate-private",
-          "ref": "crates/aggregator/src/lib.rs@23@pub use actors::{"
+          "ref": "crates/orchestration/aggregator/src/lib.rs@23@pub use actors::{"
         },
         {
           "why": "committee hashing is owned by e3-committee-hash, not a local aggregator wrapper",
@@ -388,17 +388,17 @@
         {
           "pattern": "actix-actor",
           "note": "PublicKeyAggregator is an actix Actor with its own mailbox",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@7@impl Actor for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@7@impl Actor for PublicKeyAggregator {"
         },
         {
           "pattern": "actix-handler",
           "note": "the AggregatorChanged handler flips the flag and resumes work only if allowed",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
         },
         {
           "pattern": "pattern-destructuring",
           "note": "one match arm binds the event and its inner struct together",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@74@InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {"
+          "ref": "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@74@InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {"
         }
       ],
       "depends_on": [
@@ -419,7 +419,7 @@
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "crates/aggregator/src/public_key_aggregation/tests/ (mod.rs, attestations.rs, failures.rs), crates/aggregator/src/plaintext_aggregation/tests/ (completion, failures, publication, recovery, share_admission, threshold) and the workflow_tests.rs files in both capability directories; run: cargo test -p e3-aggregator",
+      "tests": "crates/orchestration/aggregator/src/public_key_aggregation/tests/ (mod.rs, attestations.rs, failures.rs), crates/orchestration/aggregator/src/plaintext_aggregation/tests/ (completion, failures, publication, recovery, share_admission, threshold) and the workflow_tests.rs files in both capability directories; run: cargo test -p e3-aggregator",
       "unverified": [
         "The TrBFV worker (CalculateThresholdDecryption) and the zk worker (ComputeRequest::zk) that answer these requests are outside this crate and were not read.",
         "The sortition rule inside committee.effective_aggregator was not read; this unit only consumes its AggregatorChanged output."
