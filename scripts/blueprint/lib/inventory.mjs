@@ -69,10 +69,10 @@ export const LAYERS = {
   ],
   workflows: [
     'state/request',
-    'sortition',
+    'orchestration/sortition',
     'keyshare',
     'aggregator',
-    'slashing',
+    'orchestration/slashing',
     'zk/prover',
     'fhe',
     'ciphernode/multithread',

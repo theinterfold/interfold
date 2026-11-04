@@ -990,7 +990,7 @@ function ciphernode({ units }) {
         both: true,
         fa: (620 - 470) / 820,
         refs: [
-          H('crates/sortition/src/sortition/handlers/request.rs', 19, 'impl Handler<TypedEvent<E3Requested>> for Sortition'),
+          H('crates/orchestration/sortition/src/handlers/request.rs', 19, 'impl Handler<TypedEvent<E3Requested>> for Sortition'),
           ...ev('B8'),
         ],
       },
@@ -1035,7 +1035,7 @@ function ciphernode({ units }) {
         fa: (980 - 470) / 820,
         refs: [
           H(
-            'crates/slashing/src/accusation_voting/handlers.rs',
+            'crates/orchestration/slashing/src/accusation_voting/handlers.rs',
             65,
             'impl Handler<TypedEvent<ProofVerificationFailed>> for AccusationManager',
           ),
@@ -1058,7 +1058,7 @@ function ciphernode({ units }) {
         refs: [
           'crates/keyshare/src/ext.rs@66@InterfoldEventData::CiphernodeSelected',
           'crates/aggregator/src/ext.rs@98@InterfoldEventData::CiphernodeSelected',
-          'crates/slashing/src/accusation_manager_ext.rs@211@InterfoldEventData::CommitteeFinalized',
+          'crates/orchestration/slashing/src/accusation_manager_ext.rs@211@InterfoldEventData::CommitteeFinalized',
         ],
       },
       {

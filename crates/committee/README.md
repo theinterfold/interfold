@@ -39,7 +39,7 @@ cryptographic presets; supported dimensions alone do not imply installed circuit
 lowercases addresses; duplicate lowercase keys resolve to the last position. Deserialization
 rebuilds that index, while serialization and equality use only the member list. Construction does
 not validate or deduplicate addresses. Sortition owns canonical formation/normalization and the
-[active/standby failover policy](../sortition/src/failover.rs).
+[active/standby failover policy](../orchestration/sortition/src/failover.rs).
 
 ## Tests
 

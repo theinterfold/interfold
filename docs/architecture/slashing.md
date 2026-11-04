@@ -1,7 +1,7 @@
 # Accusations and slashing
 
-Owners: [accusation workflow](../../crates/slashing/src/accusation_voting/),
-[commitment consistency](../../crates/slashing/src/commitment_consistency/),
+Owners: [accusation workflow](../../crates/orchestration/slashing/src/accusation_voting/),
+[commitment consistency](../../crates/orchestration/slashing/src/commitment_consistency/),
 [slash writer](../../crates/evm/runtime/src/slashing_writing/), and `SlashingManager` in
 [contracts](../../packages/interfold-contracts/contracts/). [Settlement](failure-settlement.md) owns
 payer, reward holds, and claim allocation; [registration](registration-and-bonding.md) owns
@@ -182,11 +182,12 @@ drain policy.
   rejection.
   [Expulsion tests](../../packages/interfold-contracts/test/Slashing/CommitteeExpulsion.spec.ts)
   cover atomic viability and callbacks. Run `pnpm evm:test`.
-- [Typed accusation admission](../../crates/slashing/src/accusation_voting/transitions/admission.rs)
+- [Typed accusation admission](../../crates/orchestration/slashing/src/accusation_voting/transitions/admission.rs)
   and [writer workflow](../../crates/evm/runtime/src/slashing_writing/workflow.rs) contain
   owner-level tests; use `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
-- [Accusation actor tests](../../crates/slashing/src/accusation_voting/actor_tests.rs) and
-  [extension tests](../../crates/slashing/src/accusation_manager_ext.rs) cover saved votes/timeouts
-  and accusation deferral during replay. These do not prove every snapshot crash window.
+- [Accusation actor tests](../../crates/orchestration/slashing/src/accusation_voting/actor_tests.rs)
+  and [extension tests](../../crates/orchestration/slashing/src/accusation_manager_ext.rs) cover
+  saved votes/timeouts and accusation deferral during replay. These do not prove every snapshot
+  crash window.
 - `pnpm rust:test:slashing` exercises the proof/slashing integration harness. It does not prove the
   one-day reporting allowance or reconstruct the unsaved state listed above.

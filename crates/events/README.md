@@ -40,8 +40,8 @@ occurrences or verification batches.
 `Committee` directly from [committee](../committee/README.md); events does not re-export membership.
 `CircuitName`/`CircuitVariant` remain compatibility re-exports from
 [ZK config](../zk/config/README.md); consumers should import that owner directly. The cross-proof
-`CommitmentLink` interface belongs to [slashing](../slashing/README.md), not transport. It is not
-re-exported here because slashing already depends on events.
+`CommitmentLink` interface belongs to [slashing](../orchestration/slashing/README.md), not
+transport. It is not re-exported here because slashing already depends on events.
 
 ## Runtime use
 

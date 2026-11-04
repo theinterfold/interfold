@@ -25,7 +25,8 @@ that qualification in `unverified` rather than presenting it as verified.
 
 A reference is one string: `path@line@token`
 
-- `path`: relative to the repository root, for example `crates/sortition/src/sortition.rs`.
+- `path`: relative to the repository root, for example
+  `crates/orchestration/sortition/src/ticket.rs`.
 - `line`: the 1-based line number, from `grep -n`.
 - `token`: an exact substring of that line. Use a distinctive identifier, for example
   `impl Handler<E3Requested> for Sortition` or `pub struct ThresholdKeyshare`. It must not contain
@@ -59,7 +60,7 @@ it parses. Write no other file.
     {
       "id": "e3-sortition",
       "kind": "crate",
-      "path": "crates/sortition",
+      "path": "crates/orchestration/sortition",
       "one_line": "Short UI summary: what it does, not a protocol specification.",
       "documentation": [
         { "title": "Committee selection", "path": "docs/architecture/committee-selection.md" }

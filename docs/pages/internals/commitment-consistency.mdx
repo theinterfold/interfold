@@ -10,10 +10,10 @@ import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
 # Commitment Consistency
 
-This page describes the commitment consistency checks in `crates/slashing` and the accusation flow
-that follows a mismatch. It is for auditors and core contributors. It lists every registered link
-with its scope and its public-signal fields. At the end, you can predict which party the checker
-blames for a mismatch and what the chain requires before it slashes that party.
+This page describes the commitment consistency checks in `crates/orchestration/slashing` and the
+accusation flow that follows a mismatch. It is for auditors and core contributors. It lists every
+registered link with its scope and its public-signal fields. At the end, you can predict which party
+the checker blames for a mismatch and what the chain requires before it slashes that party.
 
 ## Why the check exists
 
@@ -30,22 +30,23 @@ starts an accusation.
 
 The protocol checks commitment links at several layers. Only the off-chain checker assigns blame.
 
-| Layer                                            | What it checks                                                    | Result of a mismatch                                    |
-| ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------- |
-| Inner circuits                                   | Each circuit recomputes the commitments that it consumes.         | The proof does not verify. `SignedProofFailed`.         |
-| `node_fold`                                      | Same-party links: C1 to C2, C2 to C3, and equal C3a and C3b keys. | The node cannot make its fold proof.                    |
-| `dkg_aggregator`                                 | Cross-party links: C0 to C3, C2 to C4, and C1 to C5.              | The DKG proof fails. `publishCommittee` cannot succeed. |
-| `decryption_aggregator`, `BfvDecryptionVerifier` | C6 to C7, and C6 commitments against the DKG anchors.             | The decryption proof is rejected.                       |
-| Off-chain checker (`crates/slashing`)            | The 12 registered links in this page.                             | `CommitmentConsistencyViolation` and an accusation.     |
+| Layer                                               | What it checks                                                    | Result of a mismatch                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------- |
+| Inner circuits                                      | Each circuit recomputes the commitments that it consumes.         | The proof does not verify. `SignedProofFailed`.         |
+| `node_fold`                                         | Same-party links: C1 to C2, C2 to C3, and equal C3a and C3b keys. | The node cannot make its fold proof.                    |
+| `dkg_aggregator`                                    | Cross-party links: C0 to C3, C2 to C4, and C1 to C5.              | The DKG proof fails. `publishCommittee` cannot succeed. |
+| `decryption_aggregator`, `BfvDecryptionVerifier`    | C6 to C7, and C6 commitments against the DKG anchors.             | The decryption proof is rejected.                       |
+| Off-chain checker (`crates/orchestration/slashing`) | The 12 registered links in this page.                             | `CommitmentConsistencyViolation` and an accusation.     |
 
 For the circuit-level links, see [PVDKG and ZK proofs](/internals/dkg#what-the-dkg-proof-enforces).
 
 ## Checker architecture
 
 Each E3 has one `CommitmentConsistencyChecker` actor
-(`crates/slashing/src/commitment_consistency/actor.rs`). The actor is a thin shell. The logic is in
-the synchronous `CommitmentConsistency` service (`commitment_consistency/workflow.rs`), which
-performs no I/O. `CommitmentConsistencyCheckerExtension` creates the actor with the links from
+(`crates/orchestration/slashing/src/commitment_consistency/actor.rs`). The actor is a thin shell.
+The logic is in the synchronous `CommitmentConsistency` service
+(`commitment_consistency/workflow.rs`), which performs no I/O.
+`CommitmentConsistencyCheckerExtension` creates the actor with the links from
 `e3_zk_prover::commitment_links::default_links(preset)` and the committee roster size H.
 
 The service keeps one cache:
@@ -107,7 +108,8 @@ accusation for each `(accused, proof_type)` pair.
 ## Link model
 
 Each link implements the `CommitmentLink` trait in
-`crates/slashing/src/commitment_consistency/link.rs`. A `FieldValue` is a 32-byte field element.
+`crates/orchestration/slashing/src/commitment_consistency/link.rs`. A `FieldValue` is a 32-byte
+field element.
 
 ```rust
 pub trait CommitmentLink: Send + Sync {
@@ -266,7 +268,7 @@ pub struct CommitmentConsistencyViolation {
 
 ### Off-chain voting
 
-`AccusationManager` (`crates/slashing/src/accusation_voting/`) handles the violation:
+`AccusationManager` (`crates/orchestration/slashing/src/accusation_voting/`) handles the violation:
 
 1. It ignores a local failure against its own address or finalized party ID. For another member, it
    records the failure for `(accused, proof_type)` with the data hash and the evidence.

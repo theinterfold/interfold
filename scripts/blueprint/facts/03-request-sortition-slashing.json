@@ -199,234 +199,234 @@
       "id": "e3-sortition",
       "documentation": [{ "title": "Committee selection", "path": "docs/architecture/committee-selection.md" }],
       "kind": "crate",
-      "path": "crates/sortition",
+      "path": "crates/orchestration/sortition",
       "one_line": "Chooses E3 committees by ranking operator tickets against the request seed, then tells each node whether it was finalized into one.",
       "actors": [
         {
           "name": "CommitteeFinalizer",
           "role": "Retains request/ticket context and schedules ranked finalization attempts through an injected chain-time reader after effects are enabled.",
-          "ref": "crates/sortition/src/committee_finalization/actor.rs@87@pub struct CommitteeFinalizer {"
+          "ref": "crates/orchestration/sortition/src/committee_finalization/actor.rs@87@pub struct CommitteeFinalizer {"
         },
         {
           "name": "Sortition",
           "role": "Bus subscriber for registry and chain state; ranks tickets for each E3Requested once its seed arrives, and stores finalized committees.",
-          "ref": "crates/sortition/src/sortition/handlers/envelope.rs@7@impl Actor for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/envelope.rs@7@impl Actor for Sortition {"
         },
         {
           "name": "CiphernodeSelector",
           "role": "Bus subscriber that turns a ranking result into TicketGenerated and a finalized roster into CiphernodeSelected; it also tracks aggregator failover.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@128@impl Actor for CiphernodeSelector {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/actor.rs@128@impl Actor for CiphernodeSelector {"
         }
       ],
       "consumes": [
         {
           "name": "E3Requested (parked until the seed arrives; ranked after EffectsEnabled)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@19@impl Handler<TypedEvent<E3Requested>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@19@impl Handler<TypedEvent<E3Requested>> for Sortition {"
         },
         {
           "name": "CommitteeRequested (seed, request block, ticket price)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/registry.rs@220@impl Handler<TypedEvent<CommitteeRequested>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/registry.rs@220@impl Handler<TypedEvent<CommitteeRequested>> for Sortition {"
         },
         {
           "name": "EffectsEnabled (ranks requests that are ready)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@44@impl Handler<EffectsEnabled> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@44@impl Handler<EffectsEnabled> for Sortition {"
         },
         {
           "name": "TicketGenerated (own tickets are marked processed)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@7@impl Handler<TypedEvent<TicketGenerated>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@7@impl Handler<TypedEvent<TicketGenerated>> for Sortition {"
         },
         {
           "name": "CommitteeFinalized (stores the roster and reconciles node jobs)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/committee.rs@7@impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/committee.rs@7@impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {"
         },
         {
           "name": "CommitteeMemberExpelled (buffered until the roster exists, then re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/committee.rs@99@impl Handler<TypedEvent<CommitteeMemberExpelled>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/committee.rs@99@impl Handler<TypedEvent<CommitteeMemberExpelled>> for Sortition {"
         },
         {
           "name": "CommitteeMemberExcluded (same buffer and re-publish path)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/committee.rs@61@impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/committee.rs@61@impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {"
         },
         {
           "name": "STATE_EVENTS (registry and chain-state events, for example CiphernodeAdded and TicketBalanceUpdatedAt)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/actor.rs@37@pub(crate) const STATE_EVENTS: &[EventType] = &["
+          "ref": "crates/orchestration/sortition/src/actor.rs@37@pub(crate) const STATE_EVENTS: &[EventType] = &["
         },
         {
           "name": "E3Requested (caches E3Meta for the selector)",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@76@impl Handler<TypedEvent<E3Requested>> for CiphernodeSelector {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@76@impl Handler<TypedEvent<E3Requested>> for CiphernodeSelector {"
         },
         {
           "name": "WithSortitionTicket of E3Requested (actix message from Sortition)",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@95@impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelector {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@95@impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelector {"
         },
         {
           "name": "CommitteeFinalized (publishes CiphernodeSelected when this node is in the roster)",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@179@impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@179@impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {"
         }
       ],
       "emits": [
         {
           "name": "CommitteeFinalizeRequested",
           "by": "CommitteeFinalizer",
-          "ref": "crates/sortition/src/committee_finalization/actor.rs@202@CommitteeFinalizeRequested {"
+          "ref": "crates/orchestration/sortition/src/committee_finalization/actor.rs@202@CommitteeFinalizeRequested {"
         },
         {
           "name": "TicketGenerated",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@129@TicketGenerated {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@129@TicketGenerated {"
         },
         {
           "name": "CiphernodeSelected",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@233@CiphernodeSelected {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@233@CiphernodeSelected {"
         },
         {
           "name": "AggregatorChanged",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@385@let event = AggregatorChanged {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/actor.rs@385@let event = AggregatorChanged {"
         },
         {
           "name": "CommitteeMemberExpelled (re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/actor.rs@430@CommitteeMemberExpelled {"
+          "ref": "crates/orchestration/sortition/src/actor.rs@430@CommitteeMemberExpelled {"
         },
         {
           "name": "CommitteeMemberExcluded (re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/actor.rs@467@CommitteeMemberExcluded {"
+          "ref": "crates/orchestration/sortition/src/actor.rs@467@CommitteeMemberExcluded {"
         }
       ],
       "state": [
         {
           "name": "per-chain sortition backends (registered nodes and tickets)",
           "where": "disk",
-          "ref": "crates/sortition/src/sortition/actor.rs@63@backends: Persistable<HashMap<u64, SortitionBackend>>,"
+          "ref": "crates/orchestration/sortition/src/actor.rs@63@backends: Persistable<HashMap<u64, SortitionBackend>>,"
         },
         {
           "name": "per-chain node state (ticket balances, activity, reservations, request snapshots)",
           "where": "disk",
-          "ref": "crates/sortition/src/sortition/actor.rs@65@node_state: Persistable<HashMap<u64, NodeStateStore>>,"
+          "ref": "crates/orchestration/sortition/src/actor.rs@65@node_state: Persistable<HashMap<u64, NodeStateStore>>,"
         },
         {
           "name": "finalized committee per E3",
           "where": "disk",
-          "ref": "crates/sortition/src/sortition/actor.rs@72@finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,"
+          "ref": "crates/orchestration/sortition/src/actor.rs@72@finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,"
         },
         {
           "name": "seeds, pending E3Requested, pending membership changes",
           "where": "disk",
-          "ref": "crates/sortition/src/sortition/actor.rs@78@recovery: Persistable<SortitionRecoveryState>,"
+          "ref": "crates/orchestration/sortition/src/actor.rs@78@recovery: Persistable<SortitionRecoveryState>,"
         },
         {
           "name": "E3s already ranked in this process",
           "where": "memory",
-          "ref": "crates/sortition/src/sortition/actor.rs@80@processed_requests: HashSet<E3id>,"
+          "ref": "crates/orchestration/sortition/src/actor.rs@80@processed_requests: HashSet<E3id>,"
         }
       ],
       "key_types": [
         {
           "name": "SortitionBackend",
           "what": "Enum of backends per chain; its only variant is Score.",
-          "ref": "crates/sortition/src/sortition/selection_backend.rs@621@pub enum SortitionBackend {"
+          "ref": "crates/orchestration/sortition/src/selection_backend.rs@621@pub enum SortitionBackend {"
         },
         {
           "name": "ScoreSortition",
           "what": "Deterministic ranking: owner shortlist, then the lowest score per node, then the top N.",
-          "ref": "crates/sortition/src/sortition/ticket_selection.rs@81@pub struct ScoreSortition {"
+          "ref": "crates/orchestration/sortition/src/ticket_selection.rs@81@pub struct ScoreSortition {"
         },
         {
           "name": "hash_to_score",
           "what": "keccak256 of the packed address, ticket number, E3 id and seed, read as a big integer.",
-          "ref": "crates/sortition/src/sortition/ticket.rs@44@pub fn hash_to_score(address: Address, ticket_id: u64, e3_id: E3id, seed: Seed) -> BigUint {"
+          "ref": "crates/orchestration/sortition/src/ticket.rs@44@pub fn hash_to_score(address: Address, ticket_id: u64, e3_id: E3id, seed: Seed) -> BigUint {"
         },
         {
           "name": "calculate_buffer_size",
           "what": "Candidate owners beyond N: (N minus T) plus a margin of 1 to 3 chosen by threshold ratio.",
-          "ref": "crates/sortition/src/sortition/ticket_selection.rs@51@pub fn calculate_buffer_size(threshold_m: usize, threshold_n: usize) -> usize {"
+          "ref": "crates/orchestration/sortition/src/ticket_selection.rs@51@pub fn calculate_buffer_size(threshold_m: usize, threshold_n: usize) -> usize {"
         },
         {
           "name": "WithSortitionTicket",
           "what": "Actix message from Sortition to CiphernodeSelector: the request plus this node's rank and ticket id, if any.",
-          "ref": "crates/sortition/src/messages.rs@13@pub struct WithSortitionTicket<T> {"
+          "ref": "crates/orchestration/sortition/src/messages.rs@13@pub struct WithSortitionTicket<T> {"
         },
         {
           "name": "NodeStateStore",
           "what": "Per-chain node map, ticket price, E3 duty sets, and the request-time snapshot per E3.",
-          "ref": "crates/sortition/src/sortition/node_registry.rs@123@pub struct NodeStateStore {"
+          "ref": "crates/orchestration/sortition/src/node_registry.rs@123@pub struct NodeStateStore {"
         },
         {
           "name": "CommitteeFinalizerRecoveryState",
           "what": "Retains the original request/context and finalization ticket under the unchanged recovery key and schema.",
-          "ref": "crates/sortition/src/committee_finalization/actor.rs@49@pub struct CommitteeFinalizerRecoveryState {"
+          "ref": "crates/orchestration/sortition/src/committee_finalization/actor.rs@49@pub struct CommitteeFinalizerRecoveryState {"
         }
       ],
       "read_first": [
         {
           "why": "E3Requested is subscribed only at EffectsEnabled, so replay does not generate tickets",
-          "ref": "crates/sortition/src/sortition/actor.rs@310@bus.subscribe(EventType::E3Requested, addr.into());"
+          "ref": "crates/orchestration/sortition/src/actor.rs@310@bus.subscribe(EventType::E3Requested, addr.into());"
         },
         {
           "why": "perform_sortition: seed lookup, candidate count, ranking, dispatch to CiphernodeSelector",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@74@pub(super) fn perform_sortition(&mut self, msg: TypedEvent<E3Requested>) {"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@74@pub(super) fn perform_sortition(&mut self, msg: TypedEvent<E3Requested>) {"
         },
         {
           "why": "Backend ranking: capacity check, owner shortlist, and this node's rank",
-          "ref": "crates/sortition/src/sortition/selection_backend.rs@638@pub fn get_submission_index("
+          "ref": "crates/orchestration/sortition/src/selection_backend.rs@638@pub fn get_submission_index("
         },
         {
           "why": "Score function used for every ticket",
-          "ref": "crates/sortition/src/sortition/ticket.rs@44@pub fn hash_to_score(address: Address, ticket_id: u64, e3_id: E3id, seed: Seed) -> BigUint {"
+          "ref": "crates/orchestration/sortition/src/ticket.rs@44@pub fn hash_to_score(address: Address, ticket_id: u64, e3_id: E3id, seed: Seed) -> BigUint {"
         },
         {
           "why": "A finalized roster becomes CiphernodeSelected for this node",
-          "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@179@impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@179@impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Sortition is an actix actor; its mailbox capacity is set at start.",
-          "ref": "crates/sortition/src/sortition/handlers/envelope.rs@7@impl Actor for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/envelope.rs@7@impl Actor for Sortition {"
         },
         {
           "pattern": "actix-handler",
           "note": "A typed handler per event, for example for E3Requested.",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@19@impl Handler<TypedEvent<E3Requested>> for Sortition {"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@19@impl Handler<TypedEvent<E3Requested>> for Sortition {"
         },
         {
           "pattern": "actix-message",
           "note": "WithSortitionTicket derives actix Message to carry the ranking result.",
-          "ref": "crates/sortition/src/messages.rs@11@#[derive(Message, Clone, Debug, PartialEq, Eq)]"
+          "ref": "crates/orchestration/sortition/src/messages.rs@11@#[derive(Message, Clone, Debug, PartialEq, Eq)]"
         },
         {
           "pattern": "actix-timer",
           "note": "The selector arms its aggregator failover timer with run_later.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@632@let handle = ctx.run_later(delay, move |actor, ctx| {"
+          "ref": "crates/orchestration/sortition/src/ciphernode_selection/actor.rs@632@let handle = ctx.run_later(delay, move |actor, ctx| {"
         },
         {
           "pattern": "iterator-chain",
           "note": "Ranking collects the best ticket per node, then sorts by score and ticket id.",
-          "ref": "crates/sortition/src/sortition/ticket_selection.rs@163@let mut items: Vec<WinnerTicket> = best_map.into_values().collect();"
+          "ref": "crates/orchestration/sortition/src/ticket_selection.rs@163@let mut items: Vec<WinnerTicket> = best_map.into_values().collect();"
         },
         {
           "pattern": "option-combinators",
           "note": "The recorded seed for an E3 is read with and_then and copied.",
-          "ref": "crates/sortition/src/sortition/handlers/request.rs@83@.and_then(|recovery| recovery.seeds.get(&e3_id).copied())"
+          "ref": "crates/orchestration/sortition/src/handlers/request.rs@83@.and_then(|recovery| recovery.seeds.get(&e3_id).copied())"
         }
       ],
       "depends_on": ["e3-data", "e3-events", "e3-request", "e3-utils"],
-      "tests": "unit tests in sortition/ticket_selection.rs, ticket.rs, selection_backend.rs, node_registry_tests.rs and ciphernode_selection/actor.rs under crates/sortition/src; fixtures in crates/sortition/tests/fixtures; cargo test -p e3-sortition",
+      "tests": "unit tests in ticket_selection.rs, ticket.rs, selection_backend.rs, node_registry_tests.rs and ciphernode_selection/actor.rs under crates/orchestration/sortition/src; fixtures in crates/orchestration/sortition/tests/fixtures; cargo test -p e3-sortition",
       "unverified": [
         "CommitteeRequested is built from randomness-provider chain logs (crates/evm/runtime/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."
       ]
@@ -435,141 +435,141 @@
       "id": "e3-slashing",
       "documentation": [{ "title": "Accusations and slashing", "path": "docs/architecture/slashing.md" }],
       "kind": "crate",
-      "path": "crates/slashing",
+      "path": "crates/orchestration/slashing",
       "one_line": "Turns a detected proof fault into a signed accusation, gathers committee votes to a quorum, and emits the verdict for on-chain slashing.",
       "actors": [
         {
           "name": "AccusationManager",
           "role": "Per-E3 actor that runs the accusation quorum: admits accusations and votes, dispatches ZK re-verification, runs vote timers, and publishes outcomes.",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@7@impl Actor for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@7@impl Actor for AccusationManager {"
         },
         {
           "name": "CommitmentConsistencyChecker",
           "role": "Per-E3 actor that caches verified proof outputs, checks cross-circuit commitment links before and after ZK, and publishes violations.",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@154@impl Actor for CommitmentConsistencyChecker {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@154@impl Actor for CommitmentConsistencyChecker {"
         }
       ],
       "consumes": [
         {
           "name": "ProofVerificationFailed and ProofVerificationPassed (local results)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@65@impl Handler<TypedEvent<ProofVerificationFailed>> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@65@impl Handler<TypedEvent<ProofVerificationFailed>> for AccusationManager {"
         },
         {
           "name": "ProofFailureAccusation (from a peer: agree, abstain, or re-verify)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@92@impl Handler<TypedEvent<ProofFailureAccusation>> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@92@impl Handler<TypedEvent<ProofFailureAccusation>> for AccusationManager {"
         },
         {
           "name": "AccusationVote (from a peer: counted toward quorum)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@106@impl Handler<TypedEvent<AccusationVote>> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@106@impl Handler<TypedEvent<AccusationVote>> for AccusationManager {"
         },
         {
           "name": "ComputeResponse and ComputeRequestError (ZK re-verification results)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@116@impl Handler<TypedEvent<ComputeResponse>> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@116@impl Handler<TypedEvent<ComputeResponse>> for AccusationManager {"
         },
         {
           "name": "CommitmentConsistencyViolation (starts an accusation)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@141@impl Handler<TypedEvent<CommitmentConsistencyViolation>> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@141@impl Handler<TypedEvent<CommitmentConsistencyViolation>> for AccusationManager {"
         },
         {
           "name": "CommitteeMemberExpelled (removes the operator from the voters and its votes)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@40@InterfoldEventData::CommitteeMemberExpelled(data) => {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@40@InterfoldEventData::CommitteeMemberExpelled(data) => {"
         },
         {
           "name": "CommitteeFinalized (starts the AccusationManager for the E3)",
           "by": "AccusationManagerExtension",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@211@let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {"
+          "ref": "crates/orchestration/slashing/src/accusation_manager_ext.rs@211@let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {"
         },
         {
           "name": "CommitmentConsistencyCheckRequested (pre-ZK gate, returns inconsistent parties)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@242@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@242@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "ProofVerificationPassed (cross-circuit check after ZK)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@223@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@223@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "CommitmentRosterSelected (fixes the C4 roster used to map rows)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@204@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@204@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
         }
       ],
       "emits": [
         {
           "name": "ProofFailureAccusation (gossiped)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@24@if let Err(err) = self.bus.publish(accusation, ec) {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@24@if let Err(err) = self.bus.publish(accusation, ec) {"
         },
         {
           "name": "AccusationVote (gossiped, own or agreeing)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@32@if let Err(err) = self.bus.publish(vote, ec) {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@32@if let Err(err) = self.bus.publish(vote, ec) {"
         },
         {
           "name": "AccusationQuorumReached (outcome, with evidence)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@37@if let Err(err) = self.bus.publish(quorum, ec) {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@37@if let Err(err) = self.bus.publish(quorum, ec) {"
         },
         {
           "name": "ComputeRequest (ReverifyAccusedProof for forwarded C3a or C3b)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@46@if let Err(err) = self.bus.publish(request, ec) {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@46@if let Err(err) = self.bus.publish(request, ec) {"
         },
         {
           "name": "CommitmentConsistencyViolation",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@216@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@216@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
         },
         {
           "name": "CommitmentConsistencyCheckComplete (pre-ZK response)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@263@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@263@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
         }
       ],
       "state": [
         {
           "name": "AccusationVoting service (pending accusations, votes, received proofs)",
           "where": "memory",
-          "ref": "crates/slashing/src/accusation_voting/actor.rs@103@voting: AccusationVoting,"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/actor.rs@103@voting: AccusationVoting,"
         },
         {
           "name": "vote timeout handles keyed by accusation id",
           "where": "memory",
-          "ref": "crates/slashing/src/accusation_voting/actor.rs@106@timeout_handles: HashMap<[u8; 32], SpawnHandle>,"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/actor.rs@106@timeout_handles: HashMap<[u8; 32], SpawnHandle>,"
         },
         {
           "name": "saved pending accusations, admitted votes, absolute timeouts, evidence, and accused proofs",
           "where": "disk",
-          "ref": "crates/slashing/src/accusation_voting/state.rs@66@pub(crate) struct AccusationVotesSnapshot {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/state.rs@66@pub(crate) struct AccusationVotesSnapshot {"
         },
         {
           "name": "verified proof cache keyed by (address, proof type)",
           "where": "memory",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@120@verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/workflow.rs@120@verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,"
         },
         {
           "name": "commitment checker snapshot repository (written after each change)",
           "where": "disk",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@58@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/actor.rs@58@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
         }
       ],
       "key_types": [
         {
           "name": "AccusationVoting",
           "what": "Plain synchronous quorum service: admits accusations and votes, and returns VoteActions for the actor to run.",
-          "ref": "crates/slashing/src/accusation_voting/state.rs@126@pub(crate) struct AccusationVoting {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/state.rs@126@pub(crate) struct AccusationVoting {"
         },
         {
           "name": "accusation_vote_quorum",
           "what": "Maps threshold T and committee size N to H, the honest-party count used as the vote quorum.",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@38@fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {"
+          "ref": "crates/orchestration/slashing/src/accusation_manager_ext.rs@38@fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {"
         },
         {
           "name": "ProofFailureAccusation",
@@ -589,35 +589,35 @@
         {
           "name": "CommitmentLink",
           "what": "Checker-owned interface for cross-circuit rules; ZK implementations depend on slashing, while ProofType stays in events.",
-          "ref": "crates/slashing/src/commitment_consistency/link.rs@34@pub trait CommitmentLink: Send + Sync {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/link.rs@34@pub trait CommitmentLink: Send + Sync {"
         },
         {
           "name": "CommitmentConsistency",
           "what": "Plain service that caches verified outputs, maps C2 rows through the C4 roster, and returns violations.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@111@pub(crate) struct CommitmentConsistency {"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/workflow.rs@111@pub(crate) struct CommitmentConsistency {"
         },
         {
           "name": "AccusationManagerExtension",
           "what": "Router extension, not an actor: starts an AccusationManager on CommitteeFinalized, and again on hydrate after restart.",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@46@pub struct AccusationManagerExtension {"
+          "ref": "crates/orchestration/slashing/src/accusation_manager_ext.rs@46@pub struct AccusationManagerExtension {"
         }
       ],
       "read_first": [
         {
           "why": "Router extension that starts the per-E3 accusation actor on CommitteeFinalized",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@209@impl E3Extension for AccusationManagerExtension {"
+          "ref": "crates/orchestration/slashing/src/accusation_manager_ext.rs@209@impl E3Extension for AccusationManagerExtension {"
         },
         {
           "why": "How a local proof failure starts an accusation and its own vote",
-          "ref": "crates/slashing/src/accusation_voting/transitions/initiate_accusation.rs@174@pub(super) fn initiate_accusation("
+          "ref": "crates/orchestration/slashing/src/accusation_voting/transitions/initiate_accusation.rs@174@pub(super) fn initiate_accusation("
         },
         {
           "why": "Quorum decision: H agreeing votes, one data hash or several",
-          "ref": "crates/slashing/src/accusation_voting/transitions/vote.rs@108@pub(super) fn check_quorum("
+          "ref": "crates/orchestration/slashing/src/accusation_voting/transitions/vote.rs@108@pub(super) fn check_quorum("
         },
         {
           "why": "Where the quorum result is published as AccusationQuorumReached",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@37@if let Err(err) = self.bus.publish(quorum, ec) {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@37@if let Err(err) = self.bus.publish(quorum, ec) {"
         },
         {
           "why": "On-chain side: the e3-evm writer consumes AccusationQuorumReached; the AccusedFaulted gate (is_slashable_outcome) is a few lines below",
@@ -628,36 +628,36 @@
         {
           "pattern": "actix-actor",
           "note": "AccusationManager is a thin actix shell around the plain AccusationVoting service.",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@7@impl Actor for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@7@impl Actor for AccusationManager {"
         },
         {
           "pattern": "actix-handler",
           "note": "The envelope handler routes each InterfoldEvent to its typed handler.",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@11@impl Handler<InterfoldEvent> for AccusationManager {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/handlers.rs@11@impl Handler<InterfoldEvent> for AccusationManager {"
         },
         {
           "pattern": "actix-timer",
           "note": "Vote timeouts are scheduled with run_later and cancelled through the stored SpawnHandle.",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@55@let handle = ctx.run_later(timeout, move |act, _ctx| {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@55@let handle = ctx.run_later(timeout, move |act, _ctx| {"
         },
         {
           "pattern": "trait-object-dyn",
           "note": "CommitmentConsistency holds its rules as boxed CommitmentLink trait objects.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@113@links: Vec<Box<dyn CommitmentLink>>,"
+          "ref": "crates/orchestration/slashing/src/commitment_consistency/workflow.rs@113@links: Vec<Box<dyn CommitmentLink>>,"
         },
         {
           "pattern": "enum-match",
           "note": "apply_actions matches each VoteAction that the pure service returns.",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@18@match action {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@18@match action {"
         },
         {
           "pattern": "let-else",
           "note": "A ZK response with no pending re-verification is ignored with an early return.",
-          "ref": "crates/slashing/src/accusation_voting/transitions/reverify_proofs.rs@44@let Some(reverif) = self.pending_reverifications.remove(&correlation_id) else {"
+          "ref": "crates/orchestration/slashing/src/accusation_voting/transitions/reverify_proofs.rs@44@let Some(reverif) = self.pending_reverifications.remove(&correlation_id) else {"
         }
       ],
       "depends_on": ["e3-committee", "e3-data", "e3-events", "e3-fhe-params", "e3-request", "e3-utils"],
-      "tests": "accusation_voting/workflow_tests/ (admission, voting, outcomes), accusation_voting/actor_tests.rs and commitment_consistency/workflow_tests.rs under crates/slashing/src; fixture crates/slashing/tests/fixtures/layout_lock.txt; cargo test -p e3-slashing",
+      "tests": "accusation_voting/workflow_tests/ (admission, voting, outcomes), accusation_voting/actor_tests.rs and commitment_consistency/workflow_tests.rs under crates/orchestration/slashing/src; fixture crates/orchestration/slashing/tests/fixtures/layout_lock.txt; cargo test -p e3-slashing",
       "unverified": [
         "Buffered votes, window-move limits, and in-flight re-verifications are not saved. Restart also does not reapply expulsions before the router checkpoint; see the slashing domain's recovery limits."
       ]

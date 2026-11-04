@@ -20,7 +20,7 @@ timer/publication effects explicit.
 - Buffered votes, window-move limits, and in-flight re-verifications remain volatile. Keep those
   limits and failed-snapshot-write behavior visible rather than claiming complete crash durability.
 
-[Slashing](../../docs/architecture/slashing.md) owns lanes and settlement dependencies;
-[DKG](../../docs/architecture/dkg.md) owns commitment links. Use the
+[Slashing](../../../docs/architecture/slashing.md) owns lanes and settlement dependencies;
+[DKG](../../../docs/architecture/dkg.md) owns commitment links. Use the
 [README test map](README.md#tests); proof-to-slash changes require the prepared integration suite,
 not only local vote outcomes.

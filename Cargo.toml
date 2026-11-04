@@ -43,8 +43,8 @@ members = [
   "crates/safe",
   "crates/sdk",
   "crates/ciphernode/daemon-server",
-  "crates/slashing",
-  "crates/sortition",
+  "crates/orchestration/slashing",
+  "crates/orchestration/sortition",
   "crates/state/sync",
   "crates/task-pool",
   "crates/test-support",
@@ -122,7 +122,7 @@ e3-net = { version = "0.20.0-dev.3", path = "./crates/net" }
 e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/compute-provider" }
 e3-openvm-host = { version = "0.20.0-dev.3", path = "./crates/openvm-host" }
 e3-openvm-types = { version = "0.20.0-dev.3", path = "./crates/openvm-types" }
-e3-sortition = { version = "0.20.0-dev.3", path = "./crates/sortition" }
+e3-sortition = { version = "0.20.0-dev.3", path = "./crates/orchestration/sortition" }
 e3-daemon-server = { version = "0.20.0-dev.3", path = "./crates/ciphernode/daemon-server" }
 e3-program-runner = { version = "0.20.0-dev.3", path = "./crates/program-runner" }
 e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program-server" }
@@ -137,7 +137,7 @@ e3-trbfv = { version = "0.20.0-dev.3", path = "./crates/trbfv" }
 e3-utils = { version = "0.20.0-dev.3", path = "./crates/utils" }
 e3-utils-derive = { version = "0.20.0-dev.3", path = "./crates/utils-derive" }
 e3-safe = { version = "0.20.0-dev.3", path = "./crates/safe" }
-e3-slashing = { version = "0.20.0-dev.3", path = "./crates/slashing" }
+e3-slashing = { version = "0.20.0-dev.3", path = "./crates/orchestration/slashing" }
 e3-zk-prover = { version = "0.20.0-dev.3", path = "./crates/zk/prover" }
 e3-zk-config = { version = "0.20.0-dev.3", path = "./crates/zk/config" }
 e3-zk-build = { path = "./crates/zk/build" }
