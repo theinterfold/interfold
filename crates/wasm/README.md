@@ -4,7 +4,7 @@
 
 `e3-wasm` / `@interfold/wasm` exposes native BFV encryption, parameter metadata, and circuit
 commitments to TypeScript in Node and browsers. Cryptographic calculations stay in
-[bfv-client](../bfv/client/README.md) and [fhe-params](../fhe-params/README.md).
+[bfv-client](../bfv/client/README.md) and [fhe-params](../bfv/params/README.md).
 
 ## Map
 

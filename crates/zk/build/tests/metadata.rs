@@ -38,7 +38,7 @@ fn metadata_preserves_frozen_identities_exact_integers_and_owner_dimensions() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let metadata = metadata::collect(&root).unwrap();
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../fhe-params/tests/fixtures/bfv_protocol.json"
+        "../../../bfv/params/tests/fixtures/bfv_protocol.json"
     ))
     .unwrap();
     let current: Vec<_> = fixture["vectors"]

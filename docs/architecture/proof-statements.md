@@ -50,10 +50,10 @@ requires reconsidering the assumption. C3 and user-data-encryption `k1` are non-
 residues; Rust witnesses, Noir equations, and asymmetric quotient bounds must agree. The workspace
 pins fhe.rs **v0.4.2**; do not infer current sampler behavior from older v0.4.1 labels. The additive
 smudging contract is `2^(lambda+1) * degree * B_C`, with preset/committee-specific bounds generated
-from the matching Rust sampler. The preset search (`crates/fhe-params/src/search`) sizes `q` with
+from the matching Rust sampler. The preset search (`crates/bfv/params/src/search`) sizes `q` with
 the same smudging bound and, for `b == 20`, `b_chi == 1`, and tabulated `d`, a lattice-estimator
 128-bit ceiling (`search::security`). Other inputs use the formula fallback and print a warning; see
-[`crates/fhe-params/README.md`](../../crates/fhe-params/README.md) for the limitation;
+[`crates/bfv/params/README.md`](../../crates/bfv/params/README.md) for the limitation;
 `search_reproduces_secure_presets` and `search_reproduces_insecure_presets` keep its moduli,
 plaintext moduli, and `ERROR1_VARIANCE` equal to the preset constants.
 

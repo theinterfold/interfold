@@ -110,7 +110,7 @@ jobs:
               - 'crates/bfv/client/**'
               - 'crates/committee/**'
               - 'crates/compute-provider/**'
-              - 'crates/fhe-params/**'
+              - 'crates/bfv/params/**'
               - 'crates/openvm-types/**'
               - 'crates/parity-matrix/**'
               - 'crates/polynomial/**'

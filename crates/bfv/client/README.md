@@ -22,7 +22,7 @@ whichever key serialization the caller received.
 
 `client::bfv_encrypt(data, public_key, degree, plaintext_modulus, moduli)` takes serialized
 public-key bytes and BFV parameters and returns serialized ciphertext bytes. Parameters must match
-the committee key; use [e3-fhe-params](../../fhe-params/README.md) rather than copying presets.
+the committee key; use [e3-fhe-params](../params/README.md) rather than copying presets.
 
 For inputs that need an encryption proof, `client::bfv_verifiable_encrypt(...)` returns
 `VerifiableEncryptionResult { encrypted_data, circuit_inputs }`. The JSON circuit inputs contain the

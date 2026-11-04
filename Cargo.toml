@@ -21,8 +21,8 @@ members = [
   "crates/evm/config",
   "crates/evm/contracts",
   "crates/evm/client",
-  "crates/fhe",
-  "crates/fhe-params",
+  "crates/bfv/runtime",
+  "crates/bfv/params",
   "crates/fs",
   "crates/hamt",
   "crates/evm/indexer",
@@ -111,8 +111,8 @@ e3-evm = { version = "0.20.0-dev.3", path = "./crates/evm/runtime" }
 e3-evm-config = { version = "0.20.0-dev.3", path = "./crates/evm/config" }
 e3-evm-contracts = { version = "0.20.0-dev.3", path = "./crates/evm/contracts" }
 e3-evm-client = { version = "0.20.0-dev.3", path = "./crates/evm/client" }
-e3-fhe = { version = "0.20.0-dev.3", path = "./crates/fhe" }
-e3-fhe-params = { version = "0.20.0-dev.3", path = "./crates/fhe-params" }
+e3-fhe = { version = "0.20.0-dev.3", path = "./crates/bfv/runtime" }
+e3-fhe-params = { version = "0.20.0-dev.3", path = "./crates/bfv/params" }
 e3-fs = { version = "0.20.0-dev.3", path = "./crates/fs" }
 e3-indexer = { version = "0.20.0-dev.3", path = "./crates/evm/indexer" }
 e3-multithread = { version = "0.20.0-dev.3", path = "./crates/ciphernode/multithread" }

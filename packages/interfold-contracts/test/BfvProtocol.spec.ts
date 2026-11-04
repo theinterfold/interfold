@@ -12,7 +12,7 @@ import { ethers } from "./fixtures/connection";
 const fixture = JSON.parse(
   readFileSync(
     new URL(
-      "../../../crates/fhe-params/tests/fixtures/bfv_protocol.json",
+      "../../../crates/bfv/params/tests/fixtures/bfv_protocol.json",
       import.meta.url,
     ),
     "utf8",

@@ -438,7 +438,7 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         "crates/zk/config/src/threshold/pk_generation.rs",
         "crates/zk/witness/src/commitments.rs",
         "crates/committee/src/lib.rs",
-        "crates/fhe-params/src/presets.rs",
+        "crates/bfv/params/src/presets.rs",
         "crates/polynomial/src/lib.rs",
         "crates/polynomial/fhe-adapter/src/lib.rs",
     ] {
@@ -674,7 +674,7 @@ fn checksum_streams_files_of_any_size_to_the_same_digest() {
 #[test]
 fn protocol_generation_preserves_deployed_parameter_hashes() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../fhe-params/tests/fixtures/bfv_protocol.json"
+        "../../../bfv/params/tests/fixtures/bfv_protocol.json"
     ))
     .unwrap();
     for vector in fixture["vectors"]

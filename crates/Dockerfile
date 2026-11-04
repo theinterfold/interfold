@@ -65,8 +65,8 @@ COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
 COPY crates/evm/config/Cargo.toml ./evm/config/Cargo.toml
 COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
 COPY crates/evm/client/Cargo.toml ./evm/client/Cargo.toml
-COPY crates/fhe/Cargo.toml ./fhe/Cargo.toml
-COPY crates/fhe-params/Cargo.toml ./fhe-params/Cargo.toml
+COPY crates/bfv/runtime/Cargo.toml ./bfv/runtime/Cargo.toml
+COPY crates/bfv/params/Cargo.toml ./bfv/params/Cargo.toml
 COPY crates/fs/Cargo.toml ./fs/Cargo.toml
 COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
 COPY crates/evm/indexer/Cargo.toml ./evm/indexer/Cargo.toml
@@ -123,7 +123,7 @@ RUN for d in ./*/ ./*/*/ ; do \
     done
 
 # Crates with [[bin]] in Cargo.toml need stub binaries so the first build succeeds
-RUN mkdir -p ./fhe-params/src/bin && echo 'fn main() {}' > ./fhe-params/src/bin/search_params.rs
+RUN mkdir -p ./bfv/params/src/bin && echo 'fn main() {}' > ./bfv/params/src/bin/search_params.rs
 # Stub the unpublished build executable for the dependency-cache layer.
 RUN mkdir -p ./zk/build/src && echo 'fn main() {}' > ./zk/build/src/main.rs
 

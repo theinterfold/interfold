@@ -74,7 +74,7 @@ export const LAYERS = {
     'orchestration/aggregator',
     'orchestration/slashing',
     'zk/prover',
-    'fhe',
+    'bfv/runtime',
     'ciphernode/multithread',
     'bfv/threshold',
     'bfv/client',
@@ -83,7 +83,7 @@ export const LAYERS = {
   vocabulary: [
     'events',
     'ciphernode/config',
-    'fhe-params',
+    'bfv/params',
     'zk/config',
     'zk/witness',
     'committee',

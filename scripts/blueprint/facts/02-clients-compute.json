@@ -668,100 +668,100 @@
         { "title": "DKG", "path": "docs/architecture/dkg.md" }
       ],
       "kind": "crate",
-      "path": "crates/fhe",
+      "path": "crates/bfv/runtime",
       "one_line": "Ciphernode wrapper around the fhe.rs BFV library that sets up per-E3 parameters and runs key-share, decryption-share and aggregation steps.",
       "actors": [],
       "consumes": [
         {
           "name": "E3Requested, with the encoded BFV params and the E3 id",
           "by": "FheExtension",
-          "ref": "crates/fhe/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
+          "ref": "crates/bfv/runtime/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
         },
         {
           "name": "saved FheSnapshot, read back on restart",
           "by": "FheExtension",
-          "ref": "crates/fhe/src/ext.rs@83@let Some(snap) = ctx.repositories().fhe(&ctx.e3_id).read().await? else {"
+          "ref": "crates/bfv/runtime/src/ext.rs@83@let Some(snap) = ctx.repositories().fhe(&ctx.e3_id).read().await? else {"
         }
       ],
       "emits": [
         {
           "name": "KeyGeneration error report when the params do not decode",
           "by": "FheExtension",
-          "ref": "crates/fhe/src/ext.rs@60@.err(EType::KeyGeneration, anyhow!(ERROR_FHE_FAILED_TO_DECODE));"
+          "ref": "crates/bfv/runtime/src/ext.rs@60@.err(EType::KeyGeneration, anyhow!(ERROR_FHE_FAILED_TO_DECODE));"
         }
       ],
       "state": [
         {
           "name": "FheSnapshot (params and CRP bytes) written per E3 through the e3-data repository",
           "where": "disk",
-          "ref": "crates/fhe/src/ext.rs@72@ctx.repositories().fhe(&e3_id).write(&snapshot);"
+          "ref": "crates/bfv/runtime/src/ext.rs@72@ctx.repositories().fhe(&e3_id).write(&snapshot);"
         },
         {
           "name": "live Fhe handle in the E3 context, under FHE_KEY",
           "where": "memory",
-          "ref": "crates/fhe/src/ext.rs@73@ctx.set_dependency(FHE_KEY, fhe);"
+          "ref": "crates/bfv/runtime/src/ext.rs@73@ctx.set_dependency(FHE_KEY, fhe);"
         }
       ],
       "key_types": [
         {
           "name": "FHE_KEY",
           "what": "TypedKey under which the Fhe handle is stored in the E3 context",
-          "ref": "crates/fhe/src/ext.rs@18@pub const FHE_KEY: TypedKey<Arc<Fhe>> = TypedKey::new("
+          "ref": "crates/bfv/runtime/src/ext.rs@18@pub const FHE_KEY: TypedKey<Arc<Fhe>> = TypedKey::new("
         },
         {
           "name": "Fhe",
           "what": "BFV parameters, common random polynomial and shared RNG, with key-share, decryption and aggregation methods",
-          "ref": "crates/fhe/src/runtime.rs@39@pub struct Fhe {"
+          "ref": "crates/bfv/runtime/src/runtime.rs@39@pub struct Fhe {"
         },
         {
           "name": "FheSnapshot",
           "what": "serializable params and CRP bytes that rebuild a Fhe in hydrate",
-          "ref": "crates/fhe/src/runtime.rs@149@pub struct FheSnapshot {"
+          "ref": "crates/bfv/runtime/src/runtime.rs@149@pub struct FheSnapshot {"
         },
         {
           "name": "DecryptCiphertext",
           "what": "input to decrypt_ciphertext: the secret-key bytes and one ciphertext",
-          "ref": "crates/fhe/src/runtime.rs@32@pub struct DecryptCiphertext {"
+          "ref": "crates/bfv/runtime/src/runtime.rs@32@pub struct DecryptCiphertext {"
         }
       ],
       "read_first": [
         {
           "why": "the public surface: FheExtension, the repository factory and FHE_KEY",
-          "ref": "crates/fhe/src/lib.rs@10@pub use ext::{FheExtension, FheRepositoryFactory, FHE_KEY};"
+          "ref": "crates/bfv/runtime/src/lib.rs@10@pub use ext::{FheExtension, FheRepositoryFactory, FHE_KEY};"
         },
         {
           "why": "setup on E3Requested",
-          "ref": "crates/fhe/src/ext.rs@49@impl E3Extension for FheExtension {"
+          "ref": "crates/bfv/runtime/src/ext.rs@49@impl E3Extension for FheExtension {"
         },
         {
           "why": "restart path: rebuild the handle from the snapshot",
-          "ref": "crates/fhe/src/ext.rs@76@async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {"
+          "ref": "crates/bfv/runtime/src/ext.rs@76@async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {"
         },
         {
           "why": "the fhe.rs adaptor and its key-share step",
-          "ref": "crates/fhe/src/runtime.rs@73@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
+          "ref": "crates/bfv/runtime/src/runtime.rs@73@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-impl",
           "note": "FheExtension implements the request crate's E3Extension trait, so the E3 context calls it",
-          "ref": "crates/fhe/src/ext.rs@49@impl E3Extension for FheExtension {"
+          "ref": "crates/bfv/runtime/src/ext.rs@49@impl E3Extension for FheExtension {"
         },
         {
           "pattern": "let-else",
           "note": "events that are not E3Requested return early through let-else",
-          "ref": "crates/fhe/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
+          "ref": "crates/bfv/runtime/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
         },
         {
           "pattern": "anyhow-context",
           "note": "a ciphertext that fails to deserialize gets a context message",
-          "ref": "crates/fhe/src/runtime.rs@93@.context(\"Error deserializing ciphertext\")?,"
+          "ref": "crates/bfv/runtime/src/runtime.rs@93@.context(\"Error deserializing ciphertext\")?,"
         },
         {
           "pattern": "iterator-chain",
           "note": "public-key shares are deserialized and aggregated in one chain",
-          "ref": "crates/fhe/src/runtime.rs@104@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
+          "ref": "crates/bfv/runtime/src/runtime.rs@104@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
         }
       ],
       "depends_on": ["e3-data", "e3-events", "e3-utils", "e3-request", "e3-bfv-client", "e3-fhe-params"],
