@@ -14,7 +14,7 @@ semaphore.
 - A missing-outcome redelivery waits until no matching job remains queued/running. Memory-only gate
   buffers are not a transactional outbox or a complete exactly-once guarantee.
 
-[Persistence](../../docs/architecture/persistence-and-replay.md#effect-recovery-and-shutdown) owns
-budgets/retries and current limits. Use the [README tests/prerequisites](README.md#tests). Gate and
-retry changes need replay/redrive/cancellation histories; fake outcomes do not measure production
-prover memory or verify cryptographic correctness.
+[Persistence](../../../docs/architecture/persistence-and-replay.md#effect-recovery-and-shutdown)
+owns budgets/retries and current limits. Use the [README tests/prerequisites](README.md#tests). Gate
+and retry changes need replay/redrive/cancellation histories; fake outcomes do not measure
+production prover memory or verify cryptographic correctness.

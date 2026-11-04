@@ -3,18 +3,18 @@
 ## Purpose
 
 Ciphernode compute dispatch for ZK and threshold-BFV work, using shared admission from
-[e3-task-pool](../task-pool/README.md). It keeps expensive jobs off actor mailboxes and coordinates
-replay-safe effects; protocol validity remains with the requesting capabilities.
+[e3-task-pool](../../task-pool/README.md). It keeps expensive jobs off actor mailboxes and
+coordinates replay-safe effects; protocol validity remains with the requesting capabilities.
 
 ## Map
 
-| Location                               | Responsibility                                                                   |
-| -------------------------------------- | -------------------------------------------------------------------------------- |
-| [e3-task-pool](../task-pool/README.md) | Semaphore admission, Rayon execution, cancellation groups, and task results.     |
-| [`memory.rs`](src/memory.rs)           | CPU/requested-job and host/cgroup-memory capacity calculation.                   |
-| [`effect_gate.rs`](src/effect_gate.rs) | Current-boot dispatch gating, duplicate/redrive matching, and retained outcomes. |
-| [`multithread.rs`](src/multithread.rs) | Bus-facing ZK/TrBFV dispatch, retries, request teardown, and result publication. |
-| [`report.rs`](src/report.rs)           | Timing/capacity report actor and flattened diagnostics.                          |
+| Location                                  | Responsibility                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------------- |
+| [e3-task-pool](../../task-pool/README.md) | Semaphore admission, Rayon execution, cancellation groups, and task results.     |
+| [`memory.rs`](src/memory.rs)              | CPU/requested-job and host/cgroup-memory capacity calculation.                   |
+| [`effect_gate.rs`](src/effect_gate.rs)    | Current-boot dispatch gating, duplicate/redrive matching, and retained outcomes. |
+| [`multithread.rs`](src/multithread.rs)    | Bus-facing ZK/TrBFV dispatch, retries, request teardown, and result publication. |
+| [`report.rs`](src/report.rs)              | Timing/capacity report actor and flattened diagnostics.                          |
 
 The dispatcher admits an event through the effect gate, queues its work in the shared pool, executes
 off the actor thread, and publishes a correlated result. Effect readiness and request termination
@@ -40,14 +40,14 @@ outcomes. Cancellation retires pending C0 verification without retry or invalid-
 Selected compute-owner dependencies (Cargo manifests contain the full graph):
 
 ```text
-ciphernode-builder -> multithread, zk/prover, task-pool
-multithread        -> task-pool, zk/prover, trbfv
-zk/prover          -> task-pool, zk/witness, zk/config, trbfv
-task-pool          -> Rayon, Tokio (no protocol dependencies)
+builder     -> multithread, zk/prover, task-pool
+multithread -> task-pool, zk/prover, trbfv
+zk/prover   -> task-pool, zk/witness, zk/config, trbfv
+task-pool   -> Rayon, Tokio (no protocol dependencies)
 ```
 
 Circuit-request adaptation and ZK execution belong to
-[`zk/prover`](../zk/prover/src/request_execution.rs); deterministic preparation remains in
+[`zk/prover`](../../zk/prover/src/request_execution.rs); deterministic preparation remains in
 `zk/witness`. This dispatcher owns admission, replay gates, retry policy, correlation, timing
 publication and terminal filtering. Native request execution, RNG access and typed calculation
 failures belong to `trbfv`. The dispatcher only wraps native results with their E3/correlation
@@ -60,7 +60,7 @@ pool and node scope, so direct Rust callers must supply them when constructing t
 protocol/schema or node-generation counter change is proposed for this ownership split.
 
 For production sizing, `ComputeCapacity::detect(requested_jobs, cpu_jobs)` applies CPU and detected
-host/cgroup-memory limits. [CiphernodeBuilder](../ciphernode-builder/README.md) exposes
+host/cgroup-memory limits. [CiphernodeBuilder](../builder/README.md) exposes
 `with_multithread_config` and optional shared task pools/reports. ZK and TrBFV work share admission
 instead of each using unrelated pool capacity.
 
@@ -68,9 +68,8 @@ instead of each using unrelated pool capacity.
 
 `Multithread::attach` installs threshold-BFV dispatch. `attach_with_zk` additionally supplies the
 prover backend, restored lifecycle stages, and canonical keys. Both need the bus, RNG, local cipher,
-task pool, and node-specific task scope; see the
-[builder caller](../ciphernode-builder/src/builder/extensions.rs) for the complete wiring. These are
-node-wide workers, not per-E3 router extensions.
+task pool, and node-specific task scope; see the [builder caller](../builder/src/extensions.rs) for
+the complete wiring. These are node-wide workers, not per-E3 router extensions.
 
 Dispatch correlates jobs with their request/E3 and gates recovery on current-boot effect readiness.
 Queued cancellation does not stop an executing closure. Prover process deadlines are separate, and
@@ -78,13 +77,13 @@ local resource failure is not proof that a peer supplied invalid crypto. `Multit
 `ToReport` expose timing and capacity diagnostics, not proof validity.
 
 See
-[effect recovery](../../docs/architecture/persistence-and-replay.md#effect-recovery-and-shutdown)
+[effect recovery](../../../docs/architecture/persistence-and-replay.md#effect-recovery-and-shutdown)
 for admission/retry limits.
 
 ## Tests
 
 `cargo test --locked -p e3-multithread` transitively builds the prover; read its
-[build prerequisites and side effects](../zk/prover/README.md) first.
+[build prerequisites and side effects](../../zk/prover/README.md) first.
 
 Inline suites distinguish deterministic capacity calculations, effect-gate replay/redelivery, and
 bus dispatch/retry/teardown. Pool cancellation/panic tests live in `e3-task-pool`. Fake outcomes

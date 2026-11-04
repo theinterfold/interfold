@@ -138,7 +138,7 @@ chain history arrives. See [network delivery](network-delivery.md) for loss and 
   `plaintext_dependencies_use_chain_rosters_across_restart`, and
   [keyshare tests](../../crates/keyshare/src/threshold_keyshare/tests.rs), including
   `retained_c6_work_recovers_key_bytes_in_every_decryption_phase`, cover recovery admission.
-- [Effect-gate tests](../../crates/multithread/src/effect_gate.rs), including
+- [Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs), including
   `replayed_c6_compute_requires_canonical_public_inputs`, guard logged request release.
 - [BfvDecryptionVerifier tests](../../packages/interfold-contracts/test/BfvDecryptionVerifier.spec.ts)
   own on-chain domain/anchor checks. Use `cargo test -p e3-aggregator`, `pnpm evm:test`, and
