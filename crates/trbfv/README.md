@@ -4,7 +4,7 @@
 
 Threshold-BFV calculations and typed request/response payloads for distributed key generation and
 threshold decryption. Actors, authenticated dealer admission, and timing belong in
-[keyshare](../keyshare/README.md) and [aggregation](../aggregator/README.md).
+[keyshare](../orchestration/keyshare/README.md) and [aggregation](../aggregator/README.md).
 
 ## Map
 

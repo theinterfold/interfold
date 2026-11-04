@@ -1002,11 +1002,7 @@ function ciphernode({ units }) {
         both: true,
         fa: (740 - 470) / 820,
         refs: [
-          H(
-            'crates/keyshare/src/threshold_keyshare/handlers.rs',
-            177,
-            'impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare',
-          ),
+          H('crates/orchestration/keyshare/src/handlers.rs', 177, 'impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare'),
           ...ev('B9'),
         ],
       },
@@ -1056,7 +1052,7 @@ function ciphernode({ units }) {
         ],
         label: 'creates actors\nper E3',
         refs: [
-          'crates/keyshare/src/ext.rs@66@InterfoldEventData::CiphernodeSelected',
+          'crates/orchestration/keyshare/src/ext.rs@66@InterfoldEventData::CiphernodeSelected',
           'crates/aggregator/src/ext.rs@98@InterfoldEventData::CiphernodeSelected',
           'crates/orchestration/slashing/src/accusation_manager_ext.rs@211@InterfoldEventData::CommitteeFinalized',
         ],

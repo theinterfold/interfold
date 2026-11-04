@@ -8,28 +8,28 @@
         { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" }
       ],
       "kind": "crate",
-      "path": "crates/keyshare",
+      "path": "crates/orchestration/keyshare",
       "one_line": "Runs one committee member's share of the E3 distributed key generation, then produces its decryption share.",
       "actors": [
         {
           "name": "ThresholdKeyshare",
           "role": "DKG and decryption state machine for one E3; owns the persisted phase and sends the TrBFV compute requests",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@204@pub struct ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/actor.rs@204@pub struct ThresholdKeyshare {"
         },
         {
           "name": "EncryptionKeyCollector",
           "role": "collects every member's BFV public key, then sends AllEncryptionKeysCollected to its parent",
-          "ref": "crates/keyshare/src/threshold_keyshare/encryption_key_collector.rs@70@pub struct EncryptionKeyCollector {"
+          "ref": "crates/orchestration/keyshare/src/encryption_key_collector.rs@70@pub struct EncryptionKeyCollector {"
         },
         {
           "name": "ThresholdShareCollector",
           "role": "collects the threshold shares sent to this node with their proofs, then sends AllThresholdSharesCollected",
-          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@50@pub struct ThresholdShareCollector {"
+          "ref": "crates/orchestration/keyshare/src/threshold_share_collector.rs@50@pub struct ThresholdShareCollector {"
         },
         {
           "name": "DecryptionKeySharedCollector",
           "role": "collects the DecryptionKeyShared messages from members, then sends AllDecryptionKeySharesCollected",
-          "ref": "crates/keyshare/src/threshold_keyshare/decryption_key_collector.rs@54@pub struct DecryptionKeySharedCollector {"
+          "ref": "crates/orchestration/keyshare/src/decryption_key_collector.rs@54@pub struct DecryptionKeySharedCollector {"
         },
         {
           "name": "ProofRequestActor (e3-zk-prover, outside this crate)",
@@ -41,149 +41,149 @@
         {
           "name": "CiphernodeSelected",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
         },
         {
           "name": "EncryptionKeyCreated",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/route_events.rs@85@InterfoldEventData::EncryptionKeyCreated(data) => {"
+          "ref": "crates/orchestration/keyshare/src/effects/route_events.rs@85@InterfoldEventData::EncryptionKeyCreated(data) => {"
         },
         {
           "name": "ThresholdShareCreated",
           "by": "ThresholdShareCollector",
-          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@189@impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {"
+          "ref": "crates/orchestration/keyshare/src/threshold_share_collector.rs@189@impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {"
         },
         {
           "name": "ShareVerificationComplete",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@246@impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@246@impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {"
         },
         {
           "name": "DecryptionKeyShared",
           "by": "DecryptionKeySharedCollector",
-          "ref": "crates/keyshare/src/threshold_keyshare/decryption_key_collector.rs@115@impl Handler<TypedEvent<DecryptionKeyShared>> for DecryptionKeySharedCollector {"
+          "ref": "crates/orchestration/keyshare/src/decryption_key_collector.rs@115@impl Handler<TypedEvent<DecryptionKeyShared>> for DecryptionKeySharedCollector {"
         },
         {
           "name": "ComputeResponse",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@115@impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@115@impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {"
         },
         {
           "name": "CiphertextOutputPublished",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@293@impl Handler<TypedEvent<CiphertextOutputPublished>> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@293@impl Handler<TypedEvent<CiphertextOutputPublished>> for ThresholdKeyshare {"
         }
       ],
       "emits": [
         {
           "name": "EncryptionKeyPending",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@158@EncryptionKeyPending {"
+          "ref": "crates/orchestration/keyshare/src/effects/initialize_dkg.rs@158@EncryptionKeyPending {"
         },
         {
           "name": "ComputeRequest (TrBFV GenPkShareAndSkSss)",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@291@let event = ComputeRequest::trbfv("
+          "ref": "crates/orchestration/keyshare/src/effects/initialize_dkg.rs@291@let event = ComputeRequest::trbfv("
         },
         {
           "name": "ThresholdSharePending",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/generate_threshold_share.rs@189@let event = ThresholdSharePending {"
+          "ref": "crates/orchestration/keyshare/src/effects/generate_threshold_share.rs@189@let event = ThresholdSharePending {"
         },
         {
           "name": "ShareVerificationDispatched",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_threshold_shares.rs@181@let dispatch = InterfoldEventData::from(ShareVerificationDispatched {"
+          "ref": "crates/orchestration/keyshare/src/effects/verify_threshold_shares.rs@181@let dispatch = InterfoldEventData::from(ShareVerificationDispatched {"
         },
         {
           "name": "ComputeRequest (TrBFV CalculateDecryptionKey)",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/calculate_decryption_key.rs@80@let event = ComputeRequest::trbfv("
+          "ref": "crates/orchestration/keyshare/src/effects/calculate_decryption_key.rs@80@let event = ComputeRequest::trbfv("
         },
         {
           "name": "DecryptionShareProofsPending",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/calculate_decryption_key.rs@141@let event = DecryptionShareProofsPending {"
+          "ref": "crates/orchestration/keyshare/src/effects/calculate_decryption_key.rs@141@let event = DecryptionShareProofsPending {"
         },
         {
           "name": "ComputeRequest (TrBFV CalculateDecryptionShare)",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@102@let event = ComputeRequest::trbfv("
+          "ref": "crates/orchestration/keyshare/src/effects/create_decryption_share.rs@102@let event = ComputeRequest::trbfv("
         },
         {
           "name": "ShareDecryptionProofPending",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@139@self.bus.publish(pending, ec.clone())?;"
+          "ref": "crates/orchestration/keyshare/src/effects/create_decryption_share.rs@139@self.bus.publish(pending, ec.clone())?;"
         },
         {
           "name": "KeyshareCreated",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@288@KeyshareCreated {"
+          "ref": "crates/orchestration/keyshare/src/effects/verify_decryption_key.rs@288@KeyshareCreated {"
         },
         {
           "name": "E3Failed",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@90@self.bus.publish_without_context(E3Failed {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@90@self.bus.publish_without_context(E3Failed {"
         }
       ],
       "state": [
         {
           "name": "ThresholdKeyshareState (DKG phase, party id, thresholds, honest set)",
           "where": "disk",
-          "ref": "crates/keyshare/src/threshold_keyshare/state.rs@208@pub struct ThresholdKeyshareState {"
+          "ref": "crates/orchestration/keyshare/src/state.rs@208@pub struct ThresholdKeyshareState {"
         },
         {
           "name": "BFV secret key, encrypted with the node cipher before it is recorded",
           "where": "disk",
-          "ref": "crates/keyshare/src/threshold_keyshare/generate_encryption_key.rs@44@let sk_bfv = SensitiveBytes::new(sk_bytes, cipher)?;"
+          "ref": "crates/orchestration/keyshare/src/generate_encryption_key.rs@44@let sk_bfv = SensitiveBytes::new(sk_bytes, cipher)?;"
         },
         {
           "name": "PendingKeyshareWork (in-flight requests and parked verdicts)",
           "where": "memory",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@230@pending: PendingKeyshareWork,"
+          "ref": "crates/orchestration/keyshare/src/actor.rs@230@pending: PendingKeyshareWork,"
         }
       ],
       "key_types": [
         {
           "name": "KeyshareState",
           "what": "DKG and decryption phases: Init, CollectingEncryptionKeys, GeneratingThresholdShare, AggregatingDecryptionKey, ReadyForDecryption, Decrypting, GeneratingDecryptionProof, Completed, Failed",
-          "ref": "crates/keyshare/src/threshold_keyshare/state.rs@113@pub enum KeyshareState {"
+          "ref": "crates/orchestration/keyshare/src/state.rs@113@pub enum KeyshareState {"
         },
         {
           "name": "BfvKeypairMaterial",
           "what": "a fresh BFV secret (encrypted at rest) and public key for one E3",
-          "ref": "crates/keyshare/src/threshold_keyshare/generate_encryption_key.rs@27@pub(crate) struct BfvKeypairMaterial {"
+          "ref": "crates/orchestration/keyshare/src/generate_encryption_key.rs@27@pub(crate) struct BfvKeypairMaterial {"
         }
       ],
       "read_first": [
         {
           "why": "entry point: a CiphernodeSelected makes ThresholdKeyshareExtension create this node's ThresholdKeyshare for the E3",
-          "ref": "crates/keyshare/src/ext.rs@66@let InterfoldEventData::CiphernodeSelected(data) = evt.get_data() else {"
+          "ref": "crates/orchestration/keyshare/src/ext.rs@66@let InterfoldEventData::CiphernodeSelected(data) = evt.get_data() else {"
         },
         {
           "why": "the DKG phase enum; the allowed transitions follow in next() at line 150",
-          "ref": "crates/keyshare/src/threshold_keyshare/state.rs@113@pub enum KeyshareState {"
+          "ref": "crates/orchestration/keyshare/src/state.rs@113@pub enum KeyshareState {"
         },
         {
           "why": "every bus event is routed from here to a typed handler",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/route_events.rs@7@impl Handler<InterfoldEvent> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/effects/route_events.rs@7@impl Handler<InterfoldEvent> for ThresholdKeyshare {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "ThresholdKeyshare is an actix Actor, so each DKG step runs in its mailbox",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@364@impl Actor for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/actor.rs@364@impl Actor for ThresholdKeyshare {"
         },
         {
           "pattern": "actix-handler",
           "note": "one typed Handler per bus event, starting with CiphernodeSelected",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
+          "ref": "crates/orchestration/keyshare/src/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
         },
         {
           "pattern": "enum-match",
           "note": "variant_name maps every KeyshareState variant to a fixed label",
-          "ref": "crates/keyshare/src/threshold_keyshare/state.rs@193@match self {"
+          "ref": "crates/orchestration/keyshare/src/state.rs@193@match self {"
         }
       ],
       "depends_on": [
@@ -201,10 +201,10 @@
         "e3-utils",
         "e3-zk-config"
       ],
-      "tests": "crates/keyshare/src/threshold_keyshare/tests.rs, state_tests.rs and tests/admission.rs, plus the #[test] functions in pure modules such as generate_encryption_key.rs; run: cargo test -p e3-keyshare",
+      "tests": "crates/orchestration/keyshare/src/tests.rs, state_tests.rs and tests/admission.rs, plus the #[test] functions in pure modules such as generate_encryption_key.rs; run: cargo test -p e3-keyshare",
       "unverified": [
         "The TrBFV compute worker that answers GenPkShareAndSkSss, GenEsiSss, CalculateDecryptionKey and CalculateDecryptionShare was not read.",
-        "The DKG timing and cutoff rules in threshold_keyshare/timeout_policy.rs were not traced.",
+        "The DKG timing and cutoff rules in keyshare/src/timeout_policy.rs were not traced.",
         "The C0 to C6 circuits behind the proofs were not read; only the requests and the events that carry them."
       ]
     },

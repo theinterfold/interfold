@@ -7,27 +7,27 @@
 //! Compatibility view of pure threshold-keyshare modules.
 //!
 //! Nothing in this module depends on actix, persistence, the event bus or
-//! timers. Implementation is physically co-located under `threshold_keyshare`.
+//! timers. Implementation files sit beside the actors in `src/`.
 
-#[path = "threshold_keyshare/generate_encryption_key.rs"]
+#[path = "generate_encryption_key.rs"]
 mod bfv_keygen;
-#[path = "threshold_keyshare/derive_decryption_key.rs"]
+#[path = "derive_decryption_key.rs"]
 mod decryption_key_calculation;
-#[path = "threshold_keyshare/collect_decryption_keys.rs"]
+#[path = "collect_decryption_keys.rs"]
 mod decryption_key_shared_collection;
-#[path = "threshold_keyshare/ready_summary.rs"]
+#[path = "ready_summary.rs"]
 mod dkg_ready_summary;
-#[path = "threshold_keyshare/roster.rs"]
+#[path = "roster.rs"]
 mod dkg_roster;
-#[path = "threshold_keyshare/collect_encryption_keys.rs"]
+#[path = "collect_encryption_keys.rs"]
 mod encryption_key_collection;
-#[path = "threshold_keyshare/state.rs"]
+#[path = "state.rs"]
 mod keyshare_state;
-#[path = "threshold_keyshare/generate_shares.rs"]
+#[path = "generate_shares.rs"]
 mod share_generation;
-#[path = "threshold_keyshare/collect_threshold_shares.rs"]
+#[path = "collect_threshold_shares.rs"]
 mod threshold_share_collection;
-#[path = "threshold_keyshare/timeout_policy.rs"]
+#[path = "timeout_policy.rs"]
 pub(crate) mod timeout_policy;
 
 // Public (re-exported at the crate root): the persisted state machine and its

@@ -4,7 +4,7 @@
 
 Runtime adapter around fhe.rs for keyshare generation, ciphertext decryption, and public-key/
 plaintext share aggregation. It also supplies an FHE dependency to each admitted E3 context; DKG
-orchestration itself belongs in [keyshare](../keyshare/README.md).
+orchestration itself belongs in [keyshare](../orchestration/keyshare/README.md).
 
 ## Map
 
