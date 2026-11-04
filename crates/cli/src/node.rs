@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_entrypoint::validate::validate_node;
 
@@ -61,7 +61,7 @@ pub enum NodeCommands {
     },
 }
 
-pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: NodeCommands, config: &NodeConfig) -> Result<()> {
     match command {
         NodeCommands::Validate { repair } => {
             // Offline-only contract: hold the same cross-host fence `start` uses so the
@@ -89,7 +89,7 @@ pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) ->
 /// Clear durable state for one node, keeping the operator identity.
 async fn reset_data(
     out: Console,
-    config: &AppConfig,
+    config: &NodeConfig,
     yes: bool,
     allow_active_e3s: bool,
     if_schema_older: bool,

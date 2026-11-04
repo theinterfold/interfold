@@ -12,7 +12,7 @@
 //! stop that system while this test still uses the bus.
 
 use anyhow::Result;
-use e3_config::{AppConfig, UnscopedAppConfig};
+use e3_ciphernode_config::{NodeConfig, UnscopedNodeConfig};
 use e3_data::{DataStore, Repositories, RepositoriesFactory, SledDb};
 use e3_entrypoint::helpers::datastore::setup_datastore;
 use e3_entrypoint::nodes::reset_data::execute;
@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// A node whose data and configuration directories are under `root`.
-fn node_config(root: &Path) -> Result<AppConfig> {
-    let config: UnscopedAppConfig = serde_yaml::from_str("node:\n  network: local\n")?;
+fn node_config(root: &Path) -> Result<NodeConfig> {
+    let config: UnscopedNodeConfig = serde_yaml::from_str("node:\n  network: local\n")?;
     config.into_scoped_with_defaults(
         "_default",
         &root.join("data"),
@@ -35,7 +35,7 @@ fn node_config(root: &Path) -> Result<AppConfig> {
     )
 }
 
-fn open(config: &AppConfig) -> Result<Repositories> {
+fn open(config: &NodeConfig) -> Result<Repositories> {
     let bus = get_interfold_bus_handle()?;
     Ok(setup_datastore(config, &bus)?.repositories())
 }
@@ -48,7 +48,7 @@ async fn close(repositories: Repositories) -> Result<()> {
 }
 
 /// Store a stage for `e3_id` and a key-share record for it, as a committee member does.
-async fn write_state(config: &AppConfig, e3_id: &E3id, stage: E3Stage) -> Result<()> {
+async fn write_state(config: &NodeConfig, e3_id: &E3id, stage: E3Stage) -> Result<()> {
     let repositories = open(config)?;
     repositories
         .e3_lifecycle()
@@ -63,7 +63,7 @@ async fn write_state(config: &AppConfig, e3_id: &E3id, stage: E3Stage) -> Result
 type StoredState = (Option<HashMap<E3id, E3Stage>>, Option<Vec<u8>>);
 
 /// The stage map and the key-share record that the store holds for `e3_id`.
-async fn read_state(config: &AppConfig, e3_id: &E3id) -> Result<StoredState> {
+async fn read_state(config: &NodeConfig, e3_id: &E3id) -> Result<StoredState> {
     let repositories = open(config)?;
     let stages = repositories.e3_lifecycle().read().await?;
     let key_share = DataStore::from(repositories.threshold_keyshare(e3_id))

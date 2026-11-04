@@ -50,6 +50,7 @@ COPY crates/bfv-client/Cargo.toml ./bfv-client/Cargo.toml
 COPY crates/bfv-test-support/Cargo.toml ./bfv-test-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
 COPY crates/ciphernode/builder/Cargo.toml ./ciphernode/builder/Cargo.toml
+COPY crates/ciphernode/config/Cargo.toml ./ciphernode/config/Cargo.toml
 COPY crates/compute-provider/Cargo.toml ./compute-provider/Cargo.toml
 COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml

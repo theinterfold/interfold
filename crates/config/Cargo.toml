@@ -3,23 +3,13 @@ name = "e3-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Interfold Ciphernode Configuration"
+description = "E3 - Interfold Network and Release Identity"
 repository.workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true }
 anyhow = { workspace = true }
-dirs = { workspace = true }
 e3-evm-config = { workspace = true }
-e3-fhe-params = { workspace = true }
 hex = { workspace = true }
-path-clean = { workspace = true }
-petname = { workspace = true }
-rand = { workspace = true }
 serde = { workspace = true }
-serde_yaml = { workspace = true }
 toml = { workspace = true }
-url = { workspace = true }
-
-[dev-dependencies]
-figment = { workspace = true }

@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_entrypoint::helpers::datastore::get_eventstore_reader;
 use e3_event_system::global_eventstore_cache::EventStoreReader;
@@ -36,7 +36,7 @@ pub enum EventsCommands {
     },
 }
 
-pub async fn execute(out: Console, command: EventsCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: EventsCommands, config: &NodeConfig) -> Result<()> {
     match command {
         EventsCommands::Query { agg, since, limit } => {
             query_events(out, config, agg, since, limit).await?
@@ -47,7 +47,7 @@ pub async fn execute(out: Console, command: EventsCommands, config: &AppConfig) 
 
 async fn query_events(
     out: Console,
-    config: &AppConfig,
+    config: &NodeConfig,
     aggregate: Option<usize>,
     since: Option<u64>,
     limit: Option<u64>,

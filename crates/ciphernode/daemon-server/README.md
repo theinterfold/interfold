@@ -14,7 +14,7 @@ CLI, not this transport.
 
 ## Client and server
 
-- `connect_daemon(Option<&AppConfig>).await` probes the configured control port and returns
+- `connect_daemon(Option<&NodeConfig>).await` probes the configured control port and returns
   `Option<ServerInfo>`. Reachability is not authenticated daemon identity.
 - `run_on_daemon(out, server, command).await` POSTs a serializable command, propagates HTTP
   failures, and writes response lines to an `e3_console::Console`.

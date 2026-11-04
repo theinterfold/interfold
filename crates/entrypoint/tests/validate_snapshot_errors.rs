@@ -9,15 +9,15 @@
 
 use anyhow::Result;
 use commitlog::{CommitLog, LogOptions};
-use e3_config::{AppConfig, UnscopedAppConfig};
+use e3_ciphernode_config::{NodeConfig, UnscopedNodeConfig};
 use e3_data::SledDb;
 use e3_entrypoint::validate::{validate_node, Severity};
 use e3_events::{Insert, StoreKeys};
 use e3_sync::SCHEMA_VERSION;
 use std::path::Path;
 
-fn node_config(root: &Path) -> Result<AppConfig> {
-    let config: UnscopedAppConfig = serde_yaml::from_str("node:\n  network: local\n")?;
+fn node_config(root: &Path) -> Result<NodeConfig> {
+    let config: UnscopedNodeConfig = serde_yaml::from_str("node:\n  network: local\n")?;
     config.into_scoped_with_defaults(
         "_default",
         &root.join("data"),

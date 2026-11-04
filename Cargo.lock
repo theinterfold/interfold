@@ -3660,6 +3660,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-ciphernode-config"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy-primitives",
+ "anyhow",
+ "dirs 5.0.1",
+ "e3-config",
+ "e3-evm-config",
+ "figment",
+ "path-clean",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "e3-cli"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -3672,6 +3687,7 @@ dependencies = [
  "dialoguer",
  "dirs 5.0.1",
  "e3-ciphernode-builder",
+ "e3-ciphernode-config",
  "e3-config",
  "e3-console",
  "e3-crypto",
@@ -3770,18 +3786,10 @@ version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "anyhow",
- "dirs 5.0.1",
  "e3-evm-config",
- "e3-fhe-params",
- "figment",
  "hex",
- "path-clean",
- "petname",
- "rand 0.9.5",
  "serde",
- "serde_yaml",
  "toml",
- "url",
 ]
 
 [[package]]
@@ -3814,7 +3822,7 @@ name = "e3-daemon-server"
 version = "0.20.0-dev.3"
 dependencies = [
  "anyhow",
- "e3-config",
+ "e3-ciphernode-config",
  "e3-console",
  "reqwest",
  "serde",
@@ -3900,7 +3908,7 @@ dependencies = [
  "dirs 5.0.1",
  "e3-aggregator",
  "e3-ciphernode-builder",
- "e3-config",
+ "e3-ciphernode-config",
  "e3-crypto",
  "e3-daemon-server",
  "e3-data",

@@ -6,7 +6,7 @@
 
 use anyhow::*;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 
 use crate::{
     nodes_daemon, nodes_down, nodes_ps, nodes_purge, nodes_restart, nodes_start, nodes_status,
@@ -91,7 +91,7 @@ pub enum NodeCommands {
 
 pub async fn execute(
     command: NodeCommands,
-    config: &AppConfig,
+    config: &NodeConfig,
     verbose: u8,
     config_string: Option<String>,
     otel: Option<String>,

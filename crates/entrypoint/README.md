@@ -18,7 +18,7 @@ dependencies.
 | [`actor_panics.rs`](src/actor_panics.rs)                                                                                                | First-panic signal for the thread running the node's actors.                                   |
 | [`wallet/`](src/wallet), [`password/`](src/password), [`net/`](src/net)                                                                 | Local identity/password/peer operations delegated by CLI commands.                             |
 
-The CLI resolves `AppConfig` and calls these library operations. Startup composes the node through
+The CLI resolves `NodeConfig` and calls these library operations. Startup composes the node through
 the builder; managed-node operations wrap child processes rather than creating a second protocol
 runtime. Offline commands inspect state under the same ownership fences.
 

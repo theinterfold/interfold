@@ -39,7 +39,7 @@
 
 use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
     AggregateId, Event, EventContextAccessors, EventContextSeq, InterfoldEvent, InterfoldEventData,
@@ -201,7 +201,7 @@ pub(crate) fn store_presence(path: &std::path::Path) -> StorePresence {
 
 /// The node's event logs: the configured chains', and any other one on disk, as of a chain that
 /// the configuration no longer has.
-fn event_logs_on_disk(config: &AppConfig, aggregate_ids: &[AggregateId]) -> Vec<PathBuf> {
+fn event_logs_on_disk(config: &NodeConfig, aggregate_ids: &[AggregateId]) -> Vec<PathBuf> {
     let log_file = config.log_file();
     let mut paths: Vec<PathBuf> = aggregate_ids
         .iter()
@@ -237,7 +237,7 @@ fn event_logs_on_disk(config: &AppConfig, aggregate_ids: &[AggregateId]) -> Vec<
 /// Opens the persisted stores while holding the node's exclusive process fence.
 /// Returns the full report; callers decide how to surface it (the CLI prints it
 /// and exits non-zero on failure).
-pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<ValidationReport> {
+pub async fn validate_node(config: &NodeConfig, repair: bool) -> Result<ValidationReport> {
     let aggregate_ids = aggregate_ids(config);
     let mut report = ValidationReport::default();
 
@@ -902,7 +902,7 @@ fn check_schema_compatibility(decision: SchemaVersionDecision) -> CheckResult {
 /// The set of aggregate ids to inspect: the local aggregate (0) plus one per
 /// configured chain. Mirrors [`AggregateId::from_chain_id`] so the validator
 /// looks at exactly the aggregates the running node persists.
-fn aggregate_ids(config: &AppConfig) -> Vec<AggregateId> {
+fn aggregate_ids(config: &NodeConfig) -> Vec<AggregateId> {
     let mut ids: Vec<AggregateId> = vec![AggregateId::new(0)];
     for chain in config.chains() {
         let id = AggregateId::from_chain_id(chain.chain_id);

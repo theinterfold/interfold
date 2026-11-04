@@ -284,10 +284,10 @@
     "id": "B22",
     "supported": true,
     "refs": [
-      "crates/cli/src/app_config.rs@44@pub fn load_config(",
-      "crates/cli/src/app_config.rs@54@DEFAULT_CONFIG_NAME,",
-      "crates/cli/src/app_config.rs@59@load_yaml_with_env(&resolved_config_path)",
-      "crates/config/src/paths_engine.rs@43@pub const DEFAULT_CONFIG_NAME"
+      "crates/cli/src/app_config.rs@46@pub fn load_config(",
+      "crates/cli/src/app_config.rs@56@DEFAULT_CONFIG_NAME,",
+      "crates/cli/src/app_config.rs@61@load_yaml_with_env(&resolved_config_path)",
+      "crates/ciphernode/config/src/paths_engine.rs@43@pub const DEFAULT_CONFIG_NAME"
     ],
     "line_text": [
       "pub fn load_config(",
@@ -301,16 +301,16 @@
     "id": "B23",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@214@Commands::Start { peers, bootstrap } => {",
-      "crates/cli/src/cli.rs@215@start::execute(config, peers, bootstrap).await?",
+      "crates/cli/src/cli.rs@236@Commands::Start { peers, bootstrap } => {",
+      "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap).await?",
       "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
-      "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
+      "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "line_text": [
       "Commands::Start { peers, bootstrap } => {",
       "start::execute(config, peers, bootstrap).await?",
       "let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
-      "pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
+      "pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "note": "The Start command calls the CLI start::execute, which calls e3_entrypoint's start::execute to build and start the node."
   }

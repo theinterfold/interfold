@@ -6,14 +6,14 @@
 
 use crate::nodes::daemon;
 use anyhow::*;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use tracing::instrument;
 
 use super::client;
 
 #[instrument(skip_all)]
 pub async fn execute(
-    config: &AppConfig,
+    config: &NodeConfig,
     detach: bool, // TBI
     exclude: Vec<String>,
     verbose: u8,

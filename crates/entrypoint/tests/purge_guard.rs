@@ -13,7 +13,7 @@
 //! that system while this test still uses the bus.
 
 use anyhow::{Context, Result};
-use e3_config::{AppConfig, UnscopedAppConfig};
+use e3_ciphernode_config::{NodeConfig, UnscopedNodeConfig};
 use e3_data::{DataStore, RepositoriesFactory, SledDb};
 use e3_entrypoint::fence::ProcessFence;
 use e3_entrypoint::helpers::datastore::setup_datastore;
@@ -38,8 +38,8 @@ fn node_with(
     config_dir: &Path,
     name: &str,
     extra: &str,
-) -> Result<AppConfig> {
-    let config: UnscopedAppConfig =
+) -> Result<NodeConfig> {
+    let config: UnscopedNodeConfig =
         serde_yaml::from_str(&format!("nodes:\n  {name}:\n    network: local\n{extra}"))?;
     config.into_scoped_with_defaults(
         name,
@@ -50,14 +50,14 @@ fn node_with(
 }
 
 /// A node named `name` whose data and configuration are in `dir/.interfold`.
-fn project_node(dir: &Path, name: &str) -> Result<AppConfig> {
+fn project_node(dir: &Path, name: &str) -> Result<NodeConfig> {
     let root = dir.join(".interfold");
     node_with(dir, &root.join("data"), &root.join("config"), name, "")
 }
 
 /// Stores the operator identity, a stage for the test E3, and a key-share record for it, as a
 /// committee member does. Also writes the node's key file.
-async fn write_state(config: &AppConfig, stage: E3Stage) -> Result<()> {
+async fn write_state(config: &NodeConfig, stage: E3Stage) -> Result<()> {
     let bus = get_interfold_bus_handle()?;
     let repositories = setup_datastore(config, &bus)?.repositories();
     repositories
@@ -78,7 +78,7 @@ async fn write_state(config: &AppConfig, stage: E3Stage) -> Result<()> {
 }
 
 /// Creates an empty store, as a local command run with another environment does.
-async fn write_empty_store(config: &AppConfig) -> Result<()> {
+async fn write_empty_store(config: &NodeConfig) -> Result<()> {
     let bus = get_interfold_bus_handle()?;
     let repositories = setup_datastore(config, &bus)?.repositories();
     repositories.store.shutdown().await?;
@@ -87,7 +87,7 @@ async fn write_empty_store(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-async fn wait_for_store_unlock(config: &AppConfig) -> Result<()> {
+async fn wait_for_store_unlock(config: &NodeConfig) -> Result<()> {
     // sled can retain its file lock briefly after shutdown while background I/O finishes.
     // Probe the existing file, not sled::open: reopening sled would start more background work.
     let path = config.db_file().join("db");
@@ -113,14 +113,14 @@ async fn wait_for_store_unlock(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-fn write_key_file(config: &AppConfig) -> Result<()> {
+fn write_key_file(config: &NodeConfig) -> Result<()> {
     std::fs::create_dir_all(config.key_file().parent().unwrap())?;
     std::fs::write(config.key_file(), b"operator key")?;
     Ok(())
 }
 
 /// Whether the store and the key file of every node are still present.
-fn untouched(nodes: &[&AppConfig]) -> bool {
+fn untouched(nodes: &[&NodeConfig]) -> bool {
     nodes
         .iter()
         .all(|node| node.db_file().exists() && node.key_file().exists())
@@ -132,7 +132,7 @@ fn purged(dir: &Path) -> bool {
 
 async fn assert_refused(
     targets: &PurgeTargets,
-    nodes: &[AppConfig],
+    nodes: &[NodeConfig],
     allow_active_e3s: bool,
     expected: &[&str],
 ) {

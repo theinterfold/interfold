@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 
 mod bond;
 mod context;
@@ -200,7 +200,7 @@ pub enum TicketCommands {
     },
 }
 
-pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: CiphernodeCommands, config: &NodeConfig) -> Result<()> {
     match command {
         CiphernodeCommands::SetBondOwner { chain, owner } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;

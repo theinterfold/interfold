@@ -213,6 +213,8 @@ async fn remote_reads_use_the_selected_nodes_control_port() -> Result<()> {
                 "config.yaml",
                 "--name",
                 "operator",
+                "--otel",
+                "HTTP://LOCALHOST:4317",
                 "wallet",
                 "get",
             ],
@@ -225,6 +227,7 @@ async fn remote_reads_use_the_selected_nodes_control_port() -> Result<()> {
     assert_eq!(command["command"], "WalletGet");
     assert_eq!(command["name"], "operator");
     assert_eq!(command["config"], "config.yaml");
+    assert_eq!(command["otel"], "http://localhost:4317/");
     assert!(!temp.path().join(".interfold").exists());
     Ok(())
 }

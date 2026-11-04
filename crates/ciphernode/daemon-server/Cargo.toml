@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 e3-console.workspace = true
-e3-config.workspace = true
+e3-ciphernode-config.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true

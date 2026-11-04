@@ -62,7 +62,7 @@ pub const MARKER_TEXT: &str =
      to finish it.\n";
 
 use anyhow::{anyhow, bail, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -118,7 +118,7 @@ impl PurgeTargets {
 /// no profile names. It also checks each folder and file in the configuration folder.
 pub async fn execute(
     targets: &PurgeTargets,
-    nodes: &[AppConfig],
+    nodes: &[NodeConfig],
     allow_active_e3s: bool,
 ) -> Result<()> {
     let targets = targets.resolved()?;

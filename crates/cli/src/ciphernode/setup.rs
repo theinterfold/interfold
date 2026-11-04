@@ -8,7 +8,7 @@ use crate::config_setup as setup;
 use alloy::primitives::Address;
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Input};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_utils::{colorize, Color};
 use std::io::IsTerminal;
@@ -134,7 +134,7 @@ fn default_rpc_url(network: &str) -> Option<&'static str> {
 
 fn print_info(
     out: Console,
-    config: &AppConfig,
+    config: &NodeConfig,
     address: Address,
     peer_id: &str,
     rpc_url: &str,

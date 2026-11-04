@@ -5,11 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::*;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_entrypoint::nodes::daemon;
 
 pub async fn execute(
-    config: &AppConfig,
+    config: &NodeConfig,
     exclude: Vec<String>,
     verbose: u8,
     config_string: Option<String>,

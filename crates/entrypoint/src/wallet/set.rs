@@ -7,7 +7,7 @@
 use alloy::{hex::FromHex, primitives::FixedBytes, signers::local::PrivateKeySigner};
 use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_data::Repositories;
 use e3_events::StoreKeys;
@@ -26,7 +26,7 @@ pub fn validate_private_key(input: &String) -> Result<()> {
     Ok(())
 }
 
-pub async fn execute(config: &AppConfig, input: Zeroizing<String>) -> Result<(Address, PeerId)> {
+pub async fn execute(config: &NodeConfig, input: Zeroizing<String>) -> Result<(Address, PeerId)> {
     let cipher = Cipher::from_file(config.key_file()).await?;
 
     let (encrypted_private_key, encrypted_keypair, address, peer_id) = process_key(&cipher, input)?;
@@ -65,7 +65,7 @@ fn process_key(
     Ok((encrypted_private_key, encrypted_keypair, address, peer_id))
 }
 
-pub async fn autowallet(config: &AppConfig) -> Result<()> {
+pub async fn autowallet(config: &NodeConfig) -> Result<()> {
     let cipher = Cipher::from_file(config.key_file()).await?;
     let repositories = get_repositories(config)?;
     ensure_autowallet(&repositories, &cipher).await?;

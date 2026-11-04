@@ -469,42 +469,79 @@
       ]
     },
     {
-      "id": "e3-config",
-      "documentation": [{ "title": "Configuration reference", "path": "docs/pages/reference/configuration.mdx" }],
+      "id": "e3-ciphernode-config",
+      "documentation": [{ "title": "Node profiles and paths", "path": "docs/pages/reference/configuration.mdx" }],
       "kind": "crate",
-      "path": "crates/config",
-      "one_line": "Resolves named-node settings, paths, network profiles and release identity; composes EVM-owned chain settings while the CLI owns loading and program settings.",
+      "path": "crates/ciphernode/config",
+      "one_line": "Resolves named-node settings and paths, composing EVM-owned chains and network identity; the CLI owns loading and program settings.",
       "actors": [],
       "consumes": [],
       "emits": [],
       "state": [
         {
-          "name": "Resolved AppConfig for the chosen node: paths, chains, network and limits",
+          "name": "Resolved NodeConfig for the chosen node: paths, chains, network and limits",
           "where": "memory",
-          "ref": "crates/config/src/app_config.rs@152@pub struct AppConfig {"
-        },
-        {
-          "name": "Protocol and node generation numbers, compiled into the binary",
-          "where": "memory",
-          "ref": "crates/config/src/node_release.rs@32@include_str!(\"../protocol-release.toml\")"
-        },
-        {
-          "name": "Node key, db and log files under the node data directory",
-          "where": "disk",
-          "ref": "crates/config/src/paths_engine.rs@45@pub const DEFAULT_DB_NAME: &str = \"db\";"
+          "ref": "crates/ciphernode/config/src/node_config.rs@152@pub struct NodeConfig {"
         }
       ],
       "key_types": [
         {
-          "name": "UnscopedAppConfig",
-          "what": "node settings before a profile is chosen: node defaults, nodes map, chains, paths, otel and custom bb",
-          "ref": "crates/config/src/app_config.rs@451@pub struct UnscopedAppConfig {"
+          "name": "UnscopedNodeConfig",
+          "what": "node settings before a profile is chosen: defaults, nodes map, chains, paths, otel and custom bb",
+          "ref": "crates/ciphernode/config/src/node_config.rs@451@pub struct UnscopedNodeConfig {"
         },
         {
           "name": "NodeDefinition",
-          "what": "one node's settings: address, peers, network, ports, file names and buffer limits; unknown keys are rejected",
-          "ref": "crates/config/src/app_config.rs@21@pub struct NodeDefinition {"
+          "what": "one node's settings: address, peers, network, ports, file names and limits; unknown keys are rejected",
+          "ref": "crates/ciphernode/config/src/node_config.rs@21@pub struct NodeDefinition {"
         },
+        {
+          "name": "PathsEngine",
+          "what": "resolves config, key, db, log and work paths without assuming one common base",
+          "ref": "crates/ciphernode/config/src/paths_engine.rs@12@pub struct PathsEngine {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "node profile and path API",
+          "ref": "crates/ciphernode/config/src/lib.rs@10@pub use node_config::*;"
+        },
+        {
+          "why": "per-node resolution: limits are checked and network policy is delegated",
+          "ref": "crates/ciphernode/config/src/node_config.rs@219@NetworkProfile::resolve(node.network.as_deref(), node.network_id, &config.chains)?;"
+        }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "serde-derive",
+          "note": "the node definition rejects unknown keys before runtime startup",
+          "ref": "crates/ciphernode/config/src/node_config.rs@20@#[serde(deny_unknown_fields)]"
+        }
+      ],
+      "depends_on": ["e3-config", "e3-evm-config"],
+      "tests": "Inline tests cover node defaults/scoping and path derivation. Run: cargo test -p e3-ciphernode-config",
+      "unverified": ["Which node code reads every NodeDefinition field was not traced."]
+    },
+    {
+      "id": "e3-config",
+      "documentation": [
+        { "title": "Network admission", "path": "docs/architecture/network-delivery.md" },
+        { "title": "Release boundaries", "path": "docs/architecture/upgrades.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/config",
+      "one_line": "Resolves network profiles and bootstrap policy, and compiles exact node release identity; runtime adapters enforce peer and chain admission.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "Protocol and node generation numbers, compiled into the binary",
+          "where": "memory",
+          "ref": "crates/config/src/node_release.rs@32@include_str!(\"../protocol-release.toml\")"
+        }
+      ],
+      "key_types": [
         {
           "name": "NetworkProfile",
           "what": "resolved P2P network: built-in mainnet, sepolia or local, or a custom network with a 32-byte id",
@@ -514,21 +551,16 @@
           "name": "NodeRelease",
           "what": "protocol_version and node_generation; release_id hashes the crate version under a fixed domain string",
           "ref": "crates/config/src/node_release.rs@14@pub struct NodeRelease {"
-        },
-        {
-          "name": "PathsEngine",
-          "what": "resolves the config, key, db, log and work paths for a node",
-          "ref": "crates/config/src/paths_engine.rs@12@pub struct PathsEngine {"
         }
       ],
       "read_first": [
         {
-          "why": "crate surface: re-exports app_config, which holds the main configuration types",
-          "ref": "crates/config/src/lib.rs@13@pub use app_config::*;"
+          "why": "crate surface: network profiles and compiled release identity",
+          "ref": "crates/config/src/lib.rs@10@pub use network::*;"
         },
         {
-          "why": "per-node resolution: limits are checked and the network profile is resolved",
-          "ref": "crates/config/src/app_config.rs@219@NetworkProfile::resolve(node.network.as_deref(), node.network_id, &config.chains)?;"
+          "why": "resolve built-in or explicitly identified custom networks",
+          "ref": "crates/config/src/network.rs@93@pub fn resolve("
         },
         {
           "why": "release numbers: protocol-release.toml is compiled in and parsed once",
@@ -547,12 +579,9 @@
           "ref": "crates/config/src/node_release.rs@31@RELEASE.get_or_init(|| {"
         }
       ],
-      "depends_on": ["e3-evm-config", "e3-fhe-params"],
-      "tests": "Inline tests cover node defaults/scoping, paths, network profiles and release identity. Run: cargo test -p e3-config",
-      "unverified": [
-        "Which node code reads every NodeDefinition field was not traced.",
-        "The CLI URL parser in validation.rs was only sampled."
-      ]
+      "depends_on": ["e3-evm-config"],
+      "tests": "Inline tests cover network profiles and release identity. Run: cargo test -p e3-config",
+      "unverified": ["Resolving a profile or release is not runtime chain/peer authentication."]
     },
     {
       "id": "e3-logger",

@@ -6,12 +6,12 @@
 
 use crate::nodes_purge::{purge, require_confirmation};
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use std::env;
 
 /// Delete the local node set's data and configuration, then the program cache.
 pub async fn execute(
-    config: &AppConfig,
+    config: &NodeConfig,
     config_file: Option<String>,
     yes: bool,
     allow_active_e3s: bool,

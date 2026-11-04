@@ -7,8 +7,8 @@
 use crate::manifest::{self, Finding};
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use e3_ciphernode_config::NodeConfig;
 use e3_cli::program_config::ProgramConfig;
-use e3_config::AppConfig;
 use e3_console::{log, Console};
 
 #[derive(Subcommand, Clone, Debug)]
@@ -33,7 +33,7 @@ pub enum ConfigCommands {
 pub async fn execute(
     out: Console,
     command: ConfigCommands,
-    config: &AppConfig,
+    config: &NodeConfig,
     program: &ProgramConfig,
 ) -> Result<()> {
     match command {
@@ -54,7 +54,7 @@ async fn check(
     out: Console,
     chain_filter: Option<String>,
     manifest_url: Option<String>,
-    config: &AppConfig,
+    config: &NodeConfig,
 ) -> Result<()> {
     let (published, source) = manifest::fetch(manifest_url.as_deref()).await?;
     log!(out, "Deployment manifest: {}", source);
@@ -167,7 +167,7 @@ async fn check(
 fn get(
     out: Console,
     param: Option<String>,
-    config: &AppConfig,
+    config: &NodeConfig,
     program: &ProgramConfig,
 ) -> Result<()> {
     match param.as_deref() {

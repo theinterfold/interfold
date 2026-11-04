@@ -4,6 +4,7 @@ members = [
   "crates/bfv-client",
   "crates/bfv-test-support",
   "crates/ciphernode/builder",
+  "crates/ciphernode/config",
   "crates/cli",
   "crates/committee",
   "crates/committee-hash",
@@ -95,6 +96,7 @@ e3-config = { version = "0.20.0-dev.3", path = "./crates/config" }
 e3-console = { version = "0.20.0-dev.3", path = "./crates/console" }
 e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/dashboard" }
 e3-ciphernode-builder = { version = "0.20.0-dev.3", path = "./crates/ciphernode/builder" }
+e3-ciphernode-config = { version = "0.20.0-dev.3", path = "./crates/ciphernode/config" }
 e3-crypto = { version = "0.20.0-dev.3", path = "./crates/crypto" }
 e3-data = { version = "0.20.0-dev.3", path = "./crates/data" }
 e3-data-availability = { version = "0.20.0-dev.3", path = "./crates/data-availability" }

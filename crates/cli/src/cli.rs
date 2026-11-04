@@ -21,7 +21,6 @@ use crate::{print_env, start};
 use anyhow::{bail, Result};
 use clap::{command, ArgAction, Parser, Subcommand};
 use e3_cli::app_config::{load_config, ApplicationConfig};
-use e3_config::validation::ValidUrl;
 use e3_console::{log, Console};
 use e3_daemon_server::connect_daemon;
 use e3_entrypoint::helpers::datastore::close_all_connections;
@@ -29,6 +28,29 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{info, instrument, Level};
+use url::Url;
+
+#[derive(Clone, Debug)]
+pub struct ValidUrl(Url);
+
+impl FromStr for ValidUrl {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(ValidUrl(Url::parse(s)?))
+    }
+}
+
+impl std::fmt::Display for ValidUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<ValidUrl> for String {
+    fn from(value: ValidUrl) -> Self {
+        value.0.to_string()
+    }
+}
 
 #[derive(Parser, Clone, Debug)]
 #[command(name = "interfold")]
@@ -598,6 +620,44 @@ impl TryFrom<RemoteCommand> for Commands {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn otel_url_is_normalized_across_daemon_conversion() -> Result<()> {
+        let cli = Cli::try_parse_from([
+            "interfold",
+            "--otel",
+            "HTTP://LOCALHOST:4317",
+            "wallet",
+            "get",
+        ])?;
+        let remote = RemoteCli::try_from(cli)?;
+        assert_eq!(remote.otel.as_deref(), Some("http://localhost:4317/"));
+        let cli = Cli::try_from(remote)?;
+        assert_eq!(
+            cli.otel.map(String::from).as_deref(),
+            Some("http://localhost:4317/")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn otel_flag_rejects_invalid_urls_but_remote_input_remains_optional() -> Result<()> {
+        let error =
+            Cli::try_parse_from(["interfold", "--otel", "not a URL", "wallet", "get"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+
+        let remote: RemoteCli =
+            serde_json::from_str(r#"{"command":"WalletGet","otel":"not a URL"}"#)?;
+        let cli = Cli::try_from(remote)?;
+        assert!(cli.otel.is_none());
+        assert!(matches!(
+            cli.command,
+            Commands::Wallet {
+                command: WalletCommands::Get
+            }
+        ));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn config_get_does_not_create_secrets() -> Result<()> {
