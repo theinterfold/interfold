@@ -180,6 +180,8 @@ export interface ProtocolDeployment {
    * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
    */
   bondedVotes?: string;
+  /** The transaction that deployed `bondedVotes`, kept so a retry can record its deploy block. */
+  bondedVotesDeploymentTx?: string;
   decryptionVerifier?: string;
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;

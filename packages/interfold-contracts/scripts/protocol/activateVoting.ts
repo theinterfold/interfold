@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { syncBondedVotesRecord } from "../deploymentRecords";
+import { readDeploymentArgs } from "../utils";
 import { connect, networkName } from "./cli";
 import { deploymentPath, readJson, writeJson } from "./files";
-import type { ProtocolDeployment } from "./types";
+import type { ProtocolConfigFile, ProtocolDeployment } from "./types";
 import {
   checkExcludedAccounts,
   deployedAddress,
-  deploymentBlock,
   loadConfig,
   requireContract,
 } from "./values";
@@ -84,6 +84,8 @@ export async function actionActivateVoting(): Promise<void> {
       deploymentPath(config),
     );
     if (outdated) throw new Error(outdated);
+    // A run that failed after saving the address left the record unwritten
+    await recordBondedVotes(ethers.provider, config, deployment);
     console.log(`BondedVotes already deployed at ${deployment.bondedVotes}`);
     return;
   }
@@ -99,21 +101,14 @@ export async function actionActivateVoting(): Promise<void> {
     deployment.bondedCheckpoints,
     excludedAccounts,
   );
+  const deploymentTx = bondedVotes.deploymentTransaction();
   await bondedVotes.waitForDeployment();
-  const bondedVotesAddress = await deployedAddress(bondedVotes);
-  // Resolved before either write: a retry finds the recorded address and skips the record, so a
-  // failure between the two writes would leave BondedVotes unrecorded.
-  const blockNumber = await deploymentBlock(bondedVotes);
-  deployment.bondedVotes = bondedVotesAddress;
+  // Saved before any other network call: a retry then finds the mined adapter and records it
+  // instead of deploying a second one
+  deployment.bondedVotes = await deployedAddress(bondedVotes);
+  deployment.bondedVotesDeploymentTx = deploymentTx?.hash;
   writeJson(deploymentPath(config), deployment);
-  syncBondedVotesRecord(
-    config,
-    {
-      bondedVotes: bondedVotesAddress,
-      bondedCheckpoints: deployment.bondedCheckpoints,
-    },
-    { chain: networkName(), blockNumber },
-  );
+  await recordBondedVotes(ethers.provider, config, deployment);
 
   console.log(`
 Bonded voting activated
@@ -126,4 +121,40 @@ Bonded voting activated
 
 Point the governance plugin at BondedVotes as its voting token.
 `);
+}
+
+/**
+ * Records `BondedVotes` unless the record already names it. The deploy block is read from the
+ * deployment transaction saved with the address, so a retry records the same adapter. A file from
+ * before the transaction was saved records it without a block.
+ */
+async function recordBondedVotes(
+  provider: {
+    getTransactionReceipt(
+      hash: string,
+    ): Promise<{ blockNumber: number } | null>;
+  },
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+): Promise<void> {
+  const bondedVotes = deployment.bondedVotes;
+  if (!bondedVotes) throw new Error("BondedVotes is not deployed");
+  const chain = networkName();
+  const recorded = readDeploymentArgs("BondedVotes", chain)?.address;
+  if (recorded?.toLowerCase() === bondedVotes.toLowerCase()) return;
+
+  const hash = deployment.bondedVotesDeploymentTx;
+  let blockNumber: number | undefined;
+  if (hash) {
+    const receipt = await provider.getTransactionReceipt(hash);
+    if (!receipt) {
+      throw new Error(`No receipt for the BondedVotes deployment ${hash}`);
+    }
+    blockNumber = receipt.blockNumber;
+  }
+  syncBondedVotesRecord(
+    config,
+    { bondedVotes, bondedCheckpoints: deployment.bondedCheckpoints },
+    { chain, blockNumber },
+  );
 }
