@@ -18,8 +18,8 @@ separate from mailbox/effects without changing authenticated dealer identity or 
 - Canonical key publication supersedes DKG failures; a local PublicKeyAggregated intent does not. C6
   work waits for confirmed key authority and coalesces repeated resume signals.
 
-[DKG](../../docs/architecture/dkg.md) and
-[decryption](../../docs/architecture/threshold-decryption.md) own dimensions, timing, signatures,
+[DKG](../../../docs/architecture/dkg.md) and
+[decryption](../../../docs/architecture/threshold-decryption.md) own dimensions, timing, signatures,
 and recovery requirements. Use the [README tests/prerequisites](README.md#tests). Statement changes
 still require prepared real proofs; collection/recovery changes need authenticated rejection, roster
 replacement, and resumed-history cases, not only the happy path.

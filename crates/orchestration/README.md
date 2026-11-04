@@ -8,6 +8,8 @@ is not a package or nested workspace, and the grouping does not merge their stat
 - [sortition](sortition/Readme.md) (package `e3-sortition`) projects request-time eligibility,
   scores ticket submissions, coordinates committee finalization, and derives this node's party and
   aggregator roles.
+- [keyshare](keyshare/README.md) (package `e3-keyshare`) runs this node's DKG participation and
+  share lifecycle, then produces its decryption shares, with durable recovery.
 - [slashing](slashing/README.md) (package `e3-slashing`) admits accusations, forms votes toward
   quorum, and checks commitment consistency across proofs.
 
@@ -19,6 +21,7 @@ committee/decryption-domain hashes in [committee hashes](../committee-hash/READM
 Checkout-relative paths for this family's members start with `crates/orchestration/`. Use the
 [workspace setup](../README.md#setup-and-checks) and each member's checks.
 [Committee selection](../../docs/architecture/committee-selection.md),
-[DKG](../../docs/architecture/dkg.md), and [slashing](../../docs/architecture/slashing.md) govern
-the cross-component rules; [upgrades](../../docs/architecture/upgrades.md) owns compatibility and
-rollback decisions.
+[DKG](../../docs/architecture/dkg.md),
+[threshold decryption](../../docs/architecture/threshold-decryption.md), and
+[slashing](../../docs/architecture/slashing.md) govern the cross-component rules;
+[upgrades](../../docs/architecture/upgrades.md) owns compatibility and rollback decisions.

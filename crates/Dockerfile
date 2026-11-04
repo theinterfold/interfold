@@ -71,7 +71,7 @@ COPY crates/fs/Cargo.toml ./fs/Cargo.toml
 COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
 COPY crates/evm/indexer/Cargo.toml ./evm/indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
-COPY crates/keyshare/Cargo.toml ./keyshare/Cargo.toml
+COPY crates/orchestration/keyshare/Cargo.toml ./orchestration/keyshare/Cargo.toml
 COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
 COPY crates/logger/Cargo.toml ./logger/Cargo.toml
 COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.toml

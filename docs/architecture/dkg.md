@@ -3,7 +3,7 @@
 DKG creates a collective BFV key without revealing its secret to one operator. The hot operator
 signs protocol messages; delegated collateral ownership does not change that identity.
 
-Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
+Owners: [keyshare](../../crates/orchestration/keyshare/src/),
 [proof requests](../../crates/zk/prover/src/proof_request/),
 [share verification](../../crates/zk/prover/src/share_verification/),
 [public-key aggregation](../../crates/aggregator/src/public_key_aggregation/), and the
@@ -230,12 +230,12 @@ circuit identity and layout selection belong to `e3-zk-config`, not to the trans
 
 Representative guards (not a complete protocol proof):
 
-- [Keyshare tests](../../crates/keyshare/src/threshold_keyshare/tests.rs):
+- [Keyshare tests](../../crates/orchestration/keyshare/src/tests.rs):
   `a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch`,
   `a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch`,
   `canonical_publication_supersedes_collector_failures`, and
   `a_restart_keeps_the_roster_that_its_c4_started_from` cover actor admission/recovery boundaries.
-- [Roster helpers](../../crates/keyshare/src/threshold_keyshare/effects/coordinate_roster.rs) test
+- [Roster helpers](../../crates/orchestration/keyshare/src/effects/coordinate_roster.rs) test
   outsider completeness and Ready growth. Recursive Noir tests in
   [circuits](../../circuits/bin/recursive_aggregation/) cover non-prefix links and party ordering.
 - [DKG publication tests](../../packages/interfold-contracts/test/Registry/DkgPublicationBinding.spec.ts)

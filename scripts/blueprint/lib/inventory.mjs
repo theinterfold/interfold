@@ -70,7 +70,7 @@ export const LAYERS = {
   workflows: [
     'state/request',
     'orchestration/sortition',
-    'keyshare',
+    'orchestration/keyshare',
     'aggregator',
     'orchestration/slashing',
     'zk/prover',

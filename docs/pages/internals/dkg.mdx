@@ -160,7 +160,7 @@ secret key at rest with its local `Cipher` (AES-256-GCM with an Argon2id key).
 ## DKG state machine
 
 Each selected ciphernode runs one `ThresholdKeyshare` actor for the E3. The actor moves through the
-`KeyshareState` enum in `crates/keyshare/src/threshold_keyshare/state.rs`.
+`KeyshareState` enum in `crates/orchestration/keyshare/src/state.rs`.
 
 ```mermaid
 stateDiagram-v2

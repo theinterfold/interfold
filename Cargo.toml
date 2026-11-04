@@ -27,7 +27,7 @@ members = [
   "crates/hamt",
   "crates/evm/indexer",
   "crates/init",
-  "crates/keyshare",
+  "crates/orchestration/keyshare",
   "crates/layout-lock",
   "crates/logger",
   "crates/ciphernode/multithread",
@@ -116,7 +116,7 @@ e3-fhe-params = { version = "0.20.0-dev.3", path = "./crates/fhe-params" }
 e3-fs = { version = "0.20.0-dev.3", path = "./crates/fs" }
 e3-indexer = { version = "0.20.0-dev.3", path = "./crates/evm/indexer" }
 e3-multithread = { version = "0.20.0-dev.3", path = "./crates/ciphernode/multithread" }
-e3-keyshare = { version = "0.20.0-dev.3", path = "./crates/keyshare" }
+e3-keyshare = { version = "0.20.0-dev.3", path = "./crates/orchestration/keyshare" }
 e3-logger = { version = "0.20.0-dev.3", path = "./crates/logger" }
 e3-net = { version = "0.20.0-dev.3", path = "./crates/net" }
 e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/compute-provider" }
