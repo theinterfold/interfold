@@ -223,7 +223,7 @@
   {
     "id": "B18",
     "supported": true,
-    "refs": ["crates/data/src/commit_log_event_log.rs@728@let bytes = bincode::serialize(event)?;"],
+    "refs": ["crates/state/storage/src/commit_log_event_log.rs@728@let bytes = bincode::serialize(event)?;"],
     "line_text": ["let bytes = bincode::serialize(event)?;"],
     "note": "CommitLogEventLog::append serializes each event with bincode before writing it to the log."
   },
@@ -231,11 +231,11 @@
     "id": "B19",
     "supported": true,
     "refs": [
-      "crates/data/src/repository.rs@74@self.store.write(value)",
-      "crates/data/src/data_store.rs@203@let Ok(serialized) = bincode::serialize(&value) else {",
-      "crates/data/src/persistable.rs@184@.try_send(msg)",
-      "crates/data/src/sled_store.rs@64@fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
-      "crates/data/src/sled_db.rs@38@.insert(msg.key(), msg.value().to_vec())",
+      "crates/state/storage/src/repository.rs@74@self.store.write(value)",
+      "crates/state/storage/src/data_store.rs@203@let Ok(serialized) = bincode::serialize(&value) else {",
+      "crates/state/storage/src/persistable.rs@184@.try_send(msg)",
+      "crates/state/storage/src/sled_store.rs@64@fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
+      "crates/state/storage/src/sled_db.rs@38@.insert(msg.key(), msg.value().to_vec())",
       "crates/request/src/routing/handlers.rs@219@.write_with_context(&context.snapshot()?, &event_context)?;"
     ],
     "line_text": [

@@ -45,7 +45,7 @@ re-exported here because slashing already depends on events.
 
 ## Runtime use
 
-Most consumers obtain an enabled `BusHandle` from [EventSystem](../event-system/README.md) or
+Most consumers obtain an enabled `BusHandle` from [EventSystem](../state/event-system/README.md) or
 [CiphernodeBuilder](../ciphernode/builder/README.md), not by manually wiring the actors:
 
 - `subscribe(EventType, recipient)` delivers matching sequenced events to Actix recipients.
@@ -76,6 +76,6 @@ compatibility spans saved events and network envelopes; see
 Tests are colocated with pipeline modules: stores cover append/query/failure behavior; bus tests
 cover delivery/barriers; snapshot-buffer tests cover batching/timing; HLC tests cover
 ordering/drift. Scenarios that need an assembled `EventSystem` live in
-[e3-event-system](../event-system/README.md#tests). Production health monitoring and whole-node
-restart are separate consumer tests. See [AGENTS.md](AGENTS.md) for identity, encoding, and pipeline
-changes.
+[e3-event-system](../state/event-system/README.md#tests). Production health monitoring and
+whole-node restart are separate consumer tests. See [AGENTS.md](AGENTS.md) for identity, encoding,
+and pipeline changes.

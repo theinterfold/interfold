@@ -22,9 +22,9 @@ journal remains replay authority while indexes/snapshots accelerate recovery. Th
 explain why the data-access layers exist and how consumers use them.
 
 For current cross-layer guarantees and limits, see
-[persistence and replay](../../docs/architecture/persistence-and-replay.md). Repository keys and
+[persistence and replay](../../../docs/architecture/persistence-and-replay.md). Repository keys and
 serialized payloads are durable interfaces: a Rust type-compatible change or key rename can still
-need an [upgrade decision](../../docs/architecture/upgrades.md).
+need an [upgrade decision](../../../docs/architecture/upgrades.md).
 
 Acknowledged sync/batch writes flush before success and reject contextual writes older than the
 persisted aggregate cursor. Ordinary queued writes are not the same acknowledgment boundary. Use
@@ -137,14 +137,10 @@ We had a way to save bytes data with the `DataStore` and had a way to specify wh
 saved but actors need to be restartable and be able to be hydrated and we needed a standard way to
 accomplish this. To do this in typical Rust fashion we created a set of traits:
 
-- [`Snapshot`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs) for
-  defining how an object can create a snapshot of its state
-- [`Checkpoint`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
-  for defining how to save that snapshot to a repository
-- [`FromSnapshot`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
-  and
-  [`FromSnapshotWithParams`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
-  for defining how an object could be reconstituted from a snapshot
+- [`Snapshot`](src/snapshot.rs) for defining how an object can create a snapshot of its state
+- [`Checkpoint`](src/snapshot.rs) for defining how to save that snapshot to a repository
+- [`FromSnapshot`](src/snapshot.rs) and [`FromSnapshotWithParams`](src/snapshot.rs) for defining how
+  an object could be reconstituted from a snapshot
 
 This worked well, especially for objects whose persistable state must be derived from a subset of
 the saved state however there are a couple of problems:

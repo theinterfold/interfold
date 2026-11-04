@@ -12,10 +12,10 @@ members = [
   "crates/console",
   "crates/dashboard",
   "crates/crypto",
-  "crates/data",
+  "crates/state/storage",
   "crates/data-availability",
   "crates/ciphernode/entrypoint",
-  "crates/event-system",
+  "crates/state/event-system",
   "crates/events",
   "crates/evm/runtime",
   "crates/evm/config",
@@ -96,7 +96,7 @@ e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/dashboard" }
 e3-ciphernode-builder = { version = "0.20.0-dev.3", path = "./crates/ciphernode/builder" }
 e3-ciphernode-config = { version = "0.20.0-dev.3", path = "./crates/ciphernode/config" }
 e3-crypto = { version = "0.20.0-dev.3", path = "./crates/crypto" }
-e3-data = { version = "0.20.0-dev.3", path = "./crates/data" }
+e3-data = { version = "0.20.0-dev.3", path = "./crates/state/storage" }
 e3-data-availability = { version = "0.20.0-dev.3", path = "./crates/data-availability" }
 e3-hamt = { version = "0.20.0-dev.3", path = "./crates/hamt" }
 e3-request = { version = "0.20.0-dev.3", path = "./crates/request" }
@@ -105,7 +105,7 @@ e3-cli = { version = "0.20.0-dev.3", path = "./crates/cli" }
 e3-committee-hash = { version = "0.20.0-dev.3", path = "./crates/committee-hash" }
 e3-entrypoint = { version = "0.20.0-dev.3", path = "./crates/ciphernode/entrypoint" }
 e3-init = { version = "0.20.0-dev.3", path = "./crates/init" }
-e3-event-system = { version = "0.20.0-dev.3", path = "./crates/event-system" }
+e3-event-system = { version = "0.20.0-dev.3", path = "./crates/state/event-system" }
 e3-events = { version = "0.20.0-dev.3", path = "./crates/events" }
 e3-evm = { version = "0.20.0-dev.3", path = "./crates/evm/runtime" }
 e3-evm-config = { version = "0.20.0-dev.3", path = "./crates/evm/config" }
