@@ -548,7 +548,17 @@ export function readBfvVkCommitment(
   )[0];
 }
 
-export function getBfvVkCommitments(config?: ActiveBfvConfig) {
+/** The sub-circuit VK commitments a BFV verifier route is built with. */
+export interface BfvVkCommitments {
+  nodesFold: string;
+  c5: string;
+  c6Fold: string;
+  c7: string;
+}
+
+export function getBfvVkCommitments(
+  config?: ActiveBfvConfig,
+): BfvVkCommitments {
   const [nodesFold, c5, c6Fold, c7] = readVkCommitmentValues(
     [
       {

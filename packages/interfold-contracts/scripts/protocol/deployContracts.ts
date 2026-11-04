@@ -2,6 +2,7 @@
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
 import {
   ActiveBfvConfig,
+  BfvVkCommitments,
   activeBfvConfigForChain,
   bfvConfigsForChain,
   getBfvVkCommitments,
@@ -341,11 +342,18 @@ async function deployBfvVerifiers(
   };
 }
 
+/**
+ * Deploys one verifier route per BFV configuration, behind routers when there is more than one.
+ * `vkCommitments` reads each route's sub-circuit VK commitments, from the circuit build by default.
+ */
 export async function deployBfvVerifierRoutes(
   ethers: any,
   registry: string,
   defaultConfig: ActiveBfvConfig,
   configs: readonly ActiveBfvConfig[],
+  vkCommitments: (
+    config: ActiveBfvConfig,
+  ) => BfvVkCommitments = getBfvVkCommitments,
 ) {
   if (configs.length === 0) {
     throw new Error("At least one BFV verifier route is required");
@@ -353,7 +361,7 @@ export async function deployBfvVerifierRoutes(
 
   const qualified = configs.map((config) => ({
     config,
-    commitments: getBfvVkCommitments(config),
+    commitments: vkCommitments(config),
   }));
   const routes = [];
   for (const { config, commitments } of qualified) {
@@ -408,7 +416,7 @@ async function deployBfvVerifierRoute(
   ethers: any,
   registry: string,
   config: ActiveBfvConfig,
-  commitments: ReturnType<typeof getBfvVkCommitments>,
+  commitments: BfvVkCommitments,
 ) {
   const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
   const decryptionSource = bfvHonkSource(

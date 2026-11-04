@@ -1128,11 +1128,19 @@ describe("Protocol deployment", function () {
     // contract that this run deploys has to appear in them, at its real address, with the arguments
     // it was built with, and at the block that mined its deployment.
     const bfv = activeBfvConfigForChain(config.chainId);
+    // The routes are built from fixed commitments: the contract tests run without a circuit build.
+    const vkCommitments = {
+      nodesFold: `0x${"00".repeat(31)}01`,
+      c5: `0x${"00".repeat(31)}02`,
+      c6Fold: `0x${"00".repeat(31)}03`,
+      c7: `0x${"00".repeat(31)}04`,
+    };
     const routes = await deployBfvVerifierRoutes(
       ethers,
       result.contracts.ciphernodeRegistry,
       bfv,
       bfvConfigsForChain(config.chainId),
+      () => vkCommitments,
     );
     const pkRouter = await ethers.getContractAt(
       "BfvPkVerifierRouter",
