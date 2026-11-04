@@ -284,6 +284,13 @@ pnpm test:integration --no-prebuild
 					<sub><b>cryptam</b></sub>
 				</a>
 			</td>
+			<td align="center">
+				<a href="https://github.com/zerozebrazone">
+					<img src="https://avatars.githubusercontent.com/u/274529094?v=4" width="100;" alt="zerozebrazone"/>
+					<br />
+					<sub><b>zerozebrazone</b></sub>
+				</a>
+			</td>
 		</tr>
 	</tbody>
 </table>
