@@ -115,8 +115,10 @@ version pin unless explicit `--allow-unpinned-archive`; without that flag a miss
 too. CI candidate fixtures deliberately use that flag/subsets, not production policy.
 
 Readiness requires the default bb executable to report the required version and every recorded
-artifact file to exist. The installer retains each resolved artifact path in version.json, including
-the committee selected for a legacy manifest key. Readiness checks file presence, not file hashes.
+artifact file to exist. A downloaded bb that cannot run on the host or reports another version fails
+setup, and therefore node startup, without being recorded. The installer retains each resolved
+artifact path in version.json, including the committee selected for a legacy manifest key. Readiness
+checks file presence, not file hashes.
 
 Validate before replacement so failure preserves installed circuits/version. Install errors trigger
 best-effort rollback but remain the returned error. Log every failed rollback rename source/target;

@@ -175,6 +175,24 @@ async fn test_check_status_rejects_invalid_circuit_inventory() {
             "{file}"
         );
     }
+    // Each key names a valid artifact file, so only the key check can fail.
+    for key in ["", "../outside.bin", "/absolute.bin"] {
+        info.circuits = HashMap::from([(
+            key.to_owned(),
+            CircuitInfo {
+                file: TEST_CIRCUIT.to_owned(),
+                checksum: "unused-by-status".to_owned(),
+            },
+        )]);
+        info.save(&backend.version_file()).await.unwrap();
+        assert!(
+            matches!(
+                backend.check_status().await,
+                SetupStatus::CircuitsNeedUpdate { .. }
+            ),
+            "{key}"
+        );
+    }
     info.circuits.clear();
     info.save(&backend.version_file()).await.unwrap();
     assert!(matches!(

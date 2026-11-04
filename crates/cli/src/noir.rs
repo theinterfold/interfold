@@ -137,7 +137,7 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
     if let Some(ref v) = version_info.circuits_version {
         log!(out, "  Recorded version: {}", v);
     }
-    if backend.circuits_dir.exists() {
+    if backend.circuits_dir.is_dir() {
         log!(out, "  Directory exists");
     } else {
         log!(out, "  Directory missing");

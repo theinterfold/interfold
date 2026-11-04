@@ -25,6 +25,9 @@ const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small"];
 /// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
 const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 
+/// Longest time `bb --version` may run. A binary that hangs must not block setup or startup.
+const BB_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
+
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
 
@@ -169,15 +172,40 @@ impl ZkBackend {
 
         let bb_source = find_bb_in_dir(temp_dir.path())?;
 
-        fs::copy(&bb_source, &self.bb_binary).await?;
+        // Verify a staged copy beside the installed binary, so a download that cannot run here
+        // keeps the previous binary. The rename then replaces the file, never a symlink's target.
+        let staged = self.bb_binary.with_file_name(".bb.download");
+        fs::copy(&bb_source, &staged).await?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&self.bb_binary).await?.permissions();
+            let mut perms = fs::metadata(&staged).await?.permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&self.bb_binary, perms).await?;
+            fs::set_permissions(&staged, perms).await?;
         }
+
+        // Readiness requires the pinned version from the binary itself. Do not record a binary
+        // that cannot run on this host or reports another version: the next start would only
+        // download it again.
+        let verified = match bb_version(&staged).await {
+            Ok(installed) if &installed == version => Ok(()),
+            Ok(installed) => Err(ZkError::VersionMismatch {
+                installed,
+                required: version.clone(),
+            }),
+            Err(error) => Err(ZkError::DownloadFailed(
+                url.clone(),
+                format!("downloaded bb cannot run: {error}"),
+            )),
+        };
+        if let Err(error) = verified {
+            if let Err(remove_error) = fs::remove_file(&staged).await {
+                warn!(path = %staged.display(), %remove_error, "could not remove staged bb");
+            }
+            return Err(error);
+        }
+        fs::rename(&staged, &self.bb_binary).await?;
 
         let mut version_info = self.load_version_info().await;
         version_info.bb_version = Some(version.clone());
@@ -379,20 +407,36 @@ impl ZkBackend {
             return Err(ZkError::BbNotInstalled);
         }
 
-        let output = tokio::process::Command::new(&self.bb_binary)
-            .arg("--version")
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(ZkError::ProveFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(version)
+        bb_version(&self.bb_binary).await
     }
+}
+
+/// Run `bb --version` at `path` within [`BB_VERSION_TIMEOUT`] and return its trimmed output.
+async fn bb_version(path: &Path) -> Result<String, ZkError> {
+    let run = tokio::process::Command::new(path)
+        .arg("--version")
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(BB_VERSION_TIMEOUT, run)
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "{} --version did not exit within {}s",
+                    path.display(),
+                    BB_VERSION_TIMEOUT.as_secs()
+                ),
+            )
+        })??;
+
+    if !output.status.success() {
+        return Err(ZkError::ProveFailed(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn invalid_circuit_archive_path(path: &Path) -> ZkError {
@@ -927,6 +971,59 @@ mod tests {
             "{result:?}"
         );
         assert_installation_unchanged(&backend, &previous_version);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn download_bb_records_only_a_binary_that_reports_the_required_version() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        seed_installation(&backend).await;
+        write_file(&backend.base_dir, "bin/bb", b"previous-bb");
+        let target = BbTarget::current().unwrap();
+        let required = backend.config.required_bb_version.clone();
+
+        let exits = "#!/bin/sh\nexit 1\n".to_owned();
+        let reports = |version: &str| format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n");
+        for (script, expected) in [
+            (exits, None),
+            (reports("0.0.1"), Some("0.0.1")),
+            (reports(&required), Some(required.as_str())),
+        ] {
+            let encoder = GzEncoder::new(Vec::new(), Compression::default());
+            let mut builder = Builder::new(encoder);
+            append_archive_file(&mut builder, "bb", script.as_bytes());
+            let archive = builder.into_inner().unwrap().finish().unwrap();
+            backend
+                .config
+                .bb_checksums
+                .insert(target.as_str().into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.bb_download_url = url;
+
+            let result = backend.download_bb().await;
+            server.await.unwrap();
+            let recorded = backend.load_version_info().await.bb_version;
+            if expected == Some(required.as_str()) {
+                result.unwrap();
+                assert_eq!(recorded, Some(required.clone()));
+                assert_eq!(fs::read(&backend.bb_binary).unwrap(), script.as_bytes());
+                continue;
+            }
+            match expected {
+                None => assert!(
+                    matches!(result, Err(ZkError::DownloadFailed(..))),
+                    "{result:?}"
+                ),
+                Some(reported) => assert!(
+                    matches!(result, Err(ZkError::VersionMismatch { ref installed, .. }) if installed == reported),
+                    "{result:?}"
+                ),
+            }
+            assert_eq!(recorded.as_deref(), Some("5.1.0"));
+            assert_eq!(fs::read(&backend.bb_binary).unwrap(), b"previous-bb");
+            assert!(!backend.bb_binary.with_file_name(".bb.download").exists());
+        }
     }
 
     #[tokio::test]
