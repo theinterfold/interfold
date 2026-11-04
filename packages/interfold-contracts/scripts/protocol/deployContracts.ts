@@ -2,6 +2,7 @@
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
 import {
   ActiveBfvConfig,
+  BfvVkCommitments,
   activeBfvConfigForChain,
   bfvConfigsForChain,
   getBfvVkCommitments,
@@ -11,10 +12,15 @@ import { deployNodeReleaseRegistry } from "./nodeRelease";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import { deployRandomnessProvider } from "./randomness";
-import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
+import type {
+  ProtocolConfigFile,
+  ProtocolContracts,
+  ProtocolDeployResult,
+} from "./types";
 import {
   assertMockDeploymentAllowed,
   deployedAddress,
+  deploymentBlock,
   feeAssetConfig,
   timeoutConfig,
 } from "./values";
@@ -336,11 +342,18 @@ async function deployBfvVerifiers(
   };
 }
 
+/**
+ * Deploys one verifier route per BFV configuration, behind routers when there is more than one.
+ * `vkCommitments` reads each route's sub-circuit VK commitments, from the circuit build by default.
+ */
 export async function deployBfvVerifierRoutes(
   ethers: any,
   registry: string,
   defaultConfig: ActiveBfvConfig,
   configs: readonly ActiveBfvConfig[],
+  vkCommitments: (
+    config: ActiveBfvConfig,
+  ) => BfvVkCommitments = getBfvVkCommitments,
 ) {
   if (configs.length === 0) {
     throw new Error("At least one BFV verifier route is required");
@@ -348,7 +361,7 @@ export async function deployBfvVerifierRoutes(
 
   const qualified = configs.map((config) => ({
     config,
-    commitments: getBfvVkCommitments(config),
+    commitments: vkCommitments(config),
   }));
   const routes = [];
   for (const { config, commitments } of qualified) {
@@ -359,6 +372,7 @@ export async function deployBfvVerifierRoutes(
 
   let pkVerifier = routes[0].pkVerifier;
   let decryptionVerifier = routes[0].decryptionVerifier;
+  let bfvVerifierRouterBlocks: ProtocolContracts["bfvVerifierRouterBlocks"];
   if (routes.length > 1) {
     const pkRouterFactory = await ethers.getContractFactory(
       "BfvPkVerifierRouter",
@@ -379,6 +393,10 @@ export async function deployBfvVerifierRoutes(
     );
     await decryptionRouter.waitForDeployment();
     decryptionVerifier = await deployedAddress(decryptionRouter);
+    bfvVerifierRouterBlocks = {
+      pkVerifier: await deploymentBlock(pkRouter),
+      decryptionVerifier: await deploymentBlock(decryptionRouter),
+    };
   }
 
   return {
@@ -390,6 +408,7 @@ export async function deployBfvVerifierRoutes(
     dkgVerifierRelationsLib: routes[0].dkgVerifierRelationsLib,
     decryptionVerifierRelationsLib: routes[0].decryptionVerifierRelationsLib,
     bfvVerifierRoutes: routes,
+    bfvVerifierRouterBlocks,
   };
 }
 
@@ -397,7 +416,7 @@ async function deployBfvVerifierRoute(
   ethers: any,
   registry: string,
   config: ActiveBfvConfig,
-  commitments: ReturnType<typeof getBfvVkCommitments>,
+  commitments: BfvVkCommitments,
 ) {
   const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
   const decryptionSource = bfvHonkSource(

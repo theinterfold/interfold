@@ -140,6 +140,20 @@ export async function checkExcludedAccounts(
   );
 }
 
+/**
+ * The block that mined the contract's deployment transaction. Read it from the receipt: the chain
+ * head after the deploy is later than the deployment whenever anything else lands in between.
+ */
+export async function deploymentBlock(contract: {
+  deploymentTransaction?: () => {
+    wait(): Promise<{ blockNumber: number } | null>;
+  } | null;
+}): Promise<number> {
+  const receipt = await contract.deploymentTransaction?.()?.wait();
+  if (!receipt) throw new Error("Could not determine the deployment block");
+  return receipt.blockNumber;
+}
+
 export async function deployedAddress(contract: {
   target?: unknown;
   getAddress?: () => Promise<string>;

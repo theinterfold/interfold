@@ -64,12 +64,14 @@ needs a fresh checkpoint contract and voting adapter, not reinterpretation of ex
 
 `protocol/deployContracts` deploys BondedCheckpoints bound to the **proxy**, then governance
 attaches it after initialization. Only `--action activate-voting` constructs BondedVotes, after the
-configured registry can answer its token binding. `protocol/validate` reads back history/registry
-and adapter token/history/registry bindings. These reads cannot distinguish an older adapter without
-exclusions; `readExcludedAccounts` probes code and compares configured exclusions. `activate-voting`
-reuses only a matching list, validation fails a missing/changed required list, and deployment
-replaces mismatches. Safe proxy upgrades attach the pair if absent and append resync calls for
-`bondedResyncOwners`; without those calls pre-existing owners remain at zero.
+configured registry can answer its token binding. It also writes the `BondedVotes` entry of
+`deployed_contracts.json`, which `--action deploy` cannot. `protocol/validate` reads back
+history/registry and adapter token/history/registry bindings. These reads cannot distinguish an
+older adapter without exclusions; `readExcludedAccounts` probes code and compares configured
+exclusions. `activate-voting` reuses only a matching list, validation fails a missing/changed
+required list, and deployment replaces mismatches. Safe proxy upgrades attach the pair if absent and
+append resync calls for `bondedResyncOwners`; without those calls pre-existing owners remain at
+zero.
 
 ## Delegation and exclusions
 

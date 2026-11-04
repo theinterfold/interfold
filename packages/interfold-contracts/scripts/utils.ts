@@ -548,7 +548,17 @@ export function readBfvVkCommitment(
   )[0];
 }
 
-export function getBfvVkCommitments(config?: ActiveBfvConfig) {
+/** The sub-circuit VK commitments a BFV verifier route is built with. */
+export interface BfvVkCommitments {
+  nodesFold: string;
+  c5: string;
+  c6Fold: string;
+  c7: string;
+}
+
+export function getBfvVkCommitments(
+  config?: ActiveBfvConfig,
+): BfvVkCommitments {
   const [nodesFold, c5, c6Fold, c7] = readVkCommitmentValues(
     [
       {
@@ -747,6 +757,27 @@ export const readDeploymentArgs = (
     fs.readFileSync(deploymentsFile, "utf8"),
   ) as Deployments;
   return deployments[chain]?.[contractName];
+};
+
+/**
+ * Remove the deployment records of the given contracts for a chain, writing only when one existed
+ * @param contractNames - The names of the contracts to remove
+ * @param chain - The chain to remove the records from
+ */
+export const removeDeploymentArgs = (
+  contractNames: string[],
+  chain: string,
+): void => {
+  const deployments = readAllDeployments();
+  const records = deployments[chain];
+  if (!records) return;
+  const stale = contractNames.filter((name) => records[name] !== undefined);
+  if (stale.length === 0) return;
+
+  for (const name of stale) {
+    delete records[name];
+  }
+  fs.writeFileSync(deploymentsFile, JSON.stringify(deployments, null, 2));
 };
 
 /**

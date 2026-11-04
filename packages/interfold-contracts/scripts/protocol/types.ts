@@ -209,6 +209,8 @@ export interface ProtocolDeployment {
    * `BondedVotes` constructor rejects a registry that does not yet bond the token it reads.
    */
   bondedVotes?: string;
+  /** The transaction that deployed `bondedVotes`, kept so a retry can record its deploy block. */
+  bondedVotesDeploymentTx?: string;
   decryptionVerifier?: string;
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
@@ -218,6 +220,11 @@ export interface ProtocolDeployment {
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
+  /**
+   * The blocks that deployed the routers, which `pkVerifier` and `decryptionVerifier` are only
+   * when the deployment serves more than one BFV route.
+   */
+  bfvVerifierRouterBlocks?: { pkVerifier: number; decryptionVerifier: number };
   ciphertextVerifier?: string;
   crispProgram?: string;
   dataAvailabilityVerifier?: string;
@@ -400,6 +407,11 @@ export interface ProtocolContracts {
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
+  /**
+   * The blocks that deployed the routers, which `pkVerifier` and `decryptionVerifier` are only
+   * when the deployment serves more than one BFV route.
+   */
+  bfvVerifierRouterBlocks?: { pkVerifier: number; decryptionVerifier: number };
   ciphertextVerifier?: string;
   initialE3Program: string;
 }

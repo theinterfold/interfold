@@ -10,7 +10,14 @@ import { network } from "hardhat";
 import os from "os";
 import path from "path";
 
-import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import {
+  syncBondedVotesRecord,
+  syncProtocolDeploymentRecords,
+} from "../../scripts/deploymentRecords";
+import {
+  deployBfvVerifierRoutes,
+  deployProtocolContracts,
+} from "../../scripts/protocol/deployContracts";
 import {
   currentNodeRelease,
   requiresNodeReleasePolicyUpdate,
@@ -37,10 +44,15 @@ import type {
 } from "../../scripts/protocol/types";
 import {
   checkExcludedAccounts,
+  deploymentBlock,
   loadConfig,
   readExcludedAccounts,
 } from "../../scripts/protocol/values";
 import { requiredActiveOperators } from "../../scripts/upgrade/v19Cutover";
+import {
+  activeBfvConfigForChain,
+  bfvConfigsForChain,
+} from "../../scripts/utils";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -1111,5 +1123,196 @@ describe("Protocol deployment", function () {
       "setRandomnessProvider",
     );
     expect(provider.provider).to.equal(result.contracts.randomnessProvider);
+
+    // The deployment records are what the docs, the manifest and source verification read, so each
+    // contract that this run deploys has to appear in them, at its real address, with the arguments
+    // it was built with, and at the block that mined its deployment.
+    const bfv = activeBfvConfigForChain(config.chainId);
+    // The routes are built from fixed commitments: the contract tests run without a circuit build.
+    const vkCommitments = {
+      nodesFold: `0x${"00".repeat(31)}01`,
+      c5: `0x${"00".repeat(31)}02`,
+      c6Fold: `0x${"00".repeat(31)}03`,
+      c7: `0x${"00".repeat(31)}04`,
+    };
+    const routes = await deployBfvVerifierRoutes(
+      ethers,
+      result.contracts.ciphernodeRegistry,
+      bfv,
+      bfvConfigsForChain(config.chainId),
+      () => vkCommitments,
+    );
+    const pkRouter = await ethers.getContractAt(
+      "BfvPkVerifierRouter",
+      routes.pkVerifier,
+    );
+    const decryptionRouter = await ethers.getContractAt(
+      "BfvDecryptionVerifierRouter",
+      routes.decryptionVerifier,
+    );
+
+    // The same adapter the real `activate-voting` builds, bound to a token and history that agree
+    // on their clock.
+    const votesHistory = await ethers.deployContract(
+      "MockBondedCheckpointsStub",
+      [config.fold],
+    );
+    await votesHistory.waitForDeployment();
+    const excluded = ethersLib.Wallet.createRandom().address;
+    config.bondedVotesExcludedAccounts = [excluded];
+    // `loadConfig` reads the example's zero adapter as unset: votes come from FOLD itself.
+    config.escrowVotesAdapter = undefined;
+    const bondedVotes = await ethers.deployContract("BondedVotes", [
+      config.fold,
+      config.fold,
+      await votesHistory.getAddress(),
+      [excluded],
+    ]);
+    await bondedVotes.waitForDeployment();
+    // The chain moves on after the deployment, as it does between a deploy and its records.
+    await ethers.provider.send("hardhat_mine", ["0x5"]);
+
+    // The first block at which the address holds code is the block that mined the deployment,
+    // found without the receipt that the records are built from.
+    const mined = async (target: string) => {
+      let low = 0;
+      let high = await ethers.provider.getBlockNumber();
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        if ((await ethers.provider.getCode(target, mid)) === "0x")
+          low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    };
+
+    const chain = "records-test";
+    // What `--action deploy` stamps on the records it has no receipt for.
+    const blockNumber = await ethers.provider.getBlockNumber();
+    const deployment = {
+      ...config,
+      ...result.contracts,
+      ...routes,
+      bondedCheckpoints: await votesHistory.getAddress(),
+    } as unknown as ProtocolDeployment;
+    const recordDir = fs.mkdtempSync(path.join(os.tmpdir(), "records-"));
+    const cwd = process.cwd();
+    process.chdir(recordDir);
+    try {
+      syncProtocolDeploymentRecords(config, deployment, result.interfaces, {
+        chain,
+        blockNumber,
+      });
+      // `activate-voting` runs after the batch, so it records on its own.
+      syncBondedVotesRecord(
+        config,
+        {
+          bondedVotes: await bondedVotes.getAddress(),
+          bondedCheckpoints: await votesHistory.getAddress(),
+        },
+        { chain, blockNumber: await deploymentBlock(bondedVotes) },
+      );
+      const records = JSON.parse(
+        fs.readFileSync("deployed_contracts.json", "utf8"),
+      )[chain];
+
+      const pkRoutes = routes.bfvVerifierRoutes.map(
+        (route) => route.pkVerifier,
+      );
+      const decryptionRoutes = routes.bfvVerifierRoutes.map(
+        (route) => route.decryptionVerifier,
+      );
+      expect(pkRoutes).to.have.lengthOf(
+        bfvConfigsForChain(config.chainId).length,
+      );
+      expect(records.BfvPkVerifierRouter).to.deep.equal({
+        address: routes.pkVerifier,
+        blockNumber: await mined(routes.pkVerifier),
+        constructorArgs: { verifiers: pkRoutes, defaultH: bfv.h },
+      });
+      expect(records.BfvDecryptionVerifierRouter).to.deep.equal({
+        address: routes.decryptionVerifier,
+        blockNumber: await mined(routes.decryptionVerifier),
+        constructorArgs: {
+          verifiers: decryptionRoutes,
+          defaultThreshold: bfv.t,
+        },
+      });
+      // The routers are not the latest deployment, so the end-of-run block would be wrong.
+      expect(records.BfvPkVerifierRouter.blockNumber).to.be.lessThan(
+        blockNumber,
+      );
+      // The recorded arguments are what reproduce the deployed router.
+      expect(await pkRouter.h()).to.equal(
+        records.BfvPkVerifierRouter.constructorArgs.defaultH,
+      );
+      expect(await decryptionRouter.threshold()).to.equal(
+        records.BfvDecryptionVerifierRouter.constructorArgs.defaultThreshold,
+      );
+      for (const [i, route] of pkRoutes.entries()) {
+        expect((await pkRouter.routeAt(i)).verifier).to.equal(route);
+        expect((await decryptionRouter.routeAt(i)).verifier).to.equal(
+          decryptionRoutes[i],
+        );
+      }
+
+      const recordedVotes = records.BondedVotes;
+      expect(recordedVotes.address).to.equal(await bondedVotes.getAddress());
+      expect(recordedVotes.blockNumber).to.equal(
+        await mined(recordedVotes.address),
+      );
+      expect(recordedVotes.blockNumber).to.be.lessThan(blockNumber);
+      expect(recordedVotes.constructorArgs).to.deep.equal({
+        token: config.fold,
+        votesSource: config.fold,
+        checkpoints: await votesHistory.getAddress(),
+        excludedAccounts: [excluded],
+      });
+      expect(await bondedVotes.token()).to.equal(
+        recordedVotes.constructorArgs.token,
+      );
+      expect(await bondedVotes.checkpoints()).to.equal(
+        recordedVotes.constructorArgs.checkpoints,
+      );
+      expect(
+        await readExcludedAccounts(ethers.provider, recordedVotes.address),
+      ).to.deep.equal(recordedVotes.constructorArgs.excludedAccounts);
+
+      // `--action deploy` cannot record `BondedVotes`, and a single-route deployment has no routers.
+      fs.rmSync("deployed_contracts.json");
+      syncProtocolDeploymentRecords(
+        config,
+        { ...deployment, bfvVerifierRoutes: undefined },
+        result.interfaces,
+        { chain, blockNumber },
+      );
+      const single = JSON.parse(
+        fs.readFileSync("deployed_contracts.json", "utf8"),
+      )[chain];
+      expect(single).to.not.have.property("BondedVotes");
+      expect(single).to.not.have.property("BfvPkVerifierRouter");
+      expect(single).to.not.have.property("BfvDecryptionVerifierRouter");
+      expect(single).to.have.property("BondedCheckpoints");
+
+      // A single-route redeployment drops the routers an earlier deployment on the chain recorded.
+      syncProtocolDeploymentRecords(config, deployment, result.interfaces, {
+        chain,
+        blockNumber,
+      });
+      syncProtocolDeploymentRecords(
+        config,
+        { ...deployment, bfvVerifierRoutes: undefined },
+        result.interfaces,
+        { chain, blockNumber },
+      );
+      const redeployed = JSON.parse(
+        fs.readFileSync("deployed_contracts.json", "utf8"),
+      )[chain];
+      expect(redeployed).to.not.have.property("BfvPkVerifierRouter");
+      expect(redeployed).to.not.have.property("BfvDecryptionVerifierRouter");
+    } finally {
+      process.chdir(cwd);
+      fs.rmSync(recordDir, { recursive: true, force: true });
+    }
   });
 });
