@@ -14,6 +14,7 @@ import { feeAssetConfig } from "./protocol/values";
 import {
   activeBfvConfigForChain,
   isLocalDeploymentChain,
+  removeDeploymentArgs,
   storeDeploymentArgs,
   updateE3Config,
 } from "./utils";
@@ -435,7 +436,8 @@ export function syncBondedVotesRecord(
 /**
  * Records the public-key and decryption routers. The deployment only creates them when it serves
  * more than one BFV route; with one route `pkVerifier` and `decryptionVerifier` are the route's
- * own verifiers, and a supplied verifier is not this deployment's to record.
+ * own verifiers, and a supplied verifier is not this deployment's to record. The routers of an
+ * earlier deployment on the chain are then removed, so the record does not name stale routers.
  */
 function syncVerifierRouterRecords(
   config: ProtocolConfigFile,
@@ -443,7 +445,13 @@ function syncVerifierRouterRecords(
   chain: string,
 ): void {
   const routes = deployment.bfvVerifierRoutes ?? [];
-  if (routes.length < 2) return;
+  if (routes.length < 2) {
+    removeDeploymentArgs(
+      ["BfvPkVerifierRouter", "BfvDecryptionVerifierRouter"],
+      chain,
+    );
+    return;
+  }
   const blocks = deployment.bfvVerifierRouterBlocks;
   if (!blocks) throw new Error("The routers' deployment blocks are missing");
   const { h, t } = activeBfvConfigForChain(config.chainId);

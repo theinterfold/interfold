@@ -101,6 +101,9 @@ export async function actionActivateVoting(): Promise<void> {
   );
   await bondedVotes.waitForDeployment();
   const bondedVotesAddress = await deployedAddress(bondedVotes);
+  // Resolved before either write: a retry finds the recorded address and skips the record, so a
+  // failure between the two writes would leave BondedVotes unrecorded.
+  const blockNumber = await deploymentBlock(bondedVotes);
   deployment.bondedVotes = bondedVotesAddress;
   writeJson(deploymentPath(config), deployment);
   syncBondedVotesRecord(
@@ -109,10 +112,7 @@ export async function actionActivateVoting(): Promise<void> {
       bondedVotes: bondedVotesAddress,
       bondedCheckpoints: deployment.bondedCheckpoints,
     },
-    {
-      chain: networkName(),
-      blockNumber: await deploymentBlock(bondedVotes),
-    },
+    { chain: networkName(), blockNumber },
   );
 
   console.log(`

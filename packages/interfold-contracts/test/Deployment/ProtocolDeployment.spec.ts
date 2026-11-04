@@ -1285,6 +1285,23 @@ describe("Protocol deployment", function () {
       expect(single).to.not.have.property("BfvPkVerifierRouter");
       expect(single).to.not.have.property("BfvDecryptionVerifierRouter");
       expect(single).to.have.property("BondedCheckpoints");
+
+      // A single-route redeployment drops the routers an earlier deployment on the chain recorded.
+      syncProtocolDeploymentRecords(config, deployment, result.interfaces, {
+        chain,
+        blockNumber,
+      });
+      syncProtocolDeploymentRecords(
+        config,
+        { ...deployment, bfvVerifierRoutes: undefined },
+        result.interfaces,
+        { chain, blockNumber },
+      );
+      const redeployed = JSON.parse(
+        fs.readFileSync("deployed_contracts.json", "utf8"),
+      )[chain];
+      expect(redeployed).to.not.have.property("BfvPkVerifierRouter");
+      expect(redeployed).to.not.have.property("BfvDecryptionVerifierRouter");
     } finally {
       process.chdir(cwd);
       fs.rmSync(recordDir, { recursive: true, force: true });
