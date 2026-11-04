@@ -14,7 +14,7 @@ use e3_events::BusHandle;
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
     AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
-    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory,
+    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory, EligibilityReader,
     FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState, NodeStateRepositoryFactory,
     Sortition, SortitionAttachParams, SortitionBackend, SortitionRecoveryRepositoryFactory,
     SortitionRepositoryFactory,
@@ -26,6 +26,7 @@ pub(super) async fn setup_sortition(
     bus: &BusHandle,
     repositories: &e3_data::Repositories,
     addr: &str,
+    eligibility: Option<EligibilityReader>,
 ) -> Result<(Addr<Sortition>, CiphernodeSelectorState)> {
     let lifecycle = repositories
         .e3_lifecycle()
@@ -62,6 +63,7 @@ pub(super) async fn setup_sortition(
         node_state_store: repositories.node_state(),
         bond_owners_store: repositories.sortition_bond_owners(),
         admission_store: repositories.sortition_admission(),
+        identity_policy_store: repositories.sortition_identity_policy(),
         recovery_store: repositories.sortition_recovery(),
         committees_store: committees_repo,
         default_backend: SortitionBackend::score(),
@@ -77,6 +79,7 @@ pub(super) async fn setup_sortition(
             .filter_map(|(e3_id, ticket)| ticket.node.eq_ignore_ascii_case(addr).then_some(e3_id))
             .collect(),
         finished_e3s,
+        eligibility,
     })
     .await?;
     Ok((sortition, selector_state))
@@ -149,7 +152,7 @@ mod tests {
                 ..Default::default()
             })
             .await?;
-        let (sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+        let (sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
         sortition.send(EffectsEnabled::new()).await?;
         bus.flush_event_pipeline().await?;
         // Without the recovered intent, sortition would try to rank this request and fail
@@ -240,7 +243,7 @@ mod tests {
                 false,
             )
             .await?;
-            let (sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+            let (sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
             if !before_snapshot {
                 // Startup replays the log suffix before it enables effects.
                 sortition
@@ -334,11 +337,19 @@ mod tests {
                 )
                     .abi_encode(),
             );
+            let identity = |timepoint: u64, required: bool| {
+                raw(
+                    vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)")],
+                    (U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
+                )
+            };
             let mut events = Vec::new();
             for (index, (log, source)) in [
                 (started(10u64), EventSource::Evm),
                 (policy, EventSource::Evm),
                 (started(200u64), EventSource::Local),
+                (identity(30, true), EventSource::Evm),
+                (identity(40, false), EventSource::Local),
             ]
             .into_iter()
             .enumerate()
@@ -358,7 +369,7 @@ mod tests {
             bus.flush_event_pipeline().await?;
             repos
                 .aggregate_seq(aggregate)
-                .write_sync(&if before_snapshot { 3 } else { 0 })
+                .write_sync(&if before_snapshot { 5 } else { 0 })
                 .await?;
 
             // The old decoder could persist an empty chain projection. Keep its bytes intact.
@@ -378,7 +389,8 @@ mod tests {
                 false,
             )
             .await?;
-            let (_sortition, _) = setup_sortition(&bus, &repos, &operator.to_string()).await?;
+            let (_sortition, _) =
+                setup_sortition(&bus, &repos, &operator.to_string(), None).await?;
             if !before_snapshot {
                 // Replay delivers stored envelopes on a fresh bus without appending them again.
                 for event in events {
@@ -405,6 +417,14 @@ mod tests {
                 1,
                 "local raw log must be ignored"
             );
+            let identity = repos.sortition_identity_policy().read().await?.unwrap();
+            identity.validate()?;
+            assert!(!identity.required_at(1, 29));
+            assert!(identity.required_at(1, 30));
+            assert!(
+                identity.required_at(1, 45),
+                "local identity log must be ignored"
+            );
             assert!(errors.send(GetEvents::new()).await?.is_empty());
             crate::recovery::backfill_restart_state(
                 &repos,
@@ -421,7 +441,154 @@ mod tests {
                 legacy_bytes,
                 bincode::serialize(&legacy_store.read().await?.unwrap())?
             );
+            // A second recovery keeps the projection; only its replay position can move forward.
+            assert_eq!(
+                bincode::serialize(&identity.chains)?,
+                bincode::serialize(
+                    &repos
+                        .sortition_identity_policy()
+                        .read()
+                        .await?
+                        .unwrap()
+                        .chains
+                )?
+            );
         }
+        Ok(())
+    }
+
+    /// A binary without the identity projection (an older release run in between) takes in policy
+    /// logs without projecting them. The next startup of this binary still applies them.
+    #[actix::test]
+    async fn an_existing_identity_projection_catches_up_on_unprojected_logs() -> anyhow::Result<()>
+    {
+        use alloy::{
+            primitives::{keccak256, U256},
+            sol_types::SolValue,
+        };
+        use e3_events::{
+            AggregateConfig, AggregateId, EventConstructorWithTimestamp, EventSource,
+            EvmLogObserved, InterfoldEvent, Unsequenced,
+        };
+        use e3_sortition::SortitionRecoveryRepositoryFactory;
+        use e3_sync::SyncRepositoryFactory;
+
+        let aggregate = AggregateId::from_chain_id(Some(1));
+        let system = e3_event_system::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([
+                (aggregate, Duration::ZERO),
+                (AggregateId::from_chain_id(None), Duration::ZERO),
+            ])));
+        let bus = system.handle()?.enable("identity-catch-up");
+        let repos = e3_data::Repositories::from(system.store()?);
+        let policy_log = |timepoint: u64, required: bool, index: u128| {
+            let log = EvmLogObserved {
+                contract: "BondingRegistry".into(),
+                chain_id: 1,
+                e3_id: None,
+                event_name: "UnknownEvmLog".into(),
+                signature: None,
+                known: false,
+                topics: vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)").to_string()],
+                data: e3_utils::ArcBytes::from_bytes(
+                    &(U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
+                ),
+            };
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                log.into(),
+                None,
+                index,
+                Some(1),
+                EventSource::Evm,
+            )
+        };
+
+        // This binary starts with one enforcement in the journal.
+        bus.naked_dispatch_async(policy_log(30, true, 1)).await?;
+        bus.flush_event_pipeline().await?;
+        repos.aggregate_seq(aggregate).write_sync(&1).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let first = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(first.required_at(1, 35));
+        assert_eq!(first.replayed.get(&1), Some(&1));
+
+        // Another binary takes in the relaxation; the snapshot stays as it was.
+        bus.naked_dispatch_async(policy_log(40, false, 2)).await?;
+        bus.flush_event_pipeline().await?;
+        repos.aggregate_seq(aggregate).write_sync(&2).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let caught_up = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(caught_up.required_at(1, 35));
+        assert!(!caught_up.required_at(1, 45), "the relaxation must count");
+        assert_eq!(caught_up.replayed.get(&1), Some(&2));
+
+        // A third startup with nothing new keeps the projection.
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        assert_eq!(
+            bincode::serialize(&caught_up)?,
+            bincode::serialize(&repos.sortition_identity_policy().read().await?.unwrap())?
+        );
+
+        // A startup that cannot replay the log does not know the policy, so it reads as required.
+        repos.aggregate_seq(aggregate).write_sync(&4).await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let unknown = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(unknown.unknown.contains(&1));
+        assert!(unknown.required_at(1, 45));
+        assert_eq!(unknown.replayed.get(&1), Some(&2));
+
+        // A live log arrives before the next startup, after the missed ones.
+        let mut live = repos.sortition_identity_policy().read().await?.unwrap();
+        live.record(&e3_events::IdentityPolicyChange {
+            chain_id: 1,
+            timepoint: 70,
+            required: true,
+        })?;
+        repos.sortition_identity_policy().write_sync(&live).await?;
+
+        // Once the log serves the range, the next startup applies it and knows the policy again.
+        bus.naked_dispatch_async(policy_log(50, true, 3)).await?;
+        bus.naked_dispatch_async(policy_log(60, false, 4)).await?;
+        bus.flush_event_pipeline().await?;
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let known = repos.sortition_identity_policy().read().await?.unwrap();
+        assert!(known.unknown.is_empty());
+        assert!(!known.required_at(1, 45));
+        assert!(known.required_at(1, 55));
+        assert!(!known.required_at(1, 65));
+        assert!(known.required_at(1, 75));
+        assert_eq!(known.replayed.get(&1), Some(&4));
         Ok(())
     }
 
@@ -475,7 +642,7 @@ mod tests {
                 }
                 .into(),
             );
-            let (_sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+            let (_sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
 
             for (index, data) in events.into_iter().enumerate() {
                 let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -533,7 +700,7 @@ mod tests {
             ]))
             .await?;
 
-        let (_sortition, _) = setup_sortition(&bus, &repos, &local).await?;
+        let (_sortition, _) = setup_sortition(&bus, &repos, &local, None).await?;
         system
             .buffer()?
             .send(e3_events::FlushPendingSnapshots)

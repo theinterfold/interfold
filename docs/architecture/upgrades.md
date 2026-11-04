@@ -57,9 +57,10 @@ tickets. Pause requests for that coordinated rollout; no honest node is slashed 
 selection. When release counter changes are mandatory, governance can only raise them with requests
 paused and both drain counters zero. Never decrease required counters.
 
-Release acknowledgment/CLI sends use twice estimated gas: same-timestamp checkpoint overwrites
-during estimation can become new checkpoint appends when mined (~40k additional gas in the observed
-fork). This compensates estimation timing, not a substitute for receipt validation.
+Release acknowledgment, capacity refresh, and CLI sends use twice estimated gas: same-timestamp
+checkpoint overwrites during estimation can become new checkpoint appends when mined (~40k
+additional gas in the observed fork). This compensates estimation timing, not a substitute for
+receipt validation.
 
 ## v0.19 protocol/crypto cutover
 

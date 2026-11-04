@@ -24,9 +24,9 @@ use e3_events::{
     SeqAgg,
 };
 use e3_evm::{
-    committee_chain_time_reader, ensure_node_release, resolve_slashing_managers, Chains,
-    EvmChainGatewayHandle, GatewayFailureReceiver, ProviderCache, ProviderConfig, ReadOnly,
-    WriteEnabled,
+    bonding_eligibility_reader, committee_chain_time_reader, ensure_node_release,
+    resolve_slashing_managers, Chains, EvmChainGatewayHandle, GatewayFailureReceiver,
+    ProviderCache, ProviderConfig, ReadOnly, WriteEnabled,
 };
 use e3_logger::attach_protocol_logger;
 use e3_request::{
@@ -402,8 +402,22 @@ impl CiphernodeBuilder {
             projection.attach(bus).await?;
         }
 
-        // Setup sortition
-        let (sortition, selector_state) = setup_sortition(bus, repositories, addr).await?;
+        // Setup sortition. A full node submits tickets, so under a required identity policy it
+        // reads candidate eligibility to keep the owner shortlist.
+        let eligibility = if self.role() == NodeRole::Full {
+            let mut chains = HashMap::new();
+            for chain in storage.chains.enabled() {
+                let factory =
+                    ProviderConfig::for_chain(&chain.config)?.into_read_provider_factory();
+                let bonding_registry = chain.config.contracts.bonding_registry.address()?;
+                chains.insert(chain.chain_id, (factory, bonding_registry));
+            }
+            Some(bonding_eligibility_reader(chains))
+        } else {
+            None
+        };
+        let (sortition, selector_state) =
+            setup_sortition(bus, repositories, addr, eligibility).await?;
         let selected_party_ids: HashMap<E3id, u64> = selector_state
             .committees
             .iter()

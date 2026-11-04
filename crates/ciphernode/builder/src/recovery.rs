@@ -13,7 +13,7 @@ use e3_evm::{SlashingWriterRepositoryFactory, SLASHING_WRITER_RECOVERY_SCHEMA_VE
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
     CiphernodeSelectorFactory, CiphernodeSelectorState, CommitteeFinalizerRecoveryState,
-    CommitteeFinalizerRepositoryFactory, FinalizedCommitteesRepositoryFactory,
+    CommitteeFinalizerRepositoryFactory, FinalizedCommitteesRepositoryFactory, IdentityPolicyState,
     RecoveredCommitteeRequest as FinalizerRecoveredCommitteeRequest,
     SortitionRecoveryRepositoryFactory, COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION,
     SORTITION_RECOVERY_SCHEMA_VERSION,
@@ -29,6 +29,90 @@ fn backfill_missing_seeds(
     for (e3_id, seed) in recovered {
         current.entry(e3_id).or_insert(seed);
     }
+}
+
+/// Appends the identity policy changes in the raw logs that the journal took in after the position
+/// that each existing projection replayed through, then records the new position. A binary without
+/// the identity projection (an older release run in between, which the schema allows) ingests policy
+/// logs without projecting them. Chains without a projection are left to the full backfill.
+async fn catch_up_identity_policy(
+    repositories: &e3_data::Repositories,
+    eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
+    chain_ids: &[u64],
+    missing: &HashSet<u64>,
+    identity: &mut IdentityPolicyState,
+) -> Result<()> {
+    let mut start_cursors = HashMap::new();
+    let mut end_cursors = HashMap::new();
+    let mut chains = HashSet::new();
+    for chain_id in chain_ids
+        .iter()
+        .filter(|chain_id| !missing.contains(chain_id))
+    {
+        let aggregate = AggregateId::from_chain_id(Some(*chain_id));
+        let end = repositories
+            .aggregate_seq(aggregate)
+            .read()
+            .await?
+            .unwrap_or(0);
+        let start = identity.replayed.get(chain_id).copied().unwrap_or(0);
+        if end > start {
+            start_cursors.insert(aggregate, start);
+            end_cursors.insert(aggregate, end);
+            chains.insert(*chain_id);
+        }
+    }
+    if chains.is_empty() {
+        return Ok(());
+    }
+    let recovered = match project_restart_state_backfill(
+        eventstore,
+        start_cursors,
+        end_cursors.clone(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &chains,
+    )
+    .await
+    {
+        Ok(recovered) => recovered,
+        Err(error) => {
+            // The log cannot serve the range (for example, a snapshot ahead of it). The history can
+            // miss a change, so the policy reads as required until the next startup replays it.
+            warn!(
+                "Could not replay the event log for the identity policy; it counts as required \
+                 until a replay succeeds: {error:#}"
+            );
+            identity.unknown.extend(&chains);
+            repositories
+                .sortition_identity_policy()
+                .write_sync(identity)
+                .await?;
+            return Ok(());
+        }
+    };
+    let mut appended = 0;
+    for change in recovered.identity_policy_updates {
+        if chains.contains(&change.chain_id) && identity.catch_up(&change)? {
+            appended += 1;
+        }
+    }
+    for chain_id in &chains {
+        let aggregate = AggregateId::from_chain_id(Some(*chain_id));
+        identity.replayed.insert(*chain_id, end_cursors[&aggregate]);
+        identity.unknown.remove(chain_id);
+    }
+    repositories
+        .sortition_identity_policy()
+        .write_sync(identity)
+        .await?;
+    if appended > 0 {
+        warn!(
+            appended,
+            "Caught up on identity policy logs that this node took in without projecting them"
+        );
+    }
+    Ok(())
 }
 
 pub(crate) async fn backfill_restart_state(
@@ -66,6 +150,22 @@ pub(crate) async fn backfill_restart_state(
         .copied()
         .filter(|chain_id| !admission.chains.contains_key(chain_id))
         .collect::<HashSet<_>>();
+    let identity_store = repositories.sortition_identity_policy();
+    let mut identity = identity_store.read().await?.unwrap_or_default();
+    identity.validate()?;
+    let identity_target_chains = chain_ids
+        .iter()
+        .copied()
+        .filter(|chain_id| !identity.chains.contains_key(chain_id))
+        .collect::<HashSet<_>>();
+    catch_up_identity_policy(
+        repositories,
+        eventstore,
+        chain_ids,
+        &identity_target_chains,
+        &mut identity,
+    )
+    .await?;
     let mut owners = owners_store.read().await?.unwrap_or_default();
     owners.validate()?;
     let owner_target_chains = chain_ids
@@ -187,7 +287,9 @@ pub(crate) async fn backfill_restart_state(
         targets.extend(active_e3s);
     }
     let projection_target_chains = owner_target_chains
-        .union(&admission_target_chains)
+        .iter()
+        .chain(&admission_target_chains)
+        .chain(&identity_target_chains)
         .copied()
         .collect::<HashSet<_>>();
     let mut cursors = HashMap::new();
@@ -198,6 +300,7 @@ pub(crate) async fn backfill_restart_state(
             slash_target_chains
                 .iter()
                 .chain(&admission_target_chains)
+                .chain(&identity_target_chains)
                 .map(|chain_id| AggregateId::from_chain_id(Some(*chain_id))),
         )
         // Typed owner/admission events use aggregate zero. Legacy raw logs use their chain aggregate.
@@ -234,7 +337,11 @@ pub(crate) async fn backfill_restart_state(
         let aggregate = AggregateId::from_chain_id(Some(e3_id.chain_id()));
         checked.get(e3_id).copied().unwrap_or(0) < cursors.get(&aggregate).copied().unwrap_or(0)
     });
-    for chain_id in slash_target_chains.iter().chain(&admission_target_chains) {
+    for chain_id in slash_target_chains
+        .iter()
+        .chain(&admission_target_chains)
+        .chain(&identity_target_chains)
+    {
         start_cursors.insert(AggregateId::from_chain_id(Some(*chain_id)), 0);
     }
     if !projection_target_chains.is_empty() {
@@ -276,6 +383,21 @@ pub(crate) async fn backfill_restart_state(
     }
     if !admission_target_chains.is_empty() {
         admission_store.write_sync(&admission).await?;
+    }
+    for change in recovered.identity_policy_updates {
+        if identity_target_chains.contains(&change.chain_id) {
+            identity.record(&change)?;
+        }
+    }
+    for chain_id in &identity_target_chains {
+        identity.chains.entry(*chain_id).or_default();
+        let aggregate = AggregateId::from_chain_id(Some(*chain_id));
+        identity
+            .replayed
+            .insert(*chain_id, cursors.get(&aggregate).copied().unwrap_or(0));
+    }
+    if !identity_target_chains.is_empty() {
+        identity_store.write_sync(&identity).await?;
     }
     for chain_id in &owner_target_chains {
         owners.chains.entry(*chain_id).or_default();

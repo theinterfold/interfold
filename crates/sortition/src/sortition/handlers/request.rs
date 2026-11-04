@@ -18,7 +18,7 @@ impl Handler<TypedEvent<TicketGenerated>> for Sortition {
 
 impl Handler<TypedEvent<E3Requested>> for Sortition {
     type Result = ();
-    fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: TypedEvent<E3Requested>, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
         if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
             recovery.pending_requests.insert(e3_id.clone(), msg.clone());
@@ -36,7 +36,7 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
             return;
         }
         if self.effects_enabled {
-            self.perform_sortition(msg);
+            self.perform_sortition(msg, ctx);
         }
     }
 }
@@ -44,7 +44,7 @@ impl Handler<TypedEvent<E3Requested>> for Sortition {
 impl Handler<EffectsEnabled> for Sortition {
     type Result = ();
 
-    fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
         let recovery = self.recovery.get().unwrap_or_default();
         let mut requests = recovery
@@ -62,7 +62,7 @@ impl Handler<EffectsEnabled> for Sortition {
             .collect::<HashSet<_>>();
 
         for request in requests {
-            self.perform_sortition(request);
+            self.perform_sortition(request, ctx);
         }
         for e3_id in membership_e3s {
             self.redrive_membership_changes(&e3_id);
@@ -71,7 +71,44 @@ impl Handler<EffectsEnabled> for Sortition {
 }
 
 impl Sortition {
-    pub(super) fn perform_sortition(&mut self, msg: TypedEvent<E3Requested>) {
+    /// Ranks this node for the request and dispatches the result. Under a required identity
+    /// policy, it first reads which candidates the bonding registry finds eligible, so the owner
+    /// shortlist stays on; a failed or stalled read ranks every eligible operator.
+    pub(super) fn perform_sortition(
+        &mut self,
+        msg: TypedEvent<E3Requested>,
+        ctx: &mut Context<Self>,
+    ) {
+        let e3_id = msg.e3_id.clone();
+        if self.processed_requests.contains(&e3_id) || self.reading_eligibility.contains(&e3_id) {
+            return;
+        }
+        let Some(read) = self.eligibility_read(&msg) else {
+            self.rank_and_dispatch(msg, None);
+            return;
+        };
+        self.reading_eligibility.insert(e3_id.clone());
+        ctx.spawn(read.into_actor(self).map(move |result, actor, _| {
+            actor.reading_eligibility.remove(&e3_id);
+            let eligible = match result {
+                Ok(eligible) => Some(eligible),
+                Err(error) => {
+                    warn!(
+                        e3_id = %e3_id,
+                        "Could not read candidate eligibility; ranking without the owner shortlist: {error:#}"
+                    );
+                    None
+                }
+            };
+            actor.rank_and_dispatch(msg, eligible.as_ref());
+        }));
+    }
+
+    fn rank_and_dispatch(
+        &mut self,
+        msg: TypedEvent<E3Requested>,
+        eligible: Option<&HashSet<Address>>,
+    ) {
         let e3_id = msg.e3_id.clone();
         if self.processed_requests.contains(&e3_id) {
             return;
@@ -108,7 +145,14 @@ impl Sortition {
             {
                 let candidate_owners = msg.threshold_n
                     + crate::calculate_buffer_size(msg.threshold_m, msg.threshold_n);
-                self.get_node_index(e3_id.clone(), seed, chain_id, snapshot, candidate_owners)
+                self.get_node_index(
+                    e3_id.clone(),
+                    seed,
+                    chain_id,
+                    snapshot,
+                    candidate_owners,
+                    eligible,
+                )
             }
             Some(snapshot) if snapshot.request_block != msg.request_block => {
                 self.bus.err(

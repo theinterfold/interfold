@@ -27,8 +27,12 @@ not reorder members or renumber finalized slots.
 ## Runtime integration
 
 `Sortition::attach(SortitionAttachParams { ... }).await` restores repositories/backend and
-subscribes to registry/request events. `CiphernodeSelector::attach` restores local party/aggregator
-roles. The [builder caller](../ciphernode/builder/src/sortition.rs) shows their combined setup,
+subscribes to registry/request events. Full nodes pass an `EligibilityReader`; the
+[EVM adapter](../evm/runtime/src/eligibility.rs) reads `eligibilityAt` for every candidate at T−1
+with a fresh provider. Under a required identity policy, selection then ranks only the eligible
+operators; without a reader, or after a failed read, it ranks every eligible operator.
+`CiphernodeSelector::attach` restores local party/aggregator roles. The
+[builder caller](../ciphernode/builder/src/sortition.rs) shows their combined setup,
 including committee reconciliation and pending ticket intents. Consumers query the actor with
 messages such as `GetNodesForE3`; they do not rerun selection from current balances.
 
@@ -287,7 +291,9 @@ flowchart LR
   - Rank all eligible nodes by their best ticket score
   - Shortlist N-plus-buffer distinct snapshot owners and retain their operators as backups
   - Submit the local node's best ticket if its owner is shortlisted and it has capacity
-  - Permit all eligible submissions when chain-time owner history is incomplete
+  - Under a required identity policy at T−1, rank only the operators that `eligibilityAt` finds
+    active; permit all eligible submissions when that read fails or runs out of time, or owner
+    history is incomplete
 - **On-Chain Integration**: Tickets submitted to contract for verification
 - **Committee Finalization**: After the window closes, the contract selects N distinct request-time
   bond owners. Each owner has at most one candidate. Existing requests from before the cap upgrade

@@ -157,6 +157,11 @@ fn layout_rows() -> Vec<String> {
         |r| r.sortition_admission(),
         &mut rows,
     );
+    repository(
+        "sortition_identity_policy",
+        |r| r.sortition_identity_policy(),
+        &mut rows,
+    );
     repository("sortition_recovery", |r| r.sortition_recovery(), &mut rows);
     repository(
         "sortition_bond_owners",

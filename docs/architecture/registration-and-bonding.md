@@ -163,18 +163,23 @@ owner address) can be added later without every owner proving again.
 Every policy change resets counted owner capacity. Requests fail capacity closed until
 `refreshOperatorStatuses` counts the operators again, so governance refreshes every operator in the
 batch that changes a policy or calls `revoke`. Under a required policy, capacity covers fixed 30-day
-windows: an owner counts only when its credential lasts to the end of the current window, so a short
-credential stays eligible but cannot make the count stale early. After the window end, or after a
-revocation of a current credential, capacity reads zero until the next refresh. It then counts only
-the owners of refreshed operators until every operator is refreshed, so it can only undercount. Any
-account can call `refreshOperatorStatuses`, and someone must call it for every operator after each
-window end, or requests can fail for lack of counted owners. During an admission pause, an operator
-also needs identity at the pause cutoff, so a later credential or policy change cannot widen the
-frozen pool. Owners renew before the window that their credential ends in, or they stop counting
-toward capacity. Rust does not apply the identity policy to its owner shortlist yet, so enabling
-`required` before a node release that does would make verified nodes misjudge selection. An
-identifier proves what its verifier proves (for a document verifier, one document rather than one
-person); it does not stop identity rental.
+windows from Unix time zero: an owner counts only when its credential lasts to the end of the
+current window, so a short credential stays eligible but cannot make the count stale early. After
+the window end, or after a revocation of a current credential, capacity reads zero until the next
+refresh. It then counts only the owners of refreshed operators until every operator is refreshed, so
+it can only undercount. While the policy is required, each full node refreshes its own operator once
+in each window, about a block after the window starts, so no keeper is needed. During an admission
+pause, an operator also needs identity at the pause cutoff, so a later credential or policy change
+cannot widen the frozen pool. Owners renew before the window that their credential ends in, or they
+stop counting toward capacity; an owner who renews during a window counts after
+`interfold ciphernode activate` or at the next window. Under a required policy, a full node reads
+`eligibilityAt` at T−1 for every candidate, and the Rust owner shortlist ranks only the eligible
+operators. If that read fails or cannot end 20 seconds before the ticket deadline, the node ranks
+without the shortlist. Turn `required` on only when, for the largest committee size, enough distinct
+verified owners run a release that has the eligibility read and the self-refresh, are online, and
+are eligible; nodes on an older release keep the shortlist on and can skip seats. An identifier
+proves what its verifier proves (for a document verifier, one document rather than one person); it
+does not stop identity rental.
 
 `ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
 cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,

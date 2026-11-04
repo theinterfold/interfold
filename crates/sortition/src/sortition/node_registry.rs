@@ -13,13 +13,13 @@
 //! is a thin shell that loads persisted state, calls into [`NodeRegistry`], and
 //! writes the result back.
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use e3_events::{
     BondingAssetConfigUpdatedAt, ChainPosition, ConfigurationUpdatedAt, E3id,
     EligibilityConfigurationVersionUpdatedAt,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use tracing::{info, warn};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,6 +138,18 @@ pub struct NodeStateStore {
 }
 
 impl NodeStateStore {
+    /// This store with only `operators`, for example the candidates that an eligibility read found
+    /// active.
+    pub fn retain_operators(&self, operators: &HashSet<Address>) -> Self {
+        let mut kept = self.clone();
+        kept.nodes.retain(|address, _| {
+            address
+                .parse::<Address>()
+                .is_ok_and(|operator| operators.contains(&operator))
+        });
+        kept
+    }
+
     pub fn sortition_snapshot(&self, e3_id: &E3id) -> Option<SortitionSnapshot> {
         self.sortition_snapshots.get(&committee_key(e3_id)).copied()
     }

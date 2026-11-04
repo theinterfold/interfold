@@ -15,9 +15,11 @@
 mod actors;
 mod adapters;
 pub mod canonical_key;
+mod capacity_refresh;
 mod chain_system;
 mod chain_time;
 mod chains;
+mod eligibility;
 use e3_evm_contracts as contracts;
 mod dkg_timing;
 mod domain;
@@ -40,12 +42,14 @@ pub use adapters::ingestion_progress::{
     write_ingestion_expectation_at, IngestionProgress, IngestionProgressSink,
     INGESTION_EXPECTATION_FILE,
 };
+pub use capacity_refresh::CapacityRefresher;
 pub use chain_system::*;
 pub use chain_time::committee_chain_time_reader;
 pub use chains::{validate_chain_id, Chain, Chains, EnabledChain};
 pub use contracts::ICiphernodeRegistry;
 pub use dkg_timing::{read_canonical_dkg_timing, CanonicalDkgTiming};
 pub use domain::encode_attestation_evidence;
+pub use eligibility::bonding_eligibility_reader;
 pub use finalized_lifecycle::{read_finalized_e3_lifecycles, FinalizedE3Lifecycle};
 pub use helpers::*;
 pub use messages::*;

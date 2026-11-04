@@ -8,11 +8,12 @@ use crate::domain::backends::{SortitionBackend, SortitionList};
 use crate::domain::node_registry::{NodeRegistry, NodeStateStore, SortitionSnapshot};
 use crate::messages::{
     CommitteeMembersResponse, E3CommitteeContainsRequest, E3CommitteeContainsResponse,
-    GetCommitteeMembersRequest, WithSortitionTicket,
+    GetCommitteeMembersRequest, IdentityPolicyRequiredAt, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
-use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention};
+use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention, IdentityPolicyState};
 use actix::prelude::*;
+use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Result};
 use e3_committee::Committee;
 use e3_data::{AutoPersist, Persistable, Repository};
@@ -27,7 +28,10 @@ use e3_events::{
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, instrument, warn};
 
 /// Events that build sortition state. The actor subscribes to them when it attaches, so that
@@ -66,6 +70,8 @@ pub struct Sortition {
     /// Owner history is derived from chain events and persisted separately from node state.
     bond_owners: Persistable<BondOwnerState>,
     admission: Persistable<AdmissionState>,
+    /// The bond-owner identity policy, derived from BondingRegistry logs.
+    identity_policy: Persistable<IdentityPolicyState>,
     /// Event bus for error reporting and interfold event subscription.
     bus: BusHandle,
     /// Persistent map of finalized committees per E3
@@ -83,6 +89,14 @@ pub struct Sortition {
     /// E3s. Startup seeds the set from the lifecycle projection.
     finished_e3s: HashSet<E3id>,
     effects_enabled: bool,
+    /// Reads which candidates are eligible, so a required identity policy keeps the owner
+    /// shortlist. Without it (no chain access), such a request ranks every eligible operator.
+    eligibility: Option<EligibilityReader>,
+    /// Requests whose eligibility read is in flight.
+    reading_eligibility: HashSet<E3id>,
+    /// Ticket deadlines of the requests that this process saw requested. An eligibility read must
+    /// leave time to submit before the deadline.
+    committee_deadlines: HashMap<E3id, u64>,
 }
 
 pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 1;
@@ -186,6 +200,7 @@ pub struct SortitionParams {
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
     pub bond_owners: Persistable<BondOwnerState>,
     pub admission: Persistable<AdmissionState>,
+    pub identity_policy: Persistable<IdentityPolicyState>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
     /// Persisted delayed and pre-finalization inputs.
@@ -207,6 +222,7 @@ pub struct SortitionAttachParams<'a> {
     pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
     pub bond_owners_store: Repository<BondOwnerState>,
     pub admission_store: Repository<AdmissionState>,
+    pub identity_policy_store: Repository<IdentityPolicyState>,
     pub recovery_store: Repository<SortitionRecoveryState>,
     pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
     pub default_backend: SortitionBackend,
@@ -214,6 +230,7 @@ pub struct SortitionAttachParams<'a> {
     pub address: &'a str,
     pub submitted_e3s: HashSet<E3id>,
     pub finished_e3s: HashSet<E3id>,
+    pub eligibility: Option<EligibilityReader>,
 }
 
 impl Sortition {
@@ -223,6 +240,7 @@ impl Sortition {
             node_state: params.node_state,
             bond_owners: params.bond_owners,
             admission: params.admission,
+            identity_policy: params.identity_policy,
             bus: params.bus,
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
@@ -231,7 +249,17 @@ impl Sortition {
             processed_requests: params.submitted_e3s,
             finished_e3s: params.finished_e3s,
             effects_enabled: false,
+            eligibility: None,
+            reading_eligibility: HashSet::new(),
+            committee_deadlines: HashMap::new(),
         }
+    }
+
+    /// Under a required identity policy, rank only the candidates that `reader` finds eligible, so
+    /// the owner shortlist stays on. Without a reader, such a request ranks every eligible operator.
+    pub fn with_eligibility(mut self, reader: Option<EligibilityReader>) -> Self {
+        self.eligibility = reader;
+        self
     }
 
     #[instrument(name = "sortition_attach", skip_all)]
@@ -242,6 +270,7 @@ impl Sortition {
             node_state_store,
             bond_owners_store,
             admission_store,
+            identity_policy_store,
             recovery_store,
             committees_store,
             default_backend,
@@ -249,6 +278,7 @@ impl Sortition {
             address,
             submitted_e3s,
             finished_e3s,
+            eligibility,
         } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
         let mut node_state = node_state_store.load_or_default(HashMap::new()).await?;
@@ -267,6 +297,10 @@ impl Sortition {
             .load_or_default(AdmissionState::default())
             .await?;
         admission.try_get()?.validate()?;
+        let identity_policy = identity_policy_store
+            .load_or_default(IdentityPolicyState::default())
+            .await?;
+        identity_policy.try_get()?.validate()?;
         let recovery = recovery_store
             .load_or_default(SortitionRecoveryState::default())
             .await?;
@@ -287,6 +321,7 @@ impl Sortition {
             node_state,
             bond_owners,
             admission,
+            identity_policy,
             recovery,
             finalized_committees,
             ciphernode_selector,
@@ -294,6 +329,7 @@ impl Sortition {
             submitted_e3s,
             finished_e3s,
         })
+        .with_eligibility(eligibility)
         .start();
 
         // Subscribe to state-building events immediately (needed during EventStore replay)
@@ -356,6 +392,61 @@ impl Sortition {
         }
     }
 
+    /// Whether selection for the request at `snapshot` needs a verified bond owner: the policy at
+    /// T-1, or at the admission pause cutoff, which the contract also checks.
+    fn identity_required(&self, chain_id: u64, snapshot: SortitionSnapshot) -> Option<bool> {
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let admission = self.admission.get()?;
+        Some(self.identity_policy.get()?.required_for_selection(
+            chain_id,
+            timepoint,
+            admission.pause_cutoff(chain_id, timepoint),
+        ))
+    }
+
+    /// The eligibility read for a request under a required identity policy: the operators that
+    /// the admission rules leave at T-1. The read must end in time to submit the ticket. None when
+    /// the policy does not apply, nothing can be read, or no time is left; after a restart this
+    /// process does not know the deadline of an open request, so it ranks without the shortlist.
+    pub(super) fn eligibility_read(
+        &self,
+        request: &TypedEvent<E3Requested>,
+    ) -> Option<EligibilityFuture> {
+        let reader = self.eligibility.as_ref()?;
+        let chain_id = request.e3_id.chain_id();
+        let snapshot = self
+            .node_state
+            .get()?
+            .get(&chain_id)?
+            .sortition_snapshot(&request.e3_id)?;
+        if snapshot.request_block != request.request_block
+            || !self.identity_required(chain_id, snapshot)?
+        {
+            return None;
+        }
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let state_map = self.node_state.get()?;
+        let admission = self.admission.get()?;
+        let state = admission.filter(chain_id, timepoint, state_map.get(&chain_id)?);
+        let operators = state
+            .nodes
+            .keys()
+            .filter_map(|address| address.parse().ok())
+            .collect();
+        let deadline = *self.committee_deadlines.get(&request.e3_id)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let limit = eligibility::read_limit(deadline, now)?;
+        Some(eligibility::bounded(
+            reader(chain_id, operators, timepoint),
+            limit,
+        ))
+    }
+
+    /// Forget the request's ticket deadline once its sortition ends.
+    pub(super) fn forget_committee_deadline(&mut self, e3_id: &E3id) {
+        self.committee_deadlines.remove(e3_id);
+    }
+
     pub fn get_node_index(
         &self,
         e3_id: E3id,
@@ -363,6 +454,7 @@ impl Sortition {
         chain_id: u64,
         snapshot: SortitionSnapshot,
         candidate_owners: usize,
+        eligible: Option<&HashSet<Address>>,
     ) -> Option<(u64, Option<u64>)> {
         let bus = self.bus.clone();
         let map = self.backends.get()?;
@@ -371,7 +463,28 @@ impl Sortition {
         let state = state_map.get(&chain_id)?;
         let owners = self.bond_owners.get()?;
         let admission = self.admission.get()?;
-        let state = admission.filter(chain_id, snapshot.request_block.checked_sub(1)?, state);
+        let timepoint = snapshot.request_block.checked_sub(1)?;
+        let mut state = admission.filter(chain_id, timepoint, state);
+        // Under a required identity policy, the shortlist ranks only the operators that the bonding
+        // registry found eligible at T-1. Without that read, the node cannot tell verified owners
+        // apart: it turns the shortlist off, and every eligible node submits.
+        let owner_shortlist = match (self.identity_required(chain_id, snapshot)?, eligible) {
+            (false, _) => true,
+            (true, Some(eligible)) => {
+                let filtered = state.retain_operators(eligible);
+                info!(
+                    chain_id,
+                    e3_id = %e3_id,
+                    timepoint,
+                    eligible_operators = filtered.nodes.len(),
+                    event = "sortition_identity_policy_eligible_shortlist",
+                    "The identity policy is required; ranking the eligible operators with the owner shortlist"
+                );
+                state = std::borrow::Cow::Owned(filtered);
+                true
+            }
+            (true, None) => false,
+        };
 
         backend
             .get_submission_index(
@@ -383,6 +496,7 @@ impl Sortition {
                 snapshot,
                 candidate_owners,
                 &owners,
+                owner_shortlist,
             )
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);
@@ -503,6 +617,10 @@ impl Sortition {
 
 #[path = "handlers/mod.rs"]
 mod handlers;
+
+#[path = "eligibility.rs"]
+mod eligibility;
+pub use eligibility::{EligibilityFuture, EligibilityReader};
 
 #[cfg(test)]
 mod tests {
