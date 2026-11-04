@@ -29,12 +29,12 @@ Use the extensions in `e3_aggregator::ext` with an `e3_request::E3RouterBuilder`
 - `ThresholdPlaintextAggregatorExtension::create(...)` creates or hydrates `plaintext`, using the
   bus, sortition actor, proof-aggregation setting, canonical keys, and sequence-history reader.
 
-The [ciphernode wiring](../ciphernode/builder/src/extensions.rs) shows registration through
+The [ciphernode wiring](../../ciphernode/builder/src/extensions.rs) shows registration through
 `with_recipient`, including the FHE dependency. Consumers do not construct the private
 public-key/plaintext actor modules directly. Committee formation is owned by
-[sortition](../orchestration/sortition/Readme.md#runtime-integration), not aggregation.
-Canonical-key inputs come from the shared `e3_request::canonical_key` authority; local aggregation
-results do not create a second authority.
+[sortition](../sortition/Readme.md#runtime-integration), not aggregation. Canonical-key inputs come
+from the shared `e3_request::canonical_key` authority; local aggregation results do not create a
+second authority.
 
 Aggregation follows the canonical roster and active/standby roles, not the fastest arriving shares.
 Plaintext reconstruction needs T+1 valid roster shares. Local aggregation results are publication
@@ -42,23 +42,23 @@ intents; confirmed contract events establish canonical completion.
 
 ## Using the capability
 
-For a complete runtime use [CiphernodeBuilder](../ciphernode/builder/README.md). The crate also
+For a complete runtime use [CiphernodeBuilder](../../ciphernode/builder/README.md). The crate also
 exports typed recovery states and repository factory traits for persistence integration. See
-[DKG](../../docs/architecture/dkg.md) and
-[threshold decryption](../../docs/architecture/threshold-decryption.md) for protocol boundaries.
+[DKG](../../../docs/architecture/dkg.md) and
+[threshold decryption](../../../docs/architecture/threshold-decryption.md) for protocol boundaries.
 
 ## Tests
 
 Run `cargo test --locked -p e3-aggregator` from the repository root. Prepare the
-[system prerequisites](../tests/README.md#prerequisites-and-assurance) first; the test graph
+[system prerequisites](../../tests/README.md#prerequisites-and-assurance) first; the test graph
 includes chain fixtures and the prover. Actor tests with mock proofs do not validate recursive
 proofs.
 
 Public-key [tests](src/public_key_aggregation/tests) cover attestations and failures; plaintext
 [tests](src/plaintext_aggregation/tests) cover share admission, thresholds, publication, completion,
 and recovery. Neighboring `workflow_tests.rs` files exercise pure phase decisions separately from
-actor delivery. Multi-node flows are in [e3-tests](../tests/README.md). See [AGENTS.md](AGENTS.md)
-for change-specific rules.
+actor delivery. Multi-node flows are in [e3-tests](../../tests/README.md). See
+[AGENTS.md](AGENTS.md) for change-specific rules.
 
 The BFV/event setup tuple is private to these aggregation tests. Event-only consumers use
 event-system's opt-in fixture rather than constructing unrelated BFV material.

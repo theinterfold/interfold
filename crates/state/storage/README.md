@@ -209,7 +209,7 @@ struct MyActor {
 We have also extracted the key calculation mechanism to a
 [`StoreKeys`](https://github.com/theinterfold/interfold/blob/main/crates/events/src/store_keys.rs)
 struct. This is used in various places when creating repository factories, for example
-[here](https://github.com/theinterfold/interfold/blob/main/crates/aggregator/src/repo.rs)
+[here](../../orchestration/aggregator/src/repo.rs)
 
 ## Durable Event Logs and Large Events
 

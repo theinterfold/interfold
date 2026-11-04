@@ -45,7 +45,7 @@ COPY --from=evm-builder /build/packages/interfold-contracts/artifacts ../package
 COPY --from=evm-builder /build/packages/interfold-contracts/deployed_contracts.json ../packages/interfold-contracts/deployed_contracts.json
 
 # find crates/* -name "Cargo.toml" -not -path "*/support/*" -printf "COPY %p %p\n" | sed 's|COPY \(.*\) crates/|COPY \1 ./|'
-COPY crates/aggregator/Cargo.toml ./aggregator/Cargo.toml
+COPY crates/orchestration/aggregator/Cargo.toml ./orchestration/aggregator/Cargo.toml
 COPY crates/bfv-client/Cargo.toml ./bfv-client/Cargo.toml
 COPY crates/bfv-test-support/Cargo.toml ./bfv-test-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml

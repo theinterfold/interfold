@@ -125,8 +125,8 @@
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {",
-      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@145@self.bus.publish(event, ec.clone())?;"
+      "crates/orchestration/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {",
+      "crates/orchestration/aggregator/src/public_key_aggregation/effects/publish_result.rs@145@self.bus.publish(event, ec.clone())?;"
     ],
     "line_text": ["let event = PublicKeyAggregated {", "self.bus.publish(event, ec.clone())?;"],
     "note": "PublicKeyAggregator builds the PublicKeyAggregated event and publishes it on the bus."
@@ -135,8 +135,8 @@
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {",
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@126@self.bus.publish(event, ec.clone())?;"
+      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {",
+      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/publish_result.rs@126@self.bus.publish(event, ec.clone())?;"
     ],
     "line_text": ["let event = PlaintextAggregated {", "self.bus.publish(event, ec.clone())?;"],
     "note": "ThresholdPlaintextAggregator builds the PlaintextAggregated event and publishes it on the bus."

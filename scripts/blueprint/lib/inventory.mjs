@@ -71,7 +71,7 @@ export const LAYERS = {
     'state/request',
     'orchestration/sortition',
     'orchestration/keyshare',
-    'aggregator',
+    'orchestration/aggregator',
     'orchestration/slashing',
     'zk/prover',
     'fhe',
