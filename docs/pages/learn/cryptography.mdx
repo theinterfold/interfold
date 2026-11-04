@@ -20,7 +20,7 @@ At the end, you can map each protocol step to its circuit and to its on-chain ve
 | Building block                   | Implementation                                                                   | Job in an E3                                       |
 | -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------- |
 | BFV fully homomorphic encryption | The `gnosisguild/fhe.rs` library, scheme ID `keccak256("fhe.rs:BFV")`            | Compute on encrypted integers                      |
-| Threshold BFV (TrBFV)            | `crates/trbfv`                                                                   | Split the secret key across the committee          |
+| Threshold BFV (TrBFV)            | `crates/bfv/threshold`                                                           | Split the secret key across the committee          |
 | Shamir secret sharing            | Part of TrBFV                                                                    | Give each member a share of each key contribution  |
 | ZK proofs                        | Noir circuits in `circuits/`, proved with Barretenberg UltraHonk (`bb`)          | Prove each key, share, and decryption step         |
 | Commitments                      | The SAFE sponge with the Poseidon2 permutation (`circuits/lib/src/math/safe.nr`) | Link circuits without publishing large polynomials |

@@ -1,6 +1,6 @@
 # Rust client integration
 
-Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv-client/),
+Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv/client/),
 [indexer](../../crates/evm/indexer/), and [EVM client](../../crates/evm/client/). The
 [TypeScript SDK](../pages/build/sdk.mdx) is a separate client. Neither client replaces the
 application contract's input checks or the protocol's output verification.

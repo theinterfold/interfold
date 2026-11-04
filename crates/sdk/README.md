@@ -35,7 +35,7 @@ let bytes = encode_vec_u64_to_bytes(&[7_u64]);
 assert_eq!(decode_bytes_to_vec_u64(&bytes).unwrap(), vec![7]);
 ```
 
-See [BFV usage](../bfv-client/README.md), [EVM clients](../evm/client/README.md), and
+See [BFV usage](../bfv/client/README.md), [EVM clients](../evm/client/README.md), and
 [indexing](../evm/indexer/README.md) for their API contracts and examples.
 
 ## Tests and feature checks

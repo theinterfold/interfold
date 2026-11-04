@@ -13,4 +13,4 @@ This is the client-side BFV/commitment boundary shared by native callers and WAS
 
 Use the [README tests](README.md#tests). For commitment/witness changes, also exercise the
 consumer's real-proof flow; Rust round trips alone do not establish circuit agreement. See
-[proof statements](../../docs/architecture/proof-statements.md).
+[proof statements](../../../docs/architecture/proof-statements.md).

@@ -4,7 +4,7 @@
 
 Local encryption for saved operator identities and secret shares. It provides password sources, an
 Argon2-derived AES-GCM `Cipher`, and encrypted byte wrappers. Threshold BFV calculations belong in
-[e3-trbfv](../trbfv/README.md), not this crate.
+[e3-trbfv](../bfv/threshold/README.md), not this crate.
 
 ## Map
 

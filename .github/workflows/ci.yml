@@ -107,7 +107,7 @@ jobs:
             # link, some of them under guest-only cfg flags.
             openvm_guest:
               - 'Cargo.toml'
-              - 'crates/bfv-client/**'
+              - 'crates/bfv/client/**'
               - 'crates/committee/**'
               - 'crates/compute-provider/**'
               - 'crates/fhe-params/**'
