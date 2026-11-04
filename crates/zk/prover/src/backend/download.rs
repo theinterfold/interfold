@@ -179,6 +179,19 @@ impl ZkBackend {
             fs::set_permissions(&self.bb_binary, perms).await?;
         }
 
+        // Readiness requires the pinned version from the binary itself. Do not record a binary
+        // that cannot run on this host or reports another version: the next start would only
+        // download it again.
+        let installed = self.verify_bb().await.map_err(|error| {
+            ZkError::DownloadFailed(url.clone(), format!("downloaded bb cannot run: {error}"))
+        })?;
+        if &installed != version {
+            return Err(ZkError::VersionMismatch {
+                installed,
+                required: version.clone(),
+            });
+        }
+
         let mut version_info = self.load_version_info().await;
         version_info.bb_version = Some(version.clone());
         version_info.bb_checksum = expected_checksum.map(|s| s.to_string());
@@ -927,6 +940,44 @@ mod tests {
             "{result:?}"
         );
         assert_installation_unchanged(&backend, &previous_version);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn download_bb_records_only_a_binary_that_reports_the_required_version() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        seed_installation(&backend).await;
+        let target = BbTarget::current().unwrap();
+        let required = backend.config.required_bb_version.clone();
+
+        for reported in ["0.0.1", required.as_str()] {
+            let encoder = GzEncoder::new(Vec::new(), Compression::default());
+            let mut builder = Builder::new(encoder);
+            let script = format!("#!/bin/sh\nprintf '%s\\n' '{reported}'\n");
+            append_archive_file(&mut builder, "bb", script.as_bytes());
+            let archive = builder.into_inner().unwrap().finish().unwrap();
+            backend
+                .config
+                .bb_checksums
+                .insert(target.as_str().into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.bb_download_url = url;
+
+            let result = backend.download_bb().await;
+            server.await.unwrap();
+            let recorded = backend.load_version_info().await.bb_version;
+            if reported == required {
+                result.unwrap();
+                assert_eq!(recorded, Some(required.clone()));
+            } else {
+                assert!(
+                    matches!(result, Err(ZkError::VersionMismatch { ref installed, .. }) if installed == reported),
+                    "{result:?}"
+                );
+                assert_eq!(recorded.as_deref(), Some("5.1.0"));
+            }
+        }
     }
 
     #[tokio::test]

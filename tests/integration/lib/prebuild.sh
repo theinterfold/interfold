@@ -15,6 +15,25 @@ echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required to pin noir/version.json for integration ZK fixtures" >&2
+  exit 1
+fi
+if ! command -v bb >/dev/null 2>&1; then
+  echo "bb is required to build source-aligned integration circuits" >&2
+  exit 1
+fi
+
+REQUIRED_BB="$(jq -r '.required_bb_version' "$VERSIONS_JSON")"
+REQUIRED_CIRCUITS="$(jq -r '.required_circuits_version' "$VERSIONS_JSON")"
+# Nodes treat a bb that reports another version as not installed and download the pinned one,
+# which replaces this fixture's noir folder. Circuits built with another bb do not match either.
+LOCAL_BB="$(bb --version)"
+if [[ "$LOCAL_BB" != "$REQUIRED_BB" ]]; then
+  echo "bb on PATH is ${LOCAL_BB}, integration fixtures need ${REQUIRED_BB} ($(command -v bb))" >&2
+  exit 1
+fi
+
 echo ""
 echo "PREPARING ZK CIRCUITS..."
 echo ""
@@ -50,17 +69,6 @@ else
   (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-64 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
 fi
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq is required to pin noir/version.json for integration ZK fixtures" >&2
-  exit 1
-fi
-if ! command -v bb >/dev/null 2>&1; then
-  echo "bb is required to build source-aligned integration circuits" >&2
-  exit 1
-fi
-
-REQUIRED_BB="$(jq -r '.required_bb_version' "$VERSIONS_JSON")"
-REQUIRED_CIRCUITS="$(jq -r '.required_circuits_version' "$VERSIONS_JSON")"
 source "$SCRIPT_DIR/utils.sh"
 (cd "$ROOT_DIR" && pnpm store:circuits checksums --dir "${INTEGRATION_NOIR}/circuits")
 CIRCUITS_MAP="$(jq '.files | with_entries(.value = {file: .key, checksum: .value})' \
