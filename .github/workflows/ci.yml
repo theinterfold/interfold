@@ -902,7 +902,7 @@ jobs:
       matrix:
         # persist runs base.sh and restarts the active aggregator after the committee publishes
         # its key.
-        test-suite: [persist]
+        test-suite: [persist, identity]
       fail-fast: true
     steps:
       - name: 'Check out the repo'

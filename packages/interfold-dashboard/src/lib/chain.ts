@@ -15,9 +15,12 @@ import {
   CiphernodeRegistryOwnable__factory,
   E3RefundManager__factory,
   Faucet__factory,
+  IOwnerIdentityRegistry__factory,
+  IZKPassportVerifier__factory,
   Interfold__factory,
   InterfoldTicketToken__factory,
   InterfoldToken__factory,
+  ZKPassportIdentityVerifier__factory,
 } from '@interfold/contracts/types'
 import { NETWORKS, overrideKey, selectNetwork, type Env, type Setting } from './networks'
 
@@ -137,3 +140,11 @@ export const bondingRegistryAbi = BondingRegistry__factory.abi
 export const ticketTokenAbi = InterfoldTicketToken__factory.abi
 export const ciphernodeBondTokenAbi = InterfoldToken__factory.abi
 export const faucetAbi = Faucet__factory.abi
+export const ownerIdentityRegistryAbi = IOwnerIdentityRegistry__factory.abi
+export const zkPassportIdentityVerifierAbi = ZKPassportIdentityVerifier__factory.abi
+export const zkPassportRootVerifierAbi = IZKPassportVerifier__factory.abi
+// `register` also reverts with the verifier's errors, so the call's ABI lists them to decode them.
+export const identityRegisterAbi = [
+  ...ownerIdentityRegistryAbi,
+  ...zkPassportIdentityVerifierAbi.filter((item) => item.type === 'error'),
+] as const

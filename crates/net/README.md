@@ -34,9 +34,9 @@ rules. `local_unrestricted()` is an explicit local/test policy, not a public-net
 `setup_net` connects a `NetInterface` to the event bus and timestamp-history reader. The
 `setup_net_with_limits` / `setup_net_with_limits_and_interests` variants configure startup buffering
 and participation-aware document fetching. See
-[builder network startup](../ciphernode-builder/src/builder/net.rs) for the complete recipe,
-including readiness and the transport task. Normal node users use
-[CiphernodeBuilder](../ciphernode-builder/README.md).
+[builder network startup](../ciphernode/builder/src/net.rs) for the complete recipe, including
+readiness and the transport task. Normal node users use
+[CiphernodeBuilder](../ciphernode/builder/README.md).
 
 For an in-process harness, `create_channel_bridge()` returns a `NetInterfaceHandle` and inverted
 `NetChannelBridge`; the [system harness](../tests/tests/ciphernode_system) keeps its mock network

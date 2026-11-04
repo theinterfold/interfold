@@ -2,6 +2,76 @@
   "group": "evm-da",
   "units": [
     {
+      "id": "e3-evm-config",
+      "kind": "crate",
+      "path": "crates/evm/config",
+      "one_line": "Owns EVM connection and chain settings, including ingestion defaults, without node profiles, file loading or provider I/O.",
+      "documentation": [
+        { "title": "Connection configuration", "path": "docs/pages/reference/configuration.mdx" },
+        { "title": "Chain ingestion limits", "path": "docs/architecture/committee-selection.md" }
+      ],
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [
+        {
+          "name": "ChainConfig",
+          "what": "one chain: endpoint, authentication, configured contracts, finalization, ingestion and data-availability settings",
+          "ref": "crates/evm/config/src/chain_config.rs@50@pub struct ChainConfig {"
+        },
+        {
+          "name": "ContractAddresses",
+          "what": "named configured contract endpoints, not checked ABI bindings or verified chain facts",
+          "ref": "crates/evm/config/src/contract.rs@45@pub struct ContractAddresses {"
+        },
+        {
+          "name": "Contract",
+          "what": "a bare address or an address with its deployment block",
+          "ref": "crates/evm/config/src/contract.rs@13@pub enum Contract {"
+        },
+        {
+          "name": "RPC",
+          "what": "validated HTTP(S)/WS(S) endpoint with protocol conversion and locality helpers",
+          "ref": "crates/evm/config/src/rpc.rs@43@pub struct RPC {"
+        },
+        {
+          "name": "RpcAuth",
+          "what": "none, basic credentials or a bearer token, using the configuration serde representation",
+          "ref": "crates/evm/config/src/rpc.rs@163@pub enum RpcAuth {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "the EVM-owned settings surface",
+          "ref": "crates/evm/config/src/lib.rs@7@EVM connection and chain settings"
+        },
+        {
+          "why": "production-safe ingestion defaults and explicit overrides",
+          "ref": "crates/evm/config/src/chain_config.rs@91@pub fn ingestion_confirmations(&self)"
+        },
+        {
+          "why": "deployment-block validation before constructing historical read configuration",
+          "ref": "crates/evm/config/src/chain_config.rs@122@impl TryFrom<&ChainConfig> for EvmEventConfigChain {"
+        }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "serde-derive",
+          "note": "untagged serde accepts a contract address string or a table with deploy_block",
+          "ref": "crates/evm/config/src/contract.rs@12@#[serde(untagged)]"
+        },
+        {
+          "pattern": "enum-match",
+          "note": "Contract::address_str reads either configured representation",
+          "ref": "crates/evm/config/src/contract.rs@25@Full { address, .. } => address,"
+        }
+      ],
+      "depends_on": ["e3-events"],
+      "tests": "Run cargo test --locked -p e3-evm-config for endpoint handling and ingestion defaults/validation; CLI and runtime tests cover the consumers.",
+      "unverified": ["Settings validation does not establish chain identity, canonical history or exactly-once effects."]
+    },
+    {
       "id": "e3-evm-contracts",
       "kind": "crate",
       "path": "crates/evm/contracts",
@@ -270,7 +340,7 @@
         },
         {
           "why": "restart: the block cursor saved with the snapshot replaces the deploy block",
-          "ref": "crates/sync/src/sync/state.rs@65@let block = block_repo.read().await?.unwrap_or(deploy_block);"
+          "ref": "crates/state/sync/src/state.rs@65@let block = block_repo.read().await?.unwrap_or(deploy_block);"
         }
       ],
       "rust_patterns": [
@@ -299,11 +369,12 @@
         "e3-committee",
         "e3-request",
         "e3-bfv-client",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-crypto",
         "e3-data",
         "e3-data-availability",
         "e3-events",
+        "e3-evm-config",
         "e3-evm-contracts",
         "e3-fhe-params",
         "e3-sortition",

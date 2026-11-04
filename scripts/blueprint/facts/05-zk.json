@@ -195,7 +195,7 @@
         {
           "name": "bb binary, circuits and work dir under the node's noir install dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/backend/mod.rs@94@let noir_dir = home_dir.join"
+          "ref": "crates/zk/prover/src/backend/mod.rs@96@let noir_dir = home_dir.join"
         },
         {
           "name": "version.json record of installed bb and circuits versions",
@@ -247,7 +247,7 @@
         {
           "name": "ZkBackend",
           "what": "bb binary path, circuits dir, work dir and the pinned config",
-          "ref": "crates/zk/prover/src/backend/mod.rs@39@pub struct ZkBackend"
+          "ref": "crates/zk/prover/src/backend/mod.rs@41@pub struct ZkBackend"
         },
         {
           "name": "ZkConfig",
@@ -332,7 +332,6 @@
       "depends_on": [
         "e3-committee",
         "e3-committee-hash",
-        "e3-config",
         "e3-crypto",
         "e3-bfv-client",
         "e3-trbfv",
@@ -353,9 +352,9 @@
         "DkgAggregator and DecryptionAggregator witnesses are built from the Default-variant circuit JSON (node_dkg_fold.rs:528 and :592) and proved with the Evm target (:536 and :665); I did not confirm that the default and evm circuit JSON files are identical.",
         "NodeProofAggregator publishes DKGRecursiveAggregationComplete without a proof when proof_aggregation_enabled is false (node_proof_aggregation/effects.rs:25-31); its log calls this test-only. I did not trace where the flag is set.",
         "versions.json circuits_checksums lists only 0.18.0 while required_circuits_version is 0.19.0; the 0.19.0 digest is inserted at build time from E3_CIRCUITS_ARCHIVE_SHA256 (config.rs:80-85). I did not check how release builds set that variable.",
-        "NodeProofAggregator persists through e3-data Repositories (node_proof_aggregation/actor.rs:45); whether that store is sled-backed was not traced (crates/data/src/lib.rs:18 declares sled_db).",
+        "NodeProofAggregator persists through e3-data Repositories (node_proof_aggregation/actor.rs:45); whether that store is sled-backed was not traced (crates/state/storage/src/lib.rs:18 declares sled_db).",
         "The commitment_links/*.rs consistency rules and the ECDSA checks in share_verification/transitions/ecdsa.rs were not read beyond their names.",
-        "The TaskPool, retry and memory logic in crates/multithread was not read beyond the dispatch path."
+        "The TaskPool, retry and memory logic in crates/ciphernode/multithread was not read beyond the dispatch path."
       ]
     },
     {

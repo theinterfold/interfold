@@ -32,7 +32,7 @@ import {
 
 const DIRECT_GOVERNANCE_CHAIN_IDS = new Set([31337, 11155111]);
 
-async function assertAragonGovernancePreconditions(
+export async function assertAragonGovernancePreconditions(
   ethers: any,
   config: ReturnType<typeof loadConfig>,
 ) {

@@ -16,7 +16,9 @@ where the CLI finds the file, where the node stores its data, and every key with
 default. For the procedure that makes and uses this file, see
 [Running a ciphernode](/operate/running).
 
-The source of truth is `crates/config/src`. The values on this page are for release 0.18.0.
+Loading lives in `crates/cli/src/app_config.rs`; node profiles and paths live in
+`crates/ciphernode/config/src`, EVM settings in `crates/evm/config/src`, and program settings in
+`crates/cli/src/program_config.rs`. The values on this page are for release 0.18.0.
 
 ## Config file location
 

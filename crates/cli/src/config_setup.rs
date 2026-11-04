@@ -16,7 +16,9 @@ use alloy::hex::FromHex;
 use alloy::primitives::{Address, FixedBytes};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Result};
-use e3_config::{load_config, AppConfig, RPC};
+use e3_ciphernode_config::NodeConfig;
+use e3_cli::app_config::load_config;
+use e3_evm_config::RPC;
 use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
@@ -68,7 +70,7 @@ pub fn execute(
     address: &Address,
     config_dir: &PathBuf,
     network: &str,
-) -> Result<AppConfig> {
+) -> Result<NodeConfig> {
     let (network, chain_id, availability_rpc) = network_chain(network)?;
     fs::create_dir_all(config_dir)?;
 
@@ -121,7 +123,7 @@ chains:
 
     let config = load_config("_default", Some(config_path.display().to_string()), None)?;
 
-    Ok(config)
+    Ok(config.node)
 }
 
 #[cfg(test)]
@@ -129,14 +131,14 @@ mod tests {
     use super::execute;
     use alloy::primitives::Address;
     use anyhow::Result;
-    use e3_config::chain_config::DataAvailabilityMode;
-    use e3_config::SEPOLIA_BOOTSTRAP_PEER;
+    use e3_ciphernode_config::SEPOLIA_BOOTSTRAP_PEER;
+    use e3_evm_config::DataAvailabilityMode;
     use std::fs;
 
     #[test]
     fn generated_config_uses_the_sepolia_profile_bootstrap() -> Result<()> {
         let dir = std::env::temp_dir().join(format!(
-            "e3-config-setup-test-{}-{}",
+            "e3-cli-config-setup-test-{}-{}",
             std::process::id(),
             line!()
         ));

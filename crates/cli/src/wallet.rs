@@ -6,7 +6,7 @@
 
 use anyhow::*;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::Console;
 
 use crate::{helpers::read_secret_line, wallet_get, wallet_set};
@@ -23,7 +23,7 @@ pub enum WalletCommands {
     Get,
 }
 
-pub async fn execute(out: Console, command: WalletCommands, config: AppConfig) -> Result<()> {
+pub async fn execute(out: Console, command: WalletCommands, config: NodeConfig) -> Result<()> {
     match command {
         WalletCommands::Set { private_key_stdin } => {
             let private_key = if private_key_stdin {

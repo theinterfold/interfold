@@ -24,7 +24,7 @@ clap = { workspace = true }
 compile-time = { workspace = true }
 dialoguer = { workspace = true }
 dirs = { workspace = true }
-e3-config = { workspace = true }
+e3-ciphernode-config = { workspace = true }
 e3-console = { workspace = true }
 e3-ciphernode-builder = { workspace = true }
 e3-event-system = { workspace = true }
@@ -33,6 +33,7 @@ e3-dashboard = { workspace = true }
 e3-entrypoint = { workspace = true }
 e3-events = { workspace = true }
 e3-evm = { workspace = true }
+e3-evm-config.workspace = true
 e3-evm-contracts.workspace = true
 e3-logger = { workspace = true }
 e3-trbfv = { workspace = true }
@@ -42,6 +43,7 @@ e3-init = { workspace = true }
 e3-daemon-server = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
+figment = { workspace = true }
 flate2 = "1"
 hex = { workspace = true }
 indicatif = "0.17"
@@ -49,6 +51,7 @@ opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry-stdout = { workspace = true }
 opentelemetry_sdk = { workspace = true }
+path-clean = { workspace = true }
 petname = { workspace = true }
 rand08 = { package = "rand", version = "=0.8.5", features = ["std", "std_rng"] }
 phf = { workspace = true }
@@ -56,6 +59,7 @@ rand = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+shellexpand = { workspace = true }
 tar = "0.4"
 tempfile = { workspace = true }
 tokio = { workspace = true }

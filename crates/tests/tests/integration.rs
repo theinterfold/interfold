@@ -10,12 +10,11 @@ mod common;
 use actix::Actor;
 use alloy::primitives::{Address, FixedBytes, I256, U256};
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder};
 use common::AddToCommittee;
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_ciphernode_builder::CiphernodeBuilder;
-use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_event_system::EventSystem;
 use e3_events::{
@@ -38,7 +37,7 @@ use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
-use e3_zk_prover::{VersionInfo, ZkBackend};
+use e3_zk_prover::{BBPath, CircuitInfo, VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
@@ -46,7 +45,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::Path, path::PathBuf, sync::Arc};
 use tokio::{sync::mpsc, time::sleep};
 
 #[derive(Debug, Clone, Copy)]
@@ -360,6 +359,27 @@ async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Res
     Ok(())
 }
 
+async fn collect_circuit_files(circuits_dir: &Path) -> Result<HashMap<String, CircuitInfo>> {
+    let status = tokio::process::Command::new("pnpm")
+        .current_dir(repo_root())
+        .args(["store:circuits", "checksums", "--dir"])
+        .arg(circuits_dir)
+        .status()
+        .await
+        .context("generate integration circuit checksums")?;
+    ensure!(
+        status.success(),
+        "generate integration circuit checksums: {status}"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(circuits_dir.join("checksums.json")).await?)?;
+    let files: HashMap<String, String> = serde_json::from_value(manifest["files"].clone())?;
+    Ok(files
+        .into_iter()
+        .map(|(file, checksum)| (file.clone(), CircuitInfo { file, checksum }))
+        .collect())
+}
+
 /// Create a ZkBackend for integration tests.
 /// If a local bb binary is found, uses it with fixture files (fast path).
 /// Otherwise, calls `ensure_installed()` to download bb + circuits (CI path).
@@ -389,10 +409,26 @@ async fn setup_test_zk_backend(
         tokio::fs::create_dir_all(&circuits_dir).await.unwrap();
         tokio::fs::create_dir_all(&work_dir).await.unwrap();
 
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&bb, &bb_binary).unwrap();
-        #[cfg(not(unix))]
-        compile_error!("Integration tests require unix symlink support");
+        // The installer can replace this binary. Keep the developer's bb isolated from it.
+        tokio::fs::copy(&bb, &bb_binary)
+            .await
+            .context("copy local bb into integration fixture")?;
+        let backend = ZkBackend::new(
+            BBPath::Default(bb_binary.clone()),
+            circuits_dir.clone(),
+            work_dir.clone(),
+        );
+        let local_version = backend
+            .verify_bb()
+            .await
+            .context("run local bb --version")?;
+        ensure!(
+            local_version == backend.config.required_bb_version,
+            "local bb is {}, tests need {} ({})",
+            local_version,
+            backend.config.required_bb_version,
+            bb.display()
+        );
 
         let preset_out = circuits_dir.join(preset_subdir).join(committee_str);
         let circuits_bin_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
@@ -766,13 +802,22 @@ async fn setup_test_zk_backend(
         }
 
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
+        let circuits = collect_circuit_files(&backend.circuits_dir).await?;
+        if circuits.is_empty() {
+            bail!(
+                "no circuit artifacts found in ZK integration fixture at {}",
+                backend.circuits_dir.display()
+            );
+        }
 
         // `CiphernodeBuilder` calls `ensure_installed()`, which deletes `circuits_dir` and downloads
         // the release tarball whenever `version.json` does not record the pinned bb/circuits
-        // versions. That would wipe the fixture tree we just copied from `circuits/bin/`.
+        // versions and circuit artifacts. That would wipe the fixture tree we just copied from
+        // `circuits/bin/`.
         let version_info = VersionInfo {
             bb_version: Some(backend.config.required_bb_version.clone()),
             circuits_version: Some(backend.config.required_circuits_version.clone()),
+            circuits,
             ..Default::default()
         };
         version_info
@@ -1438,28 +1483,28 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // Minimal chain config for in-process benchmarks (no RPC needed).
     // Provides slashing_manager address for EIP-712 accusation vote signatures.
-    let bench_chain_config = e3_config::chain_config::ChainConfig {
+    let bench_chain_config = e3_evm_config::ChainConfig {
         enabled: Some(false),
         name: "bench".into(),
         rpc_url: "http://localhost:8545".into(),
         rpc_auth: Default::default(),
-        contracts: e3_config::ContractAddresses {
-            interfold: e3_config::Contract::AddressOnly(
+        contracts: e3_evm_config::ContractAddresses {
+            interfold: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
-            ciphernode_registry: e3_config::Contract::AddressOnly(
+            ciphernode_registry: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
-            bonding_registry: e3_config::Contract::AddressOnly(
+            bonding_registry: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
             e3_program: None,
             fee_token: None,
-            slashing_manager: Some(e3_config::Contract::AddressOnly(
+            slashing_manager: Some(e3_evm_config::Contract::AddressOnly(
                 slashing_manager_addr.to_string(),
             )),
             dkg_fold_attestation_verifier: benchmark_dkg_fold_attestation_verifier_address()
-                .map(|a| e3_config::Contract::AddressOnly(a.to_string())),
+                .map(|a| e3_evm_config::Contract::AddressOnly(a.to_string())),
             faucet: None,
         },
         finalization_ms: None,

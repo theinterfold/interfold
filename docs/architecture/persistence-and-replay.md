@@ -1,10 +1,10 @@
 # Persistence, replay, and shutdown
 
-Owners: [event system](../../crates/event-system/), [events](../../crates/events/),
-[data](../../crates/data/), [request router](../../crates/request/), [sync](../../crates/sync/), and
-[ciphernode builder](../../crates/ciphernode-builder/). [Design principles](design-principles.md)
-describe the direction; owner-local documentation describes implementation boundaries. Neither makes
-an unimplemented durability guarantee true.
+Owners: [event system](../../crates/state/event-system/), [events](../../crates/events/),
+[data](../../crates/state/storage/), [request router](../../crates/state/request/),
+[sync](../../crates/state/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
+[Design principles](design-principles.md) describe the direction; owner-local documentation
+describes implementation boundaries. Neither makes an unimplemented durability guarantee true.
 
 Here **durable** means flushed to disk. EventStore flushes appended events before dispatch.
 `Persistable::try_mutate` only enqueues a snapshot write; durability arrives when its batch flushes.
@@ -183,7 +183,7 @@ disables further deferral until teardown/restart. Live routing, checkpoints, oth
 other E3s continue; the affected E3 can fail at its existing deadline. **Gap:** queues and failure
 records are memory-only; restart cannot recover their pre-checkpoint backlog.
 
-[Capacity tests](../../crates/request/src/routing/capacity_tests.rs) route four independently
+[Capacity tests](../../crates/state/request/src/routing/capacity_tests.rs) route four independently
 allocated secure-sized histories through real recipient creation, including full failed C3/C4
 requests and document envelopes. They test ordered delivery, default-limit overflow, spare-capacity
 release, and allocation-heavy empty buffers. Linux RSS checks require distinct resident storage and
@@ -247,7 +247,7 @@ logged.
 
 ## Storage representations and decoding
 
-The data crate's [in-memory store](../../crates/data/src/in_mem_kv_store.rs) uses
+The data crate's [in-memory store](../../crates/state/storage/src/in_mem_kv_store.rs) uses
 [`e3-hamt`](../../crates/hamt/) to share unchanged nodes between immutable map versions. Here
 "persistent" describes the data structure, not a disk flush. Its exported dump remains a
 bincode-encoded ordered map; changing the live structure does not authorize changing those bytes.
@@ -305,8 +305,8 @@ deleting identity or already matching history. It is not generic repair for comm
   before admission remain memory-only. Collector and slash-fallback clocks are not injected.
 - Checker snapshot failure and terminal DKG snapshot publication remain unacknowledged; C4
   roster-fixed writes can be stale after restart. [DKG](dkg.md) retains exact failure windows.
-- `sync/state.rs` reads repositories; document workflow and keyshare timeout policy read wall clock,
-  exceptions to the target pure-workflow boundary. Do not widen them.
+- `e3-sync`'s `state.rs` reads repositories; document workflow and keyshare timeout policy read wall
+  clock, exceptions to the target pure-workflow boundary. Do not widen them.
 - Chain nonce serialization is in memory; only slash submissions have a durable intent record beyond
   replay-derived publication work. Other transactions rely on preflight. Chain confirmation depth
   supplies no general reorg rollback. Cancellation ownership remains uneven across crates.
@@ -323,12 +323,13 @@ ceiling lives in `scripts/checks/repository-baselines.env`; retain both interim 
 the acknowledged pipeline work in #2266 is complete. These static checks do not prove runtime
 delivery or a successful shutdown. The remaining `do_send` sites include correctness paths; a
 call-count ceiling cannot establish safe delivery. Proof-skipping rejection is tested in
-[`start/start.rs`](../../crates/entrypoint/src/start/start.rs), but those unit tests exercise the
-validation function rather than the full startup path.
-[Schema tests](../../crates/entrypoint/tests/validate_older_schema.rs) check failure before
-recovery;
-[finalized reconciliation tests](../../crates/ciphernode-builder/src/finalized_lifecycle.rs) include
-bounded failed-batch retry. [Effect-gate tests](../../crates/multithread/src/effect_gate.rs) include
+[`start/mod.rs`](../../crates/ciphernode/entrypoint/src/start/mod.rs), but those unit tests exercise
+the validation function rather than the full startup path.
+[Schema tests](../../crates/ciphernode/entrypoint/tests/validate_older_schema.rs) check failure
+before recovery;
+[finalized reconciliation tests](../../crates/ciphernode/builder/src/finalized_lifecycle.rs) include
+bounded failed-batch retry.
+[Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs) include
 `replayed_failure_does_not_suppress_a_recovery_attempt`. Run affected focused Cargo tests and
 `pnpm test:integration` for cross-layer restart/shutdown scenarios. None closes the gaps merely by
 existing.

@@ -22,8 +22,8 @@
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
-use e3_config::{RpcAuth, RPC};
 use e3_evm::{EthProvider, ProviderConfig};
+use e3_evm_config::{RpcAuth, RPC};
 use std::collections::BTreeSet;
 
 /// Live Sepolia CiphernodeRegistry proxy.

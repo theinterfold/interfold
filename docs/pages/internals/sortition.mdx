@@ -322,8 +322,11 @@ The actor builds the eligible set from its local node-state projection at $\tau$
 ### Owner shortlist
 
 The actor ranks every eligible operator by its best score, then by address. This order matches the
-capped contract. The first appearance of each owner in that order gives the owner rank. The actor
-keeps every operator of the first $L$ owners, where:
+capped contract. Under a required identity policy, the eligible operators are those that
+`eligibilityAt(operator, T−1)` finds active. The read must end within 20 seconds and at least 20
+seconds before the ticket deadline; when it fails or runs out of time, the actor ranks every
+operator without the shortlist. The first appearance of each owner in that order gives the owner
+rank. The actor keeps every operator of the first $L$ owners, where:
 
 $$
 L = N + b(T, N), \qquad b(T, N) = (N - T) + m, \qquad
@@ -432,7 +435,7 @@ finalizes a full committee before the DKG deadline, `markE3Failed` records
 The Rust `CommitteeFinalizer` schedules one finalization attempt for each local ticket:
 
 $$
-t_{\text{wait}} = \max(t_{\text{close}} - t_{\text{now}}, 0) + 1\,\text{s} + 30\,\text{s} \times \texttt{party\_index}
+t_{\text{wait}} = \max(t_{\text{close}} - t_{\text{now}}, 0) + 1\,\text{s} + 30\,\text{s} \times \min(\texttt{party\_index}, 20)
 $$
 
 Before it sends, the writer runs a preflight call. If another member already finalized, the writer

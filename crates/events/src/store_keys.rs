@@ -131,6 +131,10 @@ impl StoreKeys {
         String::from("//sortition/admission/v2")
     }
 
+    pub fn sortition_identity_policy() -> String {
+        String::from("//sortition/identity_policy/v1")
+    }
+
     pub fn committee_finalizer_recovery() -> String {
         String::from("//committee_finalizer/recovery/v1")
     }

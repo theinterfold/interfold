@@ -1121,7 +1121,7 @@ const CIPHERNODE_ADDED = ethersLib.id(
 );
 
 /** The registry's deploy block in `deployed_contracts.json`, where the operator history starts. */
-function registryDeployBlock(network: string): number | undefined {
+export function registryDeployBlock(network: string): number | undefined {
   const file = path.resolve(protocolDir, "..", "..", "deployed_contracts.json");
   if (!fs.existsSync(file)) return undefined;
   const records =
@@ -1135,7 +1135,7 @@ function registryDeployBlock(network: string): number | undefined {
  * operator, and the registry keeps no list. A window that fails is read again from the next
  * provider.
  */
-async function addedOperators(
+export async function addedOperators(
   providers: ethersLib.Provider[],
   registry: string,
   fromBlock: number,

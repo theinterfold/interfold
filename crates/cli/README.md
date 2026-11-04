@@ -5,18 +5,20 @@
 The `interfold` executable manages ciphernode operation and application projects: setup,
 configuration/identity, full/bootstrap startup, multi-node processes, offline state checks, Noir
 artifacts, binary updates/removal, and program compilation/services. It delegates node lifecycle to
-[e3-entrypoint](../entrypoint/README.md) and composition to
-[e3-ciphernode-builder](../ciphernode-builder/README.md).
+[e3-entrypoint](../ciphernode/entrypoint/README.md) and composition to
+[e3-ciphernode-builder](../ciphernode/builder/README.md).
 
 ## Map
 
 | Location                                                                                         | Responsibility                                                                           |
 | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | [`main.rs`](src/main.rs), [`cli.rs`](src/cli.rs)                                                 | Process entry, argument parsing, configuration, and dispatch.                            |
+| [`app_config.rs`](src/app_config.rs)                                                             | File discovery, YAML/environment/flag precedence, and application settings assembly.     |
 | [`ciphernode/`](src/ciphernode)                                                                  | Operator onboarding, bonds/tickets, and on-chain lifecycle commands.                     |
 | [`start.rs`](src/start.rs), [`nodes.rs`](src/nodes.rs), [`node.rs`](src/node.rs)                 | Running-node monitoring, managed nodes, and offline maintenance commands.                |
 | [`noir.rs`](src/noir.rs), [`program.rs`](src/program.rs), [`init.rs`](src/init.rs)               | Proof artifact and application-project commands.                                         |
 | [`program_support.rs`](src/program_support.rs), [`openvm-compile.sh`](scripts/openvm-compile.sh) | Project runner compile/start, worker environment, cache purge, and embedded guest build. |
+| [`program_config.rs`](src/program_config.rs)                                                     | Program compile/start settings and backend validation.                                   |
 | [`helpers/telemetry.rs`](src/helpers/telemetry.rs), [`manifest.rs`](src/manifest.rs)             | Tracing/redaction and deployed-network comparison.                                       |
 | [`update.rs`](src/update.rs)                                                                     | Release selection, atomic installed-binary replacement, and binary-only removal.         |
 | [`build.rs`](build.rs)                                                                           | Deployment bindings and embedded build identity.                                         |
@@ -66,11 +68,27 @@ project, then the [project runner workflow](../program-runner/README.md) for `co
 
 Some read commands route to the local daemon while a node runs; mutating/offline operations are
 deliberately restricted. Reset/purge commands can destroy identity and keyshares: read their
-`--help` and [entrypoint safety boundary](../entrypoint/README.md) before use.
+`--help` and [entrypoint safety boundary](../ciphernode/entrypoint/README.md) before use.
 
 Verbosity is WARN by default, INFO with `-v`, DEBUG with `-vv`, TRACE with `-vvv`, and ERROR with
 `--quiet`. `--otel <grpc-endpoint>` enables tracing export; see
 [workspace debugging](../README.md#debugging).
+
+## Configuration loading
+
+The application loader selects an explicit `--config` file, otherwise searches ancestors for
+`interfold.config.yaml`, then falls back to the OS configuration directory. It expands YAML
+environment references and applies defaults → YAML → `E3_` variables (nested keys use `__`) →
+explicit CLI overrides. An absent `--otel` leaves the YAML/environment value intact.
+
+One file supplies separate node and program settings. Only the resolved node settings reach runtime
+owners; [node path resolution](../ciphernode/config/README.md) uses the loaded file's location
+rather than assuming the working directory. Program compile/start settings stay with CLI tooling;
+resolved worker configuration belongs to the [OpenVM host](../openvm-prover/README.md).
+
+Legacy `program.risc0` settings load so node commands sharing the file keep working, but
+compile/start refuse them. Unknown backends are rejected, not silently replaced; development mode
+requires an explicit flag or setting.
 
 ## Update or remove the binary
 
@@ -92,7 +110,10 @@ supported platforms.
 ## Tests
 
 Run `cargo test --locked -p e3-cli` with the build prerequisites above. Inline tests cover
-command/configuration behavior, local update/archive replacement, and telemetry redaction;
+command/configuration behavior, local update/archive replacement, and telemetry redaction. Library
+configuration tests isolate environment/working-directory fixtures from binary command tests.
+[`cli_configuration.rs`](tests/cli_configuration.rs) checks executable discovery, node paths,
+program settings/backend rejection, and loopback daemon forwarding;
 [`cli_secrets.rs`](tests/cli_secrets.rs) exercises the executable's secret/configuration handling.
 The [integration harness](../../tests/integration) covers live multi-process operation separately.
 See [AGENTS.md](AGENTS.md) for shared bindings and command-safety change guidance.

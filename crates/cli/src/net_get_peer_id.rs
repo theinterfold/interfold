@@ -5,11 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 
-pub async fn execute(out: &Console, config: &AppConfig) -> Result<()> {
-    let peer_id = e3_entrypoint::net::get_peer_id::execute(config).await?;
+pub async fn execute(out: &Console, config: &NodeConfig) -> Result<()> {
+    let peer_id = e3_entrypoint::net::execute(config).await?;
     log!(out, "{}", peer_id);
     Ok(())
 }

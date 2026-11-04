@@ -49,19 +49,20 @@ COPY crates/aggregator/Cargo.toml ./aggregator/Cargo.toml
 COPY crates/bfv-client/Cargo.toml ./bfv-client/Cargo.toml
 COPY crates/bfv-test-support/Cargo.toml ./bfv-test-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
-COPY crates/ciphernode-builder/Cargo.toml ./ciphernode-builder/Cargo.toml
+COPY crates/ciphernode/builder/Cargo.toml ./ciphernode/builder/Cargo.toml
+COPY crates/ciphernode/config/Cargo.toml ./ciphernode/config/Cargo.toml
 COPY crates/compute-provider/Cargo.toml ./compute-provider/Cargo.toml
 COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml
-COPY crates/config/Cargo.toml ./config/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
 COPY crates/crypto/Cargo.toml ./crypto/Cargo.toml
-COPY crates/data/Cargo.toml ./data/Cargo.toml
+COPY crates/state/storage/Cargo.toml ./state/storage/Cargo.toml
 COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
-COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
-COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
+COPY crates/ciphernode/entrypoint/Cargo.toml ./ciphernode/entrypoint/Cargo.toml
+COPY crates/state/event-system/Cargo.toml ./state/event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
 COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
+COPY crates/evm/config/Cargo.toml ./evm/config/Cargo.toml
 COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
 COPY crates/evm/client/Cargo.toml ./evm/client/Cargo.toml
 COPY crates/fhe/Cargo.toml ./fhe/Cargo.toml
@@ -73,7 +74,7 @@ COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/keyshare/Cargo.toml ./keyshare/Cargo.toml
 COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
 COPY crates/logger/Cargo.toml ./logger/Cargo.toml
-COPY crates/multithread/Cargo.toml ./multithread/Cargo.toml
+COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
 COPY crates/openvm-host/Cargo.toml ./openvm-host/Cargo.toml
 COPY crates/openvm-types/Cargo.toml ./openvm-types/Cargo.toml
@@ -83,14 +84,14 @@ COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
 COPY crates/polynomial/fhe-adapter/Cargo.toml ./polynomial/fhe-adapter/Cargo.toml
 COPY crates/program-runner/Cargo.toml ./program-runner/Cargo.toml
 COPY crates/program-server/Cargo.toml ./program-server/Cargo.toml
-COPY crates/request/Cargo.toml ./request/Cargo.toml
+COPY crates/state/request/Cargo.toml ./state/request/Cargo.toml
 COPY crates/safe/Cargo.toml ./safe/Cargo.toml
 COPY crates/sdk/Cargo.toml ./sdk/Cargo.toml
 COPY crates/slashing/Cargo.toml ./slashing/Cargo.toml
 COPY crates/sortition/Cargo.toml ./sortition/Cargo.toml
 COPY crates/dashboard/Cargo.toml ./dashboard/Cargo.toml
-COPY crates/daemon-server/Cargo.toml ./daemon-server/Cargo.toml
-COPY crates/sync/Cargo.toml ./sync/Cargo.toml
+COPY crates/ciphernode/daemon-server/Cargo.toml ./ciphernode/daemon-server/Cargo.toml
+COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml
 COPY crates/test-support/Cargo.toml ./test-support/Cargo.toml
 COPY crates/task-pool/Cargo.toml ./task-pool/Cargo.toml
 COPY crates/tests/Cargo.toml ./tests/Cargo.toml
@@ -104,7 +105,7 @@ COPY crates/zk/witness/Cargo.toml ./zk/witness/Cargo.toml
 COPY crates/zk/samples/Cargo.toml ./zk/samples/Cargo.toml
 COPY crates/zk/benchmarks/Cargo.toml ./zk/benchmarks/Cargo.toml
 
-RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./entrypoint/build.rs
+RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./ciphernode/entrypoint/build.rs
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./cli/build.rs
 RUN for d in ./*/ ./*/*/ ; do \
         if [ -f "$d/Cargo.toml" ]; then \

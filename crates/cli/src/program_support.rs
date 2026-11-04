@@ -9,7 +9,7 @@
 //! through `e3_program_runner::run`. Every command runs in the current directory, the project root.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use e3_config::ProgramConfig;
+use e3_cli::program_config::ProgramConfig;
 use std::{env, io::Write, path::Path};
 use tokio::{fs, process::Command, signal};
 

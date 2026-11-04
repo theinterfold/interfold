@@ -66,6 +66,7 @@
     "rust:build": "cargo build --locked --release",
     "prerust:build": "pnpm evm:build && pnpm fixtures:build",
     "committee:new": "cd packages/interfold-contracts && pnpm committee:new",
+    "identity:mock-gate": "cd packages/interfold-contracts && pnpm identity:mock-gate",
     "committee:get-public-key": "cd packages/interfold-contracts && pnpm committee:get-public-key",
     "committee:get-active-aggregator": "cd packages/interfold-contracts && pnpm committee:get-active-aggregator",
     "committee:publish": "cd packages/interfold-contracts && pnpm hardhat committee:publish",

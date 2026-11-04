@@ -4,9 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod bb_path;
 mod download;
 mod setup;
-use e3_config::BBPath;
+
+pub use bb_path::BBPath;
 
 #[cfg(test)]
 mod tests;

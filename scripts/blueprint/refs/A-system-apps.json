@@ -143,13 +143,10 @@
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap)",
-      "crates/cli/src/start.rs@174@e3_entrypoint::start::start::execute(config, bootstrap)"
+      "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/start.rs@174@e3_entrypoint::start::execute(config, bootstrap)"
     ],
-    "line_text": [
-      "start::execute(config, peers, bootstrap).await?",
-      "let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;"
-    ],
+    "line_text": ["start::execute(config, peers, bootstrap).await?", "let node = e3_entrypoint::start::execute(config, bootstrap).await?;"],
     "note": "The Start subcommand calls start::execute, which calls the e3-entrypoint start that launches the node."
   },
   {

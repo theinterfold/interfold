@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use alloy::{primitives::Address, providers::WalletProvider};
 use anyhow::{Context, Result};
-use e3_config::{AppConfig, ContractAddresses};
+use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
@@ -16,6 +16,7 @@ use e3_evm::{
     helpers::{load_signer_from_repository, ConcreteWriteProvider, EthProvider, ProviderConfig},
     CommitteeScan, EthPrivateKeyRepositoryFactory, OperatorCommittee,
 };
+use e3_evm_config::ContractAddresses;
 
 use e3_evm_contracts::{IBondingRegistry, IERC20Metadata, IInterfoldTicketToken};
 
@@ -35,7 +36,7 @@ pub(crate) struct ChainContext {
 }
 
 impl ChainContext {
-    pub(crate) async fn new(config: &AppConfig, selection: Option<&str>) -> Result<Self> {
+    pub(crate) async fn new(config: &NodeConfig, selection: Option<&str>) -> Result<Self> {
         let chain = select_chain(config, selection)?;
         let bonding_registry = parse_address(chain.contracts.bonding_registry.address_str())?;
 

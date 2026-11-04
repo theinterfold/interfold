@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_logger::{
     is_sensitive_field, telemetry_metadata_is_safe, LogCollector, OperationalLogLayer,
     REDACTED_FIELD_VALUE,
@@ -87,7 +87,7 @@ pub fn setup_simple_tracing(log_level: Level) {
         .try_init();
 }
 
-pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
+pub fn setup_tracing(config: &NodeConfig, log_level: Level) -> Result<()> {
     let name = config.name();
     LogCollector::init(&name, Some(operational_log_path(config)));
 
@@ -140,7 +140,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
     Ok(())
 }
 
-fn operational_log_path(config: &AppConfig) -> PathBuf {
+fn operational_log_path(config: &NodeConfig) -> PathBuf {
     config
         .log_file()
         .parent()

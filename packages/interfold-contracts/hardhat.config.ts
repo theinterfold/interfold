@@ -17,6 +17,7 @@ import {
   ciphernodeAdminAdd,
   ciphernodeMintTokens,
   ciphernodeRemove,
+  identityMockGate,
   updateSubmissionWindow,
 } from "./tasks/ciphernode";
 import {
@@ -106,6 +107,7 @@ const config: HardhatUserConfig = {
     enableE3,
     cleanDeploymentsTask,
     updateSubmissionWindow,
+    identityMockGate,
   ],
   networks: {
     hardhat: {

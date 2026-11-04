@@ -5,10 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 
-pub fn extract_env_vars_vite(config: &AppConfig, chain: &str) -> String {
+pub fn extract_env_vars_vite(config: &NodeConfig, chain: &str) -> String {
     let mut env_vars = Vec::new();
 
     // Extract from first enabled chain (or first chain if none specified)
@@ -46,7 +46,7 @@ pub fn extract_env_vars_vite(config: &AppConfig, chain: &str) -> String {
     env_vars.join(" ")
 }
 
-pub fn extract_env_vars(config: &AppConfig, chain: &str) -> String {
+pub fn extract_env_vars(config: &NodeConfig, chain: &str) -> String {
     let mut env_vars = Vec::new();
 
     // Extract from first enabled chain (or first chain if none specified)
@@ -74,7 +74,7 @@ pub fn extract_env_vars(config: &AppConfig, chain: &str) -> String {
 
     env_vars.join(" ")
 }
-pub async fn execute(out: Console, config: &AppConfig, chain: &str, as_vite: bool) -> Result<()> {
+pub async fn execute(out: Console, config: &NodeConfig, chain: &str, as_vite: bool) -> Result<()> {
     if as_vite {
         log!(out, "{}", extract_env_vars_vite(config, chain));
     } else {

@@ -19,8 +19,25 @@ impl Handler<TypedEvent<e3_events::EvmLogObserved>> for Sortition {
                     Ok(admission)
                 })?;
             }
+            if let Some(change) = e3_events::IdentityPolicyChange::from_observed_log(&log)? {
+                self.identity_policy.try_mutate(&ec, |mut policy| {
+                    policy.record(&change)?;
+                    Ok(policy)
+                })?;
+            }
             Ok(())
         })
+    }
+}
+
+impl Handler<IdentityPolicyRequiredAt> for Sortition {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, msg: IdentityPolicyRequiredAt, _: &mut Self::Context) -> Self::Result {
+        Ok(self
+            .identity_policy
+            .try_get()?
+            .required_at(msg.chain_id, msg.timepoint))
     }
 }
 
@@ -223,7 +240,7 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
     fn handle(
         &mut self,
         msg: TypedEvent<CommitteeRequested>,
-        _: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
@@ -240,6 +257,8 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
             self.bus.with_ec(&ec).err(EType::Sortition, error);
             return;
         }
+        self.committee_deadlines
+            .insert(e3_id.clone(), msg.committee_deadline);
 
         if let Err(error) = self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.seeds.insert(e3_id.clone(), msg.seed);
@@ -254,7 +273,7 @@ impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
             .and_then(|recovery| recovery.pending_requests.get(&e3_id).cloned());
         if self.effects_enabled {
             if let Some(request) = pending {
-                self.perform_sortition(request);
+                self.perform_sortition(request, ctx);
             }
         }
     }

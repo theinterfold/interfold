@@ -7,7 +7,8 @@
 use crate::manifest::{self, Finding};
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
+use e3_cli::program_config::ProgramConfig;
 use e3_console::{log, Console};
 
 #[derive(Subcommand, Clone, Debug)]
@@ -29,9 +30,14 @@ pub enum ConfigCommands {
     },
 }
 
-pub async fn execute(out: Console, command: ConfigCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(
+    out: Console,
+    command: ConfigCommands,
+    config: &NodeConfig,
+    program: &ProgramConfig,
+) -> Result<()> {
     match command {
-        ConfigCommands::Get { param } => get(out, param, config),
+        ConfigCommands::Get { param } => get(out, param, config, program),
         ConfigCommands::Check {
             chain,
             manifest_url,
@@ -48,7 +54,7 @@ async fn check(
     out: Console,
     chain_filter: Option<String>,
     manifest_url: Option<String>,
-    config: &AppConfig,
+    config: &NodeConfig,
 ) -> Result<()> {
     let (published, source) = manifest::fetch(manifest_url.as_deref()).await?;
     log!(out, "Deployment manifest: {}", source);
@@ -158,7 +164,12 @@ async fn check(
     Ok(())
 }
 
-fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
+fn get(
+    out: Console,
+    param: Option<String>,
+    config: &NodeConfig,
+    program: &ProgramConfig,
+) -> Result<()> {
     match param.as_deref() {
         Some("name") => {
             log!(out, "{}", config.name());
@@ -228,7 +239,7 @@ fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
             }
         }
         Some("program") => {
-            log!(out, "{:?}", config.program());
+            log!(out, "{:?}", program);
         }
         Some(param) => {
             anyhow::bail!("Unknown config parameter: {}", param);
@@ -253,7 +264,7 @@ fn get(out: Console, param: Option<String>, config: &AppConfig) -> Result<()> {
             log!(out, "work_dir: {}", config.work_dir().display());
             log!(out, "chains: {:?}", config.chains());
             log!(out, "nodes: {:?}", config.nodes());
-            log!(out, "program: {:?}", config.program());
+            log!(out, "program: {:?}", program);
         }
     }
     Ok(())

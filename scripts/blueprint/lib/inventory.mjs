@@ -43,7 +43,18 @@ const lines = (p) => readFileSync(p, 'utf8').split('\n')
 
 // Hand-maintained primary responsibilities for the blueprint, not the full Cargo dependency graph.
 export const LAYERS = {
-  entry: ['cli', 'entrypoint', 'ciphernode-builder', 'dashboard', 'daemon-server', 'console', 'init', 'fs', 'zk/build', 'zk/benchmarks'],
+  entry: [
+    'cli',
+    'ciphernode/entrypoint',
+    'ciphernode/builder',
+    'dashboard',
+    'ciphernode/daemon-server',
+    'console',
+    'init',
+    'fs',
+    'zk/build',
+    'zk/benchmarks',
+  ],
   clients: [
     'program-server',
     'program-runner',
@@ -56,9 +67,30 @@ export const LAYERS = {
     'openvm-types',
     'openvm-prover',
   ],
-  workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk/prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
-  adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
-  vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts'],
+  workflows: [
+    'state/request',
+    'sortition',
+    'keyshare',
+    'aggregator',
+    'slashing',
+    'zk/prover',
+    'fhe',
+    'ciphernode/multithread',
+    'trbfv',
+    'bfv-client',
+  ],
+  adapters: ['evm/runtime', 'net', 'state/sync', 'state/event-system', 'state/storage', 'data-availability', 'logger'],
+  vocabulary: [
+    'events',
+    'ciphernode/config',
+    'fhe-params',
+    'zk/config',
+    'zk/witness',
+    'committee',
+    'committee-hash',
+    'evm/contracts',
+    'evm/config',
+  ],
   foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
   validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
 }

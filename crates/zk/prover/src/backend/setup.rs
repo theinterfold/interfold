@@ -8,7 +8,7 @@ use crate::config::VersionInfo;
 use crate::error::ZkError;
 use std::path::PathBuf;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{SetupStatus, ZkBackend};
 
@@ -33,7 +33,7 @@ impl ZkBackend {
         };
 
         let circuits_ok = version_info.circuits_match(&self.config.required_circuits_version)
-            && self.circuits_dir.exists();
+            && self.circuits_files_exist(&version_info);
 
         match (bb_ok, circuits_ok) {
             (true, true) => SetupStatus::Ready,
@@ -64,8 +64,20 @@ impl ZkBackend {
         if !self.bb_binary.exists() {
             return (false, None);
         };
-        let version = self.verify_bb().await.ok();
-        let bb_ok = version_info.bb_matches(&self.config.required_bb_version);
+        let version = match self.verify_bb().await {
+            Ok(version) => Some(version),
+            Err(error) => {
+                warn!(%error, "installed Barretenberg cannot run");
+                None
+            }
+        };
+        if let Some(reported) = &version {
+            if reported != &self.config.required_bb_version {
+                warn!(%reported, required = %self.config.required_bb_version, "Barretenberg version mismatch");
+            }
+        }
+        let bb_ok = version_info.bb_matches(&self.config.required_bb_version)
+            && version.as_deref() == Some(self.config.required_bb_version.as_str());
         (bb_ok, version)
     }
 
@@ -97,11 +109,18 @@ impl ZkBackend {
                 installed,
                 required,
             } => {
-                info!(
-                    "updating circuits: {} -> {}",
-                    installed.as_deref().unwrap_or("not installed"),
-                    required
-                );
+                if installed.as_deref() == Some(required.as_str()) {
+                    info!(
+                        "repairing circuits v{}: recorded artifacts are missing or invalid",
+                        required
+                    );
+                } else {
+                    info!(
+                        "updating circuits: {} -> {}",
+                        installed.as_deref().unwrap_or("not installed"),
+                        required
+                    );
+                }
                 self.download_circuits().await
             }
             SetupStatus::FullSetupNeeded => {

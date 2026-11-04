@@ -52,6 +52,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {
                 Ok(recovery)
             })?;
             self.processed_requests.remove(&msg.e3_id);
+            self.forget_committee_deadline(&msg.e3_id);
 
             Ok(())
         })

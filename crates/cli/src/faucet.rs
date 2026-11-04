@@ -12,7 +12,7 @@ use alloy::{
     sol,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_crypto::Cipher;
 use e3_entrypoint::helpers::datastore::get_repositories;
@@ -48,7 +48,7 @@ use crate::helpers::chain::select_chain;
 
 /// Calls `faucet()` on the configured Faucet contract, sending FOLD + fee
 /// tokens to the operator's signing address. Testnet only.
-pub async fn execute(out: Console, config: &AppConfig, selection: Option<&str>) -> Result<()> {
+pub async fn execute(out: Console, config: &NodeConfig, selection: Option<&str>) -> Result<()> {
     let chain = select_chain(config, selection)?;
     let faucet_contract = chain
         .contracts

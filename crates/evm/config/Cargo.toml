@@ -1,0 +1,15 @@
+[package]
+name = "e3-evm-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EVM connection and chain settings for Interfold"
+repository.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+anyhow.workspace = true
+e3-events.workspace = true
+serde.workspace = true
+tracing.workspace = true
+url.workspace = true

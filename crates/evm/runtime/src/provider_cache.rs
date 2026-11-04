@@ -11,9 +11,9 @@ use crate::helpers::{
 use crate::EthPrivateKeyRepositoryFactory;
 use alloy::signers::{k256::ecdsa::SigningKey, local::LocalSigner};
 use anyhow::Result;
-use e3_config::chain_config::ChainConfig;
 use e3_crypto::Cipher;
 use e3_data::Repositories;
+use e3_evm_config::ChainConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 

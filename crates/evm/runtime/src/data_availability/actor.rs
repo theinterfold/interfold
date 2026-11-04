@@ -7,7 +7,6 @@ use actix::{
 };
 use alloy::primitives::keccak256;
 use e3_bfv_client::validate_pk_commitment;
-use e3_config::chain_config::{DataAvailabilityConfig, DataAvailabilityMode};
 use e3_data::Repository;
 use e3_data_availability::{
     public_key::{self, ChunkLayout},
@@ -18,6 +17,7 @@ use e3_events::{
     CommitteePublicKeyChunkPublished, CommitteePublished, E3id, EType, EventContext,
     EventPublisher, EventType, InterfoldEvent, InterfoldEventData, Sequenced,
 };
+use e3_evm_config::{DataAvailabilityConfig, DataAvailabilityMode};
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};

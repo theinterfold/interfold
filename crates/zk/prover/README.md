@@ -33,10 +33,13 @@ backend before requests are served.
 
 ## Backend and public API
 
-`ZkBackend::new(bb_path, circuits_dir, work_dir)` takes `e3_config::BBPath` and artifact/work paths.
-`check_status().await` reports setup state; `ensure_installed().await` prepares required
-tools/artifacts and may download/install them. Version/checksum requirements come from
-[versions.json](versions.json). `with_bb_timeout` bounds each proving process.
+`ZkBackend::new(bb_path, circuits_dir, work_dir)` takes this crate's `BBPath` and artifact/work
+paths. `BBPath::Default` selects a managed, version-checked binary; `Custom` retains an
+operator-managed binary. Application composition translates resolved paths and the custom-binary
+setting into this backend-owned choice. `check_status().await` reports setup state;
+`ensure_installed().await` prepares required tools/artifacts and may download/install them.
+Version/checksum requirements come from [versions.json](versions.json). `with_bb_timeout` bounds
+each proving process.
 
 `ZkProver::new(&backend)` executes proof generation and verification. Select the matching artifact
 directory with `resolve_artifacts_dir(preset, committee)` and use the explicit variant methods where
@@ -56,7 +59,7 @@ Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
 verification runs off the actor runtime through that pool, preserving serial response/barrier order.
 These arguments are required: callers must not create an independent production verification pool.
-The [builder wiring](../../ciphernode-builder/src/builder/extensions.rs) shows hydration before
+The [builder wiring](../../ciphernode/builder/src/extensions.rs) shows hydration before
 effect-enabled replay. Operators normally use the [CLI Noir commands](../../cli/src/noir.rs), not
 manual actor construction. Slashing implementation lives in [e3-slashing](../../slashing/README.md).
 

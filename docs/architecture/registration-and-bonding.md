@@ -140,6 +140,64 @@ preserves other pooled liabilities. Decimal checks establish scale, not market v
 Fee-token/raw-price configuration is separate and atomic; `setRandomnessFlatFee` changes only its
 nonzero raw-unit charge.
 
+## Owner identity
+
+`setIdentityPolicy(registry,required)` (owner only) checkpoints an identity policy in its own
+namespace and emits `IdentityPolicyUpdated`; those events are the policy history, and no view
+returns it. An unset or disabled policy requires no identity. A required policy needs a deployed
+`OwnerIdentityRegistry`: `eligibilityAt(operator,T−1)` then also requires
+`isVerifiedAt(bondOwnerAt(operator,T−1),T−1)`, and owner transfers check identity before they move
+counted capacity. One verified owner may fund many operators; the selection cap still gives each
+owner one seat.
+
+`OwnerIdentityRegistry.register(evidence)` passes the caller as the owner to the governance-set
+`IIdentityVerifier`, which must bind the credential to that owner, and checkpoints the result. Each
+identifier stays reserved to its first owner through replacement, expiry, and revocation.
+Registration cannot shorten an existing expiry, so governance revokes first. Expiry and revocation
+keep earlier snapshot answers. `setVerifier` accepts any verifier contract: a replacement that
+derives other identifiers lets every registered credential claim a second owner, so it needs a new
+registry. The registry runs behind a transparent proxy that governance administers. An upgrade keeps
+every credential and reservation, so identity recovery (for example, moving a credential to a new
+owner address) can be added later without every owner proving again.
+
+Every policy change resets counted owner capacity. Requests fail capacity closed until
+`refreshOperatorStatuses` counts the operators again, so governance refreshes every operator in the
+batch that changes a policy or calls `revoke`. Under a required policy, capacity covers fixed 30-day
+windows from Unix time zero: an owner counts only when its credential lasts to the end of the
+current window, so a short credential stays eligible but cannot make the count stale early. After
+the window end, or after a revocation of a current credential, capacity reads zero until the next
+refresh. It then counts only the owners of refreshed operators until every operator is refreshed, so
+it can only undercount. While the policy is required, each full node refreshes its own operator once
+in each window, about a block after the window starts, so no keeper is needed. During an admission
+pause, an operator also needs identity at the pause cutoff, so a later credential or policy change
+cannot widen the frozen pool. Owners renew before the window that their credential ends in, or they
+stop counting toward capacity; an owner who renews during a window counts after
+`interfold ciphernode activate` or at the next window. Under a required policy, a full node reads
+`eligibilityAt` at T−1 for every candidate, and the Rust owner shortlist ranks only the eligible
+operators. If that read fails or cannot end 20 seconds before the ticket deadline, the node ranks
+without the shortlist. Turn `required` on only when, for the largest committee size, enough distinct
+verified owners run a release that has the eligibility read and the self-refresh, are online, and
+are eligible; nodes on an older release keep the shortlist on and can skip seats. An identifier
+proves what its verifier proves (for a document verifier, one document rather than one person); it
+does not stop identity rental.
+
+`ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
+cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,
+proof-age window, and dev mode that its caller passes, so the verifier replaces them with fixed
+values. It accepts one ZKPassport version (the public-input layout belongs to the version), one
+identifier type, and one OPRF key hash (ZKPassport's key for salted proofs, zero otherwise), because
+salted and non-salted identifiers of one document differ and a salted identifier depends on the key.
+The proof must be bound to the registering owner and `block.chainid`, show an expiry date at or
+after the evidence's `validUntil`, and include strict FaceMatch when configured. The credential ends
+at `validUntil`, or `MAX_VALIDITY` after the proof date if that is earlier. The identifier hashes
+the scoped nullifier with the domain and scope, so it belongs to one document; a second document or
+a renewed one gives a new identifier. A non-salted identifier comes from document data and the
+scope, so the issuing state, which holds that data, can compute it and link it to the person. A
+salted identifier avoids that, but it depends on ZKPassport's OPRF key. ZKPassport's admin keys
+control its verifier, helper, certificate registry, and OPRF key without delay. When ZKPassport
+retires the pinned version, registration and renewal revert until governance sets a verifier for the
+new version.
+
 ## Deactivation and exit
 
 Removing tickets or unbonding can make an operator inactive without removing its IMT leaf.
@@ -188,9 +246,15 @@ routes drain. Default-admin handover uses the two-day `AccessControlDefaultAdmin
   [admission tests](../../packages/interfold-contracts/test/Registry/BondingAdmission.spec.ts),
   [ticket tests](../../packages/interfold-contracts/test/Token/InterfoldTicketToken.spec.ts), and
   [exit queue tests](../../packages/interfold-contracts/test/Registry/ExitQueueLib.spec.ts) own
-  financial and authorization behavior. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs)
-  own process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets`
-  as relevant.
+  financial and authorization behavior.
+  [Identity tests](../../packages/interfold-contracts/test/Registry/BondingIdentity.spec.ts) and
+  [registry tests](../../packages/interfold-contracts/test/Registry/OwnerIdentityRegistry.spec.ts)
+  own the identity gate and credential history;
+  [ZKPassport verifier tests](../../packages/interfold-contracts/test/Verifiers/ZKPassportIdentityVerifier.spec.ts)
+  own its binding, version, identifier-type, and OPRF-key rules against mocks of ZKPassport's
+  contracts, not against real proofs. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own
+  process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as
+  relevant.
 - [EVM event decoding](../../crates/evm/runtime/src/bonding_registry/events.rs) tests typed owner,
   policy, and activity projection inputs. Those tests do not establish complete restart or migration
   behavior.

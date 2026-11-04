@@ -6,9 +6,9 @@
 
 use anyhow::*;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
-use e3_zk_prover::{SetupStatus, ZkBackend};
+use e3_zk_prover::{BBPath, SetupStatus, ZkBackend};
 use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
@@ -37,8 +37,12 @@ pub enum NoirCommands {
     },
 }
 
-pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) -> Result<()> {
-    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir());
+pub async fn execute(out: Console, command: NoirCommands, config: &NodeConfig) -> Result<()> {
+    let backend = ZkBackend::new(
+        BBPath::new(config.bb_binary(), config.using_custom_bb()),
+        config.circuits_dir(),
+        config.work_dir(),
+    );
 
     match command {
         NoirCommands::Status => {
@@ -103,12 +107,12 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
     log!(out, "Barretenberg (bb):");
     log!(out, "  Path: {}", backend.bb_binary.display());
     if let Some(ref v) = version_info.bb_version {
-        log!(out, "  Version: {}", v);
+        log!(out, "  Recorded version: {}", v);
     }
     if backend.bb_binary.exists() {
-        log!(out, "  Installed");
+        log!(out, "  Binary exists");
     } else {
-        log!(out, "  Not installed");
+        log!(out, "  Binary missing");
     }
 
     log!(out, "");
@@ -131,12 +135,12 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             .unwrap_or("not pinned")
     );
     if let Some(ref v) = version_info.circuits_version {
-        log!(out, "  Version: {}", v);
+        log!(out, "  Recorded version: {}", v);
     }
     if backend.circuits_dir.exists() {
-        log!(out, "  Installed");
+        log!(out, "  Directory exists");
     } else {
-        log!(out, "  Not installed");
+        log!(out, "  Directory missing");
     }
 
     log!(out, "");
@@ -152,8 +156,10 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             log!(out, "Status: Barretenberg needs update");
             log!(
                 out,
-                "  Installed: {}",
-                installed.as_deref().unwrap_or("not installed")
+                "  Reported version: {}",
+                installed
+                    .as_deref()
+                    .unwrap_or("unavailable (binary missing or cannot run)")
             );
             log!(out, "  Required: {}", required);
             log!(out, "\nRun `interfold noir setup` to update");
@@ -163,6 +169,9 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
             required,
         } => {
             log!(out, "Status: Circuits need update");
+            if installed.as_deref() == Some(required.as_str()) {
+                log!(out, "  Recorded circuit artifacts are missing or invalid");
+            }
             log!(
                 out,
                 "  Installed: {}",
@@ -304,7 +313,6 @@ async fn execute_setup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_config::BBPath;
     use e3_zk_prover::ZkConfig;
 
     #[cfg(unix)]
@@ -312,7 +320,7 @@ mod tests {
     async fn setup_requires_explicit_archive_subset() {
         use crate::cli::Cli;
         use clap::Parser;
-        use e3_zk_prover::VersionInfo;
+        use e3_zk_prover::{CircuitInfo, VersionInfo};
         use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, process::Command};
 
         assert!(Cli::try_parse_from([
@@ -388,13 +396,22 @@ mod tests {
         ];
         let cli = Cli::try_parse_from(args).unwrap();
         let config = cli.load_config().unwrap();
-        let circuits = config.circuits_dir();
+        let circuits = config.node.circuits_dir();
         assert!(circuits.starts_with(temp.path()));
         fs::create_dir_all(&circuits).unwrap();
         fs::write(circuits.join("retained"), b"previous").unwrap();
         let version_file = circuits.parent().unwrap().join("version.json");
+        let mut circuit_files = std::collections::HashMap::new();
+        circuit_files.insert(
+            "retained".into(),
+            CircuitInfo {
+                file: "retained".into(),
+                checksum: "fixture-checksum".into(),
+            },
+        );
         VersionInfo {
             circuits_version: Some("previous".into()),
+            circuits: circuit_files,
             ..Default::default()
         }
         .save(&version_file)

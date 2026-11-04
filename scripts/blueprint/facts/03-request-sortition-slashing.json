@@ -5,196 +5,192 @@
       "id": "e3-request",
       "documentation": [{ "title": "Request routing and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
-      "path": "crates/request",
+      "path": "crates/state/request",
       "one_line": "Routes every bus event to a per-E3 context, creates that E3's actors on demand, and tears the context down when the E3 ends.",
       "actors": [
         {
           "name": "E3Router",
           "role": "Subscribes to every bus event, routes each one to its E3 context through RequestRouter, creates contexts lazily, and publishes E3RequestComplete.",
-          "ref": "crates/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
+          "ref": "crates/state/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
         },
         {
           "name": "E3LifecycleCoordinator",
           "role": "Durable observer that tracks each E3 stage (Requested, CommitteeFinalized, KeyPublished, and so on); it publishes no events.",
-          "ref": "crates/request/src/lifecycle/actor.rs@86@impl Actor for E3LifecycleCoordinator {"
+          "ref": "crates/state/request/src/lifecycle/actor.rs@86@impl Actor for E3LifecycleCoordinator {"
         }
       ],
       "consumes": [
         {
           "name": "every bus event (EventType::All)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/effects/build_context.rs@128@self.bus.subscribe(EventType::All, addr.clone().recipient());"
+          "ref": "crates/state/request/src/routing/effects/build_context.rs@128@self.bus.subscribe(EventType::All, addr.clone().recipient());"
         },
         {
           "name": "Shutdown and EffectsEnabled (broadcast to all contexts)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/workflow.rs@73@InterfoldEventData::Shutdown(_) | InterfoldEventData::EffectsEnabled(_)"
+          "ref": "crates/state/request/src/routing/workflow.rs@73@InterfoldEventData::Shutdown(_) | InterfoldEventData::EffectsEnabled(_)"
         },
         {
           "name": "SyncEffect (reconciles recovered selections, writes checkpoint)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/handlers.rs@116@if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {"
+          "ref": "crates/state/request/src/routing/handlers.rs@116@if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {"
         },
         {
           "name": "per-E3 events such as E3Requested (create or route to a context)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/workflow.rs@167@RoutingDecision::Process {"
+          "ref": "crates/state/request/src/routing/workflow.rs@167@RoutingDecision::Process {"
         },
         {
           "name": "E3Failed (slashable reasons: teardown after a grace period)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/workflow.rs@162@InterfoldEventData::E3Failed(_) => PostForward::ScheduleTeardown,"
+          "ref": "crates/state/request/src/routing/workflow.rs@162@InterfoldEventData::E3Failed(_) => PostForward::ScheduleTeardown,"
         },
         {
           "name": "E3RequestComplete (teardown of the context)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/workflow.rs@163@InterfoldEventData::E3RequestComplete(_) => PostForward::Teardown,"
+          "ref": "crates/state/request/src/routing/workflow.rs@163@InterfoldEventData::E3RequestComplete(_) => PostForward::Teardown,"
         },
         {
           "name": "E3Requested (stores E3Meta as a dependency)",
           "by": "E3MetaExtension",
-          "ref": "crates/request/src/meta.rs@68@let InterfoldEventData::E3Requested(data) = event.get_data() else {"
+          "ref": "crates/state/request/src/meta.rs@68@let InterfoldEventData::E3Requested(data) = event.get_data() else {"
         },
         {
           "name": "LIFECYCLE_EVENTS (E3Requested, CommitteeFinalized, CiphertextOutputPublished, E3Failed, and others)",
           "by": "E3LifecycleCoordinator",
-          "ref": "crates/request/src/lifecycle/actor.rs@34@const LIFECYCLE_EVENTS: &[EventType] = &["
+          "ref": "crates/state/request/src/lifecycle/actor.rs@34@const LIFECYCLE_EVENTS: &[EventType] = &["
         },
         {
           "name": "Shutdown (persists the stage map and stops)",
           "by": "E3LifecycleCoordinator",
-          "ref": "crates/request/src/lifecycle/actor.rs@72@subscriptions.push(EventType::Shutdown);"
+          "ref": "crates/state/request/src/lifecycle/actor.rs@72@subscriptions.push(EventType::Shutdown);"
         }
       ],
-      "emits": [{ "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/request/src/routing/handlers.rs@226@E3RequestComplete {" }],
+      "emits": [
+        { "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/state/request/src/routing/handlers.rs@226@E3RequestComplete {" }
+      ],
       "state": [
         {
           "name": "live contexts keyed by E3 id",
           "where": "memory",
-          "ref": "crates/request/src/routing/actor.rs@97@contexts: HashMap<E3id, E3Context>,"
+          "ref": "crates/state/request/src/routing/actor.rs@97@contexts: HashMap<E3id, E3Context>,"
         },
         {
           "name": "router recovery checkpoint (contexts, completed set, replay cursors)",
           "where": "disk",
-          "ref": "crates/request/src/routing/actor.rs@114@recovery_store: Repository<RequestRouterCheckpoint>,"
+          "ref": "crates/state/request/src/routing/actor.rs@114@recovery_store: Repository<RequestRouterCheckpoint>,"
         },
         {
           "name": "per-E3 context snapshot (recipient and dependency keys)",
           "where": "disk",
-          "ref": "crates/request/src/context.rs@39@pub repository: Repository<E3ContextSnapshot>,"
+          "ref": "crates/state/request/src/context.rs@39@pub repository: Repository<E3ContextSnapshot>,"
         },
         {
           "name": "E3Meta per E3 (thresholds, seed, BFV preset, params)",
           "where": "disk",
-          "ref": "crates/request/src/meta.rs@91@ctx.repositories().meta(&e3_id).write(&meta);"
+          "ref": "crates/state/request/src/meta.rs@91@ctx.repositories().meta(&e3_id).write(&meta);"
         },
         {
           "name": "stage map (E3id to E3Stage)",
           "where": "disk",
-          "ref": "crates/request/src/lifecycle/actor.rs@50@store: Persistable<E3LifecycleSnapshot>,"
+          "ref": "crates/state/request/src/lifecycle/actor.rs@50@store: Persistable<E3LifecycleSnapshot>,"
         }
       ],
       "key_types": [
         {
           "name": "E3Router",
           "what": "Actix actor that owns the per-E3 contexts, the extension list, the event buffer, and the checkpoint store.",
-          "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {"
+          "ref": "crates/state/request/src/routing/actor.rs@95@pub struct E3Router {"
         },
         {
           "name": "E3Context",
           "what": "Per-E3 struct, not an actor: e3_id, recipient Addrs by key, typed dependencies, and its snapshot repository.",
-          "ref": "crates/request/src/context.rs@31@pub struct E3Context {"
+          "ref": "crates/state/request/src/context.rs@31@pub struct E3Context {"
         },
         {
           "name": "E3Extension",
           "what": "Plugin trait: on_event runs on each routed event and may create actors; hydrate rebuilds them after restart.",
-          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/state/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "name": "RequestRouter",
           "what": "Pure routing service that returns a RoutingDecision for an event, with no actix or I/O.",
-          "ref": "crates/request/src/routing/workflow.rs@50@pub struct RequestRouter;"
+          "ref": "crates/state/request/src/routing/workflow.rs@50@pub struct RequestRouter;"
         },
         {
           "name": "PostForward",
           "what": "Action after forwarding: PublishComplete, ScheduleTeardown (grace), Teardown, or None.",
-          "ref": "crates/request/src/routing/workflow.rs@15@pub enum PostForward {"
+          "ref": "crates/state/request/src/routing/workflow.rs@15@pub enum PostForward {"
         },
         {
           "name": "E3Meta",
           "what": "Committee metadata copied from E3Requested: threshold_m, threshold_n, seed, BFV preset, params, error_size.",
-          "ref": "crates/request/src/meta.rs@27@pub struct E3Meta {"
+          "ref": "crates/state/request/src/meta.rs@27@pub struct E3Meta {"
         },
         {
           "name": "E3LifecycleService",
           "what": "Pure monotonic stage tracker; observe() returns a LifecycleDecision and freezes a terminal stage.",
-          "ref": "crates/request/src/lifecycle/workflow.rs@85@pub struct E3LifecycleService {"
+          "ref": "crates/state/request/src/lifecycle/workflow.rs@85@pub struct E3LifecycleService {"
         },
         {
           "name": "E3RouterBuilder",
           "what": "Installs extensions and restore inputs, then starts the router and subscribes it to the bus in build().",
-          "ref": "crates/request/src/routing/effects/build_context.rs@7@pub struct E3RouterBuilder {"
+          "ref": "crates/state/request/src/routing/effects/build_context.rs@7@pub struct E3RouterBuilder {"
         }
       ],
       "read_first": [
         {
           "why": "Wiring: the node builds E3Router and installs the router extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode/builder/src/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
-        { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
+        { "why": "The router actor and what it holds per E3", "ref": "crates/state/request/src/routing/actor.rs@95@pub struct E3Router {" },
         {
           "why": "Per-event handler: create or route the context, run extensions, forward, publish completion",
-          "ref": "crates/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
+          "ref": "crates/state/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
         },
-        { "why": "Pure routing decision for each event", "ref": "crates/request/src/routing/workflow.rs@60@pub fn route_with_context(" },
+        {
+          "why": "Pure routing decision for each event",
+          "ref": "crates/state/request/src/routing/workflow.rs@60@pub fn route_with_context("
+        },
         {
           "why": "How an event reaches a per-E3 actor: send to a recipient, or buffer",
-          "ref": "crates/request/src/context.rs@94@pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {"
+          "ref": "crates/state/request/src/context.rs@94@pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "E3Router implements the actix Actor trait and sets its mailbox capacity at start.",
-          "ref": "crates/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
+          "ref": "crates/state/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
         },
         {
           "pattern": "actix-handler",
           "note": "One Handler<InterfoldEvent> receives every bus event and decides what to do with it.",
-          "ref": "crates/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
+          "ref": "crates/state/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
         },
         {
           "pattern": "actix-recipient",
           "note": "The router registers its Addr as a Recipient for EventType::All on the bus.",
-          "ref": "crates/request/src/routing/effects/build_context.rs@128@self.bus.subscribe(EventType::All, addr.clone().recipient());"
+          "ref": "crates/state/request/src/routing/effects/build_context.rs@128@self.bus.subscribe(EventType::All, addr.clone().recipient());"
         },
         {
           "pattern": "trait-def",
           "note": "E3Extension is the plugin trait: on_event and async hydrate.",
-          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/state/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "pattern": "trait-object-dyn",
           "note": "Extensions are shared as a vector of boxed trait objects.",
-          "ref": "crates/request/src/routing/actor.rs@101@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
+          "ref": "crates/state/request/src/routing/actor.rs@101@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
         },
         {
           "pattern": "builder-pattern",
           "note": "E3RouterBuilder chains with() and setter methods before build().",
-          "ref": "crates/request/src/routing/effects/build_context.rs@51@pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {"
+          "ref": "crates/state/request/src/routing/effects/build_context.rs@51@pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {"
         }
       ],
-      "depends_on": [
-        "e3-bfv-client",
-        "e3-committee-hash",
-        "e3-committee",
-        "e3-events",
-        "e3-fhe-params",
-        "e3-data",
-        "e3-utils",
-        "e3-config"
-      ],
-      "tests": "routing/tests.rs, routing/buffer_tests.rs, routing/capacity_tests.rs, routing/workflow_tests.rs and lifecycle/workflow_tests.rs under crates/request/src; cargo test -p e3-request",
+      "depends_on": ["e3-bfv-client", "e3-committee-hash", "e3-committee", "e3-events", "e3-fhe-params", "e3-data", "e3-utils"],
+      "tests": "routing/tests.rs, routing/buffer_tests.rs, routing/capacity_tests.rs, routing/workflow_tests.rs and lifecycle/workflow_tests.rs under crates/state/request/src; cargo test -p e3-request",
       "unverified": [
         "The restart path (fail_on_restart, complete_on_restart, reconcile_recovered_selections) was read in routing/handlers.rs and build_context.rs; the builder's full startup order was not traced."
       ]
@@ -429,7 +425,7 @@
           "ref": "crates/sortition/src/sortition/handlers/request.rs@83@.and_then(|recovery| recovery.seeds.get(&e3_id).copied())"
         }
       ],
-      "depends_on": ["e3-config", "e3-data", "e3-events", "e3-request", "e3-utils"],
+      "depends_on": ["e3-data", "e3-events", "e3-request", "e3-utils"],
       "tests": "unit tests in sortition/ticket_selection.rs, ticket.rs, selection_backend.rs, node_registry_tests.rs and ciphernode_selection/actor.rs under crates/sortition/src; fixtures in crates/sortition/tests/fixtures; cargo test -p e3-sortition",
       "unverified": [
         "CommitteeRequested is built from randomness-provider chain logs (crates/evm/runtime/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."

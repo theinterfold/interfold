@@ -94,7 +94,7 @@ pub async fn main() -> Result<()> {
     });
 
     let config_result = cli.load_config();
-    let maybe_server = connect_daemon(config_result.as_ref().ok()).await;
+    let maybe_server = connect_daemon(config_result.as_ref().ok().map(|config| &config.node)).await;
     let maybe_remote_command = TryInto::<RemoteCli>::try_into(cli.clone()).ok();
 
     // If the socket exists and the command can be parsed as remote

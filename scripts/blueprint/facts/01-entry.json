@@ -11,9 +11,21 @@
       "path": "crates/cli",
       "one_line": "The `interfold` binary: parses commands, runs them locally, or forwards the allowed few to a node already running here.",
       "actors": [],
-      "consumes": [],
+      "consumes": [
+        { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/cli/src/app_config.rs@46@pub fn load_config(" },
+        {
+          "name": "E3_-prefixed environment variables",
+          "by": "load_config",
+          "ref": "crates/cli/src/app_config.rs@66@.merge(Env::prefixed(\"E3_\").split(\"__\"))"
+        }
+      ],
       "emits": [],
       "state": [
+        {
+          "name": "interfold.config.yaml on disk: shared node and program settings",
+          "where": "disk",
+          "ref": "crates/cli/src/app_config.rs@61@load_yaml_with_env(&resolved_config_path)"
+        },
         {
           "name": "installed binary at the resolved current-executable path; update replaces it, uninstall leaves configuration and node data intact",
           "where": "disk",
@@ -27,19 +39,24 @@
       ],
       "key_types": [
         {
+          "name": "ApplicationConfig",
+          "what": "separate resolved node and program settings, passed directly to their consumers",
+          "ref": "crates/cli/src/app_config.rs@23@pub struct ApplicationConfig {"
+        },
+        {
           "name": "Cli",
           "what": "clap parser: global flags (--config, -v, -q, --name, --otel) plus one subcommand",
-          "ref": "crates/cli/src/cli.rs@37@pub struct Cli {"
+          "ref": "crates/cli/src/cli.rs@59@pub struct Cli {"
         },
         {
           "name": "Commands",
           "what": "top-level commands, including node operations, program tooling, update, uninstall and rev",
-          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@303@pub enum Commands {"
         },
         {
           "name": "RemoteCommand",
           "what": "the allow-list of commands that a running node accepts over its control port",
-          "ref": "crates/cli/src/cli.rs@447@pub enum RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@479@pub enum RemoteCommand {"
         },
         {
           "name": "CiphernodeCommands",
@@ -59,20 +76,24 @@
       ],
       "read_first": [
         {
+          "why": "file discovery, YAML expansion, precedence, and named-node scoping",
+          "ref": "crates/cli/src/app_config.rs@46@pub fn load_config("
+        },
+        {
           "why": "the entry point: parse, then forward to a running node or run locally",
           "ref": "crates/cli/src/main.rs@72@pub async fn main() -> Result<()> {"
         },
         {
           "why": "dispatch, including commands that run without config and start's setup path",
-          "ref": "crates/cli/src/cli.rs@89@pub async fn execute(self, out: Console"
+          "ref": "crates/cli/src/cli.rs@111@pub async fn execute("
         },
         {
           "why": "the full command list",
-          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@303@pub enum Commands {"
         },
         {
           "why": "what interfold start does before the node is built",
-          "ref": "crates/cli/src/start.rs@22@pub async fn execute(mut config: AppConfig"
+          "ref": "crates/cli/src/start.rs@22@pub async fn execute(mut config: NodeConfig"
         },
         {
           "why": "update: resolves latest, dev or an explicit release tag, downloads the platform archive and replaces the installed binary",
@@ -85,24 +106,34 @@
       ],
       "rust_patterns": [
         {
+          "pattern": "serde-derive",
+          "note": "one flat file assembles settings owned by the node and program tooling",
+          "ref": "crates/cli/src/app_config.rs@31@#[serde(flatten)]"
+        },
+        {
+          "pattern": "anyhow-context",
+          "note": "a missing YAML file keeps its I/O error under a context message for setup dispatch",
+          "ref": "crates/cli/src/app_config.rs@61@.context(\"Configuration file not found\")"
+        },
+        {
           "pattern": "derive-macro",
           "note": "clap Parser derive builds the argument parser from the struct",
-          "ref": "crates/cli/src/cli.rs@33@#[derive(Parser, Clone, Debug)]"
+          "ref": "crates/cli/src/cli.rs@55@#[derive(Parser, Clone, Debug)]"
         },
         {
           "pattern": "serde-derive",
           "note": "RemoteCli is serialized to JSON for the control port",
-          "ref": "crates/cli/src/cli.rs@431@#[derive(Clone, Debug, Serialize, Deserialize)]"
+          "ref": "crates/cli/src/cli.rs@463@#[derive(Clone, Debug, Serialize, Deserialize)]"
         },
         {
           "pattern": "enum-match",
           "note": "the main dispatch: one arm per top-level command",
-          "ref": "crates/cli/src/cli.rs@203@match self.command {"
+          "ref": "crates/cli/src/cli.rs@235@match self.command {"
         },
         {
           "pattern": "trait-impl",
           "note": "TryFrom maps a Commands value to the remote allow-list or returns an error",
-          "ref": "crates/cli/src/cli.rs@472@impl TryFrom<Commands> for RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@510@impl TryFrom<Commands> for RemoteCommand {"
         },
         {
           "pattern": "closure",
@@ -126,7 +157,7 @@
         }
       ],
       "depends_on": [
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-console",
         "e3-ciphernode-builder",
         "e3-event-system",
@@ -135,6 +166,7 @@
         "e3-entrypoint",
         "e3-events",
         "e3-evm",
+        "e3-evm-config",
         "e3-logger",
         "e3-trbfv",
         "e3-fhe-params",
@@ -143,17 +175,14 @@
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "Unit tests in src/ (cli.rs, start.rs, update.rs, rev.rs, program_support.rs, helpers/, manifest.rs and others) and tests/cli_secrets.rs; run: cargo test -p e3-cli",
-      "unverified": [
-        "Default control port and log file locations come from e3-config, which was not read.",
-        "crates/cli/scripts/openvm-compile.sh was not read."
-      ]
+      "tests": "Unit tests in src/ plus tests/cli_configuration.rs and tests/cli_secrets.rs; run: cargo test -p e3-cli",
+      "unverified": ["crates/cli/scripts/openvm-compile.sh was not read."]
     },
     {
       "id": "e3-entrypoint",
       "documentation": [{ "title": "Running a ciphernode", "path": "docs/pages/operate/running.mdx" }],
       "kind": "crate",
-      "path": "crates/entrypoint",
+      "path": "crates/ciphernode/entrypoint",
       "one_line": "Operator-side library behind the node commands: starts a node from config, guards its data directory, and runs validation, purge and reset.",
       "actors": [],
       "consumes": [],
@@ -162,99 +191,99 @@
         {
           "name": "interfold.lock fence file in the node data directory",
           "where": "disk",
-          "ref": "crates/entrypoint/src/fence.rs@34@pub(crate) const LOCK_FILE_NAME"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@34@pub(crate) const LOCK_FILE_NAME"
         },
         {
           "name": "<key file>.store-record: every store path the node has started with",
           "where": "disk",
-          "ref": "crates/entrypoint/src/store_record.rs@21@pub const RECORD_SUFFIX"
+          "ref": "crates/ciphernode/entrypoint/src/store_record.rs@21@pub const RECORD_SUFFIX"
         },
         {
           "name": "child process table of a nodes set",
           "where": "memory",
-          "ref": "crates/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
         }
       ],
       "key_types": [
         {
           "name": "ProcessFence",
           "what": "exclusive OS lock on the data directory, released when dropped",
-          "ref": "crates/entrypoint/src/fence.rs@61@pub struct ProcessFence {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@61@pub struct ProcessFence {"
         },
         {
           "name": "ValidationReport",
           "what": "result of node validate: the checks in run order and whether any failed",
-          "ref": "crates/entrypoint/src/validate.rs@116@pub struct ValidationReport {"
+          "ref": "crates/ciphernode/entrypoint/src/validate.rs@116@pub struct ValidationReport {"
         },
         {
           "name": "PurgeTargets",
           "what": "the .interfold data and config folders that a purge would remove",
-          "ref": "crates/entrypoint/src/nodes/purge/mod.rs@71@pub struct PurgeTargets {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/purge/mod.rs@71@pub struct PurgeTargets {"
         },
         {
           "name": "ProcessManager",
           "what": "owns the child node processes of a nodes set",
-          "ref": "crates/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/process_manager.rs@267@pub struct ProcessManager {"
         },
         {
           "name": "LaunchCommand",
           "what": "one child interfold start command built from a node profile",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@21@pub struct LaunchCommand {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@21@pub struct LaunchCommand {"
         },
         {
           "name": "Action",
           "what": "requests that the nodes set HTTP server accepts on POST /command",
-          "ref": "crates/entrypoint/src/nodes/nodes.rs@60@pub enum Action {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/nodes.rs@60@pub enum Action {"
         }
       ],
       "read_first": [
         {
           "why": "the production startup: builder settings for the full and bootstrap roles",
-          "ref": "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool)"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool)"
         },
         {
           "why": "the single-instance lock, taken before any store is opened",
-          "ref": "crates/entrypoint/src/fence.rs@88@pub fn acquire(db_path: &Path, node_name: &str) -> Result<Self> {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@88@pub fn acquire(db_path: &Path, node_name: &str) -> Result<Self> {"
         },
         {
           "why": "the nodes set: one child per profile, then the control server",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@129@pub async fn execute("
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@129@pub async fn execute("
         },
         {
           "why": "the offline state check behind node validate",
-          "ref": "crates/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &AppConfig, repair: bool)"
+          "ref": "crates/ciphernode/entrypoint/src/validate.rs@240@pub async fn validate_node(config: &NodeConfig, repair: bool)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "result-question-mark",
           "note": "startup rejects an unsupported proof-aggregation setting before any work",
-          "ref": "crates/entrypoint/src/start/start.rs@71@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@71@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a startup that exceeds its deadline is reported with context",
-          "ref": "crates/entrypoint/src/start/start.rs@29@.with_context(|| format!("
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@29@.with_context(|| format!("
         },
         {
           "pattern": "trait-impl",
           "note": "Drop releases the fence lock when the guard goes away",
-          "ref": "crates/entrypoint/src/fence.rs@67@impl Drop for ProcessFence {"
+          "ref": "crates/ciphernode/entrypoint/src/fence.rs@67@impl Drop for ProcessFence {"
         },
         {
           "pattern": "arc-shared",
           "note": "the process manager is shared by the HTTP server and the Ctrl+C handler",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@145@let process_manager = Arc::new(Mutex::new(ProcessManager::from(command_map)));"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@145@let process_manager = Arc::new(Mutex::new(ProcessManager::from(command_map)));"
         },
         {
           "pattern": "tokio-select",
           "note": "the nodes set runs its server until the server fails or Ctrl+C arrives",
-          "ref": "crates/entrypoint/src/nodes/daemon.rs@151@tokio::select! {"
+          "ref": "crates/ciphernode/entrypoint/src/nodes/daemon.rs@151@tokio::select! {"
         }
       ],
       "depends_on": [
         "e3-aggregator",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-ciphernode-builder",
         "e3-event-system",
         "e3-crypto",
@@ -272,62 +301,62 @@
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/start.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",
+      "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/mod.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",
       "unverified": ["process_manager.rs (423 lines) and purge/plan.rs were only indexed, not traced line by line."]
     },
     {
       "id": "e3-ciphernode-builder",
       "documentation": [{ "title": "Startup and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
-      "path": "crates/ciphernode-builder",
+      "path": "crates/ciphernode/builder",
       "one_line": "Composition root for full or bootstrap nodes: orders storage preflight, restart recovery, live bus, protocol core, EVM readers, extensions, networking and sync.",
       "actors": [
         {
           "name": "EventBus<InterfoldEvent>",
           "role": "fresh node-local bus, passed to the event system before storage opens",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@105@EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();"
+          "ref": "crates/ciphernode/builder/src/startup.rs@105@EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();"
         },
         {
           "name": "E3LifecycleCoordinator",
           "role": "additive observer that tracks each E3's stage for restart and shutdown",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@419@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;"
+          "ref": "crates/ciphernode/builder/src/startup.rs@419@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;"
         },
         {
           "name": "CiphernodeSelector",
           "role": "selection state for this address, attached before Sortition",
-          "ref": "crates/ciphernode-builder/src/builder/sortition.rs@48@let ciphernode_selector = CiphernodeSelector::attach("
+          "ref": "crates/ciphernode/builder/src/sortition.rs@48@let ciphernode_selector = CiphernodeSelector::attach("
         },
         {
           "name": "Sortition",
           "role": "attached with its backend and stores; the production node uses the score backend",
-          "ref": "crates/ciphernode-builder/src/builder/sortition.rs@59@let sortition = Sortition::attach(SortitionAttachParams {"
+          "ref": "crates/ciphernode/builder/src/sortition.rs@59@let sortition = Sortition::attach(SortitionAttachParams {"
         },
         {
           "name": "EvmSystemChainBuilder",
           "role": "per enabled chain: assembles the contract-reader ingestion gateway",
-          "ref": "crates/ciphernode-builder/src/builder/evm.rs@141@let mut system = EvmSystemChainBuilder::new(bus, provider);"
+          "ref": "crates/ciphernode/builder/src/evm.rs@141@let mut system = EvmSystemChainBuilder::new(bus, provider);"
         },
         {
           "name": "E3Router",
           "role": "request router: extensions register on it, and it is attached after networking starts",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode/builder/src/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         {
           "name": "ThresholdKeyshareExtension",
           "role": "registered with ZK actors only for the full-node profile",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@79@ThresholdKeyshareExtension::create("
+          "ref": "crates/ciphernode/builder/src/extensions.rs@79@ThresholdKeyshareExtension::create("
         },
         {
           "name": "Multithread",
           "role": "full-node compute worker, started with the configured pool and ZK backend",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@205@Multithread::attach_with_zk("
+          "ref": "crates/ciphernode/builder/src/extensions.rs@205@Multithread::attach_with_zk("
         }
       ],
       "consumes": [
         {
           "name": "NetReady",
           "by": "CiphernodeBuilder",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@140@let net_ready = live.bus.wait_for(EventType::NetReady);"
+          "ref": "crates/ciphernode/builder/src/startup.rs@140@let net_ready = live.bus.wait_for(EventType::NetReady);"
         }
       ],
       "emits": [],
@@ -335,39 +364,39 @@
         {
           "name": "event log at log_file and sled key/value store at db_file (persisted mode)",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@167@pub fn with_persistence(mut self, log_path: &PathBuf, kv_path: &PathBuf) -> Self {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@173@pub fn with_persistence(mut self, log_path: &PathBuf, kv_path: &PathBuf) -> Self {"
         },
         {
           "name": "correlation-ids file next to the event log",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@246@e3_events::reserve_correlation_ids(&log_path.with_file_name(\"correlation-ids\"))?;"
+          "ref": "crates/ciphernode/builder/src/startup.rs@246@e3_events::reserve_correlation_ids(&log_path.with_file_name(\"correlation-ids\"))?;"
         },
         {
           "name": "ingestion heartbeat files, one per chain",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/builder/evm.rs@62@.map(ingestion_heartbeat_files)"
+          "ref": "crates/ciphernode/builder/src/evm.rs@62@.map(ingestion_heartbeat_files)"
         },
         {
           "name": "in-memory event system (tests and benchmarks)",
           "where": "memory",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@462@EventSystemType::InMem => EventSystem::in_mem(),"
+          "ref": "crates/ciphernode/builder/src/startup.rs@462@EventSystemType::InMem => EventSystem::in_mem(),"
         }
       ],
       "key_types": [
         {
           "name": "CiphernodeBuilder",
           "what": "builder with one field per setting; build() returns the started handle",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@48@pub struct CiphernodeBuilder {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@54@pub struct CiphernodeBuilder {"
         },
         {
           "name": "CiphernodeHandle",
           "what": "what a started node returns: bus, store, eventstore, peer id, status and shutdown",
-          "ref": "crates/ciphernode-builder/src/ciphernode.rs@45@pub struct CiphernodeHandle {"
+          "ref": "crates/ciphernode/builder/src/ciphernode.rs@45@pub struct CiphernodeHandle {"
         },
         {
           "name": "NodeProfile",
           "what": "private full/bootstrap choice; full carries the ZK backend, bootstrap installs no protocol extensions",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@81@enum NodeProfile {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@87@enum NodeProfile {"
         },
         {
           "name": "ProviderCache (e3-evm)",
@@ -377,7 +406,7 @@
         {
           "name": "Storage / Restart / Live / Protocol",
           "what": "private phase outputs passed between the ordered startup steps",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@52@pub(super) struct Storage {"
+          "ref": "crates/ciphernode/builder/src/startup.rs@52@pub(super) struct Storage {"
         },
         {
           "name": "EvmSystemChainBuilder (e3-evm)",
@@ -388,61 +417,62 @@
       "read_first": [
         {
           "why": "the function that builds the node; it hands off to build_inner",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@97@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
+          "ref": "crates/ciphernode/builder/src/startup.rs@97@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
         },
         {
           "why": "the ordered startup steps, from storage checks to the sync wait",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@102@async fn build_inner(mut self)"
+          "ref": "crates/ciphernode/builder/src/startup.rs@102@async fn build_inner(mut self)"
         },
         {
           "why": "where protocol extensions are registered, and under which roles",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@42@pub(super) async fn setup_extensions("
+          "ref": "crates/ciphernode/builder/src/extensions.rs@42@pub(super) async fn setup_extensions("
         },
         {
           "why": "the production caller, with the settings for a full node",
-          "ref": "crates/entrypoint/src/start/start.rs@124@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
+          "ref": "crates/ciphernode/entrypoint/src/start/mod.rs@128@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "builder-pattern",
           "note": "each with_* method takes self and returns it, so settings chain",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@153@pub fn with_name(mut self, name: &str) -> Self {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@159@pub fn with_name(mut self, name: &str) -> Self {"
         },
         {
           "pattern": "let-else",
           "note": "bootstrap returns the router without installing full-node protocol extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@65@let NodeProfile::Full { zk_backend } = &self.profile else {"
+          "ref": "crates/ciphernode/builder/src/extensions.rs@65@let NodeProfile::Full { zk_backend } = &self.profile else {"
         },
         {
           "pattern": "arc-shared",
           "note": "the cipher is held in an Arc and cloned into the components that need it",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@56@cipher: Arc<Cipher>,"
+          "ref": "crates/ciphernode/builder/src/lib.rs@62@cipher: Arc<Cipher>,"
         },
         {
           "pattern": "enum-match",
           "note": "the profile selects full or bootstrap storage-role fencing",
-          "ref": "crates/ciphernode-builder/src/builder/mod.rs@146@match self.profile {"
+          "ref": "crates/ciphernode/builder/src/lib.rs@152@match self.profile {"
         },
         {
           "pattern": "tokio-select",
           "note": "startup waits for sync, EVM gateways and networking, or fails on a fatal storage error",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@159@tokio::select! {"
+          "ref": "crates/ciphernode/builder/src/startup.rs@159@tokio::select! {"
         },
         {
           "pattern": "lifetime",
           "note": "ChainReaders borrows one chain's bus, config and provider during reader assembly",
-          "ref": "crates/ciphernode-builder/src/builder/evm.rs@32@struct ChainReaders<'a> {"
+          "ref": "crates/ciphernode/builder/src/evm.rs@32@struct ChainReaders<'a> {"
         }
       ],
       "depends_on": [
         "e3-aggregator",
         "e3-crypto",
-        "e3-config",
+        "e3-ciphernode-config",
         "e3-data",
         "e3-event-system",
         "e3-events",
         "e3-evm",
+        "e3-evm-config",
         "e3-fhe",
         "e3-keyshare",
         "e3-logger",
@@ -455,7 +485,7 @@
         "e3-sync",
         "e3-utils"
       ],
-      "tests": "Unit tests in src/ciphernode.rs, finalized_lifecycle.rs, recovery.rs and builder/ (startup, sortition, extensions, EVM and restart); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
+      "tests": "Unit tests in src/ciphernode.rs, finalized_lifecycle.rs, recovery.rs and src/ (startup, sortition, extensions, EVM and restart); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
       "unverified": [
         "Behaviour inside the extension crates (e3-keyshare, e3-aggregator, e3-request, e3-sync) was not read; only how this crate wires them."
       ]
@@ -564,7 +594,7 @@
           "ref": "crates/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
         }
       ],
-      "depends_on": ["e3-event-system", "e3-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
+      "depends_on": ["e3-event-system", "e3-evm-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
       "tests": "Unit tests in src/projection.rs and src/updates.rs; run: cargo test -p e3-dashboard",
       "unverified": [
         "assets/app.js (9175 lines) and app.css were not read, so the UI behaviour is not described.",
@@ -575,7 +605,7 @@
       "id": "e3-daemon-server",
       "documentation": [{ "title": "CLI control port", "path": "docs/pages/reference/cli.mdx" }],
       "kind": "crate",
-      "path": "crates/daemon-server",
+      "path": "crates/ciphernode/daemon-server",
       "one_line": "Loopback control channel: a small HTTP server inside a running node that runs forwarded CLI commands, plus the client that sends them.",
       "actors": [],
       "consumes": [],
@@ -585,21 +615,21 @@
         {
           "name": "ServerInfo",
           "what": "the control port of a running node, as found by connect_daemon",
-          "ref": "crates/daemon-server/src/lib.rs@21@pub struct ServerInfo {"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@21@pub struct ServerInfo {"
         }
       ],
       "read_first": [
         {
           "why": "the probe that decides whether a node is running",
-          "ref": "crates/daemon-server/src/lib.rs@25@pub async fn connect_daemon(maybe_config: Option<&AppConfig>)"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@25@pub async fn connect_daemon(maybe_config: Option<&NodeConfig>)"
         },
         {
           "why": "the server side: one task per connection, one command per request",
-          "ref": "crates/daemon-server/src/lib.rs@59@pub async fn start_daemon_server<F, Fut>(tcp_port: u16, handler: F)"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@59@pub async fn start_daemon_server<F, Fut>(tcp_port: u16, handler: F)"
         },
         {
           "why": "the client side: post the command, print the reply lines",
-          "ref": "crates/daemon-server/src/lib.rs@38@pub async fn run_on_daemon<T: Serialize>("
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@38@pub async fn run_on_daemon<T: Serialize>("
         },
         {
           "why": "where a node starts its control server and runs forwarded commands",
@@ -610,27 +640,27 @@
         {
           "pattern": "generic-where",
           "note": "the handler is a generic Fn(String) returning a future, bounded to 'static",
-          "ref": "crates/daemon-server/src/lib.rs@61@F: Fn(String) -> Fut + 'static,"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@61@F: Fn(String) -> Fut + 'static,"
         },
         {
           "pattern": "result-question-mark",
           "note": "request parsing propagates read errors with ?",
-          "ref": "crates/daemon-server/src/lib.rs@104@buf_reader.read_line(&mut line).await?;"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@104@buf_reader.read_line(&mut line).await?;"
         },
         {
           "pattern": "arc-shared",
           "note": "the handler is wrapped in an Arc so every connection task can use it",
-          "ref": "crates/daemon-server/src/lib.rs@72@let handler = Arc::new(handler);"
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@72@let handler = Arc::new(handler);"
         },
         {
           "pattern": "async-await",
           "note": "the client call is async and awaits the HTTP post",
-          "ref": "crates/daemon-server/src/lib.rs@38@pub async fn run_on_daemon<T: Serialize>("
+          "ref": "crates/ciphernode/daemon-server/src/lib.rs@38@pub async fn run_on_daemon<T: Serialize>("
         }
       ],
-      "depends_on": ["e3-console", "e3-config"],
+      "depends_on": ["e3-console", "e3-ciphernode-config"],
       "tests": "No tests in this crate (no test attributes in src/). Command: cargo test -p e3-daemon-server (runs nothing)",
-      "unverified": ["The default control port value is set in e3-config, which was not read."]
+      "unverified": []
     },
     {
       "id": "e3-console",
