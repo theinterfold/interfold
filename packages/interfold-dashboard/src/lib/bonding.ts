@@ -295,6 +295,10 @@ export function useBonding(operator: string | null, account: Address | null): Bo
     }
   }, [validOperator, account, nonce])
 
+  // The render that switches identity still holds the previous identity's state: the
+  // clearing above applies from the next render. Return the cleared values now, so a
+  // caller never stores the previous operator's status for the new one.
+  if (identity !== loadedIdentity) return { config, status: null, funds: null, loading: true, error: null, refresh }
   return { config, status, funds, loading, error, refresh }
 }
 
