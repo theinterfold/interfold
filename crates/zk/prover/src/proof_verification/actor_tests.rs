@@ -324,7 +324,7 @@ async fn cancelled_c0_verification_does_not_retry_accept_or_accuse() {
     let preset = BfvPreset::InsecureThreshold64;
     let temp = tempfile::tempdir().unwrap();
     let backend = crate::ZkBackend::new(
-        e3_config::BBPath::Default(temp.path().join("absent-bb")),
+        crate::BBPath::Default(temp.path().join("absent-bb")),
         temp.path().join("circuits"),
         temp.path().join("work"),
     );

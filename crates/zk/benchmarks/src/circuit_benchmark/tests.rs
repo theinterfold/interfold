@@ -400,7 +400,7 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
     write_json(&directory.join(".config-benchmark.json"), &stamp).unwrap();
     write_json(&root.join("circuits/bin/.active-preset.json"), &serde_json::json!({"preset":"secure-8192","committee":"micro","sourceHash":"different-hydrated-build"})).unwrap();
     let backend = e3_zk_prover::ZkBackend::new(
-        e3_config::BBPath::Custom(root.join("bb")),
+        e3_zk_prover::BBPath::Custom(root.join("bb")),
         root.join("dist/circuits"),
         root.join("work"),
     );
@@ -490,7 +490,7 @@ fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity()
         artifacts::digest(&package.join("target/validate_secure_configs.json")).unwrap()
     );
     let backend = e3_zk_prover::ZkBackend::new(
-        e3_config::BBPath::Custom(root.join("bb")),
+        e3_zk_prover::BBPath::Custom(root.join("bb")),
         root.join("dist/circuits"),
         root.join("work"),
     );

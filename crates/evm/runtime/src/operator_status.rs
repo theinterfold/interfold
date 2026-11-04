@@ -23,8 +23,8 @@ use alloy::{
     sol_types::SolEvent,
 };
 use anyhow::Context as _;
-use e3_config::{chain_config::ChainConfig, ContractAddresses};
 use e3_events::E3Stage;
+use e3_evm_config::{ChainConfig, ContractAddresses};
 use scan_cache::{SavedScan, ScanKey};
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};

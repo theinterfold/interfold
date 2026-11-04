@@ -7,7 +7,9 @@ resolution, and confirmed-key/lifecycle projections. Application-side listeners 
 live separately in [e3-evm-client](../client/README.md).
 
 Shared contract signatures, tuple layouts, events and errors belong to
-[e3-evm-contracts](../contracts/README.md), without ingestion or transaction policy.
+[e3-evm-contracts](../contracts/README.md), without ingestion or transaction policy. Connection and
+chain-setting types belong to [e3-evm-config](../config/README.md); resolving them does not contact
+or authenticate a chain.
 
 ## Map
 

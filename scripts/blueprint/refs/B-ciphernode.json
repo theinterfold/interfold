@@ -284,25 +284,25 @@
     "id": "B22",
     "supported": true,
     "refs": [
-      "crates/config/src/app_config.rs@558@pub fn load_config(",
-      "crates/config/src/app_config.rs@568@hardcoded now to interfold.config.yaml",
-      "crates/config/src/app_config.rs@573@load_yaml_with_env(&resolved_config_path)",
+      "crates/cli/src/app_config.rs@44@pub fn load_config(",
+      "crates/cli/src/app_config.rs@54@DEFAULT_CONFIG_NAME,",
+      "crates/cli/src/app_config.rs@59@load_yaml_with_env(&resolved_config_path)",
       "crates/config/src/paths_engine.rs@43@pub const DEFAULT_CONFIG_NAME"
     ],
     "line_text": [
       "pub fn load_config(",
-      "DEFAULT_CONFIG_NAME,       // hardcoded now to interfold.config.yaml",
+      "DEFAULT_CONFIG_NAME,",
       "load_yaml_with_env(&resolved_config_path).context(\"Configuration file not found\")?;",
       "pub const DEFAULT_CONFIG_NAME: &str = \"interfold.config.yaml\";"
     ],
-    "note": "load_config resolves the path from DEFAULT_CONFIG_NAME (interfold.config.yaml) and reads it with load_yaml_with_env."
+    "note": "The CLI loader resolves DEFAULT_CONFIG_NAME (interfold.config.yaml), reads it with load_yaml_with_env, and separates node and program settings."
   },
   {
     "id": "B23",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@204@Commands::Start { peers, bootstrap } => {",
-      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap).await?",
+      "crates/cli/src/cli.rs@214@Commands::Start { peers, bootstrap } => {",
+      "crates/cli/src/cli.rs@215@start::execute(config, peers, bootstrap).await?",
       "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
       "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],

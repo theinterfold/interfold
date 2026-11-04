@@ -298,7 +298,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
     let explicit_bb = options.bb.as_ref().map(|path| resolve(root, path));
     let bb = artifacts::bb_binary(explicit_bb.as_deref())?;
     let backend = ZkBackend::new(
-        e3_config::BBPath::Custom(bb),
+        e3_zk_prover::BBPath::Custom(bb),
         artifact_root.clone(),
         work.path().join("prover"),
     );

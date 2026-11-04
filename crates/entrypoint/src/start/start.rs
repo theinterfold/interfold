@@ -9,7 +9,7 @@ use e3_ciphernode_builder::{CiphernodeBuilder, CiphernodeHandle};
 use e3_config::AppConfig;
 use e3_crypto::Cipher;
 use e3_utils::SharedRng;
-use e3_zk_prover::ZkBackend;
+use e3_zk_prover::{BBPath, ZkBackend};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::future::Future;
@@ -109,8 +109,12 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
 
 /// A full node builder with the prover backend and the compute scheduler of `config`.
 fn full_node(config: &AppConfig, rng: SharedRng, cipher: Arc<Cipher>) -> CiphernodeBuilder {
-    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir())
-        .with_bb_timeout(config.bb_timeout());
+    let backend = ZkBackend::new(
+        BBPath::new(config.bb_binary(), config.using_custom_bb()),
+        config.circuits_dir(),
+        config.work_dir(),
+    )
+    .with_bb_timeout(config.bb_timeout());
 
     let reserve = config.multithread_reserve_threads();
     let concurrent_jobs = config.multithread_concurrent_jobs();

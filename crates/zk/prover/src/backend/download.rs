@@ -611,7 +611,7 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
 mod tests {
     use super::*;
     use crate::config::ZkConfig;
-    use e3_config::BBPath;
+    use crate::BBPath;
     use flate2::{write::GzEncoder, Compression};
     use sha2::{Digest, Sha256};
     use std::{collections::HashMap, fs, io::Write};

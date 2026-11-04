@@ -20,8 +20,8 @@ use crate::{init, noir, password, purge_all, rev, update, wallet};
 use crate::{print_env, start};
 use anyhow::{bail, Result};
 use clap::{command, ArgAction, Parser, Subcommand};
+use e3_cli::app_config::{load_config, ApplicationConfig};
 use e3_config::validation::ValidUrl;
-use e3_config::{load_config, AppConfig};
 use e3_console::{log, Console};
 use e3_daemon_server::connect_daemon;
 use e3_entrypoint::helpers::datastore::close_all_connections;
@@ -86,13 +86,20 @@ impl Cli {
     }
 
     #[instrument(skip_all)]
-    pub async fn execute(self, out: Console, config_result: Result<AppConfig>) -> Result<()> {
+    pub async fn execute(
+        self,
+        out: Console,
+        config_result: Result<ApplicationConfig>,
+    ) -> Result<()> {
         let log_level = self.log_level();
         // These commands change only the installed binary. They need no configuration, and they
         // create no log file, password, or wallet.
         match &self.command {
             Commands::Update { version } => {
-                let node_running = connect_daemon(config_result.as_ref().ok()).await.is_some();
+                let node_running =
+                    connect_daemon(config_result.as_ref().ok().map(|config| &config.node))
+                        .await
+                        .is_some();
                 return update::execute(out, version.clone(), node_running).await;
             }
             Commands::Uninstall => return update::uninstall(out),
@@ -100,7 +107,10 @@ impl Cli {
         }
         // Attempt to load the config, but only treat "not found" as
         // the trigger for the init flow.  All other errors bubble up.
-        let config = match config_result {
+        let ApplicationConfig {
+            node: config,
+            program,
+        } = match config_result {
             Ok(cfg) => cfg,
             // If the file truly doesn't exist, fall back to init
             Err(e)
@@ -207,13 +217,11 @@ impl Cli {
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
-            Commands::Compile { dev } => {
-                crate::program_support::compile(config.program(), dev).await?
-            }
+            Commands::Compile { dev } => crate::program_support::compile(&program, dev).await?,
             Commands::PrintEnv { vite, chain } => {
                 print_env::execute(out, &config, &chain, vite).await?
             }
-            Commands::Program { command } => program::execute(command, &config).await?,
+            Commands::Program { command } => program::execute(command, &program).await?,
             Commands::PurgeAll {
                 yes,
                 allow_active_e3s,
@@ -238,7 +246,9 @@ impl Cli {
             Commands::Events { command } => events::execute(out, command, &config).await?,
             Commands::Node { command } => node::execute(out, command, &config).await?,
             Commands::Rev { features } => rev::execute(out, features).await?,
-            Commands::Config { command } => config::execute(out, command, &config).await?,
+            Commands::Config { command } => {
+                config::execute(out, command, &config, &program).await?
+            }
             Commands::Faucet { chain } => {
                 faucet::execute(out, &config, chain.chain.as_deref()).await?
             }
@@ -252,7 +262,7 @@ impl Cli {
         Ok(())
     }
 
-    pub fn load_config(&self) -> Result<AppConfig> {
+    pub fn load_config(&self) -> Result<ApplicationConfig> {
         let config = load_config(
             &self.name(),
             self.config.clone(),
@@ -605,8 +615,8 @@ mod tests {
         let config_arg = config_file.to_string_lossy().into_owned();
         let cli = Cli::parse_from(["interfold", "config", "get", "key_file", "-c", &config_arg]);
         let config = cli.load_config()?;
-        let key_file = config.key_file();
-        let db_file = config.db_file();
+        let key_file = config.node.key_file();
+        let db_file = config.node.db_file();
         assert!(key_file.starts_with(&dir) && db_file.starts_with(&dir));
 
         let (out, _rx) = Console::channel();
@@ -645,7 +655,7 @@ mod tests {
             let args = [&["interfold"][..], command, &["-c", &config_arg][..]].concat();
             let cli = Cli::parse_from(args);
             let config = cli.load_config()?;
-            let (key_file, db_file) = (config.key_file(), config.db_file());
+            let (key_file, db_file) = (config.node.key_file(), config.node.db_file());
 
             let (out, _rx) = Console::channel();
             let error = cli

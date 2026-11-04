@@ -38,9 +38,9 @@ impl ZkActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BBPath;
     use crate::ZkBackend;
     use actix::{Message, Recipient};
-    use e3_config::BBPath;
     use e3_events::{
         E3id, EncryptionKey, EventContext, InterfoldEventData, Proof, TestEvent, Unsequenced,
     };

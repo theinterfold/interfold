@@ -21,6 +21,7 @@ e3-aggregator.workspace = true
 e3-committee.workspace = true
 e3-crypto.workspace = true
 e3-config.workspace = true
+e3-evm-config.workspace = true
 e3-data.workspace = true
 e3-event-system.workspace = true
 e3-events.workspace = true

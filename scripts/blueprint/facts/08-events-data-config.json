@@ -473,27 +473,15 @@
       "documentation": [{ "title": "Configuration reference", "path": "docs/pages/reference/configuration.mdx" }],
       "kind": "crate",
       "path": "crates/config",
-      "one_line": "Loads and validates node configuration from interfold.config.yaml, merging environment and CLI overrides, and exposes chains, contracts and release numbers.",
+      "one_line": "Resolves named-node settings, paths, network profiles and release identity; composes EVM-owned chain settings while the CLI owns loading and program settings.",
       "actors": [],
-      "consumes": [
-        { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/config/src/app_config.rs@558@pub fn load_config(" },
-        {
-          "name": "E3_-prefixed environment variables",
-          "by": "load_config",
-          "ref": "crates/config/src/app_config.rs@578@.merge(Env::prefixed(\"E3_\").split(\"__\"))"
-        }
-      ],
+      "consumes": [],
       "emits": [],
       "state": [
         {
-          "name": "interfold.config.yaml on disk: node, nodes and chain settings",
-          "where": "disk",
-          "ref": "crates/config/src/paths_engine.rs@43@pub const DEFAULT_CONFIG_NAME: &str = \"interfold.config.yaml\";"
-        },
-        {
           "name": "Resolved AppConfig for the chosen node: paths, chains, network and limits",
           "where": "memory",
-          "ref": "crates/config/src/app_config.rs@162@pub struct AppConfig {"
+          "ref": "crates/config/src/app_config.rs@152@pub struct AppConfig {"
         },
         {
           "name": "Protocol and node generation numbers, compiled into the binary",
@@ -509,28 +497,13 @@
       "key_types": [
         {
           "name": "UnscopedAppConfig",
-          "what": "the whole YAML document before a node is chosen: node defaults, nodes map, chains, otel and custom bb",
-          "ref": "crates/config/src/app_config.rs@498@pub struct UnscopedAppConfig {"
+          "what": "node settings before a profile is chosen: node defaults, nodes map, chains, paths, otel and custom bb",
+          "ref": "crates/config/src/app_config.rs@451@pub struct UnscopedAppConfig {"
         },
         {
           "name": "NodeDefinition",
           "what": "one node's settings: address, peers, network, ports, file names and buffer limits; unknown keys are rejected",
-          "ref": "crates/config/src/app_config.rs@31@pub struct NodeDefinition {"
-        },
-        {
-          "name": "ChainConfig",
-          "what": "one chain: name, rpc_url, rpc_auth, contract addresses, finalization and ingestion settings",
-          "ref": "crates/config/src/chain_config.rs@45@pub struct ChainConfig {"
-        },
-        {
-          "name": "ContractAddresses",
-          "what": "named contract addresses for a chain: interfold, ciphernode_registry, bonding_registry and optional others",
-          "ref": "crates/config/src/contract.rs@45@pub struct ContractAddresses {"
-        },
-        {
-          "name": "Contract",
-          "what": "untagged enum: a bare address string, or a table with address and deploy_block",
-          "ref": "crates/config/src/contract.rs@13@pub enum Contract {"
+          "ref": "crates/config/src/app_config.rs@21@pub struct NodeDefinition {"
         },
         {
           "name": "NetworkProfile",
@@ -551,19 +524,11 @@
       "read_first": [
         {
           "why": "crate surface: re-exports app_config, which holds the main configuration types",
-          "ref": "crates/config/src/lib.rs@19@pub use app_config::*;"
-        },
-        {
-          "why": "entry point: load_config resolves the file, expands env, merges the layers and scopes to the named node",
-          "ref": "crates/config/src/app_config.rs@558@pub fn load_config("
-        },
-        {
-          "why": "layer order: the YAML is merged over the defaults; E3_ variables and CLI overrides follow",
-          "ref": "crates/config/src/app_config.rs@577@.merge(Yaml::string(&loaded_yaml))"
+          "ref": "crates/config/src/lib.rs@13@pub use app_config::*;"
         },
         {
           "why": "per-node resolution: limits are checked and the network profile is resolved",
-          "ref": "crates/config/src/app_config.rs@260@NetworkProfile::resolve(node.network.as_deref(), node.network_id, &config.chains)?;"
+          "ref": "crates/config/src/app_config.rs@219@NetworkProfile::resolve(node.network.as_deref(), node.network_id, &config.chains)?;"
         },
         {
           "why": "release numbers: protocol-release.toml is compiled in and parsed once",
@@ -571,16 +536,6 @@
         }
       ],
       "rust_patterns": [
-        {
-          "pattern": "serde-derive",
-          "note": "untagged serde lets a contract be written as a bare address or as a table with deploy_block",
-          "ref": "crates/config/src/contract.rs@12@#[serde(untagged)]"
-        },
-        {
-          "pattern": "enum-match",
-          "note": "Contract::address_str returns the address from either variant",
-          "ref": "crates/config/src/contract.rs@25@Full { address, .. } => address,"
-        },
         {
           "pattern": "newtype",
           "note": "NetworkId wraps a 32-byte array and is compared with the built-in network IDs",
@@ -590,18 +545,13 @@
           "pattern": "closure",
           "note": "the release is parsed once, inside OnceLock::get_or_init",
           "ref": "crates/config/src/node_release.rs@31@RELEASE.get_or_init(|| {"
-        },
-        {
-          "pattern": "anyhow-context",
-          "note": "a missing YAML file is reported with a context message",
-          "ref": "crates/config/src/app_config.rs@573@.context(\"Configuration file not found\")"
         }
       ],
-      "depends_on": ["e3-events", "e3-fhe-params"],
-      "tests": "Unit tests sit in #[cfg(test)] modules, mainly app_config.rs (uses figment::Jail and inline chain configs). Run: cargo test -p e3-config",
+      "depends_on": ["e3-evm-config", "e3-fhe-params"],
+      "tests": "Inline tests cover node defaults/scoping, paths, network profiles and release identity. Run: cargo test -p e3-config",
       "unverified": [
-        "Which node code reads each ChainConfig and NodeDefinition field was not traced; only the loaders and NetworkProfile were read.",
-        "The validation rules in validation.rs and chain_config.rs were only sampled."
+        "Which node code reads every NodeDefinition field was not traced.",
+        "The CLI URL parser in validation.rs was only sampled."
       ]
     },
     {

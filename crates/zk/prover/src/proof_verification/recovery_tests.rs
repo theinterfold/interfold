@@ -2,8 +2,7 @@
 
 use super::*;
 use crate::actors::ZkActor;
-use crate::{PkCircuit, Provable, ZkBackend, ZkProver};
-use e3_config::BBPath;
+use crate::{BBPath, PkCircuit, Provable, ZkBackend, ZkProver};
 use e3_events::{E3RequestComplete, HistoryCollector};
 use e3_slashing::AccusationManager;
 use std::fs;

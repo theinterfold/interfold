@@ -8,10 +8,10 @@
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, bail, Context, Result};
-use e3_config::chain_config::ChainConfig;
 use e3_events::{AggregateId, E3Stage, E3id, EventStoreQueryBy, FailureReason, SeqAgg};
 use e3_evm::{read_finalized_e3_lifecycles, FinalizedE3Lifecycle};
 use e3_evm::{validate_chain_id, ProviderCache};
+use e3_evm_config::ChainConfig;
 use e3_request::E3LifecycleRepositoryFactory;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -412,10 +412,7 @@ mod tests {
     }
 
     fn anvil_chain(rpc_url: String, interfold: Address) -> ChainConfig {
-        use e3_config::{
-            contract::{Contract, ContractAddresses},
-            rpc::RpcAuth,
-        };
+        use e3_evm_config::{Contract, ContractAddresses, RpcAuth};
         let contract = |address: Address| Contract::AddressOnly(address.to_string());
         ChainConfig {
             enabled: Some(true),

@@ -37,10 +37,10 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use e3_config::{chain_config::ChainConfig, RpcAuth, RPC};
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
+use e3_evm_config::{ChainConfig, RpcAuth, RPC};
 use e3_utils::{
     nonce::{broadcast_refused, next_free_nonce},
     retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
@@ -545,8 +545,8 @@ mod tests {
     use super::*;
     use alloy::{primitives::U256, transports::mock::Asserter, transports::RpcError};
     use alloy_dyn_abi::DynSolType;
-    use e3_config::{chain_config::ChainConfig, Contract, ContractAddresses};
     use e3_events::Proof;
+    use e3_evm_config::{ChainConfig, Contract, ContractAddresses};
     use e3_utils::ArcBytes;
     use e3_zk_config::CircuitName;
     use std::sync::atomic::{AtomicUsize, Ordering};

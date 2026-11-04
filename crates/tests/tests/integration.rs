@@ -15,7 +15,6 @@ use ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBui
 use common::AddToCommittee;
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_ciphernode_builder::CiphernodeBuilder;
-use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_event_system::EventSystem;
 use e3_events::{
@@ -38,7 +37,7 @@ use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
-use e3_zk_prover::{CircuitInfo, VersionInfo, ZkBackend};
+use e3_zk_prover::{BBPath, CircuitInfo, VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
@@ -1484,28 +1483,28 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // Minimal chain config for in-process benchmarks (no RPC needed).
     // Provides slashing_manager address for EIP-712 accusation vote signatures.
-    let bench_chain_config = e3_config::chain_config::ChainConfig {
+    let bench_chain_config = e3_evm_config::ChainConfig {
         enabled: Some(false),
         name: "bench".into(),
         rpc_url: "http://localhost:8545".into(),
         rpc_auth: Default::default(),
-        contracts: e3_config::ContractAddresses {
-            interfold: e3_config::Contract::AddressOnly(
+        contracts: e3_evm_config::ContractAddresses {
+            interfold: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
-            ciphernode_registry: e3_config::Contract::AddressOnly(
+            ciphernode_registry: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
-            bonding_registry: e3_config::Contract::AddressOnly(
+            bonding_registry: e3_evm_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
             e3_program: None,
             fee_token: None,
-            slashing_manager: Some(e3_config::Contract::AddressOnly(
+            slashing_manager: Some(e3_evm_config::Contract::AddressOnly(
                 slashing_manager_addr.to_string(),
             )),
             dkg_fold_attestation_verifier: benchmark_dkg_fold_attestation_verifier_address()
-                .map(|a| e3_config::Contract::AddressOnly(a.to_string())),
+                .map(|a| e3_evm_config::Contract::AddressOnly(a.to_string())),
             faucet: None,
         },
         finalization_ms: None,

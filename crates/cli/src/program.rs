@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use e3_config::AppConfig;
+use e3_cli::program_config::ProgramConfig;
 
 use crate::program_support;
 
@@ -40,10 +40,10 @@ pub enum ProgramCacheCommands {
     Purge,
 }
 
-pub async fn execute(command: ProgramCommands, config: &AppConfig) -> Result<()> {
+pub async fn execute(command: ProgramCommands, config: &ProgramConfig) -> Result<()> {
     match command {
-        ProgramCommands::Start { dev } => program_support::start(config.program(), dev).await?,
-        ProgramCommands::Compile { dev } => program_support::compile(config.program(), dev).await?,
+        ProgramCommands::Start { dev } => program_support::start(config, dev).await?,
+        ProgramCommands::Compile { dev } => program_support::compile(config, dev).await?,
         ProgramCommands::Cache { command } => match command {
             ProgramCacheCommands::Purge => program_support::cache_purge().await?,
         },

@@ -13,7 +13,6 @@ use super::{
 };
 use alloy::primitives::Address;
 use anyhow::{ensure, Context as _, Result};
-use e3_config::chain_config::ChainConfig;
 use e3_events::{BusHandle, DkgFoldAttestationContext, E3Stage, E3id, EvmEventConfig};
 use e3_evm::{
     fetch_randomness_providers, ingestion_heartbeat_files, BondingRegistrySolReader,
@@ -24,6 +23,7 @@ use e3_evm::{
     RandomnessProviderSolReader, SlashingManagerSolReader, SlashingManagerSolWriter,
     SlashingWriterRepositoryFactory, WriteEnabled,
 };
+use e3_evm_config::ChainConfig;
 use e3_sync::NodeRole;
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info};

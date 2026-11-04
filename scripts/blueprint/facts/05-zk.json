@@ -195,7 +195,7 @@
         {
           "name": "bb binary, circuits and work dir under the node's noir install dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/backend/mod.rs@94@let noir_dir = home_dir.join"
+          "ref": "crates/zk/prover/src/backend/mod.rs@96@let noir_dir = home_dir.join"
         },
         {
           "name": "version.json record of installed bb and circuits versions",
@@ -247,7 +247,7 @@
         {
           "name": "ZkBackend",
           "what": "bb binary path, circuits dir, work dir and the pinned config",
-          "ref": "crates/zk/prover/src/backend/mod.rs@39@pub struct ZkBackend"
+          "ref": "crates/zk/prover/src/backend/mod.rs@41@pub struct ZkBackend"
         },
         {
           "name": "ZkConfig",
@@ -332,7 +332,6 @@
       "depends_on": [
         "e3-committee",
         "e3-committee-hash",
-        "e3-config",
         "e3-crypto",
         "e3-bfv-client",
         "e3-trbfv",
