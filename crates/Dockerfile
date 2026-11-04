@@ -84,7 +84,7 @@ COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
 COPY crates/polynomial/fhe-adapter/Cargo.toml ./polynomial/fhe-adapter/Cargo.toml
 COPY crates/program-runner/Cargo.toml ./program-runner/Cargo.toml
 COPY crates/program-server/Cargo.toml ./program-server/Cargo.toml
-COPY crates/request/Cargo.toml ./request/Cargo.toml
+COPY crates/state/request/Cargo.toml ./state/request/Cargo.toml
 COPY crates/safe/Cargo.toml ./safe/Cargo.toml
 COPY crates/sdk/Cargo.toml ./sdk/Cargo.toml
 COPY crates/slashing/Cargo.toml ./slashing/Cargo.toml

@@ -19,6 +19,6 @@ authorities.
 - Lifecycle is a projection; it accepts forward progress without regressing terminal state. Retained
   failures may still need accusation work, so local Failed is not proof that teardown is harmless.
 
-[Persistence](../../docs/architecture/persistence-and-replay.md) owns the recovery/overflow limits.
-Use the [README test map](README.md#tests). Routing changes need capacity and restart histories as
-well as reducer cases; Linux RSS checks exercise another boundary.
+[Persistence](../../../docs/architecture/persistence-and-replay.md) owns the recovery/overflow
+limits. Use the [README test map](README.md#tests). Routing changes need capacity and restart
+histories as well as reducer cases; Linux RSS checks exercise another boundary.

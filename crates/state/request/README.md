@@ -29,8 +29,8 @@ recipient's cryptographic state machine.
 `E3RouterBuilder::with(extension)` or `with_recipient("recipient_name", extension)`, then await
 `build()` to hydrate and attach. Named recipients let the router defer relevant history until the
 extension creates its actor. Use the
-[ciphernode extension wiring](../ciphernode/builder/src/extensions.rs) for a complete composition,
-including restored selections and terminal-state gates.
+[ciphernode extension wiring](../../ciphernode/builder/src/extensions.rs) for a complete
+composition, including restored selections and terminal-state gates.
 
 `E3Extension` implements synchronous `on_event(context, event)` and async
 `hydrate(context, snapshot)`. An extension can inject typed dependencies with
@@ -44,9 +44,9 @@ receives `EffectsEnabled`; extensions must pass that state to actors created dur
 ## Lifecycle and key authority
 
 `E3LifecycleCoordinator` is a separate node-wide observer with persisted stage projection; it is
-attached by [builder startup](../ciphernode/builder/src/startup.rs). Terminal local state does not
-itself prove confirmed chain completion, and failed contexts can remain alive for accusation work.
-Peer traffic cannot create an admitted E3.
+attached by [builder startup](../../ciphernode/builder/src/startup.rs). Terminal local state does
+not itself prove confirmed chain completion, and failed contexts can remain alive for accusation
+work. Peer traffic cannot create an admitted E3.
 
 Peer events arriving before chain admission wait in a bounded memory-only queue. They follow the
 admitting chain event in arrival order; a restart before admission loses that held history. This
@@ -58,7 +58,7 @@ projection establishes authority; a local `PublicKeyAggregated` intent cannot. R
 traits expose typed context, metadata, lifecycle, and router-checkpoint storage to startup/recovery
 consumers.
 
-See [persistence and replay](../../docs/architecture/persistence-and-replay.md) for checkpoint,
+See [persistence and replay](../../../docs/architecture/persistence-and-replay.md) for checkpoint,
 deferred-queue, overflow, and teardown limits.
 
 ## Tests
@@ -67,5 +67,5 @@ Run `cargo test --locked -p e3-request`. Routing/lifecycle `workflow_tests.rs` c
 [`routing/tests.rs`](src/routing/tests.rs) exercises checkpoint hydration and failed-context
 teardown. Buffer/capacity tests cover per-E3/global limits and retained allocation; pre-admission
 cases cover ordered delivery, overflow, teardown, and completed-E3 rejection. Context/typed-map
-tests cover recipient order and lookup. Whole-node restart is in [e3-tests](../tests/README.md). See
-[AGENTS.md](AGENTS.md) for routing/checkpoint changes.
+tests cover recipient order and lookup. Whole-node restart is in [e3-tests](../../tests/README.md).
+See [AGENTS.md](AGENTS.md) for routing/checkpoint changes.

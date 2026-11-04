@@ -1,7 +1,7 @@
 # Persistence, replay, and shutdown
 
 Owners: [event system](../../crates/state/event-system/), [events](../../crates/events/),
-[data](../../crates/state/storage/), [request router](../../crates/request/),
+[data](../../crates/state/storage/), [request router](../../crates/state/request/),
 [sync](../../crates/state/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
 [Design principles](design-principles.md) describe the direction; owner-local documentation
 describes implementation boundaries. Neither makes an unimplemented durability guarantee true.
@@ -183,7 +183,7 @@ disables further deferral until teardown/restart. Live routing, checkpoints, oth
 other E3s continue; the affected E3 can fail at its existing deadline. **Gap:** queues and failure
 records are memory-only; restart cannot recover their pre-checkpoint backlog.
 
-[Capacity tests](../../crates/request/src/routing/capacity_tests.rs) route four independently
+[Capacity tests](../../crates/state/request/src/routing/capacity_tests.rs) route four independently
 allocated secure-sized histories through real recipient creation, including full failed C3/C4
 requests and document envelopes. They test ordered delivery, default-limit overflow, spare-capacity
 release, and allocation-heavy empty buffers. Linux RSS checks require distinct resident storage and
