@@ -12,10 +12,12 @@ unchanged.
 
 This worker is an excluded, independent Cargo workspace. [`src/main.rs`](src/main.rs) owns command
 parsing plus bounded artifact/input loading, SDK construction, native guest execution,
-proving/verification, and seal encoding. `Config` binds artifact paths/checksums and application
-identity; `verify` checks the expected journal; `read_items` adapts the shared stream into OpenVM
-stdin. [`Cargo.toml`](Cargo.toml) pins this worker's SDK/features independently of the runtime
-workspace; use the Rust/OpenVM toolchains listed under prerequisites below.
+proving/verification, and seal encoding. [`stages.rs`](src/stages.rs) owns staged proving and native
+proof admission; [`checkpoint.rs`](src/checkpoint.rs) owns local checkpoint files and manifests.
+`Config` binds artifact paths/checksums and application identity; `verify` checks the expected
+journal; `read_items` adapts the shared stream into OpenVM stdin. [`Cargo.toml`](Cargo.toml) pins
+this worker's SDK/features independently of the runtime workspace; use the Rust/OpenVM toolchains
+listed under prerequisites below.
 
 The host starts a checked CPU/CUDA worker per operation. The worker executes/proves the project
 guest, aggregates into an EVM proof, verifies it against the supplied journal/commitments, then
@@ -113,19 +115,87 @@ and recomputes the identity from the executable, before any request is accepted.
 
 ## Worker commands
 
-| Command                                                                       | Purpose                                            |
-| ----------------------------------------------------------------------------- | -------------------------------------------------- |
-| `prepare <app.pk> <guest.vmexe> <new-dir>`                                    | Aggregation key and `identity.json`                |
-| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>` | The configuration below                            |
-| `probe`                                                                       | Succeeds only for a CUDA build with a GPU          |
-| `check <config.json>`                                                         | Loads and checks every artifact                    |
-| `execute <config.json> <input> <journal>`                                     | Runs the guest without proving; checks the journal |
-| `prove <config.json> <input> <journal> <new-seal>`                            | Proves and verifies one round                      |
-| `verify <config.json> <proof.json> <journal> <new-seal>`                      | Verifies an existing proof                         |
+| Command                                                                       | Purpose                                               |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `prepare <app.pk> <guest.vmexe> <new-dir>`                                    | Aggregation key and `identity.json`                   |
+| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>` | The configuration below                               |
+| `probe`                                                                       | Succeeds only for a CUDA build with a GPU             |
+| `check <config.json>`                                                         | Loads and checks every artifact                       |
+| `execute <config.json> <input> <journal>`                                     | Runs the guest without proving; checks the journal    |
+| `prove <config.json> <input> <journal> <new-seal>`                            | Proves and verifies one round                         |
+| `prove-app <config.json> <input> <journal> <new-dir>`                         | Saves a verified application STARK                    |
+| `aggregate-stark <config.json> <app-dir> <journal> <new-dir>`                 | Saves a verified aggregate STARK                      |
+| `prove-root <config.json> <aggregate-dir> <journal> <new-dir>`                | Saves a verified root STARK                           |
+| `compress-root <config.json> <root-dir> <journal> <new-seal>`                 | Verifies and compresses a saved root into an EVM seal |
+| `verify <config.json> <proof.json> <journal> <new-seal>`                      | Verifies an existing proof                            |
 
 `prove` reads the guest input items the host wrote, proves the application, aggregates it, generates
 the Halo2 EVM proof, and verifies it with the configured EVM verifier against the expected journal
 and both application commitments before it writes a seal. There is no fake-proof mode.
+
+### Save and resume completed stages
+
+For long runs, use separate stages instead of `prove`:
+
+```sh
+interfold-openvm-prover prove-app CONFIG INPUT JOURNAL NEW_APP_DIR
+interfold-openvm-prover aggregate-stark CONFIG NEW_APP_DIR JOURNAL NEW_AGGREGATE_DIR
+interfold-openvm-prover prove-root CONFIG NEW_AGGREGATE_DIR JOURNAL NEW_ROOT_DIR
+interfold-openvm-prover compress-root CONFIG NEW_ROOT_DIR JOURNAL NEW_SEAL
+```
+
+Each stage saves its result only after native verification. A later command checks the saved proof
+again against the independently derived application identity and the exact 288-byte journal. File
+hashes detect corruption; they never replace proof verification. Only `compress-root` loads the
+Halo2 key and KZG parameters, and only its EVM-verified output is a seal. It releases recursive
+prover state before loading compression setup.
+
+If a stage fails or is interrupted, restart that stage with a new output path and the last complete
+checkpoint. Earlier stages need not run again. This does not resume inside an unfinished stage or
+make a successful uninterrupted proof faster. The HTTP service still uses `prove` and keeps jobs in
+memory; it does not automatically recover these checkpoints.
+
+Outputs must be new paths with existing parent directories on a filesystem supporting hard links and
+directory synchronization. Before proving, the worker checks private file creation, hard-link
+publication and synchronization using temporary paths; it never publishes a probe at the final
+output path. This detects unsupported or unwritable destinations early, but cannot prevent later
+disk exhaustion, storage failures or permission changes. A checkpoint directory contains:
+
+- Application: `app.proof` in the pinned SDK's bitcode format.
+- Aggregate: `aggregate.json` in `VersionedVmStarkProof` format and `metadata.bin` in the SDK codec.
+- Root: `root.bin` in the SDK codec.
+- Each directory: `manifest.json`, published last after synchronizing the files. A directory without
+  a complete manifest cannot be resumed. Existing files are never replaced; retain incomplete
+  directories for diagnosis and choose a new output path.
+
+The manifest binds format version 1, the exact OpenVM revision, stage, application commitments,
+journal SHA-256, application key/executable/aggregation key/verifier hashes, and proof-file hashes.
+Default import limits are 4 GiB for application proofs and 256 MiB for aggregate/root proofs.
+`OPENVM_CHECKPOINT_MAX_PROOF_BYTES` overrides the proof import limit with a positive decimal byte
+count on the receiving host. Manifest and metadata limits remain 64 KiB and 64 bytes. These are
+serialized-file limits, not bounds on decoded memory or proving time. Use OS/container memory and
+time limits for jobs supplied by others; this CLI does not provide a sandbox or public upload API.
+
+Import limits never discard a locally generated, verified result: the worker saves its complete
+checkpoint even when its size exceeds the receiving limit. Increase that limit only on a host with
+enough memory to resume. Application proofs larger than 2 GiB occur in real workloads. Checkpoints
+consume disk, and incomplete outputs are retained; operators must budget disk space and clean up
+unneeded attempts.
+
+Checkpoint members must be regular files. On Unix the worker refuses symlinks and special files,
+including FIFOs, and creates directories/files with modes 0700/0600. Keep the directory tree under
+operator control. Aggregate JSON and root/metadata encoding stream to disk while hashing; the pinned
+bitcode application serializer still needs an in-memory proof buffer.
+
+To move a completed stage to another host, copy the whole checkpoint directory, journal, and
+matching artifacts. Paths in the destination config may differ, but artifact bytes and application
+identity must match. Halo2 setup stays independently trusted and the final proof must pass the
+configured EVM verifier. Keep checkpoints and keys outside Git.
+
+This adds an opt-in local format. Guest computation, circuit parameters, receipt bytes, deployed
+verifiers, service APIs and protocol release counters do not change. Existing `prove` and `verify`
+commands keep their behavior. An older worker cannot read the new checkpoint directories; rollback
+uses its existing `prove` command with the original inputs and artifacts.
 
 | Configuration field    | Value                                                          |
 | ---------------------- | -------------------------------------------------------------- |
@@ -183,10 +253,16 @@ drain before a live migration. The compute path is unaudited.
 ## Tests
 
 From the repository root, `pnpm openvm prover-check` checks the independent worker and
-`pnpm openvm prover-test` runs its inline stream/seal/probe tests using the pinned toolchain and
-prerequisites above. Root `cargo -p interfold-openvm-prover` cannot select this workspace. Those
-tests do not prepare keys or generate receipts. Real execution/proving/contract acceptance uses the
-prepared workflows below. [AGENTS.md](AGENTS.md) covers worker/artifact changes.
+`pnpm openvm prover-test` runs stream/seal/probe and checkpoint failure-case tests using the pinned
+toolchain and prerequisites above. Root `cargo -p interfold-openvm-prover` cannot select this
+workspace. Those tests do not prepare keys or generate receipts. Real execution/proving/contract
+acceptance uses the prepared workflows below. [AGENTS.md](AGENTS.md) covers worker/artifact changes.
+
+For a small reproducer from checked-in source, use
+[real checkpoint qualification](tests/checkpoints/README.md). It builds a pinned public digest
+guest, generates all four stages, relocates checkpoints, resumes from a completed root, runs the
+five genuine-proof tests and checks actual contract acceptance. The expensive steps are opt-in and
+keep generated artifacts outside tracked source.
 
 ## Checks
 
@@ -198,3 +274,45 @@ pnpm openvm service-test   # host, types, program server and program runner
 
 The CRISP repository, https://github.com/theinterfold/CRISP, owns the live OpenVM round test for the
 CRISP program. Keep reports, inputs, keys and proofs out of the repository.
+
+Three ignored tests reverify independently generated native proofs. `OPENVM_APP_FIXTURE` names a
+directory containing `app.pk`, `guest.vmexe`, `app.proof` and `journal.bin` (288 bytes).
+`OPENVM_AGGREGATE_FIXTURE` names one containing `config.json`, `aggregate.json` and `journal.bin`.
+`OPENVM_ROOT_FIXTURE` names one containing `config.json`, `root.bin` and `journal.bin`, with the
+configuration pointing at matching prepared artifacts. These tests do not generate a new receipt or
+load Halo2 keys. Run each explicitly on a host with sufficient free resources:
+
+```sh
+OPENVM_APP_FIXTURE=/absolute/app-fixture \
+  pnpm openvm prover-test real_application_checkpoint -- --ignored --test-threads=1
+OPENVM_AGGREGATE_FIXTURE=/absolute/aggregate-fixture \
+  pnpm openvm prover-test real_aggregate_checkpoint -- --ignored --test-threads=1
+OPENVM_ROOT_FIXTURE=/absolute/root-fixture \
+  pnpm openvm prover-test real_root_checkpoint -- --ignored --test-threads=1
+```
+
+A complete qualification also runs all four commands in separate processes and verifies the final
+seal through the prepared contract flow. Native proof tests and unit tests do not establish that
+Halo2 compression fits a particular machine or that CUDA has been exercised.
+
+The separate `real_evm_receipt` ignored test accepts `OPENVM_EVM_FIXTURE` containing `config.json`,
+`proof.json`, `journal.bin` and the expected `seal.bin`. It verifies a genuine receipt with the
+configured EVM verifier, requires byte-identical seal encoding, and rejects a changed proof,
+journal, application identity and verifier digest. It does not generate a new Halo2 proof:
+
+```sh
+OPENVM_EVM_FIXTURE=/absolute/evm-fixture \
+  pnpm openvm prover-test real_evm_receipt -- --ignored --test-threads=1
+```
+
+The lightweight `real_checkpoint_encodings` ignored test checks the streaming aggregate/root formats
+against independently generated fixtures without constructing a prover or loading Halo2. It needs
+both fixture directories above, with `metadata.bin` also present in the aggregate directory. It
+checks format compatibility, file integrity, and early rejection of an unrelated journal, not native
+proof validity:
+
+```sh
+OPENVM_AGGREGATE_FIXTURE=/absolute/aggregate-fixture \
+OPENVM_ROOT_FIXTURE=/absolute/root-fixture \
+  pnpm openvm prover-test real_checkpoint_encodings -- --ignored --test-threads=1
+```

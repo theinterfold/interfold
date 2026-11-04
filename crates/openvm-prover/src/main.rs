@@ -12,7 +12,14 @@
 //! - `execute <config.json> <input> <journal>`: runs the guest without proving and checks that it
 //!   reveals the journal's digest. A cheap check of a round, and of the guest against the host.
 //! - `prove <config.json> <input> <journal> <new-seal>`: proves and verifies a round.
+//! - `prove-app <config.json> <input> <journal> <new-dir>`: saves an application proof.
+//! - `aggregate-stark <config.json> <app-dir> <journal> <new-dir>`: saves its aggregation.
+//! - `prove-root <config.json> <aggregate-dir> <journal> <new-dir>`: saves a root proof.
+//! - `compress-root <config.json> <root-dir> <journal> <new-seal>`: finishes the EVM receipt.
 //! - `verify <config.json> <proof.json> <journal> <new-seal>`: verifies an existing proof.
+
+mod checkpoint;
+mod stages;
 
 use eyre::{ensure, Result};
 use openvm_circuit::arch::instructions::exe::VmExe;
@@ -325,7 +332,7 @@ fn write_config(paths: &[PathBuf]) -> Result<()> {
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let action = args.next().ok_or_else(|| {
-        eyre::eyre!("Expected prepare, write-config, probe, check, execute, prove, or verify")
+        eyre::eyre!("Expected prepare, write-config, probe, check, execute, prove, prove-app, aggregate-stark, prove-root, compress-root, or verify")
     })?;
     if action == "probe" {
         ensure!(args.next().is_none(), "Unexpected arguments");
@@ -385,9 +392,21 @@ fn main() -> Result<()> {
         ensure!(paths.len() == 2, "Expected the input and the journal");
         return execute(&config, &paths[0], &paths[1]);
     }
+    if let Some(action @ ("prove-app" | "aggregate-stark" | "prove-root" | "compress-root")) =
+        action.to_str()
+    {
+        let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+        ensure!(
+            paths.len() == 3,
+            "Expected input, journal, and a new output path"
+        );
+        let journal = read_limited(&paths[1], 288)?;
+        ensure!(journal.len() == 288, "Expected nine journal words");
+        return stages::run(action, &config, &paths[0], &journal, &paths[2]);
+    }
     ensure!(
         action == "prove" || action == "verify",
-        "Expected prepare, write-config, probe, check, execute, prove, or verify"
+        "Expected prepare, write-config, probe, check, execute, prove, prove-app, aggregate-stark, prove-root, compress-root, or verify"
     );
     let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
     ensure!(
@@ -436,6 +455,26 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    pub(crate) fn test_config(directory: &Path) -> Config {
+        for name in ["app.pk", "guest.vmexe", "aggregation.pk", "verifier.json"] {
+            fs::write(directory.join(name), name.as_bytes()).unwrap();
+        }
+        Config {
+            app_pk: directory.join("app.pk"),
+            executable: directory.join("guest.vmexe"),
+            aggregation_pk: directory.join("aggregation.pk"),
+            halo2_pk: directory.join("halo2-not-read.pk"),
+            halo2_params_dir: directory.join("params-not-read"),
+            verifier_artifact: directory.join("verifier.json"),
+            verifier_sha256: String::new(),
+            app_commit: AppExecutionCommit {
+                app_exe_commit: openvm_continuations::CommitBytes::try_new([0; 32]).unwrap(),
+                app_vm_commit: openvm_continuations::CommitBytes::try_new([0; 32]).unwrap(),
+            },
+            segment_memory_bytes: 1024,
+        }
+    }
+
     /// The bytes `e3_openvm_types::write_items` writes for the items `[1, 2, 3]` and `[]`. The same
     /// vector is pinned on the writer's side, so a format change on either side fails a test.
     const TWO_ITEMS: [u8; 23] = [
@@ -483,6 +522,32 @@ mod tests {
         head[94..96].copy_from_slice(&[0x06, 0xe0]);
         assert_eq!(&seal[..96], head.as_slice());
         assert_eq!(&seal[96..], proof_data.as_slice());
+    }
+
+    #[test]
+    #[ignore = "requires an independently generated EVM receipt and matching configuration; see README"]
+    fn real_evm_receipt_preserves_the_seal_and_rejects_tampering() -> Result<()> {
+        let fixture = PathBuf::from(std::env::var("OPENVM_EVM_FIXTURE")?);
+        let config = config(&fixture.join("config.json"))?;
+        let journal = read_limited(&fixture.join("journal.bin"), 288)?;
+        let proof: EvmProof =
+            serde_json::from_slice(&read_limited(&fixture.join("proof.json"), 256 * 1024)?)?;
+        verify(&proof, &config, &journal)?;
+        assert_eq!(seal(&proof), read_limited(&fixture.join("seal.bin"), 1856)?);
+
+        let mut wrong_journal = journal.clone();
+        wrong_journal[0] ^= 1;
+        assert!(verify(&proof, &config, &wrong_journal).is_err());
+        let mut tampered = proof.clone();
+        tampered.proof_data.proof[0] ^= 1;
+        assert!(verify(&tampered, &config, &journal).is_err());
+        let mut wrong_identity = proof.clone();
+        wrong_identity.app_commit.app_exe_commit = [1u32; 8].into();
+        assert!(verify(&wrong_identity, &config, &journal).is_err());
+        let mut wrong_verifier = config;
+        wrong_verifier.verifier_sha256.clear();
+        assert!(verify(&proof, &wrong_verifier, &journal).is_err());
+        Ok(())
     }
 
     #[cfg(not(feature = "cuda"))]
