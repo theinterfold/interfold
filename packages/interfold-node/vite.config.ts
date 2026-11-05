@@ -16,7 +16,7 @@ export default defineConfig({
   plugins: [react()],
   publicDir: path.resolve(here, '../interfold-dashboard/src/assets'),
   build: {
-    outDir: path.resolve(here, '../../crates/dashboard/assets'),
+    outDir: path.resolve(here, '../../crates/diagnostics/dashboard/assets'),
     emptyOutDir: true,
     rollupOptions: {
       output: {

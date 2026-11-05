@@ -22,7 +22,7 @@ output is a diagnostic sink alongside that in-memory view.
 `attach_protocol_logger(name, bus)` subscribes a `SimpleLogger<InterfoldEvent>` to summarize
 protocol events. `EventLogging` supports other event types. For operational `tracing` output,
 initialize `LogCollector::init(node_name, optional_jsonl_path)` and add `OperationalLogLayer` to the
-application's tracing subscriber. The CLI's [telemetry setup](../cli/src/helpers/telemetry.rs)
+application's tracing subscriber. The CLI's [telemetry setup](../../cli/src/helpers/telemetry.rs)
 demonstrates subscriber/OpenTelemetry wiring.
 
 The collector is process-global and keeps the first initialization. It retains up to 20,000 entries
@@ -43,7 +43,7 @@ can make arbitrary secret text in a message safe. Do not log raw secrets, plaint
 entire cryptographic payloads.
 
 For CLI verbosity and collector endpoints see the
-[workspace debugging guide](../README.md#debugging).
+[workspace debugging guide](../../README.md#debugging).
 
 ## Tests
 

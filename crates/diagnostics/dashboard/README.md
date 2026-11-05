@@ -24,7 +24,7 @@ Construct `DashboardState::new(runtime, eventstore, aggregate_ids, network, chai
 await `start_dashboard(port, state)` in an Actix runtime. `DashboardRuntime` contains node identity,
 ports, version, and displayed chains; use the ciphernode handle's event-store reader, aggregate IDs,
 and network status for the remaining runtime inputs. The CLI's
-[startup integration](../cli/src/start.rs) supplies these from the running node.
+[startup integration](../../cli/src/start.rs) supplies these from the running node.
 
 Open `http://127.0.0.1:<port>/`. The server deliberately binds loopback: its API is unauthenticated
 and exposes detailed operational/protocol data.
@@ -45,8 +45,8 @@ bounded [logger collector](../logger/README.md), separately from durable event h
 ## Tests
 
 Run `cargo test --locked -p e3-dashboard` after preparing the
-[EVM build prerequisites](../evm/runtime/README.md). Projection tests do not require a live public
-chain.
+[EVM build prerequisites](../../evm/runtime/README.md). Projection tests do not require a live
+public chain.
 
 Inline [`projection.rs`](src/projection.rs) tests feed synthetic histories into summaries/traces;
 [`updates.rs`](src/updates.rs) tests release/version handling. These do not exercise a browser or

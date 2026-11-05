@@ -1,8 +1,8 @@
 # Interfold Node Observatory
 
 The local ciphernode operator dashboard. The React source is built by Vite into
-`crates/dashboard/assets/`; the Rust dashboard server embeds those production assets into the
-`interfold` binary.
+`crates/diagnostics/dashboard/assets/`; the Rust dashboard server embeds those production assets
+into the `interfold` binary.
 
 Protocol history comes from the node's durable EventStore. Operational tracing logs come from the
 bounded log collector. These are intentionally separate: an application log is not a protocol

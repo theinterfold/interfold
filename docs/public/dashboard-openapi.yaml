@@ -6,7 +6,7 @@ info:
     name: LGPL-3.0-only
     identifier: LGPL-3.0-only
   description: |
-    Read-only JSON API of the local node dashboard (`crates/dashboard`). The dashboard web UI uses
+    Read-only JSON API of the local node dashboard (`crates/diagnostics/dashboard`). The dashboard web UI uses
     the same endpoints.
 
     The server starts only when the node config sets `dashboard_port`. It listens on `127.0.0.1`

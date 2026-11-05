@@ -494,14 +494,14 @@
       "id": "e3-dashboard",
       "documentation": [{ "title": "Node dashboard", "path": "docs/pages/operate/dashboard.mdx" }],
       "kind": "crate",
-      "path": "crates/dashboard",
+      "path": "crates/diagnostics/dashboard",
       "one_line": "Read-only web dashboard for one node: a single-page UI and JSON views built from the node's own event store.",
       "actors": [],
       "consumes": [
         {
           "name": "InterfoldEvent",
           "by": "TelemetryProjection",
-          "ref": "crates/dashboard/src/projection.rs@289@pub fn apply(&mut self, event: InterfoldEvent) {"
+          "ref": "crates/diagnostics/dashboard/src/projection.rs@289@pub fn apply(&mut self, event: InterfoldEvent) {"
         }
       ],
       "emits": [],
@@ -509,89 +509,89 @@
         {
           "name": "projection of the event store: per-E3 state and read cursors",
           "where": "memory",
-          "ref": "crates/dashboard/src/lib.rs@70@struct ProjectionState {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@70@struct ProjectionState {"
         },
         {
           "name": "operator chain status, refreshed on request",
           "where": "memory",
-          "ref": "crates/dashboard/src/lib.rs@84@struct OperatorStatusCache {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@84@struct OperatorStatusCache {"
         },
         {
           "name": "latest release info, cached with a time to live",
           "where": "memory",
-          "ref": "crates/dashboard/src/updates.rs@52@struct Cache {"
+          "ref": "crates/diagnostics/dashboard/src/updates.rs@52@struct Cache {"
         }
       ],
       "key_types": [
         {
           "name": "DashboardState",
           "what": "shared handler state: runtime info, event store reader, projection and caches",
-          "ref": "crates/dashboard/src/lib.rs@59@pub struct DashboardState {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@59@pub struct DashboardState {"
         },
         {
           "name": "DashboardRuntime",
           "what": "node name, address, peer id, ports, version and chains, shown in the snapshot",
-          "ref": "crates/dashboard/src/lib.rs@48@pub struct DashboardRuntime {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@48@pub struct DashboardRuntime {"
         },
         {
           "name": "TelemetryProjection",
           "what": "pure projection from events to per-E3 summaries, traces and an overview",
-          "ref": "crates/dashboard/src/projection.rs@274@pub struct TelemetryProjection {"
+          "ref": "crates/diagnostics/dashboard/src/projection.rs@274@pub struct TelemetryProjection {"
         },
         {
           "name": "E3Summary",
           "what": "one E3 as shown in the dashboard list",
-          "ref": "crates/dashboard/src/projection.rs@142@pub struct E3Summary {"
+          "ref": "crates/diagnostics/dashboard/src/projection.rs@142@pub struct E3Summary {"
         },
         {
           "name": "GitHubRelease",
           "what": "fields read from GitHub's releases API",
-          "ref": "crates/dashboard/src/updates.rs@43@struct GitHubRelease {"
+          "ref": "crates/diagnostics/dashboard/src/updates.rs@43@struct GitHubRelease {"
         }
       ],
       "read_first": [
         {
           "why": "the server, its routes and the embedded static assets",
-          "ref": "crates/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
         },
         {
           "why": "how the projection and caches are built from the runtime",
-          "ref": "crates/dashboard/src/lib.rs@100@let projection = TelemetryProjection::new(runtime.address.clone());"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@100@let projection = TelemetryProjection::new(runtime.address.clone());"
         },
         {
           "why": "a JSON handler: refresh the projection, then build the view",
-          "ref": "crates/dashboard/src/lib.rs@232@async fn snapshot(state: web::Data<DashboardState>)"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@232@async fn snapshot(state: web::Data<DashboardState>)"
         },
         {
           "why": "the pure projection that the handlers read",
-          "ref": "crates/dashboard/src/projection.rs@274@pub struct TelemetryProjection {"
+          "ref": "crates/diagnostics/dashboard/src/projection.rs@274@pub struct TelemetryProjection {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "serde-derive",
           "note": "the snapshot types derive Serialize for the JSON API",
-          "ref": "crates/dashboard/src/lib.rs@41@#[derive(Clone, Debug, Serialize)]"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@41@#[derive(Clone, Debug, Serialize)]"
         },
         {
           "pattern": "arc-shared",
           "note": "the aggregate list is shared behind an Arc between handlers",
-          "ref": "crates/dashboard/src/lib.rs@62@aggregate_ids: Arc<Vec<usize>>,"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@62@aggregate_ids: Arc<Vec<usize>>,"
         },
         {
           "pattern": "enum-match",
           "note": "each handler matches the refresh result and returns the view or an error",
-          "ref": "crates/dashboard/src/lib.rs@233@match state.refresh().await {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@233@match state.refresh().await {"
         },
         {
           "pattern": "closure",
           "note": "the server factory is a move closure that registers the routes",
-          "ref": "crates/dashboard/src/lib.rs@362@HttpServer::new(move || {"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@362@HttpServer::new(move || {"
         },
         {
           "pattern": "async-await",
           "note": "the server start and the handlers are async",
-          "ref": "crates/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
+          "ref": "crates/diagnostics/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
         }
       ],
       "depends_on": ["e3-event-system", "e3-evm-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
