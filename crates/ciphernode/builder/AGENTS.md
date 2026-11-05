@@ -18,7 +18,8 @@ Protocol; preserve the prerequisites, not just the current line order.
   `test-helpers` with `_for_testing`. Proof-skip support also requires its dedicated test-only
   feature.
 - Do not make shared test support depend on this crate: lower-level tests would pull the complete
-  stack and can cycle through event-system. Multi-node composition belongs in `crates/tests`.
+  stack and can cycle through event-system. Multi-node composition belongs in
+  `crates/testing/system`.
 
 [Persistence](../../../docs/architecture/persistence-and-replay.md) owns startup and failure-signal
 semantics; [slashing](../../../docs/architecture/slashing.md) owns chain-specific manager

@@ -2,7 +2,7 @@
 members = [
   "crates/orchestration/aggregator",
   "crates/bfv/client",
-  "crates/bfv-test-support",
+  "crates/testing/bfv-support",
   "crates/ciphernode/builder",
   "crates/ciphernode/config",
   "crates/cli",
@@ -28,7 +28,7 @@ members = [
   "crates/evm/indexer",
   "crates/init",
   "crates/orchestration/keyshare",
-  "crates/layout-lock",
+  "crates/testing/layout-lock",
   "crates/diagnostics/logger",
   "crates/ciphernode/multithread",
   "crates/net",
@@ -47,8 +47,8 @@ members = [
   "crates/orchestration/sortition",
   "crates/state/sync",
   "crates/task-pool",
-  "crates/test-support",
-  "crates/tests",
+  "crates/testing/support",
+  "crates/testing/system",
   "crates/bfv/threshold",
   "crates/utils",
   "crates/utils-derive",
@@ -89,7 +89,7 @@ repository = "https://github.com/theinterfold/interfold"
 [workspace.dependencies]
 e3-aggregator = { version = "0.20.0-dev.3", path = "./crates/orchestration/aggregator" }
 e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv/client" }
-e3-bfv-test-support = { path = "./crates/bfv-test-support" }
+e3-bfv-test-support = { path = "./crates/testing/bfv-support" }
 e3-committee = { version = "0.20.0-dev.3", path = "./crates/committee" }
 e3-console = { version = "0.20.0-dev.3", path = "./crates/console" }
 e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/diagnostics/dashboard" }
@@ -129,10 +129,10 @@ e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program-server"
 e3-polynomial = { version = "0.20.0-dev.3", path = "./crates/polynomial" }
 e3-polynomial-fhe = { version = "0.20.0-dev.3", path = "./crates/polynomial/fhe-adapter" }
 e3-sync = { version = "0.20.0-dev.3", path = "./crates/state/sync" }
-e3-layout-lock = { version = "0.20.0-dev.3", path = "./crates/layout-lock" }
+e3-layout-lock = { version = "0.20.0-dev.3", path = "./crates/testing/layout-lock" }
 e3-task-pool = { version = "0.20.0-dev.3", path = "./crates/task-pool" }
-e3-test-support = { path = "./crates/test-support" }
-e3-tests = { version = "0.20.0-dev.3", path = "./crates/tests" }
+e3-test-support = { path = "./crates/testing/support" }
+e3-tests = { version = "0.20.0-dev.3", path = "./crates/testing/system" }
 e3-trbfv = { version = "0.20.0-dev.3", path = "./crates/bfv/threshold" }
 e3-utils = { version = "0.20.0-dev.3", path = "./crates/utils" }
 e3-utils-derive = { version = "0.20.0-dev.3", path = "./crates/utils-derive" }

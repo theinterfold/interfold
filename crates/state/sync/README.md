@@ -54,4 +54,4 @@ Run `cargo test --locked -p e3-sync`; replay-focused targets do not need EVM/pro
 [`tests/`](src/tests) separates schema/role admission, history failures, gates, and
 checkpoint/replay scenarios. Replay-spool tests use actual paged load/replay and temporary storage,
 including byte-limited pages and sequence-preserving merge. Whole-node hydration is in
-[e3-tests](../../tests/README.md). See [AGENTS.md](AGENTS.md) for recovery changes.
+[e3-tests](../../testing/system/README.md). See [AGENTS.md](AGENTS.md) for recovery changes.

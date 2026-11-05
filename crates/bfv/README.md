@@ -24,7 +24,7 @@ changes `SOURCE_HASH` even when every byte is unchanged. See
 Local encryption of saved identities and secret shares stays in [crypto](../crypto/README.md).
 [Polynomials](../polynomial/README.md), [SAFE](../safe/README.md),
 [parity matrices](../parity-matrix/README.md), the [Rust SDK](../sdk/README.md),
-[WASM](../wasm/README.md), and the shared test [BFV ballots](../bfv-test-support/README.md) keep
+[WASM](../wasm/README.md), and the shared test [BFV ballots](../testing/bfv-support/README.md) keep
 their own roots. The actors that run these calculations belong to
 [keyshare](../orchestration/keyshare/README.md) and
 [aggregation](../orchestration/aggregator/README.md).

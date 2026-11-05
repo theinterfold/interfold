@@ -20,6 +20,6 @@ cargo test --locked -p e3-test-support
 ```
 
 No Solidity, Noir, node builder or prover preparation is required. Other fixtures live at their
-[owner boundaries](../../docs/architecture/repository-testing.md#fixture-ownership-2325): isolated
-[event runtimes](../state/event-system/README.md#test-fixtures), artificial
-[ballots](../bfv-test-support/README.md), and complete [system scenarios](../tests/README.md).
+[owner boundaries](../../../docs/architecture/repository-testing.md#fixture-ownership-2325):
+isolated [event runtimes](../../state/event-system/README.md#test-fixtures), artificial
+[ballots](../bfv-support/README.md), and complete [system scenarios](../system/README.md).

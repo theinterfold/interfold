@@ -207,9 +207,10 @@ fn benchmark_dkg_fold_attestation_verifier_address() -> Option<Address> {
         .or_else(|| "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0".parse().ok())
 }
 
-/// Monorepo root (`crates/tests` → `../..`).
+/// Monorepo root (`crates/testing/system` → `../../..`).
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
         .join("..")
         .join("..")
 }

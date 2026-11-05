@@ -84,7 +84,7 @@ bootstrap does not resolve managers or sign accusation votes.
 Consume the handle with `shutdown(deadline).await`: it acknowledges shutdown handlers, flushes the
 event pipeline, then drains snapshots and closes storage within the supplied deadline. See
 [persistence and replay](../../../docs/architecture/persistence-and-replay.md) for guarantees and
-recovery limits, and [e3-tests](../../tests/README.md) for in-process multi-node usage.
+recovery limits, and [e3-tests](../../testing/system/README.md) for in-process multi-node usage.
 
 ## Tests
 
@@ -96,12 +96,13 @@ cargo test --locked -p e3-ciphernode-builder
 
 This runs the crate's startup, profile, recovery, and handle tests. The finalized-lifecycle tests
 start Anvil, so Foundry is required. Prepare the
-[system test prerequisites](../../tests/README.md#prerequisites-and-assurance) first; the dependency
-graph includes Solidity fixtures and build-time Noir preparation.
+[system test prerequisites](../../testing/system/README.md#prerequisites-and-assurance) first; the
+dependency graph includes Solidity fixtures and build-time Noir preparation.
 
-Multi-node scenarios live in [e3-tests](../../tests/README.md), which also uses this builder. List
-its scenarios with `cargo test --locked -p e3-tests --test integration -- --list`, then select the
-scenario to run. In-memory startup tests and persisted restart scenarios exercise different paths.
+Multi-node scenarios live in [e3-tests](../../testing/system/README.md), which also uses this
+builder. List its scenarios with `cargo test --locked -p e3-tests --test integration -- --list`,
+then select the scenario to run. In-memory startup tests and persisted restart scenarios exercise
+different paths.
 
 ## Related documentation
 

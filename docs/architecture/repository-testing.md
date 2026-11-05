@@ -1,8 +1,8 @@
 # Ciphernode test harness and evidence
 
-Owners: [mechanical test support](../../crates/test-support/),
-[BFV ballot fixtures](../../crates/bfv-test-support/),
-[integration scenarios](../../crates/tests/tests/), and
+Owners: [mechanical test support](../../crates/testing/support/),
+[BFV ballot fixtures](../../crates/testing/bfv-support/),
+[integration scenarios](../../crates/testing/system/tests/), and
 [real recursive-proof tests](../../crates/zk/prover/tests/). Root
 [package scripts](../../package.json) own setup and commands. This page describes what the test
 boundaries establish, not a replacement inventory of tests.
@@ -12,7 +12,9 @@ boundaries establish, not a replacement inventory of tests.
 ### Fixture ownership (#2325)
 
 The consumer audit on `d1a6d2384` separates the former `e3-test-helpers` families as follows.
-Directory placement does not change protocol ownership or introduce a `testing/` capability family.
+Directory placement does not change protocol ownership. The shared packages and the system harness
+are grouped under [`crates/testing/`](../../crates/testing/README.md) for discovery; that family is
+test infrastructure, not a production capability.
 
 | Fixture family                                       | Independent consumers                                                                  | Decision and dependency boundary                                                                                                          |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -21,7 +23,7 @@ Directory placement does not change protocol ownership or introduce a `testing/`
 | BFV/RNG/event setup tuple                            | Aggregation (other callers discard all BFV values)                                     | Local private aggregation fixture, composed from the event fixture and canonical parameter builders.                                      |
 | Threshold-share/public-key/decryption-key generation | TrBFV integration suite only                                                           | Local `bfv/threshold/tests/common`; retain production share operations and parameter/codec owners.                                        |
 | Encrypted random ballots and tally                   | TrBFV integration and system tests                                                     | Share only this family in unpublished `e3-bfv-test-support`; depend on FHE primitives, not event/runtime/prover crates.                   |
-| Mock gossip/DHT/restart transport                    | System harness only                                                                    | Local `tests/tests/ciphernode_system`; retain its existing transport regression tests.                                                    |
+| Mock gossip/DHT/restart transport                    | System harness only                                                                    | Local `testing/system/tests/ciphernode_system`; retain its existing transport regression tests.                                           |
 | Synthetic committee registration                     | System integration suite only                                                          | Local private system-test fixture; not a committee policy API.                                                                            |
 | Anvil discovery                                      | Prover integration suites only                                                         | Local `zk/prover/tests/common`.                                                                                                           |
 | Encryption/parameter CLI fixtures                    | External system integration scripts                                                    | System-test owner bins; keep CLI names/arguments and canonical commitments/codecs. Separate bin dependencies from dev-only node assembly. |
@@ -47,9 +49,9 @@ unchanged. CI still obtains the same fixture-bin names through the integration p
 
 Mechanical support does not assemble runtimes. Event-system owns isolated bus/history fixtures;
 aggregation keeps its BFV setup private. The integration crate keeps `Libp2pMock` local. Its
-[`CiphernodeSystemBuilder`](../../crates/tests/tests/ciphernode_system/mod.rs) assembles several
-ciphernode handles in one process. `simulate_libp2p()` connects their broadcast events and DHT
-records through the mock. `restart_node` shuts down a node, rebuilds it through the supplied
+[`CiphernodeSystemBuilder`](../../crates/testing/system/tests/ciphernode_system/mod.rs) assembles
+several ciphernode handles in one process. `simulate_libp2p()` connects their broadcast events and
+DHT records through the mock. `restart_node` shuts down a node, rebuilds it through the supplied
 closure, and replaces its mock-network attachment.
 
 This exercises node actors without real QUIC, discovery, peer-held DHT persistence, or separate

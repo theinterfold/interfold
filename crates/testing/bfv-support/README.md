@@ -17,5 +17,5 @@ cargo test --locked -p e3-trbfv --test integration
 
 The TrBFV scenario tests encrypted inputs through production share generation and threshold
 decryption. Its share fixtures are private under `bfv/threshold/tests/common`. Full composition
-belongs to [e3-tests](../tests/README.md); real-proof evidence requires the matching external
+belongs to [e3-tests](../system/README.md); real-proof evidence requires the matching external
 artifacts/tools.

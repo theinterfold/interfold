@@ -48,6 +48,6 @@ extensions. `FheRepositoryFactory` supplies typed snapshot storage.
 `cargo test --locked -p e3-fhe` compiles the crate/test target; there are currently no dedicated
 test functions. Observable aggregation/hydration coverage lives in
 [aggregator](../../orchestration/aggregator/README.md) and
-[builder/system tests](../../tests/README.md). See [DKG](../../../docs/architecture/dkg.md) and
-[threshold decryption](../../../docs/architecture/threshold-decryption.md) for the surrounding flow.
-[AGENTS.md](AGENTS.md) covers request-context and secret-serialization changes.
+[builder/system tests](../../testing/system/README.md). See [DKG](../../../docs/architecture/dkg.md)
+and [threshold decryption](../../../docs/architecture/threshold-decryption.md) for the surrounding
+flow. [AGENTS.md](AGENTS.md) covers request-context and secret-serialization changes.

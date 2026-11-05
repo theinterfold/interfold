@@ -47,7 +47,7 @@ COPY --from=evm-builder /build/packages/interfold-contracts/deployed_contracts.j
 # find crates/* -name "Cargo.toml" -not -path "*/support/*" -printf "COPY %p %p\n" | sed 's|COPY \(.*\) crates/|COPY \1 ./|'
 COPY crates/orchestration/aggregator/Cargo.toml ./orchestration/aggregator/Cargo.toml
 COPY crates/bfv/client/Cargo.toml ./bfv/client/Cargo.toml
-COPY crates/bfv-test-support/Cargo.toml ./bfv-test-support/Cargo.toml
+COPY crates/testing/bfv-support/Cargo.toml ./testing/bfv-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
 COPY crates/ciphernode/builder/Cargo.toml ./ciphernode/builder/Cargo.toml
 COPY crates/ciphernode/config/Cargo.toml ./ciphernode/config/Cargo.toml
@@ -72,7 +72,7 @@ COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
 COPY crates/evm/indexer/Cargo.toml ./evm/indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/orchestration/keyshare/Cargo.toml ./orchestration/keyshare/Cargo.toml
-COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
+COPY crates/testing/layout-lock/Cargo.toml ./testing/layout-lock/Cargo.toml
 COPY crates/diagnostics/logger/Cargo.toml ./diagnostics/logger/Cargo.toml
 COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
@@ -92,9 +92,9 @@ COPY crates/orchestration/sortition/Cargo.toml ./orchestration/sortition/Cargo.t
 COPY crates/diagnostics/dashboard/Cargo.toml ./diagnostics/dashboard/Cargo.toml
 COPY crates/ciphernode/daemon-server/Cargo.toml ./ciphernode/daemon-server/Cargo.toml
 COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml
-COPY crates/test-support/Cargo.toml ./test-support/Cargo.toml
+COPY crates/testing/support/Cargo.toml ./testing/support/Cargo.toml
 COPY crates/task-pool/Cargo.toml ./task-pool/Cargo.toml
-COPY crates/tests/Cargo.toml ./tests/Cargo.toml
+COPY crates/testing/system/Cargo.toml ./testing/system/Cargo.toml
 COPY crates/bfv/threshold/Cargo.toml ./bfv/threshold/Cargo.toml
 COPY crates/utils/Cargo.toml ./utils/Cargo.toml
 COPY crates/utils-derive/Cargo.toml ./utils-derive/Cargo.toml

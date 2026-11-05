@@ -92,7 +92,7 @@ export const LAYERS = {
     'evm/config',
   ],
   foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
-  validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
+  validation: ['testing/support', 'testing/bfv-support', 'testing/system', 'testing/layout-lock', 'zk/samples'],
 }
 
 function cargoName(dir) {

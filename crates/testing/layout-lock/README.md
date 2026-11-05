@@ -24,7 +24,7 @@ assert_fixture(Path::new("tests/fixtures/optional-counter.txt"), &rows);
 
 The fixture must already contain the accepted rows for normal test runs. `sample_rows` requires
 `Serialize + DeserializeOwned`; its callback adds consumer-specific information to each row. See the
-[runtime layout test](../tests/tests/layout_lock.rs) for multiple roots, repository value bindings,
+[runtime layout test](../system/tests/layout_lock.rs) for multiple roots, repository value bindings,
 and event-ID samples.
 
 Rows contain a named digest (sample/layout names and structure) and positional digests (encoded
@@ -35,9 +35,9 @@ booleans expose many changes that a single round trip would miss.
 
 `LAYOUT_LOCK_UPDATE=1` rewrites a consumer fixture instead of comparing it. Only use it after
 reviewing the intended format change and the
-[schema/wire compatibility decision](../../docs/architecture/upgrades.md). For the broad runtime
+[schema/wire compatibility decision](../../../docs/architecture/upgrades.md). For the broad runtime
 fixture the command is `LAYOUT_LOCK_UPDATE=1 cargo test --locked -p e3-tests --test layout_lock`;
-that crate has [additional prerequisites](../tests/README.md).
+that crate has [additional prerequisites](../system/README.md).
 
 Unlisted roots, hand-written framing, and values inside opaque/encrypted byte strings are not
 covered. Some equal-width signedness changes and repeated generic enum names also escape the

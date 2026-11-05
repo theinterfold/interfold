@@ -435,11 +435,11 @@ completion cannot reserve that E3's capacity again.
 ## Tests
 
 Run `cargo test --locked -p e3-sortition` from the root with the
-[system prerequisites](../../tests/README.md#prerequisites-and-assurance). Inline modules test score
-vectors, historical owners/admission, capacity reservations, and phase-specific failover. Actor
-cases cover role restoration/promotion. On-chain ticket acceptance and owner caps are covered by the
-[contract suite](../../../packages/interfold-contracts/README.md), separately from local decisions.
-See [AGENTS.md](AGENTS.md) for selection/snapshot changes.
+[system prerequisites](../../testing/system/README.md#prerequisites-and-assurance). Inline modules
+test score vectors, historical owners/admission, capacity reservations, and phase-specific failover.
+Actor cases cover role restoration/promotion. On-chain ticket acceptance and owner caps are covered
+by the [contract suite](../../../packages/interfold-contracts/README.md), separately from local
+decisions. See [AGENTS.md](AGENTS.md) for selection/snapshot changes.
 
 `cargo test --locked -p e3-sortition --lib committee_finalizer` covers formation timing, retries,
 cancellation, production sync replay, and reopening a pre-refactor snapshot at the original disk

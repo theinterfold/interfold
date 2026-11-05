@@ -283,7 +283,7 @@ impl NodeProofAggregator {
 #[cfg(test)]
 mod layout_lock {
     //! Locks the encoded layout of the node proof recovery records. `e3-tests` locks the public
-    //! roots (`crates/tests/tests/layout_lock.rs`) but cannot reach these.
+    //! roots (`crates/testing/system/tests/layout_lock.rs`) but cannot reach these.
 
     use super::*;
     use serde::de::DeserializeOwned;

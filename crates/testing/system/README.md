@@ -8,7 +8,7 @@ use Cargo's named integration targets, not `cargo run`, to exercise the system.
 Mock transport/restart behavior lives privately in `tests/ciphernode_system/libp2p_mock.rs`;
 synthetic registration lives in `tests/common`. Neither establishes peer authorization or proof
 validity. The fixture ownership decisions are recorded in the
-[testing domain](../../docs/architecture/repository-testing.md#fixture-ownership-2325).
+[testing domain](../../../docs/architecture/repository-testing.md#fixture-ownership-2325).
 
 The external integration scripts build `fake_encrypt` and `pack_e3_params` from this package's
 `src/bin`. Their CLI names/arguments are unchanged; they reuse production parameter codecs and
@@ -50,13 +50,13 @@ cargo test --locked -p e3-tests --test integration -- --list
 ```
 
 Select a named scenario from the list rather than launching every expensive integration or ignored
-proof benchmark. [Root package scripts](../../package.json) provide the broader integration and
+proof benchmark. [Root package scripts](../../../package.json) provide the broader integration and
 real-proof suites.
 
 ## Prerequisites and assurance
 
 Prepare root `pnpm evm:build` and `pnpm fixtures:build`, with bash, solc, jq, and Anvil for chain
-scenarios. [Prover setup](../zk/prover/README.md) explains matching nargo/bb/artifacts and
+scenarios. [Prover setup](../../zk/prover/README.md) explains matching nargo/bb/artifacts and
 build-time fixture side effects. Even the layout target compiles the runtime dependency graph. Tests
 may skip when tools are absent, and ignored scenarios need explicit selection.
 
@@ -65,6 +65,6 @@ selection is dev-only; fixture-bin builds do not enable those features. Test fea
 enable them throughout a workspace test graph; successful tests do not establish production feature
 containment or recursive proof verification. Deterministic RNGs and mocked transport are isolated
 per node but do not model all distributed failures. See
-[persistence and replay](../../docs/architecture/persistence-and-replay.md) for current
+[persistence and replay](../../../docs/architecture/persistence-and-replay.md) for current
 restart/overflow assurance limits. See [AGENTS.md](AGENTS.md) for isolation and regression-design
 guidance.
