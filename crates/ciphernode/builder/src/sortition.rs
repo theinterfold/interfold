@@ -7,17 +7,16 @@
 //! Sortition and ciphernode selection, restored from their snapshots.
 
 use super::restart::terminal_e3s;
-use crate::recovery::reconcile_committee_snapshots;
 use actix::Addr;
 use anyhow::Result;
 use e3_events::BusHandle;
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
-    AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
-    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory, EligibilityReader,
-    FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState, NodeStateRepositoryFactory,
-    Sortition, SortitionAttachParams, SortitionBackend, SortitionRecoveryRepositoryFactory,
-    SortitionRepositoryFactory,
+    reconcile_committee_snapshots, AggregatorFailoverRepositoryFactory, CiphernodeSelector,
+    CiphernodeSelectorFactory, CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory,
+    EligibilityReader, FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState,
+    NodeStateRepositoryFactory, Sortition, SortitionAttachParams, SortitionBackend,
+    SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
 };
 
 /// Reconcile the selector and finalized-committee snapshots, then attach the ciphernode selector

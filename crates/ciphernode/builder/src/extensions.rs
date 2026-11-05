@@ -12,7 +12,6 @@ use super::{
     startup::{Live, Protocol, Restart, Storage},
     CiphernodeBuilder, NodeProfile,
 };
-use crate::recovery::recovered_ciphernode_selections;
 use actix::Addr;
 use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 #[cfg(feature = "test-helpers")]
@@ -30,7 +29,10 @@ use e3_keyshare::{ext::ThresholdKeyshareExtension, DkgTimingReader};
 use e3_multithread::Multithread;
 use e3_request::{canonical_key::CanonicalPublicKeys, E3Router, E3RouterBuilder};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
-use e3_sortition::{CiphernodeSelectorFactory, FinalizedCommitteesRepositoryFactory};
+use e3_sortition::{
+    recovered_ciphernode_selections, CiphernodeSelectorFactory,
+    FinalizedCommitteesRepositoryFactory,
+};
 use e3_task_pool::TaskPool;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use std::{collections::HashMap, sync::Arc, time::Duration};
