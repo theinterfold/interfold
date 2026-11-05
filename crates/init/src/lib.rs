@@ -244,9 +244,10 @@ async fn install_interfold(
 }
 
 // Updated execute function to include workspace dependency substitution
-/// Folders, under `crates/`, of the Interfold crates that the template depends on by path.
-const INTERFOLD_TEMPLATE_CRATES: &str =
-    "program/runner|bfv/client|bfv/params|program/compute-provider|program/openvm-types|safe";
+/// Folders, under `crates/`, of the Interfold crates that the template depends on by path. The guest
+/// of a released template still names the compute-provider and OpenVM types folders before their
+/// move under `crates/program`; the root manifest's crates are pinned by name.
+const INTERFOLD_TEMPLATE_CRATES: &str = "program/runner|bfv/client|bfv/params|program/compute-provider|program/openvm-types|compute-provider|openvm-types|safe";
 
 /// Pins an inline path dependency on an Interfold crate, such as the OpenVM guest's, to the
 /// template's commit. Only the source changes, so features in the same table are kept. Other path
@@ -369,6 +370,22 @@ path = "../../crates/program/openvm-host"
             ),
             "a dependency written as its own table is left alone"
         );
+    }
+
+    /// `--template` can name a released template, whose guest reaches crates by their folders
+    /// before the move under `crates/program`.
+    #[test]
+    fn pins_the_guest_dependencies_of_released_templates() {
+        let filter = interfold_path_filter("abc123");
+        let guest = r#"e3-compute-provider = { path = "../../../crates/compute-provider" }
+e3-openvm-types = { path = "../../../crates/openvm-types" }
+"#;
+        let rewritten = Regex::new(&filter.search_pattern)
+            .unwrap()
+            .replace_all(guest, filter.replacement.as_str())
+            .to_string();
+
+        assert!(!rewritten.contains("path ="), "{rewritten}");
     }
 
     /// A generated project has no Interfold checkout, so every checkout-relative dependency in the

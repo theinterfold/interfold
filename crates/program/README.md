@@ -25,11 +25,11 @@ ZK and TrBFV scheduling: no ciphernode crate depends on them. The application's 
 jobs to the program service, so the application, not the node operator, deploys and secures it.
 
 The [OpenVM worker](../openvm-prover/README.md) stays at `crates/openvm-prover`, an excluded Cargo
-workspace with its own pinned SDK. A generated project's `program/`, `guest/`, and `runner/` are
-separate workspaces too, so the guest never links the HTTP or worker dependencies. The template
-reaches these crates by checkout-relative path, and `interfold init` pins them to the release's git
-revision through the [initializer](../init/README.md)'s folder list, which must name every
-checkout-relative dependency of the template.
+workspace with its own pinned SDK. A generated project's `program/` and `runner/` share its root
+workspace, and `guest/` is a workspace of its own, so the guest never links the HTTP or worker
+dependencies. The template reaches these crates by checkout-relative path, and `interfold init` pins
+them to the release's git revision through the [initializer](../init/README.md)'s folder list, which
+must name every checkout-relative dependency of the template.
 
 The guest's executable commitment (`appExeCommit`) is not independent of where it was built. OpenVM
 v2.0.2 does not remap source paths, so the executable embeds the absolute paths of the checkout and
