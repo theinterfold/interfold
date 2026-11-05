@@ -60,7 +60,8 @@ NODE_BINARY = "e3-cli"
 
 def linked_dependencies(data: dict[str, object]) -> list[tuple[str, object]]:
     entries: list[tuple[str, object]] = []
-    for key in ("dependencies", "build-dependencies"):
+    # Editions before 2024 also accept the `build_dependencies` spelling.
+    for key in ("dependencies", "build-dependencies", "build_dependencies"):
         table = data.get(key)
         if isinstance(table, dict):
             entries.extend(table.items())
@@ -91,7 +92,13 @@ def load_graph() -> dict[str, set[str]]:
         if not isinstance(package, dict):
             continue
         inherited = {}
-        for parent in manifest.parents:
+        # Like Cargo, inherit from the root that `package.workspace` selects, else the nearest
+        # ancestor workspace.
+        selected = package.get("workspace")
+        roots = (
+            [(manifest.parent / selected).resolve()] if isinstance(selected, str) else manifest.parents
+        )
+        for parent in roots:
             workspace = manifests.get(parent / "Cargo.toml", {}).get("workspace")
             if isinstance(workspace, dict):
                 inherited = workspace.get("dependencies", {})

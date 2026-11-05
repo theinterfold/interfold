@@ -60,7 +60,10 @@ test('application execution and the node binary link only what the boundary perm
   assert.ok(python, 'install Python with tomllib or tomli')
 
   const manifest = (name, body) => `[package]\nname = "${name}"\nversion = "0.1.0"\n${body}\n`
-  const check = (changes = {}, { template = TEMPLATE_WORKSPACE(), omit } = {}) => {
+  const check = (
+    changes = {},
+    { template = TEMPLATE_WORKSPACE(), program = '[dependencies]\nruntime = { workspace = true }', omit } = {},
+  ) => {
     rmSync(join(dir, 'crates'), { recursive: true, force: true })
     const packages = { ...PERMITTED, ...changes }
     for (const [name, body] of Object.entries(packages)) {
@@ -75,7 +78,7 @@ test('application execution and the node binary link only what the boundary perm
     )
     mkdirSync(join(dir, TEMPLATE, 'program'), { recursive: true })
     writeFileSync(join(dir, TEMPLATE, 'Cargo.toml'), template)
-    writeFileSync(join(dir, TEMPLATE, 'program/Cargo.toml'), manifest('e3-user-program', '[dependencies]\nruntime = { workspace = true }'))
+    writeFileSync(join(dir, TEMPLATE, 'program/Cargo.toml'), manifest('e3-user-program', program))
     return spawnSync(python, ['scripts/checks/check.py'], { cwd: dir, encoding: 'utf8' })
   }
   const rejects = (result, pattern) => {
@@ -87,7 +90,8 @@ test('application execution and the node binary link only what the boundary perm
   assert.equal(permitted.status, 0, permitted.stdout + permitted.stderr)
 
   const events = /application execution links e3-events: e3-program-server -> e3-events\n/
-  for (const table of ['dependencies', 'build-dependencies', "target.'cfg(unix)'.dependencies"]) {
+  // Editions before 2024 also accept the `build_dependencies` spelling.
+  for (const table of ['dependencies', 'build-dependencies', 'build_dependencies', "target.'cfg(unix)'.dependencies"]) {
     rejects(check({ 'e3-program-server': `[${table}]\ne3-events = { path = "../e3-events" }` }), events)
   }
   rejects(check({ 'e3-program-server': '[dependencies]\ne3-events = { path = "../e3-events", optional = true }' }), events)
@@ -104,6 +108,20 @@ test('application execution and the node binary link only what the boundary perm
     /application execution links e3-utils: e3-openvm-host -> e3-utils/,
   )
   rejects(check({}, { template: TEMPLATE_WORKSPACE('e3-events') }), /application execution links e3-events: e3-user-program -> e3-events/)
+  // `package.workspace` selects the root that a member inherits from, here the root workspace.
+  rejects(
+    check({}, { program: 'workspace = "../../.."\n[dependencies]\nruntime = { workspace = true }' }),
+    /application execution links e3-events: e3-user-program -> e3-events/,
+  )
+  // The shortest chain wins across roots and routes. The first root reaches e3-events through
+  // e3-fhe-params; e3-openvm-guest links it directly and also through e3-bfv-client.
+  rejects(
+    check({
+      'e3-fhe-params': '[dependencies]\ne3-events = { path = "../e3-events" }',
+      'e3-openvm-guest': '[dependencies]\ne3-bfv-client = { path = "../e3-bfv-client" }\ne3-events = { path = "../e3-events" }',
+    }),
+    /application execution links e3-events: e3-openvm-guest -> e3-events\n/,
+  )
 
   rejects(
     check({
