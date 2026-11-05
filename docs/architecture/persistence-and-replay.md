@@ -204,7 +204,9 @@ propagate it to actors created during replay, not only hydrated actors. Keyshare
 accusation signing wait for that signal; replay records their inputs without starting timers or
 signing another accusation. Replay puts each event's delivery ID in the dedup window, so a fenced
 actor must keep a replayed result whose identity is payload-only: re-dispatching after
-`EffectsEnabled` cannot obtain it again.
+`EffectsEnabled` cannot obtain it again. Replay can also commit a snapshot past that result's
+sequence, so apply it under a later event of the same E3 chain, never under the result's own context
+or `EffectsEnabled`.
 
 After ten minutes without an outcome for a fresh ID, resend only once no identical request remains
 queued/running. A hung run waits for its prover cap. Terminal E3 cancels queued node-scoped compute

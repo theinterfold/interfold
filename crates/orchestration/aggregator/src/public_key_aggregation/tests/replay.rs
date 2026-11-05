@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::ext::{AggregatorRoleExtension, PublicKeyAggregatorExtension};
+use crate::test_support::commit_replay_past;
 use crate::PublicKeyRepositoryFactory;
 use e3_data::{RepositoriesFactory, Snapshot};
 use e3_events::{
@@ -33,6 +34,7 @@ struct ReplayedAggregator {
     /// The selected keyshares in party order.
     keyshares: Vec<ArcBytes>,
     states: Repository<PublicKeyAggregatorState>,
+    store: Addr<InMemStore>,
     _ctx: E3Context,
 }
 
@@ -45,12 +47,14 @@ async fn replay_until_c1_verification(signed_keyshares: bool) -> Result<Replayed
         get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
-    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let store = InMemStore::new(false).start();
     let committee: Vec<String> = (0..committee_size.n)
         .map(|party| Address::repeat_byte(party as u8 + 1).to_string())
         .collect();
     let mut ctx = E3Context::from_params(E3ContextParams {
-        repository: store.repositories().context(&e3_id),
+        repository: DataStore::from_in_mem(&store)
+            .repositories()
+            .context(&e3_id),
         e3_id: e3_id.clone(),
         extensions: Arc::new(Vec::new()),
     });
@@ -131,6 +135,7 @@ async fn replay_until_c1_verification(signed_keyshares: bool) -> Result<Replayed
                 fhe,
                 keyshares,
                 states,
+                store,
                 _ctx: ctx,
             });
         }
@@ -242,16 +247,18 @@ async fn a_former_aggregator_demoted_during_replay_applies_its_replayed_c1_verdi
     replayed_c1_verdict_reaches_c5(true).await
 }
 
-/// The snapshot holds `VerifyingC1`, and the C1 verdict was logged after it.
+/// The snapshot holds `VerifyingC1`, and the C1 verdict was logged after it. Replay committed a
+/// later snapshot, so the store rejects writes under the verdict's own revision.
 #[actix::test]
 async fn a_restored_aggregator_applies_its_replayed_c1_verdict() -> Result<()> {
-    let (bus, rng, _seed, params, crp, _errors, _history) =
+    let (bus, rng, _seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
-    let states = Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
-    let recoveries = Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
+    let store = InMemStore::new(false).start();
+    let states = Repository::new(DataStore::from_in_mem(&store).scope("state"));
+    let recoveries = Repository::new(DataStore::from_in_mem(&store).scope("recovery"));
     let mut aggregator = booted_micro_aggregator(
         &bus,
         &fhe,
@@ -271,6 +278,10 @@ async fn a_restored_aggregator_applies_its_replayed_c1_verdict() -> Result<()> {
         dishonest_parties: (circuit_h as u64..threshold_n as u64).collect(),
         ..c1_verdict(&e3_id)
     })?;
+    commit_replay_past(&store, &history, |data| {
+        matches!(data, InterfoldEventData::ShareVerificationComplete(_))
+    })
+    .await?;
     bus.publish_without_context(EffectsEnabled::new())?;
     assert!(
         reaches_c5(&states, &bus).await?,
@@ -284,23 +295,39 @@ async fn a_restored_aggregator_applies_its_replayed_c1_verdict() -> Result<()> {
 // so the bus drops the proof that the prover sends again: the aggregator must apply the replayed
 // one.
 
-/// Boot an aggregator over a saved `GeneratingC5Proof` for `keyshares`, with effects fenced as
-/// during startup replay.
-fn fenced_c5_aggregator(bus: &BusHandle, fhe: &Arc<Fhe>, e3_id: &E3id, keyshares: Vec<ArcBytes>) {
+/// Boot an aggregator over a `GeneratingC5Proof` for `keyshares` that `store` saved, with effects
+/// fenced as during startup replay. Returns the saved state and recovery.
+fn fenced_c5_aggregator(
+    bus: &BusHandle,
+    fhe: &Arc<Fhe>,
+    e3_id: &E3id,
+    keyshares: Vec<ArcBytes>,
+    store: &Addr<InMemStore>,
+) -> (
+    Repository<PublicKeyAggregatorState>,
+    Repository<PublicKeyAggregatorRecoveryState>,
+) {
     let mut state = c5_state_without_node_proofs();
     if let PublicKeyAggregatorState::GeneratingC5Proof { keyshare_bytes, .. } = &mut state {
         *keyshare_bytes = keyshares;
     }
+    let states = Repository::new(DataStore::from_in_mem(store).scope("state"));
+    let recoveries = Repository::new(DataStore::from_in_mem(store).scope("recovery"));
     let mut aggregator = booted_micro_aggregator(
         bus,
         fhe,
         e3_id,
         true,
-        test_state(state),
-        test_state(PublicKeyAggregatorRecoveryState::default()),
+        states.send(Some(state)),
+        recoveries.send(Some(PublicKeyAggregatorRecoveryState::default())),
     );
     aggregator.effects_enabled = false;
     bus.subscribe_all(&[EventType::All], aggregator.start().recipient());
+    (states, recoveries)
+}
+
+fn c5_proof_logged(data: &InterfoldEventData) -> bool {
+    matches!(data, InterfoldEventData::PkAggregationProofSigned(_))
 }
 
 fn keyshares(fhe: &Fhe, e3_id: &E3id) -> Result<Vec<ArcBytes>> {
@@ -309,7 +336,8 @@ fn keyshares(fhe: &Fhe, e3_id: &E3id) -> Result<Vec<ArcBytes>> {
         .collect()
 }
 
-/// The snapshot holds `GeneratingC5Proof`, and the C5 proof was logged after it.
+/// The snapshot holds `GeneratingC5Proof`, and the C5 proof was logged after it. Replay committed
+/// a later snapshot, so the store rejects writes under the proof's own revision.
 #[actix::test]
 async fn a_restored_aggregator_applies_its_replayed_c5_proof() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
@@ -318,14 +346,28 @@ async fn a_restored_aggregator_applies_its_replayed_c5_proof() -> Result<()> {
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let keyshares = keyshares(&fhe, &e3_id)?;
     let proof = signed_c5_proof(&e3_id, c5_signals_for(&fhe, &keyshares)?);
-    fenced_c5_aggregator(&bus, &fhe, &e3_id, keyshares);
+    let store = InMemStore::new(false).start();
+    let (states, recoveries) = fenced_c5_aggregator(&bus, &fhe, &e3_id, keyshares, &store);
 
     bus.publish_without_context(proof)?;
+    commit_replay_past(&store, &history, c5_proof_logged).await?;
     bus.publish_without_context(EffectsEnabled::new())?;
     assert!(
         public_key_aggregated(&history).await?,
         "the replayed C5 proof was not applied"
     );
+    assert!(
+        reaches_state(&states, &bus, |state| matches!(
+            state,
+            PublicKeyAggregatorState::Complete { .. }
+        ))
+        .await?,
+        "the completed key was not saved"
+    );
+    assert!(recoveries
+        .read()
+        .await?
+        .is_some_and(|recovery| recovery.pending_publication.is_some()));
     Ok(())
 }
 
@@ -338,7 +380,8 @@ async fn a_replayed_c5_proof_of_other_keyshares_is_discarded() -> Result<()> {
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let other = signed_c5_proof(&e3_id, c5_signals_for(&fhe, &keyshares(&fhe, &e3_id)?)?);
-    fenced_c5_aggregator(&bus, &fhe, &e3_id, keyshares(&fhe, &e3_id)?);
+    let store = InMemStore::new(false).start();
+    fenced_c5_aggregator(&bus, &fhe, &e3_id, keyshares(&fhe, &e3_id)?, &store);
 
     bus.publish_without_context(other)?;
     bus.publish_without_context(EffectsEnabled::new())?;
@@ -346,20 +389,23 @@ async fn a_replayed_c5_proof_of_other_keyshares_is_discarded() -> Result<()> {
     Ok(())
 }
 
-/// Replay created the aggregator, and both its C1 verdict and its C5 proof were logged.
+/// Replay created the aggregator, and both its C1 verdict and its C5 proof were logged. Replay
+/// committed a later snapshot, so the store rejects writes under the revisions of both results.
 #[actix::test]
 async fn an_aggregator_created_during_replay_applies_its_replayed_c5_proof() -> Result<()> {
     let ReplayedAggregator {
         bus,
+        history,
         e3_id,
         fhe,
         keyshares,
         states,
+        store,
         _ctx,
-        ..
     } = replay_until_c1_verification(true).await?;
     bus.publish_without_context(c1_verdict(&e3_id))?;
     bus.publish_without_context(signed_c5_proof(&e3_id, c5_signals_for(&fhe, &keyshares)?))?;
+    commit_replay_past(&store, &history, c5_proof_logged).await?;
 
     bus.publish_without_context(EffectsEnabled::new())?;
     assert!(

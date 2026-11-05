@@ -54,6 +54,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     self.resume_in_flight_work(ec)
                 });
             }
+            InterfoldEventData::AggregationResumed(data) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.handle_aggregation_resume(TypedEvent::new(data, ec))
+                });
+            }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&E3Stage::KeyPublished);

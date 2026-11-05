@@ -335,7 +335,9 @@ impl ThresholdPlaintextAggregator {
                     ))
                 })?;
                 if let Some(replayed) = replayed {
-                    self.handle_aggregation_proof_signed(replayed)?;
+                    // Replay can commit a snapshot past the result's own event.
+                    let (replayed, _) = replayed.into_components();
+                    self.handle_aggregation_proof_signed(TypedEvent::new(replayed, ec))?;
                 }
             }
 

@@ -15,9 +15,9 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_data::Persistable;
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
-    prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
-    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
+    prelude::*, AggregationInputsReady, AggregationPhase, AggregationResumed, AggregatorChanged,
+    BusHandle, CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled,
+    ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
     DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
     EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     NodesFoldStepRequest, PkAggregationProofPending, PkAggregationProofRequest,

@@ -315,7 +315,18 @@ impl ThresholdPlaintextAggregator {
                     if let Some(replayed) =
                         self.take_replayed_c7_result(&state.plaintext, state.threshold_m)
                     {
-                        return self.handle_aggregation_proof_signed(replayed);
+                        // Replay can commit a snapshot past the result's own event.
+                        // `EffectsEnabled` belongs to aggregate zero, so a fresh event of this
+                        // E3's chain carries the writes that apply the result.
+                        self.pending.replayed_c7_results.push(replayed);
+                        return self.bus.publish(
+                            AggregationResumed {
+                                e3_id: self.e3_id.clone(),
+                                phase: AggregationPhase::Plaintext,
+                                correlation_id: CorrelationId::new(),
+                            },
+                            effects_context,
+                        );
                     }
                     self.dispatch_c7_proof_request(
                         state.shares,
@@ -349,5 +360,30 @@ impl ThresholdPlaintextAggregator {
                 )
             }
         }
+    }
+
+    /// Apply the C7 result that `resume_in_flight_work` held under the resume event's revision.
+    pub(in crate::actors::threshold_plaintext_aggregator) fn handle_aggregation_resume(
+        &mut self,
+        msg: TypedEvent<AggregationResumed>,
+    ) -> Result<()> {
+        let (msg, ec) = msg.into_components();
+        if msg.e3_id != self.e3_id
+            || msg.phase != AggregationPhase::Plaintext
+            || ec.source() != e3_events::EventSource::Local
+            || !self.can_continue_aggregation_effects()
+        {
+            return Ok(());
+        }
+        let Some(ThresholdPlaintextAggregatorState::GeneratingC7Proof(state)) = self.state.get()
+        else {
+            return Ok(());
+        };
+        let Some(replayed) = self.take_replayed_c7_result(&state.plaintext, state.threshold_m)
+        else {
+            return Ok(());
+        };
+        let (replayed, _) = replayed.into_components();
+        self.handle_aggregation_proof_signed(TypedEvent::new(replayed, ec))
     }
 }

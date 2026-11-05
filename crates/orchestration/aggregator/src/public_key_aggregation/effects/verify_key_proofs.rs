@@ -172,7 +172,10 @@ impl PublicKeyAggregator {
                     e3_id = %self.e3_id,
                     "Applying C1 verification buffered during restart recovery"
                 );
-                return self.handle_c1_verification_complete(verification);
+                // Replay can commit a snapshot past the verdict's own event, and the store rejects
+                // writes under that event's revision.
+                let (verification, _) = verification.into_components();
+                return self.handle_c1_verification_complete(TypedEvent::new(verification, ec));
             }
             warn!(
                 e3_id = %self.e3_id,
@@ -481,7 +484,9 @@ impl PublicKeyAggregator {
                 e3_id = %self.e3_id,
                 "Applying C5 proof replayed during restart recovery"
             );
-            self.handle_pk_aggregation_proof_signed(c5_proof)?;
+            // Replay can commit a snapshot past the proof's own event, too.
+            let (c5_proof, _) = c5_proof.into_components();
+            self.handle_pk_aggregation_proof_signed(TypedEvent::new(c5_proof, ec))?;
         }
 
         Ok(())
