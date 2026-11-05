@@ -41,5 +41,5 @@ is not interchangeable with the committee hash alone.
 Run `cargo test --locked -p e3-committee-hash` from the root. Inline vectors check raw address
 hashing, bytes32 limb alignment, and the Solidity domain tuple without starting an EVM. The larger
 C6/C7 contract is documented in
-[threshold decryption](../../docs/architecture/threshold-decryption.md). [AGENTS.md](AGENTS.md)
+[threshold decryption](../../../docs/architecture/threshold-decryption.md). [AGENTS.md](AGENTS.md)
 covers coordinated hash-layout changes.

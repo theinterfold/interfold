@@ -381,7 +381,7 @@
         },
         {
           "why": "committee hashing is owned by e3-committee-hash, not a local aggregator wrapper",
-          "ref": "crates/committee-hash/src/lib.rs@42@pub fn hash_committee_addresses"
+          "ref": "crates/committee/hash/src/lib.rs@42@pub fn hash_committee_addresses"
         }
       ],
       "rust_patterns": [

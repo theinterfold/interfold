@@ -96,7 +96,7 @@ export const LAYERS = {
     'zk/config',
     'zk/witness',
     'committee',
-    'committee-hash',
+    'committee/hash',
     'evm/contracts',
     'evm/config',
   ],

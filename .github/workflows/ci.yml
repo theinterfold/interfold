@@ -108,7 +108,8 @@ jobs:
             openvm_guest:
               - 'Cargo.toml'
               - 'crates/bfv/client/**'
-              - 'crates/committee/**'
+              - 'crates/committee/Cargo.toml'
+              - 'crates/committee/src/**'
               - 'crates/program/compute-provider/**'
               - 'crates/bfv/params/**'
               - 'crates/program/openvm-types/**'

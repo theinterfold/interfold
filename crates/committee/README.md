@@ -2,9 +2,17 @@
 
 ## Purpose
 
-Canonical committee parameters and ordered membership data shared by runtime and circuit tooling.
-This crate preserves supplied membership order; it does not form committees, normalize chain
-addresses, or choose active aggregators.
+This folder is the `e3-committee` package. Its child `hash/` is the separate `e3-committee-hash`
+package. Both are direct members of the root workspace; there is no nested workspace, and neither
+package depends on the other.
+
+- `e3-committee` owns canonical committee parameters and ordered membership data shared by runtime
+  and circuit tooling.
+- [`hash/`](hash/README.md) (`e3-committee-hash`) owns the EVM committee commitments and
+  decryption-domain hashes that proofs and contracts bind.
+
+Neither package is a runtime formation or selection service: they preserve supplied membership order
+and do not form committees, normalize chain addresses, or choose active aggregators.
 
 ## Map
 

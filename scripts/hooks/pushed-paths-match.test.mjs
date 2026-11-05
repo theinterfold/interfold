@@ -89,6 +89,8 @@ test('verifier routing covers compiler inputs without rebuilding for unrelated c
     ['crates/bfv/params/src/constants.rs', 0],
     ['crates/zk/config/src/constants.rs', 0],
     ['crates/committee/src/lib.rs', 0],
+    ['crates/committee/Cargo.toml', 0],
+    ['crates/committee/hash/src/lib.rs', 1],
     ['packages/interfold-contracts/bfv.ts', 0],
     ['packages/interfold-contracts/crypto-config.json', 0],
     ['packages/interfold-contracts/contracts/lib/BfvDecryptionLayout.sol', 1],
