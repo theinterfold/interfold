@@ -124,14 +124,25 @@ fn c1_proof_with_pk_commitment(e3_id: &E3id, pk_commitment: [u8; 32]) -> SignedP
     }
 }
 
-fn verifying_c1_non_square_state(
-    fhe: &Fhe,
-    e3_id: &E3id,
-) -> Result<(PublicKeyAggregatorState, usize, usize, usize)> {
+/// A keyshare with a C1 proof that commits to it.
+fn keyshare_with_c1_proof(fhe: &Fhe, e3_id: &E3id) -> Result<(ArcBytes, SignedProofPayload)> {
     use fhe::bfv::SecretKey;
     use fhe::mbfv::PublicKeyShare;
     use fhe_traits::Serialize;
 
+    let mut rng = rand::rng();
+    let sk = SecretKey::random(&fhe.params, &mut rng);
+    let pk_share = PublicKeyShare::new(&sk, fhe.crp.clone(), &mut rng)?;
+    let keyshare = ArcBytes::from_bytes(&pk_share.to_bytes());
+    let commitment =
+        e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(&keyshare, &fhe.params, &fhe.crp)?;
+    Ok((keyshare, c1_proof_with_pk_commitment(e3_id, commitment)))
+}
+
+fn verifying_c1_non_square_state(
+    fhe: &Fhe,
+    e3_id: &E3id,
+) -> Result<(PublicKeyAggregatorState, usize, usize, usize)> {
     let committee = CiphernodesCommitteeSize::Micro.values();
     let threshold_n = committee.n;
     let threshold_m = committee.threshold;
@@ -144,22 +155,14 @@ fn verifying_c1_non_square_state(
     let mut submission_order = Vec::with_capacity(threshold_n);
     let mut c1_proofs = Vec::with_capacity(threshold_n);
     let mut canonical_party_nodes = HashMap::with_capacity(threshold_n);
-    let mut rng = rand::rng();
 
     for party_id in 0..threshold_n as u64 {
         let node = format!("0x{:040x}", party_id + 1);
         canonical_party_nodes.insert(party_id, node.clone());
         if party_id < circuit_h as u64 {
-            let sk = SecretKey::random(&fhe.params, &mut rng);
-            let pk_share = PublicKeyShare::new(&sk, fhe.crp.clone(), &mut rng)?;
-            let ks_bytes = ArcBytes::from_bytes(&pk_share.to_bytes());
-            let commitment = e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
-                &ks_bytes,
-                &fhe.params,
-                &fhe.crp,
-            )?;
-            submission_order.push((party_id, node, ks_bytes));
-            c1_proofs.push(Some(c1_proof_with_pk_commitment(e3_id, commitment)));
+            let (keyshare, c1_proof) = keyshare_with_c1_proof(fhe, e3_id)?;
+            submission_order.push((party_id, node, keyshare));
+            c1_proofs.push(Some(c1_proof));
         } else {
             submission_order.push((party_id, node, ArcBytes::from_bytes(&[party_id as u8])));
             c1_proofs.push(None);
@@ -826,7 +829,35 @@ async fn a_demoted_aggregator_publishes_the_key_from_its_c5_proof() -> Result<()
 
     let mut signals = vec![0; 3 * 32];
     signals[64..].copy_from_slice(&[7; 32]);
-    let signed = PkAggregationProofSigned {
+    let signed = signed_c5_proof(&e3_id, signals);
+    actor
+        .send(TypedEvent::new(signed.clone(), test_ctx(signed)))
+        .await?;
+
+    assert!(
+        public_key_aggregated(&history).await?,
+        "the demoted aggregator did not publish the key"
+    );
+    Ok(())
+}
+
+/// C5 public signals that prove the aggregation of `keyshares`: their commitments, then the
+/// aggregated commitment.
+fn c5_signals_for(fhe: &Fhe, keyshares: &[ArcBytes]) -> Result<Vec<u8>> {
+    let mut signals = Vec::new();
+    for keyshare in keyshares {
+        signals.extend(e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
+            keyshare,
+            &fhe.params,
+            &fhe.crp,
+        )?);
+    }
+    signals.extend([7; 32]);
+    Ok(signals)
+}
+
+fn signed_c5_proof(e3_id: &E3id, signals: Vec<u8>) -> PkAggregationProofSigned {
+    PkAggregationProofSigned {
         e3_id: e3_id.clone(),
         signed_proof: SignedProofPayload {
             payload: ProofPayload {
@@ -840,22 +871,22 @@ async fn a_demoted_aggregator_publishes_the_key_from_its_c5_proof() -> Result<()
             },
             signature: ArcBytes::from_bytes(&[0u8; 65]),
         },
-    };
-    actor
-        .send(TypedEvent::new(signed.clone(), test_ctx(signed)))
-        .await?;
+    }
+}
 
+/// Wait until the history holds a key publication.
+async fn public_key_aggregated(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<bool> {
     for _ in 0..100 {
         let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
         if events
             .iter()
             .any(|event| matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_)))
         {
-            return Ok(());
+            return Ok(true);
         }
         actix::clock::sleep(std::time::Duration::from_millis(20)).await;
     }
-    panic!("the demoted aggregator did not publish the key");
+    Ok(false)
 }
 
 /// A demoted aggregator that finished the key restarts while the registry writer still publishes

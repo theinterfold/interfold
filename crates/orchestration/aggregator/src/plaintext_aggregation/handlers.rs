@@ -316,6 +316,9 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
         msg: TypedEvent<AggregationProofSigned>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            return self.buffer_replayed_c7_result(msg);
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }

@@ -59,6 +59,8 @@ struct PendingDecryptionWork {
     decryption_aggregation_correlation: Option<CorrelationId>,
     /// C7 proofs stored while waiting for decryption aggregation.
     c7_proofs_pending: Option<Vec<Proof>>,
+    /// C7 results replayed while effects were fenced, applied once this node reaches C7.
+    replayed_c7_results: Vec<TypedEvent<AggregationProofSigned>>,
     /// DecryptionAggregator outputs (set when ZK completes).
     decryption_aggregator_proofs: Option<Vec<Proof>>,
     /// Last event context, reused for ZK and final publish.

@@ -186,6 +186,13 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {
         msg: TypedEvent<ShareVerificationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            return trap(
+                EType::PublickeyAggregation,
+                &self.bus.with_ec(msg.get_ctx()),
+                || self.buffer_replayed_c1_verification(msg),
+            );
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }
@@ -205,6 +212,10 @@ impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {
         msg: TypedEvent<PkAggregationProofSigned>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            self.buffer_replayed_c5_proof(msg);
+            return;
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }

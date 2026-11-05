@@ -106,23 +106,28 @@ impl PublicKeyAggregator {
                     Ok(state)
                 })?;
 
+                let replayed_c5_proof = self.take_replayed_c5_proof(&keyshare_bytes);
                 if c5_proof_pending.is_none() {
-                    self.bus.publish(
-                        PkAggregationProofPending {
-                            e3_id: self.e3_id.clone(),
-                            proof_request: PkAggregationProofRequest {
-                                keyshare_bytes,
-                                aggregated_pk_bytes: public_key.clone(),
-                                params_preset: self.params_preset,
-                                committee_n: circuit_committee_n,
-                                committee_h: circuit_committee_h,
-                                committee_threshold: self.committee_size.values().threshold,
+                    if let Some(c5_proof) = replayed_c5_proof {
+                        self.handle_pk_aggregation_proof_signed(c5_proof)?;
+                    } else {
+                        self.bus.publish(
+                            PkAggregationProofPending {
+                                e3_id: self.e3_id.clone(),
+                                proof_request: PkAggregationProofRequest {
+                                    keyshare_bytes,
+                                    aggregated_pk_bytes: public_key.clone(),
+                                    params_preset: self.params_preset,
+                                    committee_n: circuit_committee_n,
+                                    committee_h: circuit_committee_h,
+                                    committee_threshold: self.committee_size.values().threshold,
+                                },
+                                public_key,
+                                nodes,
                             },
-                            public_key,
-                            nodes,
-                        },
-                        causal_context.clone(),
-                    )?;
+                            causal_context.clone(),
+                        )?;
+                    }
                 }
 
                 self.try_dispatch_nodes_fold_step(&causal_context)?;

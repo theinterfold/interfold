@@ -202,7 +202,9 @@ shared verification request). Before release/reuse, canonical C6 admission still
 `E3Context::effects_enabled` stays false until the router receives `EffectsEnabled`. Extensions must
 propagate it to actors created during replay, not only hydrated actors. Keyshare collectors and
 accusation signing wait for that signal; replay records their inputs without starting timers or
-signing another accusation.
+signing another accusation. Replay puts each event's delivery ID in the dedup window, so a fenced
+actor must keep a replayed result whose identity is payload-only: re-dispatching after
+`EffectsEnabled` cannot obtain it again.
 
 After ten minutes without an outcome for a fresh ID, resend only once no identical request remains
 queued/running. A hung run waits for its prover cap. Terminal E3 cancels queued node-scoped compute

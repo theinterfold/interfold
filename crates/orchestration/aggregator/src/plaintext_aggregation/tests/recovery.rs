@@ -7,7 +7,8 @@ use crate::{
 };
 use e3_data::{InMemEventLog, InMemSequenceIndex, RepositoriesFactory, Snapshot};
 use e3_events::{
-    CiphertextOutputPublished, EventSource, EventStore, EventStoreQueryBy, EventStoreRouter, SeqAgg,
+    CiphertextOutputPublished, EventSource, EventStore, EventStoreQueryBy, EventStoreRouter,
+    EventType, SeqAgg,
 };
 use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_request::{
@@ -934,6 +935,27 @@ fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
         .collect()
 }
 
+fn signed_c7_result(id: &E3id, proofs: &[Proof]) -> AggregationProofSigned {
+    AggregationProofSigned {
+        e3_id: id.clone(),
+        signed_proofs: proofs
+            .iter()
+            .cloned()
+            .map(|proof| {
+                SignedProofPayload::sign(
+                    ProofPayload {
+                        e3_id: id.clone(),
+                        proof_type: ProofType::C7DecryptedSharesAggregation,
+                        proof,
+                    },
+                    &test_signer(0),
+                )
+                .unwrap()
+            })
+            .collect(),
+    }
+}
+
 async fn wait_for_event(
     history: &Addr<HistoryCollector<InterfoldEvent>>,
     matches: impl Fn(&InterfoldEventData) -> bool,
@@ -1077,24 +1099,7 @@ async fn replayed_c7_work_cannot_replace_the_recovered_share_batch() -> Result<(
     let old_proofs = batch_c7_proofs(&(0..10).collect::<Vec<_>>(), ciphertexts.len());
     // A signed result can already be in the journal independently of the live proof worker.
     addr.send(TypedEvent::new(
-        AggregationProofSigned {
-            e3_id: id.clone(),
-            signed_proofs: old_proofs
-                .iter()
-                .cloned()
-                .map(|proof| {
-                    SignedProofPayload::sign(
-                        ProofPayload {
-                            e3_id: id.clone(),
-                            proof_type: ProofType::C7DecryptedSharesAggregation,
-                            proof,
-                        },
-                        &test_signer(0),
-                    )
-                    .unwrap()
-                })
-                .collect(),
-        },
+        signed_c7_result(&id, &old_proofs),
         test_ctx(EffectsEnabled::new()),
     ))
     .await?;
@@ -1173,6 +1178,151 @@ async fn replayed_c7_work_cannot_replace_the_recovered_share_batch() -> Result<(
         "superseded worker result must not publish a signed proof"
     );
     Ok(())
+}
+
+/// A fenced aggregator with verified C6 for parties 1..=10, and the C7 proofs for that batch.
+async fn fenced_aggregator_with_verified_c6(
+    phase: impl FnOnce(Vec<(u64, Vec<ArcBytes>)>, Vec<ArcBytes>) -> ThresholdPlaintextAggregatorState,
+) -> Result<(
+    Addr<ThresholdPlaintextAggregator>,
+    BusHandle,
+    Addr<HistoryCollector<InterfoldEvent>>,
+    Vec<Proof>,
+)> {
+    let id = E3id::new("42", 1);
+    let ciphertexts = test_ciphertexts();
+    let parties: Vec<u64> = (1..=10).collect();
+    let (shares, c6): (Vec<_>, Vec<_>) = parties
+        .iter()
+        .map(|&party| {
+            let (shares, proofs) = share_with_matching_commitment(&id, party, &ciphertexts);
+            let proofs = proofs
+                .into_iter()
+                .map(|proof| proof.payload.proof)
+                .collect();
+            ((party, shares), (party, proofs))
+        })
+        .unzip();
+    let (mut aggregator, history, _) =
+        build_plaintext_aggregator(phase(shares, ciphertexts.clone()), true).await?;
+    aggregator.committee_size = CiphernodesCommitteeSize::Small;
+    aggregator.committee_addresses = (0..19).map(|party| test_signer(party).address()).collect();
+    aggregator.honest_committee_addresses = aggregator.committee_addresses[..14].to_vec();
+    aggregator.effects_enabled = false;
+    aggregator
+        .recovery
+        .try_mutate_without_context(|mut recovery| {
+            recovery.honest_c6_proofs = c6.clone();
+            Ok(recovery)
+        })?;
+    aggregator.pending.honest_c6_proofs_for_agg = Some(c6);
+    let bus = aggregator.bus.clone();
+    let addr = aggregator.start();
+    bus.subscribe_all(&[EventType::All], addr.clone().recipient());
+    Ok((
+        addr,
+        bus,
+        history,
+        batch_c7_proofs(&parties, ciphertexts.len()),
+    ))
+}
+
+async fn final_aggregation_uses(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    c7_proofs: &[Proof],
+) -> Result<()> {
+    let request = wait_for_event(history, |data| {
+        matches!(
+            data,
+            InterfoldEventData::ComputeRequest(ComputeRequest {
+                request: ComputeRequestKind::Zk(ZkRequest::DecryptionAggregation(_)),
+                ..
+            })
+        )
+    })
+    .await?;
+    let InterfoldEventData::ComputeRequest(ComputeRequest {
+        request: ComputeRequestKind::Zk(ZkRequest::DecryptionAggregation(request)),
+        ..
+    }) = request.into_data()
+    else {
+        unreachable!()
+    };
+    assert_eq!(request.jobs.len(), c7_proofs.len());
+    for (job, proof) in request.jobs.iter().zip(c7_proofs) {
+        assert_eq!(&job.c7_proof, proof);
+    }
+    Ok(())
+}
+
+/// The snapshot holds `GeneratingC7Proof`, and this node's C7 result was logged after it. Replay
+/// delivers the result while effects are fenced. Replay put its payload-derived delivery ID in the
+/// bus dedup window, so the result to a new C7 request would be dropped: the restored aggregator
+/// must apply the replayed one.
+#[actix::test]
+async fn a_restored_aggregator_applies_its_replayed_c7_result() -> Result<()> {
+    let plaintext = vec![ArcBytes::from_bytes(&0u64.to_le_bytes()); test_ciphertexts().len()];
+    let (_addr, bus, history, c7_proofs) = fenced_aggregator_with_verified_c6(|shares, _| {
+        ThresholdPlaintextAggregatorState::GeneratingC7Proof(GeneratingC7Proof {
+            threshold_m: 9,
+            threshold_n: 19,
+            shares,
+            plaintext,
+        })
+    })
+    .await?;
+
+    bus.publish_without_context(signed_c7_result(&E3id::new("42", 1), &c7_proofs))?;
+    bus.publish_without_context(EffectsEnabled::new())?;
+    final_aggregation_uses(&history, &c7_proofs).await
+}
+
+/// Replay can deliver the C7 result before this node reaches C7 again: an aggregator that replay
+/// created still computes the threshold decryption after `EffectsEnabled`.
+#[actix::test]
+async fn a_c7_result_replayed_before_threshold_decryption_is_applied() -> Result<()> {
+    use e3_trbfv::calculate_threshold_decryption::CalculateThresholdDecryptionResponse;
+    let id = E3id::new("42", 1);
+    let plaintext = vec![ArcBytes::from_bytes(&0u64.to_le_bytes()); test_ciphertexts().len()];
+    let (addr, bus, history, c7_proofs) =
+        fenced_aggregator_with_verified_c6(|shares, ciphertext_output| {
+            ThresholdPlaintextAggregatorState::Computing(Computing {
+                threshold_m: 9,
+                threshold_n: 19,
+                shares,
+                ciphertext_output,
+                params: test_params(),
+            })
+        })
+        .await?;
+
+    bus.publish_without_context(signed_c7_result(&id, &c7_proofs))?;
+    bus.publish_without_context(EffectsEnabled::new())?;
+    let threshold = wait_for_event(&history, |data| {
+        matches!(
+            data,
+            InterfoldEventData::ComputeRequest(ComputeRequest {
+                request: ComputeRequestKind::TrBFV(TrBFVRequest::CalculateThresholdDecryption(_)),
+                ..
+            })
+        )
+    })
+    .await?;
+    let InterfoldEventData::ComputeRequest(threshold) = threshold.into_data() else {
+        unreachable!()
+    };
+    addr.send(TypedEvent::new(
+        ComputeResponse::trbfv(
+            TrBFVResponse::CalculateThresholdDecryption(CalculateThresholdDecryptionResponse {
+                plaintext,
+            }),
+            threshold.correlation_id,
+            id,
+        ),
+        test_ctx(EffectsEnabled::new()),
+    ))
+    .await?;
+    final_aggregation_uses(&history, &c7_proofs).await
 }
 
 #[actix::test]

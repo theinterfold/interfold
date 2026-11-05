@@ -3,6 +3,7 @@
 //! C1 verification and honest-keyshare selection.
 
 use super::*;
+use e3_events::EventSource;
 use std::collections::{BTreeSet, HashMap};
 
 impl PublicKeyAggregator {
@@ -182,6 +183,61 @@ impl PublicKeyAggregator {
         self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)
     }
 
+    fn buffer_c1_verification(
+        &mut self,
+        selected_roster: BTreeSet<u64>,
+        verification: TypedEvent<ShareVerificationComplete>,
+    ) -> Result<()> {
+        if let Some((existing_roster, existing)) = &self.early_c1_verification {
+            anyhow::ensure!(
+                *existing_roster == selected_roster
+                    && existing.dishonest_parties == verification.dishonest_parties,
+                "conflicting C1 verification results arrived during restart recovery"
+            );
+            return Ok(());
+        }
+        info!(
+            e3_id = %self.e3_id,
+            "Buffering C1 verification until its inputs and effects are restored"
+        );
+        self.early_c1_verification = Some((selected_roster, verification));
+        Ok(())
+    }
+
+    /// Startup replay delivers this node's earlier C1 verdict while effects are fenced. Replay put
+    /// its payload-derived delivery ID in the bus dedup window, so the identical verdict to a new
+    /// dispatch after `EffectsEnabled` would be dropped. Keep the replayed verdict for
+    /// `continue_c1_verification`.
+    ///
+    /// C1 dispatches and verdicts stay local, and only an active aggregator dispatches, so a local
+    /// verdict also proves that this node started the C1 verification. Persist that ownership: a
+    /// failover may demote this node before `EffectsEnabled`, and it must still finish the work.
+    pub(in crate::actors::publickey_aggregator) fn buffer_replayed_c1_verification(
+        &mut self,
+        msg: TypedEvent<ShareVerificationComplete>,
+    ) -> Result<()> {
+        if msg.kind != VerificationKind::PkGenerationProofs
+            || msg.e3_id != self.e3_id
+            || msg.get_ctx().source() != EventSource::Local
+            || self.key_published
+            || !matches!(
+                self.state.get(),
+                Some(
+                    PublicKeyAggregatorState::Collecting { .. }
+                        | PublicKeyAggregatorState::VerifyingC1 { .. }
+                )
+            )
+        {
+            return Ok(());
+        }
+        let Some(selected_roster) = self.recovery.try_get()?.selected_roster else {
+            return Ok(());
+        };
+        let ec = msg.get_ctx().clone();
+        self.buffer_c1_verification(selected_roster, msg)?;
+        self.record_started_as_aggregator(&ec)
+    }
+
     pub(in crate::actors::publickey_aggregator) fn handle_c1_verification_complete(
         &mut self,
         msg: TypedEvent<ShareVerificationComplete>,
@@ -213,20 +269,7 @@ impl PublicKeyAggregator {
                             "C1 verification arrived before its selected roster was recovered"
                         )
                     })?;
-                if let Some((existing_roster, existing)) = &self.early_c1_verification {
-                    anyhow::ensure!(
-                        *existing_roster == selected_roster
-                            && existing.dishonest_parties == msg.dishonest_parties,
-                        "conflicting C1 verification results arrived during restart recovery"
-                    );
-                } else {
-                    info!(
-                        e3_id = %self.e3_id,
-                        "Buffering C1 verification until replay restores its keyshare inputs"
-                    );
-                    self.early_c1_verification = Some((selected_roster, TypedEvent::new(msg, ec)));
-                }
-                return Ok(());
+                return self.buffer_c1_verification(selected_roster, TypedEvent::new(msg, ec));
             }
             Some(
                 PublicKeyAggregatorState::GeneratingC5Proof { .. }
@@ -370,24 +413,27 @@ impl PublicKeyAggregator {
         let keyshare_bytes: Vec<ArcBytes> = honest_keyshares.clone();
 
         let pubkey = ArcBytes::from_bytes(&pubkey);
-        info!("Publishing PkAggregationProofPending for C5 proof generation...");
-        self.bus.publish(
-            PkAggregationProofPending {
-                e3_id: self.e3_id.clone(),
-                proof_request: PkAggregationProofRequest {
-                    keyshare_bytes: keyshare_bytes.clone(),
-                    aggregated_pk_bytes: pubkey.clone(),
-                    params_preset: self.params_preset,
-                    // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
-                    committee_n: circuit_committee_n,
-                    committee_h,
-                    committee_threshold: threshold_m,
+        let replayed_c5_proof = self.take_replayed_c5_proof(&keyshare_bytes);
+        if replayed_c5_proof.is_none() {
+            info!("Publishing PkAggregationProofPending for C5 proof generation...");
+            self.bus.publish(
+                PkAggregationProofPending {
+                    e3_id: self.e3_id.clone(),
+                    proof_request: PkAggregationProofRequest {
+                        keyshare_bytes: keyshare_bytes.clone(),
+                        aggregated_pk_bytes: pubkey.clone(),
+                        params_preset: self.params_preset,
+                        // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
+                        committee_n: circuit_committee_n,
+                        committee_h,
+                        committee_threshold: threshold_m,
+                    },
+                    public_key: pubkey.clone(),
+                    nodes: honest_nodes_set.clone(),
                 },
-                public_key: pubkey.clone(),
-                nodes: honest_nodes_set.clone(),
-            },
-            ec.clone(),
-        )?;
+                ec.clone(),
+            )?;
+        }
 
         // Proof binding uses the full immutable committee, including a member excluded before it
         // produced a keyshare. Deriving this map from keyshare submitters would shorten the roster
@@ -429,6 +475,14 @@ impl PublicKeyAggregator {
         }
 
         self.try_dispatch_dkg_aggregation(&ec)?;
+
+        if let Some(c5_proof) = replayed_c5_proof {
+            info!(
+                e3_id = %self.e3_id,
+                "Applying C5 proof replayed during restart recovery"
+            );
+            self.handle_pk_aggregation_proof_signed(c5_proof)?;
+        }
 
         Ok(())
     }

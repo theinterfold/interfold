@@ -312,6 +312,11 @@ impl ThresholdPlaintextAggregator {
             ThresholdPlaintextAggregatorState::GeneratingC7Proof(state) => {
                 self.pending.decryption_aggregation_correlation = None;
                 if self.pending.c7_proofs_pending.is_none() {
+                    if let Some(replayed) =
+                        self.take_replayed_c7_result(&state.plaintext, state.threshold_m)
+                    {
+                        return self.handle_aggregation_proof_signed(replayed);
+                    }
                     self.dispatch_c7_proof_request(
                         state.shares,
                         state.plaintext,

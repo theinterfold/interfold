@@ -133,11 +133,15 @@ actor state. Once all H keyshares exist, save `VerifyingC1` before
 `AggregationInputsReady(PublicKey)`. Only the active aggregator starts effects. A demoted aggregator
 that started C1 finishes and publishes, including after restart, but stops when the key is
 canonical; late C1 results then change nothing. A result arriving before recovered keyshares is held
-once, tied to that roster, never a replacement.
+once, tied to that roster, never a replacement. A local result replayed before `EffectsEnabled` is
+held the same way and restores the record that this node started C1, also when replay demotes it.
 
 Verify C1 for all H dealers, aggregate their public shares, prove C5, and combine exactly H
 NodeFolds. A mixed Some/None NodeFold set is a local test-configuration mismatch: retain inputs, do
-not accuse dealers. Local compute errors retain the pending input/correlation for recovery.
+not accuse dealers. Local compute errors retain the pending input/correlation for recovery. A local
+C5 proof replayed before `EffectsEnabled` is applied when the C5 phase resumes, if its public inputs
+are the commitments of the current honest keyshares: the prover would re-sign the replayed proof
+identically, and the bus drops that duplicate.
 
 `publishCommittee` is permissionless. It requires a viable committee, an unset commitment, mandatory
 DKG proof verification, and fold attestations. The request freezes the registry and fold verifier in

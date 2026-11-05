@@ -84,6 +84,36 @@ pub(crate) fn extract_pk_commitment(c5_proof: &Proof) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+/// Whether `c5_proof` proves the aggregation of exactly `keyshares`, in order. C5 takes the
+/// keyshares' `pk_commitment`s as its leading public inputs.
+pub(crate) fn c5_proof_matches_keyshares(
+    c5_proof: &Proof,
+    keyshares: &[ArcBytes],
+    fhe: &Fhe,
+) -> bool {
+    let outputs = CircuitName::PkAggregation
+        .output_layout()
+        .field_count()
+        .unwrap_or(1);
+    if c5_proof.circuit != CircuitName::PkAggregation
+        || c5_proof.public_signals.len() != (keyshares.len() + outputs) * 32
+    {
+        return false;
+    }
+    c5_proof
+        .public_signals
+        .chunks_exact(32)
+        .zip(keyshares)
+        .all(|(signal, keyshare)| {
+            e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
+                keyshare,
+                &fhe.params,
+                &fhe.crp,
+            )
+            .is_ok_and(|commitment| signal == commitment)
+        })
+}
+
 /// Outcome of cross-checking each honest party's keyshare against its signed C1
 /// `pk_commitment` public signal.
 pub(crate) struct C1CommitmentAudit {

@@ -87,6 +87,49 @@ impl ThresholdPlaintextAggregator {
         self.try_publish_complete()
     }
 
+    /// Startup replay delivers this node's earlier C7 result while effects are fenced, possibly
+    /// before replay restores `GeneratingC7Proof`. Replay put its payload-derived delivery ID in the
+    /// bus dedup window, so the identical result to a new C7 request would be dropped. Keep it for
+    /// [`Self::take_replayed_c7_result`].
+    pub(in crate::actors::threshold_plaintext_aggregator) fn buffer_replayed_c7_result(
+        &mut self,
+        msg: TypedEvent<AggregationProofSigned>,
+    ) {
+        if msg.e3_id == self.e3_id
+            && !matches!(
+                self.state.get(),
+                Some(ThresholdPlaintextAggregatorState::Complete(_))
+            )
+        {
+            self.pending.replayed_c7_results.push(msg);
+        }
+    }
+
+    /// The latest replayed C7 result that binds to this decryption batch. Results for another
+    /// batch are discarded.
+    pub(in crate::actors::threshold_plaintext_aggregator) fn take_replayed_c7_result(
+        &mut self,
+        plaintext: &[ArcBytes],
+        threshold_m: u64,
+    ) -> Option<TypedEvent<AggregationProofSigned>> {
+        let honest_c6 = self
+            .pending
+            .honest_c6_proofs_for_agg
+            .as_deref()
+            .unwrap_or_default();
+        std::mem::take(&mut self.pending.replayed_c7_results)
+            .into_iter()
+            .rev()
+            .find(|result| {
+                let proofs: Vec<_> = result
+                    .signed_proofs
+                    .iter()
+                    .map(|sp| sp.payload.proof.clone())
+                    .collect();
+                c7_proofs_match_batch(&proofs, honest_c6, plaintext, threshold_m as usize + 1)
+            })
+    }
+
     pub(in crate::actors::threshold_plaintext_aggregator) fn maybe_start_decryption_aggregation(
         &mut self,
         ec: &EventContext<Sequenced>,
@@ -263,16 +306,22 @@ impl ThresholdPlaintextAggregator {
                 let threshold_m = state.threshold_m;
                 let threshold_n = state.threshold_n;
 
+                // A replay-created aggregator reaches C7 only after EffectsEnabled; a new request
+                // would repeat the replayed one and be deduplicated.
+                let replayed = self.take_replayed_c7_result(&plaintext, threshold_m);
+
                 // Publish pending event before transitioning state so a publish
                 // failure leaves us in Computing (retryable) rather than
                 // GeneratingC7Proof (no retry path).
-                self.dispatch_c7_proof_request(
-                    shares.clone(),
-                    plaintext.clone(),
-                    threshold_m,
-                    threshold_n,
-                    ec.clone(),
-                )?;
+                if replayed.is_none() {
+                    self.dispatch_c7_proof_request(
+                        shares.clone(),
+                        plaintext.clone(),
+                        threshold_m,
+                        threshold_n,
+                        ec.clone(),
+                    )?;
+                }
 
                 // Transition to GeneratingC7Proof
                 self.state.try_mutate(&ec, |_| {
@@ -285,6 +334,9 @@ impl ThresholdPlaintextAggregator {
                         },
                     ))
                 })?;
+                if let Some(replayed) = replayed {
+                    self.handle_aggregation_proof_signed(replayed)?;
+                }
             }
 
             ComputeResponseKind::Zk(ZkResponse::DecryptionAggregation(resp)) => {
