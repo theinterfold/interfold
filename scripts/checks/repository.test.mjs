@@ -18,6 +18,10 @@ function repositoryFixture(t) {
   mkdirSync(join(root, 'scripts/checks'), { recursive: true })
   for (const file of ['repository.sh', 'cargo-feature-containment.py', 'ciphernode-docker-members.py'])
     copyFileSync(new URL(file, import.meta.url), join(root, 'scripts/checks', file))
+  // The boundary rules name real packages and have their own test; this stub checks the wiring.
+  const boundaries = (status) =>
+    write('scripts/checks/cargo-dependency-boundaries.py', `print("boundary stub")\nraise SystemExit(${status})\n`)
+  boundaries(0)
   write('scripts/checks/repository-baselines.env', 'DO_SEND_BASELINE=0\n')
   write('Cargo.toml', '[workspace]\nmembers = ["crates/core"]\n')
   write('crates/core/Cargo.toml', '[package]\nname = "core"\n')
@@ -30,13 +34,17 @@ function repositoryFixture(t) {
   write('dappnode/docker-compose.yml', compose(61))
   write('deploy/docker-compose.yml', compose(120))
   const run = () => spawnSync('bash', [join(root, 'scripts/checks/repository.sh')], { cwd: root, encoding: 'utf8' })
-  return { root, write, run, compose, startup }
+  return { root, write, run, compose, startup, boundaries }
 }
 
 test('repository checks reject insufficient grace, missing Docker members, and production proof-skip features', (t) => {
-  const { write, run, compose } = repositoryFixture(t)
+  const { write, run, compose, boundaries } = repositoryFixture(t)
   const pass = run()
   assert.equal(pass.status, 0, pass.stdout + pass.stderr)
+  boundaries(1)
+  assert.equal(run().status, 1)
+  assert.match(run().stdout, /boundary stub/)
+  boundaries(0)
   write('deploy/docker-compose.yml', compose(60))
   assert.match(run().stdout, /must exceed 60 seconds/)
   assert.equal(run().status, 1)
