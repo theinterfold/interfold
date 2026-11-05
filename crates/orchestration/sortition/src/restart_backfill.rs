@@ -151,7 +151,8 @@ pub struct RestartInputCheckpoint {
 }
 
 impl SortitionRestartBackfill {
-    /// Validates the sortition snapshots and catches up existing identity-policy projections.
+    /// Validates the sortition snapshots, then catches up and writes existing identity-policy
+    /// projections. Validate any other restart store before calling it.
     pub async fn load(
         repositories: &Repositories,
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
@@ -198,14 +199,6 @@ impl SortitionRestartBackfill {
             .copied()
             .filter(|chain_id| !identity.chains.contains_key(chain_id))
             .collect::<HashSet<_>>();
-        catch_up_identity_policy(
-            repositories,
-            eventstore,
-            chain_ids,
-            &identity_target_chains,
-            &mut identity,
-        )
-        .await?;
         let owners = repositories
             .sortition_bond_owners()
             .read()
@@ -233,6 +226,15 @@ impl SortitionRestartBackfill {
             "unsupported committee-finalizer recovery schema {}",
             finalizer.schema_version
         );
+        // The only write before the backfill, after every store of this load passes.
+        catch_up_identity_policy(
+            repositories,
+            eventstore,
+            chain_ids,
+            &identity_target_chains,
+            &mut identity,
+        )
+        .await?;
         Ok(Self {
             repositories: repositories.clone(),
             selector,

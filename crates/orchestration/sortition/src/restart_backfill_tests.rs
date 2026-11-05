@@ -413,15 +413,14 @@ fn startup_recovers_local_selection() {
         params: ArcBytes::from_bytes(&[1, 2]),
         error_size: ArcBytes::from_bytes(&[3, 4]),
     };
+    // The local node is not first, so its party id comes from its committee slot.
+    let members = vec![
+        "0x2222222222222222222222222222222222222222".to_owned(),
+        address.to_uppercase(),
+    ];
     let selector = CiphernodeSelectorState {
         e3_cache: HashMap::from([(e3_id.clone(), metadata.clone())]),
-        committees: HashMap::from([(
-            e3_id.clone(),
-            Committee::new(vec![
-                address.to_uppercase(),
-                "0x2222222222222222222222222222222222222222".to_owned(),
-            ]),
-        )]),
+        committees: HashMap::from([(e3_id.clone(), Committee::new(members.clone()))]),
         ..Default::default()
     };
 
@@ -429,7 +428,8 @@ fn startup_recovers_local_selection() {
 
     assert_eq!(selections.len(), 1);
     assert_eq!(selections[0].e3_id, e3_id);
-    assert_eq!(selections[0].party_id, 0);
+    assert_eq!(selections[0].party_id, 1);
+    assert_eq!(selections[0].committee, members);
     assert_eq!(selections[0].threshold_m, metadata.threshold_m);
     assert_eq!(selections[0].params, metadata.params);
 }

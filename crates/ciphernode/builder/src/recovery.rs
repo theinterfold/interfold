@@ -11,20 +11,21 @@ use e3_evm::SlashingWriterBackfill;
 use e3_sortition::{CommitteeFinalizerRecoveryState, SortitionRestartBackfill};
 
 /// Fills missing restart stores from one event-log scan. Every store is validated before any
-/// missing store is written; the identity-policy catch-up of existing projections is written during
-/// load. The checked log prefixes advance only after all recovered inputs are durable.
+/// backfill write, and the checked log prefixes advance only after all recovered inputs are durable.
 pub(crate) async fn backfill_restart_state(
     repositories: &e3_data::Repositories,
     eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     chain_ids: &[u64],
     slashing_manager_enabled: bool,
 ) -> Result<CommitteeFinalizerRecoveryState> {
-    let sortition = SortitionRestartBackfill::load(repositories, eventstore, chain_ids).await?;
+    // The sortition load writes the identity-policy catch-up once its own stores pass, so the
+    // slashing-writer stores are validated first.
     let slashing = if slashing_manager_enabled {
         SlashingWriterBackfill::load(repositories, chain_ids).await?
     } else {
         SlashingWriterBackfill::default()
     };
+    let sortition = SortitionRestartBackfill::load(repositories, eventstore, chain_ids).await?;
     let (slash_intents, checkpoint) = sortition
         .backfill(eventstore, &slashing.missing_chains())
         .await?;

@@ -92,6 +92,39 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
+    /// A raw `IdentityPolicyUpdated` log on chain 1, as the journal takes it in.
+    fn policy_log(
+        timepoint: u64,
+        required: bool,
+        index: u128,
+    ) -> e3_events::InterfoldEvent<e3_events::Unsequenced> {
+        use alloy::{
+            primitives::{keccak256, U256},
+            sol_types::SolValue,
+        };
+        use e3_events::{EventConstructorWithTimestamp, EventSource, EvmLogObserved};
+
+        let log = EvmLogObserved {
+            contract: "BondingRegistry".into(),
+            chain_id: 1,
+            e3_id: None,
+            event_name: "UnknownEvmLog".into(),
+            signature: None,
+            known: false,
+            topics: vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)").to_string()],
+            data: e3_utils::ArcBytes::from_bytes(
+                &(U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
+            ),
+        };
+        e3_events::InterfoldEvent::new_with_timestamp(
+            log.into(),
+            None,
+            index,
+            Some(1),
+            EventSource::Evm,
+        )
+    }
+
     #[actix::test]
     async fn startup_keeps_existing_ticket_intents_without_reranking() -> anyhow::Result<()> {
         use e3_events::{
@@ -461,14 +494,7 @@ mod tests {
     #[actix::test]
     async fn an_existing_identity_projection_catches_up_on_unprojected_logs() -> anyhow::Result<()>
     {
-        use alloy::{
-            primitives::{keccak256, U256},
-            sol_types::SolValue,
-        };
-        use e3_events::{
-            AggregateConfig, AggregateId, EventConstructorWithTimestamp, EventSource,
-            EvmLogObserved, InterfoldEvent, Unsequenced,
-        };
+        use e3_events::{AggregateConfig, AggregateId};
         use e3_sortition::SortitionRecoveryRepositoryFactory;
         use e3_sync::SyncRepositoryFactory;
 
@@ -481,28 +507,6 @@ mod tests {
             ])));
         let bus = system.handle()?.enable("identity-catch-up");
         let repos = e3_data::Repositories::from(system.store()?);
-        let policy_log = |timepoint: u64, required: bool, index: u128| {
-            let log = EvmLogObserved {
-                contract: "BondingRegistry".into(),
-                chain_id: 1,
-                e3_id: None,
-                event_name: "UnknownEvmLog".into(),
-                signature: None,
-                known: false,
-                topics: vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)").to_string()],
-                data: e3_utils::ArcBytes::from_bytes(
-                    &(U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
-                ),
-            };
-            InterfoldEvent::<Unsequenced>::new_with_timestamp(
-                log.into(),
-                None,
-                index,
-                Some(1),
-                EventSource::Evm,
-            )
-        };
-
         // This binary starts with one enforcement in the journal.
         bus.naked_dispatch_async(policy_log(30, true, 1)).await?;
         bus.flush_event_pipeline().await?;
@@ -588,6 +592,80 @@ mod tests {
         assert!(!known.required_at(1, 65));
         assert!(known.required_at(1, 75));
         assert_eq!(known.replayed.get(&1), Some(&4));
+        Ok(())
+    }
+
+    /// A store that fails validation stops startup before any restart state is written, so the
+    /// identity projection is not advanced past logs that the next startup must still replay.
+    #[actix::test]
+    async fn a_rejected_store_leaves_the_identity_projection_unchanged() -> anyhow::Result<()> {
+        use e3_events::{AggregateConfig, AggregateId};
+        use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        use e3_sortition::{
+            CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory,
+            SortitionRecoveryRepositoryFactory,
+        };
+        use e3_sync::SyncRepositoryFactory;
+
+        for rejected in ["slashing writer", "committee finalizer"] {
+            let aggregate = AggregateId::from_chain_id(Some(1));
+            let system = e3_event_system::EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([
+                    (aggregate, Duration::ZERO),
+                    (AggregateId::from_chain_id(None), Duration::ZERO),
+                ])));
+            let bus = system.handle()?.enable("rejected-store");
+            let repos = e3_data::Repositories::from(system.store()?);
+            bus.naked_dispatch_async(policy_log(30, true, 1)).await?;
+            bus.flush_event_pipeline().await?;
+            repos.aggregate_seq(aggregate).write_sync(&1).await?;
+            crate::recovery::backfill_restart_state(
+                &repos,
+                &system.eventstore_reader()?.seq(),
+                &[1],
+                true,
+            )
+            .await?;
+            let before = repos.sortition_identity_policy().read().await?.unwrap();
+            assert_eq!(before.replayed.get(&1), Some(&1));
+
+            bus.naked_dispatch_async(policy_log(40, false, 2)).await?;
+            bus.flush_event_pipeline().await?;
+            repos.aggregate_seq(aggregate).write_sync(&2).await?;
+            if rejected == "slashing writer" {
+                let mut slashing = SlashingWriterRecoveryState::default();
+                slashing.schema_version += 1;
+                repos
+                    .slashing_writer_recovery(1)
+                    .write_sync(&slashing)
+                    .await?;
+            } else {
+                let mut finalizer = CommitteeFinalizerRecoveryState::default();
+                finalizer.schema_version += 1;
+                repos
+                    .committee_finalizer_recovery()
+                    .write_sync(&finalizer)
+                    .await?;
+            }
+            assert!(
+                crate::recovery::backfill_restart_state(
+                    &repos,
+                    &system.eventstore_reader()?.seq(),
+                    &[1],
+                    true,
+                )
+                .await
+                .is_err(),
+                "{rejected}"
+            );
+            let after = repos.sortition_identity_policy().read().await?.unwrap();
+            assert_eq!(
+                bincode::serialize(&before)?,
+                bincode::serialize(&after)?,
+                "{rejected}"
+            );
+        }
         Ok(())
     }
 
