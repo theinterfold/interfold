@@ -294,6 +294,62 @@ async fn canonical_domain_gates_live_and_replayed_shares() -> Result<()> {
     Ok(())
 }
 
+/// Startup replays logged events before `EffectsEnabled`. An aggregator that a replayed ciphertext
+/// creates collects its shares, but runs no effects until the fence opens.
+#[actix::test]
+async fn an_aggregator_created_during_replay_waits_for_effects() -> Result<()> {
+    let inputs_ready = |events: Vec<InterfoldEvent>| {
+        events.iter().any(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::AggregationInputsReady(_)
+            )
+        })
+    };
+    let (bus, _, _, _, _, _, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+    let id = E3id::new("42", 1);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let ciphertext = ciphertext_event(&id);
+    let keys = CanonicalPublicKeys::default();
+    keys.insert(id.clone(), canonical_key())?;
+    let extension = ThresholdPlaintextAggregatorExtension::create(
+        &bus,
+        &start_sortition(&bus),
+        true,
+        keys,
+        history_reader(std::slice::from_ref(&ciphertext))?,
+    );
+    let mut ctx = context(&store, &id).await?;
+    // The router creates a context with its own flag, which is off while startup replays.
+    ctx.set_effects_enabled(false);
+    extension.on_event(&mut ctx, &ciphertext);
+    let recipient = ctx
+        .get_event_recipient("plaintext")
+        .expect("the ciphertext creates the aggregator")
+        .clone();
+    recipient.send(share_event(&id, 0, false, 2)).await?;
+    recipient.send(share_event(&id, 1, false, 3)).await?;
+    await_verifying(&store, &id).await?;
+    bus.flush_event_pipeline().await?;
+    assert!(
+        !inputs_ready(history.send(GetEvents::<InterfoldEvent>::new()).await?),
+        "aggregation ran before EffectsEnabled"
+    );
+
+    recipient
+        .send(event(EffectsEnabled::new(), EventSource::Local, 4))
+        .await?;
+    for _ in 0..200 {
+        bus.flush_event_pipeline().await?;
+        if inputs_ready(history.send(GetEvents::<InterfoldEvent>::new()).await?) {
+            return Ok(());
+        }
+        actix::clock::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("aggregation did not resume at EffectsEnabled")
+}
+
 #[actix::test]
 async fn hydration_rebuilds_noncanonical_c6_work_in_every_phase() -> Result<()> {
     for phase in 0..5 {

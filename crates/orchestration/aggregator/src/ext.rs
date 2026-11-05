@@ -176,7 +176,8 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 recovery,
                 initial_is_aggregator: load_is_active_aggregator(ctx),
                 initial_stage: E3Stage::CommitteeFinalized,
-                effects_enabled: true,
+                // Startup replay can create the aggregator; it stays fenced until EffectsEnabled.
+                effects_enabled: ctx.effects_enabled(),
             },
             sync_state,
         );
@@ -523,16 +524,18 @@ fn create_decryptionshare_buffer(
 #[async_trait]
 impl E3Extension for ThresholdPlaintextAggregatorExtension {
     fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
+        // Startup replay can create the aggregator; it stays fenced until EffectsEnabled.
+        let effects_enabled = ctx.effects_enabled();
         if let InterfoldEventData::AggregatorChanged(_) = evt.get_data() {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), effects_enabled);
             }
             return;
         }
 
         if matches!(evt.get_data(), InterfoldEventData::CiphernodeSelected(_)) {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), effects_enabled);
             }
             return;
         }
@@ -546,7 +549,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             }
             self.remember_canonical_committee(ctx);
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), effects_enabled);
             }
             return;
         }
@@ -563,7 +566,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             }
             self.remember_canonical_committee(ctx);
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
-                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), effects_enabled);
             }
             return;
         }
@@ -573,7 +576,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             return;
         };
         ctx.set_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY, data.clone());
-        self.try_start_plaintext(ctx, data, evt.get_ctx(), true);
+        self.try_start_plaintext(ctx, data, evt.get_ctx(), effects_enabled);
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
