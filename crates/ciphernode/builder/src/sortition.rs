@@ -591,6 +591,61 @@ mod tests {
         Ok(())
     }
 
+    /// A slashing-writer store that predates the repository is rebuilt from the slash intents in
+    /// the scanned log, and the checked prefix of the scanned E3 advances.
+    #[actix::test]
+    async fn a_missing_slashing_writer_store_recovers_logged_slash_intents() -> anyhow::Result<()> {
+        use e3_events::{
+            AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId,
+            EventPublisher, ProofType,
+        };
+        use e3_evm::SlashingWriterRepositoryFactory;
+        use e3_request::E3LifecycleRepositoryFactory;
+        use e3_sync::SyncRepositoryFactory;
+
+        let aggregate = AggregateId::from_chain_id(Some(1));
+        let system = e3_event_system::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                aggregate,
+                Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("slashing-writer-backfill");
+        let repos = e3_data::Repositories::from(system.store()?);
+        let e3_id = E3id::new("7", 1);
+        repos
+            .e3_lifecycle()
+            .write_sync(&HashMap::from([(e3_id.clone(), E3Stage::Requested)]))
+            .await?;
+        bus.publish_without_context(AccusationQuorumReached {
+            e3_id: e3_id.clone(),
+            accuser: Address::repeat_byte(1),
+            accused: Address::repeat_byte(2),
+            proof_type: ProofType::C1PkGeneration,
+            votes_for: Vec::new(),
+            outcome: AccusationOutcome::AccusedFaulted,
+            evidence: Default::default(),
+        })?;
+        bus.flush_event_pipeline().await?;
+        repos.aggregate_seq(aggregate).write_sync(&1).await?;
+
+        crate::recovery::backfill_restart_state(
+            &repos,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            true,
+        )
+        .await?;
+        let slashing = repos.slashing_writer_recovery(1).read().await?;
+        assert_eq!(
+            slashing.expect("missing store is written").pending_count(),
+            1
+        );
+        let cursors = repos.restart_input_cursors().read().await?.unwrap();
+        assert_eq!(cursors.get(&e3_id), Some(&1));
+        Ok(())
+    }
+
     /// The startup chain sync can deliver an E3's failure before its committee finalization, and
     /// the failure can also be in the saved lifecycle while only the finalization is replayed. The
     /// late finalization must not reserve slots, because no later event releases them.

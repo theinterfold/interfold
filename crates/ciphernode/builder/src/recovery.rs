@@ -11,7 +11,8 @@ use e3_evm::SlashingWriterBackfill;
 use e3_sortition::{CommitteeFinalizerRecoveryState, SortitionRestartBackfill};
 
 /// Fills missing restart stores from one event-log scan. Every store is validated before any
-/// backfill write, and the checked log prefixes advance only after all recovered inputs are durable.
+/// missing store is written; the identity-policy catch-up of existing projections is written during
+/// load. The checked log prefixes advance only after all recovered inputs are durable.
 pub(crate) async fn backfill_restart_state(
     repositories: &e3_data::Repositories,
     eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
