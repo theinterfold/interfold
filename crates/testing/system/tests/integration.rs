@@ -35,12 +35,13 @@ use e3_test_support::{create_seed_from_u64, derive_shared_rng, find_bb, with_tra
 use e3_trbfv::helpers::calculate_error_size;
 use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
-use e3_utils::{colorize, rand_eth_addr, Color};
+use e3_utils::{colorize, Color};
 use e3_zk_prover::test_utils::get_tempdir;
 use e3_zk_prover::{BBPath, CircuitInfo, VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -194,6 +195,12 @@ struct BenchmarkRestartIdentity {
 fn next_benchmark_node_rng(base_seed: u64) -> e3_utils::SharedRng {
     let salt = NEXT_BENCHMARK_NODE_RNG_SALT.fetch_add(1, Ordering::Relaxed);
     derive_shared_rng(base_seed, salt)
+}
+
+/// A node address drawn from `rng`, so a seeded run gives each node the same address.
+fn rand_eth_addr(rng: &e3_utils::SharedRng) -> String {
+    let bytes = rng.lock().unwrap().random::<[u8; 20]>();
+    Address::from_slice(&bytes).to_string()
 }
 
 /// Fold attestation verifier address for benchmark JSON reports (env override or default).

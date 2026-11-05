@@ -568,7 +568,7 @@
       "documentation": [{ "title": "Decoding and runtime boundaries", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/utils",
-      "one_line": "Shared helpers: actix channel adapters, size-bounded bincode, retry with backoff, random Ethereum addresses and byte newtypes.",
+      "one_line": "Shared helpers: actix channel adapters, size-bounded bincode, retry with backoff and byte newtypes.",
       "actors": [
         {
           "name": "Oneshot<M>",
@@ -599,11 +599,6 @@
           "name": "AsBytesSerde",
           "what": "trait that converts a newtype to and from bytes for the BytesSerde derive",
           "ref": "crates/utils/src/serde_bytes.rs@38@pub trait AsBytesSerde: Sized {"
-        },
-        {
-          "name": "RevertedTransaction",
-          "what": "details of a transaction receipt that reverted",
-          "ref": "crates/utils/src/transaction.rs@12@pub struct RevertedTransaction {"
         }
       ],
       "read_first": [
@@ -621,7 +616,7 @@
         },
         {
           "why": "retry_with_backoff: retries an operation with a delay between attempts",
-          "ref": "crates/utils/src/retry.rs@48@pub async fn retry_with_backoff<F, Fut, T>("
+          "ref": "crates/utils/src/retry.rs@43@pub async fn retry_with_backoff<F, Fut, T>("
         }
       ],
       "rust_patterns": [
@@ -643,7 +638,7 @@
         {
           "pattern": "async-await",
           "note": "retry_with_backoff is an async function over a closure that returns a future",
-          "ref": "crates/utils/src/retry.rs@48@pub async fn retry_with_backoff<F, Fut, T>("
+          "ref": "crates/utils/src/retry.rs@43@pub async fn retry_with_backoff<F, Fut, T>("
         },
         {
           "pattern": "derive-macro",

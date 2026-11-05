@@ -587,7 +587,7 @@
           "ref": "crates/evm/client/src/contracts.rs@469@.ok_or_else(|| eyre::eyre!("
         }
       ],
-      "depends_on": ["e3-utils", "e3-evm-contracts", "e3-fhe-params"],
+      "depends_on": ["e3-utils", "e3-evm-contracts", "e3-evm-transactions", "e3-fhe-params"],
       "tests": "cargo test -p e3-evm-client. Integration tests in tests/integration.rs start Anvil; build.rs runs scripts/build_fixtures.sh, which needs solc and jq.",
       "unverified": [
         "Nonce safety across processes that share one key is described only in a code comment (nonce.rs:54-55); no test in this crate covers it.",

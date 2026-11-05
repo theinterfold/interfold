@@ -4,10 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_utils::{
-    retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
-    RPC_RETRY_FIRST_DELAY_MS,
-};
+use e3_evm_transactions::{should_retry_error, RPC_RETRY_ATTEMPTS, RPC_RETRY_FIRST_DELAY_MS};
+use e3_utils::{retry_with_backoff, RetryError};
 use std::future::Future;
 use tracing::{info, warn};
 

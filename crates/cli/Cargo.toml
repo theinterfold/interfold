@@ -35,6 +35,7 @@ e3-events = { workspace = true }
 e3-evm = { workspace = true }
 e3-evm-config.workspace = true
 e3-evm-contracts.workspace = true
+e3-evm-transactions.workspace = true
 e3-logger = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-fhe-params = { workspace = true }

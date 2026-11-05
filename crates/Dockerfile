@@ -65,6 +65,7 @@ COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
 COPY crates/evm/config/Cargo.toml ./evm/config/Cargo.toml
 COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
 COPY crates/evm/client/Cargo.toml ./evm/client/Cargo.toml
+COPY crates/evm/transactions/Cargo.toml ./evm/transactions/Cargo.toml
 COPY crates/bfv/runtime/Cargo.toml ./bfv/runtime/Cargo.toml
 COPY crates/bfv/params/Cargo.toml ./bfv/params/Cargo.toml
 COPY crates/fs/Cargo.toml ./fs/Cargo.toml

@@ -1,0 +1,13 @@
+[package]
+name = "e3-evm-transactions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared EVM transaction receipt, nonce, and retry classification for Interfold"
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+
+[dev-dependencies]
+alloy = { workspace = true, features = ["json-rpc"] }

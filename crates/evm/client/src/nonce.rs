@@ -12,7 +12,7 @@ use alloy::{
     primitives::Address,
     providers::{PendingTransactionBuilder, Provider},
 };
-use e3_utils::nonce::{broadcast_refused, next_free_nonce};
+use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use eyre::Result;
 use std::{
     collections::BTreeMap,
