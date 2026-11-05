@@ -110,51 +110,28 @@ async fn install_interfold(
         );
     }
 
+    let mut filters = vec![
+        Filter::new(
+            "**/package.json",
+            r#""@interfold/contracts":\s*"[^"]*""#,
+            &format!(r#""@interfold/contracts": "{}""#, evm_version),
+        ),
+        Filter::new(
+            "**/package.json",
+            r#""@interfold/react":\s*"[^"]*""#,
+            &format!(r#""@interfold/react": "{}""#, react_version),
+        ),
+        Filter::new(
+            "**/package.json",
+            r#""@interfold/sdk":\s*"[^"]*""#,
+            &format!(r#""@interfold/sdk": "{}""#, sdk_version),
+        ),
+    ];
+    filters.extend(rust_dependency_filters(&commit_hash));
+
     spinner
         .run("Copy with filters...", || async {
-            copy::copy_with_filters(
-                &src,
-                &cwd,
-                &[
-                    Filter::new(
-                        "**/package.json",
-                        r#""@interfold/contracts":\s*"[^"]*""#,
-                        &format!(r#""@interfold/contracts": "{}""#, evm_version),
-                    ),
-                    Filter::new(
-                        "**/package.json",
-                        r#""@interfold/react":\s*"[^"]*""#,
-                        &format!(r#""@interfold/react": "{}""#, react_version),
-                    ),
-                    Filter::new(
-                        "**/package.json",
-                        r#""@interfold/sdk":\s*"[^"]*""#,
-                        &format!(r#""@interfold/sdk": "{}""#, sdk_version),
-                    ),
-                    Filter::new(
-                        "**/Cargo.toml",
-                        r"(?m)^e3-program-runner =.*\n?",
-                        &format!("e3-program-runner = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
-                    ),
-                    Filter::new(
-                       "**/Cargo.toml",
-                       r"(?m)^e3-bfv-client =.*\n?",
-                       &format!("e3-bfv-client = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
-                    ),
-                    Filter::new(
-                       "**/Cargo.toml",
-                       r"(?m)^e3-fhe-params =.*\n?",
-                       &format!("e3-fhe-params = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
-                    ),
-                    Filter::new(
-                       "**/Cargo.toml",
-                       r"(?m)^e3-compute-provider =.*\n?",
-                       &format!("e3-compute-provider = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
-                    ),
-                    interfold_path_filter(&commit_hash),
-                ],
-            )
-            .await
+            copy::copy_with_filters(&src, &cwd, &filters).await
         })
         .await?;
 
@@ -260,6 +237,34 @@ fn interfold_path_filter(commit_hash: &str) -> Filter {
     )
 }
 
+/// Pins the template's Interfold crates to the template's commit: the root manifest's crates by
+/// name, and the inline path dependencies of any manifest by folder.
+fn rust_dependency_filters(commit_hash: &str) -> Vec<Filter> {
+    vec![
+        Filter::new(
+            "**/Cargo.toml",
+            r"(?m)^e3-program-runner =.*\n?",
+            &format!("e3-program-runner = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
+        ),
+        Filter::new(
+            "**/Cargo.toml",
+            r"(?m)^e3-bfv-client =.*\n?",
+            &format!("e3-bfv-client = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
+        ),
+        Filter::new(
+            "**/Cargo.toml",
+            r"(?m)^e3-fhe-params =.*\n?",
+            &format!("e3-fhe-params = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
+        ),
+        Filter::new(
+            "**/Cargo.toml",
+            r"(?m)^e3-compute-provider =.*\n?",
+            &format!("e3-compute-provider = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
+        ),
+        interfold_path_filter(commit_hash),
+    ]
+}
+
 pub async fn execute(
     location: Option<PathBuf>,
     template: Option<String>,
@@ -340,8 +345,40 @@ pub async fn execute(
 
 #[cfg(test)]
 mod path_filter_tests {
-    use super::interfold_path_filter;
+    use super::{copy::copy_with_filters_impl, interfold_path_filter, rust_dependency_filters};
+    use e3_fs::{prelude::*, Fs};
     use regex::Regex;
+
+    /// Generates a project from a template of `manifests` (path, text) with the production Cargo
+    /// filters, and returns each manifest as generated.
+    async fn generate(manifests: &[(&str, String)]) -> Vec<String> {
+        let fs = Fs::mem();
+        for (path, text) in manifests {
+            let file = format!("/template/{path}");
+            fs.mkdirp(std::path::Path::new(&file).parent().unwrap())
+                .await
+                .unwrap();
+            fs.write_to_file(&file, text).await.unwrap();
+        }
+        copy_with_filters_impl(
+            &fs,
+            "/template/.",
+            "/project",
+            &rust_dependency_filters("abc123"),
+        )
+        .await
+        .unwrap();
+        let mut generated = Vec::new();
+        for (path, _) in manifests {
+            generated.push(fs.read_to_string(format!("/project/{path}")).await.unwrap());
+        }
+        generated
+    }
+
+    /// A dependency that reaches into an Interfold checkout, which a generated project lacks.
+    fn checkout_path() -> Regex {
+        Regex::new(r#"path = "(?:\.\./)+crates/"#).unwrap()
+    }
 
     #[test]
     fn pins_interfold_crates_and_keeps_their_features() {
@@ -374,39 +411,44 @@ path = "../../crates/program/openvm-host"
 
     /// `--template` can name a released template, whose guest reaches crates by their folders
     /// before the move under `crates/program`.
-    #[test]
-    fn pins_the_guest_dependencies_of_released_templates() {
-        let filter = interfold_path_filter("abc123");
+    #[tokio::test]
+    async fn pins_the_guest_dependencies_of_released_templates() {
         let guest = r#"e3-compute-provider = { path = "../../../crates/compute-provider" }
 e3-openvm-types = { path = "../../../crates/openvm-types" }
+e3-safe = { path = "../../../crates/safe", features = ["openvm"] }
 "#;
-        let rewritten = Regex::new(&filter.search_pattern)
-            .unwrap()
-            .replace_all(guest, filter.replacement.as_str())
-            .to_string();
 
-        assert!(!rewritten.contains("path ="), "{rewritten}");
+        let generated = generate(&[("guest/Cargo.toml", guest.to_owned())]).await;
+
+        assert!(!checkout_path().is_match(&generated[0]), "{}", generated[0]);
     }
 
     /// A generated project has no Interfold checkout, so every checkout-relative dependency in the
     /// real template must be pinned. This fails when a crate moves without updating the folder list.
-    #[test]
-    fn pins_every_path_dependency_of_the_template() {
+    #[tokio::test]
+    async fn pins_every_path_dependency_of_the_template() {
         let template =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../templates/default");
-        let checkout_path = Regex::new(r#"path = "(?:\.\./)+crates/"#).unwrap();
-        let filter = interfold_path_filter("abc123");
-        let pin = Regex::new(&filter.search_pattern).unwrap();
-        for manifest in ["Cargo.toml", "guest/Cargo.toml"] {
-            let text = std::fs::read_to_string(template.join(manifest)).unwrap();
+        let manifests = [
+            "Cargo.toml",
+            "guest/Cargo.toml",
+            "program/Cargo.toml",
+            "runner/Cargo.toml",
+        ]
+        .map(|path| (path, std::fs::read_to_string(template.join(path)).unwrap()));
+        for (path, text) in &manifests[..2] {
             assert!(
-                checkout_path.is_match(&text),
-                "{manifest}: no Interfold path dependency"
+                checkout_path().is_match(text),
+                "{path}: no Interfold path dependency"
             );
-            let rewritten = pin.replace_all(&text, filter.replacement.as_str());
+        }
+
+        let generated = generate(&manifests).await;
+
+        for ((path, _), text) in manifests.iter().zip(&generated) {
             assert!(
-                !checkout_path.is_match(&rewritten),
-                "{manifest} keeps a checkout-relative dependency:\n{rewritten}"
+                !checkout_path().is_match(text),
+                "{path} keeps a checkout-relative dependency:\n{text}"
             );
         }
     }
