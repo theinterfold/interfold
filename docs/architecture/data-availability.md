@@ -179,7 +179,7 @@ CRISP's encrypted-input and output-callback routes permit 4 MiB JSON to hold the
 hex-encoded DA object; read routes keep smaller defaults. The server uses a multithread Tokio
 runtime so expensive validation/round updates do not monopolize the RPC transport's heartbeat
 executor; HTTP workers still own their own runtimes. This is an execution boundary, not proof that
-all blocking work is absent. [Program-service limits](../../crates/program-server/README.md)
+all blocking work is absent. [Program-service limits](../../crates/program/server/README.md)
 separately describe the unauthenticated runner endpoint, callback filtering, and nondurable
 delivery.
 

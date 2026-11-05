@@ -40,16 +40,16 @@ that made it.
 
 ## Components
 
-| Component                 | Location                     | Role                                                                                |
-| ------------------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `e3-compute-provider`     | `crates/compute-provider`    | `SecureProcess`, `ComputeProvider`, `ComputeManager`, `InputPolicy`, input tree     |
-| `e3-program-server`       | `crates/program-server`      | HTTP server with `POST /run_compute` and `GET /health`. It calls a runner function. |
-| `e3-program-runner`       | `crates/program-runner`      | `run(processor, policy)`: the dev runner and the OpenVM service, chosen by argument |
-| `e3-openvm-host`          | `crates/openvm-host`         | The OpenVM runner: native run, guest input, worker selection, proof envelope        |
-| `interfold-openvm-prover` | `crates/openvm-prover`       | The worker that proves the guest. A CPU build and a CUDA build.                     |
-| Guest                     | `guest/` in your project     | The OpenVM guest. It links your `program/` crate.                                   |
-| Program runner            | `runner/` in your project    | The `program-runner` binary. It passes your `program/` crate to `e3-program-runner` |
-| Coordination server       | `server/index.ts` (template) | Sends the job, receives the webhook, and calls `publishCiphertextOutput`            |
+| Component                 | Location                          | Role                                                                                |
+| ------------------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
+| `e3-compute-provider`     | `crates/program/compute-provider` | `SecureProcess`, `ComputeProvider`, `ComputeManager`, `InputPolicy`, input tree     |
+| `e3-program-server`       | `crates/program/server`           | HTTP server with `POST /run_compute` and `GET /health`. It calls a runner function. |
+| `e3-program-runner`       | `crates/program/runner`           | `run(processor, policy)`: the dev runner and the OpenVM service, chosen by argument |
+| `e3-openvm-host`          | `crates/program/openvm-host`      | The OpenVM runner: native run, guest input, worker selection, proof envelope        |
+| `interfold-openvm-prover` | `crates/openvm-prover`            | The worker that proves the guest. A CPU build and a CUDA build.                     |
+| Guest                     | `guest/` in your project          | The OpenVM guest. It links your `program/` crate.                                   |
+| Program runner            | `runner/` in your project         | The `program-runner` binary. It passes your `program/` crate to `e3-program-runner` |
+| Coordination server       | `server/index.ts` (template)      | Sends the job, receives the webhook, and calls `publishCiphertextOutput`            |
 
 `interfold program compile` and `interfold program start` build and run the `program-runner` binary
 in your project directory. `interfold init` pins the guest's Interfold crates to the template's
@@ -57,8 +57,8 @@ commit.
 
 ## The secure process
 
-`SecureProcess` (`crates/compute-provider/src/secure_process.rs`) is the computation that every CP
-reproduces. It reads a round in two passes, one ciphertext at a time:
+`SecureProcess` (`crates/program/compute-provider/src/secure_process.rs`) is the computation that
+every CP reproduces. It reads a round in two passes, one ciphertext at a time:
 
 1. Every ciphertext, in index order. For each one it recomputes the SAFE commitment, hashes the
    bytes with Keccak-256, and builds the input's leaf with your policy. Then it drops the bytes.
@@ -93,9 +93,9 @@ The processor must read every item. Keep the state that it carries between items
 ## The ComputeProvider trait
 
 A CP that uses `ComputeManager` implements one method
-(`crates/compute-provider/src/ciphertext_output.rs`):
+(`crates/program/compute-provider/src/ciphertext_output.rs`):
 
-```rust filename="crates/compute-provider/src/ciphertext_output.rs"
+```rust filename="crates/program/compute-provider/src/ciphertext_output.rs"
 pub trait ComputeProvider {
     type Output: Send + Sync;
 
@@ -108,10 +108,10 @@ secure process and then calls `prove` with the same policy. It returns the provi
 output ciphertext from the same input selection. Use `with_published` when the policy reads the
 commitment or metadata of each input.
 
-The dev runner (`crates/program-runner/src/dev.rs`) is the smallest complete CP. It runs your
+The dev runner (`crates/program/runner/src/dev.rs`) is the smallest complete CP. It runs your
 processor, builds a mock proof, and serves it over HTTP:
 
-```rust filename="crates/program-runner/src/dev.rs"
+```rust filename="crates/program/runner/src/dev.rs"
 pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {
     let server = E3ProgramServer::builder(move |job| async move {
         let mut manager = ComputeManager::with_published(
@@ -142,7 +142,7 @@ fn main() -> anyhow::Result<()> {
 The first command-line argument selects the mode: `dev` for the dev runner, `openvm` for the OpenVM
 service. `interfold program start` passes it for you.
 
-The OpenVM service (`crates/program-runner/src/openvm.rs`) has the same shape. Its runner is
+The OpenVM service (`crates/program/runner/src/openvm.rs`) has the same shape. Its runner is
 `e3_openvm_host::Prover::prove`, which runs the secure process natively, writes the guest's input
 stream, runs the worker, and returns the verified proof envelope.
 
@@ -168,7 +168,7 @@ webhook is retried with backoff after a network error or HTTP 5xx, 408, or 429.
 
 ### Request fields
 
-`POST /run_compute` takes a JSON body (`crates/program-server/src/types.rs`, `ComputeRequest`):
+`POST /run_compute` takes a JSON body (`crates/program/server/src/types.rs`, `ComputeRequest`):
 
 | Field                       | Type                     | Content                                                                     |
 | --------------------------- | ------------------------ | --------------------------------------------------------------------------- |

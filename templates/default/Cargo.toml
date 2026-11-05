@@ -9,9 +9,9 @@ members = [
 e3-user-program = { path = "./program" }
 fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.4.2", features = ["experimental-mbfv"] }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.4.2" }
-e3-program-runner = { path = "../../crates/program-runner" }
+e3-program-runner = { path = "../../crates/program/runner" }
 e3-bfv-client = { path = "../../crates/bfv/client" }
 e3-fhe-params = { path = "../../crates/bfv/params" }
-e3-compute-provider = { path = "../../crates/compute-provider" }
+e3-compute-provider = { path = "../../crates/program/compute-provider" }
 rand = "0.9"
 anyhow = "1.0.86"

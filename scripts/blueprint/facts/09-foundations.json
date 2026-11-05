@@ -926,7 +926,7 @@
         { "title": "OpenVM operations", "path": "docs/pages/build/e3-program/compute-provider.mdx" }
       ],
       "kind": "crate",
-      "path": "crates/openvm-host",
+      "path": "crates/program/openvm-host",
       "one_line": "Runs an E3 program's secure process natively, writes the guest inputs, and hands them to the OpenVM prover worker.",
       "actors": [],
       "consumes": [],
@@ -936,62 +936,62 @@
         {
           "name": "Prover",
           "what": "a started worker: its path, backend, configuration file and prove timeout",
-          "ref": "crates/openvm-host/src/lib.rs@237@pub struct Prover {"
+          "ref": "crates/program/openvm-host/src/lib.rs@237@pub struct Prover {"
         },
         {
           "name": "Backend",
           "what": "which worker proves: Cpu or Cuda",
-          "ref": "crates/openvm-host/src/lib.rs@42@pub enum Backend {"
+          "ref": "crates/program/openvm-host/src/lib.rs@42@pub enum Backend {"
         },
         {
           "name": "BackendChoice",
           "what": "the operator's choice: Auto, Cpu or Cuda",
-          "ref": "crates/openvm-host/src/lib.rs@49@pub enum BackendChoice {"
+          "ref": "crates/program/openvm-host/src/lib.rs@49@pub enum BackendChoice {"
         },
         {
           "name": "WorkerConfig",
           "what": "worker settings read from the environment",
-          "ref": "crates/openvm-host/src/lib.rs@73@pub struct WorkerConfig {"
+          "ref": "crates/program/openvm-host/src/lib.rs@73@pub struct WorkerConfig {"
         }
       ],
       "read_first": [
         {
           "why": "crate entry: re-exports ComputeDomain and JOURNAL_BYTES from e3-openvm-types",
-          "ref": "crates/openvm-host/src/lib.rs@23@pub use e3_openvm_types::{ComputeDomain, JOURNAL_BYTES};"
+          "ref": "crates/program/openvm-host/src/lib.rs@23@pub use e3_openvm_types::{ComputeDomain, JOURNAL_BYTES};"
         },
         {
           "why": "reads the worker settings from the environment",
-          "ref": "crates/openvm-host/src/lib.rs@113@pub fn from_env()"
+          "ref": "crates/program/openvm-host/src/lib.rs@113@pub fn from_env()"
         },
         {
           "why": "starts the worker after checking it, its keys and its verifier",
-          "ref": "crates/openvm-host/src/lib.rs@246@pub async fn start(config: WorkerConfig)"
+          "ref": "crates/program/openvm-host/src/lib.rs@246@pub async fn start(config: WorkerConfig)"
         },
         {
           "why": "wraps the seal and journal for the receipt verifier",
-          "ref": "crates/openvm-host/src/lib.rs@376@pub fn encode_compute_proof("
+          "ref": "crates/program/openvm-host/src/lib.rs@376@pub fn encode_compute_proof("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-impl",
           "note": "BackendChoice parses the operator setting through FromStr",
-          "ref": "crates/openvm-host/src/lib.rs@58@impl FromStr for BackendChoice {"
+          "ref": "crates/program/openvm-host/src/lib.rs@58@impl FromStr for BackendChoice {"
         },
         {
           "pattern": "enum-match",
           "note": "the worker selection matches on the configured backend",
-          "ref": "crates/openvm-host/src/lib.rs@206@match config.backend {"
+          "ref": "crates/program/openvm-host/src/lib.rs@206@match config.backend {"
         },
         {
           "pattern": "anyhow-context",
           "note": "a missing worker configuration is reported with a context message",
-          "ref": "crates/openvm-host/src/lib.rs@116@OPENVM_PROVER_CONFIG to the worker configuration file"
+          "ref": "crates/program/openvm-host/src/lib.rs@116@OPENVM_PROVER_CONFIG to the worker configuration file"
         },
         {
           "pattern": "async-await",
           "note": "start is async and waits on worker processes under a tokio timeout",
-          "ref": "crates/openvm-host/src/lib.rs@246@pub async fn start(config: WorkerConfig)"
+          "ref": "crates/program/openvm-host/src/lib.rs@246@pub async fn start(config: WorkerConfig)"
         }
       ],
       "depends_on": ["e3-compute-provider", "e3-openvm-types"],
@@ -1002,7 +1002,7 @@
       "id": "e3-openvm-types",
       "documentation": [{ "title": "Guest journal and input binding", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "crate",
-      "path": "crates/openvm-types",
+      "path": "crates/program/openvm-types",
       "one_line": "Types shared by the OpenVM host and guest: the guest header, the nine-word journal, and length-prefixed item framing.",
       "actors": [],
       "consumes": [],
@@ -1012,62 +1012,62 @@
         {
           "name": "ComputeDomain",
           "what": "the chain id, verifying contract, E3 id, scheme id and committee key hash",
-          "ref": "crates/openvm-types/src/lib.rs@29@pub struct ComputeDomain {"
+          "ref": "crates/program/openvm-types/src/lib.rs@29@pub struct ComputeDomain {"
         },
         {
           "name": "GuestHeader",
           "what": "the first input item: domain, BFV parameters, input indices and published data",
-          "ref": "crates/openvm-types/src/lib.rs@39@pub struct GuestHeader {"
+          "ref": "crates/program/openvm-types/src/lib.rs@39@pub struct GuestHeader {"
         },
         {
           "name": "ComputeJournal",
           "what": "the nine 32-byte words the guest reveals",
-          "ref": "crates/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
+          "ref": "crates/program/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
         },
         {
           "name": "ItemReader",
           "what": "reads length-prefixed items one at a time",
-          "ref": "crates/openvm-types/src/lib.rs@150@pub struct ItemReader<R> {"
+          "ref": "crates/program/openvm-types/src/lib.rs@150@pub struct ItemReader<R> {"
         }
       ],
       "read_first": [
         {
           "why": "the per-item size limit",
-          "ref": "crates/openvm-types/src/lib.rs@22@pub const MAX_ITEM_BYTES: usize"
+          "ref": "crates/program/openvm-types/src/lib.rs@22@pub const MAX_ITEM_BYTES: usize"
         },
         {
           "why": "the header the guest reads first",
-          "ref": "crates/openvm-types/src/lib.rs@39@pub struct GuestHeader {"
+          "ref": "crates/program/openvm-types/src/lib.rs@39@pub struct GuestHeader {"
         },
         {
           "why": "the journal the verifier reads",
-          "ref": "crates/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
+          "ref": "crates/program/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
         },
         {
           "why": "write_items: the framing the host writes",
-          "ref": "crates/openvm-types/src/lib.rs@129@pub fn write_items<'a, W: Write>("
+          "ref": "crates/program/openvm-types/src/lib.rs@129@pub fn write_items<'a, W: Write>("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "serde-derive",
           "note": "the domain and header types derive Serialize and Deserialize",
-          "ref": "crates/openvm-types/src/lib.rs@28@#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]"
+          "ref": "crates/program/openvm-types/src/lib.rs@28@#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]"
         },
         {
           "pattern": "impl-trait-arg",
           "note": "write_items takes any exact-size iterator of byte slices",
-          "ref": "crates/openvm-types/src/lib.rs@131@items: impl ExactSizeIterator<Item = &'a [u8]>,"
+          "ref": "crates/program/openvm-types/src/lib.rs@131@items: impl ExactSizeIterator<Item = &'a [u8]>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "a count that does not fit in u32 is reported with ? as an io error",
-          "ref": "crates/openvm-types/src/lib.rs@133@let count = u32::try_from(items.len())"
+          "ref": "crates/program/openvm-types/src/lib.rs@133@let count = u32::try_from(items.len())"
         },
         {
           "pattern": "unit-test",
           "note": "unit tests sit in the same file",
-          "ref": "crates/openvm-types/src/lib.rs@213@#[test]"
+          "ref": "crates/program/openvm-types/src/lib.rs@213@#[test]"
         }
       ],
       "depends_on": ["e3-compute-provider"],

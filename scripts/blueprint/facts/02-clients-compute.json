@@ -5,114 +5,114 @@
       "id": "e3-program-server",
       "documentation": [{ "title": "Program server", "path": "docs/pages/build/e3-program/compute-provider.mdx" }],
       "kind": "crate",
-      "path": "crates/program-server",
+      "path": "crates/program/server",
       "one_line": "HTTP service that runs an E3 program over submitted ciphertext inputs in the background and posts the result to a callback URL.",
       "actors": [],
       "consumes": [
         {
           "name": "POST /run_compute with a ComputeRequest JSON body",
           "by": "handle_compute",
-          "ref": "crates/program-server/src/lib.rs@250@web::post().to(handle_compute)"
+          "ref": "crates/program/server/src/lib.rs@250@web::post().to(handle_compute)"
         }
       ],
       "emits": [
         {
           "name": "200 with status processing, before the job runs",
           "by": "handle_compute",
-          "ref": "crates/program-server/src/lib.rs@699@Ok(HttpResponse::Ok().json(ProcessingResponse {"
+          "ref": "crates/program/server/src/lib.rs@699@Ok(HttpResponse::Ok().json(ProcessingResponse {"
         },
         {
           "name": "WebhookPayload (completed or failed) POSTed to callback_url",
           "by": "process_computation_background",
-          "ref": "crates/program-server/src/lib.rs@535@let payload = WebhookPayload::Completed {"
+          "ref": "crates/program/server/src/lib.rs@535@let payload = WebhookPayload::Completed {"
         }
       ],
       "state": [
         {
           "name": "job semaphore with max_concurrent_jobs permits, taken before the body is read",
           "where": "memory",
-          "ref": "crates/program-server/src/lib.rs@191@Semaphore::new(self.max_concurrent_jobs)"
+          "ref": "crates/program/server/src/lib.rs@191@Semaphore::new(self.max_concurrent_jobs)"
         },
         {
           "name": "webhook client: 5 s connect, 30 s total, redirects disabled",
           "where": "memory",
-          "ref": "crates/program-server/src/lib.rs@179@let webhook_client = reqwest::Client::builder()"
+          "ref": "crates/program/server/src/lib.rs@179@let webhook_client = reqwest::Client::builder()"
         },
         {
           "name": "detached tokio task per admitted job; the permit lives until the task ends",
           "where": "memory",
-          "ref": "crates/program-server/src/lib.rs@681@tokio::spawn(async move {"
+          "ref": "crates/program/server/src/lib.rs@681@tokio::spawn(async move {"
         }
       ],
       "key_types": [
         {
           "name": "E3ProgramServer",
           "what": "holds the runner, bind settings, webhook client and job semaphore; run() starts the HTTP server, and handle_compute is the route function",
-          "ref": "crates/program-server/src/lib.rs@199@pub struct E3ProgramServer {"
+          "ref": "crates/program/server/src/lib.rs@199@pub struct E3ProgramServer {"
         },
         {
           "name": "ComputeRequest",
           "what": "JSON body of /run_compute: E3 id, chain and domain fields, hex params and inputs, optional commitments, slots and parents, callback_url",
-          "ref": "crates/program-server/src/types.rs@19@pub struct ComputeRequest {"
+          "ref": "crates/program/server/src/types.rs@19@pub struct ComputeRequest {"
         },
         {
           "name": "ComputeJob",
           "what": "inputs, published data and ComputeDomain handed to the caller's runner",
-          "ref": "crates/program-server/src/lib.rs@82@pub struct ComputeJob {"
+          "ref": "crates/program/server/src/lib.rs@82@pub struct ComputeJob {"
         },
         {
           "name": "ComputeDomain",
           "what": "chain id, verifying contract, E3 id, encryption scheme id and committee key hash that the proof is bound to",
-          "ref": "crates/program-server/src/lib.rs@31@pub struct ComputeDomain {"
+          "ref": "crates/program/server/src/lib.rs@31@pub struct ComputeDomain {"
         },
         {
           "name": "WebhookPayload",
           "what": "callback body tagged by status: completed (ciphertext, proof, ciphertext_commitment) or failed (error)",
-          "ref": "crates/program-server/src/types.rs@57@pub enum WebhookPayload {"
+          "ref": "crates/program/server/src/types.rs@57@pub enum WebhookPayload {"
         }
       ],
       "read_first": [
         {
           "why": "builder: defaults (1 job, 10 MiB body, 120 s body timeout) and the zero-capacity check",
-          "ref": "crates/program-server/src/lib.rs@166@pub fn build(self) -> Result<E3ProgramServer> {"
+          "ref": "crates/program/server/src/lib.rs@166@pub fn build(self) -> Result<E3ProgramServer> {"
         },
         {
           "why": "route table: POST /run_compute and the health check",
-          "ref": "crates/program-server/src/lib.rs@250@web::post().to(handle_compute)"
+          "ref": "crates/program/server/src/lib.rs@250@web::post().to(handle_compute)"
         },
         {
           "why": "request handler: admission, body limit, validation, then the detached job",
-          "ref": "crates/program-server/src/lib.rs@560@async fn handle_compute("
+          "ref": "crates/program/server/src/lib.rs@560@async fn handle_compute("
         },
         {
           "why": "callback URL policy: scheme, credentials, fragment and private-host checks",
-          "ref": "crates/program-server/src/lib.rs@402@fn validated_callback_url("
+          "ref": "crates/program/server/src/lib.rs@402@fn validated_callback_url("
         },
         {
           "why": "the background job: runner, ciphertext commitment, webhook payload",
-          "ref": "crates/program-server/src/lib.rs@511@async fn process_computation_background("
+          "ref": "crates/program/server/src/lib.rs@511@async fn process_computation_background("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "tokio-spawn",
           "note": "an admitted job runs as a detached task that owns its semaphore permit",
-          "ref": "crates/program-server/src/lib.rs@681@tokio::spawn(async move {"
+          "ref": "crates/program/server/src/lib.rs@681@tokio::spawn(async move {"
         },
         {
           "pattern": "arc-shared",
           "note": "the semaphore is shared with Arc::clone, and a permit is taken with try_acquire_owned so a busy server answers at once",
-          "ref": "crates/program-server/src/lib.rs@568@Arc::clone(&config.jobs)"
+          "ref": "crates/program/server/src/lib.rs@568@Arc::clone(&config.jobs)"
         },
         {
           "pattern": "anyhow-context",
           "note": "a failed webhook client build gets a message through .context",
-          "ref": "crates/program-server/src/lib.rs@184@.context(\"failed to build webhook client\")?;"
+          "ref": "crates/program/server/src/lib.rs@184@.context(\"failed to build webhook client\")?;"
         },
         {
           "pattern": "iterator-chain",
           "note": "per-commitment work is collected into one Result, so the first bad entry fails the request",
-          "ref": "crates/program-server/src/lib.rs@632@.collect::<ActixResult<Vec<PublishedData>>>()?;"
+          "ref": "crates/program/server/src/lib.rs@632@.collect::<ActixResult<Vec<PublishedData>>>()?;"
         }
       ],
       "depends_on": ["e3-compute-provider", "e3-bfv-client", "e3-fhe-params"],
@@ -126,7 +126,7 @@
       "id": "e3-program-runner",
       "documentation": [{ "title": "Project program runners", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "crate",
-      "path": "crates/program-runner",
+      "path": "crates/program/runner",
       "one_line": "Library behind a project's program-runner binary: serves the project's E3 program as the unproved dev runner or the OpenVM proving service.",
       "actors": [],
       "consumes": [],
@@ -135,45 +135,45 @@
         {
           "name": "the OpenVM prover handle, shared by all jobs of the openvm mode",
           "where": "memory",
-          "ref": "crates/program-runner/src/openvm.rs@28@let prover = Arc::new(Prover::start(WorkerConfig::from_env()?).await?);"
+          "ref": "crates/program/runner/src/openvm.rs@28@let prover = Arc::new(Prover::start(WorkerConfig::from_env()?).await?);"
         }
       ],
       "key_types": [
         {
           "name": "MockProofProvider",
           "what": "ComputeProvider of the dev mode: runs the processor under the caller policy and returns the ComputeResult that the mock proof wraps",
-          "ref": "crates/program-runner/src/dev.rs@15@struct MockProofProvider {"
+          "ref": "crates/program/runner/src/dev.rs@15@struct MockProofProvider {"
         }
       ],
       "read_first": [
         {
           "why": "the entry point: the argument that picks one of the two modes",
-          "ref": "crates/program-runner/src/lib.rs@38@fn mode_from(args: impl IntoIterator<Item = OsString>) -> Result<Mode> {"
+          "ref": "crates/program/runner/src/lib.rs@38@fn mode_from(args: impl IntoIterator<Item = OsString>) -> Result<Mode> {"
         },
         {
           "why": "the dev mode: mock proof server",
-          "ref": "crates/program-runner/src/dev.rs@59@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
+          "ref": "crates/program/runner/src/dev.rs@59@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
         },
         {
           "why": "the OpenVM mode: reads its settings from the environment and proves each job",
-          "ref": "crates/program-runner/src/openvm.rs@27@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
+          "ref": "crates/program/runner/src/openvm.rs@27@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "closure",
           "note": "each mode hands E3ProgramServer a closure that runs one job",
-          "ref": "crates/program-runner/src/dev.rs@60@let server = E3ProgramServer::builder(move |job| async move {"
+          "ref": "crates/program/runner/src/dev.rs@60@let server = E3ProgramServer::builder(move |job| async move {"
         },
         {
           "pattern": "arc-shared",
           "note": "the prover is shared between concurrent jobs through an Arc",
-          "ref": "crates/program-runner/src/openvm.rs@39@let prover = Arc::clone(&prover);"
+          "ref": "crates/program/runner/src/openvm.rs@39@let prover = Arc::clone(&prover);"
         },
         {
           "pattern": "unit-test",
           "note": "checks that the mock proof uses the current Solidity envelope",
-          "ref": "crates/program-runner/src/dev.rs@84@fn mock_proof_uses_the_current_solidity_envelope() {"
+          "ref": "crates/program/runner/src/dev.rs@84@fn mock_proof_uses_the_current_solidity_envelope() {"
         }
       ],
       "depends_on": ["e3-compute-provider", "e3-openvm-host", "e3-program-server"],
@@ -184,7 +184,7 @@
       "id": "e3-compute-provider",
       "documentation": [{ "title": "Encrypted computation", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "crate",
-      "path": "crates/compute-provider",
+      "path": "crates/program/compute-provider",
       "one_line": "Secure Process library: reads an E3's inputs in two passes, builds the input Merkle root, runs the FHE processor, and returns the result fields.",
       "actors": [],
       "consumes": [],
@@ -194,97 +194,97 @@
         {
           "name": "SecureProcess",
           "what": "one round's first pass: absorbs every input, builds the leaves and tree, and applies the selection",
-          "ref": "crates/compute-provider/src/secure_process.rs@38@pub struct SecureProcess {"
+          "ref": "crates/program/compute-provider/src/secure_process.rs@38@pub struct SecureProcess {"
         },
         {
           "name": "ComputeManager",
           "what": "holds one round's inputs and the provider, and runs the processor and the proof for them",
-          "ref": "crates/compute-provider/src/compute_manager.rs@13@pub struct ComputeManager<P>"
+          "ref": "crates/program/compute-provider/src/compute_manager.rs@13@pub struct ComputeManager<P>"
         },
         {
           "name": "FHEInputs",
           "what": "ciphertexts with their on-chain indices, plus the BFV parameter bytes",
-          "ref": "crates/compute-provider/src/compute_input.rs@35@pub struct FHEInputs {"
+          "ref": "crates/program/compute-provider/src/compute_input.rs@35@pub struct FHEInputs {"
         },
         {
           "name": "InputPolicy",
           "what": "the leaf and select functions that the E3 program chooses",
-          "ref": "crates/compute-provider/src/policy.rs@111@pub struct InputPolicy {"
+          "ref": "crates/program/compute-provider/src/policy.rs@111@pub struct InputPolicy {"
         },
         {
           "name": "ComputeResult",
           "what": "ciphertext hash, ciphertext commitment, params hash and Merkle root, returned by the Secure Process",
-          "ref": "crates/compute-provider/src/ciphertext_output.rs@25@pub struct ComputeResult {"
+          "ref": "crates/program/compute-provider/src/ciphertext_output.rs@25@pub struct ComputeResult {"
         },
         {
           "name": "ComputeInput",
           "what": "the full Secure Process input: FHEInputs plus the published data, in the same order",
-          "ref": "crates/compute-provider/src/compute_input.rs@65@pub struct ComputeInput {"
+          "ref": "crates/program/compute-provider/src/compute_input.rs@65@pub struct ComputeInput {"
         },
         {
           "name": "ComputeProvider",
           "what": "trait for the prover; prove() takes the same InputPolicy that selected the ciphertext",
-          "ref": "crates/compute-provider/src/ciphertext_output.rs@10@pub trait ComputeProvider {"
+          "ref": "crates/program/compute-provider/src/ciphertext_output.rs@10@pub trait ComputeProvider {"
         },
         {
           "name": "ComputeError",
           "what": "failures inside the Secure Process; some variants name the input index",
-          "ref": "crates/compute-provider/src/compute_input.rs@80@pub enum ComputeError {"
+          "ref": "crates/program/compute-provider/src/compute_input.rs@80@pub enum ComputeError {"
         },
         {
           "name": "Batching",
           "what": "Sequential or Parallel { batch_size } schedule for per-input commitments; it does not change the root",
-          "ref": "crates/compute-provider/src/merkle_tree_builder.rs@23@pub enum Batching {"
+          "ref": "crates/program/compute-provider/src/merkle_tree_builder.rs@23@pub enum Batching {"
         }
       ],
       "read_first": [
         {
           "why": "the two-pass design, in the module doc",
-          "ref": "crates/compute-provider/src/secure_process.rs@7@//! The Secure Process over a round that arrives one ciphertext at a time."
+          "ref": "crates/program/compute-provider/src/secure_process.rs@7@//! The Secure Process over a round that arrives one ciphertext at a time."
         },
         {
           "why": "first pass: absorb one input at a time, keeping only its hash and commitment",
-          "ref": "crates/compute-provider/src/secure_process.rs@89@pub fn absorb(&mut self, ciphertext: &[u8]) -> Result<(), ComputeError> {"
+          "ref": "crates/program/compute-provider/src/secure_process.rs@89@pub fn absorb(&mut self, ciphertext: &[u8]) -> Result<(), ComputeError> {"
         },
         {
           "why": "end of the first pass: build the tree, apply the selection and keep every leaf",
-          "ref": "crates/compute-provider/src/secure_process.rs@131@pub fn select(self) -> Result<Selected, ComputeError> {"
+          "ref": "crates/program/compute-provider/src/secure_process.rs@131@pub fn select(self) -> Result<Selected, ComputeError> {"
         },
         {
           "why": "host entry point that runs a whole round natively and returns the selected indices",
-          "ref": "crates/compute-provider/src/compute_input.rs@151@pub fn run_selected("
+          "ref": "crates/program/compute-provider/src/compute_input.rs@151@pub fn run_selected("
         },
         {
           "why": "the prover-facing entry point: start() returns the proof and the ciphertext to publish",
-          "ref": "crates/compute-provider/src/compute_manager.rs@58@pub fn start(&mut self, policy: InputPolicy)"
+          "ref": "crates/program/compute-provider/src/compute_manager.rs@58@pub fn start(&mut self, policy: InputPolicy)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "thiserror-enum",
           "note": "ComputeError derives thiserror::Error, so each variant carries its own message",
-          "ref": "crates/compute-provider/src/compute_input.rs@79@#[derive(Debug, thiserror::Error)]"
+          "ref": "crates/program/compute-provider/src/compute_input.rs@79@#[derive(Debug, thiserror::Error)]"
         },
         {
           "pattern": "trait-def",
           "note": "ComputeProvider has an associated Output type that each prover chooses",
-          "ref": "crates/compute-provider/src/ciphertext_output.rs@10@pub trait ComputeProvider {"
+          "ref": "crates/program/compute-provider/src/ciphertext_output.rs@10@pub trait ComputeProvider {"
         },
         {
           "pattern": "trait-impl",
           "note": "Checked implements Iterator, yielding each selected ciphertext only after its hash check",
-          "ref": "crates/compute-provider/src/secure_process.rs@262@impl<R> Iterator for Checked<'_, R>"
+          "ref": "crates/program/compute-provider/src/secure_process.rs@262@impl<R> Iterator for Checked<'_, R>"
         },
         {
           "pattern": "enum-match",
           "note": "the batching schedule is chosen by matching the enum; the sequential case maps to 0",
-          "ref": "crates/compute-provider/src/secure_process.rs@301@let batch_size = match batching {"
+          "ref": "crates/program/compute-provider/src/secure_process.rs@301@let batch_size = match batching {"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],
       "tests": "cargo test -p e3-compute-provider, and again with --features parallel for the rayon path. In-crate tests: compute_input.rs (cfg(test) at line 177), secure_process.rs (line 358), merkle_tree_builder.rs (line 98) and hashing.rs (line 16).",
       "unverified": [
-        "The OpenVM host and guest that compile and run this crate are outside this unit; only their call sites were checked (crates/openvm-host/src/lib.rs, crates/openvm-types/src/lib.rs).",
+        "The OpenVM host and guest that compile and run this crate are outside this unit; only their call sites were checked (crates/program/openvm-host/src/lib.rs, crates/program/openvm-types/src/lib.rs).",
         "Cargo.toml lists lean-imt, but no source file in this crate imports it; the tree uses zk_kit_imt (merkle_tree_builder.rs:14)."
       ]
     },

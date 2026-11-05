@@ -132,8 +132,8 @@ an OpenVM migration. See [Compute Provider](/build/e3-program/compute-provider).
 
 ### Program server
 
-`interfold program start` runs the `program-runner` binary of the project (`crates/program-runner`),
-which starts the program server (`crates/program-server`). It accepts a compute request over HTTP,
+`interfold program start` runs the `program-runner` binary of the project (`crates/program/runner`),
+which starts the program server (`crates/program/server`). It accepts a compute request over HTTP,
 runs the FHE computation, and posts the result to a callback URL. It runs one job at a time by
 default.
 

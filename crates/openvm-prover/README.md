@@ -26,7 +26,7 @@ writes the seal. The following map shows how this process fits the consuming pro
 | Piece                                  | What it is                                                                                            |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `guest/` in the project                | The OpenVM guest. Its own workspace, built with `cargo openvm`                                        |
-| `runner/` in the project               | The `program-runner` binary. `program-runner openvm` is the proving service (`crates/program-runner`) |
+| `runner/` in the project               | The `program-runner` binary. `program-runner openvm` is the proving service (`crates/program/runner`) |
 | `interfold-openvm-prover` (this crate) | The worker. A separate process, in a CPU build and a CUDA build                                       |
 
 The proving service is `e3-program-server` with `e3-openvm-host` as runner. `interfold init` pins

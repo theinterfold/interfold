@@ -175,7 +175,7 @@ memory. `ComputeInput::run` runs the same code over a round held in memory, and
 
 The OpenVM provider is `e3-openvm-host`. It runs the program natively, writes the guest's input
 stream, and calls the separate `interfold-openvm-prover` worker, which returns a verified EVM
-receipt. See the [OpenVM worker guide](../openvm-prover/README.md).
+receipt. See the [OpenVM worker guide](../../openvm-prover/README.md).
 
 ## Configuration
 
@@ -195,4 +195,4 @@ batching coverage. Inline `compute_input.rs` tests cover policy/root/metadata an
 equivalence. `secure_process.rs` tests compare held/streamed rounds, second-pass substitution, and
 complete processor consumption; tree/hash tests pin Solidity/reference behavior. No OpenVM worker is
 needed for these tests. Guest/proof integration is in the
-[OpenVM workflow](../openvm-prover/README.md); editing rules are in [AGENTS.md](AGENTS.md).
+[OpenVM workflow](../../openvm-prover/README.md); editing rules are in [AGENTS.md](AGENTS.md).

@@ -62,9 +62,9 @@ CRISP repository). The two programs differ only in their input policy. See
 ## Processor inputs
 
 The crate defines the processor type and its input in
-`crates/compute-provider/src/compute_input.rs`:
+`crates/program/compute-provider/src/compute_input.rs`:
 
-```rust filename="crates/compute-provider/src/compute_input.rs"
+```rust filename="crates/program/compute-provider/src/compute_input.rs"
 pub type FHEProcessor = for<'a> fn(FHEProcessorInput<'a>) -> Vec<u8>;
 
 pub struct FHEProcessorInput<'a> {
@@ -128,9 +128,9 @@ protocol verifier check them. See
 
 ## Input policy
 
-An `InputPolicy` holds two function pointers (`crates/compute-provider/src/policy.rs`):
+An `InputPolicy` holds two function pointers (`crates/program/compute-provider/src/policy.rs`):
 
-```rust filename="crates/compute-provider/src/policy.rs"
+```rust filename="crates/program/compute-provider/src/policy.rs"
 pub type LeafFn = fn(&PublishedInput) -> Result<String, ComputeError>;
 pub type SelectFn = fn(&[InputRecord]) -> Vec<usize>;
 

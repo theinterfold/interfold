@@ -1,6 +1,6 @@
 # Encrypted computation and application input binding
 
-Owners: [compute-provider](../../crates/compute-provider/),
+Owners: [compute-provider](../../crates/program/compute-provider/),
 [OpenVM prover](../../crates/openvm-prover/), the
 [CRISP program](https://github.com/theinterfold/CRISP/tree/main/program), and the
 [CRISP contracts](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-contracts).
@@ -203,9 +203,9 @@ ciphertext gate and callback's terminal preflight prevent a second output.
 
 ## Existing guards and acceptance
 
-[SecureProcess tests](../../crates/compute-provider/src/secure_process.rs) cover streamed/held
-parity, changed second reads, complete input consumption;
-[batching tests](../../crates/compute-provider/src/compute_input.rs) include
+[SecureProcess tests](../../crates/program/compute-provider/src/secure_process.rs) cover
+streamed/held parity, changed second reads, complete input consumption;
+[batching tests](../../crates/program/compute-provider/src/compute_input.rs) include
 `batching_does_not_change_the_root`.
 [Leaf vectors](https://github.com/theinterfold/CRISP/blob/main/program/tests/input_leaf.rs) and
 [on-chain root agreement](https://github.com/theinterfold/CRISP/blob/main/program/tests/onchain_root_agreement.rs)

@@ -244,9 +244,9 @@ async fn install_interfold(
 }
 
 // Updated execute function to include workspace dependency substitution
-/// The Interfold crates that the template's manifests depend on by path.
+/// Folders, under `crates/`, of the Interfold crates that the template depends on by path.
 const INTERFOLD_TEMPLATE_CRATES: &str =
-    "program-runner|bfv-client|fhe-params|compute-provider|openvm-types|safe";
+    "program/runner|bfv/client|bfv/params|program/compute-provider|program/openvm-types|safe";
 
 /// Pins an inline path dependency on an Interfold crate, such as the OpenVM guest's, to the
 /// template's commit. Only the source changes, so features in the same table are kept. Other path
@@ -346,10 +346,10 @@ mod path_filter_tests {
     fn pins_interfold_crates_and_keeps_their_features() {
         let filter = interfold_path_filter("abc123");
         let manifest = r#"e3-safe = { path = "../../../crates/safe", features = ["openvm"] }
-e3-openvm-types = { path = "../../../crates/openvm-types" }
+e3-openvm-types = { path = "../../../crates/program/openvm-types" }
 local-helper = { path = "../crates/local-helper" }
 [dependencies.e3-openvm-host]
-path = "../../crates/openvm-host"
+path = "../../crates/program/openvm-host"
 "#;
         let rewritten = Regex::new(&filter.search_pattern)
             .unwrap()
@@ -364,9 +364,33 @@ path = "../../crates/openvm-host"
         ));
         assert!(rewritten.contains(r#"local-helper = { path = "../crates/local-helper" }"#));
         assert!(
-            rewritten
-                .contains("[dependencies.e3-openvm-host]\npath = \"../../crates/openvm-host\""),
+            rewritten.contains(
+                "[dependencies.e3-openvm-host]\npath = \"../../crates/program/openvm-host\""
+            ),
             "a dependency written as its own table is left alone"
         );
+    }
+
+    /// A generated project has no Interfold checkout, so every checkout-relative dependency in the
+    /// real template must be pinned. This fails when a crate moves without updating the folder list.
+    #[test]
+    fn pins_every_path_dependency_of_the_template() {
+        let template =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../templates/default");
+        let checkout_path = Regex::new(r#"path = "(?:\.\./)+crates/"#).unwrap();
+        let filter = interfold_path_filter("abc123");
+        let pin = Regex::new(&filter.search_pattern).unwrap();
+        for manifest in ["Cargo.toml", "guest/Cargo.toml"] {
+            let text = std::fs::read_to_string(template.join(manifest)).unwrap();
+            assert!(
+                checkout_path.is_match(&text),
+                "{manifest}: no Interfold path dependency"
+            );
+            let rewritten = pin.replace_all(&text, filter.replacement.as_str());
+            assert!(
+                !checkout_path.is_match(&rewritten),
+                "{manifest} keeps a checkout-relative dependency:\n{rewritten}"
+            );
+        }
     }
 }
