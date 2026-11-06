@@ -4,6 +4,9 @@
 # it fetches from the mock availability layer. Each node is its own process; the nodes find each
 # other through the first one.
 #
+# With V2_RESTART=true it kills the decryption aggregator once the key is out and starts it again
+# from its journal and blob store before the ciphertext arrives.
+#
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
 set -Eeuo pipefail
@@ -88,7 +91,7 @@ for address in "${ADDRESSES[@]}"; do
 done
 
 heading "Start the v2 nodes"
-NODES=()
+NODE_PIDS=()
 # Node `index` listens on its own port and dials `peer`, if any.
 start_node() {
   local index="$1" peer="$2"
@@ -126,10 +129,10 @@ start_node() {
   RUST_LOG="${RUST_LOG:-info,e3_node=debug}" "$ROOT_DIR/target/debug/e3-node" "$dir/config.json" \
     >"$dir/node.log" 2>&1 &
   STARTED+=($!)
-  NODES+=($!)
+  NODE_PIDS[$index]=$!
 }
 nodes_running() {
-  for pid in "${NODES[@]}"; do
+  for pid in "${NODE_PIDS[@]}"; do
     kill -0 "$pid"
   done
 }
@@ -166,6 +169,25 @@ heading "Wait for the committee's key (E3 $E3_ID)"
   --network localhost --e3-id "$E3_ID" --out-file "$OUT/pubkey.bin")
 nodes_running
 advance_evm_time_past "$INPUT_WINDOW_START"
+
+if [[ "${V2_RESTART:-false}" == "true" ]]; then
+  heading "Kill the decryption aggregator and start it again"
+  REGISTRY="$(jq -r '.localhost.CiphernodeRegistryOwnable.address' "$DEPLOYED")"
+  # The committee in address order; its first member aggregates the plaintext.
+  AGGREGATOR=$(cast call "$REGISTRY" "getActiveCommitteeNodes(uint256)(address[],uint256[])" \
+    "$E3_ID" --rpc-url http://127.0.0.1:8545 | head -n 1 | tr -d '[] ' | cut -d',' -f1)
+  for index in "${!ADDRESSES[@]}"; do
+    if [[ "${ADDRESSES[$index],,}" == "${AGGREGATOR,,}" ]]; then
+      echo "The aggregator $AGGREGATOR is node $index"
+      kill -9 "${NODE_PIDS[$index]}"
+      sleep 5
+      peer="$FIRST"
+      [[ "$index" == 0 ]] && peer=""
+      start_node "$index" "$peer"
+    fi
+  done
+  until_ok 60 test -s "$OUT/nodes/node-0/listening"
+fi
 
 heading "Encrypt the plaintext and publish the ciphertext"
 "$ROOT_DIR/target/debug/fake_encrypt" --input "$OUT/pubkey.bin" --output "$OUT/output.bin" \
