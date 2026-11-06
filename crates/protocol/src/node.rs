@@ -236,12 +236,12 @@ impl E3 {
         self.stage != Stage::Failed
     }
 
-    fn receive(&mut self, message: PeerMessage) -> Vec<Effect> {
+    fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         let Some(dkg) = self.dkg() else {
             return Vec::new();
         };
         match message.body {
-            Body::Dkg(body) => dkg.receive(message.sender, body),
+            Body::Dkg(body) => dkg.receive(now, message.sender, body),
         }
     }
 
@@ -312,7 +312,7 @@ impl Node {
                 state.dkg = Some(dkg);
                 state.stage = Stage::CommitteeFinalized;
                 for message in self.held.take(&e3) {
-                    effects.extend(state.receive(message));
+                    effects.extend(state.receive(now, message));
                 }
                 return effects;
             }
@@ -339,7 +339,7 @@ impl Node {
             }
             ChainFact::MemberExpelled { e3, member } => {
                 if let Some(dkg) = self.e3s.get_mut(&e3).and_then(E3::dkg) {
-                    return dkg.expel(member);
+                    return dkg.expel(now, member);
                 }
             }
             ChainFact::VoteValidity { secs } => {
@@ -369,12 +369,12 @@ impl Node {
 
     /// Until the chain names the committee nothing can say whether a sender may speak, so its
     /// messages wait in the bounded hold.
-    fn apply_peer(&mut self, message: PeerMessage) -> Vec<Effect> {
+    fn apply_peer(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         if self.ended.contains(&message.e3) {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.dkg.is_some() => state.receive(message),
+            Some(state) if state.dkg.is_some() => state.receive(now, message),
             _ => {
                 self.held.hold(message);
                 Vec::new()
@@ -382,21 +382,21 @@ impl Node {
         }
     }
 
-    fn apply_job(&mut self, done: JobDone) -> Vec<Effect> {
+    fn apply_job(&mut self, now: UnixSecs, done: JobDone) -> Vec<Effect> {
         let Some(dkg) = self.e3s.get_mut(&done.e3).and_then(E3::dkg) else {
             return Vec::new();
         };
         match done.result {
-            WorkResult::Dkg(result) => dkg.job_done(result),
+            WorkResult::Dkg(result) => dkg.job_done(now, result),
         }
     }
 
-    fn apply_signed(&mut self, signed: Signed) -> Vec<Effect> {
+    fn apply_signed(&mut self, now: UnixSecs, signed: Signed) -> Vec<Effect> {
         let Some(dkg) = self.e3s.get_mut(&signed.e3).and_then(E3::dkg) else {
             return Vec::new();
         };
         match signed.purpose {
-            Purpose::Dkg(purpose) => dkg.signed(purpose, signed.signatures),
+            Purpose::Dkg(purpose) => dkg.signed(now, purpose, signed.signatures),
         }
     }
 
@@ -428,9 +428,9 @@ impl Machine for Node {
         let mut effects = self.pass_deadlines(now);
         effects.extend(match input {
             Input::Chain(event) => self.apply_chain(now, event),
-            Input::Peer(message) => self.apply_peer(message),
-            Input::Job(done) => self.apply_job(done),
-            Input::Signed(signed) => self.apply_signed(signed),
+            Input::Peer(message) => self.apply_peer(now, message),
+            Input::Job(done) => self.apply_job(now, done),
+            Input::Signed(signed) => self.apply_signed(now, signed),
             Input::Tick => Vec::new(),
         });
         effects

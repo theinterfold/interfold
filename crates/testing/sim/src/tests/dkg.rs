@@ -83,6 +83,34 @@ fn every_member_verifies_every_dealer_despite_crashes_and_a_lagging_chain_reader
 }
 
 #[test]
+fn every_member_accepts_the_same_roster_of_h_dealers() {
+    for size in [
+        CiphernodesCommitteeSize::Minimum,
+        CiphernodesCommitteeSize::Micro,
+    ] {
+        for seed in 0..16 {
+            let (sim, members) = run(size, seed);
+            let case = format!("{size:?} seed {seed}");
+            let rosters: Vec<_> = sim.nodes()[..members.len()]
+                .iter()
+                .map(|node| {
+                    let dkg = node.node().e3(&e3(1)).and_then(|state| state.dkg.as_ref());
+                    dkg.and_then(|dkg| dkg.roster()).map(<[_]>::to_vec)
+                })
+                .collect();
+            let roster = rosters[0]
+                .clone()
+                .expect("the first member accepted a roster");
+            assert!(
+                rosters.iter().all(|other| other.as_ref() == Some(&roster)),
+                "{case}: members accepted different rosters"
+            );
+            assert_eq!(roster.len(), size.values().h, "{case}");
+        }
+    }
+}
+
+#[test]
 fn no_member_sends_two_different_keys_or_shares() {
     for size in [
         CiphernodesCommitteeSize::Minimum,
@@ -102,7 +130,7 @@ fn no_member_sends_two_different_keys_or_shares() {
                         let pair = (message.sender, dealt.recipient);
                         shares.entry(pair).or_default().insert(dealt.shares);
                     }
-                    Body::Dkg(DkgMessage::Ready(_)) => {}
+                    Body::Dkg(DkgMessage::Ready(_) | DkgMessage::Roster(_)) => {}
                 }
             }
             assert_eq!(

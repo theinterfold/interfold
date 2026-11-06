@@ -9,6 +9,7 @@
 
 mod attestation;
 mod keys;
+mod roster;
 mod shares;
 mod timing;
 
@@ -22,6 +23,7 @@ use crate::{
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use keys::Keys;
+use roster::Rosters;
 use serde::{Deserialize, Serialize};
 use shares::Shares;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +38,8 @@ pub enum DkgMessage {
     /// The dealers whose shares the sender verified, the sender included, ascending by member.
     /// A member's later report contains its earlier one.
     Ready(Vec<Dealer>),
+    /// The H dealers whose shares every member sums into its decryption key, ascending by member.
+    Roster(Vec<Dealer>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,7 +62,7 @@ pub struct SharesMessage {
     pub c3b: Vec<SignedProof>,
 }
 
-/// A dealer's exact contribution, as Ready reports name it. It binds the public statements of the
+/// A dealer's exact contribution, as Ready reports and rosters name it. It binds the public statements of the
 /// dealer's C2 proofs, not their randomized proof bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Dealer {
@@ -97,7 +101,7 @@ impl DkgMessage {
                     + message.shares.len
                     + proofs.map(SignedProof::size).sum::<u64>()
             }
-            Self::Ready(dealers) => 52 * dealers.len() as u64,
+            Self::Ready(dealers) | Self::Roster(dealers) => 52 * dealers.len() as u64,
         }
     }
 }
@@ -212,6 +216,7 @@ pub struct Dkg {
     shares: Shares,
     /// The latest Ready report of each member, this node's included.
     ready: BTreeMap<Address, Vec<Dealer>>,
+    rosters: Rosters,
     phase: Phase,
 }
 
@@ -234,6 +239,7 @@ impl Dkg {
             keys: Keys::default(),
             shares: Shares::default(),
             ready: BTreeMap::new(),
+            rosters: Rosters::default(),
             phase: Phase::MakingKey,
         };
         if now >= timing.key_cutoff() {
@@ -266,36 +272,56 @@ impl Dkg {
         }
     }
 
-    pub(crate) fn receive(&mut self, sender: Address, message: DkgMessage) -> Vec<Effect> {
-        match message {
+    pub(crate) fn receive(
+        &mut self,
+        now: UnixSecs,
+        sender: Address,
+        message: DkgMessage,
+    ) -> Vec<Effect> {
+        let mut effects = match message {
             DkgMessage::EncryptionKey(message) => self.receive_key(sender, message),
             DkgMessage::Shares(message) => self.receive_shares(sender, *message),
             DkgMessage::Ready(dealers) => {
                 self.receive_ready(sender, dealers);
                 Vec::new()
             }
-        }
+            DkgMessage::Roster(dealers) => {
+                self.receive_roster(sender, dealers);
+                Vec::new()
+            }
+        };
+        effects.extend(self.advance_roster(now));
+        effects
     }
 
-    pub(crate) fn job_done(&mut self, result: DkgWorkResult) -> Vec<Effect> {
-        match result {
+    pub(crate) fn job_done(&mut self, now: UnixSecs, result: DkgWorkResult) -> Vec<Effect> {
+        let mut effects = match result {
             DkgWorkResult::EncryptionKeyMade(own) => self.key_made(own),
             DkgWorkResult::EncryptionKeyChecked { sender, valid } => {
                 self.key_checked(sender, valid)
             }
             DkgWorkResult::SharesMade(made) => self.shares_made(made),
             DkgWorkResult::SharesChecked { dealer, valid } => self.shares_checked(dealer, valid),
-        }
+        };
+        effects.extend(self.advance_roster(now));
+        effects
     }
 
-    pub(crate) fn signed(&mut self, purpose: DkgSignature, signatures: Vec<Bytes>) -> Vec<Effect> {
-        match purpose {
+    pub(crate) fn signed(
+        &mut self,
+        now: UnixSecs,
+        purpose: DkgSignature,
+        signatures: Vec<Bytes>,
+    ) -> Vec<Effect> {
+        let mut effects = match purpose {
             DkgSignature::EncryptionKeyProof => self.key_signed(signatures),
             DkgSignature::DealerProofs => self.shares_signed(signatures),
-        }
+        };
+        effects.extend(self.advance_roster(now));
+        effects
     }
 
-    pub(crate) fn expel(&mut self, member: Address) -> Vec<Effect> {
+    pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
         if !self.is_member(member) || !self.expelled.insert(member) {
             return Vec::new();
         }
@@ -305,6 +331,7 @@ impl Dkg {
         }
         let mut effects = self.close_keys_if_all_in();
         effects.extend(self.send_ready_if_due());
+        effects.extend(self.pass_roster_deadlines(now));
         effects
     }
 
@@ -317,6 +344,7 @@ impl Dkg {
             self.shares.checkpoint_passed = true;
             effects.extend(self.send_ready_if_due());
         }
+        effects.extend(self.pass_roster_deadlines(now));
         if self.running() && now >= self.timing.deadline {
             self.phase = Phase::Failed(DkgFailure::DeadlinePassed);
         }
@@ -329,10 +357,15 @@ impl Dkg {
         }
         let key_cutoff = self.collecting_keys().then(|| self.timing.key_cutoff());
         let checkpoint = (!self.shares.checkpoint_passed).then(|| self.timing.share_checkpoint());
-        [key_cutoff, checkpoint, Some(self.timing.deadline)]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            key_cutoff,
+            checkpoint,
+            self.roster_deadline(),
+            Some(self.timing.deadline),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn running(&self) -> bool {

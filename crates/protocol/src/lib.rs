@@ -11,6 +11,7 @@
 
 pub mod accusation;
 pub mod dkg;
+mod failover;
 mod ids;
 mod machine;
 pub mod node;

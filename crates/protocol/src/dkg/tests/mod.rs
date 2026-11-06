@@ -8,11 +8,12 @@
 //! Minimum: operators 1, 2, and ME, with H = 2.
 
 mod keys;
+mod roster;
 mod shares;
 
-use super::Dkg;
+use super::{Dealer, Dkg, DkgMessage};
 use crate::{
-    node::{Effect, Node},
+    node::{Body, Effect, Input, Node, PeerMessage},
     testing::*,
     Machine,
 };
@@ -55,4 +56,75 @@ fn dkg(node: &Node) -> &Dkg {
     node.e3(&e3(1))
         .and_then(|state| state.dkg.as_ref())
         .expect("the DKG started")
+}
+
+/// Operator `me` with every member's key valid, after it dealt its shares to the others.
+fn dealt(me: u64) -> Node {
+    let mut node = with_its_key(me);
+    for n in others(me) {
+        add_valid_key(&mut node, n);
+    }
+    let effects = node.step(NOW, shares_made(e3(1), own_shares(&others(me))));
+    node.step(NOW, sign(me, signing(&effects)));
+    node
+}
+
+/// Operator `me` after it dealt and verified every other member's shares.
+fn verified_all(me: u64) -> Node {
+    let mut node = dealt(me);
+    for n in others(me) {
+        node.step(NOW, shares_from(e3(1), n, me));
+        node.step(NOW, shares_checked(e3(1), n, true));
+    }
+    node
+}
+
+/// The committee's operators in party order, ascending by address.
+fn ordered() -> [u64; 3] {
+    let mut operators = [1, 2, ME];
+    operators.sort_by_key(|n| address(*n));
+    operators
+}
+
+fn members(operators: &[u64]) -> Vec<Address> {
+    let mut members: Vec<Address> = operators.iter().map(|n| address(*n)).collect();
+    members.sort();
+    members
+}
+
+/// Dealer `n`'s contribution, as node `node` names it: its own from `own_shares`, a peer's from
+/// what `shares_from` sends.
+fn contribution(n: u64, node: u64) -> Dealer {
+    if n == node {
+        let own = own_shares(&[]);
+        return Dealer::new(address(n), own.pk_share, &own.c2a, &own.c2b);
+    }
+    let Input::Peer(PeerMessage {
+        body: Body::Dkg(DkgMessage::Shares(message)),
+        ..
+    }) = shares_from(e3(1), n, node)
+    else {
+        unreachable!("shares_from builds shares");
+    };
+    Dealer::new(
+        address(n),
+        message.pk_share,
+        &message.c2a.proof,
+        &message.c2b.proof,
+    )
+}
+
+/// A Ready report or roster that names `dealers` with the contributions node `node` knows.
+fn named(dealers: &[u64], node: u64) -> Vec<Dealer> {
+    let mut named: Vec<Dealer> = dealers.iter().map(|n| contribution(*n, node)).collect();
+    named.sort_by_key(|dealer| dealer.member);
+    named
+}
+
+fn from(sender: u64, message: DkgMessage) -> Input {
+    Input::Peer(PeerMessage {
+        e3: e3(1),
+        sender: address(sender),
+        body: Body::Dkg(message),
+    })
 }

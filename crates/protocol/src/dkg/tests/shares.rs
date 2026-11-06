@@ -12,26 +12,9 @@ use crate::{
 };
 use alloy_primitives::B256;
 
-/// Operator `me` with every member's key valid, after it dealt its shares to the others.
-fn dealt(me: u64) -> Node {
-    let mut node = with_its_key(me);
-    for n in others(me) {
-        add_valid_key(&mut node, n);
-    }
-    let effects = node.step(NOW, shares_made(e3(1), own_shares(&others(me))));
-    node.step(NOW, sign(me, signing(&effects)));
-    node
-}
-
 fn add_valid_shares(node: &mut Node, dealer: u64) -> Vec<Effect> {
     node.step(NOW, shares_from(e3(1), dealer, ME));
     node.step(NOW, shares_checked(e3(1), dealer, true))
-}
-
-fn members(operators: &[u64]) -> Vec<Address> {
-    let mut members: Vec<Address> = operators.iter().map(|n| address(*n)).collect();
-    members.sort();
-    members
 }
 
 #[test]
