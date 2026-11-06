@@ -106,6 +106,7 @@ impl Dkg {
                 let fold = self.aggregation.folds.get(member)?;
                 Some(SignedAttestation {
                     party_id: self.party_id(*member)?,
+                    node: *member,
                     sk_agg_commit: fold.fold.sk_agg_commit,
                     esm_agg_commit: fold.fold.esm_agg_commit,
                     signature: fold.attestation.clone(),

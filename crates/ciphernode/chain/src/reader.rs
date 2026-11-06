@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog};
+use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError};
 use alloy_primitives::U256;
 use e3_protocol::{
     dkg::DkgTiming,
@@ -46,10 +46,6 @@ pub trait Rpc {
         block: u64,
     ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
 }
-
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub struct RpcError(pub Box<dyn std::error::Error + Send + Sync>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReadError {

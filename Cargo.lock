@@ -3636,11 +3636,15 @@ dependencies = [
  "alloy",
  "alloy-primitives",
  "alloy-sol-types",
+ "e3-blobs",
  "e3-committee",
+ "e3-data-availability",
  "e3-evm-contracts",
+ "e3-evm-transactions",
  "e3-protocol",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

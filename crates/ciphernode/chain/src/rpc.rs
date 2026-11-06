@@ -28,7 +28,10 @@ impl<P> ChainNode<P> {
 
 impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
     async fn head(&self) -> Result<u64, RpcError> {
-        self.provider.get_block_number().await.map_err(failed)
+        self.provider
+            .get_block_number()
+            .await
+            .map_err(RpcError::new)
     }
 
     async fn logs(&self, from: u64, to: u64) -> Result<Vec<RawLog>, RpcError> {
@@ -41,7 +44,11 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .address(addresses)
             .from_block(from)
             .to_block(to);
-        let logs = self.provider.get_logs(&filter).await.map_err(failed)?;
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .map_err(RpcError::new)?;
         let mut times: BTreeMap<u64, UnixSecs> = BTreeMap::new();
         let mut raw = Vec::with_capacity(logs.len());
         for log in logs {
@@ -80,7 +87,7 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .block(at)
             .call()
             .await
-            .map_err(failed)?;
+            .map_err(RpcError::new)?;
         if !seed.ready {
             return Ok(None);
         }
@@ -89,7 +96,7 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .block(at)
             .call()
             .await
-            .map_err(failed)?;
+            .map_err(RpcError::new)?;
         Ok(Some((seed.seed, secs(request.committeeDeadline))))
     }
 
@@ -101,13 +108,13 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .block(at)
             .call()
             .await
-            .map_err(failed)?;
+            .map_err(RpcError::new)?;
         let windows = interfold
             .getE3TimeoutConfig(e3)
             .block(at)
             .call()
             .await
-            .map_err(failed)?;
+            .map_err(RpcError::new)?;
         Ok(DkgTiming {
             deadline: secs(deadlines.dkgDeadline),
             window: secs(windows.dkgWindow),
@@ -121,7 +128,7 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .block(BlockId::number(block))
             .call()
             .await
-            .map_err(failed)?;
+            .map_err(RpcError::new)?;
         Ok(secs(deadlines.decryptionDeadline))
     }
 }
@@ -132,14 +139,10 @@ impl<P: Provider> ChainNode<P> {
             .provider
             .get_block_by_number(block.into())
             .await
-            .map_err(failed)?
+            .map_err(RpcError::new)?
             .ok_or_else(|| RpcError(format!("the node has no block {block}").into()))?;
         Ok(header.header.timestamp)
     }
-}
-
-fn failed(error: impl std::error::Error + Send + Sync + 'static) -> RpcError {
-    RpcError(Box::new(error))
 }
 
 fn secs(value: U256) -> UnixSecs {

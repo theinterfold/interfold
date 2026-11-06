@@ -83,6 +83,8 @@ pub struct KeyPublication {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedAttestation {
     pub party_id: u64,
+    /// The member in the party's committee slot, which the verifier binds to it.
+    pub node: Address,
     pub sk_agg_commit: B256,
     pub esm_agg_commit: B256,
     pub signature: Bytes,
