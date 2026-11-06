@@ -7,12 +7,18 @@
 //! The whole node as one machine: admission of E3s from chain facts, routing of peer messages,
 //! jobs and signatures, and the end of each E3's work.
 
+pub use crate::e3::E3;
+
 use crate::{
+    decryption::{
+        DecryptionMessage, DecryptionSignature, DecryptionWork, DecryptionWorkResult,
+        PlaintextPublication,
+    },
     dkg::{
-        AttestationContext, Dkg, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
+        AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
         KeyPublication,
     },
-    E3Id, Machine, Tick, UnixSecs,
+    BlobRef, E3Id, Machine, Tick, UnixSecs,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use e3_committee::CiphernodesCommitteeSize;
@@ -83,17 +89,34 @@ impl FailureReason {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainFact {
-    /// The chain adapter takes `attestation` from the `DkgFoldAttestationContextEstablished` log
-    /// that the same transaction emits just before `E3Requested`.
+    /// `interfold` is the contract that emitted `E3Requested`. The chain adapter takes
+    /// `attestation` from the `DkgFoldAttestationContextEstablished` log that the same transaction
+    /// emits just before it.
     E3Requested {
         e3: E3Id,
         committee_size: CiphernodesCommitteeSize,
+        interfold: Address,
         attestation: AttestationContext,
     },
     CommitteeFinalized {
         e3: E3Id,
         members: Vec<Address>,
         dkg: DkgTiming,
+    },
+    /// `CommitteeProofPublished`: the registry's committee in its order, the roster (the selected
+    /// party IDs that the proof's public inputs carry), and the key commitment.
+    KeyPublished {
+        e3: E3Id,
+        committee: Vec<Address>,
+        roster: Vec<Address>,
+        commitment: B256,
+    },
+    /// `CiphertextOutputPublished`: the ciphertext bytes as a blob, whose hash is the one the
+    /// contract recorded, and the decryption deadline.
+    CiphertextReady {
+        e3: E3Id,
+        ciphertext: BlobRef,
+        deadline: UnixSecs,
     },
     StageChanged {
         e3: E3Id,
@@ -132,12 +155,14 @@ pub struct PeerMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Body {
     Dkg(DkgMessage),
+    Decryption(DecryptionMessage),
 }
 
 impl PeerMessage {
     fn size(&self) -> u64 {
         match &self.body {
             Body::Dkg(message) => message.size(),
+            Body::Decryption(message) => message.size(),
         }
     }
 }
@@ -153,6 +178,7 @@ pub struct Job {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Work {
     Dkg(DkgWork),
+    Decryption(DecryptionWork),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +190,7 @@ pub struct JobDone {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkResult {
     Dkg(DkgWorkResult),
+    Decryption(DecryptionWorkResult),
 }
 
 /// Hashes for the operator key to sign. The signatures return in the same order as
@@ -178,6 +205,7 @@ pub struct Signing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Purpose {
     Dkg(DkgSignature),
+    Decryption(DecryptionSignature),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +245,8 @@ pub enum Transaction {
     /// `publishCommittee`, then the key's chunks. Another aggregator's equal commitment completes
     /// it.
     PublishCommittee(KeyPublication),
+    /// `publishPlaintextOutput`. Another aggregator's plaintext on chain completes it.
+    PublishPlaintext(PlaintextPublication),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,57 +255,6 @@ pub enum Effect {
     Sign(Signing),
     Gossip(PeerMessage),
     Submit(Submission),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct E3 {
-    pub stage: Stage,
-    pub committee_size: CiphernodesCommitteeSize,
-    pub attestation: AttestationContext,
-    /// From the committee's finalization on; a node outside the committee ends the E3 instead.
-    pub dkg: Option<Dkg>,
-    /// When a failed E3's accusation work ends.
-    pub ends_at: Option<UnixSecs>,
-}
-
-impl E3 {
-    fn new(committee_size: CiphernodesCommitteeSize, attestation: AttestationContext) -> Self {
-        Self {
-            stage: Stage::Requested,
-            committee_size,
-            attestation,
-            dkg: None,
-            ends_at: None,
-        }
-    }
-
-    /// The DKG runs from the committee's finalization until the chain fails the E3; after a
-    /// failure only accusation work remains.
-    fn dkg(&mut self) -> Option<&mut Dkg> {
-        let running = self.running();
-        self.dkg.as_mut().filter(|_| running)
-    }
-
-    fn running(&self) -> bool {
-        self.stage != Stage::Failed
-    }
-
-    fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
-        let Some(dkg) = self.dkg() else {
-            return Vec::new();
-        };
-        match message.body {
-            Body::Dkg(body) => dkg.receive(now, message.sender, body),
-        }
-    }
-
-    fn next_deadline(&self) -> Option<UnixSecs> {
-        let dkg = self.dkg.as_ref().filter(|_| self.running());
-        self.ends_at
-            .into_iter()
-            .chain(dkg.and_then(Dkg::next_deadline))
-            .min()
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,8 +298,15 @@ impl Node {
             ChainFact::E3Requested {
                 e3,
                 committee_size,
+                interfold,
                 attestation,
-            } => self.admit(e3, committee_size, attestation),
+            } => {
+                if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
+                    let state = E3::new(e3, self.me, committee_size, interfold, attestation);
+                    self.e3s.insert(e3, state);
+                }
+                Vec::new()
+            }
             ChainFact::CommitteeFinalized {
                 e3,
                 mut members,
@@ -335,33 +321,37 @@ impl Node {
                 let Some(state) = self.e3s.get_mut(&e3) else {
                     return Vec::new();
                 };
-                let (dkg, mut effects) = Dkg::start(
-                    e3,
-                    self.me,
-                    members,
-                    state.committee_size,
-                    dkg,
-                    state.attestation,
-                    now,
-                );
-                state.dkg = Some(dkg);
-                state.stage = Stage::CommitteeFinalized;
-                for message in self.held.take(&e3) {
-                    effects.extend(state.receive(now, message));
-                }
-                return effects;
+                let mut effects = state.finalize(now, members, dkg);
+                effects.extend(self.release_held(now, e3));
+                effects
             }
-            ChainFact::StageChanged { e3, stage } => match stage {
-                Stage::Complete => self.end(e3),
-                stage => {
-                    if let Some(state) = self.e3s.get_mut(&e3) {
-                        state.stage = stage;
-                        if let (Stage::KeyPublished, Some(dkg)) = (stage, state.dkg.as_mut()) {
-                            dkg.key_published();
-                        }
-                    }
+            ChainFact::KeyPublished {
+                e3,
+                committee,
+                roster,
+                commitment,
+            } => {
+                if let Some(state) = self.e3s.get_mut(&e3) {
+                    state.key_published(committee, roster, commitment);
                 }
+                self.release_held(now, e3)
+            }
+            ChainFact::CiphertextReady {
+                e3,
+                ciphertext,
+                deadline,
+            } => match self.e3s.get_mut(&e3) {
+                Some(state) => state.ciphertext_ready(now, ciphertext, deadline),
+                None => Vec::new(),
             },
+            ChainFact::StageChanged { e3, stage } => {
+                match (stage, self.e3s.get_mut(&e3)) {
+                    (Stage::Complete, _) => self.end(e3),
+                    (stage, Some(state)) => state.stage = stage,
+                    (_, None) => {}
+                }
+                Vec::new()
+            }
             ChainFact::Failed { e3, reason } => {
                 if reason.ends_without_slashing() {
                     self.end(e3);
@@ -374,29 +364,17 @@ impl Node {
                     state.stage = Stage::Failed;
                     state.ends_at = Some(now + SLASHABLE_FAILURE_GRACE + vote_validity);
                 }
+                Vec::new()
             }
-            ChainFact::MemberExpelled { e3, member } => {
-                if let Some(dkg) = self.e3s.get_mut(&e3).and_then(E3::dkg) {
-                    return dkg.expel(now, member);
-                }
-            }
+            ChainFact::MemberExpelled { e3, member } => match self.e3s.get_mut(&e3) {
+                Some(state) => state.expel(now, member),
+                None => Vec::new(),
+            },
             ChainFact::VoteValidity { secs } => {
                 self.vote_validity.insert(event.at.chain_id, secs);
+                Vec::new()
             }
         }
-        Vec::new()
-    }
-
-    fn admit(
-        &mut self,
-        e3: E3Id,
-        committee_size: CiphernodesCommitteeSize,
-        attestation: AttestationContext,
-    ) {
-        if self.e3s.contains_key(&e3) || self.ended.contains(&e3) {
-            return;
-        }
-        self.e3s.insert(e3, E3::new(committee_size, attestation));
     }
 
     fn end(&mut self, e3: E3Id) {
@@ -410,14 +388,14 @@ impl Node {
         }
     }
 
-    /// Until the chain names the committee nothing can say whether a sender may speak, so its
-    /// messages wait in the bounded hold.
+    /// A message waits in the bounded hold until the chain fact that lets the node judge it:
+    /// the committee's finalization for the DKG, the key's publication for decryption.
     fn apply_peer(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         if self.ended.contains(&message.e3) {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.dkg.is_some() => state.receive(now, message),
+            Some(state) if state.routes(&message.body) => state.receive(now, message),
             _ => {
                 self.held.hold(message);
                 Vec::new()
@@ -425,21 +403,24 @@ impl Node {
         }
     }
 
+    fn release_held(&mut self, now: UnixSecs, e3: E3Id) -> Vec<Effect> {
+        let held = self.held.take(&e3);
+        held.into_iter()
+            .flat_map(|message| self.apply_peer(now, message))
+            .collect()
+    }
+
     fn apply_job(&mut self, now: UnixSecs, done: JobDone) -> Vec<Effect> {
-        let Some(dkg) = self.e3s.get_mut(&done.e3).and_then(E3::dkg) else {
-            return Vec::new();
-        };
-        match done.result {
-            WorkResult::Dkg(result) => dkg.job_done(now, result),
+        match self.e3s.get_mut(&done.e3) {
+            Some(state) => state.job_done(now, done.result),
+            None => Vec::new(),
         }
     }
 
     fn apply_signed(&mut self, now: UnixSecs, signed: Signed) -> Vec<Effect> {
-        let Some(dkg) = self.e3s.get_mut(&signed.e3).and_then(E3::dkg) else {
-            return Vec::new();
-        };
-        match signed.purpose {
-            Purpose::Dkg(purpose) => dkg.signed(now, purpose, signed.signatures),
+        match self.e3s.get_mut(&signed.e3) {
+            Some(state) => state.signed(now, signed.purpose, signed.signatures),
+            None => Vec::new(),
         }
     }
 
@@ -447,8 +428,7 @@ impl Node {
         let effects = self
             .e3s
             .values_mut()
-            .filter_map(E3::dkg)
-            .flat_map(|dkg| dkg.pass_deadlines(now))
+            .flat_map(|state| state.pass_deadlines(now))
             .collect();
         let due: Vec<E3Id> = self
             .e3s
@@ -484,7 +464,7 @@ impl Machine for Node {
     }
 }
 
-/// Peer messages for E3s whose committee the chain has not finalized yet, in arrival order. When a bound is full the
+/// Peer messages that wait for a chain fact, in arrival order. When a bound is full the
 /// oldest goes first: the E3's oldest for the per-E3 bound, the oldest of all for the total.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Hold {
@@ -687,6 +667,18 @@ mod tests {
         assert!(node.step(100, sign(ME, signing(&effects))).is_empty());
         assert!(node.step(100, key_from(e3(2), 1)).is_empty());
         assert_eq!(node.next_deadline(), Some(100 + SLASHABLE_FAILURE_GRACE));
+    }
+
+    #[test]
+    fn decryption_shares_wait_in_the_hold_until_the_key_is_published() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        node.step(0, decryption_shares(e3(1), 1, 1));
+        let roster = vec![address(1), address(ME)];
+        node.step(0, key_published(12, e3(1), members([1, 2]), roster));
+        let decryption = node.e3(&e3(1)).and_then(|state| state.decryption.as_ref());
+        assert!(decryption.is_some_and(|d| d.shares_of(&address(1)).is_some()));
     }
 
     #[test]

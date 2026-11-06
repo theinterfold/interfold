@@ -4,46 +4,20 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Faults, Sim};
+use super::committee;
+use crate::Sim;
 use alloy_primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     dkg::DkgMessage,
-    node::{Body, ChainFact, Transaction},
-    testing::{address, e3, ATTESTATION, TIMING},
+    node::{Body, Transaction},
+    testing::{e3, TIMING},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-const FAULTS: Faults = Faults {
-    crash: 0.1,
-    max_delay: 5,
-    duplicate: 0.2,
-};
-
-/// A committee, then one operator outside it; the first member reads the chain 30 seconds late.
+/// The committee's run through the DKG, stopped just before its deadline.
 fn run(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
-    let n = size.values().n;
-    let operators: Vec<u64> = (1..=n as u64 + 1).collect();
-    let mut members: Vec<Address> = operators[..n].iter().map(|&o| address(o)).collect();
-    members.sort();
-    let mut sim = Sim::new(seed, &operators, FAULTS);
-    sim.set_chain_lag(0, 30);
-    sim.chain(
-        0,
-        ChainFact::E3Requested {
-            e3: e3(1),
-            committee_size: size,
-            attestation: ATTESTATION,
-        },
-    );
-    sim.chain(
-        10,
-        ChainFact::CommitteeFinalized {
-            e3: e3(1),
-            members: members.clone(),
-            dkg: TIMING,
-        },
-    );
+    let (mut sim, members) = committee(size, seed);
     sim.run_until(TIMING.deadline - 1);
     (sim, members)
 }
@@ -161,8 +135,9 @@ fn the_committee_publishes_one_key_and_every_member_sees_the_dkg_end() {
             let commitments: BTreeSet<_> = sim
                 .submissions()
                 .iter()
-                .map(|submission| match &submission.transaction {
-                    Transaction::PublishCommittee(publication) => publication.commitment,
+                .filter_map(|submission| match &submission.transaction {
+                    Transaction::PublishCommittee(publication) => Some(publication.commitment),
+                    Transaction::PublishPlaintext(_) => None,
                 })
                 .collect();
             assert_eq!(commitments.len(), 1, "{case}: one key");
@@ -201,7 +176,8 @@ fn no_member_sends_two_different_keys_or_shares() {
                         | DkgMessage::DecryptionKey(_)
                         | DkgMessage::Keyshare(_)
                         | DkgMessage::NodeFold(_),
-                    ) => {}
+                    )
+                    | Body::Decryption(_) => {}
                 }
             }
             assert_eq!(

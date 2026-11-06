@@ -422,6 +422,22 @@ impl Dkg {
         self.published
     }
 
+    pub(crate) fn members(&self) -> &[Address] {
+        &self.members
+    }
+
+    pub(crate) fn expelled(&self) -> &BTreeSet<Address> {
+        &self.expelled
+    }
+
+    /// This node's sealed decryption key, once it sent its keyshare.
+    pub(crate) fn decryption_key(&self) -> Option<BlobRef> {
+        match self.phase {
+            Phase::KeyshareSent(key) => Some(key),
+            _ => None,
+        }
+    }
+
     pub(crate) fn key_published(&mut self) {
         self.published = true;
     }

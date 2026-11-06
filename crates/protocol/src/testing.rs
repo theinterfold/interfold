@@ -7,6 +7,10 @@
 //! Builders for tests of the protocol machines.
 
 use crate::{
+    decryption::{
+        DecryptionMessage, DecryptionWorkResult, OwnShares as DecryptionOwnShares,
+        PlaintextPublication, SharesMessage as DecryptionSharesMessage,
+    },
     dkg::{
         AggregatedKey, AttestationContext, DecryptionKeyMessage, DkgMessage, DkgTiming, DkgWork,
         DkgWorkResult, FoldAttestation, KeyMessage, KeyshareMessage, NodeFold, NodeFoldMessage,
@@ -17,7 +21,7 @@ use crate::{
         Signing, Work, WorkResult,
     },
     proof::{ProofType, SignedProof, ZkProof},
-    BlobRef, E3Id,
+    BlobRef, E3Id, UnixSecs,
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_signer::SignerSync;
@@ -353,6 +357,103 @@ pub fn key_aggregated(e3: E3Id, fill: u8) -> Input {
     })
 }
 
+pub const KEY_COMMITMENT: B256 = B256::repeat_byte(0xc0);
+
+pub const CIPHERTEXT: BlobRef = BlobRef {
+    hash: B256::repeat_byte(0xc7),
+    len: 4_000,
+};
+
+/// After the DKG window, so decryption has its own.
+pub const DECRYPTION_DEADLINE: UnixSecs = 200_000;
+
+/// The chain's key for `e3`, with the committee in the registry's order and the roster.
+pub fn key_published(block: u64, e3: E3Id, committee: Vec<Address>, roster: Vec<Address>) -> Input {
+    chain(
+        block,
+        ChainFact::KeyPublished {
+            e3,
+            committee,
+            roster,
+            commitment: KEY_COMMITMENT,
+        },
+    )
+}
+
+pub fn ciphertext_ready(block: u64, e3: E3Id) -> Input {
+    chain(
+        block,
+        ChainFact::CiphertextReady {
+            e3,
+            ciphertext: CIPHERTEXT,
+            deadline: DECRYPTION_DEADLINE,
+        },
+    )
+}
+
+/// One decryption share and its C6 proof, made by the job runner for this node.
+pub fn own_decryption_shares(fill: u8) -> DecryptionOwnShares {
+    DecryptionOwnShares {
+        shares: vec![BlobRef {
+            hash: B256::repeat_byte(fill),
+            len: 500,
+        }],
+        c6: vec![proof(fill)],
+    }
+}
+
+pub fn decryption_shares_made(e3: E3Id, own: DecryptionOwnShares) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Decryption(DecryptionWorkResult::SharesMade(own)),
+    })
+}
+
+/// Operator `member`'s decryption share of one ciphertext, its C6 signed by operator `signer`.
+pub fn decryption_shares(e3: E3Id, member: u64, signer: u64) -> Input {
+    let c6 = proof(member as u8);
+    Input::Peer(PeerMessage {
+        e3,
+        sender: address(member),
+        body: Body::Decryption(DecryptionMessage::Shares(DecryptionSharesMessage {
+            shares: vec![BlobRef {
+                hash: B256::repeat_byte(member as u8),
+                len: 500,
+            }],
+            c6: vec![SignedProof {
+                signature: signature(
+                    signer,
+                    c6.payload_signing_hash(e3, ProofType::C6ThresholdShareDecryption),
+                ),
+                proof: c6,
+            }],
+        })),
+    })
+}
+
+pub fn decryption_shares_checked(e3: E3Id, member: u64, valid: bool) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Decryption(DecryptionWorkResult::SharesChecked {
+            member: address(member),
+            valid,
+        }),
+    })
+}
+
+pub fn plaintext_made(e3: E3Id, fill: u8) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Decryption(DecryptionWorkResult::PlaintextMade(PlaintextPublication {
+            plaintext: BlobRef {
+                hash: B256::repeat_byte(fill),
+                len: 64,
+            },
+            proof: proof(fill),
+        })),
+    })
+}
+
 /// The members each Ready report among `effects` names, in order.
 pub fn ready_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
     effects
@@ -398,10 +499,13 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
         ChainFact::E3Requested {
             e3,
             committee_size: CiphernodesCommitteeSize::Minimum,
+            interfold: INTERFOLD,
             attestation: ATTESTATION,
         },
     )
 }
+
+pub const INTERFOLD: Address = Address::repeat_byte(0x1f);
 
 pub const ATTESTATION: AttestationContext = AttestationContext {
     registry: Address::repeat_byte(0x8e),

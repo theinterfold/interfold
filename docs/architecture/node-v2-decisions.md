@@ -54,11 +54,11 @@ Each rule is checkable in review.
   a machine reads no clock, draws no randomness, and holds no secret key. Signatures are effects
   whose results come back as inputs.
 
-- **D10. Peer messages wait in the bounded hold until the chain finalizes the E3's committee.**
-  Before that, nothing can say whether a sender may speak, and a libp2p peer ID is not bound to an
-  operator, so an attacker can sign as many operator addresses as it likes. The DKG starts at
-  finalization, and held messages enter it then. This replaces the early-key record in `Init`
-  ([dkg](dkg.md), key collection row).
+- **D10. Peer messages wait in the bounded hold until the chain fact that lets the node judge
+  them:** the committee's finalization for DKG messages, the key's publication for decryption
+  shares. Before that, nothing can say whether a sender may speak, and a libp2p peer ID is not bound
+  to an operator, so an attacker can sign as many operator addresses as it likes. This replaces the
+  early-key record in `Init` ([dkg](dkg.md), key collection row).
 - **D11. Every input first applies the deadlines that have passed.** A tick only wakes the machine,
   so a late wake-up changes nothing: a key check that returns after the key cutoff does not count,
   whether or not the cutoff's tick came first ([dkg](dkg.md), "Timing and collection").
@@ -86,6 +86,12 @@ Each rule is checkable in review.
   blob reference's hash, so signing and signature checks need no bytes; jobs and the chain writer
   read the bytes from the blob store. A Small committee's DKG holds hundreds of proofs, and inline
   bytes would put megabytes into every snapshot.
+
+- **D18. Decryption takes its authority from the chain.** The key event gives the committee in the
+  registry's order, the roster (the selected party IDs in the proof's public inputs), and the key
+  commitment; the decryption domain is computed from them and the ciphertext's hash
+  ([threshold decryption](threshold-decryption.md), "Authority before work"). The DKG only supplies
+  this node's sealed decryption key.
 
 ## Problems in the current node, with the fix above them
 

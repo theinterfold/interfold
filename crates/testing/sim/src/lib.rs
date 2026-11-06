@@ -11,6 +11,9 @@
 use alloy_primitives::{keccak256, Address, B256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
+    decryption::{
+        DecryptionWork, DecryptionWorkResult, OwnShares as DecryptionShares, PlaintextPublication,
+    },
     dkg::{
         AggregatedKey, DkgWork, DkgWorkResult, NodeFold, OwnDecryptionKey, OwnKey, OwnShares,
         RecipientShares,
@@ -21,7 +24,7 @@ use e3_protocol::{
     },
     proof::ZkProof,
     testing::{address, sign},
-    BlobRef, Machine, UnixSecs,
+    BlobRef, E3Id, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -109,7 +112,11 @@ pub struct Sim {
     ticks: Vec<Option<UnixSecs>>,
     queue: BTreeMap<(UnixSecs, u64), Delivery>,
     next_delivery: u64,
-    block: u64,
+    /// How many facts each block holds so far; a fact's block is its time, so later facts never
+    /// sort before earlier ones.
+    blocks: BTreeMap<UnixSecs, u64>,
+    /// Each E3's finalized committee, ascending, which the chain's key event repeats.
+    committees: BTreeMap<E3Id, Vec<Address>>,
     now: UnixSecs,
     rng: ChaCha8Rng,
     faults: Faults,
@@ -138,7 +145,8 @@ impl Sim {
             ticks: vec![None; operators.len()],
             queue: BTreeMap::new(),
             next_delivery: 0,
-            block: 0,
+            blocks: BTreeMap::new(),
+            committees: BTreeMap::new(),
             now: 0,
             rng,
             faults,
@@ -153,15 +161,22 @@ impl Sim {
 
     /// A fact confirmed at `at`, in its own block. Each node reads it after its chain lag.
     pub fn chain(&mut self, at: UnixSecs, fact: ChainFact) {
-        self.block += 1;
+        let at = at.max(self.now);
+        if let ChainFact::CommitteeFinalized { e3, members, .. } = &fact {
+            let mut members = members.clone();
+            members.sort();
+            self.committees.insert(*e3, members);
+        }
+        let log_index = self.blocks.entry(at).or_default();
         let event = ChainEvent {
             at: LogPosition {
                 chain_id: 1,
-                block: self.block,
-                log_index: 0,
+                block: at,
+                log_index: *log_index,
             },
             fact,
         };
+        *log_index += 1;
         for node in 0..self.nodes.len() {
             let input = Input::Chain(event.clone());
             self.schedule(at + self.chain_lags[node], node, input, None);
@@ -256,21 +271,40 @@ impl Sim {
         }
     }
 
-    /// The chain accepts the first key for an E3 and rejects later ones, as `publishCommittee`
-    /// does once a key is set.
+    /// The chain accepts the first key and the first plaintext of an E3 and rejects later ones,
+    /// as the contracts do once they are set. A key publishes the committee and the roster that
+    /// its attestations name; a plaintext completes the E3.
     fn submit(&mut self, submission: Submission) {
-        let Transaction::PublishCommittee(_) = &submission.transaction;
-        let first = !self
-            .submissions
-            .iter()
-            .any(|earlier| earlier.e3 == submission.e3);
-        if first {
-            let published = ChainFact::StageChanged {
+        let first = !self.submissions.iter().any(|earlier| {
+            earlier.e3 == submission.e3
+                && std::mem::discriminant(&earlier.transaction)
+                    == std::mem::discriminant(&submission.transaction)
+        });
+        let committee = self
+            .committees
+            .get(&submission.e3)
+            .cloned()
+            .unwrap_or_default();
+        let fact = match &submission.transaction {
+            Transaction::PublishCommittee(publication) => ChainFact::KeyPublished {
                 e3: submission.e3,
-                stage: Stage::KeyPublished,
-            };
+                roster: publication
+                    .attestations
+                    .iter()
+                    .filter_map(|attestation| committee.get(attestation.party_id as usize))
+                    .copied()
+                    .collect(),
+                committee,
+                commitment: publication.commitment,
+            },
+            Transaction::PublishPlaintext(_) => ChainFact::StageChanged {
+                e3: submission.e3,
+                stage: Stage::Complete,
+            },
+        };
+        if first {
             let at = self.now + self.delay();
-            self.chain(at, published);
+            self.chain(at, fact);
         }
         self.submissions.push(submission);
     }
@@ -369,6 +403,7 @@ impl Sim {
                 member: *member,
                 valid: keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash],
             },
+            Work::Decryption(work) => return self.decrypt(work),
             Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
                 let shares: Vec<u8> = keyshares
                     .iter()
@@ -383,6 +418,43 @@ impl Sim {
             }
         };
         WorkResult::Dkg(result)
+    }
+
+    /// Mock decryption: a share binds the domain in its C6 inputs, and the plaintext follows from
+    /// the ciphertext alone, so every aggregator gets the same one.
+    fn decrypt(&mut self, work: &DecryptionWork) -> WorkResult {
+        let result = match work {
+            DecryptionWork::MakeShares {
+                key,
+                ciphertext,
+                domain,
+            } => DecryptionWorkResult::SharesMade(DecryptionShares {
+                shares: vec![blob(keccak256([key.hash, ciphertext.hash].concat()))],
+                c6: vec![ZkProof {
+                    public_inputs: vec![*domain],
+                    ..self.proof()
+                }],
+            }),
+            DecryptionWork::CheckShares {
+                member,
+                domain,
+                message,
+                ..
+            } => DecryptionWorkResult::SharesChecked {
+                member: *member,
+                valid: message
+                    .c6
+                    .iter()
+                    .all(|proof| proof.proof.public_inputs == [*domain]),
+            },
+            DecryptionWork::AggregatePlaintext { ciphertext, .. } => {
+                DecryptionWorkResult::PlaintextMade(PlaintextPublication {
+                    plaintext: blob(keccak256(ciphertext.hash)),
+                    proof: self.proof(),
+                })
+            }
+        };
+        WorkResult::Decryption(result)
     }
 
     fn hash(&mut self) -> B256 {

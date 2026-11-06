@@ -7,7 +7,7 @@
 use super::*;
 use crate::{
     dkg::{DkgWork, FoldAttestation, KeyPublication},
-    node::{ChainFact, Job, Stage, Submission, Transaction, Work},
+    node::{Job, Submission, Transaction, Work},
     proof::ProofType,
 };
 use alloy_primitives::B256;
@@ -202,12 +202,12 @@ fn the_next_member_aggregates_when_the_aggregator_s_budget_runs_out() {
 
 #[test]
 fn a_published_key_ends_the_dkg() {
+    let [first, second, _] = ordered();
     let (mut node, _) = first_with_keyshare();
-    let published = ChainFact::StageChanged {
-        e3: e3(1),
-        stage: Stage::KeyPublished,
-    };
-    node.step(NOW, chain(12, published));
+    node.step(
+        NOW,
+        key_published(12, e3(1), committee(), members(&[first, second])),
+    );
     assert!(dkg(&node).published());
     assert_eq!(node.next_deadline(), None);
     node.step(TIMING.deadline, Input::Tick);
