@@ -7,12 +7,15 @@
 //! Builders for tests of the protocol machines.
 
 use crate::{
-    dkg::{DkgMessage, DkgTiming, DkgWork, DkgWorkResult, KeyMessage, OwnKey},
+    dkg::{
+        DkgMessage, DkgTiming, DkgWork, DkgWorkResult, KeyMessage, OwnKey, OwnShares,
+        RecipientShares, SharesMessage,
+    },
     node::{
         Body, ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, PeerMessage, Signed,
         Signing, Work, WorkResult,
     },
-    proof::{ProofType, ZkProof},
+    proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id,
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
@@ -93,8 +96,10 @@ pub fn key(e3: E3Id, sender: u64, proof: ZkProof, signer: u64) -> Input {
                 hash: keccak256(&proof.data),
                 len: 1_000,
             },
-            signature: signature(signer, hash),
-            proof,
+            proof: SignedProof {
+                signature: signature(signer, hash),
+                proof,
+            },
         })),
     })
 }
@@ -130,6 +135,104 @@ pub fn key_checked(e3: E3Id, n: u64, valid: bool) -> Input {
             valid,
         }),
     })
+}
+
+/// Threshold shares the job runner made for this node: one entry per recipient, three Shamir
+/// rows each.
+pub fn own_shares(recipients: &[u64]) -> OwnShares {
+    OwnShares {
+        pk_share: BlobRef {
+            hash: B256::repeat_byte(0xaa),
+            len: 1_000,
+        },
+        own_share: BlobRef {
+            hash: B256::repeat_byte(0xab),
+            len: 100,
+        },
+        c1: proof(0xc1),
+        c2a: proof(0xca),
+        c2b: proof(0xcb),
+        recipients: recipients
+            .iter()
+            .map(|n| {
+                let shares = RecipientShares {
+                    shares: BlobRef {
+                        hash: B256::repeat_byte(*n as u8),
+                        len: 1_000,
+                    },
+                    c3a: vec![proof(0x3a); 3],
+                    c3b: vec![proof(0x3b); 3],
+                };
+                (address(*n), shares)
+            })
+            .collect(),
+    }
+}
+
+pub fn shares_made(e3: E3Id, own: OwnShares) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::SharesMade(own)),
+    })
+}
+
+/// Operator `dealer`'s shares for operator `recipient`, correctly signed.
+pub fn shares_from(e3: E3Id, dealer: u64, recipient: u64) -> Input {
+    shares(e3, dealer, recipient, dealer)
+}
+
+/// Shares that claim operator `dealer`, every proof signed by operator `signer`. Each dealer's C2
+/// proofs differ, so each dealer's contribution does.
+pub fn shares(e3: E3Id, dealer: u64, recipient: u64, signer: u64) -> Input {
+    let signed = |proof_type, proof: ZkProof| SignedProof {
+        signature: signature(signer, proof.payload_signing_hash(e3, proof_type)),
+        proof,
+    };
+    let rows = |proof_type| (0..3).map(|row| signed(proof_type, proof(row))).collect();
+    Input::Peer(PeerMessage {
+        e3,
+        sender: address(dealer),
+        body: Body::Dkg(DkgMessage::Shares(Box::new(SharesMessage {
+            recipient: address(recipient),
+            pk_share: BlobRef {
+                hash: B256::repeat_byte(dealer as u8),
+                len: 1_000,
+            },
+            shares: BlobRef {
+                hash: keccak256([dealer as u8, recipient as u8]),
+                len: 1_000,
+            },
+            c2a: signed(ProofType::C2aSkShareComputation, proof(dealer as u8)),
+            c2b: signed(ProofType::C2bESmShareComputation, proof(!(dealer as u8))),
+            c3a: rows(ProofType::C3aSkShareEncryption),
+            c3b: rows(ProofType::C3bESmShareEncryption),
+        }))),
+    })
+}
+
+/// The job runner's verdict on operator `dealer`'s shares for this node.
+pub fn shares_checked(e3: E3Id, dealer: u64, valid: bool) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::SharesChecked {
+            dealer: address(dealer),
+            valid,
+        }),
+    })
+}
+
+/// The members each Ready report among `effects` names, in order.
+pub fn ready_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Gossip(PeerMessage {
+                body: Body::Dkg(DkgMessage::Ready(dealers)),
+                ..
+            }) => Some(dealers.iter().map(|dealer| dealer.member).collect()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The members whose keys `effects` ask the job runner to check, in order.

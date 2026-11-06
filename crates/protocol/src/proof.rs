@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::E3Id;
-use alloy_primitives::{eip191_hash_message, keccak256, Bytes, B256, U256};
+use alloy_primitives::{eip191_hash_message, keccak256, Address, Bytes, Signature, B256, U256};
 use alloy_sol_types::SolValue;
 use serde::{Deserialize, Serialize};
 
@@ -72,10 +72,31 @@ impl ZkProof {
     }
 }
 
+/// A proof with its prover's signature over the proof payload, which the slashing contracts accept
+/// as evidence against the prover.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SignedProof {
+    pub proof: ZkProof,
+    pub signature: Bytes,
+}
+
+impl SignedProof {
+    pub(crate) fn size(&self) -> u64 {
+        (self.proof.data.len() + 32 * self.proof.public_inputs.len() + self.signature.len()) as u64
+    }
+
+    pub fn is_signed_by(&self, signer: Address, e3: E3Id, proof_type: ProofType) -> bool {
+        let hash = self.proof.payload_signing_hash(e3, proof_type);
+        Signature::try_from(self.signature.as_ref())
+            .ok()
+            .and_then(|signature| signature.recover_address_from_prehash(&hash).ok())
+            == Some(signer)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, Signature};
 
     /// Anvil's first development account; it signed the reference vectors below.
     const SIGNER: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -96,15 +117,13 @@ mod tests {
 
     #[test]
     fn a_signature_from_the_current_node_recovers_to_its_signer() {
-        let signature = Signature::try_from(
-            &hex::decode("cb0515edb11ec668720b96399da6b48cdcc90b14f3b11f83d645ad7642d27548708c2d49fbb614aa1cf7b3d49bbb96fe6b9d48bf4c9e84a1b6180f0191b55e4f1b").unwrap()[..],
-        )
-        .unwrap();
-        let hash = proof().payload_signing_hash(e3(), ProofType::C5PkAggregation);
-        assert_eq!(
-            signature.recover_address_from_prehash(&hash).unwrap(),
-            SIGNER.parse::<Address>().unwrap()
-        );
+        let signed = SignedProof {
+            proof: proof(),
+            signature: hex::decode("cb0515edb11ec668720b96399da6b48cdcc90b14f3b11f83d645ad7642d27548708c2d49fbb614aa1cf7b3d49bbb96fe6b9d48bf4c9e84a1b6180f0191b55e4f1b").unwrap().into(),
+        };
+        let signer = SIGNER.parse().unwrap();
+        assert!(signed.is_signed_by(signer, e3(), ProofType::C5PkAggregation));
+        assert!(!signed.is_signed_by(signer, e3(), ProofType::C4aSkShareDecryption));
     }
 
     #[test]

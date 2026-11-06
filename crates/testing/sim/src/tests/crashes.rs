@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::SimNode;
 use e3_protocol::{
     dkg::DkgSignature,
     node::{ChainFact, FailureReason, Input, Purpose, Signing, Stage},
@@ -14,7 +15,6 @@ use e3_protocol::{
     },
     UnixSecs,
 };
-use e3_sim::SimNode;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 

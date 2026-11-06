@@ -97,6 +97,11 @@ pub enum ChainFact {
         e3: E3Id,
         reason: FailureReason,
     },
+    /// The chain slashed a committee member and removed it from the E3.
+    MemberExpelled {
+        e3: E3Id,
+        member: Address,
+    },
     /// The chain's maximum accusation vote validity, in seconds.
     VoteValidity {
         secs: u64,
@@ -332,6 +337,11 @@ impl Node {
                     state.ends_at = Some(now + SLASHABLE_FAILURE_GRACE + vote_validity);
                 }
             }
+            ChainFact::MemberExpelled { e3, member } => {
+                if let Some(dkg) = self.e3s.get_mut(&e3).and_then(E3::dkg) {
+                    return dkg.expel(member);
+                }
+            }
             ChainFact::VoteValidity { secs } => {
                 self.vote_validity.insert(event.at.chain_id, secs);
             }
@@ -390,10 +400,13 @@ impl Node {
         }
     }
 
-    fn pass_deadlines(&mut self, now: UnixSecs) {
-        for dkg in self.e3s.values_mut().filter_map(E3::dkg) {
-            dkg.pass_deadlines(now);
-        }
+    fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        let effects = self
+            .e3s
+            .values_mut()
+            .filter_map(E3::dkg)
+            .flat_map(|dkg| dkg.pass_deadlines(now))
+            .collect();
         let due: Vec<E3Id> = self
             .e3s
             .iter()
@@ -403,6 +416,7 @@ impl Node {
         for e3 in due {
             self.end(e3);
         }
+        effects
     }
 }
 
@@ -411,14 +425,15 @@ impl Machine for Node {
     type Effect = Effect;
 
     fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {
-        self.pass_deadlines(now);
-        match input {
+        let mut effects = self.pass_deadlines(now);
+        effects.extend(match input {
             Input::Chain(event) => self.apply_chain(now, event),
             Input::Peer(message) => self.apply_peer(message),
             Input::Job(done) => self.apply_job(done),
             Input::Signed(signed) => self.apply_signed(signed),
             Input::Tick => Vec::new(),
-        }
+        });
+        effects
     }
 
     fn next_deadline(&self) -> Option<UnixSecs> {

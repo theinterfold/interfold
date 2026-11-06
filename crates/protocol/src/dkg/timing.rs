@@ -22,6 +22,11 @@ impl DkgTiming {
         self.at_basis_points(1_000)
     }
 
+    /// After this a Ready report no longer waits for missing dealers: 75% into the window.
+    pub fn share_checkpoint(&self) -> UnixSecs {
+        self.at_basis_points(7_500)
+    }
+
     fn at_basis_points(&self, basis_points: u64) -> UnixSecs {
         let start = self.deadline.saturating_sub(self.window);
         let offset = (self.window.saturating_mul(basis_points) / 10_000).max(1);
@@ -34,10 +39,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_key_cutoff_is_a_tenth_into_the_window_at_least_a_second_and_never_past_the_deadline() {
+    fn cutoffs_are_a_share_of_the_window_at_least_a_second_in_and_never_past_the_deadline() {
         let timing = |deadline, window| DkgTiming { deadline, window };
         assert_eq!(timing(10_000, 1_000).key_cutoff(), 9_100);
+        assert_eq!(timing(10_000, 1_000).share_checkpoint(), 9_750);
         assert_eq!(timing(10_000, 5).key_cutoff(), 9_996);
+        assert_eq!(timing(10_000, 5).share_checkpoint(), 9_998);
         assert_eq!(timing(10_000, 20_000).key_cutoff(), 2_000);
         assert_eq!(timing(10_000, 1).key_cutoff(), 10_000);
     }

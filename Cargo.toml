@@ -260,3 +260,16 @@ libp2p = { version = "=0.56.0", features = [
   "cbor"
 ]}
 zeroize = "=1.9.0"
+
+# Debug tests recover and sign many operator signatures (the v2 simulator runs whole committees);
+# optimized curve and hash crates make them about six times faster.
+[profile.dev.package.k256]
+opt-level = 3
+[profile.dev.package.ecdsa]
+opt-level = 3
+[profile.dev.package.elliptic-curve]
+opt-level = 3
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+[profile.dev.package.tiny-keccak]
+opt-level = 3

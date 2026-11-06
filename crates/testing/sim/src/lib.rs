@@ -8,10 +8,10 @@
 //! feeds a shadow copy of its machine that never crashes and never touches a store; the node must
 //! always produce the same effects as its shadow and end in the same state.
 
-use alloy_primitives::{keccak256, Bytes};
+use alloy_primitives::{keccak256, Bytes, B256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
-    dkg::{DkgWork, DkgWorkResult, OwnKey},
+    dkg::{DkgWork, DkgWorkResult, OwnKey, OwnShares, RecipientShares},
     node::{
         ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Work,
         WorkResult,
@@ -243,34 +243,76 @@ impl Sim {
     }
 
     /// Mock work: no cryptography, but the same shape of results, drawn fresh on every run as real
-    /// key generation is.
+    /// key and share generation are. A check passes when the checked bytes are the ones the mock
+    /// derived for them.
     fn run(&mut self, job: &Job) -> WorkResult {
-        match &job.work {
+        let result = match &job.work {
             Work::Dkg(DkgWork::MakeEncryptionKey) => {
-                let proof = ZkProof {
-                    data: Bytes::from(self.rng.random::<[u8; 32]>().to_vec()),
-                    public_inputs: Vec::new(),
-                };
-                let public = BlobRef {
-                    hash: keccak256(&proof.data),
-                    len: 1_000,
-                };
-                let secret = BlobRef {
-                    hash: keccak256(public.hash),
-                    len: 100,
-                };
-                WorkResult::Dkg(DkgWorkResult::EncryptionKeyMade(OwnKey {
+                let proof = self.proof();
+                let public = blob(keccak256(&proof.data));
+                DkgWorkResult::EncryptionKeyMade(OwnKey {
                     public,
-                    secret,
+                    secret: blob(keccak256(public.hash)),
                     proof,
-                }))
-            }
-            Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
-                WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked {
-                    sender: *sender,
-                    valid: key.hash == keccak256(&proof.data),
                 })
             }
+            Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
+                DkgWorkResult::EncryptionKeyChecked {
+                    sender: *sender,
+                    valid: key.hash == keccak256(&proof.data),
+                }
+            }
+            Work::Dkg(DkgWork::MakeShares { keys, .. }) => {
+                let pk_share = blob(self.hash());
+                let recipients = keys
+                    .keys()
+                    .map(|member| {
+                        let shares = RecipientShares {
+                            shares: blob(keccak256(
+                                [pk_share.hash.as_slice(), member.as_slice()].concat(),
+                            )),
+                            c3a: (0..3).map(|_| self.proof()).collect(),
+                            c3b: (0..3).map(|_| self.proof()).collect(),
+                        };
+                        (*member, shares)
+                    })
+                    .collect();
+                DkgWorkResult::SharesMade(OwnShares {
+                    pk_share,
+                    own_share: blob(self.hash()),
+                    c1: self.proof(),
+                    c2a: self.proof(),
+                    c2b: self.proof(),
+                    recipients,
+                })
+            }
+            Work::Dkg(DkgWork::CheckShares {
+                dealer, message, ..
+            }) => {
+                let expected = keccak256(
+                    [
+                        message.pk_share.hash.as_slice(),
+                        message.recipient.as_slice(),
+                    ]
+                    .concat(),
+                );
+                DkgWorkResult::SharesChecked {
+                    dealer: *dealer,
+                    valid: message.shares.hash == expected,
+                }
+            }
+        };
+        WorkResult::Dkg(result)
+    }
+
+    fn hash(&mut self) -> B256 {
+        B256::from(self.rng.random::<[u8; 32]>())
+    }
+
+    fn proof(&mut self) -> ZkProof {
+        ZkProof {
+            data: Bytes::from(self.rng.random::<[u8; 32]>().to_vec()),
+            public_inputs: vec![self.hash()],
         }
     }
 
@@ -295,3 +337,10 @@ impl Sim {
         self.rng.random_range(1..=self.faults.max_delay)
     }
 }
+
+fn blob(hash: B256) -> BlobRef {
+    BlobRef { hash, len: 1_000 }
+}
+
+#[cfg(test)]
+mod tests;

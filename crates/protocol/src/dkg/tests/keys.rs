@@ -4,48 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::{Dkg, DkgFailure, DkgMessage, DkgWork};
+use super::*;
 use crate::{
-    node::{Body, Effect, Input, Job, Node, Work},
+    dkg::{DkgFailure, DkgMessage, DkgWork},
+    node::{Body, ChainFact, Input, Job, Work},
     proof::ProofType,
-    testing::*,
-    Machine,
 };
-use alloy_primitives::Address;
-
-const NOW: u64 = 9_000;
-const KEY_CUTOFF: u64 = 9_100;
-
-/// A Minimum committee: three members, H = 2.
-fn committee() -> Vec<Address> {
-    [1, 2, ME].map(address).to_vec()
-}
-
-/// Operator `me`, a member whose committee was just finalized.
-fn member(me: u64) -> Node {
-    let mut node = Node::new(address(me));
-    node.step(0, requested(10, e3(1)));
-    node.step(NOW, finalized(11, e3(1), committee()));
-    node
-}
-
-fn member_with_its_key() -> Node {
-    let mut node = member(ME);
-    let effects = node.step(NOW, key_made(e3(1), own_key(0xee)));
-    node.step(NOW, sign(ME, signing(&effects)));
-    node
-}
-
-fn dkg(node: &Node) -> &Dkg {
-    node.e3(&e3(1))
-        .and_then(|state| state.dkg.as_ref())
-        .expect("the DKG started")
-}
-
-fn add_valid_key(node: &mut Node, n: u64) {
-    node.step(NOW, key_from(e3(1), n));
-    node.step(NOW, key_checked(e3(1), n, true));
-}
 
 #[test]
 fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
@@ -83,7 +47,7 @@ fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
 
 #[test]
 fn a_key_counts_only_after_its_signature_and_its_check_pass() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     let signed_by_another = key(e3(1), 1, proof(1), 2);
     assert!(node.step(NOW, signed_by_another).is_empty());
 
@@ -102,23 +66,41 @@ fn a_key_counts_only_after_its_signature_and_its_check_pass() {
 
 #[test]
 fn only_a_member_s_first_signed_key_is_checked() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     node.step(NOW, key_from(e3(1), 1));
     assert!(node.step(NOW, key(e3(1), 1, proof(0x77), 1)).is_empty());
 }
 
 #[test]
 fn key_collection_ends_once_every_member_s_key_is_valid() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     add_valid_key(&mut node, 1);
-    add_valid_key(&mut node, 2);
+    let effects = add_valid_key(&mut node, 2);
     assert!(dkg(&node).keys_collected());
-    assert_eq!(node.next_deadline(), None);
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::Run(Job {
+            work: Work::Dkg(DkgWork::MakeShares { .. }),
+            ..
+        })]
+    ));
+}
+
+#[test]
+fn key_collection_does_not_wait_for_an_expelled_member() {
+    let mut node = with_its_key(ME);
+    add_valid_key(&mut node, 1);
+    let expelled = ChainFact::MemberExpelled {
+        e3: e3(1),
+        member: address(2),
+    };
+    node.step(NOW, chain(12, expelled));
+    assert!(dkg(&node).keys_collected());
 }
 
 #[test]
 fn at_the_key_cutoff_h_valid_keys_suffice() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     add_valid_key(&mut node, 1);
     assert_eq!(node.next_deadline(), Some(KEY_CUTOFF));
     node.step(KEY_CUTOFF - 1, Input::Tick);
@@ -129,7 +111,7 @@ fn at_the_key_cutoff_h_valid_keys_suffice() {
 
 #[test]
 fn at_the_key_cutoff_fewer_than_h_valid_keys_fail() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     node.step(KEY_CUTOFF, Input::Tick);
     assert_eq!(dkg(&node).failure(), Some(DkgFailure::TooFewKeys));
 }
@@ -145,7 +127,7 @@ fn the_h_valid_keys_must_include_this_node_s_key() {
 
 #[test]
 fn a_key_still_being_checked_at_the_cutoff_does_not_count() {
-    let mut node = member_with_its_key();
+    let mut node = with_its_key(ME);
     node.step(NOW, key_from(e3(1), 1));
     node.step(KEY_CUTOFF, key_checked(e3(1), 1, true));
     assert_eq!(dkg(&node).failure(), Some(DkgFailure::TooFewKeys));
@@ -173,6 +155,8 @@ fn a_repeated_key_job_never_replaces_the_first_key() {
     let [Effect::Gossip(sent)] = effects.as_slice() else {
         panic!("one gossip, got {effects:?}");
     };
-    let Body::Dkg(DkgMessage::EncryptionKey(message)) = &sent.body;
+    let Body::Dkg(DkgMessage::EncryptionKey(message)) = &sent.body else {
+        panic!("a key, got {sent:?}");
+    };
     assert_eq!(message.key, own_key(0xee).public);
 }
