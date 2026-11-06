@@ -4,53 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{contract_domain, BlobRef, E3Id};
+use crate::{contract_domain, E3Id};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolStruct;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-/// What committee members send each other during the DKG.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DkgMessage {
-    /// A member's BFV encryption key (C0); the others encrypt their shares to it.
-    EncryptionKey(BlobRef),
-}
-
-impl DkgMessage {
-    pub(crate) fn size(&self) -> u64 {
-        match self {
-            DkgMessage::EncryptionKey(key) => key.len,
-        }
-    }
-}
-
-/// One E3's DKG, from this node's point of view.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Dkg {
-    /// The first encryption key each member sent.
-    keys: BTreeMap<Address, BlobRef>,
-}
-
-impl Dkg {
-    pub(crate) fn receive(&mut self, sender: Address, message: DkgMessage) {
-        match message {
-            DkgMessage::EncryptionKey(key) => {
-                self.keys.entry(sender).or_insert(key);
-            }
-        }
-    }
-
-    /// Drop what non-members sent before the committee was known.
-    pub(crate) fn keep_only(&mut self, members: &[Address]) {
-        self.keys
-            .retain(|sender, _| members.binary_search(sender).is_ok());
-    }
-
-    pub fn keys(&self) -> &BTreeMap<Address, BlobRef> {
-        &self.keys
-    }
-}
 
 mod typed {
     alloy_sol_types::sol! {

@@ -4,102 +4,69 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy_primitives::{Address, B256, U256};
 use e3_protocol::{
-    dkg::DkgMessage,
-    node::{Body, ChainEvent, ChainFact, FailureReason, Input, LogPosition, PeerMessage, Stage},
-    BlobRef, E3Id, UnixSecs,
+    dkg::DkgSignature,
+    node::{ChainFact, FailureReason, Input, Purpose, Signing, Stage},
+    proof::ProofType,
+    testing::{
+        address, chain, e3, finalized, key_checked, key_from, key_made, own_key, requested, sign,
+        ME,
+    },
+    UnixSecs,
 };
 use e3_sim::SimNode;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-const ME: Address = Address::repeat_byte(0xaa);
-
-fn e3(number: u64) -> E3Id {
-    E3Id {
-        chain_id: 1,
-        number: U256::from(number),
-    }
-}
-
-fn chain(block: u64, fact: ChainFact) -> Input {
-    Input::Chain(ChainEvent {
-        at: LogPosition {
-            chain_id: 1,
-            block,
-            log_index: 0,
-        },
-        fact,
-    })
-}
-
-fn key(e3: E3Id, sender: u8) -> Input {
-    Input::Peer(PeerMessage {
-        e3,
-        sender: Address::repeat_byte(sender),
-        body: Body::Dkg(DkgMessage::EncryptionKey(BlobRef {
-            hash: B256::repeat_byte(sender),
-            len: 1_000,
-        })),
-    })
-}
-
-/// Admissions, early and late keys, finalization with and without this node, both kinds of
-/// failure, completion, and the end of an accusation grace.
+/// Held, repeated, non-member, and late keys; a DKG through its key cutoff; finalization without
+/// this node; completion; and a slashable failure through the end of its grace.
 fn lifecycle() -> Vec<(UnixSecs, Input)> {
+    let own = own_key(0xee);
+    let own_key_signed = sign(
+        ME,
+        &Signing {
+            e3: e3(1),
+            purpose: Purpose::Dkg(DkgSignature::EncryptionKeyProof),
+            hash: own.proof.payload_signing_hash(e3(1), ProofType::C0PkBfv),
+        },
+    );
     vec![
         (0, chain(1, ChainFact::VoteValidity { secs: 600 })),
-        (5, key(e3(1), 1)),
-        (6, key(e3(2), 2)),
-        (10, chain(2, ChainFact::E3Requested { e3: e3(1) })),
-        (11, chain(3, ChainFact::E3Requested { e3: e3(2) })),
-        (12, chain(4, ChainFact::E3Requested { e3: e3(3) })),
-        (13, key(e3(1), 1)),
-        (14, key(e3(1), 3)),
-        (
-            20,
-            chain(
-                5,
-                ChainFact::CommitteeFinalized {
-                    e3: e3(1),
-                    members: vec![ME, Address::repeat_byte(1)],
-                },
-            ),
-        ),
-        (
-            21,
-            chain(
-                6,
-                ChainFact::CommitteeFinalized {
-                    e3: e3(3),
-                    members: vec![Address::repeat_byte(1)],
-                },
-            ),
-        ),
-        (
-            30,
-            chain(
-                7,
-                ChainFact::Failed {
-                    e3: e3(1),
-                    reason: FailureReason::DkgInvalidShares,
-                },
-            ),
-        ),
+        (5, key_from(e3(1), 1)),
+        (6, key_from(e3(2), 2)),
+        (10, requested(2, e3(1))),
+        (11, requested(3, e3(2))),
+        (12, requested(4, e3(3))),
+        (13, key_from(e3(1), 1)),
+        (14, key_from(e3(1), 3)),
+        (20, finalized(5, e3(1), [ME, 1, 2].map(address).to_vec())),
+        (21, finalized(6, e3(3), [1, 2, 3].map(address).to_vec())),
+        (22, key_made(e3(1), own)),
+        (23, own_key_signed),
+        (24, key_checked(e3(1), 1, true)),
         (
             31,
             chain(
-                8,
+                7,
                 ChainFact::StageChanged {
                     e3: e3(2),
                     stage: Stage::Complete,
                 },
             ),
         ),
-        (32, key(e3(2), 4)),
-        (33, key(e3(4), 5)),
-        (90_000, Input::Tick),
+        (32, key_from(e3(2), 4)),
+        (33, key_from(e3(4), 5)),
+        (9_100, Input::Tick),
+        (
+            9_200,
+            chain(
+                8,
+                ChainFact::Failed {
+                    e3: e3(1),
+                    reason: FailureReason::DkgInvalidShares,
+                },
+            ),
+        ),
         (200_000, Input::Tick),
     ]
 }
@@ -108,7 +75,7 @@ fn lifecycle() -> Vec<(UnixSecs, Input)> {
 fn a_node_that_crashes_at_random_steps_ends_where_an_uncrashed_node_ends() {
     for seed in 0..64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut node = SimNode::new(ME, rng.random_range(1..=4));
+        let mut node = SimNode::new(address(ME), rng.random_range(1..=4));
         for (now, input) in lifecycle() {
             if rng.random_bool(0.3) {
                 node.crash_and_restart();

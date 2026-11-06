@@ -15,6 +15,8 @@ mod ids;
 mod machine;
 pub mod node;
 pub mod proof;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use ids::{BlobRef, E3Id};
 pub use machine::{Machine, Tick, UnixSecs};

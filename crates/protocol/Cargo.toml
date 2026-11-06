@@ -6,11 +6,20 @@ license.workspace = true
 description = "Pure protocol rules of the ciphernode: machines, wire messages, and contract encodings"
 repository.workspace = true
 
+[features]
+# Input builders and operator signers for tests of the machines, here and in the simulator.
+testing = ["dep:alloy-signer", "dep:alloy-signer-local"]
+
 [dependencies]
+e3-committee = { workspace = true }
 alloy-primitives = { workspace = true, features = ["k256"] }
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+alloy-signer = { workspace = true }
+alloy-signer-local = { workspace = true }
 hex = { workspace = true }

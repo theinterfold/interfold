@@ -166,6 +166,8 @@ alloy-primitives = { version = "=1.4.1", default-features = false, features = [
   "std",
 ] }
 alloy-sol-types = "=1.4.1"
+alloy-signer = "=1.0.41"
+alloy-signer-local = "=1.0.41"
 alloy-dyn-abi = "=1.4.1"
 avail-rust-client = "=0.5.1"
 argon2 = "=0.5.3"

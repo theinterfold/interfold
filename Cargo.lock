@@ -4409,7 +4409,10 @@ name = "e3-protocol"
 version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-sol-types",
+ "e3-committee",
  "hex",
  "serde",
  "thiserror 1.0.69",

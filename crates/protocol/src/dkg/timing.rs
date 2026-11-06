@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use crate::UnixSecs;
+use serde::{Deserialize, Serialize};
+
+/// The DKG timing the request froze, read from the chain when the committee is finalized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DkgTiming {
+    /// The canonical DKG deadline.
+    pub deadline: UnixSecs,
+    /// The frozen DKG window, which ends at the deadline.
+    pub window: u64,
+}
+
+impl DkgTiming {
+    /// Encryption keys that arrive after this do not count: 10% into the window.
+    pub fn key_cutoff(&self) -> UnixSecs {
+        self.at_basis_points(1_000)
+    }
+
+    fn at_basis_points(&self, basis_points: u64) -> UnixSecs {
+        let start = self.deadline.saturating_sub(self.window);
+        let offset = (self.window.saturating_mul(basis_points) / 10_000).max(1);
+        start.saturating_add(offset).min(self.deadline)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_key_cutoff_is_a_tenth_into_the_window_at_least_a_second_and_never_past_the_deadline() {
+        let timing = |deadline, window| DkgTiming { deadline, window };
+        assert_eq!(timing(10_000, 1_000).key_cutoff(), 9_100);
+        assert_eq!(timing(10_000, 5).key_cutoff(), 9_996);
+        assert_eq!(timing(10_000, 20_000).key_cutoff(), 2_000);
+        assert_eq!(timing(10_000, 1).key_cutoff(), 10_000);
+    }
+}
