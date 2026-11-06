@@ -135,6 +135,13 @@ impl PublicKeyAggregator {
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         self.mark_started_as_aggregator(&ec)?;
+        // Warn here, once per dispatch: matching a verdict also plans the request.
+        for party_id in &no_proof_parties {
+            warn!(
+                "Party {} submitted keyshare without C1 proof — treating as dishonest",
+                party_id
+            );
+        }
 
         // Store no-proof parties in state for the response handler
         if !no_proof_parties.is_empty() {

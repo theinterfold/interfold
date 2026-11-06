@@ -145,13 +145,7 @@ impl PublicKeyAggregation {
                         signed_proofs: vec![proof.clone()],
                     });
                 }
-                None => {
-                    warn!(
-                        "Party {} submitted keyshare without C1 proof — treating as dishonest",
-                        party_id
-                    );
-                    no_proof_parties.push(*party_id);
-                }
+                None => no_proof_parties.push(*party_id),
             }
         }
 
