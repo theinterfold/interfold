@@ -175,6 +175,16 @@ Each rule is checkable in review.
   fails the DKG. The committee key's commitment is the DKG aggregation proof's last public input,
   which `BfvPkVerifier` checks, not a hash of the key bytes. A node without a prover makes
   placeholders, which only the mock verifiers of a test deployment accept.
+- **D28. An accusation carries the failing proof, and H votes slash.** A check that finds a signed
+  proof failing names it. The node accuses the signer once per proof type, in a window as long as
+  the vote validity the request snapshotted, and signs under the slashing manager the request
+  snapshotted: the Interfold's at that time, which governance replaces only with no E3 assigned. The
+  accusation carries the signed proof, so every member verifies the same bytes and votes only when
+  its own check fails. Votes count per window, and the first window with H votes, the current node's
+  quorum (the contract needs T), is submitted by the first three voters in address order, 30 seconds
+  apart; the contract takes one proposal per proof. A member whose bytes do not match a valid proof
+  is left out but not accused (D27). A completed or failed E3 stays while an accusation's window is
+  open.
 
 ## Problems in the current node, with the fix above them
 

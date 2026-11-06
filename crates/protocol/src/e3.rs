@@ -8,8 +8,9 @@
 //! from the key's publication.
 
 use crate::{
-    decryption::{Decryption, Handover, PublishedKey},
-    dkg::{AttestationContext, Dkg, DkgTiming},
+    accusation::{Accusations, Fault, Slashing, Verdict},
+    decryption::{Decryption, DecryptionWorkResult, Handover, PublishedKey},
+    dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult},
     node::{
         Body, CommitteeRequest, CryptoParams, DataRef, Effect, Kind, PeerMessage, Purpose, Stage,
         Submission, Transaction, WorkResult,
@@ -34,6 +35,10 @@ pub struct E3 {
     pub dkg: Option<Dkg>,
     /// From the key's publication on.
     pub decryption: Option<Decryption>,
+    /// From the committee's finalization on, if the request snapshotted a slashing manager.
+    accusations: Option<Accusations>,
+    /// What the request snapshotted for slashing; unknown before the node saw the facts.
+    slashing: Option<Slashing>,
     pub request: CommitteeRequest,
     ticket: Option<Ticket>,
     resend: Resend,
@@ -93,6 +98,7 @@ impl E3 {
         request: CommitteeRequest,
         committee_deadline: UnixSecs,
         slot: Option<u64>,
+        slashing: Option<Slashing>,
     ) -> Self {
         Self {
             id,
@@ -103,6 +109,8 @@ impl E3 {
             attestation,
             dkg: None,
             decryption: None,
+            accusations: None,
+            slashing,
             request,
             ticket: None,
             resend: Resend::default(),
@@ -163,6 +171,10 @@ impl E3 {
     /// come, and be appealed, even after settlement, until that release; they can need the
     /// committee's work and its blobs.
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
+        let accusations = self.accusations.as_ref().and_then(Accusations::closes_at);
+        if self.stage == Stage::Complete {
+            return Some(accusations.unwrap_or_default());
+        }
         let failure = self.failure?;
         let settles = self
             .slot
@@ -173,9 +185,15 @@ impl E3 {
         Some(failure.accusable_until.max(failure.at))
     }
 
-    /// Whether the E3 still has DKG or decryption work, which the blobs of the E3 serve.
+    /// Whether the E3 still has DKG, decryption or accusation work, which the blobs of the E3
+    /// serve.
     pub fn has_work(&self) -> bool {
-        self.dkg.is_some() || self.decryption.is_some()
+        self.dkg.is_some() || self.decryption.is_some() || self.accuses()
+    }
+
+    /// Whether an accusation's window is still open.
+    pub(crate) fn accuses(&self) -> bool {
+        self.accusations.as_ref().is_some_and(Accusations::running)
     }
 
     pub(crate) fn finalize(
@@ -189,6 +207,10 @@ impl E3 {
             .iter()
             .position(|member| *member == self.me)
             .map(|party| party as u64);
+        self.accusations = self.slashing.map(|slashing| {
+            let members = members.clone();
+            Accusations::new(self.id, self.me, self.params, members, slashing)
+        });
         let (dkg, effects) = Dkg::start(
             self.id,
             self.me,
@@ -287,30 +309,34 @@ impl E3 {
         match body {
             Body::Dkg(_) => self.dkg.is_some(),
             Body::Decryption(_) => self.decryption.is_some(),
+            Body::Accusation(_) => self.accusations.is_some(),
         }
     }
 
     /// Whether this node takes `message` now; it can tell before it fetches any blob the message
     /// names.
-    pub(crate) fn admits(&self, message: &PeerMessage) -> bool {
+    pub(crate) fn admits(&self, now: UnixSecs, message: &PeerMessage) -> bool {
         let sender = message.sender;
-        self.running()
-            && match &message.body {
-                Body::Dkg(body) => self
-                    .dkg
-                    .as_ref()
-                    .is_some_and(|dkg| dkg.admits(sender, body)),
-                Body::Decryption(body) => self
-                    .decryption
-                    .as_ref()
-                    .is_some_and(|decryption| decryption.admits(sender, body)),
-            }
+        match &message.body {
+            Body::Dkg(body) => self
+                .dkg
+                .as_ref()
+                .is_some_and(|dkg| self.running() && dkg.admits(sender, body)),
+            Body::Decryption(body) => self
+                .decryption
+                .as_ref()
+                .is_some_and(|decryption| self.running() && decryption.admits(sender, body)),
+            Body::Accusation(body) => self
+                .accusations
+                .as_ref()
+                .is_some_and(|accusations| accusations.admits(now, sender, body)),
+        }
     }
 
     /// Whether to fetch the blobs of `message`: the E3 admits it, and it is the one message of its
     /// kind from its sender that this node fetches.
-    pub(crate) fn fetches(&mut self, message: &PeerMessage) -> bool {
-        if !self.admits(message) {
+    pub(crate) fn fetches(&mut self, now: UnixSecs, message: &PeerMessage) -> bool {
+        if !self.admits(now, message) {
             return false;
         }
         let id = message.id();
@@ -332,12 +358,17 @@ impl E3 {
                 Some(decryption) => decryption.receive(now, message.sender, body),
                 None => Vec::new(),
             },
+            Body::Accusation(body) => match &mut self.accusations {
+                Some(accusations) => accusations.receive(now, message.sender, body),
+                None => Vec::new(),
+            },
         };
         self.sent(now, effects)
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: WorkResult) -> Vec<Effect> {
-        let effects = match result {
+        let fault = fault_of(&result);
+        let mut effects = match result {
             WorkResult::Dkg(result) => match self.dkg_mut() {
                 Some(dkg) => dkg.job_done(now, result),
                 None => Vec::new(),
@@ -346,8 +377,33 @@ impl E3 {
                 Some(decryption) => decryption.job_done(now, result),
                 None => Vec::new(),
             },
+            WorkResult::Accusation(result) => match &mut self.accusations {
+                Some(accusations) => accusations.verified(now, result),
+                None => Vec::new(),
+            },
         };
+        if let Some((member, fault)) = fault {
+            effects.extend(self.accuse(now, member, fault));
+        }
         self.sent(now, effects)
+    }
+
+    /// Accuse `member` of the signed proof it sent that `fault` names.
+    fn accuse(&mut self, now: UnixSecs, member: Address, fault: Fault) -> Vec<Effect> {
+        let signed = self
+            .dkg
+            .as_ref()
+            .and_then(|dkg| dkg.signed_proof(member, &fault.proof))
+            .or_else(|| {
+                let decryption = self.decryption.as_ref()?;
+                decryption.signed_proof(member, &fault.proof)
+            });
+        match (signed, &mut self.accusations) {
+            (Some(signed), Some(accusations)) => {
+                accusations.accuse(now, member, fault.proof_type, signed, fault.data_hash)
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub(crate) fn signed(
@@ -365,6 +421,10 @@ impl E3 {
                 Some(decryption) => decryption.signed(now, purpose, signatures),
                 None => Vec::new(),
             },
+            Purpose::Accusation(ballot) => match &mut self.accusations {
+                Some(accusations) => accusations.signed(now, ballot, signatures),
+                None => Vec::new(),
+            },
         };
         self.sent(now, effects)
     }
@@ -376,6 +436,9 @@ impl E3 {
         }
         if let Some(decryption) = self.decryption_mut() {
             effects.extend(decryption.expel(now, member));
+        }
+        if let Some(accusations) = &mut self.accusations {
+            accusations.expel(member);
         }
         self.sent(now, effects)
     }
@@ -404,11 +467,16 @@ impl E3 {
         if let Some(decryption) = self.decryption_mut() {
             effects.extend(decryption.pass_deadlines(now));
         }
+        if let Some(accusations) = &mut self.accusations {
+            effects.extend(accusations.pass_deadlines(now));
+        }
         let mut effects = self.sent(now, effects);
         let (dkg_runs, decryption_runs) = self.work_running();
+        let accusing = self.accuses();
         let again = self.resend.due(now, |body| match body {
             Body::Dkg(_) => dkg_runs,
             Body::Decryption(_) => decryption_runs,
+            Body::Accusation(_) => accusing,
         });
         effects.extend(again.into_iter().map(Effect::Gossip));
         effects
@@ -416,24 +484,32 @@ impl E3 {
 
     pub(crate) fn next_deadline(&self) -> Option<UnixSecs> {
         let (dkg_runs, decryption_runs) = self.work_running();
+        let accusing = self.accuses();
         let work = self.running().then(|| {
             let dkg = self.dkg.as_ref().and_then(Dkg::next_deadline);
             let decryption = self.decryption.as_ref().and_then(Decryption::next_deadline);
-            let resend = self.resend.next_deadline(|body| match body {
-                Body::Dkg(_) => dkg_runs,
-                Body::Decryption(_) => decryption_runs,
-            });
             dkg.into_iter()
                 .chain(decryption)
-                .chain(resend)
                 .chain(self.finalizer_due())
                 .chain(self.failure_due())
                 .min()
         });
-        [self.ends_at(), work.flatten(), self.settlement_due()]
-            .into_iter()
-            .flatten()
-            .min()
+        let resend = self.resend.next_deadline(|body| match body {
+            Body::Dkg(_) => dkg_runs,
+            Body::Decryption(_) => decryption_runs,
+            Body::Accusation(_) => accusing,
+        });
+        let accusations = self.accusations.as_ref().and_then(Accusations::next_deadline);
+        [
+            self.ends_at(),
+            work.flatten(),
+            resend,
+            accusations,
+            self.settlement_due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// The stage the E3 is in, and its deadline if this node watches it.
@@ -492,9 +568,10 @@ impl E3 {
         (self.running() && dkg, self.running() && decryption)
     }
 
-    /// The chain has not failed the E3; after a failure only accusation work remains.
+    /// The chain has neither failed nor completed the E3; after either, only accusation work
+    /// remains.
     fn running(&self) -> bool {
-        self.stage != Stage::Failed
+        !matches!(self.stage, Stage::Failed | Stage::Complete)
     }
 
     fn dkg_mut(&mut self) -> Option<&mut Dkg> {
@@ -505,5 +582,23 @@ impl E3 {
     fn decryption_mut(&mut self) -> Option<&mut Decryption> {
         let running = self.running();
         self.decryption.as_mut().filter(|_| running)
+    }
+}
+
+/// The member and the failing proof that a check found, if any.
+fn fault_of(result: &WorkResult) -> Option<(Address, Fault)> {
+    let (member, verdict) = match result {
+        WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked { sender, verdict }) => (sender, verdict),
+        WorkResult::Dkg(DkgWorkResult::SharesChecked { dealer, verdict }) => (dealer, verdict),
+        WorkResult::Dkg(DkgWorkResult::DecryptionKeyChecked { member, verdict })
+        | WorkResult::Dkg(DkgWorkResult::KeyshareChecked { member, verdict })
+        | WorkResult::Decryption(DecryptionWorkResult::SharesChecked { member, verdict }) => {
+            (member, verdict)
+        }
+        _ => return None,
+    };
+    match verdict {
+        Verdict::Fails(fault) => Some((*member, fault.clone())),
+        Verdict::Valid | Verdict::Invalid => None,
     }
 }

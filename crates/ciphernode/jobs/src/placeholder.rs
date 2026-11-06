@@ -11,6 +11,7 @@
 use crate::{Blobs, JobError};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use e3_protocol::{
+    accusation::Verdict,
     dkg::DkgProofs,
     proof::{ProofType, ZkProof},
 };
@@ -70,4 +71,13 @@ pub(crate) fn statements(proofs: &DkgProofs) -> Vec<u8> {
     .chain(&proofs.c4b)
     .flat_map(|proof| proof.public_inputs.iter().flat_map(|word| word.0))
     .collect()
+}
+
+/// A placeholder proves nothing, so a check that finds its commitment wrong cannot tell a bad
+/// proof from bad bytes: the message is invalid, and no one is accused.
+pub(crate) fn verdict(committed: bool) -> Verdict {
+    match committed {
+        true => Verdict::Valid,
+        false => Verdict::Invalid,
+    }
 }

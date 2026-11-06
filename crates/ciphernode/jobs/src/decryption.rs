@@ -17,6 +17,7 @@ use e3_crypto::SensitiveBytes;
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_protocol::{
+    accusation::Verdict,
     decryption::{
         DecryptionWork, DecryptionWorkResult, OwnShares, PlaintextPublication, SharesMessage,
     },
@@ -71,7 +72,7 @@ impl<B: Blobs> Jobs<'_, B> {
                 ..
             } => DecryptionWorkResult::SharesChecked {
                 member: *member,
-                valid: self.check_decryption_shares(params, ciphertext, *domain, message)?,
+                verdict: self.check_decryption_shares(params, ciphertext, *domain, message)?,
             },
             DecryptionWork::AggregatePlaintext {
                 committee,
@@ -197,34 +198,34 @@ impl<B: Blobs> Jobs<'_, B> {
         ciphertext: &BlobRef,
         domain: B256,
         message: &SharesMessage,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         if message.shares.len() != message.c6.len() {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         }
         let Some(prover) = self.prover() else {
             for (share, c6) in message.shares.iter().zip(&message.c6) {
                 let bound = [self.blobs.get(share)?.as_slice(), domain.as_slice()].concat();
                 if !placeholder::commits_to(&c6.proof, &bound) {
-                    return Ok(false);
+                    return Ok(Verdict::Invalid);
                 }
             }
-            return Ok(true);
+            return Ok(Verdict::Valid);
         };
         let ciphertexts = self.ciphertexts(ciphertext)?;
         if message.shares.len() != ciphertexts.len() {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         }
         for ((share, c6), ciphertext) in message.shares.iter().zip(&message.c6).zip(&ciphertexts) {
             let share = self.blobs.get(share)?;
             if !self.c6_binds(params, &c6.proof, ciphertext, &share, domain)? {
-                return Ok(false);
+                return Ok(Verdict::Invalid);
             }
         }
         let c6 = message
             .c6
             .iter()
             .map(|c6| (ProofType::C6ThresholdShareDecryption, &c6.proof));
-        self.verify(prover, params, c6)
+        self.verdict(prover, params, c6)
     }
 
     /// Whether a valid C6 would be about this share of this ciphertext, under this domain.

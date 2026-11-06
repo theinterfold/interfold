@@ -9,6 +9,7 @@
 //! minutes, for at most eight hours. Receivers keep the first copy, so a repeat changes nothing.
 
 use crate::{
+    accusation::{AccusationMessage, Ballot},
     decryption::DecryptionMessage,
     dkg::DkgMessage,
     node::{Body, PeerMessage},
@@ -34,6 +35,8 @@ enum Slot {
     Keyshare,
     NodeFold,
     DecryptionShares,
+    /// This node's accusation or vote in one window.
+    Accusation(Ballot),
 }
 
 impl Slot {
@@ -47,6 +50,10 @@ impl Slot {
             Body::Dkg(DkgMessage::Keyshare(_)) => Self::Keyshare,
             Body::Dkg(DkgMessage::NodeFold(_)) => Self::NodeFold,
             Body::Decryption(DecryptionMessage::Shares(_)) => Self::DecryptionShares,
+            Body::Accusation(AccusationMessage::Accuse { vote, .. })
+            | Body::Accusation(AccusationMessage::Vote(vote)) => {
+                Self::Accusation(Ballot::of(&vote.vote))
+            }
         }
     }
 }

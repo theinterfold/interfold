@@ -10,6 +10,9 @@
 pub use crate::e3::E3;
 
 use crate::{
+    accusation::{
+        AccusationMessage, AccusationWork, AccusationWorkResult, Ballot, SignedVote, Slashing,
+    },
     decryption::{
         DecryptionMessage, DecryptionSignature, DecryptionWork, DecryptionWorkResult,
         PlaintextPublication,
@@ -18,6 +21,7 @@ use crate::{
         AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
         KeyPublication,
     },
+    proof::{ProofType, ZkProof},
     registry::Registry,
     selection::{candidate_owners, candidates},
     BlobRef, E3Id, Machine, Tick, UnixSecs,
@@ -254,6 +258,7 @@ pub struct PeerMessage {
 pub enum Body {
     Dkg(DkgMessage),
     Decryption(DecryptionMessage),
+    Accusation(AccusationMessage),
 }
 
 /// What a message is, whatever it holds.
@@ -267,6 +272,8 @@ pub(crate) enum Kind {
     Keyshare,
     NodeFold,
     DecryptionShares,
+    Accusation,
+    Vote,
 }
 
 impl Body {
@@ -280,6 +287,8 @@ impl Body {
             Body::Dkg(DkgMessage::Keyshare(_)) => Kind::Keyshare,
             Body::Dkg(DkgMessage::NodeFold(_)) => Kind::NodeFold,
             Body::Decryption(DecryptionMessage::Shares(_)) => Kind::DecryptionShares,
+            Body::Accusation(AccusationMessage::Accuse { .. }) => Kind::Accusation,
+            Body::Accusation(AccusationMessage::Vote(_)) => Kind::Vote,
         }
     }
 }
@@ -298,6 +307,7 @@ impl PeerMessage {
         match &self.body {
             Body::Dkg(message) => message.blobs(),
             Body::Decryption(message) => message.blobs(),
+            Body::Accusation(message) => message.blobs(),
         }
     }
 
@@ -328,6 +338,7 @@ pub struct Job {
 pub enum Work {
     Dkg(DkgWork),
     Decryption(DecryptionWork),
+    Accusation(AccusationWork),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,6 +351,7 @@ pub struct JobDone {
 pub enum WorkResult {
     Dkg(DkgWorkResult),
     Decryption(DecryptionWorkResult),
+    Accusation(AccusationWorkResult),
 }
 
 /// Hashes for the operator key to sign. The signatures return in the same order as
@@ -355,6 +367,8 @@ pub struct Signing {
 pub enum Purpose {
     Dkg(DkgSignature),
     Decryption(DecryptionSignature),
+    /// This node's vote in an accusation's window.
+    Accusation(Ballot),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,6 +436,15 @@ pub enum Transaction {
     MarkFailed,
     /// `processE3Failure`: refunds a failed E3's requester and pays its honest members.
     SettleFailure,
+    /// `proposeSlash` at `manager`, with the votes of H members that `proof`, which `accused`
+    /// signed, fails. Another voter's proposal completes it.
+    ProposeSlash {
+        manager: Address,
+        accused: Address,
+        proof_type: ProofType,
+        proof: ZkProof,
+        votes: Vec<SignedVote>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,6 +485,8 @@ pub struct Node {
     /// logs after a restart too.
     providers: BTreeMap<u64, BTreeSet<Address>>,
     managers: BTreeMap<u64, BTreeSet<Address>>,
+    /// Each chain's current slashing manager, which a request now snapshots.
+    slashing: BTreeMap<u64, Address>,
 }
 
 impl Node {
@@ -476,6 +501,7 @@ impl Node {
             vote_validity: BTreeMap::new(),
             providers: BTreeMap::new(),
             managers: BTreeMap::new(),
+            slashing: BTreeMap::new(),
         }
     }
 
@@ -527,6 +553,12 @@ impl Node {
             } => {
                 if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
                     let slot = request_slot(registry, self.me, &request);
+                    // The request snapshots the Interfold's slashing manager and the registry's
+                    // vote validity of now.
+                    let slashing = self.slashing.get(&chain_id).map(|manager| Slashing {
+                        manager: *manager,
+                        validity: self.vote_validity.get(&chain_id).copied().unwrap_or_default(),
+                    });
                     let state = E3::new(
                         e3,
                         self.me,
@@ -536,6 +568,7 @@ impl Node {
                         request,
                         committee_deadline,
                         slot,
+                        slashing,
                     );
                     self.e3s.insert(e3, state);
                 }
@@ -612,6 +645,10 @@ impl Node {
             },
             ChainFact::StageChanged { e3, stage } => {
                 match (stage, self.e3s.get_mut(&e3)) {
+                    // Open accusations keep a completed E3 until their windows close.
+                    (Stage::Complete, Some(state)) if state.accuses() => {
+                        state.advance(stage)
+                    }
                     (Stage::Complete, _) => self.end(e3),
                     (stage, Some(state)) => state.advance(stage),
                     (_, None) => {}
@@ -661,6 +698,7 @@ impl Node {
             ChainFact::SlashingManager { manager } => {
                 let managers = self.managers.entry(event.at.chain_id).or_default();
                 managers.insert(manager);
+                self.slashing.insert(event.at.chain_id, manager);
                 Vec::new()
             }
         }
@@ -741,7 +779,7 @@ impl Node {
             Some(state) if state.routes(&message.body) => {
                 if message.blobs().is_empty() {
                     state.receive(now, message)
-                } else if state.fetches(&message) {
+                } else if state.fetches(now, &message) {
                     vec![Effect::FetchBlobs(message)]
                 } else {
                     Vec::new()
@@ -1282,6 +1320,8 @@ mod tests {
             }
             effects
         };
+        step(chain(2, ChainFact::SlashingManager { manager: address(9) }));
+        step(chain(3, ChainFact::VoteValidity { secs: 600 }));
         step(requested(10, e3(1)));
         step(finalized(11, e3(1), members([1, 2])));
         let effects = step(key_made(e3(1), own_key(0xee)));
@@ -1297,6 +1337,8 @@ mod tests {
             .expect("a recipient")
             .shares = None;
         let effects = step(shares_made(e3(1), made));
+        step(sign(ME, signing(&effects)));
+        let effects = step(key_failed(e3(1), 1, B256::repeat_byte(0xd1)));
         step(sign(ME, signing(&effects)));
         step(key_published(12, e3(1), members([1, 2]), members([1, 2])));
         step(failure(20, e3(1), FailureReason::DkgInvalidShares));
@@ -1321,9 +1363,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                5,
+                6,
                 alloy_primitives::b256!(
-                    "40c5d0e4777490b4468501d6914bd838880d53ba8b5680e3dcc85b82cc8a8312"
+                    "906c63fdca563eb9204c1f8d1590bb17a7faaf0aad2b5e563c55e32618622efa"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

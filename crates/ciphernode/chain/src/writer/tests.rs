@@ -8,7 +8,13 @@ use super::*;
 use crate::testing::contracts;
 use alloy_primitives::{address, bytes, B256};
 use e3_blobs::{BlobStore, Blobs, MemoryBlobs};
-use e3_protocol::{decryption::PlaintextPublication, dkg::KeyPublication, E3Id};
+use e3_protocol::{
+    accusation::{SignedVote, Vote},
+    decryption::PlaintextPublication,
+    dkg::KeyPublication,
+    proof::ProofType,
+    E3Id,
+};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -287,6 +293,43 @@ async fn a_committee_publishes_its_proof_then_its_key_in_chunks() {
         .flat_map(|chunk| chunk.chunk.to_vec())
         .collect();
     assert_eq!(joined, key);
+}
+
+#[tokio::test]
+async fn a_slash_goes_to_the_e3_s_manager_with_the_accused_proof_s_bytes_as_evidence() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    let manager = address!("0x00000000000000000000000000000000000000bb");
+    let accused = address!("0x00000000000000000000000000000000000000cc");
+    let proof = ZkProof {
+        data: blobs.of(E3).put(b"bad proof").unwrap(),
+        public_inputs: vec![B256::repeat_byte(2)],
+    };
+    let vote = SignedVote {
+        vote: Vote {
+            e3: E3,
+            accusation_id: B256::repeat_byte(3),
+            voter: address!("0x00000000000000000000000000000000000000dd"),
+            data_hash: B256::repeat_byte(4),
+            issued_at: 1,
+            deadline: 2,
+        },
+        signature: Bytes::from(vec![5; 65]),
+    };
+    let slash = submission(Transaction::ProposeSlash {
+        manager,
+        accused,
+        proof_type: ProofType::C2aSkShareComputation,
+        proof: proof.clone(),
+        votes: vec![vote.clone()],
+    });
+    writer(&account, &blobs).submit(&slash).await.unwrap();
+    let [(call, _)] = account.sent().try_into().unwrap();
+    assert_eq!(call.to, manager);
+    let sent = ISlashingManager::proposeSlashCall::abi_decode(&call.data).unwrap();
+    assert_eq!((sent.e3Id, sent.operator), (U256::from(7), accused));
+    let disputed = disputed_proof(b"bad proof", &proof.public_inputs);
+    let evidence = slash_evidence(ProofType::C2aSkShareComputation, &[vote], &disputed).unwrap();
+    assert_eq!(sent.proof, evidence);
 }
 
 /// The bytes that the mainnet node's encoder (`encode_dkg_attestation_bundle` in `e3-zk-prover`)

@@ -7,6 +7,7 @@
 //! Builders for tests of the protocol machines.
 
 use crate::{
+    accusation::{Fault, Verdict},
     decryption::{
         DecryptionMessage, DecryptionWorkResult, OwnShares as DecryptionOwnShares,
         PlaintextPublication, SharesMessage as DecryptionSharesMessage,
@@ -137,7 +138,7 @@ pub fn key_checked(e3: E3Id, n: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked {
             sender: address(n),
-            valid,
+            verdict: verdict(valid),
         }),
     })
 }
@@ -221,7 +222,7 @@ pub fn shares_checked(e3: E3Id, dealer: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Dkg(DkgWorkResult::SharesChecked {
             dealer: address(dealer),
-            valid,
+            verdict: verdict(valid),
         }),
     })
 }
@@ -270,7 +271,7 @@ pub fn decryption_key_checked(e3: E3Id, member: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Dkg(DkgWorkResult::DecryptionKeyChecked {
             member: address(member),
-            valid,
+            verdict: verdict(valid),
         }),
     })
 }
@@ -338,7 +339,7 @@ pub fn keyshare_checked(e3: E3Id, member: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Dkg(DkgWorkResult::KeyshareChecked {
             member: address(member),
-            valid,
+            verdict: verdict(valid),
         }),
     })
 }
@@ -458,7 +459,7 @@ pub fn decryption_shares_checked(e3: E3Id, member: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Decryption(DecryptionWorkResult::SharesChecked {
             member: address(member),
-            valid,
+            verdict: verdict(valid),
         }),
     })
 }
@@ -590,4 +591,28 @@ pub fn finalized(block: u64, e3: E3Id, members: Vec<Address>) -> Input {
             dkg: TIMING,
         },
     )
+}
+
+/// The check of operator `n`'s key, which found its C0 proof failing.
+pub fn key_failed(e3: E3Id, n: u64, data_hash: B256) -> Input {
+    let fault = Fault {
+        proof_type: ProofType::C0PkBfv,
+        proof: proof(n as u8),
+        data_hash,
+    };
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked {
+            sender: address(n),
+            verdict: Verdict::Fails(fault),
+        }),
+    })
+}
+
+/// A check's verdict that is valid or invalid without a failing proof.
+pub fn verdict(valid: bool) -> Verdict {
+    match valid {
+        true => Verdict::Valid,
+        false => Verdict::Invalid,
+    }
 }

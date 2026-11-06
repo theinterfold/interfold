@@ -18,6 +18,7 @@ mod tests;
 pub use domain::{committee_hash, decryption_domain};
 
 use crate::{
+    accusation::Verdict,
     failover::Failover,
     node::{
         Body, CryptoParams, DataRef, Effect, Fetch, Job, PeerMessage, Purpose, Signing, Submission,
@@ -83,7 +84,7 @@ pub enum DecryptionWork {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecryptionWorkResult {
     SharesMade(OwnShares),
-    SharesChecked { member: Address, valid: bool },
+    SharesChecked { member: Address, verdict: Verdict },
     PlaintextMade(PlaintextPublication),
 }
 
@@ -215,6 +216,12 @@ impl Decryption {
         self.failure.is_none()
     }
 
+    /// The proof that `member` signed and sent this node, for an accusation of it.
+    pub(crate) fn signed_proof(&self, member: Address, proof: &ZkProof) -> Option<SignedProof> {
+        let shares = self.shares_of(&member)?;
+        shares.c6.iter().find(|signed| signed.proof == *proof).cloned()
+    }
+
     pub fn shares_of(&self, member: &Address) -> Option<&SharesMessage> {
         self.shares.get(member)
     }
@@ -295,9 +302,9 @@ impl Decryption {
         }
         let mut effects = match result {
             DecryptionWorkResult::SharesMade(made) => self.shares_made(made),
-            DecryptionWorkResult::SharesChecked { member, valid } => {
+            DecryptionWorkResult::SharesChecked { member, verdict } => {
                 if let Aggregation::Checking { verdicts, .. } = &mut self.aggregation {
-                    verdicts.entry(member).or_insert(valid);
+                    verdicts.entry(member).or_insert(verdict.is_valid());
                 }
                 Vec::new()
             }

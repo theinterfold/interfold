@@ -9,8 +9,11 @@ use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolValue};
 use e3_blobs::{BlobError, BlobStore, Blobs};
 use e3_data_availability::public_key::ChunkLayout;
-use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry as Registry, IInterfold};
+use e3_evm_contracts::{
+    IBondingRegistry, ICiphernodeRegistry as Registry, IInterfold, ISlashingManager,
+};
 use e3_protocol::{
+    accusation::{disputed_proof, slash_evidence, EvidenceError},
     dkg::SignedAttestation,
     node::{Submission, Transaction},
     proof::{verifier_calldata, ZkProof},
@@ -98,6 +101,8 @@ pub trait Account {
 pub enum WriteError {
     #[error(transparent)]
     Blob(#[from] BlobError),
+    #[error(transparent)]
+    Evidence(#[from] EvidenceError),
     #[error("the committee public key has {0} bytes")]
     KeySize(usize),
 }
@@ -283,6 +288,23 @@ fn calls(
             let data = IInterfold::processE3FailureCall { e3Id: e3 };
             let not_yet = &[E3NotFailed::SELECTOR, SettlementBlocked::SELECTOR];
             vec![interfold("processE3Failure", data.abi_encode(), not_yet)]
+        }
+        // Each of the first voters can send it in turn; the contract takes one proposal for the
+        // proof, and a later one reverts, which means nothing to send.
+        Transaction::ProposeSlash {
+            manager,
+            accused,
+            proof_type,
+            proof,
+            votes,
+        } => {
+            let disputed = disputed_proof(&blobs.get(&proof.data)?, &proof.public_inputs);
+            let data = ISlashingManager::proposeSlashCall {
+                e3Id: e3,
+                operator: *accused,
+                proof: slash_evidence(*proof_type, votes, &disputed)?,
+            };
+            vec![call(*manager, "proposeSlash", data.abi_encode(), &[])]
         }
     })
 }

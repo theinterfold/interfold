@@ -8,9 +8,10 @@
 //! peers check, or placeholders, which only the mock verifiers of a test deployment accept.
 
 use crate::{trbfv, Blobs, JobError, Jobs};
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 use e3_events::Proof;
 use e3_protocol::{
+    accusation::{disputed_proof, Fault, Verdict},
     node::CryptoParams,
     proof::{ProofType, ZkProof},
     E3Id,
@@ -91,26 +92,36 @@ impl<B: Blobs> Jobs<'_, B> {
         store(&self.blobs, &proof)
     }
 
-    /// Whether every proof proves its circuit's statement. A verifier that cannot run is an
-    /// error, not an invalid proof.
-    pub(crate) fn verify<'a>(
+    /// The verdict on proofs a member signed: the first that fails, or valid. A verifier that
+    /// cannot run is an error, not a failing proof.
+    pub(crate) fn verdict<'a>(
         &self,
         prover: &Circuits,
         params: &CryptoParams,
         proofs: impl IntoIterator<Item = (ProofType, &'a ZkProof)>,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         let artifacts = self.artifacts(prover, params)?;
         for (proof_type, proof) in proofs {
-            let proof = load(&self.blobs, proof, circuit(proof_type))?;
+            let loaded = load(&self.blobs, proof, circuit(proof_type))?;
             let valid = prover
                 .prover
-                .verify_proof(&proof, &self.work("verify"), 0, &artifacts)
+                .verify_proof(&loaded, &self.work("verify"), 0, &artifacts)
                 .map_err(JobError::crypto)?;
             if !valid {
-                return Ok(false);
+                return Ok(Verdict::Fails(Fault {
+                    proof_type,
+                    proof: proof.clone(),
+                    data_hash: self.data_hash(proof)?,
+                }));
             }
         }
-        Ok(true)
+        Ok(Verdict::Valid)
+    }
+
+    /// The hash of the evidence that a slash of `proof` carries, which votes sign.
+    pub(crate) fn data_hash(&self, proof: &ZkProof) -> Result<B256, JobError> {
+        let bytes = self.blobs.get(&proof.data)?;
+        Ok(keccak256(disputed_proof(&bytes, &proof.public_inputs)))
     }
 
     /// The directory of the request's compiled circuits.

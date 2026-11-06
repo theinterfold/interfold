@@ -8,6 +8,7 @@
 //! into one store that the network adapter shares; a secret is stored sealed with the node's
 //! cipher, so the machine and its journal only ever hold a reference to ciphertext.
 
+mod accusation;
 mod decryption;
 mod dkg;
 mod placeholder;
@@ -103,6 +104,9 @@ impl<S: BlobStore> JobRunner<S> {
             Work::Decryption(work) => jobs
                 .run_decryption(&job.params, work)
                 .map(WorkResult::Decryption),
+            Work::Accusation(work) => jobs
+                .run_accusation(&job.params, work)
+                .map(WorkResult::Accusation),
         }
     }
 }

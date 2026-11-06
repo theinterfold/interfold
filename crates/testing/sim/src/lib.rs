@@ -27,7 +27,7 @@ use e3_protocol::{
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct SimNode {
     operator: u64,
@@ -242,6 +242,17 @@ impl<J: Jobs> Sim<J> {
         self.requests.get(e3)?.committee.as_deref()
     }
 
+    /// The members that slashes expelled from `e3`'s committee.
+    pub fn expelled(&self, e3: &E3Id) -> Option<&BTreeSet<Address>> {
+        Some(&self.requests.get(e3)?.expelled)
+    }
+
+    pub fn key_published(&self, e3: &E3Id) -> bool {
+        self.requests
+            .get(e3)
+            .is_some_and(|request| request.key_published)
+    }
+
     fn confirm(&mut self) {
         while let Some(entry) = self.confirming.first_entry() {
             if *entry.key() > self.now {
@@ -399,6 +410,16 @@ impl<J: Jobs> Sim<J> {
             Transaction::SettleFailure => (request.failed
                 && !std::mem::replace(&mut request.settled, true))
             .then_some(ChainFact::FailureSettled { e3 }),
+            // The slashing manager takes T votes; this policy expels the member.
+            Transaction::ProposeSlash { accused, votes, .. } => {
+                let quorum = request.params.committee_size.values().threshold;
+                (votes.len() >= quorum && request.expelled.insert(*accused)).then_some(
+                    ChainFact::MemberExpelled {
+                        e3,
+                        member: *accused,
+                    },
+                )
+            }
         };
         let ciphertext = match (&fact, &submission.transaction) {
             (Some(_), Transaction::PublishCommittee(publication)) => {
@@ -471,6 +492,8 @@ struct Request {
     timeout: (UnixSecs, FailureReason),
     failed: bool,
     settled: bool,
+    /// The members a slash expelled.
+    expelled: BTreeSet<Address>,
 }
 
 impl Request {
@@ -488,6 +511,7 @@ impl Request {
             timeout: (committee_deadline, FailureReason::CommitteeFormationTimeout),
             failed: false,
             settled: false,
+            expelled: BTreeSet::new(),
         }
     }
 

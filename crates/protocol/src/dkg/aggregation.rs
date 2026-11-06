@@ -32,7 +32,7 @@ const PUBLIC_KEY_BUDGET: UnixSecs = 40 * 60;
 pub(super) struct Aggregation {
     /// The first signed keyshare of each member. Before the roster is known every member's are
     /// kept; only roster members' count.
-    keyshares: BTreeMap<Address, KeyshareMessage>,
+    pub(super) keyshares: BTreeMap<Address, KeyshareMessage>,
     /// The first attested fold of each member, kept the same way.
     folds: BTreeMap<Address, NodeFoldMessage>,
     failover: Failover,

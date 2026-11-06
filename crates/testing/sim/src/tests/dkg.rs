@@ -190,7 +190,8 @@ fn no_member_sends_two_different_keys_or_shares() {
                         | DkgMessage::Keyshare(_)
                         | DkgMessage::NodeFold(_),
                     )
-                    | Body::Decryption(_) => {}
+                    | Body::Decryption(_)
+                    | Body::Accusation(_) => {}
                 }
             }
             assert_eq!(

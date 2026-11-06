@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use super::*;
+
+fn e3() -> E3Id {
+    E3Id {
+        chain_id: 31337,
+        number: U256::from(42),
+    }
+}
+
+fn address(text: &str) -> Address {
+    text.parse().unwrap()
+}
+
+#[test]
+fn vote_hash_matches_the_independent_eip712_vector() {
+    let accusation = accusation_id(
+        e3(),
+        address("0x1111111111111111111111111111111111111111"),
+        ProofType::C0PkBfv,
+    );
+    assert_eq!(
+        accusation,
+        "0x4511f8ed6c3d679b420f7632b2e7603a3efc8a630e779ce7260a15e4b92dca96"
+            .parse::<B256>()
+            .unwrap()
+    );
+    let vote = Vote {
+        e3: e3(),
+        accusation_id: accusation,
+        voter: address("0x2222222222222222222222222222222222222222"),
+        data_hash: B256::repeat_byte(0xab),
+        issued_at: 1_000,
+        deadline: 2_800,
+    };
+    assert_eq!(
+        vote.signing_hash(address("0x9999999999999999999999999999999999999999")),
+        "0xcb216d9b5829c294d91eb7a47e64aec925818d691097005aa78e844591667545"
+            .parse::<B256>()
+            .unwrap()
+    );
+}
+
+fn signed(voter: &str, fill: u8) -> SignedVote {
+    SignedVote {
+        vote: Vote {
+            e3: e3(),
+            accusation_id: B256::repeat_byte(0x01),
+            voter: address(voter),
+            data_hash: B256::repeat_byte(fill),
+            issued_at: 1_000,
+            deadline: 2_800,
+        },
+        signature: Bytes::from(vec![fill; 65]),
+    }
+}
+
+#[test]
+fn slash_evidence_matches_the_current_node() {
+    let votes = [
+        signed("0x2222222222222222222222222222222222222222", 0xaa),
+        signed("0x2111111111111111111111111111111111111111", 0xbb),
+    ];
+    let expected = hex::decode(concat!(
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "00000000000000000000000000000000000000000000000000000000000000e0",
+        "0000000000000000000000000000000000000000000000000000000000000140",
+        "00000000000000000000000000000000000000000000000000000000000001a0",
+        "00000000000000000000000000000000000000000000000000000000000003e8",
+        "0000000000000000000000000000000000000000000000000000000000000af0",
+        "0000000000000000000000000000000000000000000000000000000000000200",
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "0000000000000000000000002111111111111111111111111111111111111111",
+        "0000000000000000000000002222222222222222222222222222222222222222",
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "0000000000000000000000000000000000000000000000000000000000000028",
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        "5555555555555555000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "0000000000000000000000000000000000000000000000000000000000000040",
+        "00000000000000000000000000000000000000000000000000000000000000c0",
+        "0000000000000000000000000000000000000000000000000000000000000041",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bb00000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000041",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "aa00000000000000000000000000000000000000000000000000000000000000",
+    ))
+    .unwrap();
+    assert_eq!(
+        slash_evidence(ProofType::C1PkGeneration, &votes, &[0x55; 40]).unwrap(),
+        Bytes::from(expected)
+    );
+}
+
+#[test]
+fn slash_evidence_needs_votes_and_the_disputed_proof() {
+    let votes = [signed("0x2222222222222222222222222222222222222222", 0xaa)];
+    assert_eq!(
+        slash_evidence(ProofType::C1PkGeneration, &[], &[0x55; 40]),
+        Err(EvidenceError::NoVotes)
+    );
+    assert_eq!(
+        slash_evidence(ProofType::C1PkGeneration, &votes, &[]),
+        Err(EvidenceError::NoProofBytes)
+    );
+}
+
+mod cases {
+    use super::super::{AccusationMessage, AccusationWorkResult};
+    use crate::{
+        accusation::{accusation_id, SignedVote, Vote},
+        node::{
+            Body, ChainFact, Effect, Input, JobDone, Node, PeerMessage, Purpose, Stage,
+            Submission, Transaction, Work, WorkResult,
+        },
+        proof::{ProofType, SignedProof},
+        testing::*,
+        Machine,
+    };
+    use alloy_primitives::{Address, B256};
+
+    const MANAGER: Address = Address::repeat_byte(0x5a);
+    const VALIDITY: u64 = 600;
+    const NOW: u64 = 1_000;
+
+    /// Operator `me` in the committee of operators 1, 2, and `me`, whose request snapshotted the
+    /// slashing manager, with operator 1's key received.
+    fn member(me: u64) -> Node {
+        member_of(me, &[1, 2])
+    }
+
+    fn member_of(me: u64, others: &[u64]) -> Node {
+        let mut node = Node::new(address(me));
+        node.step(0, chain(2, ChainFact::SlashingManager { manager: MANAGER }));
+        node.step(0, chain(3, ChainFact::VoteValidity { secs: VALIDITY }));
+        node.step(0, requested(10, e3(1)));
+        let mut members: Vec<Address> = others.iter().chain([&me]).map(|n| address(*n)).collect();
+        members.sort();
+        node.step(0, finalized(11, e3(1), members));
+        node.step(NOW, key_from(e3(1), 1));
+        node
+    }
+
+    fn data_hash(n: u64) -> B256 {
+        B256::repeat_byte(0xd0 + n as u8)
+    }
+
+    /// Operator 1's C0 proof, signed by `signer`.
+    fn key_proof(signer: u64) -> SignedProof {
+        let proof = proof(1);
+        let hash = proof.payload_signing_hash(e3(1), ProofType::C0PkBfv);
+        SignedProof {
+            signature: signature(signer, hash),
+            proof,
+        }
+    }
+
+    fn vote(voter: u64, issued_at: u64) -> SignedVote {
+        let vote = Vote {
+            e3: e3(1),
+            accusation_id: accusation_id(e3(1), address(1), ProofType::C0PkBfv),
+            voter: address(voter),
+            data_hash: data_hash(1),
+            issued_at,
+            deadline: issued_at + VALIDITY,
+        };
+        let signature = signature(voter, vote.signing_hash(MANAGER));
+        SignedVote { vote, signature }
+    }
+
+    fn from(sender: u64, message: AccusationMessage) -> Input {
+        Input::Peer(PeerMessage {
+            e3: e3(1),
+            sender: address(sender),
+            body: Body::Accusation(message),
+        })
+    }
+
+    /// Operator `accuser`'s accusation of operator 1's key, issued at `issued_at`.
+    fn accusation(accuser: u64, issued_at: u64, signer: u64) -> Input {
+        from(
+            accuser,
+            AccusationMessage::Accuse {
+                accused: address(1),
+                proof_type: ProofType::C0PkBfv,
+                proof: key_proof(signer),
+                vote: vote(accuser, issued_at),
+            },
+        )
+    }
+
+    fn verified(fails: bool) -> Input {
+        Input::Job(JobDone {
+            e3: e3(1),
+            result: WorkResult::Accusation(AccusationWorkResult::Verified {
+                proof: proof(1),
+                fails,
+                data_hash: data_hash(1),
+            }),
+        })
+    }
+
+    fn gossiped(effects: &[Effect]) -> Vec<&AccusationMessage> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Gossip(PeerMessage {
+                    body: Body::Accusation(message),
+                    ..
+                }) => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn slashes(effects: &[Effect]) -> Vec<(Address, usize)> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Submit(Submission {
+                    transaction:
+                        Transaction::ProposeSlash {
+                            manager,
+                            accused,
+                            votes,
+                            ..
+                        },
+                    ..
+                }) => {
+                    assert_eq!(*manager, MANAGER);
+                    Some((*accused, votes.len()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_member_whose_signed_proof_fails_is_accused_with_the_proof_and_the_accuser_s_vote() {
+        let mut node = member(ME);
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        let signing = signing(&effects);
+        assert_eq!(signing.hashes, [vote(ME, NOW).vote.signing_hash(MANAGER)]);
+        assert!(matches!(signing.purpose, Purpose::Accusation(_)));
+
+        let effects = node.step(NOW, sign(ME, signing));
+        let [AccusationMessage::Accuse {
+            accused,
+            proof_type,
+            proof,
+            vote: signed,
+        }] = gossiped(&effects)[..]
+        else {
+            panic!("one accusation, got {effects:?}");
+        };
+        assert_eq!((*accused, *proof_type), (address(1), ProofType::C0PkBfv));
+        assert_eq!(*proof, key_proof(1));
+        assert_eq!(*signed, vote(ME, NOW));
+    }
+
+    #[test]
+    fn a_member_votes_for_an_accusation_once_its_own_check_of_the_proof_fails() {
+        let mut node = member(ME);
+        let effects = node.step(NOW, accusation(2, NOW, 1));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Run(job) if matches!(job.work, Work::Accusation(_))
+        )));
+
+        let effects = node.step(NOW, verified(true));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        assert_eq!(
+            gossiped(&effects),
+            [&AccusationMessage::Vote(vote(ME, NOW))]
+        );
+    }
+
+    #[test]
+    fn a_proof_that_verifies_gets_no_vote() {
+        let mut node = member(ME);
+        node.step(NOW, accusation(2, NOW, 1));
+        assert!(node.step(NOW, verified(false)).is_empty());
+    }
+
+    #[test]
+    fn an_accusation_counts_only_with_the_accused_s_signature_on_the_proof() {
+        let mut node = member(ME);
+        assert!(node.step(NOW, accusation(2, NOW, 2)).is_empty());
+    }
+
+    #[test]
+    fn h_votes_in_one_window_go_to_the_slashing_manager_from_the_first_voters_in_turn() {
+        // H is two for the Minimum committee: the accuser's vote and this node's.
+        let mut node = member(ME);
+        node.step(NOW, accusation(2, NOW, 1));
+        let effects = node.step(NOW, verified(true));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        let first = address(2).min(address(ME)) == address(ME);
+        match first {
+            true => assert_eq!(slashes(&effects), [(address(1), 2)]),
+            false => {
+                assert!(slashes(&effects).is_empty());
+                let later = node.step(NOW + 30, Input::Tick);
+                assert_eq!(slashes(&later), [(address(1), 2)]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_vote_that_comes_before_its_accusation_counts_once_the_accusation_arrives() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        node.step(NOW, from(3, AccusationMessage::Vote(vote(3, NOW))));
+        node.step(NOW, accusation(2, NOW, 1));
+        let effects = node.step(NOW, verified(true));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        let later = node.step(NOW + 60, Input::Tick);
+        let slashes: Vec<_> = slashes(&effects).into_iter().chain(slashes(&later)).collect();
+        assert_eq!(slashes, [(address(1), 3)]);
+    }
+
+    #[test]
+    fn a_completed_e3_stays_until_its_accusations_close() {
+        let mut node = member(ME);
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        node.step(NOW, sign(ME, signing(&effects)));
+        node.step(
+            NOW,
+            chain(
+                20,
+                ChainFact::StageChanged {
+                    e3: e3(1),
+                    stage: Stage::Complete,
+                },
+            ),
+        );
+        assert!(node.e3(&e3(1)).is_some());
+        node.step(NOW + VALIDITY + 1, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
+    }
+}

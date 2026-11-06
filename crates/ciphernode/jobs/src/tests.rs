@@ -13,6 +13,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
 use e3_fhe_params::BfvPreset;
 use e3_protocol::{
+    accusation::Verdict,
     decryption::{DecryptionWork, DecryptionWorkResult, SharesMessage as DecryptionShares},
     dkg::{DkgWork, DkgWorkResult, KeyshareMessage, OwnKey, OwnShares, SharesMessage},
     node::{CryptoParams, Job, Work, WorkResult},
@@ -101,7 +102,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             checked,
             DkgWorkResult::EncryptionKeyChecked {
                 sender: members[0],
-                valid: true
+                verdict: Verdict::Valid
             }
         );
         let _ = key;
@@ -152,7 +153,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         checked,
         DkgWorkResult::SharesChecked {
             dealer: members[0],
-            valid: true
+            verdict: Verdict::Valid
         }
     );
     let swapped = SharesMessage {
@@ -172,7 +173,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         tampered,
         DkgWorkResult::SharesChecked {
             dealer: members[0],
-            valid: false
+            verdict: Verdict::Invalid
         }
     );
 
@@ -224,7 +225,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             checked,
             DkgWorkResult::KeyshareChecked {
                 member: members[0],
-                valid: true
+                verdict: Verdict::Valid
             }
         );
     }
@@ -284,7 +285,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             checked,
             DecryptionWorkResult::SharesChecked {
                 member: *member,
-                valid: true
+                verdict: Verdict::Valid
             }
         );
     }
@@ -344,7 +345,7 @@ async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_chec
         checked,
         DkgWorkResult::EncryptionKeyChecked {
             sender: Address::ZERO,
-            valid: false
+            verdict: Verdict::Invalid
         }
     );
 }

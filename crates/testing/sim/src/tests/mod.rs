@@ -7,12 +7,13 @@
 //! Properties of v2 nodes under crashes, lag, and network faults. They live in the library so that
 //! the repository's `--lib` test runs include them.
 
+mod accusations;
 mod crashes;
 mod decryption;
 mod dkg;
 
 use crate::{Faults, Jobs, MockJobs, Sim};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::{ChainFact, CommitteeSeed},
@@ -38,6 +39,10 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
     let operators: Vec<u64> = (1..=size.values().n as u64 + 1).collect();
     let mut sim = Sim::with_jobs(seed, &operators, FAULTS, jobs);
     sim.set_chain_lag(0, 30);
+    // A request snapshots the slashing manager and the vote validity, which accusations use.
+    let manager = Address::repeat_byte(0x5a);
+    sim.chain(0, ChainFact::SlashingManager { manager });
+    sim.chain(0, ChainFact::VoteValidity { secs: 3_600 });
     for operator in operators.iter().map(|operator| address(*operator)) {
         sim.chain(
             0,

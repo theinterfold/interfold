@@ -21,6 +21,7 @@ pub use attestation::{AttestationContext, FoldAttestation};
 pub use timing::DkgTiming;
 
 use crate::{
+    accusation::Verdict,
     node::{Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Work},
     proof::{SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
@@ -249,13 +250,13 @@ pub enum DkgWork {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DkgWorkResult {
     EncryptionKeyMade(OwnKey),
-    EncryptionKeyChecked { sender: Address, valid: bool },
+    EncryptionKeyChecked { sender: Address, verdict: Verdict },
     SharesMade(OwnShares),
-    SharesChecked { dealer: Address, valid: bool },
+    SharesChecked { dealer: Address, verdict: Verdict },
     DecryptionKeyMade(OwnDecryptionKey),
-    DecryptionKeyChecked { member: Address, valid: bool },
+    DecryptionKeyChecked { member: Address, verdict: Verdict },
     ProofsFolded(NodeFold),
-    KeyshareChecked { member: Address, valid: bool },
+    KeyshareChecked { member: Address, verdict: Verdict },
     KeyAggregated(AggregatedKey),
 }
 
@@ -529,18 +530,20 @@ impl Dkg {
         }
         let mut effects = match result {
             DkgWorkResult::EncryptionKeyMade(own) => self.key_made(own),
-            DkgWorkResult::EncryptionKeyChecked { sender, valid } => {
-                self.key_checked(sender, valid)
+            DkgWorkResult::EncryptionKeyChecked { sender, verdict } => {
+                self.key_checked(sender, verdict.is_valid())
             }
             DkgWorkResult::SharesMade(made) => self.shares_made(made),
-            DkgWorkResult::SharesChecked { dealer, valid } => self.shares_checked(dealer, valid),
+            DkgWorkResult::SharesChecked { dealer, verdict } => {
+                self.shares_checked(dealer, verdict.is_valid())
+            }
             DkgWorkResult::DecryptionKeyMade(made) => self.decryption_key_made(made),
-            DkgWorkResult::DecryptionKeyChecked { member, valid } => {
-                self.decryption_key_checked(member, valid)
+            DkgWorkResult::DecryptionKeyChecked { member, verdict } => {
+                self.decryption_key_checked(member, verdict.is_valid())
             }
             DkgWorkResult::ProofsFolded(fold) => self.proofs_folded(fold),
-            DkgWorkResult::KeyshareChecked { member, valid } => {
-                self.keyshare_checked(member, valid);
+            DkgWorkResult::KeyshareChecked { member, verdict } => {
+                self.keyshare_checked(member, verdict.is_valid());
                 Vec::new()
             }
             DkgWorkResult::KeyAggregated(key) => self.key_aggregated(key),
@@ -675,6 +678,30 @@ impl Dkg {
             purpose: Purpose::Dkg(purpose),
             hashes,
         })
+    }
+
+    /// The proof that `member` signed and sent this node, for an accusation of it.
+    pub(crate) fn signed_proof(&self, member: Address, proof: &ZkProof) -> Option<SignedProof> {
+        let key = self.keys.received.get(&member).map(|key| &key.proof);
+        let shares = self.shares.received.get(&member).into_iter().flat_map(|shares| {
+            [&shares.c2a, &shares.c2b]
+                .into_iter()
+                .chain(&shares.c3a)
+                .chain(&shares.c3b)
+        });
+        let decryption_key = self
+            .decryption_keys
+            .received
+            .get(&member)
+            .into_iter()
+            .flat_map(|key| std::iter::once(&key.c4a).chain(&key.c4b));
+        let keyshare = self.aggregation.keyshares.get(&member).map(|keyshare| &keyshare.c1);
+        key.into_iter()
+            .chain(shares)
+            .chain(decryption_key)
+            .chain(keyshare)
+            .find(|signed| signed.proof == *proof)
+            .cloned()
     }
 
     fn gossip(&self, message: DkgMessage) -> Effect {

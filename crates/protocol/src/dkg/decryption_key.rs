@@ -27,7 +27,7 @@ use std::{collections::BTreeMap, iter};
 pub(super) struct DecryptionKeys {
     /// The first signed C4 proofs of each member. Before the roster is known every member's are
     /// kept; afterwards only roster members' count.
-    received: BTreeMap<Address, DecryptionKeyMessage>,
+    pub(super) received: BTreeMap<Address, DecryptionKeyMessage>,
     /// Each roster member's C4 verdict.
     checked: BTreeMap<Address, bool>,
     /// The roster dealers' C2 proofs, which every C4 binds; fixed with the roster.

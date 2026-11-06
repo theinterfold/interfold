@@ -17,6 +17,7 @@ use e3_crypto::SensitiveBytes;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_protocol::{
+    accusation::Verdict,
     dkg::{
         AggregatedKey, DecryptionKeyMessage, DkgProofs, DkgWork, DkgWorkResult, KeyshareMessage,
         NodeFold, OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
@@ -80,7 +81,7 @@ impl<B: Blobs> Jobs<'_, B> {
             DkgWork::CheckEncryptionKey { sender, key, proof } => {
                 DkgWorkResult::EncryptionKeyChecked {
                     sender: *sender,
-                    valid: self.check_encryption_key(params, key, proof)?,
+                    verdict: self.check_encryption_key(params, key, proof)?,
                 }
             }
             DkgWork::MakeShares {
@@ -98,7 +99,7 @@ impl<B: Blobs> Jobs<'_, B> {
                 message,
             } => DkgWorkResult::SharesChecked {
                 dealer: *dealer,
-                valid: self.check_shares(params, committee, secret, message)?,
+                verdict: self.check_shares(params, committee, secret, message)?,
             },
             DkgWork::MakeDecryptionKey {
                 member,
@@ -116,7 +117,7 @@ impl<B: Blobs> Jobs<'_, B> {
                 message,
             } => DkgWorkResult::DecryptionKeyChecked {
                 member: *member,
-                valid: self.check_decryption_key(params, *member, committee, c2, message)?,
+                verdict: self.check_decryption_key(params, *member, committee, c2, message)?,
             },
             DkgWork::FoldProofs {
                 member,
@@ -127,7 +128,7 @@ impl<B: Blobs> Jobs<'_, B> {
                 member, keyshare, ..
             } => DkgWorkResult::KeyshareChecked {
                 member: *member,
-                valid: self.check_keyshare(params, keyshare)?,
+                verdict: self.check_keyshare(params, keyshare)?,
             },
             DkgWork::AggregateKey {
                 committee,
@@ -174,14 +175,14 @@ impl<B: Blobs> Jobs<'_, B> {
         params: &CryptoParams,
         key: &BlobRef,
         proof: &ZkProof,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         let bfv = trbfv::dkg_params(params)?;
         let bytes = self.blobs.get(key)?;
         if PublicKey::from_bytes(&bytes, &bfv).is_err() {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         }
         let Some(prover) = self.prover() else {
-            return Ok(placeholder::commits_to(proof, &bytes));
+            return Ok(placeholder::verdict(placeholder::commits_to(proof, &bytes)));
         };
         // A valid proof counts only for the key bytes it commits to.
         let commitment = compute_dkg_pk_commitment_from_public_key_bytes(
@@ -190,9 +191,12 @@ impl<B: Blobs> Jobs<'_, B> {
         )
         .ok()
         .map(B256::from);
-        let bound = commitment.is_some()
-            && proofs::field(proof, CircuitName::PkBfv, "pk_commitment") == commitment;
-        Ok(bound && self.verify(prover, params, [(ProofType::C0PkBfv, proof)])?)
+        if commitment.is_none()
+            || proofs::field(proof, CircuitName::PkBfv, "pk_commitment") != commitment
+        {
+            return Ok(Verdict::Invalid);
+        }
+        self.verdict(prover, params, [(ProofType::C0PkBfv, proof)])
     }
 
     /// Generate this dealer's public-key share and its secret-key and smudging-noise shares, and
@@ -491,15 +495,15 @@ impl<B: Blobs> Jobs<'_, B> {
         committee: &[Address],
         secret: &BlobRef,
         message: &SharesMessage,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         let bytes = self.blobs.get(&message.shares)?;
         let dkg = trbfv::dkg_params(params)?;
         let key = self.secret_key(&dkg, secret)?;
         let Ok(ciphertexts) = bincode::deserialize::<RecipientCiphertexts>(&bytes) else {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         };
         let Ok(shares) = decrypt_shares(&key, &dkg, &ciphertexts) else {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         };
         let c3 = message
             .c3a
@@ -512,17 +516,20 @@ impl<B: Blobs> Jobs<'_, B> {
                     .map(|c3| (ProofType::C3bESmShareEncryption, &c3.proof)),
             );
         let Some(prover) = self.prover() else {
-            return Ok(c3
+            let committed = c3
                 .into_iter()
-                .all(|(_, proof)| placeholder::commits_to(proof, &bytes)));
+                .all(|(_, proof)| placeholder::commits_to(proof, &bytes));
+            return Ok(placeholder::verdict(committed));
         };
         let party = trbfv::party(committee, message.recipient)?;
+        if !self.dealt_as_committed(params, party, &shares, message)? {
+            return Ok(Verdict::Invalid);
+        }
         let c2 = [
             (ProofType::C2aSkShareComputation, &message.c2a.proof),
             (ProofType::C2bESmShareComputation, &message.c2b.proof),
         ];
-        Ok(self.dealt_as_committed(params, party, &shares, message)?
-            && self.verify(prover, params, c2.into_iter().chain(c3))?)
+        self.verdict(prover, params, c2.into_iter().chain(c3))
     }
 
     /// Whether the shares this node decrypted are the ones the dealer's C2 proofs commit to for
@@ -802,19 +809,19 @@ impl<B: Blobs> Jobs<'_, B> {
         committee: &[Address],
         c2: &BTreeMap<Address, (ZkProof, ZkProof)>,
         message: &DecryptionKeyMessage,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         let Some(prover) = self.prover() else {
-            return Ok(true);
+            return Ok(Verdict::Valid);
         };
+        if !self.sums_committed_shares(params, member, committee, c2, message)? {
+            return Ok(Verdict::Invalid);
+        }
         let c4b = message
             .c4b
             .iter()
             .map(|c4b| (ProofType::C4bESmShareDecryption, &c4b.proof));
         let c4a = (ProofType::C4aSkShareDecryption, &message.c4a.proof);
-        Ok(
-            self.sums_committed_shares(params, member, committee, c2, message)?
-                && self.verify(prover, params, std::iter::once(c4a).chain(c4b))?,
-        )
+        self.verdict(prover, params, std::iter::once(c4a).chain(c4b))
     }
 
     /// Whether a member's C4 proofs take, for each roster dealer, the share commitments that
@@ -849,23 +856,26 @@ impl<B: Blobs> Jobs<'_, B> {
         &self,
         params: &CryptoParams,
         keyshare: &KeyshareMessage,
-    ) -> Result<bool, JobError> {
+    ) -> Result<Verdict, JobError> {
         let bytes = self.blobs.get(&keyshare.pk_share)?;
         let bfv = trbfv::threshold_params(params)?;
         if PublicKeyShare::deserialize(&bytes, &bfv, trbfv::crp_poly(params)?).is_err() {
-            return Ok(false);
+            return Ok(Verdict::Invalid);
         }
         let c1 = &keyshare.c1.proof;
         let Some(prover) = self.prover() else {
-            return Ok(placeholder::commits_to(c1, &bytes));
+            return Ok(placeholder::verdict(placeholder::commits_to(c1, &bytes)));
         };
         let crp = trbfv::crp_poly(params)?;
         let commitment = compute_pk_commitment_from_keyshare_bytes(&bytes, &bfv, &crp)
             .ok()
             .map(B256::from);
-        let bound = commitment.is_some()
-            && proofs::field(c1, CircuitName::PkGeneration, "pk_commitment") == commitment;
-        Ok(bound && self.verify(prover, params, [(ProofType::C1PkGeneration, c1)])?)
+        if commitment.is_none()
+            || proofs::field(c1, CircuitName::PkGeneration, "pk_commitment") != commitment
+        {
+            return Ok(Verdict::Invalid);
+        }
+        self.verdict(prover, params, [(ProofType::C1PkGeneration, c1)])
     }
 
     /// Sum the roster's public-key shares into the committee key. Its proof, which

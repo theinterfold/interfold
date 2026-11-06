@@ -6,6 +6,7 @@
 
 use alloy_primitives::{keccak256, Address, B256};
 use e3_protocol::{
+    accusation::{AccusationWork, AccusationWorkResult, Fault, Verdict},
     decryption::{
         DecryptionWork, DecryptionWorkResult, OwnShares as DecryptionShares, PlaintextPublication,
     },
@@ -14,7 +15,7 @@ use e3_protocol::{
         RecipientShares,
     },
     node::{CryptoParams, Job, Work, WorkResult},
-    proof::ZkProof,
+    proof::{ProofType, ZkProof},
     BlobRef, E3Id,
 };
 use rand::{Rng, SeedableRng};
@@ -30,12 +31,26 @@ pub trait Jobs {
 
 pub struct MockJobs {
     rng: ChaCha8Rng,
+    /// A dealer whose C2a proof fails.
+    faulty: Option<Address>,
 }
+
+/// The statement of a mock proof that fails its check.
+const FAILS: B256 = B256::repeat_byte(0xfa);
 
 impl MockJobs {
     pub fn new(seed: u64) -> Self {
         Self {
             rng: ChaCha8Rng::seed_from_u64(seed),
+            faulty: None,
+        }
+    }
+
+    /// Mock jobs in which `dealer` deals with a C2a proof that fails.
+    pub fn with_faulty(seed: u64, dealer: Address) -> Self {
+        Self {
+            faulty: Some(dealer),
+            ..Self::new(seed)
         }
     }
 }
@@ -68,7 +83,7 @@ impl MockJobs {
             Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
                 DkgWorkResult::EncryptionKeyChecked {
                     sender: *sender,
-                    valid: key.hash == keccak256(proof.data.hash),
+                    verdict: verdict(key.hash == keccak256(proof.data.hash)),
                 }
             }
             Work::Dkg(DkgWork::MakeShares {
@@ -77,6 +92,7 @@ impl MockJobs {
                 keys,
                 ..
             }) => {
+                let fails = self.faulty == Some(*dealer);
                 let pk_share = blob(self.hash());
                 let recipients = committee
                     .iter()
@@ -103,7 +119,13 @@ impl MockJobs {
                     pk_share,
                     own_share: blob(self.hash()),
                     c1,
-                    c2a: self.proof(),
+                    c2a: match fails {
+                        true => ZkProof {
+                            public_inputs: vec![FAILS],
+                            ..self.proof()
+                        },
+                        false => self.proof(),
+                    },
                     c2b: self.proof(),
                     recipients,
                 })
@@ -120,7 +142,13 @@ impl MockJobs {
                 );
                 DkgWorkResult::SharesChecked {
                     dealer: *dealer,
-                    valid: message.shares.hash == expected,
+                    verdict: match message.c2a.proof.public_inputs == [FAILS] {
+                        true => Verdict::Fails(fault(
+                            ProofType::C2aSkShareComputation,
+                            &message.c2a.proof,
+                        )),
+                        false => verdict(message.shares.hash == expected),
+                    },
                 }
             }
             Work::Dkg(DkgWork::MakeDecryptionKey { c2, .. }) => {
@@ -141,7 +169,7 @@ impl MockJobs {
                 ..
             }) => DkgWorkResult::DecryptionKeyChecked {
                 member: *member,
-                valid: message.c4a.proof.public_inputs == [c2_commitment(c2)],
+                verdict: verdict(message.c4a.proof.public_inputs == [c2_commitment(c2)]),
             },
             Work::Dkg(DkgWork::FoldProofs { .. }) => DkgWorkResult::ProofsFolded(NodeFold {
                 proof: self.proof(),
@@ -152,9 +180,16 @@ impl MockJobs {
                 member, keyshare, ..
             }) => DkgWorkResult::KeyshareChecked {
                 member: *member,
-                valid: keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash],
+                verdict: verdict(keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash]),
             },
             Work::Decryption(work) => return self.decrypt(work),
+            Work::Accusation(AccusationWork::Verify { proof, .. }) => {
+                return WorkResult::Accusation(AccusationWorkResult::Verified {
+                    proof: proof.clone(),
+                    fails: proof.public_inputs == [FAILS],
+                    data_hash: data_hash(proof),
+                })
+            }
             Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
                 let shares: Vec<u8> = keyshares
                     .iter()
@@ -193,10 +228,12 @@ impl MockJobs {
                 ..
             } => DecryptionWorkResult::SharesChecked {
                 member: *member,
-                valid: message
-                    .c6
-                    .iter()
-                    .all(|proof| proof.proof.public_inputs == [*domain]),
+                verdict: verdict(
+                    message
+                        .c6
+                        .iter()
+                        .all(|proof| proof.proof.public_inputs == [*domain]),
+                ),
             },
             DecryptionWork::AggregatePlaintext { ciphertext, .. } => {
                 DecryptionWorkResult::PlaintextMade(PlaintextPublication {
@@ -232,4 +269,24 @@ fn c2_commitment(c2: &BTreeMap<Address, (ZkProof, ZkProof)>) -> B256 {
         .flat_map(|word| word.0)
         .collect();
     keccak256(statements)
+}
+
+fn verdict(valid: bool) -> Verdict {
+    match valid {
+        true => Verdict::Valid,
+        false => Verdict::Invalid,
+    }
+}
+
+/// A mock proof's evidence hash: mock jobs hold no proof bytes, so its blob's hash stands in.
+fn data_hash(proof: &ZkProof) -> B256 {
+    keccak256(proof.data.hash)
+}
+
+fn fault(proof_type: ProofType, proof: &ZkProof) -> Fault {
+    Fault {
+        proof_type,
+        proof: proof.clone(),
+        data_hash: data_hash(proof),
+    }
 }
