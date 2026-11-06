@@ -21,7 +21,7 @@ Production startup and the in-process test harness use the same builder. It retu
 | [`sortition.rs`](src/sortition.rs)                     | Sortition and ciphernode-selector assembly from restored state.                |
 | [`net.rs`](src/net.rs)                                 | Network policy, libp2p/channel transport, and startup buffering.               |
 | [`restart.rs`](src/restart.rs)                         | Restart decisions derived from local lifecycle stages.                         |
-| [`recovery.rs`](src/recovery.rs)                       | Restart-state backfill and committee snapshot reconciliation.                  |
+| [`recovery.rs`](src/recovery.rs)                       | Restart-state backfill order across the sortition and slashing-writer stores.  |
 | [`finalized_lifecycle.rs`](src/finalized_lifecycle.rs) | Reconciliation with finalized chain lifecycle.                                 |
 | [`ciphernode.rs`](src/ciphernode.rs)                   | Running node handle, health signals, and shutdown.                             |
 

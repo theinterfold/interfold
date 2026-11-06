@@ -32,6 +32,8 @@ mod randomness_provider_sol;
 mod slashing_manager_sol_reader;
 #[path = "slashing_writing/actor.rs"]
 mod slashing_manager_sol_writer;
+#[path = "slashing_writing/restart_backfill.rs"]
+mod slashing_writer_restart_backfill;
 
 pub use bonding_registry_sol::BondingRegistrySolReader;
 pub use ciphernode_registry_sol::{
@@ -56,3 +58,4 @@ pub use slashing_manager_sol_writer::{
     SlashIntentTimes, SlashingManagerSolWriter, SlashingWriterRecoveryState,
     SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
 };
+pub use slashing_writer_restart_backfill::SlashingWriterBackfill;

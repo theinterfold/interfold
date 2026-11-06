@@ -23,6 +23,7 @@ not reorder members or renumber finalized slots.
 | [`ciphernode_selection/`](src/ciphernode_selection), [`failover.rs`](src/failover.rs)                                              | Finalized party roles and readiness-gated aggregator failover.        |
 | [`committee_finalization/`](src/committee_finalization)                                                                            | Separate node-wide finalization actor, chain-time input and recovery. |
 | [`messages.rs`](src/messages.rs), [`repo.rs`](src/repo.rs)                                                                         | Query/delivery messages and typed persistence.                        |
+| [`restart_backfill.rs`](src/restart_backfill.rs)                                                                                   | Restart-store backfill and committee snapshot reconciliation.         |
 
 ## Runtime integration
 

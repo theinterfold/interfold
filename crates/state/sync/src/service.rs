@@ -219,8 +219,9 @@ impl RestartStateBackfill {
 ///
 /// Stores that predate the dedicated recovery repositories kept delayed sortition inputs,
 /// pre-finalization membership changes, committee-finalization requests, generated ticket
-/// retries, and pending slash submissions only in the event log. The ciphernode builder writes
-/// this projection into missing recovery repositories before actors start.
+/// retries, and pending slash submissions only in the event log. Restart writes this projection
+/// into missing recovery repositories before actors start; see `SortitionRestartBackfill` in
+/// `e3-sortition`.
 pub async fn project_restart_state_backfill(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
     start_cursors: HashMap<AggregateId, u64>,

@@ -17,6 +17,7 @@ async-trait = { workspace = true }
 e3-data = { workspace = true }
 e3-events = { workspace = true }
 e3-request = { workspace = true }
+e3-sync = { workspace = true }
 e3-utils = { workspace = true }
 num = { workspace = true } 
 rand = { workspace = true }
@@ -28,7 +29,7 @@ num-bigint = { workspace = true }
 [dev-dependencies]
 bincode.workspace = true
 e3-event-system = { workspace = true, features = ["test-support"] }
-e3-sync.workspace = true
+e3-fhe-params.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true
