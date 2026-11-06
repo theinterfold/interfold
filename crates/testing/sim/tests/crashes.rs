@@ -27,7 +27,7 @@ fn lifecycle() -> Vec<(UnixSecs, Input)> {
         &Signing {
             e3: e3(1),
             purpose: Purpose::Dkg(DkgSignature::EncryptionKeyProof),
-            hash: own.proof.payload_signing_hash(e3(1), ProofType::C0PkBfv),
+            hashes: vec![own.proof.payload_signing_hash(e3(1), ProofType::C0PkBfv)],
         },
     );
     vec![

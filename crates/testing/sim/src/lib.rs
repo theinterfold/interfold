@@ -13,11 +13,11 @@ use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
     dkg::{DkgWork, DkgWorkResult, OwnKey},
     node::{
-        ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Signed,
-        Work, WorkResult,
+        ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Work,
+        WorkResult,
     },
     proof::ZkProof,
-    testing::{address, signature},
+    testing::{address, sign},
     BlobRef, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
@@ -224,11 +224,7 @@ impl Sim {
                     self.schedule(at, node, done, Some(key));
                 }
                 Effect::Sign(signing) => {
-                    let signed = Input::Signed(Signed {
-                        e3: signing.e3,
-                        purpose: signing.purpose,
-                        signature: signature(self.nodes[node].operator, signing.hash),
-                    });
+                    let signed = sign(self.nodes[node].operator, &signing);
                     self.schedule(self.now, node, signed, Some(key));
                 }
                 Effect::Gossip(message) => {

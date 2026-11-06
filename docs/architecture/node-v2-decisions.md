@@ -63,6 +63,15 @@ Each rule is checkable in review.
   so a late wake-up changes nothing: a key check that returns after the key cutoff does not count,
   whether or not the cutoff's tick came first ([dkg](dkg.md), "Timing and collection").
 
+- **D12. Ready reports only grow.** A member's later Ready must contain its earlier one; each
+  receiver drops expelled dealers itself when it chooses a roster. Today a reporter drops expelled
+  dealers, so a receiver that has not seen the expulsion yet must hold the update
+  ([dkg](dkg.md), "One H-roster").
+- **D13. One verification job per dealer.** A verdict covers one dealer's exact message, so a verdict
+  can never apply to a batch it was not made for, and growth needs no new batch.
+- **D14. Signatures are requested in batches.** One request carries every hash of a step (a dealer's
+  C1, C2, and per-recipient C3 proofs), and its answer returns every signature in order.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

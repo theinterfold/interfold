@@ -62,8 +62,8 @@ fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
     let signing = signing(&effects).clone();
     let own = own_key(0xee);
     assert_eq!(
-        signing.hash,
-        own.proof.payload_signing_hash(e3(1), ProofType::C0PkBfv)
+        signing.hashes,
+        vec![own.proof.payload_signing_hash(e3(1), ProofType::C0PkBfv)]
     );
 
     let effects = node.step(NOW, sign(ME, &signing));

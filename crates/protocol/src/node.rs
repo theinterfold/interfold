@@ -155,12 +155,13 @@ pub enum WorkResult {
     Dkg(DkgWorkResult),
 }
 
-/// A hash for the operator key to sign. The signature returns as [`Input::Signed`].
+/// Hashes for the operator key to sign. The signatures return in the same order as
+/// [`Input::Signed`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signing {
     pub e3: E3Id,
     pub purpose: Purpose,
-    pub hash: B256,
+    pub hashes: Vec<B256>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,7 +173,7 @@ pub enum Purpose {
 pub struct Signed {
     pub e3: E3Id,
     pub purpose: Purpose,
-    pub signature: Bytes,
+    pub signatures: Vec<Bytes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,7 +386,7 @@ impl Node {
             return Vec::new();
         };
         match signed.purpose {
-            Purpose::Dkg(purpose) => dkg.signed(purpose, signed.signature),
+            Purpose::Dkg(purpose) => dkg.signed(purpose, signed.signatures),
         }
     }
 

@@ -50,7 +50,11 @@ pub fn sign(n: u64, signing: &Signing) -> Input {
     Input::Signed(Signed {
         e3: signing.e3,
         purpose: signing.purpose,
-        signature: signature(n, signing.hash),
+        signatures: signing
+            .hashes
+            .iter()
+            .map(|hash| signature(n, *hash))
+            .collect(),
     })
 }
 

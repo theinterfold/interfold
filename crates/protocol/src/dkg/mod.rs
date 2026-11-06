@@ -183,7 +183,7 @@ impl Dkg {
                 vec![Effect::Sign(Signing {
                     e3: self.e3,
                     purpose: Purpose::Dkg(DkgSignature::EncryptionKeyProof),
-                    hash,
+                    hashes: vec![hash],
                 })]
             }
             DkgWorkResult::EncryptionKeyChecked { sender, valid } => {
@@ -196,12 +196,13 @@ impl Dkg {
         }
     }
 
-    pub(crate) fn signed(&mut self, purpose: DkgSignature, signature: Bytes) -> Vec<Effect> {
-        let (DkgSignature::EncryptionKeyProof, Phase::SigningKey(own)) = (purpose, &self.phase)
+    pub(crate) fn signed(&mut self, purpose: DkgSignature, signatures: Vec<Bytes>) -> Vec<Effect> {
+        let (DkgSignature::EncryptionKeyProof, Phase::SigningKey(own), [signature]) =
+            (purpose, &self.phase, signatures.as_slice())
         else {
             return Vec::new();
         };
-        let own = own.clone();
+        let (own, signature) = (own.clone(), signature.clone());
         let message = KeyMessage {
             key: own.public,
             proof: own.proof.clone(),
