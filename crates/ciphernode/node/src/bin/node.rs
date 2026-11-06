@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
         .connect_http(url);
-    let wallet = Wallet::new(wallet, config.chain_id);
+    let wallet = Wallet::new(wallet, config.chain_id, config.confirmations);
     wallet.acknowledge_release(&contracts, release).await?;
 
     std::fs::create_dir_all(&config.data_dir)?;

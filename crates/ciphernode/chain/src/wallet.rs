@@ -6,6 +6,7 @@
 
 use crate::{Account, Call, Contracts, Estimate, RpcError};
 use alloy::{
+    eips::BlockId,
     network::TransactionBuilder,
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
@@ -24,19 +25,24 @@ use tokio::sync::Mutex;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The operator's account on one chain over JSON-RPC. Calls run concurrently; only choosing a
-/// nonce and broadcasting take turns.
+/// nonce and broadcasting take turns. Its view of the chain is the reader's: a call is checked
+/// against the confirmed head and counts as landed once its block is confirmed, so no reorg the
+/// reader would survive undoes a call the writer finished.
 pub struct Wallet<P> {
     provider: P,
     chain_id: u64,
+    /// Blocks closer to the head than this may still be replaced.
+    confirmations: u64,
     /// The nonces this process sent, with their send times.
     sent: Mutex<BTreeMap<u64, Instant>>,
 }
 
 impl<P: Provider + WalletProvider> Wallet<P> {
-    pub fn new(provider: P, chain_id: u64) -> Self {
+    pub fn new(provider: P, chain_id: u64, confirmations: u64) -> Self {
         Self {
             provider,
             chain_id,
+            confirmations,
             sent: Mutex::new(BTreeMap::new()),
         }
     }
@@ -51,7 +57,18 @@ impl<P: Provider + WalletProvider> Wallet<P> {
 
 impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     async fn estimate(&self, call: &Call) -> Result<Estimate, RpcError> {
-        match self.provider.estimate_gas(self.request(call)).await {
+        let head = self
+            .provider
+            .get_block_number()
+            .await
+            .map_err(RpcError::new)?;
+        let confirmed = BlockId::number(head.saturating_sub(self.confirmations));
+        match self
+            .provider
+            .estimate_gas(self.request(call))
+            .block(confirmed)
+            .await
+        {
             Ok(gas) => Ok(Estimate::Gas(gas)),
             Err(error) => match error
                 .as_error_resp()
@@ -105,6 +122,7 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             }
         };
         let receipt = pending
+            .with_required_confirmations(self.confirmations + 1)
             .with_timeout(Some(RECEIPT_TIMEOUT))
             .get_receipt()
             .await
