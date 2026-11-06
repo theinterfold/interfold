@@ -178,6 +178,34 @@ async fn a_copy_sent_again_arrives_again() {
 }
 
 /// The publisher's store holds other bytes under the blob's name; a receiver keeps nothing from it.
+/// The dealer and the recipient each know only the first node; the recipient finds the dealer
+/// through it and fetches the share's blobs from the dealer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recipient_finds_a_dealer_it_was_not_told_about() {
+    let first = node(1, Vec::new()).await;
+    let second = node(2, first.p2p.listening().to_vec()).await;
+    let mut third = node(3, first.p2p.listening().to_vec()).await;
+    let message = shares(&second, 2, 3);
+    publish(&second, signed(message.clone(), 2, 10)).await;
+    let mut delivered = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv())
+        .await
+        .ok()
+        .flatten();
+    // The first copy can arrive before the two have found each other; a re-send then reaches it.
+    for sent_at in 11.. {
+        if delivered.is_some() {
+            break;
+        }
+        publish(&second, signed(message.clone(), 2, sent_at)).await;
+        delivered = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(sent_at < 20, "the recipient never found the dealer");
+    }
+    assert_eq!(delivered, Some(message));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_blob_with_other_bytes_is_never_delivered() {
     let [first, mut second, _third] = network().await;

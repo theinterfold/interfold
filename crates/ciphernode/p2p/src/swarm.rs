@@ -333,10 +333,9 @@ impl Driver {
         }
     }
 
-    /// Dials the configured peers that are not connected, and looks for more peers.
+    /// Dials the configured peers that are not connected. Kademlia finds the others: it looks
+    /// up the network whenever its routing table gains a peer, and connects to the peers it finds.
     fn dial_peers(&mut self) {
-        // Fails while the routing table is empty; the next round tries again.
-        let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
         for address in self.peers.clone() {
             let Some(Protocol::P2p(peer)) = address.iter().last() else {
                 warn!(%address, "a configured peer needs its /p2p/ identity");
