@@ -91,7 +91,7 @@ Each rule is checkable in review.
   registry's order, the roster (the selected party IDs in the proof's public inputs), and the key
   commitment; the decryption domain is computed from them and the ciphertext's hash
   ([threshold decryption](threshold-decryption.md), "Authority before work"). The DKG only supplies
-  this node's sealed decryption key.
+  this node's sealed decryption key, and only when it summed that key over the chain's roster.
 
 ## Problems in the current node, with the fix above them
 

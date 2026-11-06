@@ -213,3 +213,35 @@ fn a_published_key_ends_the_dkg() {
     node.step(TIMING.deadline, Input::Tick);
     assert_eq!(dkg(&node).failure(), None);
 }
+
+#[test]
+fn decryption_gets_this_node_s_key_only_for_the_roster_it_summed() {
+    let [first, second, third] = ordered();
+    let (mut summed, _) = first_with_keyshare();
+    let (mut other, _) = first_with_keyshare();
+    summed.step(
+        NOW,
+        key_published(12, e3(1), committee(), members(&[first, second])),
+    );
+    other.step(
+        NOW,
+        key_published(12, e3(1), committee(), members(&[first, third])),
+    );
+    let decryption_work = |node: &mut Node| {
+        let effects = node.step(NOW, ciphertext_ready(13, e3(1)));
+        effects
+            .iter()
+            .filter(|effect| {
+                matches!(
+                    effect,
+                    Effect::Run(Job {
+                        work: Work::Decryption(_),
+                        ..
+                    })
+                )
+            })
+            .count()
+    };
+    assert_eq!(decryption_work(&mut summed), 1);
+    assert_eq!(decryption_work(&mut other), 0);
+}

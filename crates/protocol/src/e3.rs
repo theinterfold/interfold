@@ -75,8 +75,9 @@ impl E3 {
         effects
     }
 
-    /// The chain's key, committee order, and roster are the authority for decryption; this node's
-    /// DKG supplies its sealed decryption key, if it holds one for that roster.
+    /// The chain's key, committee order, and roster are the authority for decryption. This node's
+    /// DKG supplies its sealed decryption key only if it summed that key over the same roster;
+    /// shares from a key over another roster would not combine.
     pub(crate) fn key_published(
         &mut self,
         committee: Vec<Address>,
@@ -87,7 +88,8 @@ impl E3 {
             return;
         };
         dkg.key_published();
-        let key = dkg.decryption_key().filter(|_| roster.contains(&self.me));
+        let same_roster = dkg.roster_members().as_ref() == Some(&roster);
+        let key = dkg.decryption_key().filter(|_| same_roster);
         let handover = Handover {
             roster,
             key,

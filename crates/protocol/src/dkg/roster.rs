@@ -48,7 +48,7 @@ impl Dkg {
         Some(&accepted.dealers)
     }
 
-    pub(super) fn roster_members(&self) -> Option<Vec<Address>> {
+    pub(crate) fn roster_members(&self) -> Option<Vec<Address>> {
         let roster = self.roster()?;
         Some(roster.iter().map(|dealer| dealer.member).collect())
     }
