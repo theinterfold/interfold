@@ -49,6 +49,7 @@ members = [
   "crates/state/sync",
   "crates/protocol",
   "crates/ciphernode/chain",
+  "crates/ciphernode/node",
   "crates/ciphernode/engine",
   "crates/ciphernode/jobs",
   "crates/state/blobs",
@@ -159,6 +160,7 @@ e3-chain = { version = "0.20.0-dev.3", path = "./crates/ciphernode/chain" }
 e3-engine = { version = "0.20.0-dev.3", path = "./crates/ciphernode/engine" }
 e3-jobs = { version = "0.20.0-dev.3", path = "./crates/ciphernode/jobs" }
 e3-journal = { version = "0.20.0-dev.3", path = "./crates/state/journal" }
+e3-node = { version = "0.20.0-dev.3", path = "./crates/ciphernode/node" }
 
 actix = "=0.13.5"
 actix-web = "=4.11.0"

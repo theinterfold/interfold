@@ -4373,6 +4373,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-node"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "anyhow",
+ "e3-blobs",
+ "e3-chain",
+ "e3-crypto",
+ "e3-data-availability",
+ "e3-engine",
+ "e3-evm-contracts",
+ "e3-jobs",
+ "e3-journal",
+ "e3-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "e3-openvm-host"
 version = "0.20.0-dev.3"
 dependencies = [
