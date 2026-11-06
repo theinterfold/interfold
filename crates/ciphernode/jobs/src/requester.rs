@@ -27,6 +27,5 @@ pub fn encrypt(
     let ciphertext = key
         .try_encrypt(&plaintext, &mut UnwrapErr(OsRng))
         .map_err(JobError::crypto)?;
-    let encoded = bincode::serialize(&vec![ciphertext.to_bytes()]).map_err(JobError::crypto)?;
-    Ok(blobs.put(&encoded))
+    Ok(blobs.put(&ciphertext.to_bytes()))
 }

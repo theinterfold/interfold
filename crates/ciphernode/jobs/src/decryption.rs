@@ -154,13 +154,9 @@ impl<B: Blobs> JobRunner<B> {
         })
     }
 
-    /// The ciphertext blob holds the serialized ciphertexts, bincode-encoded.
+    /// The ciphertext blob holds the bytes the chain's content hash names: one serialized
+    /// ciphertext.
     fn ciphertexts(&self, blob: &BlobRef) -> Result<Vec<ArcBytes>, JobError> {
-        let ciphertexts: Vec<Vec<u8>> =
-            bincode::deserialize(&self.blobs.get(blob)?).map_err(JobError::crypto)?;
-        Ok(ciphertexts
-            .iter()
-            .map(|bytes| ArcBytes::from_bytes(bytes))
-            .collect())
+        Ok(vec![ArcBytes::from_bytes(&self.blobs.get(blob)?)])
     }
 }
