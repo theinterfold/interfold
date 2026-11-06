@@ -485,3 +485,50 @@ async fn an_aggregator_collecting_during_replay_applies_its_replayed_c5_proof() 
     );
     Ok(())
 }
+
+/// The committee filter can release the keyshares only after `EffectsEnabled`, and replay can
+/// demote this node before that. Its replayed local verdict shows that it dispatched C1, so it
+/// still finishes C1 and C5 once the keyshares complete the inputs.
+#[actix::test]
+async fn a_former_aggregator_demoted_while_collecting_finishes_c1_and_c5() -> Result<()> {
+    let mut replayed = replay_selection().await?;
+    replayed.publish_selected_keyshares(true)?;
+    let ReplayedAggregator {
+        bus,
+        history,
+        e3_id,
+        fhe,
+        keyshares,
+        states,
+        store,
+        ..
+    } = &replayed;
+    bus.publish_without_context(c1_verdict(e3_id))?;
+    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, keyshares)?))?;
+    bus.publish_without_context(AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    })?;
+    commit_replay_past(store, history, c5_proof_logged).await?;
+
+    bus.publish_without_context(EffectsEnabled::new())?;
+    bus.flush_event_pipeline().await?;
+    assert!(matches!(
+        states.read().await?,
+        Some(PublicKeyAggregatorState::Collecting { .. })
+    ));
+    replayed.publish_committee()?;
+    assert!(
+        reaches_state(states, bus, |state| matches!(
+            state,
+            PublicKeyAggregatorState::GeneratingC5Proof {
+                c5_proof_pending: Some(_),
+                ..
+            }
+        ))
+        .await?,
+        "the demoted node did not finish its C1 and C5"
+    );
+    Ok(())
+}

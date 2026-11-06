@@ -173,8 +173,9 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             }
 
             // If we just transitioned to VerifyingC1, start verification
-            // of the c1_proofs stored in the new state.
-            if became_ready && self.can_run_aggregation_effects() {
+            // of the c1_proofs stored in the new state. A node that replay demoted still
+            // finishes the C1 verification that it started.
+            if became_ready && self.can_continue_aggregation_effects() {
                 self.start_c1_verification(ec)?;
             }
 
