@@ -25,7 +25,7 @@ export default defineConfig([
     // Generated WASM bindings
     '**/pkg/**',
     // Bundled dashboard assets
-    'crates/dashboard/assets/**',
+    'crates/diagnostics/dashboard/assets/**',
   ]),
   {
     extends: [config],

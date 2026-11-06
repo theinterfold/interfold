@@ -47,7 +47,7 @@ export const LAYERS = {
     'cli',
     'ciphernode/entrypoint',
     'ciphernode/builder',
-    'dashboard',
+    'diagnostics/dashboard',
     'ciphernode/daemon-server',
     'console',
     'init',
@@ -79,7 +79,7 @@ export const LAYERS = {
     'bfv/threshold',
     'bfv/client',
   ],
-  adapters: ['evm/runtime', 'net', 'state/sync', 'state/event-system', 'state/storage', 'data-availability', 'logger'],
+  adapters: ['evm/runtime', 'net', 'state/sync', 'state/event-system', 'state/storage', 'data-availability', 'diagnostics/logger'],
   vocabulary: [
     'events',
     'ciphernode/config',

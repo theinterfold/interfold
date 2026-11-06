@@ -10,7 +10,7 @@ members = [
   "crates/committee-hash",
   "crates/compute-provider",
   "crates/console",
-  "crates/dashboard",
+  "crates/diagnostics/dashboard",
   "crates/crypto",
   "crates/state/storage",
   "crates/data-availability",
@@ -29,7 +29,7 @@ members = [
   "crates/init",
   "crates/orchestration/keyshare",
   "crates/layout-lock",
-  "crates/logger",
+  "crates/diagnostics/logger",
   "crates/ciphernode/multithread",
   "crates/net",
   "crates/openvm-host",
@@ -92,7 +92,7 @@ e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv/client" }
 e3-bfv-test-support = { path = "./crates/bfv-test-support" }
 e3-committee = { version = "0.20.0-dev.3", path = "./crates/committee" }
 e3-console = { version = "0.20.0-dev.3", path = "./crates/console" }
-e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/dashboard" }
+e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/diagnostics/dashboard" }
 e3-ciphernode-builder = { version = "0.20.0-dev.3", path = "./crates/ciphernode/builder" }
 e3-ciphernode-config = { version = "0.20.0-dev.3", path = "./crates/ciphernode/config" }
 e3-crypto = { version = "0.20.0-dev.3", path = "./crates/crypto" }
@@ -117,7 +117,7 @@ e3-fs = { version = "0.20.0-dev.3", path = "./crates/fs" }
 e3-indexer = { version = "0.20.0-dev.3", path = "./crates/evm/indexer" }
 e3-multithread = { version = "0.20.0-dev.3", path = "./crates/ciphernode/multithread" }
 e3-keyshare = { version = "0.20.0-dev.3", path = "./crates/orchestration/keyshare" }
-e3-logger = { version = "0.20.0-dev.3", path = "./crates/logger" }
+e3-logger = { version = "0.20.0-dev.3", path = "./crates/diagnostics/logger" }
 e3-net = { version = "0.20.0-dev.3", path = "./crates/net" }
 e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/compute-provider" }
 e3-openvm-host = { version = "0.20.0-dev.3", path = "./crates/openvm-host" }

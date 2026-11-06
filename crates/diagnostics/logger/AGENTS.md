@@ -14,4 +14,4 @@ Keep protocol observation and operational diagnostics passive; the EventStore re
 
 Use the [README tests](README.md#tests); changed paths need redaction/cursor/rotation coverage as
 applicable. Logger failure should not acquire protocol authority or reorder events; see
-[persistence](../../docs/architecture/persistence-and-replay.md).
+[persistence](../../../docs/architecture/persistence-and-replay.md).

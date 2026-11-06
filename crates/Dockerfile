@@ -73,7 +73,7 @@ COPY crates/evm/indexer/Cargo.toml ./evm/indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/orchestration/keyshare/Cargo.toml ./orchestration/keyshare/Cargo.toml
 COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
-COPY crates/logger/Cargo.toml ./logger/Cargo.toml
+COPY crates/diagnostics/logger/Cargo.toml ./diagnostics/logger/Cargo.toml
 COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
 COPY crates/openvm-host/Cargo.toml ./openvm-host/Cargo.toml
@@ -89,7 +89,7 @@ COPY crates/safe/Cargo.toml ./safe/Cargo.toml
 COPY crates/sdk/Cargo.toml ./sdk/Cargo.toml
 COPY crates/orchestration/slashing/Cargo.toml ./orchestration/slashing/Cargo.toml
 COPY crates/orchestration/sortition/Cargo.toml ./orchestration/sortition/Cargo.toml
-COPY crates/dashboard/Cargo.toml ./dashboard/Cargo.toml
+COPY crates/diagnostics/dashboard/Cargo.toml ./diagnostics/dashboard/Cargo.toml
 COPY crates/ciphernode/daemon-server/Cargo.toml ./ciphernode/daemon-server/Cargo.toml
 COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml
 COPY crates/test-support/Cargo.toml ./test-support/Cargo.toml

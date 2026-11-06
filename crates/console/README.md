@@ -4,7 +4,7 @@
 
 Injectable, cloneable command output for stdout, an asynchronous writer, or a captured channel. This
 lets the same CLI command print locally or return its output through the daemon. Protocol and
-structured operational logging belong in [e3-logger](../logger/README.md).
+structured operational logging belong in [e3-logger](../diagnostics/logger/README.md).
 
 ## Map and output lifecycle
 

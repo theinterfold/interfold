@@ -566,141 +566,145 @@
         { "title": "Dashboard views", "path": "docs/pages/operate/dashboard.mdx" }
       ],
       "kind": "crate",
-      "path": "crates/logger",
+      "path": "crates/diagnostics/logger",
       "one_line": "Passive protocol-event logger plus a bounded, redacting operational log of tracing output for the dashboard.",
       "actors": [
         {
           "name": "SimpleLogger",
           "role": "Actix actor subscribed to every event type on the node EventBus; it calls EventLogging::log for each event",
-          "ref": "crates/logger/src/logger.rs@33@pub struct SimpleLogger<E: EventLogging> {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@33@pub struct SimpleLogger<E: EventLogging> {"
         }
       ],
       "consumes": [
-        { "name": "All protocol events (EventType::All)", "by": "SimpleLogger", "ref": "crates/logger/src/logger.rs@46@EventType::All," },
+        {
+          "name": "All protocol events (EventType::All)",
+          "by": "SimpleLogger",
+          "ref": "crates/diagnostics/logger/src/logger.rs@46@EventType::All,"
+        },
         {
           "name": "tracing events and their span fields",
           "by": "OperationalLogLayer",
-          "ref": "crates/logger/src/tracing_layer.rs@146@fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@146@fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {"
         }
       ],
       "emits": [
         {
           "name": "structured tracing line per protocol event, at error, warn, info or debug",
           "by": "SimpleLogger",
-          "ref": "crates/logger/src/logger.rs@281@fn log(&self, logger_name: &str) {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@281@fn log(&self, logger_name: &str) {"
         },
         {
           "name": "JSON line in the rotating operational log file",
           "by": "RollingJsonWriter",
-          "ref": "crates/logger/src/log_collector.rs@236@fn write(&mut self, entry: &LogEntry) -> std::io::Result<()> {"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@236@fn write(&mut self, entry: &LogEntry) -> std::io::Result<()> {"
         }
       ],
       "state": [
         {
           "name": "Newest operational entries: a ring of at most 20,000 in memory",
           "where": "memory",
-          "ref": "crates/logger/src/log_collector.rs@27@const DEFAULT_CAPACITY: usize = 20_000;"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@27@const DEFAULT_CAPACITY: usize = 20_000;"
         },
         {
           "name": "Rotating JSON lines file, 25 MiB per file, with up to 4 rotated files",
           "where": "disk",
-          "ref": "crates/logger/src/log_collector.rs@30@const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@30@const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;"
         },
         {
           "name": "Next sequence number for entries, which query cursors use",
           "where": "memory",
-          "ref": "crates/logger/src/log_collector.rs@57@next_seq: AtomicU64,"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@57@next_seq: AtomicU64,"
         }
       ],
       "key_types": [
         {
           "name": "EventLogging",
           "what": "trait an event implements to be logged: log(logger_name)",
-          "ref": "crates/logger/src/logger.rs@15@pub trait EventLogging: Event {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@15@pub trait EventLogging: Event {"
         },
         {
           "name": "attach_protocol_logger",
           "what": "function that attaches the standard observer to a BusHandle; the ciphernode builder calls it",
-          "ref": "crates/logger/src/logger.rs@24@pub fn attach_protocol_logger(name: &str, bus: &BusHandle)"
+          "ref": "crates/diagnostics/logger/src/logger.rs@24@pub fn attach_protocol_logger(name: &str, bus: &BusHandle)"
         },
         {
           "name": "severity",
           "what": "maps each InterfoldEventData to Error, Warn, Info or Debug",
-          "ref": "crates/logger/src/logger.rs@74@fn severity(data: &InterfoldEventData) -> Severity {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@74@fn severity(data: &InterfoldEventData) -> Severity {"
         },
         {
           "name": "LogCollector",
           "what": "process-wide bounded store and rotating writer; init returns the first instance it creates",
-          "ref": "crates/logger/src/log_collector.rs@53@pub struct LogCollector {"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@53@pub struct LogCollector {"
         },
         {
           "name": "LogEntry",
           "what": "one stored line: seq, timestamp_ms, level, target, message, node and structured fields",
-          "ref": "crates/logger/src/log_collector.rs@34@pub struct LogEntry {"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@34@pub struct LogEntry {"
         },
         {
           "name": "LogQueryResult",
           "what": "query page with entries, next_cursor, oldest_cursor and total_stored",
-          "ref": "crates/logger/src/log_collector.rs@46@pub struct LogQueryResult {"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@46@pub struct LogQueryResult {"
         },
         {
           "name": "OperationalLogLayer",
           "what": "tracing Layer that copies span and event fields into LogCollector",
-          "ref": "crates/logger/src/tracing_layer.rs@118@pub struct OperationalLogLayer;"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@118@pub struct OperationalLogLayer;"
         },
         {
           "name": "is_sensitive_field",
           "what": "name-based redaction rule: exact names such as password and seed, plus substrings such as secret, keyshare and plaintext",
-          "ref": "crates/logger/src/tracing_layer.rs@29@pub fn is_sensitive_field(name: &str) -> bool {"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@29@pub fn is_sensitive_field(name: &str) -> bool {"
         }
       ],
       "read_first": [
         {
           "why": "crate surface: re-exports the protocol logger, the collector and the tracing layer",
-          "ref": "crates/logger/src/lib.rs@12@pub use logger::*;"
+          "ref": "crates/diagnostics/logger/src/lib.rs@12@pub use logger::*;"
         },
         {
           "why": "wiring: attach_protocol_logger subscribes the observer to the node's bus",
-          "ref": "crates/logger/src/logger.rs@24@pub fn attach_protocol_logger(name: &str, bus: &BusHandle)"
+          "ref": "crates/diagnostics/logger/src/logger.rs@24@pub fn attach_protocol_logger(name: &str, bus: &BusHandle)"
         },
         {
           "why": "observer: each event that reaches the SimpleLogger is passed to EventLogging::log",
-          "ref": "crates/logger/src/logger.rs@58@impl<E: EventLogging> Handler<E> for SimpleLogger<E> {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@58@impl<E: EventLogging> Handler<E> for SimpleLogger<E> {"
         },
         {
           "why": "operational path: the tracing layer captures each event and hands it to the collector",
-          "ref": "crates/logger/src/tracing_layer.rs@146@fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@146@fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {"
         },
         {
           "why": "storage: LogCollector.record keeps the ring and writes each entry to the rotating file",
-          "ref": "crates/logger/src/log_collector.rs@89@pub fn record(&self, level: &str, target: &str, message: String, fields: Map<String, Value>) {"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@89@pub fn record(&self, level: &str, target: &str, message: String, fields: Map<String, Value>) {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-def",
           "note": "EventLogging is a trait with the events crate Event as a supertrait",
-          "ref": "crates/logger/src/logger.rs@15@pub trait EventLogging: Event {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@15@pub trait EventLogging: Event {"
         },
         {
           "pattern": "actix-handler",
           "note": "SimpleLogger handles any event type that implements EventLogging",
-          "ref": "crates/logger/src/logger.rs@58@impl<E: EventLogging> Handler<E> for SimpleLogger<E> {"
+          "ref": "crates/diagnostics/logger/src/logger.rs@58@impl<E: EventLogging> Handler<E> for SimpleLogger<E> {"
         },
         {
           "pattern": "trait-impl",
           "note": "OperationalLogLayer implements tracing_subscriber's Layer for any subscriber S",
-          "ref": "crates/logger/src/tracing_layer.rs@120@impl<S> Layer<S> for OperationalLogLayer"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@120@impl<S> Layer<S> for OperationalLogLayer"
         },
         {
           "pattern": "let-else",
           "note": "returns early when no global collector has been initialized",
-          "ref": "crates/logger/src/tracing_layer.rs@147@let Some(collector) = LogCollector::global() else {"
+          "ref": "crates/diagnostics/logger/src/tracing_layer.rs@147@let Some(collector) = LogCollector::global() else {"
         },
         {
           "pattern": "closure",
           "note": "the collector is created lazily inside OnceLock::get_or_init",
-          "ref": "crates/logger/src/log_collector.rs@65@INSTANCE.get_or_init(|| Self::new(node, path, DEFAULT_CAPACITY))"
+          "ref": "crates/diagnostics/logger/src/log_collector.rs@65@INSTANCE.get_or_init(|| Self::new(node, path, DEFAULT_CAPACITY))"
         }
       ],
       "depends_on": ["e3-events"],
