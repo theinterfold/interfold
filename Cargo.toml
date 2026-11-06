@@ -50,6 +50,7 @@ members = [
   "crates/protocol",
   "crates/ciphernode/engine",
   "crates/state/journal",
+  "crates/testing/sim",
   "crates/task-pool",
   "crates/testing/support",
   "crates/testing/system",
