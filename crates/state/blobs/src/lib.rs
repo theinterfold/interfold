@@ -15,7 +15,10 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -59,10 +62,23 @@ pub struct FileBlobs {
     dir: PathBuf,
 }
 
+/// Numbers each write's partial file, so two writers of one blob never share one.
+static WRITES: AtomicU64 = AtomicU64::new(0);
+
 impl FileBlobs {
+    /// Opens the store in `dir` and removes the partial files a crash left.
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BlobError> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "partial")
+            {
+                fs::remove_file(path)?;
+            }
+        }
         Ok(Self { dir })
     }
 
@@ -78,8 +94,8 @@ impl Blobs for FileBlobs {
         if path.exists() {
             return Ok(blob);
         }
-        // A crash leaves at most a partial file under a name no blob has.
-        let partial = path.with_extension("partial");
+        let write = WRITES.fetch_add(1, Ordering::Relaxed);
+        let partial = path.with_extension(format!("{}-{write}.partial", std::process::id()));
         let mut file = File::create(&partial)?;
         file.write_all(bytes)?;
         file.sync_all()?;
@@ -111,5 +127,24 @@ mod tests {
         assert!(
             matches!(reopened.get(&other), Err(BlobError::Missing(missing)) if missing == other)
         );
+    }
+
+    /// Peers send the same blob at once: placeholder proofs of one kind have the same bytes.
+    #[test]
+    fn writers_of_the_same_blob_at_once_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        let bytes = vec![7u8; 64 * 1024];
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..20 {
+                        let _ = fs::remove_file(blobs.path(&BlobRef::of(&bytes).hash));
+                        blobs.put(&bytes).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(blobs.get(&BlobRef::of(&bytes)).unwrap(), bytes);
     }
 }
