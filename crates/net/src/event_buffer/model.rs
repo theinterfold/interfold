@@ -27,7 +27,12 @@ use crate::{
 /// in memory. Operators with a larger legitimate gap must use the controlled resync procedure.
 const MAX_SYNC_FETCH_PAGES: usize = 512;
 const MAX_SYNC_FETCH_EVENTS: usize = 50_000;
-const MAX_SYNC_FETCH_BYTES: usize = 128 * 1024 * 1024;
+/// Bytes that the fetch downloads. A peer stores an event again each time that it reaches the peer
+/// after the peer forgot it, and serves every copy, so the download can be several times the
+/// history that the node keeps. The deadline bounds the download too.
+const MAX_SYNC_FETCH_BYTES: usize = 1024 * 1024 * 1024;
+/// Bytes of the history that the fetch keeps in memory, with each event counted once.
+const MAX_SYNC_KEPT_BYTES: usize = 128 * 1024 * 1024;
 const MAX_SYNC_FETCH_DURATION: Duration = Duration::from_secs(5 * 60);
 
 pub(crate) struct SyncFetchBudget {
@@ -35,9 +40,11 @@ pub(crate) struct SyncFetchBudget {
     pages: usize,
     events: usize,
     bytes: usize,
+    kept_bytes: usize,
     max_pages: usize,
     max_events: usize,
     max_bytes: usize,
+    max_kept_bytes: usize,
     max_duration: Duration,
     exhausted: bool,
     /// The latest event time that the fetch accepts now: a later one exceeds this node's
@@ -54,18 +61,26 @@ impl SyncFetchBudget {
             MAX_SYNC_FETCH_PAGES,
             MAX_SYNC_FETCH_EVENTS,
             MAX_SYNC_FETCH_BYTES,
+            MAX_SYNC_KEPT_BYTES,
         )
     }
 
-    fn new(max_pages: usize, max_events: usize, max_bytes: usize) -> Self {
+    pub(crate) fn new(
+        max_pages: usize,
+        max_events: usize,
+        max_bytes: usize,
+        max_kept_bytes: usize,
+    ) -> Self {
         Self {
             started: Instant::now(),
             pages: 0,
             events: 0,
             bytes: 0,
+            kept_bytes: 0,
             max_pages,
             max_events,
             max_bytes,
+            max_kept_bytes,
             max_duration: MAX_SYNC_FETCH_DURATION,
             exhausted: false,
             latest_ts: Arc::new(|| Ok(u128::MAX)),
@@ -143,6 +158,34 @@ impl SyncFetchBudget {
         self.pages = pages;
         self.events = events;
         self.bytes = bytes;
+        Ok(())
+    }
+
+    /// The bytes of history that the fetch keeps now.
+    pub(crate) fn kept(&self) -> usize {
+        self.kept_bytes
+    }
+
+    /// Stop counting the history kept since `kept` returned `mark`: the caller dropped it, for
+    /// example a failed source's.
+    pub(crate) fn drop_kept_since(&mut self, mark: usize) {
+        self.kept_bytes = self.kept_bytes.min(mark);
+    }
+
+    /// Count the bytes of the events that a page added to the history that the fetch keeps.
+    fn record_kept(&mut self, kept_bytes: usize) -> Result<()> {
+        let kept = self
+            .kept_bytes
+            .checked_add(kept_bytes)
+            .context("sync kept byte count overflow")?;
+        if kept > self.max_kept_bytes {
+            self.exhausted = true;
+            bail!(
+                "historical sync exceeded kept-history limit ({})",
+                self.max_kept_bytes
+            );
+        }
+        self.kept_bytes = kept;
         Ok(())
     }
 }
@@ -245,16 +288,11 @@ where
     requester.request(request).await
 }
 
-/// The history that one peer served for an aggregate.
-#[derive(Debug)]
-pub(crate) struct PeerHistory<E> {
-    pub events: Vec<E>,
-    /// The responder's `observed_from`, the same on every page.
-    pub observed_from: Option<u128>,
-}
-
-/// Fetch the history of `aggregate_id` after `since`, page by page. With `source_time`, the source
-/// fails when it has not ended in that time, which leaves the rest of the budget to other sources.
+/// Fetch the history of `aggregate_id` after `since`, page by page, and give each page to `keep`,
+/// which returns the bytes of the events that it retains. Returns the responder's
+/// `observed_from`, the same on every page. With `source_time`, the source fails when it has not
+/// ended in that time, which leaves the rest of the budget to other sources.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerTarget,
@@ -263,7 +301,8 @@ pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     batch_size: usize,
     budget: &mut SyncFetchBudget,
     source_time: Option<Duration>,
-) -> Result<PeerHistory<E>>
+    mut keep: impl FnMut(Vec<E>) -> Result<usize>,
+) -> Result<Option<u128>>
 where
     E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
     EventBatch<E>: TryFrom<Vec<u8>>,
@@ -271,7 +310,7 @@ where
     ensure!(batch_size > 0, "sync batch size must be greater than 0");
     let batch_size = effective_sync_limit(batch_size);
     let requester = requester.to(peer);
-    let mut all_events = Vec::new();
+    let mut received = 0usize;
     let mut cursor = since;
     let mut observed_from = None;
     let mut first_page = true;
@@ -337,12 +376,9 @@ where
                 batch.observed_from
             );
         }
-        all_events
-            .try_reserve(batch.events.len())
-            .map_err(|error| {
-                anyhow::anyhow!("failed to reserve historical sync buffer: {error}")
-            })?;
-        all_events.extend(batch.events);
+        received += batch.events.len();
+        let kept_bytes = keep(batch.events)?;
+        budget.record_kept(kept_bytes)?;
 
         match batch.next {
             BatchCursor::Done => break,
@@ -356,15 +392,9 @@ where
         }
     }
 
-    debug!(
-        "Historical sync fetch complete: {} events",
-        all_events.len()
-    );
+    debug!("Historical sync fetch complete: {received} events");
 
-    Ok(PeerHistory {
-        events: all_events,
-        observed_from,
-    })
+    Ok(observed_from)
 }
 
 #[cfg(test)]

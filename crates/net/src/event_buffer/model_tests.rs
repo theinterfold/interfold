@@ -12,14 +12,14 @@ use tokio::sync::mpsc;
 
 #[test]
 fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
-    let mut budget = SyncFetchBudget::new(1, 2, 3);
+    let mut budget = SyncFetchBudget::new(1, 2, 3, 4);
     budget.record_page(2, 3).unwrap();
 
     let page_error = budget.record_page(0, 0).unwrap_err();
     assert!(page_error.to_string().contains("page limit"));
     assert_eq!((budget.pages, budget.events, budget.bytes), (1, 2, 3));
 
-    let mut event_budget = SyncFetchBudget::new(2, 1, 3);
+    let mut event_budget = SyncFetchBudget::new(2, 1, 3, 4);
     let event_error = event_budget.record_page(2, 0).unwrap_err();
     assert!(event_error.to_string().contains("event limit"));
     assert_eq!(
@@ -27,13 +27,20 @@ fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
         (0, 0, 0)
     );
 
-    let mut byte_budget = SyncFetchBudget::new(2, 2, 1);
+    let mut byte_budget = SyncFetchBudget::new(2, 2, 1, 4);
     let byte_error = byte_budget.record_page(0, 2).unwrap_err();
     assert!(byte_error.to_string().contains("byte limit"));
     assert_eq!(
         (byte_budget.pages, byte_budget.events, byte_budget.bytes),
         (0, 0, 0)
     );
+
+    let mut kept_budget = SyncFetchBudget::new(2, 2, 3, 1);
+    kept_budget.record_kept(1).unwrap();
+    let kept_error = kept_budget.record_kept(1).unwrap_err();
+    assert!(kept_error.to_string().contains("kept-history limit"));
+    assert_eq!(kept_budget.kept_bytes, 1);
+    assert!(kept_budget.is_exhausted());
 }
 
 #[tokio::test]
@@ -63,6 +70,7 @@ async fn test_non_advancing_cursor_is_rejected() {
         1,
         &mut SyncFetchBudget::production(),
         None,
+        |_| Ok(0),
     )
     .await
     .unwrap_err();
@@ -108,7 +116,8 @@ async fn test_three_batches_with_cursor_continuity() {
         .respond_with(batch3)
         .spawn();
 
-    let events: Vec<Vec<u8>> = fetch_all_batched_events_with_budget(
+    let mut events: Vec<Vec<u8>> = Vec::new();
+    fetch_all_batched_events_with_budget(
         requester,
         PeerTarget::Random,
         AggregateId::new(1),
@@ -116,10 +125,13 @@ async fn test_three_batches_with_cursor_continuity() {
         2,
         &mut SyncFetchBudget::production(),
         None,
+        |page| {
+            events.extend(page);
+            Ok(0)
+        },
     )
     .await
-    .unwrap()
-    .events;
+    .unwrap();
 
     handle.await.unwrap();
 
@@ -171,6 +183,7 @@ async fn a_responder_that_resets_between_pages_fails_as_a_source() {
         1,
         &mut SyncFetchBudget::production(),
         None,
+        |_| Ok(0),
     )
     .await
     .unwrap_err();
@@ -210,7 +223,8 @@ async fn a_responder_that_ends_its_startup_between_pages_stays_a_source() {
         .respond_with(started)
         .spawn();
 
-    let fetched = fetch_all_batched_events_with_budget::<Vec<u8>>(
+    let mut events: Vec<Vec<u8>> = Vec::new();
+    let observed_from = fetch_all_batched_events_with_budget(
         requester,
         PeerTarget::Random,
         AggregateId::new(1),
@@ -218,11 +232,15 @@ async fn a_responder_that_ends_its_startup_between_pages_stays_a_source() {
         1,
         &mut SyncFetchBudget::production(),
         None,
+        |page| {
+            events.extend(page);
+            Ok(0)
+        },
     )
     .await
     .unwrap();
 
     handle.await.unwrap();
-    assert_eq!(fetched.events, vec![b"a".to_vec(), b"b".to_vec()]);
-    assert_eq!(fetched.observed_from, None);
+    assert_eq!(events, vec![b"a".to_vec(), b"b".to_vec()]);
+    assert_eq!(observed_from, None);
 }

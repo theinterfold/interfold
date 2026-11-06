@@ -78,11 +78,17 @@ impl EventTranslationService {
     /// Decide whether a local event should be gossiped.
     ///
     /// Returns `Some(GossipData)` to publish over the network, or `None` when the event is not
-    /// forwardable or has already been broadcast.
+    /// forwardable, came from the network, or has already been broadcast.
     pub fn prepare_outbound(
         &mut self,
         event: InterfoldEvent,
     ) -> Result<Option<(EventId, GossipData)>> {
+        // An event from the network, such as the history that startup fetches, has reached its
+        // peers already. Gossiping it again makes every peer that forgot it store another copy.
+        if event.source() != EventSource::Local {
+            trace!(evt_id=%event.event_id(), "Network events are not gossiped again");
+            return Ok(None);
+        }
         if !Self::is_forwardable_event(&event) {
             let id = event.event_id();
             trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring");
