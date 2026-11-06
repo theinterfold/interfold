@@ -94,9 +94,14 @@ impl<B: Blobs> JobRunner<B> {
                 member: *member,
                 valid: self.check_keyshare(params, keyshare)?,
             },
-            DkgWork::AggregateKey { keyshares, .. } => {
-                DkgWorkResult::KeyAggregated(self.aggregate_key(params, keyshares)?)
-            }
+            DkgWork::AggregateKey {
+                committee,
+                roster,
+                keyshares,
+                ..
+            } => DkgWorkResult::KeyAggregated(
+                self.aggregate_key(params, committee, roster, keyshares)?,
+            ),
         })
     }
 
@@ -385,6 +390,8 @@ impl<B: Blobs> JobRunner<B> {
     fn aggregate_key(
         &self,
         params: &CryptoParams,
+        committee: &[Address],
+        roster: &[Address],
         keyshares: &[KeyshareMessage],
     ) -> Result<AggregatedKey, JobError> {
         let bfv = trbfv::threshold_params(params)?;
@@ -398,10 +405,11 @@ impl<B: Blobs> JobRunner<B> {
             .collect::<Result<Vec<_>, JobError>>()?;
         let key: PublicKey = shares.into_iter().aggregate().map_err(JobError::crypto)?;
         let bytes = key.to_bytes();
+        let commitment = keccak256(&bytes);
         Ok(AggregatedKey {
             public_key: self.blobs.put(&bytes)?,
-            commitment: keccak256(&bytes),
-            proof: placeholder::proof(&self.blobs, ProofType::C5PkAggregation, &bytes)?,
+            commitment,
+            proof: placeholder::key_aggregation(&self.blobs, committee, roster, commitment)?,
         })
     }
 
