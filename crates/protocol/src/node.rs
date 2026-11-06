@@ -373,6 +373,11 @@ impl Node {
         self.e3s.get(e3)
     }
 
+    /// The position of the last fact this node applied from chain `chain_id`.
+    pub fn applied(&self, chain_id: u64) -> Option<LogPosition> {
+        self.applied.get(&chain_id).copied()
+    }
+
     fn apply_chain(&mut self, now: UnixSecs, event: ChainEvent) -> Vec<Effect> {
         // The chain adapter delivers each chain's confirmed log in order; a position at or before
         // the last applied one is a re-read of the same history.

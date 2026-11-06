@@ -11,7 +11,8 @@ use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold, IRando
 use e3_protocol::{
     dkg::AttestationContext,
     node::{
-        ChainEvent, ChainFact, CommitteeRequest, CryptoParams, FailureReason, LogPosition, Stage,
+        ChainEvent, ChainFact, CommitteeRequest, CryptoParams, DataRef, FailureReason, LogPosition,
+        Stage,
     },
     E3Id, UnixSecs,
 };
@@ -51,14 +52,14 @@ pub struct RawLog {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Decoded {
+pub(crate) enum Decoded {
     Fact(ChainEvent),
     Read(PendingRead),
 }
 
 /// A fact that needs contract state at its block before the node can take it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PendingRead {
+pub(crate) enum PendingRead {
     /// `CommitteeFinalized`: its DKG deadline from `getDeadlines` and window from
     /// `getE3TimeoutConfig`.
     DkgTiming {
@@ -73,13 +74,12 @@ pub enum PendingRead {
         time: UnixSecs,
         e3: E3Id,
     },
-    /// `CiphertextOutputPublished`: its bytes go into the blob store, with the decryption deadline
-    /// from `getDeadlines`.
+    /// `CiphertextOutputReferencePublished`: its decryption deadline from `getDeadlines`.
     Ciphertext {
         at: LogPosition,
         time: UnixSecs,
         e3: E3Id,
-        ciphertext: Bytes,
+        ciphertext: DataRef,
     },
 }
 
@@ -93,8 +93,8 @@ pub enum DecodeError {
     },
     #[error("unknown {kind} value {value}")]
     UnknownEnum { kind: &'static str, value: u8 },
-    #[error("the key proof does not name {0} ordered committee slots")]
-    Roster(usize),
+    #[error("the key proof does not name an ordered roster of committee slots")]
+    Roster,
 }
 
 /// The parts of a request that its transaction logs before `E3Requested`.
@@ -105,63 +105,66 @@ struct RequestParts {
     owner_cap: bool,
 }
 
-pub struct Decoder {
-    contracts: Contracts,
+/// Decodes `logs`, whole blocks in chain order. A request and a finalization each pair logs of one
+/// transaction, and a transaction never spans blocks, so nothing carries over between calls.
+pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog]) -> Result<Vec<Decoded>, DecodeError> {
+    let mut decoder = Decoder {
+        contracts,
+        requests: BTreeMap::new(),
+        finalized: BTreeMap::new(),
+    };
+    let mut decoded = Vec::new();
+    for log in logs {
+        decoded.extend(decoder.decode(log)?);
+    }
+    Ok(decoded)
+}
+
+struct Decoder<'a> {
+    contracts: &'a Contracts,
     /// Request parts per transaction and E3, until its `E3Requested`.
     requests: BTreeMap<(B256, U256), RequestParts>,
     /// `SortitionCommitteeFinalized` members per transaction and E3, until its
     /// `CommitteeFinalized`.
     finalized: BTreeMap<(B256, U256), Vec<Address>>,
-    /// Each requested E3's committee size, which the key proof's layout depends on.
-    sizes: BTreeMap<U256, CiphernodesCommitteeSize>,
 }
 
-impl Decoder {
-    pub fn new(contracts: Contracts) -> Self {
-        Self {
-            contracts,
-            requests: BTreeMap::new(),
-            finalized: BTreeMap::new(),
-            sizes: BTreeMap::new(),
-        }
-    }
-
-    pub fn decode(&mut self, log: &RawLog) -> Result<Vec<Decoded>, DecodeError> {
+impl Decoder<'_> {
+    fn decode(&mut self, log: &RawLog) -> Result<Option<Decoded>, DecodeError> {
         let Some(&topic) = log.topics.first() else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
-        let c = &self.contracts;
-        let fact = if log.address == c.interfold {
-            self.interfold(log, topic)?
+        let c = self.contracts;
+        if log.address == c.interfold {
+            self.interfold(log, topic)
         } else if log.address == c.registry {
-            self.registry(log, topic)?
+            self.registry(log, topic)
         } else if log.address == c.bonding {
-            self.bonding(log, topic)?
+            self.bonding(log, topic)
         } else if c.randomness.contains(&log.address)
             && topic == IRandomnessProvider::RandomnessFulfilled::SIGNATURE_HASH
         {
             let event: IRandomnessProvider::RandomnessFulfilled =
-                decode(log, "RandomnessFulfilled")?;
-            return Ok(vec![Decoded::Read(PendingRead::Seed {
+                decode_event(log, "RandomnessFulfilled")?;
+            Ok(Some(Decoded::Read(PendingRead::Seed {
                 at: log.at,
                 time: log.time,
                 e3: self.e3(event.e3Id),
-            })]);
+            })))
         } else {
-            None
-        };
-        Ok(fact.into_iter().collect())
+            Ok(None)
+        }
     }
 
     fn interfold(&mut self, log: &RawLog, topic: B256) -> Result<Option<Decoded>, DecodeError> {
         use IInterfold as I;
         let fact = match topic {
             I::E3Requested::SIGNATURE_HASH => {
-                let event: I::E3Requested = decode(log, "E3Requested")?;
+                let event: I::E3Requested = decode_event(log, "E3Requested")?;
                 return Ok(self.requested(log, event));
             }
             I::CommitteeFinalized::SIGNATURE_HASH => {
-                let event: I::CommitteeFinalized = decode(log, "CommitteeFinalized")?;
+                let event: I::CommitteeFinalized = decode_event(log, "CommitteeFinalized")?;
                 let members = self
                     .finalized
                     .remove(&(log.transaction, event.e3Id))
@@ -173,25 +176,29 @@ impl Decoder {
                     members,
                 })));
             }
-            I::CiphertextOutputPublished::SIGNATURE_HASH => {
-                let event: I::CiphertextOutputPublished = decode(log, "CiphertextOutputPublished")?;
+            I::CiphertextOutputReferencePublished::SIGNATURE_HASH => {
+                let event: I::CiphertextOutputReferencePublished =
+                    decode_event(log, "CiphertextOutputReferencePublished")?;
                 return Ok(Some(Decoded::Read(PendingRead::Ciphertext {
                     at: log.at,
                     time: log.time,
                     e3: self.e3(event.e3Id),
-                    ciphertext: event.ciphertextOutput,
+                    ciphertext: DataRef {
+                        hash: event.contentHash,
+                        block: event.availabilityBlock,
+                        leaf: event.availabilityLeafIndex,
+                    },
                 })));
             }
             I::E3StageChanged::SIGNATURE_HASH => {
-                let event: I::E3StageChanged = decode(log, "E3StageChanged")?;
+                let event: I::E3StageChanged = decode_event(log, "E3StageChanged")?;
                 ChainFact::StageChanged {
                     e3: self.e3(event.e3Id),
                     stage: stage(event.newStage)?,
                 }
             }
             I::E3Failed::SIGNATURE_HASH => {
-                let event: I::E3Failed = decode(log, "E3Failed")?;
-                self.sizes.remove(&event.e3Id);
+                let event: I::E3Failed = decode_event(log, "E3Failed")?;
                 ChainFact::Failed {
                     e3: self.e3(event.e3Id),
                     reason: failure(event.reason)?,
@@ -207,7 +214,7 @@ impl Decoder {
         let fact = match topic {
             R::DkgFoldAttestationContextEstablished::SIGNATURE_HASH => {
                 let event: R::DkgFoldAttestationContextEstablished =
-                    decode(log, "DkgFoldAttestationContextEstablished")?;
+                    decode_event(log, "DkgFoldAttestationContextEstablished")?;
                 self.parts(log.transaction, event.e3Id).attestation = Some(AttestationContext {
                     registry: event.registry,
                     verifier: event.dkgFoldAttestationVerifier,
@@ -215,35 +222,28 @@ impl Decoder {
                 return Ok(None);
             }
             R::CommitteeRequested::SIGNATURE_HASH => {
-                let event: R::CommitteeRequested = decode(log, "CommitteeRequested")?;
+                let event: R::CommitteeRequested = decode_event(log, "CommitteeRequested")?;
                 let time = UnixSecs::try_from(event.requestBlock).unwrap_or(UnixSecs::MAX);
                 self.parts(log.transaction, event.e3Id).request = Some((time, event.ticketPrice));
                 return Ok(None);
             }
             extra::CommitteeBondOwnerCapEnabled::SIGNATURE_HASH => {
                 let event: extra::CommitteeBondOwnerCapEnabled =
-                    decode(log, "CommitteeBondOwnerCapEnabled")?;
+                    decode_event(log, "CommitteeBondOwnerCapEnabled")?;
                 self.parts(log.transaction, event.e3Id).owner_cap = true;
                 return Ok(None);
             }
             R::SortitionCommitteeFinalized::SIGNATURE_HASH => {
                 let event: R::SortitionCommitteeFinalized =
-                    decode(log, "SortitionCommitteeFinalized")?;
+                    decode_event(log, "SortitionCommitteeFinalized")?;
                 self.finalized
                     .insert((log.transaction, event.e3Id), event.committee);
                 return Ok(None);
             }
             R::CommitteeProofPublished::SIGNATURE_HASH => {
-                let event: R::CommitteeProofPublished = decode(log, "CommitteeProofPublished")?;
-                let Some(size) = self.sizes.get(&event.e3Id) else {
-                    return Ok(None);
-                };
-                let roster = roster(
-                    &event.nodes,
-                    &event.proof,
-                    size.values().h,
-                    event.pkCommitment,
-                )?;
+                let event: R::CommitteeProofPublished =
+                    decode_event(log, "CommitteeProofPublished")?;
+                let roster = roster(&event.nodes, &event.proof, event.pkCommitment)?;
                 ChainFact::KeyPublished {
                     e3: self.e3(event.e3Id),
                     committee: event.nodes,
@@ -252,7 +252,8 @@ impl Decoder {
                 }
             }
             R::CommitteeMemberExpelled::SIGNATURE_HASH => {
-                let event: R::CommitteeMemberExpelled = decode(log, "CommitteeMemberExpelled")?;
+                let event: R::CommitteeMemberExpelled =
+                    decode_event(log, "CommitteeMemberExpelled")?;
                 ChainFact::MemberExpelled {
                     e3: self.e3(event.e3Id),
                     member: event.node,
@@ -260,7 +261,7 @@ impl Decoder {
             }
             extra::AccusationVoteValiditySet::SIGNATURE_HASH => {
                 let event: extra::AccusationVoteValiditySet =
-                    decode(log, "AccusationVoteValiditySet")?;
+                    decode_event(log, "AccusationVoteValiditySet")?;
                 ChainFact::VoteValidity {
                     secs: u64::try_from(event.accusationVoteValidity).unwrap_or(u64::MAX),
                 }
@@ -274,21 +275,22 @@ impl Decoder {
         use IBondingRegistry as B;
         let fact = match topic {
             B::OperatorActivationChanged::SIGNATURE_HASH => {
-                let event: B::OperatorActivationChanged = decode(log, "OperatorActivationChanged")?;
+                let event: B::OperatorActivationChanged =
+                    decode_event(log, "OperatorActivationChanged")?;
                 ChainFact::OperatorActive {
                     operator: event.operator,
                     active: event.active,
                 }
             }
             B::TicketBalanceUpdated::SIGNATURE_HASH => {
-                let event: B::TicketBalanceUpdated = decode(log, "TicketBalanceUpdated")?;
+                let event: B::TicketBalanceUpdated = decode_event(log, "TicketBalanceUpdated")?;
                 ChainFact::TicketBalance {
                     operator: event.operator,
                     balance: event.newBalance,
                 }
             }
             B::BondOwnerSet::SIGNATURE_HASH => {
-                let event: B::BondOwnerSet = decode(log, "BondOwnerSet")?;
+                let event: B::BondOwnerSet = decode_event(log, "BondOwnerSet")?;
                 ChainFact::BondOwner {
                     operator: event.operator,
                     owner: event.bondOwner,
@@ -298,14 +300,15 @@ impl Decoder {
                 ChainFact::EligibilityReset
             }
             B::ConfigurationUpdated::SIGNATURE_HASH => {
-                let event: B::ConfigurationUpdated = decode(log, "ConfigurationUpdated")?;
+                let event: B::ConfigurationUpdated = decode_event(log, "ConfigurationUpdated")?;
                 if !affects_eligibility(event.parameter) {
                     return Ok(None);
                 }
                 ChainFact::EligibilityReset
             }
             extra::IdentityPolicyUpdated::SIGNATURE_HASH => {
-                let event: extra::IdentityPolicyUpdated = decode(log, "IdentityPolicyUpdated")?;
+                let event: extra::IdentityPolicyUpdated =
+                    decode_event(log, "IdentityPolicyUpdated")?;
                 ChainFact::IdentityPolicy {
                     required: event.required,
                 }
@@ -326,7 +329,6 @@ impl Decoder {
         else {
             return None;
         };
-        self.sizes.insert(event.e3Id, size);
         let fact = ChainFact::E3Requested {
             e3: self.e3(event.e3Id),
             params: CryptoParams {
@@ -365,18 +367,18 @@ impl Decoder {
     }
 }
 
-fn decode<E: SolEvent>(log: &RawLog, event: &'static str) -> Result<E, DecodeError> {
+fn decode_event<E: SolEvent>(log: &RawLog, event: &'static str) -> Result<E, DecodeError> {
     E::decode_raw_log(log.topics.iter().copied(), &log.data)
         .map_err(|source| DecodeError::Malformed { event, source })
 }
 
-/// The roster from the key proof's public inputs, as `CiphernodeRegistryOwnable` lays them out:
-/// `abi.encode(bytes proof, bytes32[] inputs)` with `6 + 3H` inputs, the selected party IDs at
-/// `[2, 2 + H)`, ascending, and the key commitment last.
+/// The roster from the key proof's public inputs, laid out as the deployed key verifier reads
+/// them: `abi.encode(bytes proof, bytes32[] inputs)` with `6 + 3H` inputs for a roster of H (the
+/// verifier picks its circuit by that count), the roster's committee slots at `[2, 2 + H)` in
+/// ascending order, and the key commitment last.
 fn roster(
     committee: &[Address],
     proof: &[u8],
-    h: usize,
     commitment: B256,
 ) -> Result<Vec<Address>, DecodeError> {
     let (_, inputs) = <(Bytes, Vec<B256>)>::abi_decode_params(proof).map_err(|source| {
@@ -385,8 +387,9 @@ fn roster(
             source,
         }
     })?;
-    if inputs.len() != 6 + 3 * h || inputs.last() != Some(&commitment) {
-        return Err(DecodeError::Roster(h));
+    let h = inputs.len().saturating_sub(6) / 3;
+    if h == 0 || inputs.len() != 6 + 3 * h || inputs.last() != Some(&commitment) {
+        return Err(DecodeError::Roster);
     }
     let slots: Vec<usize> = inputs[2..2 + h]
         .iter()
@@ -395,7 +398,7 @@ fn roster(
     let ordered = slots.windows(2).all(|pair| pair[0] < pair[1])
         && slots.iter().all(|slot| *slot < committee.len());
     if !ordered {
-        return Err(DecodeError::Roster(h));
+        return Err(DecodeError::Roster);
     }
     Ok(slots.into_iter().map(|slot| committee[slot]).collect())
 }

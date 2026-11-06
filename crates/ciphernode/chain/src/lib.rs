@@ -4,10 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The v2 node's chain adapter. The decoder turns confirmed contract logs into the protocol's
-//! chain facts; a fact that needs contract state from its block comes out as a read for the
-//! ingestion loop to finish.
+//! The v2 node's chain adapter. The reader turns each chain's confirmed contract logs into the
+//! protocol's chain facts, in order, and reads the contract state that some facts carry.
 
 mod decode;
+mod reader;
+mod rpc;
+#[cfg(test)]
+mod testing;
 
-pub use decode::{Contracts, DecodeError, Decoded, Decoder, PendingRead, RawLog};
+use decode::{decode, Decoded, PendingRead};
+pub use decode::{Contracts, DecodeError, RawLog};
+pub use reader::{ReadError, Reader, Rpc, RpcError};
+pub use rpc::ChainNode;

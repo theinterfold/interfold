@@ -10,9 +10,11 @@ repository.workspace = true
 e3-committee = { workspace = true }
 e3-evm-contracts = { workspace = true }
 e3-protocol = { workspace = true }
+alloy = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 e3-protocol = { workspace = true, features = ["testing"] }
+tokio = { workspace = true }

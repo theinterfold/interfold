@@ -3633,12 +3633,14 @@ dependencies = [
 name = "e3-chain"
 version = "0.20.0-dev.3"
 dependencies = [
+ "alloy",
  "alloy-primitives",
  "alloy-sol-types",
  "e3-committee",
  "e3-evm-contracts",
  "e3-protocol",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
