@@ -403,7 +403,7 @@ impl<J: Jobs> Sim<J> {
         let ciphertext = match (&fact, &submission.transaction) {
             (Some(_), Transaction::PublishCommittee(publication)) => {
                 let params = request.params;
-                Some(self.jobs.ciphertext(&params, publication.public_key))
+                Some(self.jobs.ciphertext(e3, &params, publication.public_key))
             }
             _ => None,
         };

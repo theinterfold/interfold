@@ -211,4 +211,13 @@ if [[ "$ACTUAL" != "$PLAINTEXT"* ]]; then
   echo "FAILED: expected $PLAINTEXT" >&2
   exit 1
 fi
+
+heading "Wait for every node to delete the E3's blobs"
+no_blobs() {
+  local blobs
+  for blobs in "$OUT"/nodes/node-*/blobs; do
+    [[ -z "$(ls -A "$blobs")" ]] || return 1
+  done
+}
+until_ok 120 no_blobs
 heading "PASSED"

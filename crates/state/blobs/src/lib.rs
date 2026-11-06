@@ -4,12 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Bytes stored once and named by their Keccak-256 hash. The chain adapter stores published
+//! Bytes stored once per E3 and named by their Keccak-256 hash. The chain adapter stores published
 //! ciphertexts, the network adapter what peers send, and the job runner what it makes; the
-//! protocol only holds references.
+//! protocol only holds references. Each E3 keeps its own copy, so an E3's blobs can go when it
+//! ends even if another E3 has the same bytes.
 
-use alloy_primitives::B256;
-use e3_protocol::BlobRef;
+use alloy_primitives::{B256, U256};
+use e3_protocol::{BlobRef, E3Id};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -29,40 +30,87 @@ pub enum BlobError {
     Io(#[from] io::Error),
 }
 
+/// Blobs by the E3 whose work made or fetched them.
+pub trait BlobStore: Clone + Send + Sync + 'static {
+    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;
+    fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
+    fn has(&self, e3: E3Id, blob: &BlobRef) -> bool;
+    /// Deletes the blobs of every E3 that `keep` rejects.
+    fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError>;
+
+    fn of(&self, e3: E3Id) -> E3Blobs<Self> {
+        E3Blobs {
+            store: self.clone(),
+            e3,
+        }
+    }
+}
+
+/// The blobs of one E3, for code that works on one.
 pub trait Blobs {
     fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, blob: &BlobRef) -> bool;
 }
 
-/// Blobs in memory; clones share them.
-#[derive(Clone, Default)]
-pub struct MemoryBlobs(Arc<Mutex<HashMap<B256, Vec<u8>>>>);
+#[derive(Clone)]
+pub struct E3Blobs<S> {
+    store: S,
+    e3: E3Id,
+}
 
-impl Blobs for MemoryBlobs {
+impl<S: BlobStore> Blobs for E3Blobs<S> {
     fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        let blob = BlobRef::of(bytes);
-        let mut blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs.entry(blob.hash).or_insert_with(|| bytes.to_vec());
-        Ok(blob)
+        self.store.put(self.e3, bytes)
     }
 
     fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
+        self.store.get(self.e3, blob)
+    }
+
+    fn has(&self, blob: &BlobRef) -> bool {
+        self.store.has(self.e3, blob)
+    }
+}
+
+/// Blobs in memory; clones share them.
+#[derive(Clone, Default)]
+pub struct MemoryBlobs(Arc<Mutex<HashMap<BlobKey, Vec<u8>>>>);
+
+type BlobKey = (E3Id, B256);
+
+impl BlobStore for MemoryBlobs {
+    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
+        let blob = BlobRef::of(bytes);
+        let mut blobs = self.0.lock().expect("no holder of the lock panics");
+        blobs
+            .entry((e3, blob.hash))
+            .or_insert_with(|| bytes.to_vec());
+        Ok(blob)
+    }
+
+    fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
         let blobs = self.0.lock().expect("no holder of the lock panics");
         blobs
-            .get(&blob.hash)
+            .get(&(e3, blob.hash))
             .cloned()
             .ok_or(BlobError::Missing(*blob))
     }
 
-    fn has(&self, blob: &BlobRef) -> bool {
+    fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
         let blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs.contains_key(&blob.hash)
+        blobs.contains_key(&(e3, blob.hash))
+    }
+
+    fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
+        let mut blobs = self.0.lock().expect("no holder of the lock panics");
+        blobs.retain(|(e3, _), _| keep(e3));
+        Ok(())
     }
 }
 
-/// Blobs as files in one directory, each named by its hash. A step that names a blob is journaled
-/// after `put` returns, so `put` returns only once the file is complete on disk.
+/// Blobs as files, one directory per E3, each file named by its hash. A step that names a blob is
+/// journaled after `put` returns, so `put` returns only once the file is complete on disk.
 #[derive(Clone)]
 pub struct FileBlobs {
     dir: PathBuf,
@@ -76,29 +124,44 @@ impl FileBlobs {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BlobError> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        for entry in fs::read_dir(&dir)? {
-            let path = entry?.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "partial")
-            {
-                fs::remove_file(path)?;
+        for e3 in fs::read_dir(&dir)? {
+            let e3 = e3?.path();
+            if !e3.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(e3)? {
+                let path = entry?.path();
+                if path
+                    .extension()
+                    .is_some_and(|extension| extension == "partial")
+                {
+                    fs::remove_file(path)?;
+                }
             }
         }
         Ok(Self { dir })
     }
 
-    fn path(&self, hash: &B256) -> PathBuf {
-        self.dir.join(hash.to_string())
+    fn e3_dir(&self, e3: E3Id) -> PathBuf {
+        self.dir.join(format!("{}-{}", e3.chain_id, e3.number))
+    }
+
+    fn path(&self, e3: E3Id, hash: &B256) -> PathBuf {
+        self.e3_dir(e3).join(hash.to_string())
     }
 }
 
-impl Blobs for FileBlobs {
-    fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError> {
+impl BlobStore for FileBlobs {
+    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
         let blob = BlobRef::of(bytes);
-        let path = self.path(&blob.hash);
+        let path = self.path(e3, &blob.hash);
         if path.exists() {
             return Ok(blob);
+        }
+        let dir = self.e3_dir(e3);
+        if !dir.exists() {
+            fs::create_dir_all(&dir)?;
+            File::open(&self.dir)?.sync_all()?;
         }
         let write = WRITES.fetch_add(1, Ordering::Relaxed);
         let partial = path.with_extension(format!("{}-{write}.partial", std::process::id()));
@@ -106,20 +169,43 @@ impl Blobs for FileBlobs {
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&partial, &path)?;
-        File::open(&self.dir)?.sync_all()?;
+        File::open(&dir)?.sync_all()?;
         Ok(blob)
     }
 
-    fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        match fs::read(self.path(&blob.hash)) {
+    fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
+        match fs::read(self.path(e3, &blob.hash)) {
             Ok(bytes) => Ok(bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Err(BlobError::Missing(*blob)),
             Err(error) => Err(error.into()),
         }
     }
 
-    fn has(&self, blob: &BlobRef) -> bool {
-        self.path(&blob.hash).exists()
+    fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
+        self.path(e3, &blob.hash).exists()
+    }
+
+    /// Also deletes anything in the store's directory that is not an E3's.
+    fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
+        for entry in fs::read_dir(&self.dir)? {
+            let path = entry?.path();
+            let e3 = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.split_once('-'))
+                .and_then(|(chain_id, number)| {
+                    Some(E3Id {
+                        chain_id: chain_id.parse().ok()?,
+                        number: U256::from_str_radix(number, 10).ok()?,
+                    })
+                });
+            match e3 {
+                Some(e3) if keep(&e3) => {}
+                _ if path.is_dir() => fs::remove_dir_all(path)?,
+                _ => fs::remove_file(path)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -127,15 +213,25 @@ impl Blobs for FileBlobs {
 mod tests {
     use super::*;
 
+    fn e3(number: u64) -> E3Id {
+        E3Id {
+            chain_id: 1,
+            number: U256::from(number),
+        }
+    }
+
     #[test]
     fn a_file_blob_reads_back_after_the_store_is_opened_again() {
         let dir = tempfile::tempdir().unwrap();
-        let blob = FileBlobs::open(dir.path()).unwrap().put(b"share").unwrap();
+        let blob = FileBlobs::open(dir.path())
+            .unwrap()
+            .put(e3(1), b"share")
+            .unwrap();
         let reopened = FileBlobs::open(dir.path()).unwrap();
-        assert_eq!(reopened.get(&blob).unwrap(), b"share");
+        assert_eq!(reopened.get(e3(1), &blob).unwrap(), b"share");
         let other = BlobRef::of(b"other");
         assert!(
-            matches!(reopened.get(&other), Err(BlobError::Missing(missing)) if missing == other)
+            matches!(reopened.get(e3(1), &other), Err(BlobError::Missing(missing)) if missing == other)
         );
     }
 
@@ -149,12 +245,24 @@ mod tests {
             for _ in 0..8 {
                 scope.spawn(|| {
                     for _ in 0..20 {
-                        let _ = fs::remove_file(blobs.path(&BlobRef::of(&bytes).hash));
-                        blobs.put(&bytes).unwrap();
+                        let _ = fs::remove_file(blobs.path(e3(1), &BlobRef::of(&bytes).hash));
+                        blobs.put(e3(1), &bytes).unwrap();
                     }
                 });
             }
         });
-        assert_eq!(blobs.get(&BlobRef::of(&bytes)).unwrap(), bytes);
+        assert_eq!(blobs.get(e3(1), &BlobRef::of(&bytes)).unwrap(), bytes);
+    }
+
+    /// Placeholder proofs of one kind have the same bytes in every E3.
+    #[test]
+    fn an_ended_e3_s_blobs_go_and_another_e3_keeps_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        let blob = blobs.put(e3(1), b"proof").unwrap();
+        blobs.put(e3(2), b"proof").unwrap();
+        blobs.retain(|kept| *kept == e3(2)).unwrap();
+        assert!(!blobs.has(e3(1), &blob));
+        assert_eq!(blobs.get(e3(2), &blob).unwrap(), b"proof");
     }
 }

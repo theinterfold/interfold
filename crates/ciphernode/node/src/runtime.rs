@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy_primitives::keccak256;
+use alloy_primitives::{keccak256, Address};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use e3_blobs::Blobs;
+use e3_blobs::BlobStore;
 use e3_chain::{Account, Contracts, ReadError, Reader, Rpc, Writer};
 use e3_data_availability::{DataAvailabilityReader, DataReference};
 use e3_engine::{EffectKey, Engine, Pending};
@@ -41,6 +41,14 @@ const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(600);
 /// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
 /// for its inputs fails every time.
 const JOB_ATTEMPTS: u32 = 10;
+
+/// The bonding registry's owner capacity windows start at multiples of this from Unix time zero.
+const CAPACITY_WINDOW: UnixSecs = 30 * 24 * 60 * 60;
+/// The first refresh waits this long after a start, so a node that restarts in a loop does not
+/// refresh at each start.
+const FIRST_REFRESH: Duration = Duration::from_secs(10 * 60);
+/// A refresh waits this long past a window's start, so the chain's block time is past it too.
+const REFRESH_MARGIN: UnixSecs = 60;
 
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
@@ -96,7 +104,7 @@ where
     R: Rpc + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
-    B: Blobs + Clone + Send + Sync + 'static,
+    B: BlobStore,
 {
     match start(settings, parts).await {
         Ok(never) => match never {},
@@ -112,10 +120,11 @@ where
     R: Rpc + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
-    B: Blobs + Clone + Send + Sync + 'static,
+    B: BlobStore,
 {
     let genesis = Node::new(parts.operator.address());
     let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
+    sweep(&parts.blobs, engine.machine());
     let chain_id = settings.contracts.chain_id;
     let from = engine
         .machine()
@@ -141,6 +150,10 @@ where
         events,
         tasks: BTreeMap::new(),
     };
+    tokio::spawn(refresh_each_window(
+        effects.writer.clone(),
+        effects.operator.address(),
+    ));
     let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
     loop {
         let event = match queue.pop_front() {
@@ -157,8 +170,12 @@ where
             Event::Fatal(error) => return Err(error),
         };
         debug!(input = %brief(&input), "applying");
+        let held = engine.machine().e3s().count();
         let (next, pending) = engine.apply(now(), input)?;
         engine = next;
+        if engine.machine().e3s().count() < held {
+            sweep(&effects.blobs, engine.machine());
+        }
         if let Some(key) = answers {
             engine.acknowledge(key)?;
         }
@@ -166,6 +183,30 @@ where
         for key in effects.stop_ended(engine.machine()) {
             engine.acknowledge(key)?;
         }
+    }
+}
+
+/// Refreshes the operator once in each owner capacity window, right after it starts. The node does
+/// so whatever the identity policy: the chain offers no view of the policy, and a refresh is one
+/// call a month.
+async fn refresh_each_window<A, B>(writer: Arc<Writer<A, B>>, operator: Address)
+where
+    A: Account + Send + Sync + 'static,
+    B: BlobStore,
+{
+    tokio::time::sleep(FIRST_REFRESH).await;
+    loop {
+        writer.refresh_operator(operator).await;
+        let next = (now() / CAPACITY_WINDOW + 1) * CAPACITY_WINDOW + REFRESH_MARGIN;
+        tokio::time::sleep(Duration::from_secs(next.saturating_sub(now()))).await;
+    }
+}
+
+/// Deletes the blobs of the E3s `machine` no longer holds. A job that ends after its E3 can still
+/// store a blob, so each sweep takes all of them, not only the E3s that just ended.
+fn sweep(blobs: &impl BlobStore, machine: &Node) {
+    if let Err(error) = blobs.retain(|e3| machine.e3(e3).is_some()) {
+        warn!(%error, "deleting the blobs of ended E3s failed");
     }
 }
 
@@ -259,7 +300,7 @@ impl<A, N, B> Effects<A, N, B>
 where
     A: Account + Send + Sync + 'static,
     N: Network,
-    B: Blobs + Clone + Send + Sync + 'static,
+    B: BlobStore,
 {
     /// Starts each effect; returns the events of the effects that finish at once.
     fn dispatch(&mut self, pending: Vec<Pending<Effect>>) -> Vec<Event> {
@@ -410,16 +451,18 @@ where
             let mut wait = RETRY_AFTER;
             loop {
                 match availability.retrieve(reference).await {
-                    Ok(bytes) if keccak256(&bytes) == fetch.data.hash => match blobs.put(&bytes) {
-                        Ok(blob) => {
-                            let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
-                            let _ = events.send(Event::Result(key, fetched)).await;
-                            return;
+                    Ok(bytes) if keccak256(&bytes) == fetch.data.hash => {
+                        match blobs.put(fetch.e3, &bytes) {
+                            Ok(blob) => {
+                                let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
+                                let _ = events.send(Event::Result(key, fetched)).await;
+                                return;
+                            }
+                            Err(failure) => {
+                                error!(e3 = %fetch.e3, %failure, "storing a ciphertext failed")
+                            }
                         }
-                        Err(failure) => {
-                            error!(e3 = %fetch.e3, %failure, "storing a ciphertext failed")
-                        }
-                    },
+                    }
                     Ok(_) => warn!(e3 = %fetch.e3, "the availability layer sent other bytes"),
                     Err(failure) => {
                         warn!(e3 = %fetch.e3, %failure, "fetching the ciphertext failed")

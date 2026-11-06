@@ -9,7 +9,7 @@
 use super::*;
 use alloy_primitives::Bytes;
 use alloy_signer::SignerSync;
-use e3_blobs::{Blobs, FileBlobs};
+use e3_blobs::{BlobError, BlobStore, Blobs, E3Blobs, FileBlobs};
 use e3_protocol::{
     dkg::{DkgMessage, KeyMessage, SharesMessage},
     node::Body,
@@ -17,7 +17,6 @@ use e3_protocol::{
     testing::{address, e3, operator},
     BlobRef,
 };
-use std::sync::Arc;
 use tempfile::TempDir;
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -25,11 +24,24 @@ const WAIT: Duration = Duration::from_secs(30);
 struct Node {
     p2p: P2p,
     inbound: mpsc::Receiver<PeerMessage>,
-    blobs: FileBlobs,
-    dir: TempDir,
+    blobs: E3Blobs<FileBlobs>,
+    _dir: TempDir,
 }
 
 async fn node(n: u64, peers: Vec<Multiaddr>) -> Node {
+    started(n, peers, |blobs| blobs).await
+}
+
+/// A node whose store serves other bytes than it holds.
+async fn forger(n: u64, peers: Vec<Multiaddr>) -> Node {
+    started(n, peers, Forging).await
+}
+
+async fn started<S: BlobStore>(
+    n: u64,
+    peers: Vec<Multiaddr>,
+    serve: impl FnOnce(FileBlobs) -> S,
+) -> Node {
     let dir = tempfile::tempdir().unwrap();
     let blobs = FileBlobs::open(dir.path()).unwrap();
     let config = P2pConfig {
@@ -39,14 +51,35 @@ async fn node(n: u64, peers: Vec<Multiaddr>) -> Node {
         listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         peers,
     };
-    let (p2p, inbound) = P2p::start(config, address(n), Arc::new(blobs.clone()))
+    let (p2p, inbound) = P2p::start(config, address(n), serve(blobs.clone()))
         .await
         .unwrap();
     Node {
         p2p,
         inbound,
-        blobs,
-        dir,
+        blobs: blobs.of(e3(1)),
+        _dir: dir,
+    }
+}
+
+#[derive(Clone)]
+struct Forging(FileBlobs);
+
+impl BlobStore for Forging {
+    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
+        self.0.put(e3, bytes)
+    }
+
+    fn get(&self, _: E3Id, _: &BlobRef) -> Result<Vec<u8>, BlobError> {
+        Ok(b"forged".to_vec())
+    }
+
+    fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
+        self.0.has(e3, blob)
+    }
+
+    fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
+        self.0.retain(keep)
     }
 }
 
@@ -69,7 +102,7 @@ fn signed(message: PeerMessage, signer: u64, sent_at: u64) -> Envelope {
     }
 }
 
-fn proof(blobs: &FileBlobs, bytes: &[u8]) -> SignedProof {
+fn proof(blobs: &E3Blobs<FileBlobs>, bytes: &[u8]) -> SignedProof {
     SignedProof {
         proof: ZkProof {
             data: blobs.put(bytes).unwrap(),
@@ -252,13 +285,13 @@ async fn a_message_that_names_too_many_bytes_is_not_fetched() {
 /// The publisher's store holds other bytes under the blob's name; a receiver keeps nothing from it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_blob_with_other_bytes_is_never_stored() {
-    let [first, mut second, _third] = network().await;
+    let first = forger(1, Vec::new()).await;
+    let mut second = node(2, first.p2p.listening().to_vec()).await;
     let message = key(&first, 1);
     let Body::Dkg(DkgMessage::EncryptionKey(sent)) = &message.body else {
         unreachable!("a key message")
     };
     let forged = sent.key;
-    std::fs::write(first.dir.path().join(forged.hash.to_string()), b"forged").unwrap();
     publish(&first, signed(message.clone(), 1, 10)).await;
     assert_eq!(received(&mut second).await, message);
     let result = fetch(&second, message).await;

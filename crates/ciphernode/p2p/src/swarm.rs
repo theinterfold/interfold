@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{inbound_ip_limits::InboundIpLimits, Network, NetworkError, SharedBlobs};
+use crate::{inbound_ip_limits::InboundIpLimits, Network, NetworkError};
 use alloy_primitives::{Address, B256};
-use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef};
+use e3_blobs::BlobStore;
+use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef, E3Id};
 use futures::StreamExt;
 use libp2p::{
     connection_limits::{self, ConnectionLimits},
@@ -178,7 +179,7 @@ impl P2p {
     pub async fn start(
         config: P2pConfig,
         me: Address,
-        blobs: SharedBlobs,
+        blobs: impl BlobStore,
     ) -> Result<(Self, mpsc::Receiver<PeerMessage>), P2pError> {
         let key = Keypair::ed25519_from_bytes(config.identity)
             .map_err(|error| P2pError::Identity(error.to_string()))?;
@@ -330,14 +331,15 @@ struct PendingPublish {
     done: oneshot::Sender<Result<(), NetworkError>>,
 }
 
-struct Driver {
+struct Driver<S> {
     swarm: Swarm<Behaviour>,
     protocols: Protocols,
     me: Address,
-    blobs: SharedBlobs,
+    blobs: S,
     inbound: mpsc::Sender<PeerMessage>,
     peers: Vec<Multiaddr>,
-    servable: Recent<B256, BlobRef, MAX_SERVABLE>,
+    /// The blobs this node serves, with their E3s, by hash.
+    servable: Recent<B256, (E3Id, BlobRef), MAX_SERVABLE>,
     /// The peers that sent each message, by its ID.
     sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
     fetching: BTreeMap<u64, Fetching>,
@@ -351,7 +353,7 @@ struct Driver {
     publishes: VecDeque<PendingPublish>,
 }
 
-impl Driver {
+impl<S: BlobStore> Driver<S> {
     async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
         let mut redial = tokio::time::interval(REDIAL);
         let mut retry = tokio::time::interval(PUBLISH_RETRY);
@@ -483,7 +485,7 @@ impl Driver {
         let missing: BTreeMap<B256, BlobRef> = message
             .blobs()
             .into_iter()
-            .filter(|blob| !self.blobs.has(blob))
+            .filter(|blob| !self.blobs.has(message.e3, blob))
             .map(|blob| (blob.hash, blob))
             .collect();
         if missing.is_empty() {
@@ -546,7 +548,7 @@ impl Driver {
                 let bytes = self
                     .servable
                     .get(&request)
-                    .and_then(|blob| self.blobs.get(blob).ok())
+                    .and_then(|(e3, blob)| self.blobs.get(*e3, blob).ok())
                     .map(ByteBuf::from);
                 let _ = self
                     .swarm
@@ -588,7 +590,8 @@ impl Driver {
         if !self.fetching.contains_key(&fetch) {
             return;
         }
-        if let Err(error) = self.blobs.put(bytes) {
+        let e3 = self.fetching[&fetch].message.e3;
+        if let Err(error) = self.blobs.put(e3, bytes) {
             self.finish(fetch, Err(NetworkError::Store(error.to_string())));
             return;
         }
@@ -635,7 +638,7 @@ impl Driver {
 
     fn serve(&mut self, message: &PeerMessage) {
         for blob in message.blobs() {
-            self.servable.insert(blob.hash, blob);
+            self.servable.insert(blob.hash, (message.e3, blob));
         }
     }
 

@@ -92,7 +92,7 @@ fn with_real_threshold_bfv_the_committee_decrypts_the_requester_s_message() {
             })
             .collect();
         let first = plaintexts.first().expect("a published plaintext");
-        let values = sim.jobs().values(first);
+        let values = sim.jobs().values(e3(1), first);
         assert_eq!(values[..message.len()], message[..], "seed {seed}");
     }
 }

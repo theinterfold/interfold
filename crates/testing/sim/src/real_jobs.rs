@@ -6,10 +6,10 @@
 
 use crate::Jobs;
 use e3_crypto::Cipher;
-use e3_jobs::{Blobs, JobRunner, MemoryBlobs};
+use e3_jobs::{BlobStore, Blobs, JobRunner, MemoryBlobs};
 use e3_protocol::{
     node::{CryptoParams, Job, WorkResult},
-    BlobRef,
+    BlobRef, E3Id,
 };
 
 /// The nodes' real job runners, each with its own cipher, over one blob store that stands in for
@@ -51,16 +51,20 @@ impl Jobs for RealJobs {
             .expect("an honest node's job succeeds")
     }
 
-    fn ciphertext(&mut self, params: &CryptoParams, public_key: BlobRef) -> BlobRef {
-        e3_jobs::encrypt(&self.blobs, params, &public_key, &self.message)
+    fn ciphertext(&mut self, e3: E3Id, params: &CryptoParams, public_key: BlobRef) -> BlobRef {
+        e3_jobs::encrypt(&self.blobs.of(e3), params, &public_key, &self.message)
             .expect("the committee key encrypts")
     }
 }
 
 impl RealJobs {
     /// The plaintext values in a published plaintext blob.
-    pub fn values(&self, plaintext: &BlobRef) -> Vec<u64> {
-        let bytes = self.blobs.get(plaintext).expect("a published plaintext");
+    pub fn values(&self, e3: E3Id, plaintext: &BlobRef) -> Vec<u64> {
+        let bytes = self
+            .blobs
+            .of(e3)
+            .get(plaintext)
+            .expect("a published plaintext");
         bytes
             .chunks(8)
             .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight-byte values")))

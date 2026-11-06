@@ -7,7 +7,7 @@
 use super::*;
 use crate::testing::contracts;
 use alloy_primitives::{address, bytes, B256};
-use e3_blobs::MemoryBlobs;
+use e3_blobs::{BlobStore, Blobs, MemoryBlobs};
 use e3_protocol::{decryption::PlaintextPublication, dkg::KeyPublication, E3Id};
 use std::{
     collections::VecDeque,
@@ -70,21 +70,23 @@ fn writer(account: &FakeAccount, blobs: &MemoryBlobs) -> Writer<FakeAccount, Mem
     Writer::new(account.clone(), blobs.clone(), contracts())
 }
 
+const E3: E3Id = E3Id {
+    chain_id: 1,
+    number: U256::from_limbs([7, 0, 0, 0]),
+};
+
 fn submission(transaction: Transaction) -> Submission {
     Submission {
-        e3: E3Id {
-            chain_id: 1,
-            number: U256::from(7),
-        },
+        e3: E3,
         transaction,
     }
 }
 
 fn plaintext(blobs: &MemoryBlobs) -> Submission {
     submission(Transaction::PublishPlaintext(PlaintextPublication {
-        plaintext: blobs.put(&[7, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
+        plaintext: blobs.of(E3).put(&[7, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
         proof: ZkProof {
-            data: blobs.put(b"proof").unwrap(),
+            data: blobs.of(E3).put(b"proof").unwrap(),
             public_inputs: vec![B256::repeat_byte(1)],
         },
     }))
@@ -227,6 +229,18 @@ async fn failure_calls_wait_out_the_grace_period_and_closed_settlement() {
 }
 
 #[tokio::test]
+async fn an_operator_refresh_goes_to_the_bonding_registry() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    let operator = address!("0x00000000000000000000000000000000000000aa");
+    writer(&account, &blobs).refresh_operator(operator).await;
+    let [(call, gas)] = account.sent().try_into().unwrap();
+    assert_eq!(call.to, contracts().bonding);
+    let refresh = IBondingRegistry::refreshOperatorStatusCall { operator };
+    assert_eq!(call.data, Bytes::from(refresh.abi_encode()));
+    assert_eq!(gas, 2 * GAS);
+}
+
+#[tokio::test]
 async fn a_ticket_gets_twice_its_estimated_gas() {
     let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
     let ticket = submission(Transaction::SubmitTicket { ticket: 3 });
@@ -241,9 +255,9 @@ async fn a_committee_publishes_its_proof_then_its_key_in_chunks() {
     let key: Vec<u8> = (0..200 * 1024).map(|n| n as u8).collect();
     let publication = KeyPublication {
         commitment: B256::repeat_byte(0xc0),
-        public_key: blobs.put(&key).unwrap(),
+        public_key: blobs.of(E3).put(&key).unwrap(),
         proof: ZkProof {
-            data: blobs.put(b"proof").unwrap(),
+            data: blobs.of(E3).put(b"proof").unwrap(),
             public_inputs: vec![B256::repeat_byte(1)],
         },
         attestations: Vec::new(),

@@ -7,16 +7,15 @@
 use crate::{Contracts, RpcError};
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolValue};
-use e3_blobs::{BlobError, Blobs};
+use e3_blobs::{BlobError, BlobStore, Blobs};
 use e3_data_availability::public_key::ChunkLayout;
-use e3_evm_contracts::{ICiphernodeRegistry as Registry, IInterfold};
+use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry as Registry, IInterfold};
 use e3_protocol::{
     dkg::SignedAttestation,
     node::{Submission, Transaction},
     proof::{verifier_calldata, ZkProof},
-    E3Id,
 };
-use std::{future::Future, iter, time::Duration};
+use std::{fmt::Display, future::Future, iter, time::Duration};
 use tracing::{debug, info, warn};
 
 /// What the shared bindings do not carry.
@@ -47,6 +46,10 @@ const LONGEST_RETRY: Duration = Duration::from_secs(600);
 /// Tickets estimated at the same time land one after another, and a later insertion into the top
 /// N can cost more than its estimate.
 const TICKET_GAS_MULTIPLIER: u64 = 2;
+
+/// A refresh writes the registries' checkpoints at `block.timestamp`, which can cost more than at
+/// the block it was estimated in.
+const REFRESH_GAS_MULTIPLIER: u64 = 2;
 
 /// One contract call for the operator to send.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,7 +114,7 @@ enum Progress {
     NotYet(String),
 }
 
-impl<A: Account, B: Blobs> Writer<A, B> {
+impl<A: Account, B: BlobStore> Writer<A, B> {
     pub fn new(account: A, blobs: B, contracts: Contracts) -> Self {
         Self {
             account,
@@ -124,33 +127,50 @@ impl<A: Account, B: Blobs> Writer<A, B> {
     /// with an error it does not wait out: then the chain has its effect already, or can no longer
     /// take it. Until then it tries again; the node stops the calls of an E3 it no longer holds.
     pub async fn submit(&self, submission: &Submission) -> Result<(), WriteError> {
-        for call in calls(&self.contracts, &self.blobs, submission)? {
-            self.deliver(submission.e3, &call).await;
+        let blobs = self.blobs.of(submission.e3);
+        for call in calls(&self.contracts, &blobs, submission)? {
+            self.deliver(&submission.e3, &call).await;
         }
         Ok(())
     }
 
-    async fn deliver(&self, e3: E3Id, call: &Call) {
+    /// Refreshes `operator`'s activity and owner capacity. Under a required identity policy an
+    /// owner's capacity reads zero from the start of each 30-day window until its operators
+    /// refresh. An unregistered operator's call reverts, so nothing is sent.
+    pub async fn refresh_operator(&self, operator: Address) {
+        let data = IBondingRegistry::refreshOperatorStatusCall { operator };
+        let call = Call {
+            label: "refreshOperatorStatus",
+            to: self.contracts.bonding,
+            data: data.abi_encode().into(),
+            gas_multiplier: REFRESH_GAS_MULTIPLIER,
+            not_yet: &[],
+        };
+        self.deliver(&operator, &call).await;
+    }
+
+    /// `of` names what the call is for, in logs.
+    async fn deliver(&self, of: &(dyn Display + Sync), call: &Call) {
         let mut wait = FIRST_RETRY;
         loop {
-            match self.attempt(e3, call).await {
+            match self.attempt(of, call).await {
                 Ok(Progress::Done) => return,
-                Ok(Progress::NotYet(reason)) => debug!(%e3, call = call.label, %reason, "not yet"),
-                Err(error) => warn!(%e3, call = call.label, %error, "the attempt failed"),
+                Ok(Progress::NotYet(reason)) => debug!(%of, call = call.label, %reason, "not yet"),
+                Err(error) => warn!(%of, call = call.label, %error, "the attempt failed"),
             }
             tokio::time::sleep(wait).await;
             wait = (wait * 2).min(LONGEST_RETRY);
         }
     }
 
-    async fn attempt(&self, e3: E3Id, call: &Call) -> Result<Progress, RpcError> {
+    async fn attempt(&self, of: &(dyn Display + Sync), call: &Call) -> Result<Progress, RpcError> {
         let gas = match self.account.estimate(call).await? {
             Estimate::Gas(gas) => gas,
             Estimate::Reverts(revert) if call.waits_out(&revert) => {
                 return Ok(Progress::NotYet(format!("reverts with {revert}")));
             }
             Estimate::Reverts(revert) => {
-                info!(%e3, call = call.label, %revert, "nothing to send: the call reverts");
+                info!(%of, call = call.label, %revert, "nothing to send: the call reverts");
                 return Ok(Progress::Done);
             }
         };
@@ -158,7 +178,7 @@ impl<A: Account, B: Blobs> Writer<A, B> {
         if !self.account.send(call, gas).await? {
             return Ok(Progress::NotYet("reverted on chain".into()));
         }
-        info!(%e3, call = call.label, "landed");
+        info!(%of, call = call.label, "landed");
         Ok(Progress::Done)
     }
 }

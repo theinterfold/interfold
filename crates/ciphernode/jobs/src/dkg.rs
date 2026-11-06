@@ -9,7 +9,7 @@
 //! that commit to what the real proofs bind, and prove nothing.
 
 use crate::{
-    placeholder, trbfv, Blobs, JobError, JobRunner, OwnShareRows, RecipientCiphertexts,
+    placeholder, trbfv, Blobs, JobError, Jobs, OwnShareRows, RecipientCiphertexts,
     SealedDecryptionKey,
 };
 use alloy_primitives::{keccak256, Address};
@@ -38,7 +38,7 @@ use rand::rngs::OsRng;
 use rand_core::UnwrapErr;
 use std::{collections::BTreeMap, sync::Arc};
 
-impl<B: Blobs> JobRunner<B> {
+impl<B: Blobs> Jobs<'_, B> {
     pub(crate) fn run_dkg(
         &self,
         params: &CryptoParams,
@@ -150,7 +150,7 @@ impl<B: Blobs> JobRunner<B> {
         let mut rng = UnwrapErr(OsRng);
         let generated = gen_pk_share_and_sk_sss(
             &mut rng,
-            &self.cipher,
+            self.cipher,
             GenPkShareAndSkSssRequest {
                 trbfv_config: config.clone(),
                 crp: trbfv::crp(params)?,
@@ -161,7 +161,7 @@ impl<B: Blobs> JobRunner<B> {
         .map_err(JobError::crypto)?;
         let smudging = gen_esi_sss(
             &mut rng,
-            &self.cipher,
+            self.cipher,
             GenEsiSssRequest {
                 trbfv_config: config,
                 e_sm_raw: generated.e_sm_raw.clone(),
@@ -170,12 +170,12 @@ impl<B: Blobs> JobRunner<B> {
         .map_err(JobError::crypto)?;
         let sk_sss = generated
             .sk_sss
-            .decrypt(&self.cipher)
+            .decrypt(self.cipher)
             .map_err(JobError::crypto)?;
         let esi_sss: Vec<_> = smudging
             .esi_sss
             .into_iter()
-            .map(|shares| shares.decrypt(&self.cipher))
+            .map(|shares| shares.decrypt(self.cipher))
             .collect::<Result<_, _>>()
             .map_err(JobError::crypto)?;
 
@@ -326,12 +326,12 @@ impl<B: Blobs> JobRunner<B> {
         let encrypt = |shares: Vec<ShamirShare>| {
             shares
                 .into_iter()
-                .map(|share| Encrypted::new(share, &self.cipher))
+                .map(|share| Encrypted::new(share, self.cipher))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(JobError::crypto)
         };
         let key = calculate_decryption_key(
-            &self.cipher,
+            self.cipher,
             CalculateDecryptionKeyRequest {
                 trbfv_config: trbfv::config(params)?,
                 sk_sss_collected: encrypt(sk_collected)?,
@@ -345,12 +345,12 @@ impl<B: Blobs> JobRunner<B> {
         let sealed = SealedDecryptionKey {
             sk_poly_sum: key
                 .sk_poly_sum
-                .access_raw(&self.cipher)
+                .access_raw(self.cipher)
                 .map_err(JobError::crypto)?,
             es_poly_sum: key
                 .es_poly_sum
                 .iter()
-                .map(|sum| sum.access_raw(&self.cipher))
+                .map(|sum| sum.access_raw(self.cipher))
                 .collect::<Result<_, _>>()
                 .map_err(JobError::crypto)?,
         };

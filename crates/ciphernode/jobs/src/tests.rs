@@ -7,8 +7,8 @@
 //! A Minimum committee through every job with real threshold-BFV math: keys, shares, decryption
 //! keys, the committee key, encryption, decryption shares, and the plaintext.
 
-use crate::{trbfv, Blobs, JobRunner, MemoryBlobs};
-use alloy_primitives::{Address, B256};
+use crate::{trbfv, BlobStore, Blobs, JobRunner, MemoryBlobs};
+use alloy_primitives::{Address, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
 use e3_fhe_params::BfvPreset;
@@ -34,12 +34,14 @@ fn params() -> CryptoParams {
     }
 }
 
+const E3: E3Id = E3Id {
+    chain_id: 1,
+    number: U256::ZERO,
+};
+
 fn job(work: Work) -> Job {
     Job {
-        e3: E3Id {
-            chain_id: 1,
-            number: Default::default(),
-        },
+        e3: E3,
         params: params(),
         work,
     }
@@ -239,7 +241,8 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
     };
 
     let message_values = vec![7u64, 11, 13];
-    let ciphertext = crate::encrypt(&blobs, &params(), &key.public_key, &message_values).unwrap();
+    let ciphertext =
+        crate::encrypt(&blobs.of(E3), &params(), &key.public_key, &message_values).unwrap();
 
     let domain = B256::repeat_byte(0xd0);
     let shares: BTreeMap<Address, DecryptionShares> = roster
@@ -296,7 +299,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         DecryptionWorkResult::PlaintextMade(published) => published,
         other => panic!("{other:?}"),
     };
-    let decrypted = blobs.get(&published.plaintext).unwrap();
+    let decrypted = blobs.of(E3).get(&published.plaintext).unwrap();
     let values: Vec<u64> = decrypted
         .chunks(8)
         .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
@@ -313,18 +316,21 @@ async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_chec
         panic!("a key");
     };
     let dkg_params = trbfv::dkg_params(&params()).unwrap();
-    let stored = blobs.get(&own.secret).unwrap();
+    let stored = blobs.of(E3).get(&own.secret).unwrap();
     assert!(e3_trbfv::helpers::deserialize_secret_key(&stored, &dkg_params).is_err());
     assert!(e3_trbfv::helpers::deserialize_secret_key(
-        &runner.unseal(&own.secret).unwrap(),
+        &runner.jobs(E3).unseal(&own.secret).unwrap(),
         &dkg_params
     )
     .is_ok());
 
-    let garbage = blobs.put(b"not a key").unwrap();
-    let proof =
-        crate::placeholder::proof(&blobs, e3_protocol::proof::ProofType::C0PkBfv, b"not a key")
-            .unwrap();
+    let garbage = blobs.of(E3).put(b"not a key").unwrap();
+    let proof = crate::placeholder::proof(
+        &blobs.of(E3),
+        e3_protocol::proof::ProofType::C0PkBfv,
+        b"not a key",
+    )
+    .unwrap();
     let checked = dkg(
         &runner,
         DkgWork::CheckEncryptionKey {

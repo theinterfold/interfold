@@ -119,7 +119,8 @@ Each rule is checkable in review.
   message, publisher first, and keeps only bytes that hash to the reference and have its length.
   The machine takes the message once the blobs are in the store. So a sender outside the
   committee costs a node no download, and a member at most one message of each kind; the adapter
-  bounds the bytes on their way at once. The protocol says which blobs a node needs: a share
+  bounds the bytes on their way at once. Each E3 keeps its own blobs, and the node deletes them
+  when it drops the E3. The protocol says which blobs a node needs: a share
   message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
   share once, where a DHT put of the current node goes to twenty peers. A share comes only from
   its dealer, so members need direct connections: peers that identify on the network enter
@@ -138,6 +139,11 @@ Each rule is checkable in review.
   `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement.
   The finalizer takes the same turns. The node judges deadlines by its own clock, so a node that
   replays old history submits these calls for E3s that ended long ago; each ends at its preflight.
+- **D25. The node refreshes its operator once in each owner capacity window, whatever the identity
+  policy.** Under a required policy an owner's capacity reads zero from the start of each 30-day
+  window until its operators refresh, so requests can fail with `InsufficientBondOwners`. The chain
+  offers no view of the policy, and a node that starts after the policy's event would not know it,
+  so the node refreshes unconditionally: one call a month, the first ten minutes after a start.
 
 ## Problems in the current node, with the fix above them
 

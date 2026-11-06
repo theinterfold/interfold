@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         listen: parse(&config.network.listen)?,
         peers: parse(&config.network.peers)?,
     };
-    let (network, inbound) = P2p::start(p2p, operator.address(), Arc::new(blobs.clone())).await?;
+    let (network, inbound) = P2p::start(p2p, operator.address(), blobs.clone()).await?;
     let listening: Vec<String> = network
         .listening()
         .iter()

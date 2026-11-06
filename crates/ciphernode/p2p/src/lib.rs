@@ -12,9 +12,8 @@ mod swarm;
 
 pub use swarm::{P2p, P2pConfig, P2pError};
 
-use e3_blobs::Blobs;
 use e3_protocol::{node::PeerMessage, wire::Envelope};
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 /// What the node needs from the network. Inbound, an adapter delivers each peer message whose
 /// envelope opens and that is for this node, before it fetches any blob the message names.
@@ -40,5 +39,3 @@ pub enum NetworkError {
     #[error("the network stopped")]
     Stopped,
 }
-
-pub type SharedBlobs = Arc<dyn Blobs + Send + Sync>;

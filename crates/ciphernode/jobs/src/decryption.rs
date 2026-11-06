@@ -7,7 +7,7 @@
 //! The decryption jobs: a roster member's decryption shares (C6) and the plaintext from exactly
 //! T+1 members' shares (C7), with the current node's library calls and placeholder proofs.
 
-use crate::{placeholder, trbfv, Blobs, JobError, JobRunner, SealedDecryptionKey};
+use crate::{placeholder, trbfv, Blobs, JobError, Jobs, SealedDecryptionKey};
 use alloy_primitives::{Address, B256};
 use e3_crypto::SensitiveBytes;
 use e3_protocol::{
@@ -27,7 +27,7 @@ use e3_trbfv::{
 use e3_utils::utility_types::ArcBytes;
 use std::collections::BTreeMap;
 
-impl<B: Blobs> JobRunner<B> {
+impl<B: Blobs> Jobs<'_, B> {
     pub(crate) fn run_decryption(
         &self,
         params: &CryptoParams,
@@ -71,9 +71,9 @@ impl<B: Blobs> JobRunner<B> {
         let key: SealedDecryptionKey =
             bincode::deserialize(&self.unseal(key)?).map_err(JobError::crypto)?;
         let sensitive =
-            |bytes: Vec<u8>| SensitiveBytes::new(bytes, &self.cipher).map_err(JobError::crypto);
+            |bytes: Vec<u8>| SensitiveBytes::new(bytes, self.cipher).map_err(JobError::crypto);
         let response = calculate_decryption_share(
-            &self.cipher,
+            self.cipher,
             CalculateDecryptionShareRequest {
                 name: "decryption share".to_owned(),
                 trbfv_config: trbfv::config(params)?,

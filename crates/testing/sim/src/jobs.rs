@@ -15,7 +15,7 @@ use e3_protocol::{
     },
     node::{CryptoParams, Job, Work, WorkResult},
     proof::ZkProof,
-    BlobRef,
+    BlobRef, E3Id,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 pub trait Jobs {
     fn run(&mut self, node: usize, job: &Job) -> WorkResult;
     /// The ciphertext the chain publishes once the committee key `public_key` is out.
-    fn ciphertext(&mut self, params: &CryptoParams, public_key: BlobRef) -> BlobRef;
+    fn ciphertext(&mut self, e3: E3Id, params: &CryptoParams, public_key: BlobRef) -> BlobRef;
 }
 
 pub struct MockJobs {
@@ -45,7 +45,7 @@ impl Jobs for MockJobs {
         self.mock(job)
     }
 
-    fn ciphertext(&mut self, _params: &CryptoParams, public_key: BlobRef) -> BlobRef {
+    fn ciphertext(&mut self, _: E3Id, _: &CryptoParams, public_key: BlobRef) -> BlobRef {
         blob(keccak256(public_key.hash))
     }
 }

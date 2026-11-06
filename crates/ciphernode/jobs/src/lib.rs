@@ -17,7 +17,7 @@ mod requester;
 mod tests;
 mod trbfv;
 
-pub use e3_blobs::{Blobs, MemoryBlobs};
+pub use e3_blobs::{BlobStore, Blobs, E3Blobs, MemoryBlobs};
 #[cfg(any(test, feature = "testing"))]
 pub use requester::encrypt;
 pub use trbfv::crypto_configs;
@@ -25,7 +25,7 @@ pub use trbfv::crypto_configs;
 use e3_crypto::Cipher;
 use e3_protocol::{
     node::{Job, Work, WorkResult},
-    BlobRef,
+    BlobRef, E3Id,
 };
 use e3_trbfv::shares::{BfvEncryptedShare, ShamirShare};
 use serde::{Deserialize, Serialize};
@@ -70,25 +70,43 @@ pub(crate) struct SealedDecryptionKey {
     pub(crate) es_poly_sum: Vec<Vec<u8>>,
 }
 
-pub struct JobRunner<B> {
-    blobs: B,
+pub struct JobRunner<S> {
+    blobs: S,
     cipher: Cipher,
 }
 
-impl<B: Blobs> JobRunner<B> {
-    pub fn new(blobs: B, cipher: Cipher) -> Self {
+impl<S: BlobStore> JobRunner<S> {
+    pub fn new(blobs: S, cipher: Cipher) -> Self {
         Self { blobs, cipher }
     }
 
     pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {
+        let jobs = self.jobs(job.e3);
         match &job.work {
-            Work::Dkg(work) => self.run_dkg(&job.params, work).map(WorkResult::Dkg),
-            Work::Decryption(work) => self
+            Work::Dkg(work) => jobs.run_dkg(&job.params, work).map(WorkResult::Dkg),
+            Work::Decryption(work) => jobs
                 .run_decryption(&job.params, work)
                 .map(WorkResult::Decryption),
         }
     }
+}
 
+impl<S: BlobStore> JobRunner<S> {
+    fn jobs(&self, e3: E3Id) -> Jobs<'_, E3Blobs<S>> {
+        Jobs {
+            blobs: self.blobs.of(e3),
+            cipher: &self.cipher,
+        }
+    }
+}
+
+/// A job's view: the blobs of its E3.
+struct Jobs<'a, B> {
+    blobs: B,
+    cipher: &'a Cipher,
+}
+
+impl<B: Blobs> Jobs<'_, B> {
     fn seal(&self, secret: &[u8]) -> Result<BlobRef, JobError> {
         let mut secret = secret.to_vec();
         let sealed = self

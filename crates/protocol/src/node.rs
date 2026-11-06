@@ -416,6 +416,10 @@ impl Node {
         }
     }
 
+    pub fn e3s(&self) -> impl Iterator<Item = &E3Id> {
+        self.e3s.keys()
+    }
+
     pub fn e3(&self, e3: &E3Id) -> Option<&E3> {
         self.e3s.get(e3)
     }
