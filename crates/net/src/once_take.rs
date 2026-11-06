@@ -3,26 +3,10 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+
+use std::sync::{Arc, Mutex};
 
 use tracing::info;
-
-pub fn to_ordered_vec<K, T>(source: HashMap<K, T>) -> Vec<T>
-where
-    K: Ord + Copy,
-{
-    // extract a vector
-    let mut pairs: Vec<_> = source.into_iter().collect();
-
-    // Ensure keys are sorted
-    pairs.sort_by_key(|&(key, _)| key);
-
-    // Extract to Vec of ThresholdShares in order
-    pairs.into_iter().map(|(_, value)| value).collect()
-}
 
 /// A cloneable wrapper that allows a non-cloneable value to be shared and taken exactly once.
 ///
@@ -30,7 +14,7 @@ where
 ///
 /// # Example
 /// ```
-/// use e3_utils::OnceTake;
+/// use e3_net::OnceTake;
 ///
 /// let (tx, rx) = tokio::sync::oneshot::channel::<u32>();
 /// let once = OnceTake::new(tx);

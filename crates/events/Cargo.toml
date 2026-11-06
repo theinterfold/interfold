@@ -20,6 +20,7 @@ derivative = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }

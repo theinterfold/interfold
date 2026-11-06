@@ -58,7 +58,7 @@ fn older_store(config: &NodeConfig, fixture: &str, schema: Option<u32>) -> Resul
     }
     db.flush()?;
 
-    let path = e3_utils::enumerate_path(&config.log_file(), 0);
+    let path = e3_event_system::enumerate_path(&config.log_file(), 0);
     let mut log = CommitLog::new(LogOptions::new(&path))?;
     log.append_msg(bytes)?;
     log.flush()?;
@@ -155,7 +155,7 @@ async fn validate_reports_a_store_from_an_older_schema() -> Result<()> {
                 db.insert(Insert::new(key, bincode::serialize(&vec![1_u8])?))?;
             }
         }
-        let path = e3_utils::enumerate_path(&config.log_file(), 0);
+        let path = e3_event_system::enumerate_path(&config.log_file(), 0);
         drop(CommitLog::new(LogOptions::new(path))?);
         let report = validate_node(&config, false).await?;
         assert!(!report.has_failure(), "{}", report.render());
@@ -209,7 +209,7 @@ async fn validate_creates_no_store() -> Result<()> {
             std::fs::create_dir_all(config.db_file())?;
         }
         if with_events {
-            let path = e3_utils::enumerate_path(&config.log_file(), 0);
+            let path = e3_event_system::enumerate_path(&config.log_file(), 0);
             let mut log = CommitLog::new(LogOptions::new(&path))?;
             log.append_msg(b"an event")?;
             log.flush()?;
@@ -286,7 +286,7 @@ async fn validate_reports_a_damaged_store_and_every_event_log() -> Result<()> {
 
     let root = tempfile::tempdir()?;
     let config = node_config(root.path())?;
-    let path = e3_utils::enumerate_path(&config.log_file(), 7);
+    let path = e3_event_system::enumerate_path(&config.log_file(), 7);
     let mut log = CommitLog::new(LogOptions::new(&path))?;
     log.append_msg(b"an event")?;
     log.flush()?;

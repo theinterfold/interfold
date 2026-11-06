@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::events::{IncomingResponse, NetCommand, ProtocolResponse};
+use crate::OnceTake;
 use anyhow::{anyhow, Context, Result};
 use derivative::Derivative;
-use e3_utils::OnceTake;
 use libp2p::request_response::{InboundRequestId, ResponseChannel};
 use tokio::sync::mpsc;
 

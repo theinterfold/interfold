@@ -20,9 +20,9 @@ use tracing::warn;
 
 use crate::{
     events::{NetCommand, NetEvent, PeerRejectionKind},
-    NetEventSender,
+    NetEventSender, OnceTake,
 };
-use e3_utils::{to_retry, OnceTake, RetryError};
+use e3_utils::{to_retry, RetryError};
 
 const INITIAL_DIAL_ATTEMPTS: u32 = 3;
 const INITIAL_DIAL_DELAY: Duration = Duration::from_secs(3);

@@ -195,7 +195,7 @@
       "read_first": [
         {
           "why": "The entry point: wires the startup buffer, sync manager, publisher, translator and converter around the swarm.",
-          "ref": "crates/net/src/lib.rs@141@pub fn setup_net_with_limits_and_interests("
+          "ref": "crates/net/src/lib.rs@144@pub fn setup_net_with_limits_and_interests("
         },
         {
           "why": "The libp2p behaviours the swarm combines, with the gossip and DHT settings.",

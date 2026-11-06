@@ -7,11 +7,12 @@
 use super::*;
 use crate::{
     event_context::{AggregateId, EventContext},
+    event_id::colorize_event_ids,
     traits::{ErrorEvent, Event, EventConstructorWithTimestamp, EventContextAccessors},
     E3id, EventContextSeq, EventId, EventSource, WithAggregateId,
 };
 use actix::Message;
-use e3_utils::{colorize, colorize_event_ids, Color};
+use e3_utils::{colorize, Color};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::{self},

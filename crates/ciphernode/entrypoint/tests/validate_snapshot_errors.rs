@@ -43,10 +43,9 @@ async fn an_unreadable_snapshot_cursor_is_a_failed_check() -> Result<()> {
     ))?;
     db.flush()?;
     drop(db);
-    drop(CommitLog::new(LogOptions::new(e3_utils::enumerate_path(
-        &config.log_file(),
-        0,
-    )))?);
+    drop(CommitLog::new(LogOptions::new(
+        e3_event_system::enumerate_path(&config.log_file(), 0),
+    ))?);
 
     let report = validate_node(&config, false).await?;
 
