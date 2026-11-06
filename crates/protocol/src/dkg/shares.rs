@@ -198,6 +198,15 @@ impl Dkg {
     }
 
     /// Shares can only be for a key this node has sent, so they count from then on.
+    /// Shares need this node's key to open.
+    pub(super) fn admits_shares(&self, dealer: Address, message: &SharesMessage) -> bool {
+        self.own_key().is_some()
+            && dealer != self.me
+            && self.is_member(dealer)
+            && !self.shares.received.contains_key(&dealer)
+            && message.is_signed_by(dealer, self.e3)
+    }
+
     pub(super) fn receive_shares(
         &mut self,
         dealer: Address,
@@ -206,13 +215,6 @@ impl Dkg {
         let Some(own) = self.own_key() else {
             return Vec::new();
         };
-        if dealer == self.me
-            || !self.is_member(dealer)
-            || self.shares.received.contains_key(&dealer)
-            || !message.is_signed_by(dealer, self.e3)
-        {
-            return Vec::new();
-        }
         let check = self.run(DkgWork::CheckShares {
             dealer,
             committee: self.members.clone(),
@@ -232,8 +234,8 @@ impl Dkg {
         self.send_ready_if_due()
     }
 
-    pub(super) fn receive_ready(&mut self, reporter: Address, dealers: Vec<Dealer>) {
-        let accepted = reporter != self.me
+    pub(super) fn admits_ready(&self, reporter: Address, dealers: &[Dealer]) -> bool {
+        reporter != self.me
             && self.is_member(reporter)
             && self.is_live(&reporter)
             && dealers.len() >= self.h()
@@ -245,10 +247,11 @@ impl Dkg {
             && self
                 .ready
                 .get(&reporter)
-                .is_none_or(|earlier| earlier.iter().all(|dealer| dealers.contains(dealer)));
-        if accepted {
-            self.ready.insert(reporter, dealers);
-        }
+                .is_none_or(|earlier| earlier.iter().all(|dealer| dealers.contains(dealer)))
+    }
+
+    pub(super) fn receive_ready(&mut self, reporter: Address, dealers: Vec<Dealer>) {
+        self.ready.insert(reporter, dealers);
     }
 
     /// Send a Ready report, or a larger one, once it names at least H dealers and either every

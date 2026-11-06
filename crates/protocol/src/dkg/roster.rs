@@ -53,7 +53,7 @@ impl Dkg {
         Some(roster.iter().map(|dealer| dealer.member).collect())
     }
 
-    pub(super) fn receive_roster(&mut self, proposer: Address, dealers: Vec<Dealer>) {
+    pub(super) fn admits_roster(&self, proposer: Address, dealers: &[Dealer]) -> bool {
         let well_formed = self.rosters.accepted.is_none()
             && self.is_member(proposer)
             && self.is_live(&proposer)
@@ -69,9 +69,11 @@ impl Dkg {
             .proposed
             .get(&proposer)
             .is_some_and(|held| self.is_usable(proposer, held));
-        if well_formed && !held_is_usable {
-            self.rosters.proposed.insert(proposer, dealers);
-        }
+        well_formed && !held_is_usable
+    }
+
+    pub(super) fn receive_roster(&mut self, proposer: Address, dealers: Vec<Dealer>) {
+        self.rosters.proposed.insert(proposer, dealers);
     }
 
     /// Start the aggregator's budget, propose as the aggregator, and accept the best usable

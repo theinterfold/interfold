@@ -110,23 +110,26 @@ impl Dkg {
         effects
     }
 
+    pub(super) fn admits_decryption_key(
+        &self,
+        member: Address,
+        message: &DecryptionKeyMessage,
+    ) -> bool {
+        let in_roster = self
+            .roster_members()
+            .is_none_or(|roster| roster.contains(&member));
+        in_roster
+            && member != self.me
+            && self.is_member(member)
+            && !self.decryption_keys.received.contains_key(&member)
+            && message.is_signed_by(member, self.e3)
+    }
+
     pub(super) fn receive_decryption_key(
         &mut self,
         member: Address,
         message: DecryptionKeyMessage,
     ) -> Vec<Effect> {
-        let in_roster = self
-            .roster_members()
-            .is_none_or(|roster| roster.contains(&member));
-        if !self.running()
-            || !in_roster
-            || member == self.me
-            || !self.is_member(member)
-            || self.decryption_keys.received.contains_key(&member)
-            || !message.is_signed_by(member, self.e3)
-        {
-            return Vec::new();
-        }
         let check = self
             .roster()
             .is_some()

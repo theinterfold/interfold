@@ -272,6 +272,23 @@ impl E3 {
         }
     }
 
+    /// Whether this node takes `message` now; it can tell before it fetches any blob the message
+    /// names.
+    pub(crate) fn admits(&self, message: &PeerMessage) -> bool {
+        let sender = message.sender;
+        self.running()
+            && match &message.body {
+                Body::Dkg(body) => self
+                    .dkg
+                    .as_ref()
+                    .is_some_and(|dkg| dkg.admits(sender, body)),
+                Body::Decryption(body) => self
+                    .decryption
+                    .as_ref()
+                    .is_some_and(|decryption| decryption.admits(sender, body)),
+            }
+    }
+
     pub(crate) fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         let effects = match message.body {
             Body::Dkg(body) => match self.dkg_mut() {

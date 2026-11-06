@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! The v2 node's network: operator-signed peer messages, and the blobs they name, which a node
-//! fetches from the message's publisher before it delivers the message.
+//! fetches from the message's publisher once its machine admits the message.
 
 mod inbound_ip_limits;
 mod swarm;
@@ -13,21 +13,30 @@ mod swarm;
 pub use swarm::{P2p, P2pConfig, P2pError};
 
 use e3_blobs::Blobs;
-use e3_protocol::wire::Envelope;
+use e3_protocol::{node::PeerMessage, wire::Envelope};
 use std::{future::Future, sync::Arc};
 
-/// What the node needs from the network. Inbound, an adapter delivers a peer message only if its
-/// envelope opens, the message is for this node, and every blob the node needs from it is in the
-/// node's store.
+/// What the node needs from the network. Inbound, an adapter delivers each peer message whose
+/// envelope opens and that is for this node, before it fetches any blob the message names.
 pub trait Network: Send + Sync + 'static {
     /// Sends `envelope` to the other nodes; its blobs are in this node's store.
     fn publish(&self, envelope: Envelope) -> impl Future<Output = Result<(), NetworkError>> + Send;
+
+    /// Brings the blobs `message` names into the node's store, from the peers that sent it.
+    fn fetch(&self, message: PeerMessage) -> impl Future<Output = Result<(), NetworkError>> + Send;
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum NetworkError {
     #[error("publishing: {0}")]
     Publish(String),
+    /// The sender's re-send brings the message, and the peers to ask, again.
+    #[error("no peer that sent the message gave its blobs")]
+    Unavailable,
+    #[error("too many blob bytes are on their way")]
+    Busy,
+    #[error("storing a blob: {0}")]
+    Store(String),
     #[error("the network stopped")]
     Stopped,
 }

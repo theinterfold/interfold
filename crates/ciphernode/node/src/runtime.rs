@@ -231,7 +231,7 @@ async fn read_chain<R: Rpc>(mut reader: Reader<R>, events: mpsc::Sender<Event>, 
 async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::Sender<Event>) {
     while let Some(message) = inbound.recv().await {
         if events
-            .send(Event::Input(Input::Peer(message)))
+            .send(Event::Input(Input::Announced(message)))
             .await
             .is_err()
         {
@@ -278,6 +278,7 @@ where
                 Effect::Run(job) => (job.e3, self.run(key, job)),
                 Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),
                 Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),
+                Effect::FetchBlobs(message) => (message.e3, self.fetch_blobs(key, message)),
             };
             let tasks = self.tasks.entry(e3).or_default();
             tasks.push((key, task.abort_handle()));
@@ -376,6 +377,22 @@ where
             }
             let _ = events.send(Event::Done(key)).await;
         });
+    }
+
+    fn fetch_blobs(&self, key: EffectKey, message: PeerMessage) -> JoinHandle<()> {
+        let (network, events) = (self.network.clone(), self.events.clone());
+        tokio::spawn(async move {
+            match network.fetch(message.clone()).await {
+                Ok(()) => {
+                    let _ = events.send(Event::Result(key, Input::Peer(message))).await;
+                }
+                // The sender's re-send announces the message again.
+                Err(failure) => {
+                    debug!(e3 = %message.e3, %failure, "fetching a peer's blobs failed");
+                    let _ = events.send(Event::Done(key)).await;
+                }
+            }
+        })
     }
 
     fn fetch(&self, key: EffectKey, fetch: Fetch) -> JoinHandle<()> {

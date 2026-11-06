@@ -113,15 +113,18 @@ Each rule is checkable in review.
   transfer limit or be gossiped again by its readers.
 
 - **D22. Blobs travel from their publisher, not through DHT records.** Gossip carries the operator
-  signed message with blob references. A receiver fetches each blob it needs from the message's
-  publisher by request and response, checks that the bytes hash to the reference and have its
-  length, and delivers the message only once every blob it needs is in its store. The protocol
-  says which blobs a node needs: a share message's only for its recipient. A publisher uploads a
-  broadcast blob once per receiver and a share once, where a DHT put of the current node goes to
-  twenty peers. A share comes only from its dealer, so members need direct connections: peers that
-  identify on the network enter Kademlia's routing table, whose lookups connect to the peers they
-  find. Open: until membership reaches the network adapter, a non-member can make nodes fetch its
-  blobs; per-peer limits bound the cost.
+  signed message with blob references, and the network adapter delivers it at once. The machine
+  fetches a message's blobs only once the message's E3 admits it (a member's first message of its
+  kind, correctly signed), with an effect the adapter carries out: it asks the peers that sent the
+  message, publisher first, and keeps only bytes that hash to the reference and have its length.
+  The machine takes the message once the blobs are in the store. So a sender outside the
+  committee costs a node no download, and a member at most one message of each kind; the adapter
+  bounds the bytes on their way at once. The protocol says which blobs a node needs: a share
+  message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
+  share once, where a DHT put of the current node goes to twenty peers. A share comes only from
+  its dealer, so members need direct connections: peers that identify on the network enter
+  Kademlia's routing table, whose lookups connect to the peers they find. Open: gossip still
+  forwards a non-member's envelopes, since the adapter does not know the committees.
 
 - **D23. A ciphertext is fetched, not read from the log.** The deployed Interfold logs a content
   hash and its availability coordinates (`CiphertextOutputReferencePublished`). Decryption emits a

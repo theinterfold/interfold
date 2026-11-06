@@ -456,7 +456,9 @@ impl Dkg {
         if !self.running() {
             return Vec::new();
         }
+        let admitted = self.admits(sender, &message);
         let mut effects = match message {
+            _ if !admitted => Vec::new(),
             DkgMessage::EncryptionKey(message) => self.receive_key(sender, message),
             DkgMessage::Shares(message) => self.receive_shares(sender, *message),
             DkgMessage::Ready(dealers) => {
@@ -479,6 +481,21 @@ impl Dkg {
         };
         effects.extend(self.advance(now));
         effects
+    }
+
+    /// Whether this node takes `message` from `sender` now; it can tell before it fetches any blob
+    /// the message names.
+    pub(crate) fn admits(&self, sender: Address, message: &DkgMessage) -> bool {
+        self.running()
+            && match message {
+                DkgMessage::EncryptionKey(message) => self.admits_key(sender, message),
+                DkgMessage::Shares(message) => self.admits_shares(sender, message),
+                DkgMessage::Ready(dealers) => self.admits_ready(sender, dealers),
+                DkgMessage::Roster(dealers) => self.admits_roster(sender, dealers),
+                DkgMessage::DecryptionKey(message) => self.admits_decryption_key(sender, message),
+                DkgMessage::Keyshare(message) => self.admits_keyshare(sender, message),
+                DkgMessage::NodeFold(message) => self.admits_fold(sender, message),
+            }
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: DkgWorkResult) -> Vec<Effect> {

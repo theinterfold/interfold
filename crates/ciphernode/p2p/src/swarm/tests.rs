@@ -15,6 +15,7 @@ use e3_protocol::{
     node::Body,
     proof::{SignedProof, ZkProof},
     testing::{address, e3, operator},
+    BlobRef,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -126,19 +127,28 @@ async fn received(node: &mut Node) -> PeerMessage {
         .expect("the network runs")
 }
 
+async fn fetch(node: &Node, message: PeerMessage) -> Result<(), NetworkError> {
+    tokio::time::timeout(WAIT, node.p2p.fetch(message))
+        .await
+        .expect("a fetch ends in time")
+}
+
 async fn nothing(node: &mut Node, within: Duration) {
     if let Ok(message) = tokio::time::timeout(within, node.inbound.recv()).await {
         panic!("expected no message, got {message:?}");
     }
 }
 
+/// A message arrives before its blobs; a fetch brings them from its publisher.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_broadcast_reaches_every_peer_with_the_blobs_it_names() {
+async fn a_broadcast_reaches_every_peer_and_its_blobs_come_on_request() {
     let [first, mut second, mut third] = network().await;
     let message = key(&first, 1);
     publish(&first, signed(message.clone(), 1, 10)).await;
     for node in [&mut second, &mut third] {
         assert_eq!(received(node).await, message);
+        assert!(message.blobs().iter().all(|blob| !node.blobs.has(blob)));
+        fetch(node, message.clone()).await.unwrap();
         assert!(message.blobs().iter().all(|blob| node.blobs.has(blob)));
     }
 }
@@ -149,7 +159,7 @@ async fn a_share_reaches_only_its_recipient() {
     let message = shares(&first, 1, 3);
     publish(&first, signed(message.clone(), 1, 10)).await;
     assert_eq!(received(&mut third).await, message);
-    assert!(message.blobs().iter().all(|blob| third.blobs.has(blob)));
+    fetch(&third, message.clone()).await.unwrap();
     nothing(&mut second, Duration::from_secs(3)).await;
     let Body::Dkg(DkgMessage::Shares(sent)) = &message.body else {
         unreachable!("a share message")
@@ -177,7 +187,6 @@ async fn a_copy_sent_again_arrives_again() {
     assert_eq!(received(&mut second).await, message);
 }
 
-/// The publisher's store holds other bytes under the blob's name; a receiver keeps nothing from it.
 /// The dealer and the recipient each know only the first node; the recipient finds the dealer
 /// through it and fetches the share's blobs from the dealer.
 #[tokio::test(flavor = "multi_thread")]
@@ -186,28 +195,63 @@ async fn a_recipient_finds_a_dealer_it_was_not_told_about() {
     let second = node(2, first.p2p.listening().to_vec()).await;
     let mut third = node(3, first.p2p.listening().to_vec()).await;
     let message = shares(&second, 2, 3);
-    publish(&second, signed(message.clone(), 2, 10)).await;
-    let mut delivered = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv())
-        .await
-        .ok()
-        .flatten();
-    // The first copy can arrive before the two have found each other; a re-send then reaches it.
-    for sent_at in 11.. {
-        if delivered.is_some() {
+    // A copy can arrive before the two have found each other; a re-send then reaches it.
+    for sent_at in 10.. {
+        assert!(sent_at < 20, "the recipient never fetched from the dealer");
+        publish(&second, signed(message.clone(), 2, sent_at)).await;
+        let arrived = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv()).await;
+        let Ok(Some(arrived)) = arrived else {
+            continue;
+        };
+        assert_eq!(arrived, message);
+        if fetch(&third, message.clone()).await.is_ok() {
             break;
         }
-        publish(&second, signed(message.clone(), 2, sent_at)).await;
-        delivered = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv())
-            .await
-            .ok()
-            .flatten();
-        assert!(sent_at < 20, "the recipient never found the dealer");
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    assert_eq!(delivered, Some(message));
+    assert!(message.blobs().iter().all(|blob| third.blobs.has(blob)));
+}
+
+/// After a restart the node has not heard the message, so it knows no peer to ask.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_the_node_never_heard_cannot_be_fetched() {
+    let [first, second, _third] = network().await;
+    let result = fetch(&second, key(&first, 1)).await;
+    assert!(
+        matches!(result, Err(NetworkError::Unavailable)),
+        "{result:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_blob_with_other_bytes_is_never_delivered() {
+async fn a_message_that_names_too_many_bytes_is_not_fetched() {
+    let [first, mut second, _third] = network().await;
+    let mut message = shares(&first, 1, 2);
+    let Body::Dkg(DkgMessage::Shares(sent)) = &mut message.body else {
+        unreachable!("a share message")
+    };
+    let huge = |n: u8| BlobRef {
+        hash: B256::repeat_byte(n),
+        len: 30 * 1024 * 1024,
+    };
+    sent.c3a = (1..=40)
+        .map(|n| SignedProof {
+            proof: ZkProof {
+                data: huge(n),
+                public_inputs: Vec::new(),
+            },
+            signature: Bytes::new(),
+        })
+        .collect();
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
+    let result = fetch(&second, message).await;
+    assert!(matches!(result, Err(NetworkError::Busy)), "{result:?}");
+}
+
+/// The publisher's store holds other bytes under the blob's name; a receiver keeps nothing from it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blob_with_other_bytes_is_never_stored() {
     let [first, mut second, _third] = network().await;
     let message = key(&first, 1);
     let Body::Dkg(DkgMessage::EncryptionKey(sent)) = &message.body else {
@@ -215,7 +259,12 @@ async fn a_blob_with_other_bytes_is_never_delivered() {
     };
     let forged = sent.key;
     std::fs::write(first.dir.path().join(forged.hash.to_string()), b"forged").unwrap();
-    publish(&first, signed(message, 1, 10)).await;
-    nothing(&mut second, Duration::from_secs(5)).await;
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
+    let result = fetch(&second, message).await;
+    assert!(
+        matches!(result, Err(NetworkError::Unavailable)),
+        "{result:?}"
+    );
     assert!(!second.blobs.has(&forged));
 }

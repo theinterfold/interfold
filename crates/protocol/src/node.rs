@@ -22,7 +22,7 @@ use crate::{
     selection::{candidate_owners, candidates},
     BlobRef, E3Id, Machine, Tick, UnixSecs,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -256,6 +256,11 @@ impl PeerMessage {
         }
     }
 
+    /// The same for every copy and re-send of the message.
+    pub fn id(&self) -> B256 {
+        keccak256(bincode::serialize(self).expect("a peer message encodes"))
+    }
+
     /// Its encoded bytes and its blobs' bytes.
     fn size(&self) -> u64 {
         let encoded = bincode::serialized_size(self).unwrap_or(u64::MAX);
@@ -331,6 +336,9 @@ pub struct Fetched {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Input {
     Chain(ChainEvent),
+    /// A peer's message as gossip announced it; the blobs it names may not be in the store.
+    Announced(PeerMessage),
+    /// A peer's message whose blobs are in the store.
     Peer(PeerMessage),
     Job(JobDone),
     Signed(Signed),
@@ -378,6 +386,9 @@ pub enum Effect {
     Gossip(PeerMessage),
     Submit(Submission),
     Fetch(Fetch),
+    /// Bring the blobs a peer's message names into the store, from the peers that sent it; the
+    /// message comes back as `Input::Peer` once they are there.
+    FetchBlobs(PeerMessage),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -626,13 +637,19 @@ impl Node {
     }
 
     /// A message waits in the bounded hold until the chain fact that lets the node judge it:
-    /// the committee's finalization for the DKG, the key's publication for decryption.
-    fn apply_peer(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+    /// the committee's finalization for the DKG, the key's publication for decryption. Its blobs
+    /// are fetched only once its E3 admits it, so a sender outside the committee costs no
+    /// download.
+    fn apply_announced(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         if self.ended.contains(&message.e3) || !message.is_for(self.me) {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.routes(&message.body) => state.receive(now, message),
+            Some(state) if state.routes(&message.body) => match state.admits(&message) {
+                false => Vec::new(),
+                true if message.blobs().is_empty() => state.receive(now, message),
+                true => vec![Effect::FetchBlobs(message)],
+            },
             _ => {
                 self.held.hold(message);
                 Vec::new()
@@ -640,10 +657,20 @@ impl Node {
         }
     }
 
+    fn apply_peer(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+        if !message.is_for(self.me) {
+            return Vec::new();
+        }
+        match self.e3s.get_mut(&message.e3) {
+            Some(state) if state.routes(&message.body) => state.receive(now, message),
+            _ => Vec::new(),
+        }
+    }
+
     fn release_held(&mut self, now: UnixSecs, e3: E3Id) -> Vec<Effect> {
         let held = self.held.take(&e3);
         held.into_iter()
-            .flat_map(|message| self.apply_peer(now, message))
+            .flat_map(|message| self.apply_announced(now, message))
             .collect()
     }
 
@@ -699,6 +726,7 @@ impl Machine for Node {
         let mut effects = self.pass_deadlines(now);
         effects.extend(match input {
             Input::Chain(event) => self.apply_chain(now, event),
+            Input::Announced(message) => self.apply_announced(now, message),
             Input::Peer(message) => self.apply_peer(now, message),
             Input::Job(done) => self.apply_job(now, done),
             Input::Signed(signed) => self.apply_signed(now, signed),
@@ -1066,39 +1094,60 @@ mod tests {
     }
 
     #[test]
-    fn keys_sent_before_the_committee_is_known_are_checked_once_it_is() {
+    fn keys_announced_before_the_committee_is_known_are_fetched_once_it_is() {
         let mut node = node();
-        node.step(0, key_from(e3(1), 1));
+        node.step(0, announced(key_from(e3(1), 1)));
         node.step(0, requested(10, e3(1)));
-        node.step(0, key_from(e3(1), 2));
+        node.step(0, announced(key_from(e3(1), 2)));
         let effects = node.step(0, finalized(11, e3(1), members([1, 2])));
-        assert_eq!(key_checks(&effects), vec![address(1), address(2)]);
+        assert_eq!(fetched_from(&effects), vec![address(1), address(2)]);
+    }
+
+    #[test]
+    fn a_member_s_message_is_fetched_then_taken_once() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let key = key_from(e3(1), 1);
+        let effects = node.step(0, announced(key.clone()));
+        assert_eq!(fetched_from(&effects), vec![address(1)]);
+        assert_eq!(key_checks(&node.step(0, key.clone())), vec![address(1)]);
+        assert!(key_checks(&node.step(0, key.clone())).is_empty());
+        assert!(node.step(0, announced(key)).is_empty());
+    }
+
+    #[test]
+    fn a_message_from_outside_the_committee_is_never_fetched() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        assert!(node.step(0, announced(key_from(e3(1), 9))).is_empty());
     }
 
     #[test]
     fn a_full_e3_hold_drops_its_oldest_message() {
         let mut node = node();
         for n in 1..=513 {
-            node.step(0, key_from(e3(1), n));
+            node.step(0, announced(key_from(e3(1), n)));
         }
         node.step(0, requested(10, e3(1)));
-        let checked = key_checks(&node.step(0, finalized(11, e3(1), members(1..=513))));
-        assert_eq!(checked.len(), 512);
-        assert!(!checked.contains(&address(1)));
+        let fetched = fetched_from(&node.step(0, finalized(11, e3(1), members(1..=513))));
+        assert_eq!(fetched.len(), 512);
+        assert!(!fetched.contains(&address(1)));
     }
 
     #[test]
     fn a_full_hold_drops_the_oldest_message_of_any_e3() {
         let mut node = node();
         for n in 1..=512 {
-            node.step(0, key_from(e3(1), n));
-            node.step(0, key_from(e3(2), n));
+            node.step(0, announced(key_from(e3(1), n)));
+            node.step(0, announced(key_from(e3(2), n)));
         }
-        node.step(0, key_from(e3(3), 1));
+        node.step(0, announced(key_from(e3(3), 1)));
         node.step(0, requested(10, e3(1)));
-        let checked = key_checks(&node.step(0, finalized(11, e3(1), members(1..=512))));
-        assert_eq!(checked.len(), 511);
-        assert!(!checked.contains(&address(1)));
+        let fetched = fetched_from(&node.step(0, finalized(11, e3(1), members(1..=512))));
+        assert_eq!(fetched.len(), 511);
+        assert!(!fetched.contains(&address(1)));
     }
 
     #[test]
@@ -1232,11 +1281,10 @@ mod tests {
         let mut node = node();
         node.step(0, requested(10, e3(1)));
         node.step(0, finalized(11, e3(1), members([1, 2])));
-        node.step(0, decryption_shares(e3(1), 1, 1));
+        node.step(0, announced(decryption_shares(e3(1), 1, 1)));
         let roster = vec![address(1), address(ME)];
-        node.step(0, key_published(12, e3(1), members([1, 2]), roster));
-        let decryption = node.e3(&e3(1)).and_then(|state| state.decryption.as_ref());
-        assert!(decryption.is_some_and(|d| d.shares_of(&address(1)).is_some()));
+        let effects = node.step(0, key_published(12, e3(1), members([1, 2]), roster));
+        assert_eq!(fetched_from(&effects), vec![address(1)]);
     }
 
     #[test]
@@ -1250,11 +1298,11 @@ mod tests {
     #[test]
     fn finalization_drops_what_non_members_sent() {
         let mut node = node();
-        node.step(0, key_from(e3(1), 1));
-        node.step(0, key_from(e3(1), 9));
+        node.step(0, announced(key_from(e3(1), 1)));
+        node.step(0, announced(key_from(e3(1), 9)));
         node.step(0, requested(10, e3(1)));
         let effects = node.step(0, finalized(11, e3(1), members([1])));
-        assert_eq!(key_checks(&effects), vec![address(1)]);
+        assert_eq!(fetched_from(&effects), vec![address(1)]);
     }
 
     #[test]
@@ -1272,12 +1320,12 @@ mod tests {
             ),
         );
         for n in 1..=512 {
-            node.step(0, key_from(e3(2), n));
-            node.step(0, key_from(e3(3), n));
+            node.step(0, announced(key_from(e3(2), n)));
+            node.step(0, announced(key_from(e3(3), n)));
         }
-        node.step(0, key_from(e3(1), 1));
+        node.step(0, announced(key_from(e3(1), 1)));
         node.step(0, requested(12, e3(2)));
-        let checked = key_checks(&node.step(0, finalized(13, e3(2), members(1..=512))));
-        assert_eq!(checked.len(), 512);
+        let fetched = fetched_from(&node.step(0, finalized(13, e3(2), members(1..=512))));
+        assert_eq!(fetched.len(), 512);
     }
 }

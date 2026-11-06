@@ -61,24 +61,26 @@ impl Default for Aggregation {
 }
 
 impl Dkg {
-    pub(super) fn receive_keyshare(&mut self, member: Address, message: KeyshareMessage) {
-        if self.counts_for_the_key(member)
+    pub(super) fn admits_keyshare(&self, member: Address, message: &KeyshareMessage) -> bool {
+        self.counts_for_the_key(member)
             && !self.aggregation.keyshares.contains_key(&member)
             && message
                 .c1
                 .is_signed_by(member, self.e3, ProofType::C1PkGeneration)
-        {
-            self.aggregation.keyshares.insert(member, message);
-        }
+    }
+
+    pub(super) fn receive_keyshare(&mut self, member: Address, message: KeyshareMessage) {
+        self.aggregation.keyshares.insert(member, message);
+    }
+
+    pub(super) fn admits_fold(&self, member: Address, message: &NodeFoldMessage) -> bool {
+        self.counts_for_the_key(member)
+            && !self.aggregation.folds.contains_key(&member)
+            && self.attests(member, message)
     }
 
     pub(super) fn receive_fold(&mut self, member: Address, message: NodeFoldMessage) {
-        if self.counts_for_the_key(member)
-            && !self.aggregation.folds.contains_key(&member)
-            && self.attests(member, &message)
-        {
-            self.record_fold(member, message);
-        }
+        self.record_fold(member, message);
     }
 
     pub(super) fn record_keyshare(&mut self, member: Address, message: KeyshareMessage) {

@@ -32,11 +32,14 @@ use tracing::{debug, warn};
 const MAX_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 /// The largest blob a peer may send, above the old document limit of 26 MiB.
 const MAX_BLOB_BYTES: u64 = 32 * 1024 * 1024;
-/// Messages that wait for blobs at once; past it a message is dropped and comes again with its
-/// sender's re-send.
-const MAX_WAITING: usize = 4_096;
-/// Blob references a node serves: those of the messages it published or delivered lately.
+/// Messages whose blobs are on their way at once, and their bytes; past either, a fetch fails and
+/// the sender's re-send brings the message again.
+const MAX_FETCHING: usize = 4_096;
+const MAX_FETCHING_BYTES: u64 = 1024 * 1024 * 1024;
+/// Blob references a node serves: those of the messages it published or fetched lately.
 const MAX_SERVABLE: usize = 65_536;
+/// Messages whose senders a node remembers, to fetch their blobs from.
+const MAX_SOURCES: usize = 4_096;
 /// A publish waits this long for a peer on the topic, as a node that just started has none.
 const PUBLISH_ATTEMPTS: u32 = 6;
 const PUBLISH_RETRY: Duration = Duration::from_secs(5);
@@ -162,16 +165,16 @@ pub struct P2p {
     listening: Vec<Multiaddr>,
 }
 
+type Done = oneshot::Sender<Result<(), NetworkError>>;
+
 enum Command {
-    Publish {
-        envelope: Envelope,
-        done: oneshot::Sender<Result<(), NetworkError>>,
-    },
+    Publish { envelope: Envelope, done: Done },
+    Fetch { message: PeerMessage, done: Done },
 }
 
 impl P2p {
     /// Joins the network as operator `me`. Peer messages for this node arrive on the returned
-    /// receiver once the blobs it needs from them are in `blobs`.
+    /// receiver as their envelopes open; `fetch` brings their blobs into `blobs`.
     pub async fn start(
         config: P2pConfig,
         me: Address,
@@ -229,9 +232,12 @@ impl P2p {
             blobs,
             inbound,
             peers: config.peers,
-            servable: Servable::default(),
-            waiting: BTreeMap::new(),
-            next_wait: 0,
+            servable: Recent::default(),
+            sources: Recent::default(),
+            fetching: BTreeMap::new(),
+            fetch_of: HashMap::new(),
+            fetching_bytes: 0,
+            next_fetch: 0,
             requests: HashMap::new(),
             publishes: VecDeque::new(),
         };
@@ -264,33 +270,57 @@ impl Network for P2p {
             .map_err(|_| NetworkError::Stopped)?;
         result.await.map_err(|_| NetworkError::Stopped)?
     }
+
+    async fn fetch(&self, message: PeerMessage) -> Result<(), NetworkError> {
+        let (done, result) = oneshot::channel();
+        self.commands
+            .send(Command::Fetch { message, done })
+            .await
+            .map_err(|_| NetworkError::Stopped)?;
+        result.await.map_err(|_| NetworkError::Stopped)?
+    }
 }
 
-/// A peer message that waits for blobs, and the peers to ask for them: the publisher first, then
-/// the peer that forwarded the message.
-struct Waiting {
+/// The blobs of one message on their way, the peers to ask for them (the publisher first, then the
+/// peer that forwarded the message), and the callers that wait for them.
+struct Fetching {
+    id: B256,
     message: PeerMessage,
     missing: BTreeMap<B256, BlobRef>,
     peers: Vec<PeerId>,
+    bytes: u64,
+    done: Vec<Done>,
 }
 
-/// The blob references a node serves, oldest dropped first.
-#[derive(Default)]
-struct Servable {
-    blobs: HashMap<B256, BlobRef>,
-    order: VecDeque<B256>,
+/// The latest `CAPACITY` entries, oldest dropped first.
+struct Recent<K, V, const CAPACITY: usize> {
+    entries: HashMap<K, V>,
+    order: VecDeque<K>,
 }
 
-impl Servable {
-    fn insert(&mut self, blob: BlobRef) {
-        if self.blobs.insert(blob.hash, blob).is_none() {
-            self.order.push_back(blob.hash);
+impl<K, V, const CAPACITY: usize> Default for Recent<K, V, CAPACITY> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
         }
-        while self.order.len() > MAX_SERVABLE {
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash, V, const CAPACITY: usize> Recent<K, V, CAPACITY> {
+    fn insert(&mut self, key: K, value: V) {
+        if self.entries.insert(key, value).is_none() {
+            self.order.push_back(key);
+        }
+        while self.order.len() > CAPACITY {
             if let Some(oldest) = self.order.pop_front() {
-                self.blobs.remove(&oldest);
+                self.entries.remove(&oldest);
             }
         }
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.entries.get(key)
     }
 }
 
@@ -307,10 +337,15 @@ struct Driver {
     blobs: SharedBlobs,
     inbound: mpsc::Sender<PeerMessage>,
     peers: Vec<Multiaddr>,
-    servable: Servable,
-    waiting: BTreeMap<u64, Waiting>,
-    next_wait: u64,
-    /// The blob each request asks for, and the message waiting for it.
+    servable: Recent<B256, BlobRef, MAX_SERVABLE>,
+    /// The peers that sent each message, by its ID.
+    sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
+    fetching: BTreeMap<u64, Fetching>,
+    /// The fetch on its way for each message, by its ID.
+    fetch_of: HashMap<B256, u64>,
+    fetching_bytes: u64,
+    next_fetch: u64,
+    /// The blob each request asks for, and the fetch waiting for it.
     requests: HashMap<OutboundRequestId, (u64, BlobRef, PeerId)>,
     /// Publishes that found no peer on the topic yet.
     publishes: VecDeque<PendingPublish>,
@@ -324,6 +359,7 @@ impl Driver {
             tokio::select! {
                 command = commands.recv() => match command {
                     Some(Command::Publish { envelope, done }) => self.publish(envelope, done),
+                    Some(Command::Fetch { message, done }) => self.fetch(message, done),
                     None => return,
                 },
                 event = self.swarm.select_next_some() => self.on_event(event),
@@ -349,10 +385,8 @@ impl Driver {
         }
     }
 
-    fn publish(&mut self, envelope: Envelope, done: oneshot::Sender<Result<(), NetworkError>>) {
-        for blob in envelope.message.blobs() {
-            self.servable.insert(blob);
-        }
+    fn publish(&mut self, envelope: Envelope, done: Done) {
+        self.serve(&envelope.message);
         let pending = PendingPublish {
             bytes: envelope.encode(),
             attempts: 0,
@@ -410,7 +444,7 @@ impl Driver {
     }
 
     /// Accepts for forwarding every envelope that opens, whoever it is for; delivers the ones for
-    /// this node once their blobs are here.
+    /// this node at once, and remembers who sent each, to fetch its blobs from.
     fn on_gossip(&mut self, propagation: PeerId, id: MessageId, message: gossipsub::Message) {
         let opened = Envelope::decode(&message.data).and_then(Envelope::open);
         let acceptance = match opened {
@@ -424,45 +458,80 @@ impl Driver {
         let Some(peer_message) = opened.filter(|opened| opened.is_for(self.me)) else {
             return;
         };
-        let missing: BTreeMap<B256, BlobRef> = peer_message
+        let mut peers: Vec<PeerId> = message.source.into_iter().collect();
+        if !peers.contains(&propagation) {
+            peers.push(propagation);
+        }
+        self.sources.insert(peer_message.id(), peers);
+        if self.inbound.try_send(peer_message).is_err() {
+            warn!("the node is not taking peer messages; dropping one");
+        }
+    }
+
+    /// Fetches the blobs `message` names that the store lacks. A fetch already on its way for the
+    /// same message answers this caller too.
+    fn fetch(&mut self, message: PeerMessage, done: Done) {
+        let id = message.id();
+        if let Some(fetching) = self
+            .fetch_of
+            .get(&id)
+            .and_then(|fetch| self.fetching.get_mut(fetch))
+        {
+            fetching.done.push(done);
+            return;
+        }
+        let missing: BTreeMap<B256, BlobRef> = message
             .blobs()
             .into_iter()
             .filter(|blob| !self.blobs.has(blob))
             .map(|blob| (blob.hash, blob))
             .collect();
         if missing.is_empty() {
-            self.deliver(peer_message);
+            self.serve(&message);
+            let _ = done.send(Ok(()));
             return;
         }
-        if self.waiting.len() >= MAX_WAITING {
-            warn!("too many messages wait for blobs; dropping one");
+        let bytes = missing
+            .values()
+            .fold(0u64, |sum, blob| sum.saturating_add(blob.len));
+        let (Some(peers), true) = (
+            self.sources.get(&id).cloned(),
+            missing.values().all(|blob| blob.len <= MAX_BLOB_BYTES),
+        ) else {
+            let _ = done.send(Err(NetworkError::Unavailable));
+            return;
+        };
+        if self.fetching.len() >= MAX_FETCHING
+            || self.fetching_bytes.saturating_add(bytes) > MAX_FETCHING_BYTES
+        {
+            let _ = done.send(Err(NetworkError::Busy));
             return;
         }
-        let mut peers: Vec<PeerId> = message.source.into_iter().collect();
-        if !peers.contains(&propagation) {
-            peers.push(propagation);
-        }
-        let wait = self.next_wait;
-        self.next_wait += 1;
-        let first = peers[0];
+        let fetch = self.next_fetch;
+        self.next_fetch += 1;
         for blob in missing.values() {
-            self.request(wait, *blob, first);
+            self.request(fetch, *blob, peers[0]);
         }
-        let waiting = Waiting {
-            message: peer_message,
+        self.fetching_bytes += bytes;
+        self.fetch_of.insert(id, fetch);
+        let fetching = Fetching {
+            id,
+            message,
             missing,
             peers,
+            bytes,
+            done: vec![done],
         };
-        self.waiting.insert(wait, waiting);
+        self.fetching.insert(fetch, fetching);
     }
 
-    fn request(&mut self, wait: u64, blob: BlobRef, peer: PeerId) {
+    fn request(&mut self, fetch: u64, blob: BlobRef, peer: PeerId) {
         let request = self
             .swarm
             .behaviour_mut()
             .blobs
             .send_request(&peer, blob.hash);
-        self.requests.insert(request, (wait, blob, peer));
+        self.requests.insert(request, (fetch, blob, peer));
     }
 
     fn on_blobs(&mut self, event: request_response::Event<B256, Option<ByteBuf>>) {
@@ -476,7 +545,6 @@ impl Driver {
             } => {
                 let bytes = self
                     .servable
-                    .blobs
                     .get(&request)
                     .and_then(|blob| self.blobs.get(blob).ok())
                     .map(ByteBuf::from);
@@ -494,70 +562,80 @@ impl Driver {
                     },
                 ..
             } => {
-                let Some((wait, blob, peer)) = self.requests.remove(&request_id) else {
+                let Some((fetch, blob, peer)) = self.requests.remove(&request_id) else {
                     return;
                 };
                 let bytes = response.map(ByteBuf::into_vec);
                 match bytes.filter(|bytes| BlobRef::of(bytes) == blob) {
-                    Some(bytes) => self.received(wait, blob, &bytes),
-                    None => self.ask_next(wait, blob, peer),
+                    Some(bytes) => self.received(fetch, blob, &bytes),
+                    None => self.ask_next(fetch, blob, peer),
                 }
             }
             request_response::Event::OutboundFailure {
                 request_id, error, ..
             } => {
-                if let Some((wait, blob, peer)) = self.requests.remove(&request_id) {
+                if let Some((fetch, blob, peer)) = self.requests.remove(&request_id) {
                     debug!(%peer, %error, "a blob request failed");
-                    self.ask_next(wait, blob, peer);
+                    self.ask_next(fetch, blob, peer);
                 }
             }
             _ => {}
         }
     }
 
-    fn received(&mut self, wait: u64, blob: BlobRef, bytes: &[u8]) {
-        if let Err(error) = self.blobs.put(bytes) {
-            warn!(%error, "storing a peer's blob failed");
-            self.waiting.remove(&wait);
+    /// Stores a blob of a fetch still on its way; a fetch that ended keeps nothing.
+    fn received(&mut self, fetch: u64, blob: BlobRef, bytes: &[u8]) {
+        if !self.fetching.contains_key(&fetch) {
             return;
         }
-        let Some(waiting) = self.waiting.get_mut(&wait) else {
+        if let Err(error) = self.blobs.put(bytes) {
+            self.finish(fetch, Err(NetworkError::Store(error.to_string())));
             return;
-        };
-        waiting.missing.remove(&blob.hash);
-        if waiting.missing.is_empty() {
-            let waiting = self.waiting.remove(&wait).expect("the message waits");
-            self.deliver(waiting.message);
+        }
+        let fetching = self
+            .fetching
+            .get_mut(&fetch)
+            .expect("the fetch is on its way");
+        fetching.missing.remove(&blob.hash);
+        if fetching.missing.is_empty() {
+            self.finish(fetch, Ok(()));
         }
     }
 
-    /// Asks the next peer for a blob that `asked` could not give, or drops the message: its
-    /// sender's re-send brings it again.
-    fn ask_next(&mut self, wait: u64, blob: BlobRef, asked: PeerId) {
-        let Some(waiting) = self.waiting.get(&wait) else {
+    /// Asks the next peer for a blob that `asked` could not give, or ends the fetch.
+    fn ask_next(&mut self, fetch: u64, blob: BlobRef, asked: PeerId) {
+        let Some(fetching) = self.fetching.get(&fetch) else {
             return;
         };
-        let next = waiting
+        let next = fetching
             .peers
             .iter()
             .skip_while(|peer| **peer != asked)
             .nth(1)
             .copied();
         match next {
-            Some(peer) => self.request(wait, blob, peer),
-            None => {
-                debug!(e3 = %waiting.message.e3, "no peer had a message's blob");
-                self.waiting.remove(&wait);
-            }
+            Some(peer) => self.request(fetch, blob, peer),
+            None => self.finish(fetch, Err(NetworkError::Unavailable)),
         }
     }
 
-    fn deliver(&mut self, message: PeerMessage) {
-        for blob in message.blobs() {
-            self.servable.insert(blob);
+    fn finish(&mut self, fetch: u64, result: Result<(), NetworkError>) {
+        let Some(fetching) = self.fetching.remove(&fetch) else {
+            return;
+        };
+        self.fetch_of.remove(&fetching.id);
+        self.fetching_bytes -= fetching.bytes;
+        if result.is_ok() {
+            self.serve(&fetching.message);
         }
-        if self.inbound.try_send(message).is_err() {
-            warn!("the node is not taking peer messages; dropping one");
+        for done in fetching.done {
+            let _ = done.send(result.clone());
+        }
+    }
+
+    fn serve(&mut self, message: &PeerMessage) {
+        for blob in message.blobs() {
+            self.servable.insert(blob.hash, blob);
         }
     }
 

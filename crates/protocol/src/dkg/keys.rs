@@ -25,17 +25,17 @@ pub(super) struct Keys {
 }
 
 impl Dkg {
-    pub(super) fn receive_key(&mut self, sender: Address, message: KeyMessage) -> Vec<Effect> {
-        if !self.collecting_keys()
-            || sender == self.me
-            || !self.is_member(sender)
-            || self.keys.received.contains_key(&sender)
-            || !message
+    pub(super) fn admits_key(&self, sender: Address, message: &KeyMessage) -> bool {
+        self.collecting_keys()
+            && sender != self.me
+            && self.is_member(sender)
+            && !self.keys.received.contains_key(&sender)
+            && message
                 .proof
                 .is_signed_by(sender, self.e3, ProofType::C0PkBfv)
-        {
-            return Vec::new();
-        }
+    }
+
+    pub(super) fn receive_key(&mut self, sender: Address, message: KeyMessage) -> Vec<Effect> {
         let check = self.run(DkgWork::CheckEncryptionKey {
             sender,
             key: message.key,

@@ -266,8 +266,19 @@ impl Decryption {
         sender: Address,
         message: DecryptionMessage,
     ) -> Vec<Effect> {
+        if !self.admits(sender, &message) {
+            return Vec::new();
+        }
         let DecryptionMessage::Shares(shares) = message;
-        let accepted = self.failure.is_none()
+        self.shares.insert(sender, shares);
+        self.advance(now)
+    }
+
+    /// Whether this node takes `message` from `sender` now; it can tell before it fetches any blob
+    /// the message names.
+    pub(crate) fn admits(&self, sender: Address, message: &DecryptionMessage) -> bool {
+        let DecryptionMessage::Shares(shares) = message;
+        self.failure.is_none()
             && sender != self.me
             && self.counts(&sender)
             && !self.shares.contains_key(&sender)
@@ -275,12 +286,7 @@ impl Decryption {
             && shares.shares.len() == shares.c6.len()
             && shares.c6.iter().all(|proof| {
                 proof.is_signed_by(sender, self.e3, ProofType::C6ThresholdShareDecryption)
-            });
-        if !accepted {
-            return Vec::new();
-        }
-        self.shares.insert(sender, shares);
-        self.advance(now)
+            })
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: DecryptionWorkResult) -> Vec<Effect> {

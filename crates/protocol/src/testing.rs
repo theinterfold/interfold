@@ -491,6 +491,25 @@ pub fn ready_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
 }
 
 /// The members whose keys `effects` ask the job runner to check, in order.
+/// A peer's message as gossip announces it, before its blobs are fetched.
+pub fn announced(input: Input) -> Input {
+    let Input::Peer(message) = input else {
+        panic!("a peer message")
+    };
+    Input::Announced(message)
+}
+
+/// The senders of the messages whose blobs the node asked for.
+pub fn fetched_from(effects: &[Effect]) -> Vec<Address> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::FetchBlobs(message) => Some(message.sender),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn key_checks(effects: &[Effect]) -> Vec<Address> {
     effects
         .iter()

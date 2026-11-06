@@ -317,7 +317,7 @@ impl<J: Jobs> Sim<J> {
                         let copies = 1 + u32::from(self.rng.random_bool(self.faults.duplicate));
                         for _ in 0..copies {
                             let at = self.now + self.delay();
-                            self.schedule(at, peer, Input::Peer(message.clone()), None);
+                            self.schedule(at, peer, Input::Announced(message.clone()), None);
                         }
                     }
                     self.gossip.push(message);
@@ -325,6 +325,10 @@ impl<J: Jobs> Sim<J> {
                 Effect::Submit(submission) => {
                     self.nodes[node].acknowledge(key);
                     self.submit(address(self.nodes[node].operator), submission);
+                }
+                Effect::FetchBlobs(message) => {
+                    let at = self.now + self.delay();
+                    self.schedule(at, node, Input::Peer(message), Some(key));
                 }
                 Effect::Fetch(fetch) => {
                     let blob = self.available[&fetch.data.hash];
