@@ -11,7 +11,7 @@ fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.4.2", features 
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.4.2" }
 e3-program-runner = { path = "../../crates/program-runner" }
 e3-bfv-client = { path = "../../crates/bfv/client" }
-e3-fhe-params = { path = "../../crates/fhe-params" }
+e3-fhe-params = { path = "../../crates/bfv/params" }
 e3-compute-provider = { path = "../../crates/compute-provider" }
 rand = "0.9"
 anyhow = "1.0.86"

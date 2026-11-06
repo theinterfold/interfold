@@ -691,7 +691,7 @@ pub fn check_ownership(root: &Path) -> Result<()> {
         e3_zk_config::metadata::CircuitDimensions::current().plaintext_byte_len
     ))?;
     let reviewed = [
-        "crates/fhe-params/src/constants.rs",
+        "crates/bfv/params/src/constants.rs",
         "crates/zk/config/src/constants.rs",
         "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
         "circuits/lib/src/configs/protocol.nr",

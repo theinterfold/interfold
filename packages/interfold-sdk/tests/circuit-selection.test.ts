@@ -30,7 +30,7 @@ describe('SDK circuit selection', () => {
   })
 
   it('uses current configuration IDs and the current secure registry entry', () => {
-    const fixture = JSON.parse(readFixture(new URL('../../../crates/fhe-params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'))
+    const fixture = JSON.parse(readFixture(new URL('../../../crates/bfv/params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'))
     expect(ParamSet.Secure8192).toBe(fixture.vectors.find((vector: { name: string }) => vector.name === 'current-secure').paramSet)
     for (const vector of fixture.vectors.filter((vector: { preset: string | null }) => vector.preset !== null)) {
       expect(cryptoConfigIdForParamSet(vector.paramSet)).toBe(vector.cryptoConfigId)

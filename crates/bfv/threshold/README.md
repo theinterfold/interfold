@@ -51,7 +51,7 @@ policy stay with the compute runtime.
 `TrBFVConfig::new(encoded_params, num_parties, threshold)` receives T, not T+1. Runtime `PartyId` is
 zero-based; Shamir reconstruction coordinates are one-based at the mathematical boundary. Share
 ordering must retain the corresponding party IDs. Use paired threshold/DKG metadata from
-[e3-fhe-params](../../fhe-params/README.md), not interchangeable parameter sets.
+[e3-fhe-params](../params/README.md), not interchangeable parameter sets.
 
 ## Secret inputs and outputs
 

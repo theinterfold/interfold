@@ -13,4 +13,4 @@ This is the runtime fhe.rs adapter and per-E3 FHE dependency extension, not the 
 
 The [README](README.md#tests) locates consumer coverage; this crate's target is compile-only today.
 Test new hydration behavior at the request/builder boundary. Adapter compilation does not replace
-the [DKG](../../docs/architecture/dkg.md) or threshold-decryption acceptance flows.
+the [DKG](../../../docs/architecture/dkg.md) or threshold-decryption acceptance flows.

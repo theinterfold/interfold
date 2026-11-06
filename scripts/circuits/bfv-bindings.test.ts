@@ -53,7 +53,7 @@ const root = resolve(__dirname, '../..')
 const packageRoot = join(root, 'packages/interfold-contracts')
 const requireContracts = createRequire(join(packageRoot, 'package.json'))
 const { AbiCoder, id, keccak256 } = requireContracts('ethers')
-const fixture = JSON.parse(readFileSync(join(root, 'crates/fhe-params/tests/fixtures/bfv_protocol.json'), 'utf8'))
+const fixture = JSON.parse(readFileSync(join(root, 'crates/bfv/params/tests/fixtures/bfv_protocol.json'), 'utf8'))
 
 test('deployment routes retain chain policy and order while projecting owner metadata', () => {
   assert.deepEqual(
@@ -303,7 +303,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'packages/interfold-contracts/contracts/lib/BfvProtocol.sol',
       'packages/interfold-contracts/tasks/interfold.ts',
       'packages/interfold-sdk/src/utils.ts',
-      'crates/fhe-params/src/constants.rs',
+      'crates/bfv/params/src/constants.rs',
       'crates/committee/src/lib.rs',
       'crates/evm/client/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',

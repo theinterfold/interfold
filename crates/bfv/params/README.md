@@ -58,7 +58,7 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
 and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old
 degree-512 persisted discriminants does not migrate stored data. Follow the
-[testnet reset requirement](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset)
+[testnet reset requirement](../../../docs/architecture/upgrades.md#insecure-testnet-preset-reset)
 before opening an existing degree-512 testnet store.
 
 In the PVSS protocol, two types of BFV parameters are needed:
@@ -198,7 +198,7 @@ Hash registry parameters as received: decoding and re-encoding can preserve thei
 their identity. Hash derivation is not admission; current consumers still check supported presets,
 while the indexer selects historical domains explicitly. Message width and DKG parameters are not
 bound by the threshold parameter hash, so statement changes still require an explicit version
-decision. See [upgrade compatibility](../../docs/architecture/upgrades.md).
+decision. See [upgrade compatibility](../../../docs/architecture/upgrades.md).
 
 ## Usage
 
@@ -380,5 +380,5 @@ cover exact preset lookup/pairs, fallible construction, deterministic CRP, ABI r
 full-width scalar arithmetic, prime selection, and search validation. These native tests do not run
 a prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
 not regenerate them to make a failing implementation pass.
-[Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching generated
+[Circuit artifacts](../../../docs/architecture/circuit-artifacts.md) describes matching generated
 outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.

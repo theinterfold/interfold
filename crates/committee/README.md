@@ -30,7 +30,7 @@ assert_eq!(CiphernodesCommitteeSize::from_threshold(1, 3).unwrap(), size);
 compatibility-sensitive, distinct from those lowercase names.
 
 For a dependency inside this workspace, use `e3-committee = { workspace = true }` and import
-`e3_committee`. The [FHE parameter API](../fhe-params/README.md) combines committee dimensions with
+`e3_committee`. The [FHE parameter API](../bfv/params/README.md) combines committee dimensions with
 cryptographic presets; supported dimensions alone do not imply installed circuit artifacts.
 
 ## Ordered membership
