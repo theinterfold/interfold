@@ -429,7 +429,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             .await?
             .get_receipt()
             .await?;
-        e3_utils::require_successful_receipt("request E3", &receipt)?;
+        e3_evm_transactions::require_successful_receipt("request E3", &receipt)?;
         let e3_id = receipt
             .logs()
             .iter()
@@ -451,7 +451,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             .await?
             .get_receipt()
             .await?;
-        e3_utils::require_successful_receipt("register E3 program", &receipt)?;
+        e3_evm_transactions::require_successful_receipt("register E3 program", &receipt)?;
 
         Ok(receipt)
     }
@@ -482,7 +482,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         .await?
         .get_receipt()
         .await?;
-        e3_utils::require_successful_receipt("publish ciphertext output", &receipt)?;
+        e3_evm_transactions::require_successful_receipt("publish ciphertext output", &receipt)?;
         Ok(receipt)
     }
 
@@ -504,7 +504,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         .await?
         .get_receipt()
         .await?;
-        e3_utils::require_successful_receipt("publish plaintext output", &receipt)?;
+        e3_evm_transactions::require_successful_receipt("publish plaintext output", &receipt)?;
 
         Ok(receipt)
     }

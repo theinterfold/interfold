@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_evm::error_decoder::format_evm_error;
 use e3_evm_config::ChainConfig;
-use e3_utils::require_successful_receipt;
+use e3_evm_transactions::require_successful_receipt;
 
 pub fn select_chain<'a>(config: &'a NodeConfig, name: Option<&str>) -> Result<&'a ChainConfig> {
     match name {

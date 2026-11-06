@@ -79,7 +79,16 @@ export const LAYERS = {
     'bfv/threshold',
     'bfv/client',
   ],
-  adapters: ['evm/runtime', 'net', 'state/sync', 'state/event-system', 'state/storage', 'data-availability', 'diagnostics/logger'],
+  adapters: [
+    'evm/runtime',
+    'evm/transactions',
+    'net',
+    'state/sync',
+    'state/event-system',
+    'state/storage',
+    'data-availability',
+    'diagnostics/logger',
+  ],
   vocabulary: [
     'events',
     'ciphernode/config',

@@ -131,7 +131,7 @@ pub async fn execute(out: Console, config: &NodeConfig, selection: Option<&str>)
         })?
         .get_receipt()
         .await?;
-    e3_utils::require_successful_receipt("request faucet funds", &receipt)?;
+    e3_evm_transactions::require_successful_receipt("request faucet funds", &receipt)?;
 
     log!(
         out,

@@ -18,6 +18,7 @@ tokio.workspace = true
 tracing.workspace = true
 e3-utils.workspace = true
 e3-evm-contracts.workspace = true
+e3-evm-transactions.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 
 [dev-dependencies]

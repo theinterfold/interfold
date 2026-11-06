@@ -41,11 +41,11 @@ use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
 use e3_evm_config::{ChainConfig, RpcAuth, RPC};
-use e3_utils::{
+use e3_evm_transactions::{
     nonce::{broadcast_refused, next_free_nonce},
-    retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
-    RPC_RETRY_FIRST_DELAY_MS,
+    should_retry_error, RPC_RETRY_ATTEMPTS, RPC_RETRY_FIRST_DELAY_MS,
 };
+use e3_utils::{retry_with_backoff, RetryError};
 use std::{
     collections::{BTreeMap, HashMap},
     env,

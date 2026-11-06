@@ -39,7 +39,8 @@ use e3_events::{
     EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof, PublicKeyAggregated,
     Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
+use e3_evm_transactions::require_successful_receipt;
+use e3_utils::{ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};

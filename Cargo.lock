@@ -3699,6 +3699,7 @@ dependencies = [
  "e3-evm",
  "e3-evm-config",
  "e3-evm-contracts",
+ "e3-evm-transactions",
  "e3-fhe-params",
  "e3-init",
  "e3-logger",
@@ -4005,6 +4006,7 @@ dependencies = [
  "e3-evm",
  "e3-evm-config",
  "e3-evm-contracts",
+ "e3-evm-transactions",
  "e3-fhe-params",
  "e3-request",
  "e3-sortition",
@@ -4035,6 +4037,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "e3-evm-contracts",
+ "e3-evm-transactions",
  "e3-fhe-params",
  "e3-utils",
  "eyre",
@@ -4068,6 +4071,13 @@ dependencies = [
  "bincode",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "e3-evm-transactions"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy",
 ]
 
 [[package]]
@@ -4608,7 +4618,6 @@ name = "e3-utils"
 version = "0.20.0-dev.3"
 dependencies = [
  "actix",
- "alloy",
  "anyhow",
  "bincode",
  "derivative",

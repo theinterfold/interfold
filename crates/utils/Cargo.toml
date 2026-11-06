@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 actix.workspace = true
-alloy.workspace = true
 anyhow.workspace = true
 bincode.workspace = true
 derivative.workspace = true
@@ -22,5 +21,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-alloy = { workspace = true, features = ["json-rpc"] }
 tokio = { workspace = true, features = ["test-util"] }

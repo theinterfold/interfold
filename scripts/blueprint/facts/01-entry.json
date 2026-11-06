@@ -167,6 +167,7 @@
         "e3-events",
         "e3-evm",
         "e3-evm-config",
+        "e3-evm-transactions",
         "e3-logger",
         "e3-trbfv",
         "e3-fhe-params",

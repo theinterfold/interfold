@@ -6,21 +6,17 @@
 
 extern crate self as e3_utils; // need this for e3_utils_derive to reference this crate
 pub mod actix;
-pub mod alloy;
 pub mod bounded_bincode;
 pub mod constants;
 pub mod error;
 pub mod formatters;
 pub mod helpers;
-pub mod nonce;
 pub mod ordered_set;
 pub mod path;
 pub mod retry;
 pub mod serde_bytes;
-pub mod transaction;
 pub mod utility_types;
 pub use actix::NotifySync;
-pub use alloy::*;
 pub use bounded_bincode::{deserialize_bounded, deserialize_exact};
 pub use constants::*;
 pub use e3_utils_derive::BytesSerde;
@@ -31,5 +27,4 @@ pub use ordered_set::*;
 pub use path::*;
 pub use retry::*;
 pub use serde_bytes::AsBytesSerde;
-pub use transaction::require_successful_receipt;
 pub use utility_types::*;

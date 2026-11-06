@@ -3,7 +3,9 @@
 Keep contract signatures, wire tuples, events, errors, and typed enum views in `contracts`.
 Application delivery belongs in `client`/`indexer`; node ingestion and transaction recovery belong
 in `runtime`. Sharing ABI facts does not authorize sharing confirmation, nonce, retry, cursor, or
-replay policy. Persisted domain/projection types remain with their owners.
+replay policy. Receipt, nonce-choice, broadcast-refusal, and retry-classification rules that several
+senders share belong in `transactions`; each sender keeps its own lock and attempt policy. Persisted
+domain/projection types remain with their owners.
 
 Connection and chain-setting types belong to `config`, not the ABI crate or a node configuration
 facade. Their consumers still own runtime validation and delivery policy.

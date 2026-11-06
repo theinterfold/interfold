@@ -30,8 +30,9 @@ use e3_events::{
     EffectsEnabled, EventStoreQueryBy, EventType, InterfoldEvent, InterfoldEventData,
     PlaintextAggregated, Proof, SeqAgg, Shutdown, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
+use e3_evm_transactions::require_successful_receipt;
 use e3_request::canonical_key::CanonicalPublicKeys;
-use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
+use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;

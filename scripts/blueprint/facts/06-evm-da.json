@@ -72,6 +72,54 @@
       "unverified": ["Settings validation does not establish chain identity, canonical history or exactly-once effects."]
     },
     {
+      "id": "e3-evm-transactions",
+      "kind": "crate",
+      "path": "crates/evm/transactions",
+      "one_line": "Shares the EVM transaction rules of client, runtime and CLI senders: receipt success, nonce choice, broadcast refusal and RPC retry classification, without their locks or attempt policies.",
+      "documentation": [{ "title": "Client and runtime boundaries", "path": "docs/architecture/rust-client-integration.md" }],
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [
+        {
+          "name": "RevertedTransaction",
+          "what": "a mined transaction whose receipt reports execution failure, with its operation and hash",
+          "ref": "crates/evm/transactions/src/receipt.rs@12@pub struct RevertedTransaction {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "the crate entry: the shared rules and what callers keep",
+          "ref": "crates/evm/transactions/src/lib.rs@7@Transaction facts that EVM senders share"
+        },
+        {
+          "why": "the nonce choice from local reservations and the RPC pending count",
+          "ref": "crates/evm/transactions/src/nonce.rs@32@pub fn next_free_nonce("
+        },
+        {
+          "why": "which failed broadcasts free their nonce",
+          "ref": "crates/evm/transactions/src/nonce.rs@55@pub fn broadcast_refused(error: &Error) -> bool {"
+        },
+        {
+          "why": "a receipt check, so that RPC submission is not taken for success",
+          "ref": "crates/evm/transactions/src/receipt.rs@30@pub fn require_successful_receipt("
+        }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "enum-match",
+          "note": "broadcast_refused matches the alloy contract and RPC error variants",
+          "ref": "crates/evm/transactions/src/nonce.rs@57@Error::TransportError(RpcError::LocalUsageError(_)) => true,"
+        }
+      ],
+      "depends_on": [],
+      "tests": "Run cargo test --locked -p e3-evm-transactions for receipt status, nonce reservation and expiry, and broadcast-refusal classification; the client and runtime tests cover their lock and retry wrappers.",
+      "unverified": [
+        "The broadcast-refusal messages are matched as text; other node implementations can word an already-known answer differently."
+      ]
+    },
+    {
       "id": "e3-evm-contracts",
       "kind": "crate",
       "path": "crates/evm/contracts",
@@ -122,7 +170,7 @@
         {
           "name": "CiphernodeRegistrySolReader",
           "role": "CiphernodeRegistry.sol: decodes committee, ticket, and public-key chunk events.",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@63@pub struct CiphernodeRegistrySolReader<P> {"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@64@pub struct CiphernodeRegistrySolReader<P> {"
         },
         {
           "name": "BondingRegistrySolReader",
@@ -162,17 +210,17 @@
         {
           "name": "CiphernodeRegistrySolWriter",
           "role": "Writes to CiphernodeRegistry.sol: submitTicket, finalizeCommittee, publishCommittee, and publishCommitteePublicKey chunks; acts only on a local PublicKeyAggregated.",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@357@pub struct CiphernodeRegistrySolWriter<P> {"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@358@pub struct CiphernodeRegistrySolWriter<P> {"
         },
         {
           "name": "InterfoldSolWriter",
           "role": "Writes to Interfold.sol: publishPlaintextOutput for a local PlaintextAggregated, plus markE3Failed and processE3Failure around failure deadlines.",
-          "ref": "crates/evm/runtime/src/interfold_writing/actor.rs@49@pub struct InterfoldSolWriter<P> {"
+          "ref": "crates/evm/runtime/src/interfold_writing/actor.rs@50@pub struct InterfoldSolWriter<P> {"
         },
         {
           "name": "SlashingManagerSolWriter",
           "role": "Writes to SlashingManager.sol: proposeSlash or proposeSlashByDkgParty after AccusationQuorumReached; with the policy disabled it publishes a local exclusion instead.",
-          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@48@pub struct SlashingManagerSolWriter<P> {"
+          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@49@pub struct SlashingManagerSolWriter<P> {"
         }
       ],
       "consumes": [
@@ -273,7 +321,7 @@
         {
           "name": "Slashing writer recovery state, per chain",
           "where": "disk",
-          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@53@recovery: Option<Persistable<SlashingWriterRecoveryState>>,"
+          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@54@recovery: Option<Persistable<SlashingWriterRecoveryState>>,"
         },
         {
           "name": "Data-availability recovery state: key chunks, pending outputs, terminal E3s",
@@ -376,6 +424,7 @@
         "e3-events",
         "e3-evm-config",
         "e3-evm-contracts",
+        "e3-evm-transactions",
         "e3-fhe-params",
         "e3-sortition",
         "e3-trbfv",
