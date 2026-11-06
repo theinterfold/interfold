@@ -100,6 +100,13 @@ Each rule is checkable in review.
   document re-announcement as the only DKG recovery, and the promoted aggregator's roster
   re-proposal.
 
+- **D20. Selection reads the node's own registry history.** Activity, ticket balances, bond owners,
+  and the identity policy are chain facts with their block times; selection reads them at T−1 for
+  a request at T ([committee selection](committee-selection.md)). The node's load limit counts the
+  live E3s it holds a ticket for, so no separate counter can drift. Under a required identity
+  policy v2 ranks every eligible operator, which is today's fallback when the eligibility read
+  fails; porting that read, which keeps the owner shortlist, is still open.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

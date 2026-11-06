@@ -18,9 +18,11 @@ use crate::{
         AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
         KeyPublication,
     },
+    registry::Registry,
+    selection::{candidate_owners, candidates},
     BlobRef, E3Id, Machine, Tick, UnixSecs,
 };
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -97,6 +99,18 @@ pub struct CryptoParams {
     pub seed: B256,
 }
 
+/// What the registry froze for a request's committee selection (`CommitteeRequested`, and
+/// `CommitteeBondOwnerCapEnabled` when the same transaction emits it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitteeRequest {
+    /// T, the request's timestamp (the contracts call it `requestBlock`); selection reads the
+    /// registry at T−1.
+    pub time: UnixSecs,
+    pub ticket_price: U256,
+    /// The contract keeps one candidate per request-time bond owner.
+    pub owner_cap: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainFact {
     /// `interfold` is the contract that emitted `E3Requested`. The chain adapter takes
@@ -108,6 +122,15 @@ pub enum ChainFact {
         params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
+        request: CommitteeRequest,
+    },
+    /// The registry accepted the request's randomness: the committee seed, and the deadline by
+    /// which tickets must arrive. The chain adapter reads both from the registry at the
+    /// fulfillment's block.
+    SeedReady {
+        e3: E3Id,
+        seed: U256,
+        committee_deadline: UnixSecs,
     },
     CommitteeFinalized {
         e3: E3Id,
@@ -146,11 +169,34 @@ pub enum ChainFact {
     VoteValidity {
         secs: u64,
     },
+    /// `OperatorActivationChanged`.
+    OperatorActive {
+        operator: Address,
+        active: bool,
+    },
+    /// `TicketBalanceUpdated`.
+    TicketBalance {
+        operator: Address,
+        balance: U256,
+    },
+    /// `BondOwnerSet`.
+    BondOwner {
+        operator: Address,
+        owner: Address,
+    },
+    /// A new eligibility configuration: every operator is inactive until it refreshes.
+    EligibilityReset,
+    /// Whether bond owners need an identity credential.
+    IdentityPolicy {
+        required: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainEvent {
     pub at: LogPosition,
+    /// The block's timestamp.
+    pub time: UnixSecs,
     pub fact: ChainFact,
 }
 
@@ -259,6 +305,10 @@ pub enum Transaction {
     PublishCommittee(KeyPublication),
     /// `publishPlaintextOutput`. Another aggregator's plaintext on chain completes it.
     PublishPlaintext(PlaintextPublication),
+    /// This node's ticket for the committee.
+    SubmitTicket { ticket: u64 },
+    /// `finalizeCommittee`, after the committee deadline.
+    FinalizeCommittee,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +323,8 @@ pub enum Effect {
 pub struct Node {
     me: Address,
     e3s: BTreeMap<E3Id, E3>,
+    /// Each chain's operator registry over time.
+    registries: BTreeMap<u64, Registry>,
     held: Hold,
     ended: VecDeque<E3Id>,
     applied: BTreeMap<u64, LogPosition>,
@@ -284,6 +336,7 @@ impl Node {
         Self {
             me,
             e3s: BTreeMap::new(),
+            registries: BTreeMap::new(),
             held: Hold::default(),
             ended: VecDeque::new(),
             applied: BTreeMap::new(),
@@ -306,17 +359,45 @@ impl Node {
             return Vec::new();
         }
         self.applied.insert(event.at.chain_id, event.at);
+        let (chain_id, time) = (event.at.chain_id, event.time);
+        let registry = self.registries.entry(chain_id).or_default();
         match event.fact {
             ChainFact::E3Requested {
                 e3,
                 params,
                 interfold,
                 attestation,
+                request,
             } => {
                 if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
-                    let state = E3::new(e3, self.me, params, interfold, attestation);
+                    let state = E3::new(e3, self.me, params, interfold, attestation, request);
                     self.e3s.insert(e3, state);
                 }
+                Vec::new()
+            }
+            ChainFact::SeedReady {
+                e3,
+                seed,
+                committee_deadline,
+            } => self.select(now, e3, seed, committee_deadline),
+            ChainFact::OperatorActive { operator, active } => {
+                registry.set_active(time, operator, active);
+                Vec::new()
+            }
+            ChainFact::TicketBalance { operator, balance } => {
+                registry.set_balance(time, operator, balance);
+                Vec::new()
+            }
+            ChainFact::BondOwner { operator, owner } => {
+                registry.set_owner(time, operator, owner);
+                Vec::new()
+            }
+            ChainFact::EligibilityReset => {
+                registry.reset_activity(time);
+                Vec::new()
+            }
+            ChainFact::IdentityPolicy { required } => {
+                registry.set_identity_required(time, required);
                 Vec::new()
             }
             ChainFact::CommitteeFinalized {
@@ -386,6 +467,57 @@ impl Node {
                 self.vote_validity.insert(event.at.chain_id, secs);
                 Vec::new()
             }
+        }
+    }
+
+    /// Rank the request's candidates from the registry at T−1 and submit this node's ticket if it
+    /// is one of them, before the committee deadline. Under a required identity policy the node
+    /// cannot tell which owners hold a credential, so it ranks every eligible operator, and the
+    /// contract rejects the others. A node takes at most as many E3s at once as it has tickets.
+    fn select(
+        &mut self,
+        now: UnixSecs,
+        e3: E3Id,
+        seed: U256,
+        committee_deadline: UnixSecs,
+    ) -> Vec<Effect> {
+        let active_jobs = self
+            .e3s
+            .values()
+            .filter(|state| state.ticket().is_some())
+            .count() as u64;
+        let Some(state) = self.e3s.get(&e3) else {
+            return Vec::new();
+        };
+        if state.ticket().is_some() || now >= committee_deadline {
+            return Vec::new();
+        }
+        let request = state.request;
+        let at = request.time.saturating_sub(1);
+        let registry = self.registries.entry(e3.chain_id).or_default();
+        let eligible = registry.eligible_at(at, request.ticket_price);
+        let owner_cap = request.owner_cap && !registry.identity_required_at(at);
+        let committee = state.params.committee_size.values();
+        let owners = candidate_owners(committee.n, committee.threshold);
+        let ranked = candidates(e3, seed, &eligible, owner_cap, owners);
+        let tickets = eligible
+            .iter()
+            .find(|operator| operator.operator == self.me)
+            .map_or(0, |operator| operator.tickets);
+        let Some((rank, mine)) = ranked
+            .iter()
+            .enumerate()
+            .find(|(_, candidate)| candidate.operator == self.me)
+        else {
+            return Vec::new();
+        };
+        if active_jobs >= tickets {
+            return Vec::new();
+        }
+        let ticket = mine.ticket;
+        match self.e3s.get_mut(&e3) {
+            Some(state) => state.submit_ticket(ticket, rank, committee_deadline),
+            None => Vec::new(),
         }
     }
 
@@ -546,7 +678,7 @@ impl Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::*;
+    use crate::{selection::Eligible, testing::*};
 
     fn node() -> Node {
         Node::new(address(ME))
@@ -554,6 +686,226 @@ mod tests {
 
     fn members(operators: impl IntoIterator<Item = u64>) -> Vec<Address> {
         operators.into_iter().chain([ME]).map(address).collect()
+    }
+
+    /// Operators active from timestamp 0 with `balance` tokens (tickets at one token each), each
+    /// its own bond owner.
+    fn registered(node: &mut Node, operators: &[u64], balance: u64) {
+        for (index, operator) in operators.iter().enumerate() {
+            let facts = [
+                ChainFact::OperatorActive {
+                    operator: address(*operator),
+                    active: true,
+                },
+                ChainFact::TicketBalance {
+                    operator: address(*operator),
+                    balance: U256::from(balance),
+                },
+                ChainFact::BondOwner {
+                    operator: address(*operator),
+                    owner: address(*operator),
+                },
+            ];
+            for (offset, fact) in facts.into_iter().enumerate() {
+                let at = LogPosition {
+                    chain_id: 1,
+                    block: 0,
+                    log_index: (3 * index + offset) as u64,
+                };
+                node.step(0, Input::Chain(ChainEvent { at, time: 0, fact }));
+            }
+        }
+    }
+
+    /// A request at timestamp `time`, so selection reads the registry at `time - 1`.
+    fn requested_at(block: u64, e3: E3Id, time: UnixSecs) -> Input {
+        chain(
+            block,
+            ChainFact::E3Requested {
+                e3,
+                params: params(e3_committee::CiphernodesCommitteeSize::Minimum),
+                interfold: INTERFOLD,
+                attestation: ATTESTATION,
+                request: CommitteeRequest { time, ..REQUEST },
+            },
+        )
+    }
+
+    fn seed_ready(block: u64, e3: E3Id, seed: u64, committee_deadline: UnixSecs) -> Input {
+        chain(
+            block,
+            ChainFact::SeedReady {
+                e3,
+                seed: U256::from(seed),
+                committee_deadline,
+            },
+        )
+    }
+
+    fn submissions(effects: &[Effect]) -> Vec<Transaction> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Submit(submission) => Some(submission.transaction.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// This node's rank and best ticket among `operators` for `seed`, as every node ranks them.
+    fn rank(operators: &[u64], seed: u64, owner_cap: bool) -> Option<(usize, u64)> {
+        let eligible: Vec<Eligible> = operators
+            .iter()
+            .map(|operator| Eligible {
+                operator: address(*operator),
+                tickets: 10,
+                owner: Some(address(*operator)),
+            })
+            .collect();
+        let owners = candidate_owners(3, 1);
+        let ranked = candidates(e3(1), U256::from(seed), &eligible, owner_cap, owners);
+        ranked
+            .iter()
+            .enumerate()
+            .find(|(_, candidate)| candidate.operator == address(ME))
+            .map(|(rank, candidate)| (rank, candidate.ticket))
+    }
+
+    #[test]
+    fn a_selected_node_submits_its_best_ticket_before_the_committee_deadline() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        let effects = node.step(5, seed_ready(5, e3(1), 42, 100));
+        let (_, ticket) = rank(&[1, 2, ME], 42, true).unwrap();
+        assert_eq!(
+            submissions(&effects),
+            vec![Transaction::SubmitTicket { ticket }]
+        );
+    }
+
+    #[test]
+    fn a_node_inactive_at_the_request_submits_nothing() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, chain(1, ChainFact::EligibilityReset));
+        node.step(3, requested_at(3, e3(1), 3));
+        assert!(submissions(&node.step(5, seed_ready(5, e3(1), 42, 100))).is_empty());
+    }
+
+    #[test]
+    fn a_change_in_the_request_s_own_block_does_not_count() {
+        let mut node = node();
+        registered(&mut node, &[1, 2], 10);
+        let activation = LogPosition {
+            chain_id: 1,
+            block: 3,
+            log_index: 0,
+        };
+        let facts = [
+            ChainFact::OperatorActive {
+                operator: address(ME),
+                active: true,
+            },
+            ChainFact::TicketBalance {
+                operator: address(ME),
+                balance: U256::from(10),
+            },
+            ChainFact::BondOwner {
+                operator: address(ME),
+                owner: address(ME),
+            },
+        ];
+        for (log_index, fact) in (1..).zip(facts) {
+            let at = LogPosition {
+                log_index,
+                ..activation
+            };
+            node.step(3, Input::Chain(ChainEvent { at, time: 3, fact }));
+        }
+        let request = LogPosition {
+            log_index: 9,
+            ..activation
+        };
+        let fact = match requested_at(3, e3(1), 3) {
+            Input::Chain(event) => event.fact,
+            _ => unreachable!(),
+        };
+        node.step(
+            3,
+            Input::Chain(ChainEvent {
+                at: request,
+                time: 3,
+                fact,
+            }),
+        );
+        assert!(submissions(&node.step(5, seed_ready(5, e3(1), 42, 100))).is_empty());
+    }
+
+    #[test]
+    fn a_seed_after_the_committee_deadline_submits_nothing() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        assert!(submissions(&node.step(100, seed_ready(5, e3(1), 42, 100))).is_empty());
+    }
+
+    #[test]
+    fn a_node_takes_at_most_as_many_e3s_at_once_as_it_has_tickets() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 1);
+        node.step(1, requested(1, e3(1)));
+        node.step(1, requested(2, e3(2)));
+        assert_eq!(
+            submissions(&node.step(5, seed_ready(5, e3(1), 42, 100))).len(),
+            1
+        );
+        assert!(submissions(&node.step(5, seed_ready(6, e3(2), 42, 100))).is_empty());
+    }
+
+    #[test]
+    fn the_finalizer_calls_after_the_deadline_staggered_by_rank() {
+        let seed = (0..1_000)
+            .find(|seed| rank(&[1, 2, ME], *seed, true).is_some_and(|(rank, _)| rank > 0))
+            .expect("a seed that ranks this node after another");
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(5, seed_ready(5, e3(1), seed, 100));
+        let (rank, _) = rank(&[1, 2, ME], seed, true).unwrap();
+        let due = 100 + 1 + 30 * rank as u64;
+        assert_eq!(node.next_deadline(), Some(due));
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::FinalizeCommittee]);
+        assert!(submissions(&node.step(due + 600, Input::Tick)).is_empty());
+    }
+
+    #[test]
+    fn a_finalized_committee_stops_the_finalizer() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(5, seed_ready(5, e3(1), 42, 100));
+        node.step(100, finalized(6, e3(1), members([1, 2])));
+        assert!(submissions(&node.step(10_000, Input::Tick)).is_empty());
+    }
+
+    #[test]
+    fn a_required_identity_policy_ranks_every_eligible_operator() {
+        let operators: Vec<u64> = (1..=8).chain([ME]).collect();
+        let seed = (0..1_000)
+            .find(|seed| rank(&operators, *seed, true).is_none())
+            .expect("a seed that leaves this node off the owner shortlist");
+        let submits = |required: bool| {
+            let mut node = node();
+            registered(&mut node, &operators, 10);
+            node.step(1, chain(1, ChainFact::IdentityPolicy { required }));
+            node.step(3, requested_at(3, e3(1), 3));
+            submissions(&node.step(5, seed_ready(5, e3(1), seed, 100))).len()
+        };
+        assert_eq!(submits(false), 0);
+        assert_eq!(submits(true), 1);
     }
 
     #[test]

@@ -12,12 +12,13 @@ mod decryption;
 mod dkg;
 
 use crate::{Faults, Sim};
-use alloy_primitives::Address;
+use alloy_primitives::U256;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::ChainFact,
     testing::{
-        address, e3, params, ATTESTATION, CIPHERTEXT, DECRYPTION_DEADLINE, INTERFOLD, TIMING,
+        address, e3, params, ATTESTATION, CIPHERTEXT, DECRYPTION_DEADLINE, INTERFOLD, REQUEST,
+        TIMING,
     },
 };
 
@@ -28,31 +29,48 @@ const FAULTS: Faults = Faults {
     drop: 0.1,
 };
 
-/// A committee, then one operator outside it; the first member reads the chain 30 seconds late.
-/// The chain requests the E3, finalizes the committee, and publishes the ciphertext once the DKG
-/// window has passed.
-fn committee(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
-    let n = size.values().n;
-    let operators: Vec<u64> = (1..=n as u64 + 1).collect();
-    let mut members: Vec<Address> = operators[..n].iter().map(|&o| address(o)).collect();
-    members.sort();
+/// One operator more than the committee needs, each active with ten tickets and its own bond
+/// owner; the first reads the chain 30 seconds late. The chain requests the E3, readies its seed,
+/// and publishes the ciphertext once the DKG window has passed; the operators select and finalize
+/// the committee themselves.
+fn committee(size: CiphernodesCommitteeSize, seed: u64) -> Sim {
+    let operators: Vec<u64> = (1..=size.values().n as u64 + 1).collect();
     let mut sim = Sim::new(seed, &operators, FAULTS);
     sim.set_chain_lag(0, 30);
+    for operator in operators.iter().map(|operator| address(*operator)) {
+        sim.chain(
+            0,
+            ChainFact::OperatorActive {
+                operator,
+                active: true,
+            },
+        );
+        let balance = U256::from(10);
+        sim.chain(0, ChainFact::TicketBalance { operator, balance });
+        sim.chain(
+            0,
+            ChainFact::BondOwner {
+                operator,
+                owner: operator,
+            },
+        );
+    }
     sim.chain(
-        0,
+        1,
         ChainFact::E3Requested {
             e3: e3(1),
             params: params(size),
             interfold: INTERFOLD,
             attestation: ATTESTATION,
+            request: REQUEST,
         },
     );
     sim.chain(
-        10,
-        ChainFact::CommitteeFinalized {
+        5,
+        ChainFact::SeedReady {
             e3: e3(1),
-            members: members.clone(),
-            dkg: TIMING,
+            seed: U256::from(seed),
+            committee_deadline: 100,
         },
     );
     sim.chain(
@@ -63,5 +81,5 @@ fn committee(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
             deadline: DECRYPTION_DEADLINE,
         },
     );
-    (sim, members)
+    sim
 }

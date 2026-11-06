@@ -19,7 +19,7 @@ fn the_committee_decrypts_one_plaintext_and_every_node_sees_the_e3_complete() {
         CiphernodesCommitteeSize::Micro,
     ] {
         for seed in 0..16 {
-            let (mut sim, _) = committee(size, seed);
+            let mut sim = committee(size, seed);
             sim.run_until(DECRYPTION_DEADLINE);
             let case = format!("{size:?} seed {seed}");
             let plaintexts: BTreeSet<_> = sim
@@ -27,7 +27,7 @@ fn the_committee_decrypts_one_plaintext_and_every_node_sees_the_e3_complete() {
                 .iter()
                 .filter_map(|submission| match &submission.transaction {
                     Transaction::PublishPlaintext(publication) => Some(publication.plaintext),
-                    Transaction::PublishCommittee(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(plaintexts.len(), 1, "{case}: one plaintext");

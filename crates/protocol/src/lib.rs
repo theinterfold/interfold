@@ -18,7 +18,9 @@ mod ids;
 mod machine;
 pub mod node;
 pub mod proof;
+mod registry;
 mod resend;
+pub mod selection;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 

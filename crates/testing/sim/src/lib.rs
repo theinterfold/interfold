@@ -8,7 +8,7 @@
 //! feeds a shadow copy of its machine that never crashes and never touches a store; the node must
 //! always produce the same effects as its shadow and end in the same state.
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
     decryption::{
@@ -19,11 +19,12 @@ use e3_protocol::{
         RecipientShares,
     },
     node::{
-        ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Stage,
-        Submission, Transaction, Work, WorkResult,
+        ChainEvent, ChainFact, Effect, FailureReason, Input, Job, JobDone, LogPosition, Node,
+        PeerMessage, Stage, Submission, Transaction, Work, WorkResult,
     },
     proof::ZkProof,
-    testing::{address, sign},
+    selection::ticket_score,
+    testing::{address, sign, TIMING},
     BlobRef, E3Id, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
@@ -90,6 +91,10 @@ impl SimNode {
     pub fn shadow(&self) -> &Node {
         &self.shadow
     }
+
+    pub fn address(&self) -> Address {
+        address(self.operator)
+    }
 }
 
 /// The faults of a run.
@@ -117,8 +122,8 @@ pub struct Sim {
     /// How many facts each block holds so far; a fact's block is its time, so later facts never
     /// sort before earlier ones.
     blocks: BTreeMap<UnixSecs, u64>,
-    /// Each E3's finalized committee, ascending, which the chain's key event repeats.
-    committees: BTreeMap<E3Id, Vec<Address>>,
+    /// What the simulated contracts keep for each E3.
+    requests: BTreeMap<E3Id, Request>,
     now: UnixSecs,
     rng: ChaCha8Rng,
     faults: Faults,
@@ -148,7 +153,7 @@ impl Sim {
             queue: BTreeMap::new(),
             next_delivery: 0,
             blocks: BTreeMap::new(),
-            committees: BTreeMap::new(),
+            requests: BTreeMap::new(),
             now: 0,
             rng,
             faults,
@@ -164,10 +169,29 @@ impl Sim {
     /// A fact confirmed at `at`, in its own block. Each node reads it after its chain lag.
     pub fn chain(&mut self, at: UnixSecs, fact: ChainFact) {
         let at = at.max(self.now);
-        if let ChainFact::CommitteeFinalized { e3, members, .. } = &fact {
-            let mut members = members.clone();
-            members.sort();
-            self.committees.insert(*e3, members);
+        match &fact {
+            ChainFact::E3Requested { e3, params, .. } => {
+                self.requests
+                    .insert(*e3, Request::new(params.committee_size.values().n));
+            }
+            ChainFact::SeedReady {
+                e3,
+                seed,
+                committee_deadline,
+            } => {
+                if let Some(request) = self.requests.get_mut(e3) {
+                    request.seed = *seed;
+                    request.deadline = *committee_deadline;
+                }
+            }
+            ChainFact::CommitteeFinalized { e3, members, .. } => {
+                if let Some(request) = self.requests.get_mut(e3) {
+                    let mut members = members.clone();
+                    members.sort();
+                    request.committee = Some(members);
+                }
+            }
+            _ => {}
         }
         let log_index = self.blocks.entry(at).or_default();
         let event = ChainEvent {
@@ -176,6 +200,7 @@ impl Sim {
                 block: at,
                 log_index: *log_index,
             },
+            time: at,
             fact,
         };
         *log_index += 1;
@@ -210,6 +235,11 @@ impl Sim {
     /// Every transaction the nodes asked the chain writer for, in order.
     pub fn submissions(&self) -> &[Submission] {
         &self.submissions
+    }
+
+    /// The committee the chain finalized for `e3`, ascending.
+    pub fn committee(&self, e3: &E3Id) -> Option<&[Address]> {
+        self.requests.get(e3)?.committee.as_deref()
     }
 
     fn deliver(&mut self, delivery: Delivery) {
@@ -270,44 +300,63 @@ impl Sim {
                 }
                 Effect::Submit(submission) => {
                     self.nodes[node].acknowledge(key);
-                    self.submit(submission);
+                    self.submit(address(self.nodes[node].operator), submission);
                 }
             }
         }
     }
 
-    /// The chain accepts the first key and the first plaintext of an E3 and rejects later ones,
-    /// as the contracts do once they are set. A key publishes the committee and the roster that
-    /// its attestations name; a plaintext completes the E3.
-    fn submit(&mut self, submission: Submission) {
-        let first = !self.submissions.iter().any(|earlier| {
-            earlier.e3 == submission.e3
-                && std::mem::discriminant(&earlier.transaction)
-                    == std::mem::discriminant(&submission.transaction)
-        });
-        let committee = self
-            .committees
-            .get(&submission.e3)
-            .cloned()
-            .unwrap_or_default();
-        let fact = match &submission.transaction {
-            Transaction::PublishCommittee(publication) => ChainFact::KeyPublished {
-                e3: submission.e3,
-                roster: publication
-                    .attestations
-                    .iter()
-                    .filter_map(|attestation| committee.get(attestation.party_id as usize))
-                    .copied()
-                    .collect(),
-                committee,
-                commitment: publication.commitment,
-            },
-            Transaction::PublishPlaintext(_) => ChainFact::StageChanged {
-                e3: submission.e3,
-                stage: Stage::Complete,
-            },
+    /// The simulated contracts: tickets count until the committee deadline; finalizing after it
+    /// takes the N best scores, or fails the E3 with fewer; the first key and the first plaintext
+    /// of an E3 count, as on chain once they are set.
+    fn submit(&mut self, sender: Address, submission: Submission) {
+        let e3 = submission.e3;
+        let now = self.now;
+        let Some(request) = self.requests.get_mut(&e3) else {
+            return;
         };
-        if first {
+        let fact = match &submission.transaction {
+            Transaction::SubmitTicket { ticket } => {
+                if now <= request.deadline {
+                    let score = ticket_score(sender, *ticket, e3, request.seed);
+                    request.tickets.insert(sender, score);
+                }
+                None
+            }
+            Transaction::FinalizeCommittee => request.finalize(now).map(|members| match members {
+                Some(members) => ChainFact::CommitteeFinalized {
+                    e3,
+                    members,
+                    dkg: TIMING,
+                },
+                None => ChainFact::Failed {
+                    e3,
+                    reason: FailureReason::InsufficientCommitteeMembers,
+                },
+            }),
+            Transaction::PublishCommittee(publication) => {
+                let committee = request.committee.clone().unwrap_or_default();
+                (!std::mem::replace(&mut request.key_published, true)).then(|| {
+                    ChainFact::KeyPublished {
+                        e3,
+                        roster: publication
+                            .attestations
+                            .iter()
+                            .filter_map(|attestation| committee.get(attestation.party_id as usize))
+                            .copied()
+                            .collect(),
+                        committee,
+                        commitment: publication.commitment,
+                    }
+                })
+            }
+            Transaction::PublishPlaintext(_) => (!std::mem::replace(&mut request.completed, true))
+                .then_some(ChainFact::StageChanged {
+                    e3,
+                    stage: Stage::Complete,
+                }),
+        };
+        if let Some(fact) = fact {
             let at = self.now + self.delay();
             self.chain(at, fact);
         }
@@ -511,3 +560,53 @@ fn c2_commitment(c2: &BTreeMap<Address, (ZkProof, ZkProof)>) -> B256 {
 
 #[cfg(test)]
 mod tests;
+
+/// One E3 as the simulated contracts keep it.
+struct Request {
+    n: usize,
+    seed: U256,
+    deadline: UnixSecs,
+    tickets: BTreeMap<Address, U256>,
+    finalized: bool,
+    committee: Option<Vec<Address>>,
+    key_published: bool,
+    completed: bool,
+}
+
+impl Request {
+    fn new(n: usize) -> Self {
+        Self {
+            n,
+            seed: U256::ZERO,
+            deadline: UnixSecs::MAX,
+            tickets: BTreeMap::new(),
+            finalized: false,
+            committee: None,
+            key_published: false,
+            completed: false,
+        }
+    }
+
+    /// The committee, or None when too few tickets came, the first time a call after the
+    /// deadline finalizes it.
+    fn finalize(&mut self, now: UnixSecs) -> Option<Option<Vec<Address>>> {
+        if now <= self.deadline || std::mem::replace(&mut self.finalized, true) {
+            return None;
+        }
+        let mut ranked: Vec<(U256, Address)> = self
+            .tickets
+            .iter()
+            .map(|(operator, score)| (*score, *operator))
+            .collect();
+        ranked.sort();
+        if ranked.len() < self.n {
+            return Some(None);
+        }
+        let mut members: Vec<Address> = ranked[..self.n]
+            .iter()
+            .map(|(_, operator)| *operator)
+            .collect();
+        members.sort();
+        Some(Some(members))
+    }
+}

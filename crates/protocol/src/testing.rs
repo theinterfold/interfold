@@ -17,8 +17,8 @@ use crate::{
         OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::{
-        Body, ChainEvent, ChainFact, CryptoParams, Effect, Input, Job, JobDone, LogPosition,
-        PeerMessage, Signed, Signing, Work, WorkResult,
+        Body, ChainEvent, ChainFact, CommitteeRequest, CryptoParams, Effect, Input, Job, JobDone,
+        LogPosition, PeerMessage, Signed, Signing, Work, WorkResult,
     },
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
@@ -482,6 +482,7 @@ pub fn key_checks(effects: &[Effect]) -> Vec<Address> {
         .collect()
 }
 
+/// A fact in its own block, whose timestamp is its number.
 pub fn chain(block: u64, fact: ChainFact) -> Input {
     Input::Chain(ChainEvent {
         at: LogPosition {
@@ -489,6 +490,7 @@ pub fn chain(block: u64, fact: ChainFact) -> Input {
             block,
             log_index: 0,
         },
+        time: block,
         fact,
     })
 }
@@ -501,11 +503,19 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
             params: params(CiphernodesCommitteeSize::Minimum),
             interfold: INTERFOLD,
             attestation: ATTESTATION,
+            request: REQUEST,
         },
     )
 }
 
 pub const INTERFOLD: Address = Address::repeat_byte(0x1f);
+
+/// A request at timestamp 1 that keeps one candidate per owner, at one token a ticket.
+pub const REQUEST: CommitteeRequest = CommitteeRequest {
+    time: 1,
+    ticket_price: U256::from_limbs([1, 0, 0, 0]),
+    owner_cap: true,
+};
 
 pub fn params(committee_size: CiphernodesCommitteeSize) -> CryptoParams {
     CryptoParams {

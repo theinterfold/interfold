@@ -10,7 +10,10 @@
 use crate::{
     decryption::{Decryption, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming},
-    node::{Body, CryptoParams, Effect, PeerMessage, Purpose, Stage, WorkResult},
+    node::{
+        Body, CommitteeRequest, CryptoParams, Effect, PeerMessage, Purpose, Stage, Submission,
+        Transaction, WorkResult,
+    },
     resend::Resend,
     BlobRef, E3Id, UnixSecs,
 };
@@ -32,8 +35,24 @@ pub struct E3 {
     pub decryption: Option<Decryption>,
     /// When a failed E3's accusation work ends.
     pub ends_at: Option<UnixSecs>,
+    pub request: CommitteeRequest,
+    ticket: Option<Ticket>,
     resend: Resend,
 }
+
+/// This node's ticket, its rank among the candidates, and the committee deadline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ticket {
+    number: u64,
+    rank: usize,
+    deadline: UnixSecs,
+    finalize_sent: bool,
+}
+
+/// Candidates call `finalizeCommittee` in rank order, 30 seconds apart, because a ranked member
+/// can stay silent; ranks past the twentieth never call it.
+const FINALIZER_STAGGER: UnixSecs = 30;
+const FINALIZER_RANKS: usize = 20;
 
 impl E3 {
     pub(crate) fn new(
@@ -42,6 +61,7 @@ impl E3 {
         params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
+        request: CommitteeRequest,
     ) -> Self {
         Self {
             id,
@@ -53,6 +73,8 @@ impl E3 {
             dkg: None,
             decryption: None,
             ends_at: None,
+            request,
+            ticket: None,
             resend: Resend::default(),
         }
     }
@@ -126,6 +148,25 @@ impl E3 {
         self.sent(now, effects)
     }
 
+    pub(crate) fn ticket(&self) -> Option<u64> {
+        self.ticket.map(|ticket| ticket.number)
+    }
+
+    pub(crate) fn submit_ticket(
+        &mut self,
+        number: u64,
+        rank: usize,
+        deadline: UnixSecs,
+    ) -> Vec<Effect> {
+        self.ticket = Some(Ticket {
+            number,
+            rank,
+            deadline,
+            finalize_sent: false,
+        });
+        vec![self.submit(Transaction::SubmitTicket { ticket: number })]
+    }
+
     /// Whether a message of `body`'s kind has its handler here yet; until then it waits in the
     /// hold.
     pub(crate) fn routes(&self, body: &Body) -> bool {
@@ -195,6 +236,12 @@ impl E3 {
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         let mut effects = Vec::new();
+        if self.finalizer_due().is_some_and(|due| now >= due) {
+            if let Some(ticket) = &mut self.ticket {
+                ticket.finalize_sent = true;
+            }
+            effects.push(self.submit(Transaction::FinalizeCommittee));
+        }
         if let Some(dkg) = self.dkg_mut() {
             effects.extend(dkg.pass_deadlines(now));
         }
@@ -220,9 +267,27 @@ impl E3 {
                 Body::Dkg(_) => dkg_runs,
                 Body::Decryption(_) => decryption_runs,
             });
-            dkg.into_iter().chain(decryption).chain(resend).min()
+            dkg.into_iter()
+                .chain(decryption)
+                .chain(resend)
+                .chain(self.finalizer_due())
+                .min()
         });
         self.ends_at.into_iter().chain(work.flatten()).min()
+    }
+
+    /// After the committee deadline, while the chain has not finalized the committee.
+    fn finalizer_due(&self) -> Option<UnixSecs> {
+        let ticket = self.ticket.filter(|ticket| !ticket.finalize_sent)?;
+        let waiting = self.stage == Stage::Requested && ticket.rank < FINALIZER_RANKS;
+        waiting.then(|| ticket.deadline + 1 + FINALIZER_STAGGER * ticket.rank as UnixSecs)
+    }
+
+    fn submit(&self, transaction: Transaction) -> Effect {
+        Effect::Submit(Submission {
+            e3: self.id,
+            transaction,
+        })
     }
 
     /// Keep this node's messages for sending again while their work runs.

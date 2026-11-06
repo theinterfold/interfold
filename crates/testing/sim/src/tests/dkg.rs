@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::committee;
-use crate::Sim;
+use crate::{Sim, SimNode};
 use alloy_primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
@@ -15,11 +15,24 @@ use e3_protocol::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The committee's run through the DKG, stopped just before its deadline.
+/// The run through selection and the DKG, stopped just before the DKG deadline, with the
+/// committee the chain finalized.
 fn run(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
-    let (mut sim, members) = committee(size, seed);
+    let mut sim = committee(size, seed);
     sim.run_until(TIMING.deadline - 1);
+    let members = sim
+        .committee(&e3(1))
+        .expect("a finalized committee")
+        .to_vec();
+    assert_eq!(members.len(), size.values().n);
     (sim, members)
+}
+
+/// The nodes in the committee.
+fn members_of<'a>(sim: &'a Sim, members: &'a [Address]) -> impl Iterator<Item = &'a SimNode> {
+    sim.nodes()
+        .iter()
+        .filter(|node| members.contains(&node.address()))
 }
 
 /// Under loss a slow member can miss shares until the others publish the key without it, so its
@@ -36,7 +49,7 @@ fn every_member_collects_every_key_and_ready_reports_agree_on_contributions() {
             for (index, node) in sim.nodes().iter().enumerate() {
                 assert_eq!(node.node(), node.shadow(), "{case} node {index}");
                 let state = node.node().e3(&e3(1));
-                if index == members.len() {
+                if !members.contains(&node.address()) {
                     assert!(state.is_none(), "{case}: the outsider ended the E3");
                     continue;
                 }
@@ -65,8 +78,7 @@ fn members_that_accept_a_roster_accept_the_same_one() {
         for seed in 0..16 {
             let (sim, members) = run(size, seed);
             let case = format!("{size:?} seed {seed}");
-            let rosters: Vec<_> = sim.nodes()[..members.len()]
-                .iter()
+            let rosters: Vec<_> = members_of(&sim, &members)
                 .filter_map(|node| {
                     let dkg = node.node().e3(&e3(1)).and_then(|state| state.dkg.as_ref());
                     dkg.and_then(|dkg| dkg.roster()).map(<[_]>::to_vec)
@@ -95,12 +107,12 @@ fn every_roster_member_and_only_they_send_one_keyshare() {
         for seed in 0..16 {
             let (sim, members) = run(size, seed);
             let case = format!("{size:?} seed {seed}");
-            let roster: BTreeSet<Address> = sim.nodes()[0]
-                .node()
-                .e3(&e3(1))
-                .and_then(|state| state.dkg.as_ref())
-                .and_then(|dkg| dkg.roster())
-                .expect("a roster")
+            let roster: BTreeSet<Address> = members_of(&sim, &members)
+                .find_map(|node| {
+                    let dkg = node.node().e3(&e3(1)).and_then(|state| state.dkg.as_ref());
+                    dkg.and_then(|dkg| dkg.roster())
+                })
+                .expect("a member accepted the roster")
                 .iter()
                 .map(|dealer| dealer.member)
                 .collect();
@@ -138,11 +150,11 @@ fn the_committee_publishes_one_key_and_every_member_sees_the_dkg_end() {
                 .iter()
                 .filter_map(|submission| match &submission.transaction {
                     Transaction::PublishCommittee(publication) => Some(publication.commitment),
-                    Transaction::PublishPlaintext(_) => None,
+                    _ => None,
                 })
                 .collect();
             assert_eq!(commitments.len(), 1, "{case}: one key");
-            for (index, node) in sim.nodes()[..members.len()].iter().enumerate() {
+            for (index, node) in members_of(&sim, &members).enumerate() {
                 let dkg = node.node().e3(&e3(1)).and_then(|state| state.dkg.as_ref());
                 let published = dkg.is_some_and(|dkg| dkg.published());
                 assert!(published, "{case} node {index}: the DKG ended with the key");
