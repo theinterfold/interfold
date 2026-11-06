@@ -279,7 +279,8 @@ async fn a_range_the_provider_rejects_is_requested_again_in_halves() {
 }
 
 /// Governance replaced the provider, so the node did not know the one this request names. A mock
-/// provider fulfills inside the request, before the registry logs it.
+/// provider fulfills inside the request, before the registry logs it. The node keeps the
+/// provider, so a restart reads its fulfillments too.
 #[tokio::test]
 async fn a_request_s_new_randomness_provider_is_read_in_the_same_poll() {
     let c = contracts();
@@ -311,7 +312,10 @@ async fn a_request_s_new_randomness_provider_is_read_in_the_same_poll() {
         e3: e3(),
         seed: SEED,
     };
-    assert_eq!(facts, vec![seed]);
+    assert_eq!(
+        facts,
+        vec![seed, ChainFact::RandomnessProvider { provider }]
+    );
 }
 
 /// A provider can fulfill inside the request's own transaction, before `E3Requested`: the node
@@ -356,6 +360,7 @@ async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
             time: 50,
             ticket_price: TICKET_PRICE,
             owner_cap: false,
+            dkg_window: TIMING.window,
         },
         committee_deadline: SEED.deadline,
         seed: Some(SEED.seed),

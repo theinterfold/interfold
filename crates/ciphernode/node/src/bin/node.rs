@@ -20,7 +20,12 @@ use e3_journal::Journal;
 use e3_node::{run, Parts, Settings};
 use e3_p2p::{P2p, P2pConfig};
 use serde::Deserialize;
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Deserialize)]
@@ -81,13 +86,14 @@ async fn main() -> anyhow::Result<()> {
         protocol_version: built.protocol_version,
         node_generation: built.node_generation,
     };
+    open_data_dir(&config.data_dir)?;
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
         .connect_http(url);
-    let wallet = Wallet::new(wallet, config.chain_id, config.confirmations);
+    let unmined = config.data_dir.join("unmined.json");
+    let wallet = Wallet::new(wallet, config.chain_id, config.confirmations, unmined)?;
     wallet.acknowledge_release(&contracts, release).await?;
 
-    std::fs::create_dir_all(&config.data_dir)?;
     let blobs = FileBlobs::open(config.data_dir.join("blobs"))?;
     let p2p = P2pConfig {
         identity: config.network.identity.0,
@@ -126,6 +132,38 @@ async fn main() -> anyhow::Result<()> {
         availability,
     };
     Err(run(settings, parts).await.into())
+}
+
+/// The layout of the node's files in a data directory: the journal's and snapshots' encodings,
+/// the blob store's folders, and the wallet's file. A node refuses a directory in another layout
+/// rather than misread its journal or delete its blobs; change this whenever one of them changes.
+const DATA_LAYOUT: &str = "interfold-node-v2 1";
+
+/// The files of the node in a data directory; others, such as its configuration, may share it.
+const NODE_FILES: [&str; 3] = ["journal.redb", "blobs", "unmined.json"];
+
+fn open_data_dir(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let marker = dir.join("LAYOUT");
+    match std::fs::read_to_string(&marker) {
+        Ok(found) => anyhow::ensure!(
+            found.trim() == DATA_LAYOUT,
+            "{} holds node data in layout '{}', not '{DATA_LAYOUT}': use an empty directory",
+            dir.display(),
+            found.trim()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let unmarked = NODE_FILES.iter().any(|file| dir.join(file).exists());
+            anyhow::ensure!(
+                !unmarked,
+                "{} holds node data of an unknown layout: use an empty directory",
+                dir.display()
+            );
+            std::fs::write(&marker, DATA_LAYOUT)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 fn parse<T: std::str::FromStr>(values: &[String]) -> anyhow::Result<Vec<T>>

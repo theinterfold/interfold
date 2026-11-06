@@ -127,29 +127,6 @@ struct RequestParts {
     owner_cap: bool,
 }
 
-/// The randomness providers that the registry names in `logs` and `contracts` lacks: a request
-/// names the provider it is bound to, and governance can set a new one.
-pub(crate) fn new_providers(contracts: &Contracts, logs: &[RawLog]) -> BTreeSet<Address> {
-    use ICiphernodeRegistry as R;
-    logs.iter()
-        .filter(|log| log.address == contracts.registry)
-        .filter_map(|log| match *log.topics.first()? {
-            R::CommitteeRandomnessRequested::SIGNATURE_HASH => {
-                let event: R::CommitteeRandomnessRequested =
-                    decode_event(log, "CommitteeRandomnessRequested").ok()?;
-                Some(event.provider)
-            }
-            R::RandomnessProviderSet::SIGNATURE_HASH => {
-                let event: R::RandomnessProviderSet =
-                    decode_event(log, "RandomnessProviderSet").ok()?;
-                Some(event.randomnessProvider)
-            }
-            _ => None,
-        })
-        .filter(|provider| !contracts.randomness.contains(provider))
-        .collect()
-}
-
 /// Decodes `logs`, whole blocks in chain order. A request pairs logs of one transaction, and a
 /// transaction never spans blocks, so nothing carries over between calls.
 pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog]) -> Result<Vec<Decoded>, DecodeError> {
@@ -283,6 +260,19 @@ impl Decoder<'_> {
                     roster,
                     commitment: event.pkCommitment,
                 })));
+            }
+            R::CommitteeRandomnessRequested::SIGNATURE_HASH => {
+                let event: R::CommitteeRandomnessRequested =
+                    decode_event(log, "CommitteeRandomnessRequested")?;
+                ChainFact::RandomnessProvider {
+                    provider: event.provider,
+                }
+            }
+            R::RandomnessProviderSet::SIGNATURE_HASH => {
+                let event: R::RandomnessProviderSet = decode_event(log, "RandomnessProviderSet")?;
+                ChainFact::RandomnessProvider {
+                    provider: event.randomnessProvider,
+                }
             }
             R::CommitteeMemberExpelled::SIGNATURE_HASH => {
                 let event: R::CommitteeMemberExpelled =

@@ -24,6 +24,8 @@ const WAIT: Duration = Duration::from_secs(30);
 struct Node {
     p2p: P2p,
     inbound: mpsc::Receiver<PeerMessage>,
+    store: FileBlobs,
+    /// The blobs of E3 1, which most tests use.
     blobs: E3Blobs<FileBlobs>,
     _dir: TempDir,
 }
@@ -58,6 +60,7 @@ async fn started<S: BlobStore>(
         p2p,
         inbound,
         blobs: blobs.of(e3(1)),
+        store: blobs,
         _dir: dir,
     }
 }
@@ -114,15 +117,17 @@ fn proof(blobs: &E3Blobs<FileBlobs>, bytes: &[u8]) -> SignedProof {
 
 /// Operator `sender`'s encryption key, which every member needs.
 fn key(node: &Node, sender: u64) -> PeerMessage {
+    key_in(node, e3(1), sender)
+}
+
+fn key_in(node: &Node, e3: E3Id, sender: u64) -> PeerMessage {
+    let blobs = node.store.of(e3);
     let message = KeyMessage {
-        key: node
-            .blobs
-            .put(format!("key of {sender}").as_bytes())
-            .unwrap(),
-        proof: proof(&node.blobs, b"key proof"),
+        key: blobs.put(format!("key of {sender}").as_bytes()).unwrap(),
+        proof: proof(&blobs, b"key proof"),
     };
     PeerMessage {
-        e3: e3(1),
+        e3,
         sender: address(sender),
         body: Body::Dkg(DkgMessage::EncryptionKey(message)),
     }
@@ -280,6 +285,21 @@ async fn a_message_that_names_too_many_bytes_is_not_fetched() {
     assert_eq!(received(&mut second).await, message);
     let result = fetch(&second, message).await;
     assert!(matches!(result, Err(NetworkError::Busy)), "{result:?}");
+}
+
+/// Placeholder proofs of one kind have the same bytes in every E3. The publisher deleted the
+/// copy of the E3 that sent them last.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blob_two_e3s_share_comes_from_the_copy_of_the_e3_asked_for() {
+    let [first, mut second, _third] = network().await;
+    let one = key_in(&first, e3(1), 1);
+    let two = key_in(&first, e3(2), 1);
+    publish(&first, signed(one.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, one);
+    publish(&first, signed(two.clone(), 1, 11)).await;
+    assert_eq!(received(&mut second).await, two);
+    first.store.retain(|kept| *kept == e3(1)).unwrap();
+    fetch(&second, one).await.unwrap();
 }
 
 /// The publisher's store holds other bytes under the blob's name; a receiver keeps nothing from it.

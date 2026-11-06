@@ -119,8 +119,10 @@ Each rule is checkable in review.
   message, publisher first, and keeps only bytes that hash to the reference and have its length.
   The machine takes the message once the blobs are in the store. So a sender outside the
   committee costs a node no download, and a member at most one message of each kind; the adapter
-  bounds the bytes on their way at once. Each E3 keeps its own blobs, and the node deletes them
-  when it drops the E3. The protocol says which blobs a node needs: a share
+  bounds the bytes on their way at once. A sender's message of a kind is the only one of that kind
+  fetched from it until the node takes it, even when a blob of it never comes. Each E3 keeps its
+  own blobs, a blob request names the E3, and the node deletes an E3's blobs once its work ends;
+  the store then refuses late blobs of that E3. The protocol says which blobs a node needs: a share
   message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
   share once, where a DHT put of the current node goes to twenty peers. A share comes only from
   its dealer, so members need direct connections: peers that identify on the network enter
@@ -133,17 +135,26 @@ Each rule is checkable in review.
   delays only that E3, and the outbox repeats the fetch after a restart.
 - **D24. Nodes fail stalled E3s and settle failed ones, in turns.** Each chain fact that starts a
   stage gives the deadline after which the contract fails it. From one second after it, nodes call
-  `markE3Failed` in turns 30 seconds apart: committee members by party ID, and, while a request
-  waits for randomness, its eligible operators in address order. Once the randomness arrives, the
-  finalizer ends the Requested stage instead. After a failure the same turns call
-  `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement.
-  The finalizer takes the same turns. The node judges deadlines by its own clock, so a node that
-  replays old history submits these calls for E3s that ended long ago; each ends at its preflight.
-- **D25. The node refreshes its operator once in each owner capacity window, whatever the identity
+  `markE3Failed` in turns 30 seconds apart: committee members by party ID, and, before a committee
+  exists, the request's eligible operators in address order. While the request waits for
+  randomness the deadline is the randomness deadline; once the seed arrives, ticket holders
+  finalize after the committee deadline, and the others wait the DKG window more, after which the
+  contract fails a committee that met its threshold too. After a failure the same turns call
+  `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement,
+  however long the contract keeps settlement closed, without its DKG and decryption once
+  accusations cannot need them. The finalizer takes the same turns. The node judges deadlines by
+  its own clock, so a node that replays old history submits these calls for E3s that ended long
+  ago; each ends at its preflight.
+- **D25. The node refreshes its operator in each owner capacity window, whatever the identity
   policy.** Under a required policy an owner's capacity reads zero from the start of each 30-day
   window until its operators refresh, so requests can fail with `InsufficientBondOwners`. The chain
   offers no view of the policy, and a node that starts after the policy's event would not know it,
-  so the node refreshes unconditionally: one call a month, the first ten minutes after a start.
+  so the node refreshes unconditionally: ten minutes after a start, then a minute and an hour after
+  each window starts, since a refresh counts for the window of its block.
+- **D26. A data directory carries its layout.** The node writes the layout of its journal,
+  snapshots, blob folders and wallet file beside them, and refuses a directory in another layout,
+  so an update never misreads an old journal or deletes old blobs as foreign. v2 has no migrations
+  before its first release: a layout change means starting from an empty directory.
 
 ## Problems in the current node, with the fix above them
 

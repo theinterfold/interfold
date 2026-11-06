@@ -16,10 +16,13 @@ e3-protocol = { workspace = true }
 alloy = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 e3-protocol = { workspace = true, features = ["testing"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

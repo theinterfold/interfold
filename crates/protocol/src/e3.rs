@@ -11,7 +11,7 @@ use crate::{
     decryption::{Decryption, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming},
     node::{
-        Body, CommitteeRequest, CryptoParams, DataRef, Effect, PeerMessage, Purpose, Stage,
+        Body, CommitteeRequest, CryptoParams, DataRef, Effect, Kind, PeerMessage, Purpose, Stage,
         Submission, Transaction, WorkResult,
     },
     resend::Resend,
@@ -42,9 +42,14 @@ pub struct E3 {
     /// This node's turn to mark the E3 failed and to settle it: its party ID in the committee,
     /// before that its place among the request's eligible operators.
     slot: Option<u64>,
-    /// The stage whose failure this node asked for.
-    marked: Option<Stage>,
+    /// The stage, and its deadline, whose failure this node asked for; a stage whose deadline
+    /// moves is watched again.
+    marked: Option<(Stage, UnixSecs)>,
     failure: Option<Failure>,
+    /// The message of each kind and sender whose blobs this node fetches. Another message of that
+    /// kind from that sender waits until this one is taken, so a member makes the node download
+    /// at most one message of each kind.
+    fetching: BTreeMap<(Address, Kind), B256>,
 }
 
 /// The chain failed the E3.
@@ -76,12 +81,6 @@ fn turn(deadline: UnixSecs, place: u64) -> Option<UnixSecs> {
     (place < TURNS).then(|| deadline + 1 + TURN * place)
 }
 
-/// How long a node that settles a failed E3 keeps it if the settlement never lands, which happens
-/// only when the writer gives the call up. With a committee, the contract opens settlement a day
-/// after the E3's lifecycle deadline and keeps it closed while accusations are open, which appeals
-/// can stretch to 37 days; this bound assumes a lifecycle under three weeks.
-const SETTLEMENT_WAIT: UnixSecs = 60 * 24 * 60 * 60;
-
 impl E3 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -110,13 +109,17 @@ impl E3 {
             slot,
             marked: None,
             failure: None,
+            fetching: BTreeMap::new(),
         }
     }
 
-    /// Once the registry accepts the randomness, the finalizer ends the Requested stage:
-    /// `finalizeCommittee` fails a committee short of its threshold.
-    pub(crate) fn seeded(&mut self) {
-        self.deadlines.remove(&Stage::Requested);
+    /// The registry accepted the randomness, so tickets are due by `committee_deadline`. Ticket
+    /// holders finalize the committee after it, and `finalizeCommittee` fails one short of its
+    /// threshold. If no ticket holder acts, the contract fails a committee that met its threshold
+    /// only after the DKG window too, so the watch waits that long.
+    pub(crate) fn seeded(&mut self, committee_deadline: UnixSecs) {
+        let deadline = committee_deadline + self.request.dkg_window;
+        self.deadlines.insert(Stage::Requested, deadline);
     }
 
     /// The chain moved the E3 to `stage`, unless it already moved it past.
@@ -148,16 +151,30 @@ impl E3 {
 
     /// When the node lets a failed E3 go: once accusations cannot need its work, and, if this
     /// node settles it, once the chain settled it.
+    ///
+    /// The contract can keep settlement closed for months: with a committee it opens a day after
+    /// the E3's lifecycle deadline, and only once no accusation is open. A node that settles keeps
+    /// the E3 until then, without its DKG and decryption once accusations cannot need them.
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
         let failure = self.failure?;
         let settles = self
             .slot
             .is_some_and(|slot| turn(failure.at, slot).is_some());
-        let settlement = match settles && !failure.settled {
-            true => failure.at + SETTLEMENT_WAIT,
-            false => failure.at,
-        };
-        Some(failure.accusable_until.max(settlement))
+        if settles && !failure.settled {
+            return None;
+        }
+        Some(failure.accusable_until.max(failure.at))
+    }
+
+    /// Whether the E3 still has DKG or decryption work, which the blobs of the E3 serve.
+    pub fn has_work(&self) -> bool {
+        self.dkg.is_some() || self.decryption.is_some()
+    }
+
+    /// When accusations stop needing a failed E3's work.
+    fn work_ends_at(&self) -> Option<UnixSecs> {
+        let failure = self.failure.filter(|_| self.has_work())?;
+        Some(failure.accusable_until)
     }
 
     pub(crate) fn finalize(
@@ -289,7 +306,22 @@ impl E3 {
             }
     }
 
+    /// Whether to fetch the blobs of `message`: the E3 admits it, and it is the one message of its
+    /// kind from its sender that this node fetches.
+    pub(crate) fn fetches(&mut self, message: &PeerMessage) -> bool {
+        if !self.admits(message) {
+            return false;
+        }
+        let id = message.id();
+        let slot = (message.sender, message.body.kind());
+        *self.fetching.entry(slot).or_insert(id) == id
+    }
+
     pub(crate) fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+        let slot = (message.sender, message.body.kind());
+        if self.fetching.get(&slot) == Some(&message.id()) {
+            self.fetching.remove(&slot);
+        }
         let effects = match message.body {
             Body::Dkg(body) => match self.dkg_mut() {
                 Some(dkg) => dkg.receive(now, message.sender, body),
@@ -348,6 +380,10 @@ impl E3 {
     }
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        if self.work_ends_at().is_some_and(|at| now >= at) {
+            self.dkg = None;
+            self.decryption = None;
+        }
         let mut effects = Vec::new();
         if self.finalizer_due().is_some_and(|due| now >= due) {
             if let Some(ticket) = &mut self.ticket {
@@ -356,7 +392,7 @@ impl E3 {
             effects.push(self.submit(Transaction::FinalizeCommittee));
         }
         if self.failure_due().is_some_and(|due| now >= due) {
-            self.marked = Some(self.stage);
+            self.marked = self.watched();
             effects.push(self.submit(Transaction::MarkFailed));
         }
         if self.settlement_due().is_some_and(|due| now >= due) {
@@ -397,18 +433,30 @@ impl E3 {
                 .chain(self.failure_due())
                 .min()
         });
-        [self.ends_at(), work.flatten(), self.settlement_due()]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.ends_at(),
+            work.flatten(),
+            self.settlement_due(),
+            self.work_ends_at(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// The stage the E3 is in, and its deadline if this node watches it.
+    fn watched(&self) -> Option<(Stage, UnixSecs)> {
+        let deadline = self.deadlines.get(&self.stage)?;
+        Some((self.stage, *deadline))
     }
 
     /// This node's turn after the deadline of the stage it watches.
     fn failure_due(&self) -> Option<UnixSecs> {
-        if self.marked == Some(self.stage) {
+        let watched = self.watched()?;
+        if self.marked == Some(watched) {
             return None;
         }
-        turn(*self.deadlines.get(&self.stage)?, self.slot?)
+        turn(watched.1, self.slot?)
     }
 
     fn settlement_due(&self) -> Option<UnixSecs> {

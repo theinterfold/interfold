@@ -34,9 +34,9 @@ use tokio::{
 use tracing::{debug, error, warn};
 
 /// How long a failed job or chain read waits before it runs again, and the first wait of a failed
-/// fetch; each later fetch waits twice as long, up to ten minutes.
+/// fetch or submission; each later attempt of those waits twice as long, up to ten minutes.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
-const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(600);
+const LONGEST_RETRY: Duration = Duration::from_secs(600);
 
 /// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
 /// for its inputs fails every time.
@@ -49,6 +49,7 @@ const CAPACITY_WINDOW: UnixSecs = 30 * 24 * 60 * 60;
 const FIRST_REFRESH: Duration = Duration::from_secs(10 * 60);
 /// A refresh waits this long past a window's start, so the chain's block time is past it too.
 const REFRESH_MARGIN: UnixSecs = 60;
+const REFRESH_AGAIN: UnixSecs = 60 * 60;
 
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
@@ -131,9 +132,12 @@ where
         .applied(chain_id)
         .map_or(settings.start_block, |at| at.block);
     let (events, mut receiver) = mpsc::channel(1_024);
+    let mut contracts = settings.contracts.clone();
+    let providers = engine.machine().randomness_providers(chain_id);
+    contracts.randomness.extend(providers);
     let reader = Reader::new(
         parts.rpc,
-        settings.contracts.clone(),
+        contracts,
         settings.confirmations,
         settings.max_log_range,
         from,
@@ -170,12 +174,9 @@ where
             Event::Fatal(error) => return Err(error),
         };
         debug!(input = %brief(&input), "applying");
-        let held = engine.machine().e3s().count();
+        let working = engine.machine().working().count();
         let (next, pending) = engine.apply(now(), input)?;
         engine = next;
-        if engine.machine().e3s().count() < held {
-            sweep(&effects.blobs, engine.machine());
-        }
         if let Some(key) = answers {
             engine.acknowledge(key)?;
         }
@@ -183,12 +184,16 @@ where
         for key in effects.stop_ended(engine.machine()) {
             engine.acknowledge(key)?;
         }
+        if engine.machine().working().count() < working {
+            sweep(&effects.blobs, engine.machine());
+        }
     }
 }
 
-/// Refreshes the operator once in each owner capacity window, right after it starts. The node does
-/// so whatever the identity policy: the chain offers no view of the policy, and a refresh is one
-/// call a month.
+/// Refreshes the operator in each owner capacity window, right after it starts. The node does so
+/// whatever the identity policy: the chain offers no view of the policy, and a refresh is a call a
+/// month. A refresh counts for the window of its block, which can be the window before when it
+/// lands near a window's start, so the node refreshes again an hour in.
 async fn refresh_each_window<A, B>(writer: Arc<Writer<A, B>>, operator: Address)
 where
     A: Account + Send + Sync + 'static,
@@ -196,17 +201,26 @@ where
 {
     tokio::time::sleep(FIRST_REFRESH).await;
     loop {
+        let window = now() / CAPACITY_WINDOW;
         writer.refresh_operator(operator).await;
-        let next = (now() / CAPACITY_WINDOW + 1) * CAPACITY_WINDOW + REFRESH_MARGIN;
-        tokio::time::sleep(Duration::from_secs(next.saturating_sub(now()))).await;
+        let again = window * CAPACITY_WINDOW + REFRESH_AGAIN;
+        if now() < again {
+            sleep_until(again).await;
+            writer.refresh_operator(operator).await;
+        }
+        sleep_until((window + 1) * CAPACITY_WINDOW + REFRESH_MARGIN).await;
     }
 }
 
-/// Deletes the blobs of the E3s `machine` no longer holds. A job that ends after its E3 can still
-/// store a blob, so each sweep takes all of them, not only the E3s that just ended.
+async fn sleep_until(at: UnixSecs) {
+    tokio::time::sleep(Duration::from_secs(at.saturating_sub(now()))).await;
+}
+
+/// Deletes the blobs of the E3s whose work `machine` no longer holds.
 fn sweep(blobs: &impl BlobStore, machine: &Node) {
-    if let Err(error) = blobs.retain(|e3| machine.e3(e3).is_some()) {
-        warn!(%error, "deleting the blobs of ended E3s failed");
+    let working = |e3: &E3Id| machine.e3(e3).is_some_and(|state| state.has_work());
+    if let Err(error) = blobs.retain(working) {
+        warn!(%error, "deleting the blobs of ended work failed");
     }
 }
 
@@ -344,15 +358,22 @@ where
         ended
     }
 
+    /// A submission whose calls cannot be built, for a blob the store cannot read now, is built
+    /// again later.
     fn submit(&self, key: EffectKey, submission: Submission) -> JoinHandle<()> {
         let (writer, events) = (self.writer.clone(), self.events.clone());
         tokio::spawn(async move {
-            match writer.submit(&submission).await {
-                Ok(()) => {
-                    let _ = events.send(Event::Done(key)).await;
+            let mut wait = RETRY_AFTER;
+            loop {
+                match writer.submit(&submission).await {
+                    Ok(()) => {
+                        let _ = events.send(Event::Done(key)).await;
+                        return;
+                    }
+                    Err(failure) => error!(e3 = %submission.e3, %failure, "the submission failed"),
                 }
-                // The submission stays in the outbox, so the next start tries it again.
-                Err(failure) => error!(e3 = %submission.e3, %failure, "the submission failed"),
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(LONGEST_RETRY);
             }
         })
     }
@@ -469,7 +490,7 @@ where
                     }
                 }
                 tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(LONGEST_FETCH_RETRY);
+                wait = (wait * 2).min(LONGEST_RETRY);
             }
         })
     }

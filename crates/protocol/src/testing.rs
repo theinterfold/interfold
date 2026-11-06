@@ -558,6 +558,7 @@ pub const REQUEST: CommitteeRequest = CommitteeRequest {
     time: 1,
     ticket_price: U256::from_limbs([1, 0, 0, 0]),
     owner_cap: true,
+    dkg_window: TIMING.window,
 };
 
 pub fn params(committee_size: CiphernodesCommitteeSize) -> CryptoParams {

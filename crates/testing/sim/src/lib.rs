@@ -550,7 +550,8 @@ fn fact_e3(fact: &ChainFact) -> Option<E3Id> {
         | ChainFact::TicketBalance { .. }
         | ChainFact::BondOwner { .. }
         | ChainFact::EligibilityReset
-        | ChainFact::IdentityPolicy { .. } => return None,
+        | ChainFact::IdentityPolicy { .. }
+        | ChainFact::RandomnessProvider { .. } => return None,
     };
     Some(*e3)
 }

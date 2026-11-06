@@ -103,7 +103,8 @@ pub(crate) struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
-    blobs: cbor::Behaviour<B256, Option<ByteBuf>>,
+    /// A request names the blob's E3 and hash: each E3 keeps its own copy of its blobs.
+    blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,
 }
 
 impl Behaviour {
@@ -339,7 +340,7 @@ struct Driver<S> {
     inbound: mpsc::Sender<PeerMessage>,
     peers: Vec<Multiaddr>,
     /// The blobs this node serves, with their E3s, by hash.
-    servable: Recent<B256, (E3Id, BlobRef), MAX_SERVABLE>,
+    servable: Recent<(E3Id, B256), BlobRef, MAX_SERVABLE>,
     /// The peers that sent each message, by its ID.
     sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
     fetching: BTreeMap<u64, Fetching>,
@@ -511,9 +512,7 @@ impl<S: BlobStore> Driver<S> {
         }
         let fetch = self.next_fetch;
         self.next_fetch += 1;
-        for blob in missing.values() {
-            self.request(fetch, *blob, peers[0]);
-        }
+        let (first, blobs) = (peers[0], missing.clone());
         self.fetching_bytes += bytes;
         self.fetch_of.insert(id, fetch);
         let fetching = Fetching {
@@ -525,18 +524,22 @@ impl<S: BlobStore> Driver<S> {
             done: vec![done],
         };
         self.fetching.insert(fetch, fetching);
+        for blob in blobs.into_values() {
+            self.request(fetch, blob, first);
+        }
     }
 
     fn request(&mut self, fetch: u64, blob: BlobRef, peer: PeerId) {
+        let e3 = self.fetching[&fetch].message.e3;
         let request = self
             .swarm
             .behaviour_mut()
             .blobs
-            .send_request(&peer, blob.hash);
+            .send_request(&peer, (e3, blob.hash));
         self.requests.insert(request, (fetch, blob, peer));
     }
 
-    fn on_blobs(&mut self, event: request_response::Event<B256, Option<ByteBuf>>) {
+    fn on_blobs(&mut self, event: request_response::Event<(E3Id, B256), Option<ByteBuf>>) {
         match event {
             request_response::Event::Message {
                 message:
@@ -545,10 +548,11 @@ impl<S: BlobStore> Driver<S> {
                     },
                 ..
             } => {
+                let (e3, _) = request;
                 let bytes = self
                     .servable
                     .get(&request)
-                    .and_then(|(e3, blob)| self.blobs.get(*e3, blob).ok())
+                    .and_then(|blob| self.blobs.get(e3, blob).ok())
                     .map(ByteBuf::from);
                 let _ = self
                     .swarm
@@ -638,7 +642,7 @@ impl<S: BlobStore> Driver<S> {
 
     fn serve(&mut self, message: &PeerMessage) {
         for blob in message.blobs() {
-            self.servable.insert(blob.hash, (message.e3, blob));
+            self.servable.insert((message.e3, blob.hash), blob);
         }
     }
 

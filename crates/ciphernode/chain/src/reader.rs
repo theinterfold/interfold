@@ -4,9 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{
-    decode, decode::new_providers, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError,
-};
+use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError};
 use alloy_primitives::Address;
 use alloy_primitives::U256;
 use e3_protocol::{
@@ -14,6 +12,7 @@ use e3_protocol::{
     node::{ChainEvent, ChainFact, CommitteeRequest, CommitteeSeed},
     UnixSecs,
 };
+use std::collections::BTreeSet;
 use std::future::Future;
 
 /// What the reader needs from a chain node.
@@ -128,7 +127,7 @@ impl<R: Rpc> Reader<R> {
             return Ok(Vec::new());
         };
         let to = confirmed.min(self.next.saturating_add(self.range - 1));
-        let logs = loop {
+        let decoded = loop {
             let addresses = self.contracts.addresses();
             let logs = match self.rpc.logs(&addresses, self.next, to).await {
                 Ok(logs) => {
@@ -140,15 +139,26 @@ impl<R: Rpc> Reader<R> {
                     return Err(error.into());
                 }
             };
-            let providers = new_providers(&self.contracts, &logs);
+            let decoded = decode(&self.contracts, &logs)?;
+            let providers: BTreeSet<Address> = decoded
+                .iter()
+                .filter_map(|decoded| match decoded {
+                    Decoded::Fact(ChainEvent {
+                        fact: ChainFact::RandomnessProvider { provider },
+                        ..
+                    }) => Some(*provider),
+                    _ => None,
+                })
+                .filter(|provider| !self.contracts.randomness.contains(provider))
+                .collect();
             if providers.is_empty() {
-                break logs;
+                break decoded;
             }
             // The new providers' fulfillments in these blocks were filtered out.
             self.contracts.randomness.extend(providers);
         };
         let mut events = Vec::new();
-        for decoded in decode(&self.contracts, &logs)? {
+        for decoded in decoded {
             match decoded {
                 Decoded::Fact(event) => events.push(event),
                 Decoded::Read(read) => events.extend(self.read(read, confirmed).await?),
@@ -178,6 +188,7 @@ impl<R: Rpc> Reader<R> {
                     time,
                     ticket_price: sortition.ticket_price,
                     owner_cap,
+                    dkg_window: self.rpc.dkg_window(e3.number, block).await?,
                 };
                 let fact = ChainFact::E3Requested {
                     e3,

@@ -25,7 +25,7 @@ use crate::{
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// A failed E3 that may still see accusations keeps its work for this long after the failure,
 /// plus the chain's maximum vote validity: longer than the DKG and decryption windows in which
@@ -99,8 +99,9 @@ pub struct CryptoParams {
     pub seed: B256,
 }
 
-/// What the registry froze for a request's committee selection (`CommitteeRequested`, and
-/// `CommitteeBondOwnerCapEnabled` when the same transaction emits it).
+/// What a request froze for forming its committee: the registry's selection inputs (and
+/// `CommitteeBondOwnerCapEnabled` when the same transaction emits it), and the DKG window the
+/// Interfold contract gives the committee.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitteeRequest {
     /// T, the request's timestamp (the contracts call it `requestBlock`); selection reads the
@@ -109,6 +110,7 @@ pub struct CommitteeRequest {
     pub ticket_price: U256,
     /// The contract keeps one candidate per request-time bond owner.
     pub owner_cap: bool,
+    pub dkg_window: UnixSecs,
 }
 
 /// The registry accepted a request's randomness: the committee seed, and the deadline by which
@@ -184,6 +186,11 @@ pub enum ChainFact {
     VoteValidity {
         secs: u64,
     },
+    /// A randomness provider the registry uses: a request is bound to one, and governance can set
+    /// another.
+    RandomnessProvider {
+        provider: Address,
+    },
     /// `OperatorActivationChanged`.
     OperatorActive {
         operator: Address,
@@ -237,6 +244,34 @@ pub struct PeerMessage {
 pub enum Body {
     Dkg(DkgMessage),
     Decryption(DecryptionMessage),
+}
+
+/// What a message is, whatever it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) enum Kind {
+    EncryptionKey,
+    Shares,
+    Ready,
+    Roster,
+    DecryptionKey,
+    Keyshare,
+    NodeFold,
+    DecryptionShares,
+}
+
+impl Body {
+    pub(crate) fn kind(&self) -> Kind {
+        match self {
+            Body::Dkg(DkgMessage::EncryptionKey(_)) => Kind::EncryptionKey,
+            Body::Dkg(DkgMessage::Shares(_)) => Kind::Shares,
+            Body::Dkg(DkgMessage::Ready(_)) => Kind::Ready,
+            Body::Dkg(DkgMessage::Roster(_)) => Kind::Roster,
+            Body::Dkg(DkgMessage::DecryptionKey(_)) => Kind::DecryptionKey,
+            Body::Dkg(DkgMessage::Keyshare(_)) => Kind::Keyshare,
+            Body::Dkg(DkgMessage::NodeFold(_)) => Kind::NodeFold,
+            Body::Decryption(DecryptionMessage::Shares(_)) => Kind::DecryptionShares,
+        }
+    }
 }
 
 impl PeerMessage {
@@ -401,6 +436,9 @@ pub struct Node {
     ended: VecDeque<E3Id>,
     applied: BTreeMap<u64, LogPosition>,
     vote_validity: BTreeMap<u64, u64>,
+    /// Each chain's randomness providers, so the chain adapter reads their fulfillments after a
+    /// restart too.
+    providers: BTreeMap<u64, BTreeSet<Address>>,
 }
 
 impl Node {
@@ -413,11 +451,18 @@ impl Node {
             ended: VecDeque::new(),
             applied: BTreeMap::new(),
             vote_validity: BTreeMap::new(),
+            providers: BTreeMap::new(),
         }
     }
 
-    pub fn e3s(&self) -> impl Iterator<Item = &E3Id> {
-        self.e3s.keys()
+    pub fn randomness_providers(&self, chain_id: u64) -> impl Iterator<Item = &Address> {
+        self.providers.get(&chain_id).into_iter().flatten()
+    }
+
+    /// The E3s whose DKG or decryption work still needs their blobs.
+    pub fn working(&self) -> impl Iterator<Item = &E3Id> {
+        let working = self.e3s.iter().filter(|(_, state)| state.has_work());
+        working.map(|(e3, _)| e3)
     }
 
     pub fn e3(&self, e3: &E3Id) -> Option<&E3> {
@@ -574,6 +619,11 @@ impl Node {
                 self.vote_validity.insert(event.at.chain_id, secs);
                 Vec::new()
             }
+            ChainFact::RandomnessProvider { provider } => {
+                let providers = self.providers.entry(event.at.chain_id).or_default();
+                providers.insert(provider);
+                Vec::new()
+            }
         }
     }
 
@@ -587,7 +637,7 @@ impl Node {
             deadline: committee_deadline,
         } = seed;
         if let Some(state) = self.e3s.get_mut(&e3) {
-            state.seeded();
+            state.seeded(committee_deadline);
         }
         let active_jobs = self
             .e3s
@@ -649,11 +699,15 @@ impl Node {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.routes(&message.body) => match state.admits(&message) {
-                false => Vec::new(),
-                true if message.blobs().is_empty() => state.receive(now, message),
-                true => vec![Effect::FetchBlobs(message)],
-            },
+            Some(state) if state.routes(&message.body) => {
+                if message.blobs().is_empty() {
+                    state.receive(now, message)
+                } else if state.fetches(&message) {
+                    vec![Effect::FetchBlobs(message)]
+                } else {
+                    Vec::new()
+                }
+            }
             _ => {
                 self.held.hold(message);
                 Vec::new()
@@ -1120,6 +1174,28 @@ mod tests {
         assert!(node.step(0, announced(key)).is_empty());
     }
 
+    /// A member that announces many messages, or withholds a blob of one, makes the node fetch
+    /// only its first message of each kind, again and again.
+    #[test]
+    fn a_member_s_other_message_of_a_kind_waits_until_the_first_is_taken() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let first = key_from(e3(1), 1);
+        let other = key(e3(1), 1, proof(2), 1);
+        assert_eq!(
+            fetched_from(&node.step(0, announced(first.clone()))),
+            vec![address(1)]
+        );
+        assert!(node.step(0, announced(other.clone())).is_empty());
+        assert_eq!(
+            fetched_from(&node.step(60, announced(first.clone()))),
+            vec![address(1)]
+        );
+        assert_eq!(key_checks(&node.step(61, first)), vec![address(1)]);
+        assert!(node.step(62, announced(other)).is_empty());
+    }
+
     #[test]
     fn a_message_from_outside_the_committee_is_never_fetched() {
         let mut node = node();
@@ -1228,6 +1304,36 @@ mod tests {
         assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
         let effects = node.step(due, Input::Tick);
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
+    /// The seed came after the ticket deadline, as it does for a node that replays history, so
+    /// this node holds no ticket and no finalizer turn.
+    #[test]
+    fn a_seeded_request_nobody_finalizes_is_marked_failed_after_the_dkg_window() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(200, seed_ready(5, e3(1), 42, 100));
+        let due = 100 + TIMING.window + 1 + 30 * place(&[1, 2, ME]);
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
+    /// Settlement can stay closed for months after a failure, while accusations can come.
+    #[test]
+    fn a_settler_keeps_an_unsettled_failure_without_its_work_until_the_chain_settles_it() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        node.step(20, failure(20, e3(1), FailureReason::DkgInvalidShares));
+        let months = 20 + 200 * 24 * 60 * 60;
+        node.step(months, Input::Tick);
+        let state = node.e3(&e3(1)).expect("the E3 waits for its settlement");
+        assert!(!state.has_work());
+        node.step(months, chain(30, ChainFact::FailureSettled { e3: e3(1) }));
+        node.step(months, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
     }
 
     #[test]

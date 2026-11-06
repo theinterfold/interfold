@@ -12,7 +12,7 @@
 use alloy_primitives::{B256, U256};
 use e3_protocol::{BlobRef, E3Id};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap, VecDeque},
     fs::{self, File},
     io::{self, Write},
     path::PathBuf,
@@ -26,6 +26,8 @@ use std::{
 pub enum BlobError {
     #[error("blob {0:?} is not in the store")]
     Missing(BlobRef),
+    #[error("the blobs of E3 {0} were deleted")]
+    Deleted(E3Id),
     #[error("blob store: {0}")]
     Io(#[from] io::Error),
 }
@@ -111,9 +113,35 @@ impl BlobStore for MemoryBlobs {
 
 /// Blobs as files, one directory per E3, each file named by its hash. A step that names a blob is
 /// journaled after `put` returns, so `put` returns only once the file is complete on disk.
+///
+/// A job or fetch can finish after its E3 ended, so the store refuses to store blobs for an E3
+/// whose blobs it deleted, instead of making its directory again.
 #[derive(Clone)]
 pub struct FileBlobs {
     dir: PathBuf,
+    deleted: Arc<Mutex<Deleted>>,
+}
+
+/// The E3s whose blobs the store deleted lately.
+#[derive(Default)]
+struct Deleted {
+    e3s: BTreeSet<E3Id>,
+    order: VecDeque<E3Id>,
+}
+
+const DELETED_MEMORY: usize = 4_096;
+
+impl Deleted {
+    fn insert(&mut self, e3: E3Id) {
+        if self.e3s.insert(e3) {
+            self.order.push_back(e3);
+        }
+        while self.order.len() > DELETED_MEMORY {
+            if let Some(oldest) = self.order.pop_front() {
+                self.e3s.remove(&oldest);
+            }
+        }
+    }
 }
 
 /// Numbers each write's partial file, so two writers of one blob never share one.
@@ -139,7 +167,10 @@ impl FileBlobs {
                 }
             }
         }
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            deleted: Arc::default(),
+        })
     }
 
     fn e3_dir(&self, e3: E3Id) -> PathBuf {
@@ -153,6 +184,11 @@ impl FileBlobs {
 
 impl BlobStore for FileBlobs {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
+        let deleted = self.deleted.lock().expect("no holder of the lock panics");
+        if deleted.e3s.contains(&e3) {
+            return Err(BlobError::Deleted(e3));
+        }
+        drop(deleted);
         let blob = BlobRef::of(bytes);
         let path = self.path(e3, &blob.hash);
         if path.exists() {
@@ -200,9 +236,17 @@ impl BlobStore for FileBlobs {
                     })
                 });
             match e3 {
-                Some(e3) if keep(&e3) => {}
-                _ if path.is_dir() => fs::remove_dir_all(path)?,
-                _ => fs::remove_file(path)?,
+                Some(e3) if keep(&e3) => continue,
+                Some(e3) => self
+                    .deleted
+                    .lock()
+                    .expect("no holder of the lock panics")
+                    .insert(e3),
+                None => {}
+            }
+            match path.is_dir() {
+                true => fs::remove_dir_all(path)?,
+                false => fs::remove_file(path)?,
             }
         }
         Ok(())
@@ -252,6 +296,19 @@ mod tests {
             }
         });
         assert_eq!(blobs.get(e3(1), &BlobRef::of(&bytes)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_blob_stored_after_its_e3_s_blobs_were_deleted_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        blobs.put(e3(1), b"share").unwrap();
+        blobs.retain(|_| false).unwrap();
+        assert!(matches!(
+            blobs.put(e3(1), b"late"),
+            Err(BlobError::Deleted(_))
+        ));
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     /// Placeholder proofs of one kind have the same bytes in every E3.
