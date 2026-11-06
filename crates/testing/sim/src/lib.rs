@@ -14,16 +14,16 @@ mod real_jobs;
 pub use jobs::{Jobs, MockJobs};
 pub use real_jobs::RealJobs;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
     node::{
-        ChainEvent, ChainFact, CryptoParams, Effect, FailureReason, Input, JobDone, LogPosition,
-        Node, PeerMessage, Stage, Submission, Transaction,
+        ChainEvent, ChainFact, CryptoParams, DataRef, Effect, FailureReason, Fetched, Input,
+        JobDone, LogPosition, Node, PeerMessage, Stage, Submission, Transaction,
     },
     selection::ticket_score,
     testing::{address, sign, TIMING},
-    E3Id, Machine, UnixSecs,
+    BlobRef, E3Id, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -130,6 +130,8 @@ pub struct Sim<J = MockJobs> {
     jobs: J,
     /// The earliest time the chain publishes an E3's ciphertext once its key is out.
     ciphertext_at: UnixSecs,
+    /// The bytes the availability layer holds, by hash.
+    available: BTreeMap<B256, BlobRef>,
 }
 
 struct Delivery {
@@ -168,6 +170,7 @@ impl<J: Jobs> Sim<J> {
             submissions: Vec::new(),
             jobs,
             ciphertext_at: 0,
+            available: BTreeMap::new(),
         }
     }
 
@@ -318,6 +321,12 @@ impl<J: Jobs> Sim<J> {
                     self.nodes[node].acknowledge(key);
                     self.submit(address(self.nodes[node].operator), submission);
                 }
+                Effect::Fetch(fetch) => {
+                    let blob = self.available[&fetch.data.hash];
+                    let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
+                    let at = self.now + self.delay();
+                    self.schedule(at, node, fetched, Some(key));
+                }
             }
         }
     }
@@ -384,10 +393,15 @@ impl<J: Jobs> Sim<J> {
             self.chain(at, fact);
         }
         if let Some(ciphertext) = ciphertext {
+            self.available.insert(ciphertext.hash, ciphertext);
             let at = self.ciphertext_at.max(self.now + 100);
             let ready = ChainFact::CiphertextReady {
                 e3,
-                ciphertext,
+                ciphertext: DataRef {
+                    hash: ciphertext.hash,
+                    block: 0,
+                    leaf: 0,
+                },
                 deadline: at + 100_000,
             };
             self.chain(at, ready);

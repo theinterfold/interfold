@@ -9,7 +9,7 @@
 
 use super::*;
 use crate::{
-    node::{Input, JobDone, Signed, WorkResult},
+    node::{Fetch, Fetched, Input, JobDone, Signed, WorkResult},
     testing::*,
 };
 use e3_committee::CiphernodesCommitteeSize;
@@ -74,16 +74,23 @@ fn deliver(decryption: &mut Decryption, now: UnixSecs, input: Input) -> Vec<Effe
             signatures,
             ..
         }) => decryption.signed(now, purpose, signatures),
+        Input::Fetched(Fetched { blob, .. }) => decryption.ciphertext_fetched(now, blob),
         Input::Tick => Vec::new(),
         other => panic!("not a decryption input: {other:?}"),
     });
     effects
 }
 
+/// The chain names the ciphertext and the fetcher returns its bytes.
+fn ciphertext(decryption: &mut Decryption) -> Vec<Effect> {
+    decryption.ciphertext_ready(CIPHERTEXT_DATA, DECRYPTION_DEADLINE);
+    deliver(decryption, NOW, ciphertext_fetched(e3(1)))
+}
+
 /// Operator `me`, a roster member that decrypted and sent its share.
 fn with_its_share(me: u64, roster: &[u64]) -> Decryption {
     let mut decryption = decryption(me, roster, true);
-    decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
+    ciphertext(&mut decryption);
     let effects = deliver(
         &mut decryption,
         NOW,
@@ -123,10 +130,22 @@ fn combined(effects: &[Effect]) -> Vec<Vec<Address>> {
 }
 
 #[test]
+fn a_member_fetches_the_ciphertext_the_chain_names() {
+    let [a, b, c, _] = ordered();
+    let mut decryption = decryption(c, &[a, b], false);
+    let effects = decryption.ciphertext_ready(CIPHERTEXT_DATA, DECRYPTION_DEADLINE);
+    let fetch = Effect::Fetch(Fetch {
+        e3: e3(1),
+        data: CIPHERTEXT_DATA,
+    });
+    assert_eq!(effects, vec![fetch]);
+}
+
+#[test]
 fn a_roster_member_decrypts_with_its_sealed_key_under_the_contract_s_domain() {
     let [a, b, ..] = ordered();
     let mut decryption = decryption(a, &[a, b], true);
-    let effects = decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
+    let effects = ciphertext(&mut decryption);
     let domain = decryption_domain(
         e3(1),
         INTERFOLD,
@@ -146,7 +165,7 @@ fn a_roster_member_decrypts_with_its_sealed_key_under_the_contract_s_domain() {
 fn a_member_without_a_decryption_key_does_not_decrypt() {
     let [a, b, c, _] = ordered();
     let mut decryption = decryption(c, &[a, b], false);
-    let effects = decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
+    let effects = ciphertext(&mut decryption);
     assert!(works(&effects).is_empty());
 }
 
@@ -154,7 +173,7 @@ fn a_member_without_a_decryption_key_does_not_decrypt() {
 fn a_roster_member_sends_shares_its_peers_accept() {
     let [a, b, ..] = ordered();
     let mut decryption = decryption(a, &[a, b], true);
-    decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
+    ciphertext(&mut decryption);
     let effects = deliver(
         &mut decryption,
         NOW,
@@ -171,7 +190,7 @@ fn a_roster_member_sends_shares_its_peers_accept() {
 
 fn decryption_of(me: u64, roster: &[u64]) -> Decryption {
     let mut decryption = decryption(me, roster, false);
-    decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
+    ciphertext(&mut decryption);
     decryption
 }
 
@@ -185,6 +204,18 @@ fn only_a_roster_member_s_first_correctly_signed_shares_count() {
     assert!(decryption.shares_of(&address(a)).is_none());
     deliver(&mut decryption, NOW, decryption_shares(e3(1), a, a));
     assert!(decryption.shares_of(&address(a)).is_some());
+}
+
+#[test]
+fn shares_that_arrive_before_the_ciphertext_s_bytes_are_checked_once_they_are_here() {
+    let [a, b, c, _] = ordered();
+    let mut decryption = decryption(a, &[b, c], false);
+    decryption.ciphertext_ready(CIPHERTEXT_DATA, DECRYPTION_DEADLINE);
+    deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
+    let effects = deliver(&mut decryption, NOW, decryption_shares(e3(1), c, c));
+    assert!(checked(&effects).is_empty());
+    let effects = deliver(&mut decryption, NOW, ciphertext_fetched(e3(1)));
+    assert_eq!(checked(&effects), members(&[b, c]));
 }
 
 #[test]

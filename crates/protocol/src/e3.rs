@@ -11,8 +11,8 @@ use crate::{
     decryption::{Decryption, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming},
     node::{
-        Body, CommitteeRequest, CryptoParams, Effect, PeerMessage, Purpose, Stage, Submission,
-        Transaction, WorkResult,
+        Body, CommitteeRequest, CryptoParams, DataRef, Effect, PeerMessage, Purpose, Stage,
+        Submission, Transaction, WorkResult,
     },
     resend::Resend,
     BlobRef, E3Id, UnixSecs,
@@ -138,11 +138,19 @@ impl E3 {
     pub(crate) fn ciphertext_ready(
         &mut self,
         now: UnixSecs,
-        ciphertext: BlobRef,
+        ciphertext: DataRef,
         deadline: UnixSecs,
     ) -> Vec<Effect> {
         let effects = match self.decryption_mut() {
-            Some(decryption) => decryption.ciphertext_ready(now, ciphertext, deadline),
+            Some(decryption) => decryption.ciphertext_ready(ciphertext, deadline),
+            None => Vec::new(),
+        };
+        self.sent(now, effects)
+    }
+
+    pub(crate) fn fetched(&mut self, now: UnixSecs, blob: BlobRef) -> Vec<Effect> {
+        let effects = match self.decryption_mut() {
+            Some(decryption) => decryption.ciphertext_fetched(now, blob),
             None => Vec::new(),
         };
         self.sent(now, effects)

@@ -4,8 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Threshold decryption of an E3's ciphertext (C6, C7). Roster members decrypt with their sealed
-//! decryption keys. Every member keeps the roster members' shares, so any member can take over as
+//! Threshold decryption of an E3's ciphertext (C6, C7). Every member fetches the ciphertext's
+//! bytes from where the chain says they are. Roster members decrypt with their sealed decryption
+//! keys. Every member keeps the roster members' shares, so any member can take over as
 //! the plaintext aggregator: once T+1 shares are here it checks them, combines exactly T+1 valid
 //! ones into the plaintext (C7), and asks the chain writer to publish it. An aggregator that has
 //! started combining finishes; the chain accepts one plaintext.
@@ -19,8 +20,8 @@ pub use domain::{committee_hash, decryption_domain};
 use crate::{
     failover::Failover,
     node::{
-        Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Submission, Transaction,
-        Work,
+        Body, CryptoParams, DataRef, Effect, Fetch, Job, PeerMessage, Purpose, Signing, Submission,
+        Transaction, Work,
     },
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
@@ -133,7 +134,8 @@ pub(crate) struct PublishedKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Ciphertext {
-    blob: BlobRef,
+    /// The bytes, once fetched.
+    blob: Option<BlobRef>,
     domain: B256,
     deadline: UnixSecs,
 }
@@ -217,12 +219,7 @@ impl Decryption {
         self.shares.get(member)
     }
 
-    pub(crate) fn ciphertext_ready(
-        &mut self,
-        now: UnixSecs,
-        ciphertext: BlobRef,
-        deadline: UnixSecs,
-    ) -> Vec<Effect> {
+    pub(crate) fn ciphertext_ready(&mut self, data: DataRef, deadline: UnixSecs) -> Vec<Effect> {
         if self.ciphertext.is_some() || self.failure.is_some() {
             return Vec::new();
         }
@@ -230,20 +227,32 @@ impl Decryption {
             self.e3,
             self.published.interfold,
             committee_hash(&self.published.committee),
-            ciphertext.hash,
+            data.hash,
             self.published.commitment,
         );
         self.ciphertext = Some(Ciphertext {
-            blob: ciphertext,
+            blob: None,
             domain,
             deadline,
         });
+        vec![Effect::Fetch(Fetch { e3: self.e3, data })]
+    }
+
+    pub(crate) fn ciphertext_fetched(&mut self, now: UnixSecs, blob: BlobRef) -> Vec<Effect> {
+        let Some(ciphertext) = self.ciphertext.as_mut() else {
+            return Vec::new();
+        };
+        if ciphertext.blob.is_some() || self.failure.is_some() {
+            return Vec::new();
+        }
+        ciphertext.blob = Some(blob);
+        let domain = ciphertext.domain;
         let mut effects = Vec::new();
         if let (Some(key), true) = (self.key, self.roster.contains(&self.me)) {
             self.own = Own::Making;
             effects.push(self.run(DecryptionWork::MakeShares {
                 key,
-                ciphertext,
+                ciphertext: blob,
                 domain,
             }));
         }
@@ -396,10 +405,14 @@ impl Decryption {
     /// Start the aggregator's budget once T+1 roster members' shares are here; as the aggregator,
     /// check every share that is here, and combine the first T+1 valid ones in committee order.
     fn advance(&mut self, now: UnixSecs) -> Vec<Effect> {
-        let (Some(ciphertext), None) = (&self.ciphertext, self.failure) else {
+        let Some((blob, domain)) = self
+            .ciphertext
+            .as_ref()
+            .filter(|_| self.failure.is_none())
+            .and_then(|ciphertext| Some((ciphertext.blob?, ciphertext.domain)))
+        else {
             return Vec::new();
         };
-        let (blob, domain) = (ciphertext.blob, ciphertext.domain);
         let here: Vec<Address> = self
             .roster
             .iter()

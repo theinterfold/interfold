@@ -145,11 +145,11 @@ pub enum ChainFact {
         roster: Vec<Address>,
         commitment: B256,
     },
-    /// `CiphertextOutputPublished`: the ciphertext bytes as a blob, whose hash is the one the
-    /// contract recorded, and the decryption deadline.
+    /// `CiphertextOutputReferencePublished`: where the ciphertext's bytes are, and the decryption
+    /// deadline.
     CiphertextReady {
         e3: E3Id,
-        ciphertext: BlobRef,
+        ciphertext: DataRef,
         deadline: UnixSecs,
     },
     StageChanged {
@@ -190,6 +190,15 @@ pub enum ChainFact {
     IdentityPolicy {
         required: bool,
     },
+}
+
+/// Bytes the chain names by their Keccak-256 hash and an availability layer holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataRef {
+    pub hash: B256,
+    /// The availability layer's block and blob leaf that hold the bytes.
+    pub block: u32,
+    pub leaf: u128,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,12 +282,27 @@ pub struct Signed {
     pub signatures: Vec<Bytes>,
 }
 
+/// Bytes for the fetcher to copy from their availability layer into the blob store, checked
+/// against their hash. The blob returns as [`Input::Fetched`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fetch {
+    pub e3: E3Id,
+    pub data: DataRef,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fetched {
+    pub e3: E3Id,
+    pub blob: BlobRef,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Input {
     Chain(ChainEvent),
     Peer(PeerMessage),
     Job(JobDone),
     Signed(Signed),
+    Fetched(Fetched),
     /// Wakes the machine at its next deadline. Every input first applies the deadlines that have
     /// passed, so a late wake-up changes nothing.
     Tick,
@@ -317,6 +341,7 @@ pub enum Effect {
     Sign(Signing),
     Gossip(PeerMessage),
     Submit(Submission),
+    Fetch(Fetch),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -598,6 +623,10 @@ impl Machine for Node {
             Input::Peer(message) => self.apply_peer(now, message),
             Input::Job(done) => self.apply_job(now, done),
             Input::Signed(signed) => self.apply_signed(now, signed),
+            Input::Fetched(fetched) => match self.e3s.get_mut(&fetched.e3) {
+                Some(state) => state.fetched(now, fetched.blob),
+                None => Vec::new(),
+            },
             Input::Tick => Vec::new(),
         });
         effects

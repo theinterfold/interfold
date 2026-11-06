@@ -17,8 +17,8 @@ use crate::{
         OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::{
-        Body, ChainEvent, ChainFact, CommitteeRequest, CryptoParams, Effect, Input, Job, JobDone,
-        LogPosition, PeerMessage, Signed, Signing, Work, WorkResult,
+        Body, ChainEvent, ChainFact, CommitteeRequest, CryptoParams, DataRef, Effect, Fetched,
+        Input, Job, JobDone, LogPosition, PeerMessage, Signed, Signing, Work, WorkResult,
     },
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
@@ -359,9 +359,17 @@ pub fn key_aggregated(e3: E3Id, fill: u8) -> Input {
 
 pub const KEY_COMMITMENT: B256 = B256::repeat_byte(0xc0);
 
+/// The ciphertext's bytes in the blob store, once fetched.
 pub const CIPHERTEXT: BlobRef = BlobRef {
     hash: B256::repeat_byte(0xc7),
     len: 4_000,
+};
+
+/// Where the chain says the ciphertext's bytes are.
+pub const CIPHERTEXT_DATA: DataRef = DataRef {
+    hash: CIPHERTEXT.hash,
+    block: 70,
+    leaf: 3,
 };
 
 /// After the DKG window, so decryption has its own.
@@ -385,10 +393,17 @@ pub fn ciphertext_ready(block: u64, e3: E3Id) -> Input {
         block,
         ChainFact::CiphertextReady {
             e3,
-            ciphertext: CIPHERTEXT,
+            ciphertext: CIPHERTEXT_DATA,
             deadline: DECRYPTION_DEADLINE,
         },
     )
+}
+
+pub fn ciphertext_fetched(e3: E3Id) -> Input {
+    Input::Fetched(Fetched {
+        e3,
+        blob: CIPHERTEXT,
+    })
 }
 
 /// One decryption share and its C6 proof, made by the job runner for this node.

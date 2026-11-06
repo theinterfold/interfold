@@ -228,7 +228,8 @@ fn decryption_gets_this_node_s_key_only_for_the_roster_it_summed() {
         key_published(12, e3(1), committee(), members(&[first, third])),
     );
     let decryption_work = |node: &mut Node| {
-        let effects = node.step(NOW, ciphertext_ready(13, e3(1)));
+        node.step(NOW, ciphertext_ready(13, e3(1)));
+        let effects = node.step(NOW, ciphertext_fetched(e3(1)));
         effects
             .iter()
             .filter(|effect| {
