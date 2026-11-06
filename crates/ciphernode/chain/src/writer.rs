@@ -7,7 +7,7 @@
 use crate::{Contracts, RpcError};
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolValue};
-use e3_blobs::{Blobs, MissingBlob};
+use e3_blobs::{BlobError, Blobs};
 use e3_data_availability::public_key::ChunkLayout;
 use e3_evm_contracts::{ICiphernodeRegistry as Registry, IInterfold};
 use e3_protocol::{
@@ -96,7 +96,7 @@ pub trait Account {
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     #[error(transparent)]
-    MissingBlob(#[from] MissingBlob),
+    Blob(#[from] BlobError),
     #[error("the committee public key has {0} bytes")]
     KeySize(usize),
     #[error("{label} failed {ATTEMPTS} times; last: {last}")]
@@ -261,7 +261,7 @@ fn calls(
     })
 }
 
-fn proof_calldata(blobs: &impl Blobs, proof: &ZkProof) -> Result<Bytes, MissingBlob> {
+fn proof_calldata(blobs: &impl Blobs, proof: &ZkProof) -> Result<Bytes, BlobError> {
     Ok(verifier_calldata(
         &blobs.get(&proof.data)?,
         &proof.public_inputs,

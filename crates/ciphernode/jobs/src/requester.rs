@@ -27,5 +27,5 @@ pub fn encrypt(
     let ciphertext = key
         .try_encrypt(&plaintext, &mut UnwrapErr(OsRng))
         .map_err(JobError::crypto)?;
-    Ok(blobs.put(&ciphertext.to_bytes()))
+    Ok(blobs.put(&ciphertext.to_bytes())?)
 }

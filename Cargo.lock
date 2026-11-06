@@ -3626,6 +3626,7 @@ version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "e3-protocol",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
@@ -4461,6 +4462,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "bincode",
  "e3-committee",
  "hex",
  "serde",

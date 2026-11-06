@@ -10,3 +10,6 @@ repository.workspace = true
 e3-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

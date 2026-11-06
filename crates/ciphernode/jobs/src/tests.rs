@@ -321,9 +321,10 @@ async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_chec
     )
     .is_ok());
 
-    let garbage = blobs.put(b"not a key");
+    let garbage = blobs.put(b"not a key").unwrap();
     let proof =
-        crate::placeholder::proof(&blobs, e3_protocol::proof::ProofType::C0PkBfv, b"not a key");
+        crate::placeholder::proof(&blobs, e3_protocol::proof::ProofType::C0PkBfv, b"not a key")
+            .unwrap();
     let checked = dkg(
         &runner,
         DkgWork::CheckEncryptionKey {

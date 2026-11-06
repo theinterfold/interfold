@@ -84,7 +84,7 @@ impl<B: Blobs> JobRunner<B> {
                 valid: true,
             },
             DkgWork::FoldProofs { proofs } => DkgWorkResult::ProofsFolded(NodeFold {
-                proof: placeholder::proof(&self.blobs, ProofType::C5PkAggregation, &[]),
+                proof: placeholder::proof(&self.blobs, ProofType::C5PkAggregation, &[])?,
                 sk_agg_commit: keccak256(placeholder::statements(proofs)),
                 esm_agg_commit: keccak256(placeholder::statements(proofs).repeat(2)),
             }),
@@ -107,9 +107,9 @@ impl<B: Blobs> JobRunner<B> {
         let public = PublicKey::new(&secret, &mut rng).to_bytes();
         let secret = serialize_secret_key(&secret).map_err(JobError::crypto)?;
         Ok(OwnKey {
-            public: self.blobs.put(&public),
+            public: self.blobs.put(&public)?,
             secret: self.seal(&secret)?,
-            proof: placeholder::proof(&self.blobs, ProofType::C0PkBfv, &public),
+            proof: placeholder::proof(&self.blobs, ProofType::C0PkBfv, &public)?,
         })
     }
 
@@ -213,7 +213,7 @@ impl<B: Blobs> JobRunner<B> {
                 .collect::<Result<_, _>>()
                 .map_err(JobError::crypto)?,
         };
-        let pk_share = self.blobs.put(&generated.pk_share);
+        let pk_share = self.blobs.put(&generated.pk_share)?;
         let mut recipients = BTreeMap::new();
         for (slot, member) in committee.iter().enumerate() {
             if !keys.contains_key(member) || *member == dealer {
@@ -234,7 +234,7 @@ impl<B: Blobs> JobRunner<B> {
             };
             let rows = ciphertexts.sk.num_moduli();
             let bytes = bincode::serialize(&ciphertexts).map_err(JobError::crypto)?;
-            let shares = self.blobs.put(&bytes);
+            let shares = self.blobs.put(&bytes)?;
             recipients.insert(
                 *member,
                 RecipientShares {
@@ -243,7 +243,7 @@ impl<B: Blobs> JobRunner<B> {
                         .map(|_| {
                             placeholder::proof(&self.blobs, ProofType::C3aSkShareEncryption, &bytes)
                         })
-                        .collect(),
+                        .collect::<Result<_, _>>()?,
                     c3b: (0..rows)
                         .map(|_| {
                             placeholder::proof(
@@ -252,7 +252,7 @@ impl<B: Blobs> JobRunner<B> {
                                 &bytes,
                             )
                         })
-                        .collect(),
+                        .collect::<Result<_, _>>()?,
                 },
             );
         }
@@ -260,17 +260,17 @@ impl<B: Blobs> JobRunner<B> {
         Ok(OwnShares {
             pk_share,
             own_share: self.seal(&own)?,
-            c1: placeholder::proof(&self.blobs, ProofType::C1PkGeneration, &generated.pk_share),
+            c1: placeholder::proof(&self.blobs, ProofType::C1PkGeneration, &generated.pk_share)?,
             c2a: placeholder::proof(
                 &self.blobs,
                 ProofType::C2aSkShareComputation,
                 &generated.pk_share,
-            ),
+            )?,
             c2b: placeholder::proof(
                 &self.blobs,
                 ProofType::C2bESmShareComputation,
                 &generated.pk_share,
-            ),
+            )?,
             recipients,
         })
     }
@@ -357,12 +357,12 @@ impl<B: Blobs> JobRunner<B> {
                 &self.blobs,
                 ProofType::C4aSkShareDecryption,
                 key.hash.as_slice(),
-            ),
+            )?,
             c4b: vec![placeholder::proof(
                 &self.blobs,
                 ProofType::C4bESmShareDecryption,
                 key.hash.as_slice(),
-            )],
+            )?],
         })
     }
 
@@ -399,9 +399,9 @@ impl<B: Blobs> JobRunner<B> {
         let key: PublicKey = shares.into_iter().aggregate().map_err(JobError::crypto)?;
         let bytes = key.to_bytes();
         Ok(AggregatedKey {
-            public_key: self.blobs.put(&bytes),
+            public_key: self.blobs.put(&bytes)?,
             commitment: keccak256(&bytes),
-            proof: placeholder::proof(&self.blobs, ProofType::C5PkAggregation, &bytes),
+            proof: placeholder::proof(&self.blobs, ProofType::C5PkAggregation, &bytes)?,
         })
     }
 

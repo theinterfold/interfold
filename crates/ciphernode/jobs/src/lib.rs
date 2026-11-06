@@ -33,7 +33,7 @@ use std::fmt::Display;
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
     #[error(transparent)]
-    MissingBlob(#[from] e3_blobs::MissingBlob),
+    Blob(#[from] e3_blobs::BlobError),
     #[error("parameter set {0} is not supported by this node")]
     UnsupportedParams(u8),
     #[error("sealing: {0}")]
@@ -94,7 +94,7 @@ impl<B: Blobs> JobRunner<B> {
             .cipher
             .encrypt_data(&mut secret)
             .map_err(|error| JobError::Seal(error.to_string()))?;
-        Ok(self.blobs.put(&sealed))
+        Ok(self.blobs.put(&sealed)?)
     }
 
     fn unseal(&self, blob: &BlobRef) -> Result<Vec<u8>, JobError> {

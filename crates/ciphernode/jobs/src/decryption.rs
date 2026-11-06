@@ -48,7 +48,7 @@ impl<B: Blobs> JobRunner<B> {
                 ..
             } => DecryptionWorkResult::SharesChecked {
                 member: *member,
-                valid: self.check_decryption_shares(message, *domain),
+                valid: self.check_decryption_shares(message, *domain)?,
             },
             DecryptionWork::AggregatePlaintext {
                 committee,
@@ -91,7 +91,7 @@ impl<B: Blobs> JobRunner<B> {
             .d_share_poly
             .iter()
             .map(|share| self.blobs.put(share))
-            .collect();
+            .collect::<Result<_, _>>()?;
         let c6 = response
             .d_share_poly
             .iter()
@@ -99,19 +99,26 @@ impl<B: Blobs> JobRunner<B> {
                 let bound = [share.as_ref(), domain.as_slice()].concat();
                 placeholder::proof(&self.blobs, ProofType::C6ThresholdShareDecryption, &bound)
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         Ok(OwnShares { shares, c6 })
     }
 
     /// Shares count when each C6 commits to its share under the decryption domain.
-    fn check_decryption_shares(&self, message: &SharesMessage, domain: B256) -> bool {
-        message.shares.len() == message.c6.len()
-            && message.shares.iter().zip(&message.c6).all(|(share, c6)| {
-                self.blobs.get(share).is_ok_and(|bytes| {
-                    let bound = [bytes.as_slice(), domain.as_slice()].concat();
-                    placeholder::commits_to(&c6.proof, &bound)
-                })
-            })
+    fn check_decryption_shares(
+        &self,
+        message: &SharesMessage,
+        domain: B256,
+    ) -> Result<bool, JobError> {
+        if message.shares.len() != message.c6.len() {
+            return Ok(false);
+        }
+        for (share, c6) in message.shares.iter().zip(&message.c6) {
+            let bound = [self.blobs.get(share)?.as_slice(), domain.as_slice()].concat();
+            if !placeholder::commits_to(&c6.proof, &bound) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// The plaintext of the first ciphertext, which is what `publishPlaintextOutput` takes.
@@ -145,12 +152,12 @@ impl<B: Blobs> JobRunner<B> {
             .first()
             .ok_or(JobError::crypto("no plaintext"))?;
         Ok(PlaintextPublication {
-            plaintext: self.blobs.put(plaintext),
+            plaintext: self.blobs.put(plaintext)?,
             proof: placeholder::proof(
                 &self.blobs,
                 ProofType::C7DecryptedSharesAggregation,
                 plaintext,
-            ),
+            )?,
         })
     }
 

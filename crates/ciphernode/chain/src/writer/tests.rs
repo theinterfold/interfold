@@ -87,9 +87,9 @@ fn submission(transaction: Transaction) -> Submission {
 
 fn plaintext(blobs: &MemoryBlobs) -> Submission {
     submission(Transaction::PublishPlaintext(PlaintextPublication {
-        plaintext: blobs.put(&[7, 0, 0, 0, 0, 0, 0, 0]),
+        plaintext: blobs.put(&[7, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
         proof: ZkProof {
-            data: blobs.put(b"proof"),
+            data: blobs.put(b"proof").unwrap(),
             public_inputs: vec![B256::repeat_byte(1)],
         },
     }))
@@ -216,9 +216,9 @@ async fn a_committee_publishes_its_proof_then_its_key_in_chunks() {
     let key: Vec<u8> = (0..200 * 1024).map(|n| n as u8).collect();
     let publication = KeyPublication {
         commitment: B256::repeat_byte(0xc0),
-        public_key: blobs.put(&key),
+        public_key: blobs.put(&key).unwrap(),
         proof: ZkProof {
-            data: blobs.put(b"proof"),
+            data: blobs.put(b"proof").unwrap(),
             public_inputs: vec![B256::repeat_byte(1)],
         },
         attestations: Vec::new(),
