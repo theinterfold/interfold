@@ -17,7 +17,7 @@ use e3_protocol::{
     E3Id,
 };
 use std::{future::Future, iter, time::Duration};
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// What the shared bindings do not carry.
 mod extra {
@@ -40,11 +40,11 @@ mod extra {
     }
 }
 
-/// Attempts per call, 30 seconds apart. The errors a call waits out come from an RPC node behind
-/// the chain or a block time behind the node's clock, which clear within minutes; a publication
-/// that cannot land by then is left to the next aggregator.
-const ATTEMPTS: u32 = 20;
-const RETRY_AFTER: Duration = Duration::from_secs(30);
+/// The wait after a call's first failed attempt; each later wait doubles, up to ten minutes. The
+/// errors a call waits out come from a chain node that is behind or down, or a block time behind
+/// the node's clock.
+const FIRST_RETRY: Duration = Duration::from_secs(30);
+const LONGEST_RETRY: Duration = Duration::from_secs(600);
 
 /// Tickets estimated at the same time land one after another, and a later insertion into the top
 /// N can cost more than its estimate.
@@ -99,8 +99,6 @@ pub enum WriteError {
     Blob(#[from] BlobError),
     #[error("the committee public key has {0} bytes")]
     KeySize(usize),
-    #[error("{label} failed {ATTEMPTS} times; last: {last}")]
-    GaveUp { label: &'static str, last: String },
 }
 
 /// Sends the node's submissions from the operator's account.
@@ -126,30 +124,25 @@ impl<A: Account, B: Blobs> Writer<A, B> {
 
     /// Sends `submission`'s calls in order. A call is done when it succeeds, or when it reverts
     /// with an error it does not wait out: then the chain has its effect already, or can no longer
-    /// take it.
+    /// take it. Until then it tries again; the node stops the calls of an E3 it no longer holds.
     pub async fn submit(&self, submission: &Submission) -> Result<(), WriteError> {
         for call in calls(&self.contracts, &self.blobs, submission)? {
-            self.deliver(submission.e3, &call).await?;
+            self.deliver(submission.e3, &call).await;
         }
         Ok(())
     }
 
-    async fn deliver(&self, e3: E3Id, call: &Call) -> Result<(), WriteError> {
-        let mut last = String::new();
-        for attempt in 0..ATTEMPTS {
-            if attempt > 0 {
-                tokio::time::sleep(RETRY_AFTER).await;
-            }
+    async fn deliver(&self, e3: E3Id, call: &Call) {
+        let mut wait = FIRST_RETRY;
+        loop {
             match self.attempt(e3, call).await {
-                Ok(Progress::Done) => return Ok(()),
-                Ok(Progress::NotYet(reason)) => last = reason,
-                Err(error) => last = error.to_string(),
+                Ok(Progress::Done) => return,
+                Ok(Progress::NotYet(reason)) => debug!(%e3, call = call.label, %reason, "not yet"),
+                Err(error) => warn!(%e3, call = call.label, %error, "the attempt failed"),
             }
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(LONGEST_RETRY);
         }
-        Err(WriteError::GaveUp {
-            label: call.label,
-            last,
-        })
     }
 
     async fn attempt(&self, e3: E3Id, call: &Call) -> Result<Progress, RpcError> {

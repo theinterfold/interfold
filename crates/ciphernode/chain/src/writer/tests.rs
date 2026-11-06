@@ -20,8 +20,6 @@ const GAS: u64 = 50_000;
 struct Script {
     /// What each estimate returns, in order; gas once the script runs out.
     estimates: VecDeque<Result<Estimate, &'static str>>,
-    /// Every request fails, as with a chain node that is down.
-    down: bool,
     /// Whether each send succeeds on chain, in order; success once the script runs out.
     sends: VecDeque<bool>,
     estimated: usize,
@@ -50,9 +48,6 @@ impl Account for FakeAccount {
     async fn estimate(&self, _: &Call) -> Result<Estimate, RpcError> {
         let mut script = self.0.lock().unwrap();
         script.estimated += 1;
-        if script.down {
-            return Err(RpcError("connection refused".into()));
-        }
         match script.estimates.pop_front() {
             Some(Ok(estimate)) => Ok(estimate),
             Some(Err(message)) => Err(RpcError(message.into())),
@@ -180,25 +175,23 @@ async fn a_call_that_reverts_on_chain_is_tried_again() {
     assert_eq!(account.sent().len(), 2);
 }
 
-/// A call that keeps failing is retried for minutes, to wait out a chain node that is behind,
-/// and given up within ten, by when the next aggregator has taken over a publication.
+/// A chain node down for over an hour does not lose the call: it lands once the node answers,
+/// and the waits between attempts grow, so a long outage costs few requests.
 #[tokio::test(start_paused = true)]
-async fn the_writer_gives_up_on_a_call_that_keeps_failing_within_ten_minutes() {
+async fn a_call_lands_after_a_long_outage_with_growing_waits() {
     let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
-    account.script(|script| script.down = true);
+    account.script(|script| {
+        script
+            .estimates
+            .extend((0..12).map(|_| Err("connection refused")));
+    });
     let started = tokio::time::Instant::now();
     let finalize = submission(Transaction::FinalizeCommittee);
-    let result = writer(&account, &blobs).submit(&finalize).await;
-    assert!(matches!(
-        result,
-        Err(WriteError::GaveUp {
-            label: "finalizeCommittee",
-            ..
-        })
-    ));
+    writer(&account, &blobs).submit(&finalize).await.unwrap();
+    assert_eq!(account.labels(), ["finalizeCommittee"]);
+    assert_eq!(account.0.lock().unwrap().estimated, 13);
     let waited = started.elapsed();
-    assert!(waited > Duration::from_secs(5 * 60), "{waited:?}");
-    assert!(waited <= Duration::from_secs(10 * 60), "{waited:?}");
+    assert!(waited > Duration::from_secs(60 * 60), "{waited:?}");
 }
 
 #[tokio::test]

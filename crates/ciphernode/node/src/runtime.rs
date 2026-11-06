@@ -15,25 +15,28 @@ use e3_jobs::JobRunner;
 use e3_journal::Journal;
 use e3_p2p::Network;
 use e3_protocol::{
-    node::{Effect, Fetch, Fetched, Input, Job, JobDone, Node, PeerMessage, Signed, Signing},
+    node::{
+        Effect, Fetch, Fetched, Input, Job, JobDone, Node, PeerMessage, Signed, Signing, Submission,
+    },
     wire::Envelope,
-    UnixSecs,
+    E3Id, UnixSecs,
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     convert::Infallible,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc;
+use tokio::{
+    sync::mpsc,
+    task::{AbortHandle, JoinHandle},
+};
 use tracing::{debug, error, warn};
 
-/// How long a failed job, fetch, or chain read waits before it runs again.
+/// How long a failed job or chain read waits before it runs again, and the first wait of a failed
+/// fetch; each later fetch waits twice as long, up to ten minutes.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
-
-/// Fetch attempts before a ciphertext is given up: two hours, longer than any decryption window
-/// that a fetch can still help.
-const FETCH_ATTEMPTS: u32 = 240;
+const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(600);
 
 /// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
 /// for its inputs fails every time.
@@ -128,7 +131,7 @@ where
     );
     tokio::spawn(read_chain(reader, events.clone(), settings.poll_interval));
     tokio::spawn(forward_peers(parts.inbound, events.clone()));
-    let effects = Effects {
+    let mut effects = Effects {
         operator: parts.operator,
         blobs: parts.blobs.clone(),
         jobs: Arc::new(parts.jobs),
@@ -136,6 +139,7 @@ where
         network: Arc::new(parts.network),
         availability: parts.availability,
         events,
+        tasks: BTreeMap::new(),
     };
     let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
     loop {
@@ -159,6 +163,9 @@ where
             engine.acknowledge(key)?;
         }
         queue.extend(effects.dispatch(pending));
+        for key in effects.stop_ended(engine.machine()) {
+            engine.acknowledge(key)?;
+        }
     }
 }
 
@@ -235,7 +242,7 @@ async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::S
 
 /// Carries out the machine's effects. Each effect stays in the outbox until it is done: a job, a
 /// signature or a fetch once its result is journaled, a gossip once it is published, a
-/// submission once the writer is finished with it.
+/// submission once the writer finished it, and any effect of an E3 the machine dropped.
 struct Effects<A, N, B> {
     operator: PrivateKeySigner,
     blobs: B,
@@ -244,6 +251,8 @@ struct Effects<A, N, B> {
     network: Arc<N>,
     availability: Arc<dyn DataAvailabilityReader>,
     events: mpsc::Sender<Event>,
+    /// The jobs, submissions and fetches that run, by E3.
+    tasks: BTreeMap<E3Id, Vec<(EffectKey, AbortHandle)>>,
 }
 
 impl<A, N, B> Effects<A, N, B>
@@ -253,30 +262,60 @@ where
     B: Blobs + Clone + Send + Sync + 'static,
 {
     /// Starts each effect; returns the events of the effects that finish at once.
-    fn dispatch(&self, pending: Vec<Pending<Effect>>) -> Vec<Event> {
+    fn dispatch(&mut self, pending: Vec<Pending<Effect>>) -> Vec<Event> {
         let mut now = Vec::new();
         for Pending { key, effect } in pending {
             debug!(effect = %brief(&effect), "dispatching");
-            match effect {
-                Effect::Run(job) => self.run(key, job),
-                Effect::Sign(signing) => now.push(Event::Result(key, self.sign(signing))),
-                Effect::Gossip(message) => self.gossip(key, message),
-                Effect::Submit(submission) => {
-                    let (writer, events) = (self.writer.clone(), self.events.clone());
-                    tokio::spawn(async move {
-                        if let Err(failure) = writer.submit(&submission).await {
-                            error!(e3 = %submission.e3, %failure, "submission dropped");
-                        }
-                        let _ = events.send(Event::Done(key)).await;
-                    });
+            let (e3, task) = match effect {
+                Effect::Sign(signing) => {
+                    now.push(Event::Result(key, self.sign(signing)));
+                    continue;
                 }
-                Effect::Fetch(fetch) => self.fetch(key, fetch),
-            }
+                Effect::Gossip(message) => {
+                    self.gossip(key, message);
+                    continue;
+                }
+                Effect::Run(job) => (job.e3, self.run(key, job)),
+                Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),
+                Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),
+            };
+            let tasks = self.tasks.entry(e3).or_default();
+            tasks.push((key, task.abort_handle()));
         }
         now
     }
 
-    fn run(&self, key: EffectKey, job: Job) {
+    /// Stops the tasks of the E3s `machine` no longer holds; their effects are done.
+    fn stop_ended(&mut self, machine: &Node) -> Vec<EffectKey> {
+        let mut ended = Vec::new();
+        self.tasks.retain(|e3, tasks| {
+            tasks.retain(|(_, task)| !task.is_finished());
+            if machine.e3(e3).is_some() {
+                return !tasks.is_empty();
+            }
+            for (key, task) in tasks.drain(..) {
+                task.abort();
+                ended.push(key);
+            }
+            false
+        });
+        ended
+    }
+
+    fn submit(&self, key: EffectKey, submission: Submission) -> JoinHandle<()> {
+        let (writer, events) = (self.writer.clone(), self.events.clone());
+        tokio::spawn(async move {
+            match writer.submit(&submission).await {
+                Ok(()) => {
+                    let _ = events.send(Event::Done(key)).await;
+                }
+                // The submission stays in the outbox, so the next start tries it again.
+                Err(failure) => error!(e3 = %submission.e3, %failure, "the submission failed"),
+            }
+        })
+    }
+
+    fn run(&self, key: EffectKey, job: Job) -> JoinHandle<()> {
         let (jobs, events) = (self.jobs.clone(), self.events.clone());
         tokio::spawn(async move {
             for _ in 0..JOB_ATTEMPTS {
@@ -295,7 +334,7 @@ where
             // The job stays in the outbox, so the next start runs it again; meanwhile the
             // machine's deadlines end the work that waits for it.
             error!(e3 = %job.e3, "job given up until the node restarts");
-        });
+        })
     }
 
     fn sign(&self, signing: Signing) -> Input {
@@ -339,7 +378,7 @@ where
         });
     }
 
-    fn fetch(&self, key: EffectKey, fetch: Fetch) {
+    fn fetch(&self, key: EffectKey, fetch: Fetch) -> JoinHandle<()> {
         let (availability, blobs, events) = (
             self.availability.clone(),
             self.blobs.clone(),
@@ -351,7 +390,8 @@ where
                 block_number: fetch.data.block,
                 leaf_index: fetch.data.leaf,
             };
-            for _ in 0..FETCH_ATTEMPTS {
+            let mut wait = RETRY_AFTER;
+            loop {
                 match availability.retrieve(reference).await {
                     Ok(bytes) if keccak256(&bytes) == fetch.data.hash => match blobs.put(&bytes) {
                         Ok(blob) => {
@@ -368,10 +408,9 @@ where
                         warn!(e3 = %fetch.e3, %failure, "fetching the ciphertext failed")
                     }
                 }
-                tokio::time::sleep(RETRY_AFTER).await;
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(LONGEST_FETCH_RETRY);
             }
-            error!(e3 = %fetch.e3, "ciphertext given up");
-            let _ = events.send(Event::Done(key)).await;
-        });
+        })
     }
 }
