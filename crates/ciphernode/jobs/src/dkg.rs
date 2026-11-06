@@ -30,13 +30,13 @@ use e3_trbfv::{
     shares::{BfvEncryptedShare, BfvEncryptedShares, Encrypted, ShamirShare},
 };
 use fhe::{
-    bfv::{PublicKey, SecretKey},
+    bfv::{BfvParameters, PublicKey, SecretKey},
     mbfv::{AggregateIter, PublicKeyShare},
 };
 use fhe_traits::{DeserializeParametrized, Serialize};
 use rand::rngs::OsRng;
 use rand_core::UnwrapErr;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 impl<B: Blobs> JobRunner<B> {
     pub(crate) fn run_dkg(
@@ -127,9 +127,7 @@ impl<B: Blobs> JobRunner<B> {
         proof: &ZkProof,
     ) -> Result<bool, JobError> {
         let bfv = trbfv::dkg_params(params)?;
-        let Ok(bytes) = self.blobs.get(key) else {
-            return Ok(false);
-        };
+        let bytes = self.blobs.get(key)?;
         let decodes = PublicKey::from_bytes(&bytes, &bfv).is_ok();
         Ok(decodes && placeholder::commits_to(proof, &bytes))
     }
@@ -289,18 +287,18 @@ impl<B: Blobs> JobRunner<B> {
         secret: &BlobRef,
         message: &SharesMessage,
     ) -> Result<bool, JobError> {
-        let Ok(bytes) = self.blobs.get(&message.shares) else {
-            return Ok(false);
-        };
+        let bytes = self.blobs.get(&message.shares)?;
         let committed = message
             .c3a
             .iter()
             .chain(&message.c3b)
             .all(|c3| placeholder::commits_to(&c3.proof, &bytes));
+        let dkg = trbfv::dkg_params(params)?;
+        let key = self.secret_key(&dkg, secret)?;
         let Ok(ciphertexts) = bincode::deserialize::<RecipientCiphertexts>(&bytes) else {
             return Ok(false);
         };
-        Ok(committed && self.decrypt_shares(params, secret, ciphertexts).is_ok())
+        Ok(committed && decrypt_shares(&key, &dkg, ciphertexts).is_ok())
     }
 
     /// Sum the roster dealers' shares for this node, its own included, into its decryption key.
@@ -316,8 +314,10 @@ impl<B: Blobs> JobRunner<B> {
         let mut sk_collected = vec![own.sk];
         let mut esi_collected: Vec<Vec<ShamirShare>> =
             own.esi.into_iter().map(|esi| vec![esi]).collect();
+        let dkg = trbfv::dkg_params(params)?;
+        let key = self.secret_key(&dkg, secret)?;
         for blob in shares.values() {
-            let dealt = self.decrypt_shares(params, secret, self.recipient_ciphertexts(blob)?)?;
+            let dealt = decrypt_shares(&key, &dkg, self.recipient_ciphertexts(blob)?)?;
             sk_collected.push(dealt.sk);
             for (collected, esi) in esi_collected.iter_mut().zip(dealt.esi) {
                 collected.push(esi);
@@ -377,9 +377,7 @@ impl<B: Blobs> JobRunner<B> {
         params: &CryptoParams,
         keyshare: &KeyshareMessage,
     ) -> Result<bool, JobError> {
-        let Ok(bytes) = self.blobs.get(&keyshare.pk_share) else {
-            return Ok(false);
-        };
+        let bytes = self.blobs.get(&keyshare.pk_share)?;
         let bfv = trbfv::threshold_params(params)?;
         let crp = trbfv::crp_poly(params)?;
         let decodes = PublicKeyShare::deserialize(&bytes, &bfv, crp).is_ok();
@@ -417,28 +415,31 @@ impl<B: Blobs> JobRunner<B> {
         bincode::deserialize(&self.blobs.get(blob)?).map_err(JobError::crypto)
     }
 
-    fn decrypt_shares(
+    /// This node's C0 secret key, unsealed.
+    fn secret_key(
         &self,
-        params: &CryptoParams,
+        dkg: &Arc<BfvParameters>,
         secret: &BlobRef,
-        ciphertexts: RecipientCiphertexts,
-    ) -> Result<OwnShareRows, JobError> {
-        let dkg = trbfv::dkg_params(params)?;
-        let secret =
-            deserialize_secret_key(&self.unseal(secret)?, &dkg).map_err(JobError::crypto)?;
-        let degree = dkg.degree();
-        let decrypt = |share: BfvEncryptedShare| {
-            share
-                .decrypt(&secret, &dkg, degree)
-                .map_err(JobError::crypto)
-        };
-        Ok(OwnShareRows {
-            sk: decrypt(ciphertexts.sk)?,
-            esi: ciphertexts
-                .esi
-                .into_iter()
-                .map(decrypt)
-                .collect::<Result<_, _>>()?,
-        })
+    ) -> Result<SecretKey, JobError> {
+        deserialize_secret_key(&self.unseal(secret)?, dkg).map_err(JobError::crypto)
     }
+}
+
+/// A dealer's shares for this node, decrypted with its C0 secret key.
+fn decrypt_shares(
+    key: &SecretKey,
+    dkg: &Arc<BfvParameters>,
+    ciphertexts: RecipientCiphertexts,
+) -> Result<OwnShareRows, JobError> {
+    let degree = dkg.degree();
+    let decrypt =
+        |share: BfvEncryptedShare| share.decrypt(key, dkg, degree).map_err(JobError::crypto);
+    Ok(OwnShareRows {
+        sk: decrypt(ciphertexts.sk)?,
+        esi: ciphertexts
+            .esi
+            .into_iter()
+            .map(decrypt)
+            .collect::<Result<_, _>>()?,
+    })
 }
