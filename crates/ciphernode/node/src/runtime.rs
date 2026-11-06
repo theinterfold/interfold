@@ -35,6 +35,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 /// that a fetch can still help.
 const FETCH_ATTEMPTS: u32 = 240;
 
+/// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
+/// for its inputs fails every time.
+const JOB_ATTEMPTS: u32 = 10;
+
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -275,7 +279,7 @@ where
     fn run(&self, key: EffectKey, job: Job) {
         let (jobs, events) = (self.jobs.clone(), self.events.clone());
         tokio::spawn(async move {
-            loop {
+            for _ in 0..JOB_ATTEMPTS {
                 let (runner, work) = (jobs.clone(), job.clone());
                 match tokio::task::spawn_blocking(move || runner.run(&work)).await {
                     Ok(Ok(result)) => {
@@ -283,13 +287,14 @@ where
                         let _ = events.send(Event::Result(key, done)).await;
                         return;
                     }
-                    Ok(Err(failure)) => {
-                        error!(e3 = %job.e3, %failure, "job failed; running it again")
-                    }
-                    Err(panic) => error!(e3 = %job.e3, %panic, "job panicked; running it again"),
+                    Ok(Err(failure)) => error!(e3 = %job.e3, %failure, "job failed"),
+                    Err(panic) => error!(e3 = %job.e3, %panic, "job panicked"),
                 }
                 tokio::time::sleep(RETRY_AFTER).await;
             }
+            // The job stays in the outbox, so the next start runs it again; meanwhile the
+            // machine's deadlines end the work that waits for it.
+            error!(e3 = %job.e3, "job given up until the node restarts");
         });
     }
 
