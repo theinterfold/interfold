@@ -68,8 +68,8 @@ impl Journal {
 
     fn commit_step(&self, step: Step) -> Result<(), redb::Error> {
         let txn = self.db.begin_write()?;
-        txn.open_table(JOURNAL)?
-            .insert(step.seq, step.entry.as_slice())?;
+        let mut journal = txn.open_table(JOURNAL)?;
+        journal.insert(step.seq, step.entry.as_slice())?;
         let mut outbox = txn.open_table(OUTBOX)?;
         for (key, bytes) in &step.effects {
             outbox.insert((key.seq, key.index), bytes.as_slice())?;
@@ -79,7 +79,10 @@ impl Journal {
             let mut snapshots = txn.open_table(SNAPSHOT)?;
             snapshots.retain(|_, _| false)?;
             snapshots.insert(step.seq, snapshot.as_slice())?;
+            // The snapshot holds every step up to it, so no restart reads those entries again.
+            journal.retain_in(..=step.seq, |_, _| false)?;
         }
+        drop(journal);
         txn.commit()?;
         Ok(())
     }
@@ -157,5 +160,31 @@ mod tests {
             stored.outbox,
             vec![(key(2, 0), b"y".to_vec()), (key(3, 0), b"z".to_vec())]
         );
+    }
+
+    #[test]
+    fn a_snapshot_drops_the_journal_entries_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.redb");
+        let mut journal = Journal::open(&path).unwrap();
+        for seq in 1..=5 {
+            journal
+                .commit(Step {
+                    seq,
+                    entry: vec![seq as u8],
+                    effects: Vec::new(),
+                    snapshot: (seq == 3).then(|| b"state at 3".to_vec()),
+                })
+                .unwrap();
+        }
+        let txn = journal.db.begin_read().unwrap();
+        let kept: Vec<u64> = txn
+            .open_table(JOURNAL)
+            .unwrap()
+            .iter()
+            .unwrap()
+            .map(|entry| entry.unwrap().0.value())
+            .collect();
+        assert_eq!(kept, [4, 5]);
     }
 }
