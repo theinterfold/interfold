@@ -12,6 +12,6 @@ This crate owns the shared guest stream and public journal format, not backend e
   Changes require host, worker, guest, and contract review together, not a one-sided decoder fix.
 
 Use the [README tests](README.md#tests). Format changes additionally need host/guest parity and
-contract journal coverage from the [OpenVM workflow](../openvm-prover/README.md). A byte round trip
-does not establish proof compatibility; see
-[encrypted computation](../../docs/architecture/encrypted-computation.md).
+contract journal coverage from the [OpenVM workflow](../../openvm-prover/README.md). A byte round
+trip does not establish proof compatibility; see
+[encrypted computation](../../../docs/architecture/encrypted-computation.md).

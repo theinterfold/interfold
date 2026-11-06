@@ -8,7 +8,7 @@ members = [
   "crates/cli",
   "crates/committee",
   "crates/committee-hash",
-  "crates/compute-provider",
+  "crates/program/compute-provider",
   "crates/console",
   "crates/diagnostics/dashboard",
   "crates/crypto",
@@ -32,13 +32,13 @@ members = [
   "crates/diagnostics/logger",
   "crates/ciphernode/multithread",
   "crates/net",
-  "crates/openvm-host",
-  "crates/openvm-types",
+  "crates/program/openvm-host",
+  "crates/program/openvm-types",
   "crates/parity-matrix",
   "crates/polynomial",
   "crates/polynomial/fhe-adapter",
-  "crates/program-runner",
-  "crates/program-server",
+  "crates/program/runner",
+  "crates/program/server",
   "crates/state/request",
   "crates/safe",
   "crates/sdk",
@@ -119,13 +119,13 @@ e3-multithread = { version = "0.20.0-dev.3", path = "./crates/ciphernode/multith
 e3-keyshare = { version = "0.20.0-dev.3", path = "./crates/orchestration/keyshare" }
 e3-logger = { version = "0.20.0-dev.3", path = "./crates/diagnostics/logger" }
 e3-net = { version = "0.20.0-dev.3", path = "./crates/net" }
-e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/compute-provider" }
-e3-openvm-host = { version = "0.20.0-dev.3", path = "./crates/openvm-host" }
-e3-openvm-types = { version = "0.20.0-dev.3", path = "./crates/openvm-types" }
+e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/program/compute-provider" }
+e3-openvm-host = { version = "0.20.0-dev.3", path = "./crates/program/openvm-host" }
+e3-openvm-types = { version = "0.20.0-dev.3", path = "./crates/program/openvm-types" }
 e3-sortition = { version = "0.20.0-dev.3", path = "./crates/orchestration/sortition" }
 e3-daemon-server = { version = "0.20.0-dev.3", path = "./crates/ciphernode/daemon-server" }
-e3-program-runner = { version = "0.20.0-dev.3", path = "./crates/program-runner" }
-e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program-server" }
+e3-program-runner = { version = "0.20.0-dev.3", path = "./crates/program/runner" }
+e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program/server" }
 e3-polynomial = { version = "0.20.0-dev.3", path = "./crates/polynomial" }
 e3-polynomial-fhe = { version = "0.20.0-dev.3", path = "./crates/polynomial/fhe-adapter" }
 e3-sync = { version = "0.20.0-dev.3", path = "./crates/state/sync" }

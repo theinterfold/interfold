@@ -10,12 +10,12 @@ state.
 
 ## Map
 
-| Location                                             | Responsibility                                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| [`lib.rs`](src/lib.rs)                               | Builder, HTTP admission/body handling, domain validation, runner invocation, and callback delivery. |
-| [`types.rs`](src/types.rs)                           | Hex-encoded request and completion/failure webhook formats.                                         |
-| [`development runner`](../program-runner/src/dev.rs) | Concrete native/mock-proof consumer of the server builder.                                          |
-| [`OpenVM service`](../program-runner/src/openvm.rs)  | Worker-verified project runner with explicit limits.                                                |
+| Location                                     | Responsibility                                                                                      |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [`lib.rs`](src/lib.rs)                       | Builder, HTTP admission/body handling, domain validation, runner invocation, and callback delivery. |
+| [`types.rs`](src/types.rs)                   | Hex-encoded request and completion/failure webhook formats.                                         |
+| [`development runner`](../runner/src/dev.rs) | Concrete native/mock-proof consumer of the server builder.                                          |
+| [`OpenVM service`](../runner/src/openvm.rs)  | Worker-verified project runner with explicit limits.                                                |
 
 ## Usage and job lifecycle
 
@@ -38,7 +38,7 @@ input.
 Request metadata binds exact full E3/domain fields and one commitment/slot/parent per ciphertext
 where provided. Slots are 20 bytes and parents fit uint40; coercing lengths changes the application
 leaf. The shared computation derives roots from consumed bytes, not caller-supplied roots. See
-[encrypted computation](../../docs/architecture/encrypted-computation.md).
+[encrypted computation](../../../docs/architecture/encrypted-computation.md).
 
 Callbacks require HTTP(S), a host, no credentials, and no fragment. Redirects are disabled;
 connections have five-second and whole requests 30-second bounds. Transient transport failures, 408,
@@ -66,7 +66,7 @@ require it; do not claim accepted HTTP means recoverable completion.
 The project-specific OpenVM service links that project's program and checks its worker before
 serving. Native and guest policy must agree, but genuine proof identity still depends on
 executable/VM/keys and deployed receipt verifiers. See
-[OpenVM prover operations](../openvm-prover/README.md); explicit `program.dev` is unproved and is
+[OpenVM prover operations](../../openvm-prover/README.md); explicit `program.dev` is unproved and is
 not a fallback for failed production proving.
 
 ## Tests

@@ -32,7 +32,7 @@ There is no authentication or TLS. Keep the control socket local. Its manual HTT
 content-length framing, not arbitrary chunked requests, and is not a general-purpose HTTP server
 with framework body/time limits. Handler errors become HTTP 500 responses.
 
-Use [program-server](../../program-server/README.md) for the separate computation-job HTTP API.
+Use [program-server](../../program/server/README.md) for the separate computation-job HTTP API.
 
 ## Tests
 

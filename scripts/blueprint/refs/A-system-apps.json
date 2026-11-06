@@ -69,7 +69,7 @@
   {
     "id": "A8",
     "supported": true,
-    "refs": ["templates/default/server/runner.ts@36@/run_compute", "crates/program-server/src/lib.rs@250@.route(\"/run_compute\""],
+    "refs": ["templates/default/server/runner.ts@36@/run_compute", "crates/program/server/src/lib.rs@250@.route(\"/run_compute\""],
     "line_text": [
       "const response = await fetch(`${PROGRAM_RUNNER_URL}/run_compute`, {",
       ".route(\"/run_compute\", web::post().to(handle_compute))"
@@ -80,8 +80,8 @@
     "id": "A9",
     "supported": true,
     "refs": [
-      "crates/program-server/src/lib.rs@111@pub fn new<F, Fut>(callback: F)",
-      "crates/program-runner/src/dev.rs@63@ComputeManager::with_published("
+      "crates/program/server/src/lib.rs@111@pub fn new<F, Fut>(callback: F)",
+      "crates/program/runner/src/dev.rs@63@ComputeManager::with_published("
     ],
     "line_text": ["pub fn new<F, Fut>(callback: F) -> Self", "let mut manager = ComputeManager::with_published("],
     "note": "program-server hosts /run_compute and hands each job to the callback it is built with; program-runner supplies that callback and calls compute-provider (dev runner ComputeManager, OpenVM service via openvm-host)."
@@ -90,7 +90,7 @@
     "id": "A10",
     "supported": true,
     "refs": [
-      "crates/compute-provider/src/secure_process.rs@225@let output = processor(FHEProcessorInput {",
+      "crates/program/compute-provider/src/secure_process.rs@225@let output = processor(FHEProcessorInput {",
       "templates/default/program/src/lib.rs@28@pub fn fhe_processor("
     ],
     "line_text": ["let output = processor(FHEProcessorInput {", "pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {"],
@@ -99,7 +99,10 @@
   {
     "id": "A11",
     "supported": true,
-    "refs": ["crates/openvm-host/src/lib.rs@274@pub async fn prove(", "crates/openvm-host/src/lib.rs@303@input_path.as_os_str()"],
+    "refs": [
+      "crates/program/openvm-host/src/lib.rs@274@pub async fn prove(",
+      "crates/program/openvm-host/src/lib.rs@303@input_path.as_os_str()"
+    ],
     "line_text": ["pub async fn prove(", "input_path.as_os_str(),"],
     "note": "Prover::prove runs ComputeInput natively with compute-provider, then passes the input file to the OpenVM worker's prove command."
   },

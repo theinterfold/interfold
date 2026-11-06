@@ -51,7 +51,7 @@ COPY crates/testing/bfv-support/Cargo.toml ./testing/bfv-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
 COPY crates/ciphernode/builder/Cargo.toml ./ciphernode/builder/Cargo.toml
 COPY crates/ciphernode/config/Cargo.toml ./ciphernode/config/Cargo.toml
-COPY crates/compute-provider/Cargo.toml ./compute-provider/Cargo.toml
+COPY crates/program/compute-provider/Cargo.toml ./program/compute-provider/Cargo.toml
 COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
@@ -76,14 +76,14 @@ COPY crates/testing/layout-lock/Cargo.toml ./testing/layout-lock/Cargo.toml
 COPY crates/diagnostics/logger/Cargo.toml ./diagnostics/logger/Cargo.toml
 COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
-COPY crates/openvm-host/Cargo.toml ./openvm-host/Cargo.toml
-COPY crates/openvm-types/Cargo.toml ./openvm-types/Cargo.toml
+COPY crates/program/openvm-host/Cargo.toml ./program/openvm-host/Cargo.toml
+COPY crates/program/openvm-types/Cargo.toml ./program/openvm-types/Cargo.toml
 COPY crates/parity-matrix/Cargo.toml ./parity-matrix/Cargo.toml
 COPY crates/zk/prover/Cargo.toml ./zk/prover/Cargo.toml
 COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
 COPY crates/polynomial/fhe-adapter/Cargo.toml ./polynomial/fhe-adapter/Cargo.toml
-COPY crates/program-runner/Cargo.toml ./program-runner/Cargo.toml
-COPY crates/program-server/Cargo.toml ./program-server/Cargo.toml
+COPY crates/program/runner/Cargo.toml ./program/runner/Cargo.toml
+COPY crates/program/server/Cargo.toml ./program/server/Cargo.toml
 COPY crates/state/request/Cargo.toml ./state/request/Cargo.toml
 COPY crates/safe/Cargo.toml ./safe/Cargo.toml
 COPY crates/sdk/Cargo.toml ./sdk/Cargo.toml

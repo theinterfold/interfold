@@ -35,7 +35,7 @@ public contracts.
 checks; Cargo manifests own dependency edges. Domain evidence sections name representative guards,
 not complete coverage. For client-facing recovery limits see the
 [indexer](../../crates/evm/indexer/README.md) and
-[compute service](../../crates/program-server/README.md).
+[compute service](../../crates/program/server/README.md).
 
 When maintaining a domain, distinguish its required contract, actual implementation, test evidence,
 and remaining gaps. A passing focused test is not proof of every security or recovery property. Keep

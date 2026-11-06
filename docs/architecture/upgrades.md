@@ -310,7 +310,7 @@ Project program tooling uses a separate `runner/` crate and `e3-program-runner`.
 `.interfold/support` must adopt the template runner and remove the old workspace members before CLI
 compile/start succeeds. This source-layout migration is not a node-state reset or permission to
 change the guest's processor, policy, or deployed receipt identity. Follow the
-[runner guide](../../crates/program-runner/README.md#compatibility-and-limits).
+[runner guide](../../crates/program/runner/README.md#compatibility-and-limits).
 
 Counters never decrease. For bad node-only code, pause/drain and publish restored safe behavior
 under a new release ID and **higher generation**. For protocol/contracts, restore safety under
