@@ -51,6 +51,7 @@ members = [
   "crates/ciphernode/chain",
   "crates/ciphernode/engine",
   "crates/ciphernode/jobs",
+  "crates/state/blobs",
   "crates/state/journal",
   "crates/testing/sim",
   "crates/task-pool",
@@ -153,6 +154,7 @@ e3-zk-witness = { version = "0.20.0-dev.3", path = "./crates/zk/witness" }
 e3-zk-samples = { path = "./crates/zk/samples" }
 e3-parity-matrix = { version = "0.20.0-dev.3", path = "./crates/parity-matrix" }
 e3-protocol = { version = "0.20.0-dev.3", path = "./crates/protocol" }
+e3-blobs = { version = "0.20.0-dev.3", path = "./crates/state/blobs" }
 e3-chain = { version = "0.20.0-dev.3", path = "./crates/ciphernode/chain" }
 e3-engine = { version = "0.20.0-dev.3", path = "./crates/ciphernode/engine" }
 e3-jobs = { version = "0.20.0-dev.3", path = "./crates/ciphernode/jobs" }

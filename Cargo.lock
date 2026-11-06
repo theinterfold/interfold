@@ -3621,6 +3621,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-blobs"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy-primitives",
+ "e3-protocol",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "e3-chain"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -4210,6 +4219,7 @@ version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "bincode",
+ "e3-blobs",
  "e3-committee",
  "e3-crypto",
  "e3-fhe-params",

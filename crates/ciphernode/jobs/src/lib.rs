@@ -8,7 +8,6 @@
 //! into one store that the network adapter shares; a secret is stored sealed with the node's
 //! cipher, so the machine and its journal only ever hold a reference to ciphertext.
 
-mod blobs;
 mod decryption;
 mod dkg;
 mod placeholder;
@@ -18,7 +17,7 @@ mod requester;
 mod tests;
 mod trbfv;
 
-pub use blobs::{Blobs, MemoryBlobs};
+pub use e3_blobs::{Blobs, MemoryBlobs};
 #[cfg(any(test, feature = "testing"))]
 pub use requester::encrypt;
 
@@ -33,8 +32,8 @@ use std::fmt::Display;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
-    #[error("blob {0:?} is not in the store")]
-    MissingBlob(BlobRef),
+    #[error(transparent)]
+    MissingBlob(#[from] e3_blobs::MissingBlob),
     #[error("parameter set {0} is not supported by this node")]
     UnsupportedParams(u8),
     #[error("sealing: {0}")]

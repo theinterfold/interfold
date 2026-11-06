@@ -11,6 +11,7 @@ repository.workspace = true
 testing = []
 
 [dependencies]
+e3-blobs = { workspace = true }
 e3-protocol = { workspace = true }
 e3-crypto = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
