@@ -21,14 +21,13 @@ pub use attestation::{AttestationContext, FoldAttestation};
 pub use timing::DkgTiming;
 
 use crate::{
-    node::{Body, Effect, Job, PeerMessage, Purpose, Signing, Work},
+    node::{Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Work},
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
 };
 use aggregation::Aggregation;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use decryption_key::DecryptionKeys;
-use e3_committee::CiphernodesCommitteeSize;
 use fold::OwnFold;
 use keys::Keys;
 use roster::Rosters;
@@ -346,7 +345,7 @@ pub struct Dkg {
     me: Address,
     /// The finalized committee, ascending by address; a party's ID is its index.
     members: Vec<Address>,
-    size: CiphernodesCommitteeSize,
+    params: CryptoParams,
     timing: DkgTiming,
     attestation: AttestationContext,
     expelled: BTreeSet<Address>,
@@ -368,7 +367,7 @@ impl Dkg {
         e3: E3Id,
         me: Address,
         members: Vec<Address>,
-        size: CiphernodesCommitteeSize,
+        params: CryptoParams,
         timing: DkgTiming,
         attestation: AttestationContext,
         now: UnixSecs,
@@ -377,7 +376,7 @@ impl Dkg {
             e3,
             me,
             members,
-            size,
+            params,
             timing,
             attestation,
             expelled: BTreeSet::new(),
@@ -599,11 +598,11 @@ impl Dkg {
     }
 
     fn h(&self) -> usize {
-        self.size.values().h
+        self.params.committee_size.values().h
     }
 
     fn t(&self) -> usize {
-        self.size.values().threshold
+        self.params.committee_size.values().threshold
     }
 
     fn is_member(&self, address: Address) -> bool {
@@ -617,6 +616,7 @@ impl Dkg {
     fn run(&self, work: DkgWork) -> Effect {
         Effect::Run(Job {
             e3: self.e3,
+            params: self.params,
             work: Work::Dkg(work),
         })
     }

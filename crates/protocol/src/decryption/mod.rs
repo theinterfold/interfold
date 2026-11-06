@@ -18,7 +18,10 @@ pub use domain::{committee_hash, decryption_domain};
 
 use crate::{
     failover::Failover,
-    node::{Body, Effect, Job, PeerMessage, Purpose, Signing, Submission, Transaction, Work},
+    node::{
+        Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Submission, Transaction,
+        Work,
+    },
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
 };
@@ -161,7 +164,7 @@ pub struct Decryption {
     e3: E3Id,
     me: Address,
     members: Vec<Address>,
-    threshold: usize,
+    params: CryptoParams,
     roster: Vec<Address>,
     key: Option<BlobRef>,
     published: PublishedKey,
@@ -180,7 +183,7 @@ impl Decryption {
         e3: E3Id,
         me: Address,
         members: Vec<Address>,
-        threshold: usize,
+        params: CryptoParams,
         handover: Handover,
         published: PublishedKey,
     ) -> Self {
@@ -188,7 +191,7 @@ impl Decryption {
             e3,
             me,
             members,
-            threshold,
+            params,
             roster: handover.roster,
             key: handover.key,
             published,
@@ -403,7 +406,7 @@ impl Decryption {
             .filter(|member| self.counts(member) && self.shares.contains_key(*member))
             .copied()
             .collect();
-        if here.len() <= self.threshold {
+        if here.len() <= self.threshold() {
             return Vec::new();
         }
         self.failover
@@ -431,7 +434,7 @@ impl Decryption {
         let valid: Vec<Address> = here
             .iter()
             .filter(|member| verdicts.get(*member) == Some(&true))
-            .take(self.threshold + 1)
+            .take(self.threshold() + 1)
             .copied()
             .collect();
         let possible = self
@@ -455,7 +458,7 @@ impl Decryption {
                 }))
             })
             .collect();
-        if valid.len() > self.threshold {
+        if valid.len() > self.threshold() {
             self.aggregation = Aggregation::Combining;
             let shares = valid
                 .iter()
@@ -467,10 +470,14 @@ impl Decryption {
                 domain,
                 shares,
             }));
-        } else if possible <= self.threshold {
+        } else if possible <= self.threshold() {
             self.failure = Some(DecryptionFailure::TooFewShares);
         }
         effects
+    }
+
+    fn threshold(&self) -> usize {
+        self.params.committee_size.values().threshold
     }
 
     /// A roster member the chain has not expelled.
@@ -481,6 +488,7 @@ impl Decryption {
     fn run(&self, work: DecryptionWork) -> Effect {
         Effect::Run(Job {
             e3: self.e3,
+            params: self.params,
             work: Work::Decryption(work),
         })
     }

@@ -17,8 +17,8 @@ use crate::{
         OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::{
-        Body, ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, PeerMessage, Signed,
-        Signing, Work, WorkResult,
+        Body, ChainEvent, ChainFact, CryptoParams, Effect, Input, Job, JobDone, LogPosition,
+        PeerMessage, Signed, Signing, Work, WorkResult,
     },
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
@@ -498,7 +498,7 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
         block,
         ChainFact::E3Requested {
             e3,
-            committee_size: CiphernodesCommitteeSize::Minimum,
+            params: params(CiphernodesCommitteeSize::Minimum),
             interfold: INTERFOLD,
             attestation: ATTESTATION,
         },
@@ -506,6 +506,14 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
 }
 
 pub const INTERFOLD: Address = Address::repeat_byte(0x1f);
+
+pub fn params(committee_size: CiphernodesCommitteeSize) -> CryptoParams {
+    CryptoParams {
+        param_set: 0,
+        committee_size,
+        seed: B256::repeat_byte(0x5e),
+    }
+}
 
 pub const ATTESTATION: AttestationContext = AttestationContext {
     registry: Address::repeat_byte(0x8e),

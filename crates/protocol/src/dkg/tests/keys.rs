@@ -10,6 +10,7 @@ use crate::{
     node::{Body, ChainFact, Input, Job, PeerMessage, Work},
     proof::ProofType,
 };
+use e3_committee::CiphernodesCommitteeSize;
 
 #[test]
 fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
@@ -18,6 +19,7 @@ fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
     let effects = node.step(NOW, finalized(11, e3(1), committee()));
     let make = Effect::Run(Job {
         e3: e3(1),
+        params: params(CiphernodesCommitteeSize::Minimum),
         work: Work::Dkg(DkgWork::MakeEncryptionKey),
     });
     assert_eq!(effects, vec![make]);
@@ -36,6 +38,7 @@ fn a_member_makes_signs_and_sends_a_key_its_peers_accept() {
     };
     let check = Effect::Run(Job {
         e3: e3(1),
+        params: params(CiphernodesCommitteeSize::Minimum),
         work: Work::Dkg(DkgWork::CheckEncryptionKey {
             sender: address(ME),
             key: own.public,

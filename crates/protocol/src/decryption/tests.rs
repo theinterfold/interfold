@@ -5,13 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Decryption at its own boundary, fed the inputs the node routes to it. The committee is
-//! operators 1, 2, 3, and ME; each test picks the roster and T.
+//! operators 1, 2, 3, and ME with a Minimum committee's T = 1; each test picks the roster.
 
 use super::*;
 use crate::{
     node::{Input, JobDone, Signed, WorkResult},
     testing::*,
 };
+use e3_committee::CiphernodesCommitteeSize;
 
 const NOW: u64 = 150_000;
 const PLAINTEXT_BUDGET: u64 = 10 * 60;
@@ -33,7 +34,7 @@ fn members(operators: &[u64]) -> Vec<Address> {
     members
 }
 
-fn decryption(me: u64, roster: &[u64], threshold: usize, key: bool) -> Decryption {
+fn decryption(me: u64, roster: &[u64], key: bool) -> Decryption {
     let committee = members(&ordered());
     let handover = Handover {
         roster: members(roster),
@@ -49,7 +50,7 @@ fn decryption(me: u64, roster: &[u64], threshold: usize, key: bool) -> Decryptio
         e3(1),
         address(me),
         committee,
-        threshold,
+        params(CiphernodesCommitteeSize::Minimum),
         handover,
         published,
     )
@@ -80,8 +81,8 @@ fn deliver(decryption: &mut Decryption, now: UnixSecs, input: Input) -> Vec<Effe
 }
 
 /// Operator `me`, a roster member that decrypted and sent its share.
-fn with_its_share(me: u64, roster: &[u64], threshold: usize) -> Decryption {
-    let mut decryption = decryption(me, roster, threshold, true);
+fn with_its_share(me: u64, roster: &[u64]) -> Decryption {
+    let mut decryption = decryption(me, roster, true);
     decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
     let effects = deliver(
         &mut decryption,
@@ -124,7 +125,7 @@ fn combined(effects: &[Effect]) -> Vec<Vec<Address>> {
 #[test]
 fn a_roster_member_decrypts_with_its_sealed_key_under_the_contract_s_domain() {
     let [a, b, ..] = ordered();
-    let mut decryption = decryption(a, &[a, b], 1, true);
+    let mut decryption = decryption(a, &[a, b], true);
     let effects = decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
     let domain = decryption_domain(
         e3(1),
@@ -144,7 +145,7 @@ fn a_roster_member_decrypts_with_its_sealed_key_under_the_contract_s_domain() {
 #[test]
 fn a_member_without_a_decryption_key_does_not_decrypt() {
     let [a, b, c, _] = ordered();
-    let mut decryption = decryption(c, &[a, b], 1, false);
+    let mut decryption = decryption(c, &[a, b], false);
     let effects = decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
     assert!(works(&effects).is_empty());
 }
@@ -152,7 +153,7 @@ fn a_member_without_a_decryption_key_does_not_decrypt() {
 #[test]
 fn a_roster_member_sends_shares_its_peers_accept() {
     let [a, b, ..] = ordered();
-    let mut decryption = decryption(a, &[a, b], 1, true);
+    let mut decryption = decryption(a, &[a, b], true);
     decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
     let effects = deliver(
         &mut decryption,
@@ -169,7 +170,7 @@ fn a_roster_member_sends_shares_its_peers_accept() {
 }
 
 fn decryption_of(me: u64, roster: &[u64]) -> Decryption {
-    let mut decryption = decryption(me, roster, 1, false);
+    let mut decryption = decryption(me, roster, false);
     decryption.ciphertext_ready(NOW, CIPHERTEXT, DECRYPTION_DEADLINE);
     decryption
 }
@@ -189,7 +190,7 @@ fn only_a_roster_member_s_first_correctly_signed_shares_count() {
 #[test]
 fn the_aggregator_checks_shares_once_t_plus_one_are_here() {
     let [a, b, ..] = ordered();
-    let mut decryption = with_its_share(a, &[a, b], 1);
+    let mut decryption = with_its_share(a, &[a, b]);
     let effects = deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
     assert_eq!(checked(&effects), members(&[a, b]));
 }
@@ -197,7 +198,7 @@ fn the_aggregator_checks_shares_once_t_plus_one_are_here() {
 #[test]
 fn the_aggregator_combines_exactly_t_plus_one_valid_shares() {
     let [a, b, c, _] = ordered();
-    let mut decryption = with_its_share(a, &[a, b, c], 1);
+    let mut decryption = with_its_share(a, &[a, b, c]);
     deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
     deliver(&mut decryption, NOW, decryption_shares(e3(1), c, c));
     deliver(
@@ -216,7 +217,7 @@ fn the_aggregator_combines_exactly_t_plus_one_valid_shares() {
 #[test]
 fn a_failed_share_waits_for_a_backup() {
     let [a, b, c, _] = ordered();
-    let mut decryption = with_its_share(a, &[a, b, c], 1);
+    let mut decryption = with_its_share(a, &[a, b, c]);
     deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
     deliver(
         &mut decryption,
@@ -242,7 +243,7 @@ fn a_failed_share_waits_for_a_backup() {
 #[test]
 fn decryption_fails_once_t_plus_one_valid_shares_are_impossible() {
     let [a, b, ..] = ordered();
-    let mut decryption = with_its_share(a, &[a, b], 1);
+    let mut decryption = with_its_share(a, &[a, b]);
     deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
     deliver(
         &mut decryption,
@@ -255,7 +256,7 @@ fn decryption_fails_once_t_plus_one_valid_shares_are_impossible() {
 #[test]
 fn the_aggregator_asks_the_chain_writer_to_publish_the_plaintext() {
     let [a, b, ..] = ordered();
-    let mut decryption = with_its_share(a, &[a, b], 1);
+    let mut decryption = with_its_share(a, &[a, b]);
     deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
     deliver(
         &mut decryption,
@@ -280,7 +281,7 @@ fn the_aggregator_asks_the_chain_writer_to_publish_the_plaintext() {
 #[test]
 fn the_next_member_aggregates_when_the_aggregator_s_budget_runs_out() {
     let [a, b, ..] = ordered();
-    let mut decryption = with_its_share(b, &[a, b], 1);
+    let mut decryption = with_its_share(b, &[a, b]);
     let effects = deliver(&mut decryption, NOW, decryption_shares(e3(1), a, a));
     assert!(checked(&effects).is_empty());
     let effects = deliver(&mut decryption, NOW + PLAINTEXT_BUDGET, Input::Tick);
@@ -290,7 +291,7 @@ fn the_next_member_aggregates_when_the_aggregator_s_budget_runs_out() {
 #[test]
 fn decryption_stops_at_its_deadline() {
     let [a, b, ..] = ordered();
-    let mut decryption = with_its_share(a, &[a, b], 1);
+    let mut decryption = with_its_share(a, &[a, b]);
     deliver(&mut decryption, DECRYPTION_DEADLINE, Input::Tick);
     assert_eq!(
         decryption.failure(),

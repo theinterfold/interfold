@@ -16,7 +16,9 @@ use alloy_primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::ChainFact,
-    testing::{address, e3, ATTESTATION, CIPHERTEXT, DECRYPTION_DEADLINE, INTERFOLD, TIMING},
+    testing::{
+        address, e3, params, ATTESTATION, CIPHERTEXT, DECRYPTION_DEADLINE, INTERFOLD, TIMING,
+    },
 };
 
 const FAULTS: Faults = Faults {
@@ -40,7 +42,7 @@ fn committee(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
         0,
         ChainFact::E3Requested {
             e3: e3(1),
-            committee_size: size,
+            params: params(size),
             interfold: INTERFOLD,
             attestation: ATTESTATION,
         },

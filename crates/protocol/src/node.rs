@@ -87,14 +87,25 @@ impl FailureReason {
     }
 }
 
+/// What a request fixed for its E3's cryptography. Every job gets it: the job runner maps the
+/// contract's parameter set to BFV parameters and derives the error size from them and the
+/// committee size; the seed is the E3's shared randomness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CryptoParams {
+    pub param_set: u8,
+    pub committee_size: CiphernodesCommitteeSize,
+    pub seed: B256,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainFact {
     /// `interfold` is the contract that emitted `E3Requested`. The chain adapter takes
     /// `attestation` from the `DkgFoldAttestationContextEstablished` log that the same transaction
-    /// emits just before it.
+    /// emits just before it, and delivers no request whose crypto configuration this node does
+    /// not support.
     E3Requested {
         e3: E3Id,
-        committee_size: CiphernodesCommitteeSize,
+        params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
     },
@@ -172,6 +183,7 @@ impl PeerMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Job {
     pub e3: E3Id,
+    pub params: CryptoParams,
     pub work: Work,
 }
 
@@ -297,12 +309,12 @@ impl Node {
         match event.fact {
             ChainFact::E3Requested {
                 e3,
-                committee_size,
+                params,
                 interfold,
                 attestation,
             } => {
                 if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
-                    let state = E3::new(e3, self.me, committee_size, interfold, attestation);
+                    let state = E3::new(e3, self.me, params, interfold, attestation);
                     self.e3s.insert(e3, state);
                 }
                 Vec::new()

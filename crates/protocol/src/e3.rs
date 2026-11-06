@@ -10,12 +10,11 @@
 use crate::{
     decryption::{Decryption, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming},
-    node::{Body, Effect, PeerMessage, Purpose, Stage, WorkResult},
+    node::{Body, CryptoParams, Effect, PeerMessage, Purpose, Stage, WorkResult},
     resend::Resend,
     BlobRef, E3Id, UnixSecs,
 };
 use alloy_primitives::{Address, Bytes, B256};
-use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +22,7 @@ pub struct E3 {
     id: E3Id,
     me: Address,
     pub stage: Stage,
-    pub committee_size: CiphernodesCommitteeSize,
+    pub params: CryptoParams,
     /// The Interfold contract that holds the request.
     pub interfold: Address,
     pub attestation: AttestationContext,
@@ -40,7 +39,7 @@ impl E3 {
     pub(crate) fn new(
         id: E3Id,
         me: Address,
-        committee_size: CiphernodesCommitteeSize,
+        params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
     ) -> Self {
@@ -48,7 +47,7 @@ impl E3 {
             id,
             me,
             stage: Stage::Requested,
-            committee_size,
+            params,
             interfold,
             attestation,
             dkg: None,
@@ -68,7 +67,7 @@ impl E3 {
             self.id,
             self.me,
             members,
-            self.committee_size,
+            self.params,
             timing,
             self.attestation,
             now,
@@ -103,10 +102,14 @@ impl E3 {
             committee,
             commitment,
         };
-        let threshold = self.committee_size.values().threshold;
         let members = dkg.members().to_vec();
         self.decryption = Some(Decryption::new(
-            self.id, self.me, members, threshold, handover, published,
+            self.id,
+            self.me,
+            members,
+            self.params,
+            handover,
+            published,
         ));
     }
 
