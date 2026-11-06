@@ -172,10 +172,10 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
                 self.publish_inputs_ready(ec.clone())?;
             }
 
-            // If we just transitioned to VerifyingC1, dispatch verification
-            // using c1_proofs stored in the new state.
+            // If we just transitioned to VerifyingC1, start verification
+            // of the c1_proofs stored in the new state.
             if became_ready && self.can_run_aggregation_effects() {
-                self.continue_c1_verification(ec)?;
+                self.start_c1_verification(ec)?;
             }
 
             Ok(())

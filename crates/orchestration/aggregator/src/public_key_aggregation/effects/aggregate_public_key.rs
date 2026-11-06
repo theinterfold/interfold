@@ -9,7 +9,8 @@ impl PublicKeyAggregator {
     /// Startup replay delivers this node's earlier C5 proof while effects are fenced. The prover
     /// answers the replayed request with the replayed compute response and a deterministic
     /// signature, so its proof after `EffectsEnabled` repeats the replayed delivery ID and the bus
-    /// drops it. Keep the replayed proof for the C5 phase instead.
+    /// drops it. Keep the replayed proof for the C5 phase instead. The committee filter can hold
+    /// the keyshares until after `EffectsEnabled`, so keep it while collecting, too.
     pub(in crate::actors::publickey_aggregator) fn buffer_replayed_c5_proof(
         &mut self,
         msg: TypedEvent<PkAggregationProofSigned>,
@@ -20,7 +21,8 @@ impl PublicKeyAggregator {
             || !matches!(
                 self.state.get(),
                 Some(
-                    PublicKeyAggregatorState::VerifyingC1 { .. }
+                    PublicKeyAggregatorState::Collecting { .. }
+                        | PublicKeyAggregatorState::VerifyingC1 { .. }
                         | PublicKeyAggregatorState::GeneratingC5Proof { .. }
                 )
             )

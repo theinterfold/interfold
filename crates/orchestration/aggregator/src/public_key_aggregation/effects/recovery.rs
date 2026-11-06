@@ -78,10 +78,7 @@ impl PublicKeyAggregator {
 
         match state {
             PublicKeyAggregatorState::VerifyingC1 { .. } => {
-                if self.early_c1_verification.is_some() {
-                    return self.publish_aggregation_resumed(effects_context);
-                }
-                self.continue_c1_verification(effects_context)
+                self.start_c1_verification(effects_context)
             }
             PublicKeyAggregatorState::GeneratingC5Proof {
                 public_key,
@@ -143,9 +140,21 @@ impl PublicKeyAggregator {
         }
     }
 
-    /// Startup replay held a C1 verdict or a C5 proof of this node, and replay can commit a
-    /// snapshot past the result's own event. `EffectsEnabled` belongs to aggregate zero, so a
-    /// fresh event of this E3's chain carries the writes that apply the result.
+    /// Start C1 verification of the collected keyshares, or apply the verdict held for them.
+    pub(in crate::actors::publickey_aggregator) fn start_c1_verification(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self.early_c1_verification.is_some() {
+            return self.publish_aggregation_resumed(ec);
+        }
+        self.continue_c1_verification(ec)
+    }
+
+    /// A restart can hold a C1 verdict or a C5 proof of this node, and replay can commit a
+    /// snapshot past the result's own event. `EffectsEnabled` belongs to aggregate zero, and the
+    /// committee filter releases replayed keyshares with their logged contexts, so a fresh event
+    /// of this E3's chain carries the writes that apply the result.
     fn publish_aggregation_resumed(&self, cause: EventContext<Sequenced>) -> Result<()> {
         self.bus.publish(
             AggregationResumed {

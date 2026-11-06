@@ -31,6 +31,8 @@ struct ReplayedAggregator {
     history: Addr<HistoryCollector<InterfoldEvent>>,
     e3_id: E3id,
     fhe: Arc<Fhe>,
+    /// The selected committee in party order.
+    committee: Vec<String>,
     /// The selected keyshares in party order.
     keyshares: Vec<ArcBytes>,
     states: Repository<PublicKeyAggregatorState>,
@@ -38,10 +40,46 @@ struct ReplayedAggregator {
     _ctx: E3Context,
 }
 
-/// Replay a selection, its committee, the selected keyshares and the roster into a context whose
-/// effects are off, as startup replay does, until the aggregator that the selection creates
-/// verifies C1.
-async fn replay_until_c1_verification(signed_keyshares: bool) -> Result<ReplayedAggregator> {
+impl ReplayedAggregator {
+    /// The committee filter holds keyshares until this event.
+    fn publish_committee(&self) -> Result<()> {
+        self.bus.publish_without_context(CommitteeFinalized {
+            e3_id: self.e3_id.clone(),
+            committee: self.committee.clone(),
+            scores: Vec::new(),
+            chain_id: 1,
+        })
+    }
+
+    /// Publish the keyshares of the first H parties, then the roster that selects them.
+    fn publish_selected_keyshares(&mut self, signed: bool) -> Result<()> {
+        let h = CiphernodesCommitteeSize::Minimum.values().h;
+        for (party, node) in self.committee.iter().take(h).enumerate() {
+            let (pubkey, signed_pk_generation_proof) = if signed {
+                let (keyshare, proof) = keyshare_with_c1_proof(&self.fhe, &self.e3_id)?;
+                (keyshare, Some(proof))
+            } else {
+                (ArcBytes::from_bytes(&[1]), None)
+            };
+            self.keyshares.push(pubkey.clone());
+            self.bus.publish_without_context(KeyshareCreated {
+                pubkey,
+                e3_id: self.e3_id.clone(),
+                node: node.clone(),
+                party_id: party as u64,
+                signed_pk_generation_proof,
+            })?;
+        }
+        self.bus.publish_without_context(CommitmentRosterSelected {
+            e3_id: self.e3_id.clone(),
+            party_ids: (0..h as u64).collect(),
+        })
+    }
+}
+
+/// Replay a selection into a context whose effects are off, as startup replay does. The selection
+/// creates the aggregator.
+async fn replay_selection() -> Result<ReplayedAggregator> {
     let committee_size = CiphernodesCommitteeSize::Minimum.values();
     let (bus, rng, seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
@@ -94,54 +132,35 @@ async fn replay_until_c1_verification(signed_keyshares: bool) -> Result<Replayed
         .clone();
     bus.subscribe_all(&[EventType::All], aggregator);
 
-    bus.publish_without_context(CommitteeFinalized {
-        e3_id: e3_id.clone(),
-        committee: committee.clone(),
-        scores: Vec::new(),
-        chain_id: 1,
-    })?;
-    let mut keyshares = Vec::new();
-    for (party, node) in committee.iter().take(committee_size.h).enumerate() {
-        let (pubkey, signed_pk_generation_proof) = if signed_keyshares {
-            let (keyshare, proof) = keyshare_with_c1_proof(&fhe, &e3_id)?;
-            (keyshare, Some(proof))
-        } else {
-            (ArcBytes::from_bytes(&[1]), None)
-        };
-        keyshares.push(pubkey.clone());
-        bus.publish_without_context(KeyshareCreated {
-            pubkey,
-            e3_id: e3_id.clone(),
-            node: node.clone(),
-            party_id: party as u64,
-            signed_pk_generation_proof,
-        })?;
-    }
-    bus.publish_without_context(CommitmentRosterSelected {
-        e3_id: e3_id.clone(),
-        party_ids: (0..committee_size.h as u64).collect(),
-    })?;
     let states = ctx.repositories().publickey(&e3_id);
-    for _ in 0..200 {
-        bus.flush_event_pipeline().await?;
-        if matches!(
-            states.read().await?,
-            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
-        ) {
-            return Ok(ReplayedAggregator {
-                bus,
-                history,
-                e3_id,
-                fhe,
-                keyshares,
-                states,
-                store,
-                _ctx: ctx,
-            });
-        }
-        actix::clock::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the aggregator did not collect the selected keyshares")
+    Ok(ReplayedAggregator {
+        bus,
+        history,
+        e3_id,
+        fhe,
+        committee,
+        keyshares: Vec::new(),
+        states,
+        store,
+        _ctx: ctx,
+    })
+}
+
+/// Also replay the committee, the selected keyshares and the roster, until the aggregator verifies
+/// C1.
+async fn replay_until_c1_verification(signed_keyshares: bool) -> Result<ReplayedAggregator> {
+    let mut replayed = replay_selection().await?;
+    replayed.publish_committee()?;
+    replayed.publish_selected_keyshares(signed_keyshares)?;
+    assert!(
+        reaches_state(&replayed.states, &replayed.bus, |state| matches!(
+            state,
+            PublicKeyAggregatorState::VerifyingC1 { .. }
+        ))
+        .await?,
+        "the aggregator did not collect the selected keyshares"
+    );
+    Ok(replayed)
 }
 
 fn c1_verdict(e3_id: &E3id) -> ShareVerificationComplete {
@@ -402,6 +421,7 @@ async fn an_aggregator_created_during_replay_applies_its_replayed_c5_proof() -> 
         states,
         store,
         _ctx,
+        ..
     } = replay_until_c1_verification(true).await?;
     bus.publish_without_context(c1_verdict(&e3_id))?;
     bus.publish_without_context(signed_c5_proof(&e3_id, c5_signals_for(&fhe, &keyshares)?))?;
@@ -410,6 +430,50 @@ async fn an_aggregator_created_during_replay_applies_its_replayed_c5_proof() -> 
     bus.publish_without_context(EffectsEnabled::new())?;
     assert!(
         reaches_state(&states, &bus, |state| matches!(
+            state,
+            PublicKeyAggregatorState::GeneratingC5Proof {
+                c5_proof_pending: Some(_),
+                ..
+            }
+        ))
+        .await?,
+        "the replayed C5 proof was not applied"
+    );
+    Ok(())
+}
+
+/// The committee filter holds keyshares until the committee is finalized, and startup can deliver
+/// that chain event after `EffectsEnabled`. The C1 verdict and the C5 proof of this node are then
+/// replayed while the aggregator still collects. The filter releases the keyshares with their
+/// logged contexts, and replay committed a snapshot past both results, so the store rejects writes
+/// under the revisions of the keyshares and of both results.
+#[actix::test]
+async fn an_aggregator_collecting_during_replay_applies_its_replayed_c5_proof() -> Result<()> {
+    let mut replayed = replay_selection().await?;
+    replayed.publish_selected_keyshares(true)?;
+    let ReplayedAggregator {
+        bus,
+        history,
+        e3_id,
+        fhe,
+        keyshares,
+        states,
+        store,
+        ..
+    } = &replayed;
+    bus.publish_without_context(c1_verdict(e3_id))?;
+    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, keyshares)?))?;
+    bus.flush_event_pipeline().await?;
+    assert!(matches!(
+        states.read().await?,
+        Some(PublicKeyAggregatorState::Collecting { .. })
+    ));
+    commit_replay_past(store, history, c5_proof_logged).await?;
+
+    bus.publish_without_context(EffectsEnabled::new())?;
+    replayed.publish_committee()?;
+    assert!(
+        reaches_state(states, bus, |state| matches!(
             state,
             PublicKeyAggregatorState::GeneratingC5Proof {
                 c5_proof_pending: Some(_),
