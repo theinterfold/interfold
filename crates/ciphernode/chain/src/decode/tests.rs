@@ -32,7 +32,7 @@ fn request(config: B256) -> Vec<RawLog> {
         registry: c.registry,
         dkgFoldAttestationVerifier: Address::repeat_byte(0x5f),
     };
-    let cap = extra::CommitteeBondOwnerCapEnabled {
+    let cap = ICiphernodeRegistry::CommitteeBondOwnerCapEnabled {
         e3Id: U256::from(7),
     };
     vec![
@@ -117,9 +117,9 @@ fn the_key_proof_names_the_roster_by_committee_slot() {
         pkCommitment: commitment,
         proof: proof.into(),
     };
-    let facts = facts(&[log(c.registry, &published, 3, 0)]);
-    let [ChainFact::KeyPublished { roster, .. }] = facts.as_slice() else {
-        panic!("a published key, got {facts:?}");
+    let decoded = decode(&c, &[log(c.registry, &published, 3, 0)]).unwrap();
+    let [Decoded::Read(PendingRead::Key { roster, .. })] = decoded.as_slice() else {
+        panic!("a published key, got {decoded:?}");
     };
     assert_eq!(*roster, vec![committee[0], committee[2]]);
 }

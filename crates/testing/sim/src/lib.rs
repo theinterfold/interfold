@@ -22,7 +22,7 @@ use e3_protocol::{
         JobDone, LogPosition, Node, PeerMessage, Stage, Submission, Transaction,
     },
     selection::ticket_score,
-    testing::{address, sign, TIMING},
+    testing::{address, sign, COMPUTE_DEADLINE, TIMING},
     BlobRef, E3Id, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
@@ -122,6 +122,8 @@ pub struct Sim<J = MockJobs> {
     blocks: BTreeMap<UnixSecs, u64>,
     /// What the simulated contracts keep for each E3.
     requests: BTreeMap<E3Id, Request>,
+    /// Facts by the time they are confirmed; the simulated contracts take each at its time.
+    confirming: BTreeMap<UnixSecs, Vec<ChainFact>>,
     now: UnixSecs,
     rng: ChaCha8Rng,
     faults: Faults,
@@ -163,6 +165,7 @@ impl<J: Jobs> Sim<J> {
             next_delivery: 0,
             blocks: BTreeMap::new(),
             requests: BTreeMap::new(),
+            confirming: BTreeMap::new(),
             now: 0,
             rng,
             faults,
@@ -189,25 +192,7 @@ impl<J: Jobs> Sim<J> {
     /// A fact confirmed at `at`, in its own block. Each node reads it after its chain lag.
     pub fn chain(&mut self, at: UnixSecs, fact: ChainFact) {
         let at = at.max(self.now);
-        match &fact {
-            ChainFact::E3Requested { e3, params, .. } => {
-                self.requests.insert(*e3, Request::new(*params));
-            }
-            ChainFact::SeedReady { e3, seed } => {
-                if let Some(request) = self.requests.get_mut(e3) {
-                    request.seed = seed.seed;
-                    request.deadline = seed.deadline;
-                }
-            }
-            ChainFact::CommitteeFinalized { e3, members, .. } => {
-                if let Some(request) = self.requests.get_mut(e3) {
-                    let mut members = members.clone();
-                    members.sort();
-                    request.committee = Some(members);
-                }
-            }
-            _ => {}
-        }
+        self.confirming.entry(at).or_default().push(fact.clone());
         let log_index = self.blocks.entry(at).or_default();
         let event = ChainEvent {
             at: LogPosition {
@@ -257,7 +242,31 @@ impl<J: Jobs> Sim<J> {
         self.requests.get(e3)?.committee.as_deref()
     }
 
+    fn confirm(&mut self) {
+        while let Some(entry) = self.confirming.first_entry() {
+            if *entry.key() > self.now {
+                break;
+            }
+            for fact in entry.remove() {
+                if let ChainFact::E3Requested {
+                    e3,
+                    params,
+                    committee_deadline,
+                    ..
+                } = &fact
+                {
+                    let request = Request::new(*params, *committee_deadline);
+                    self.requests.insert(*e3, request);
+                }
+                if let Some(request) = fact_e3(&fact).and_then(|e3| self.requests.get_mut(&e3)) {
+                    request.apply(&fact);
+                }
+            }
+        }
+    }
+
     fn deliver(&mut self, delivery: Delivery) {
+        self.confirm();
         let node = delivery.to;
         if self.rng.random_bool(self.faults.crash) {
             self.crash(node);
@@ -368,6 +377,7 @@ impl<J: Jobs> Sim<J> {
                             .collect(),
                         committee,
                         commitment: publication.commitment,
+                        compute_deadline: COMPUTE_DEADLINE,
                     }
                 })
             }
@@ -376,6 +386,15 @@ impl<J: Jobs> Sim<J> {
                     e3,
                     stage: Stage::Complete,
                 }),
+            Transaction::MarkFailed => {
+                let (deadline, reason) = request.timeout;
+                let fails = !request.completed && !request.failed && now > deadline;
+                request.failed |= fails;
+                fails.then_some(ChainFact::Failed { e3, reason })
+            }
+            Transaction::SettleFailure => (request.failed
+                && !std::mem::replace(&mut request.settled, true))
+            .then_some(ChainFact::FailureSettled { e3 }),
         };
         let ciphertext = match (&fact, &submission.transaction) {
             (Some(_), Transaction::PublishCommittee(publication)) => {
@@ -438,20 +457,51 @@ struct Request {
     committee: Option<Vec<Address>>,
     key_published: bool,
     completed: bool,
+    /// When the stage the E3 is in fails, and why.
+    timeout: (UnixSecs, FailureReason),
+    failed: bool,
+    settled: bool,
 }
 
 impl Request {
-    fn new(params: CryptoParams) -> Self {
+    fn new(params: CryptoParams, committee_deadline: UnixSecs) -> Self {
         Self {
             params,
             n: params.committee_size.values().n,
             seed: U256::ZERO,
-            deadline: UnixSecs::MAX,
+            deadline: committee_deadline,
             tickets: BTreeMap::new(),
             finalized: false,
             committee: None,
             key_published: false,
             completed: false,
+            timeout: (committee_deadline, FailureReason::CommitteeFormationTimeout),
+            failed: false,
+            settled: false,
+        }
+    }
+
+    fn apply(&mut self, fact: &ChainFact) {
+        match fact {
+            ChainFact::SeedReady { seed, .. } => {
+                self.seed = seed.seed;
+                self.deadline = seed.deadline;
+                self.timeout = (seed.deadline, FailureReason::CommitteeFormationTimeout);
+            }
+            ChainFact::CommitteeFinalized { members, dkg, .. } => {
+                let mut members = members.clone();
+                members.sort();
+                self.committee = Some(members);
+                self.timeout = (dkg.deadline, FailureReason::DkgTimeout);
+            }
+            ChainFact::KeyPublished {
+                compute_deadline, ..
+            } => self.timeout = (*compute_deadline, FailureReason::ComputeTimeout),
+            ChainFact::CiphertextReady { deadline, .. } => {
+                self.timeout = (*deadline, FailureReason::DecryptionTimeout)
+            }
+            ChainFact::Failed { .. } => self.failed = true,
+            _ => {}
         }
     }
 
@@ -477,6 +527,28 @@ impl Request {
         members.sort();
         Some(Some(members))
     }
+}
+
+/// The E3 a fact is about; chain-wide facts name none.
+fn fact_e3(fact: &ChainFact) -> Option<E3Id> {
+    let e3 = match fact {
+        ChainFact::E3Requested { e3, .. }
+        | ChainFact::SeedReady { e3, .. }
+        | ChainFact::CommitteeFinalized { e3, .. }
+        | ChainFact::KeyPublished { e3, .. }
+        | ChainFact::CiphertextReady { e3, .. }
+        | ChainFact::StageChanged { e3, .. }
+        | ChainFact::FailureSettled { e3 }
+        | ChainFact::Failed { e3, .. }
+        | ChainFact::MemberExpelled { e3, .. } => e3,
+        ChainFact::VoteValidity { .. }
+        | ChainFact::OperatorActive { .. }
+        | ChainFact::TicketBalance { .. }
+        | ChainFact::BondOwner { .. }
+        | ChainFact::EligibilityReset
+        | ChainFact::IdentityPolicy { .. } => return None,
+    };
+    Some(*e3)
 }
 
 #[cfg(test)]

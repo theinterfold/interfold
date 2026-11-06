@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::testing::{contracts, e3_requested, log, CONFIG, RANDOMNESS};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Bytes, B256};
+use alloy_sol_types::SolValue;
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider};
 use e3_protocol::{
     dkg::AttestationContext,
@@ -20,8 +21,11 @@ const TIMING: DkgTiming = DkgTiming {
     deadline: 900,
     window: 300,
 };
+const COMPUTE_DEADLINE: UnixSecs = 1_500;
 const DECRYPTION_DEADLINE: UnixSecs = 2_000;
+const RANDOMNESS_DEADLINE: UnixSecs = 60;
 const TICKET_PRICE: U256 = U256::from_limbs([5, 0, 0, 0]);
+const KEY_COMMITMENT: B256 = B256::repeat_byte(0x99);
 const SEED: CommitteeSeed = CommitteeSeed {
     seed: U256::from_limbs([42, 0, 0, 0]),
     deadline: 500,
@@ -78,16 +82,21 @@ impl Rpc for FakeNode {
     async fn sortition(&self, _: U256, block: u64) -> Result<Sortition, RpcError> {
         self.read(block, |chain| Sortition {
             ticket_price: TICKET_PRICE,
-            seed: chain.seed,
+            committee_deadline: chain.seed.map_or(RANDOMNESS_DEADLINE, |seed| seed.deadline),
+            seed: chain.seed.map(|seed| seed.seed),
         })
     }
 
-    async fn dkg_timing(&self, _: U256, block: u64) -> Result<DkgTiming, RpcError> {
-        self.read(block, |_| TIMING)
+    async fn deadlines(&self, _: U256, block: u64) -> Result<Deadlines, RpcError> {
+        self.read(block, |_| Deadlines {
+            dkg: TIMING.deadline,
+            compute: COMPUTE_DEADLINE,
+            decryption: DECRYPTION_DEADLINE,
+        })
     }
 
-    async fn decryption_deadline(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
-        self.read(block, |_| DECRYPTION_DEADLINE)
+    async fn dkg_window(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
+        self.read(block, |_| TIMING.window)
     }
 }
 
@@ -107,8 +116,8 @@ fn stage_changed(block: u64) -> RawLog {
     log(contracts().interfold, &event, block, 1, 0)
 }
 
-/// The logs of one block whose facts need contract state: a seed, a finalized committee, and a
-/// ciphertext.
+/// The logs of one block whose facts need contract state: a seed, a finalized committee, a key,
+/// and a ciphertext.
 fn reads(block: u64) -> Vec<RawLog> {
     let c = contracts();
     let fulfilled = IRandomnessProvider::RandomnessFulfilled {
@@ -125,6 +134,14 @@ fn reads(block: u64) -> Vec<RawLog> {
     let finalized = IInterfold::CommitteeFinalized {
         e3Id: U256::from(7),
     };
+    let mut inputs = vec![B256::ZERO; 9];
+    *inputs.last_mut().unwrap() = KEY_COMMITMENT;
+    let key = ICiphernodeRegistry::CommitteeProofPublished {
+        e3Id: U256::from(7),
+        nodes: vec![Address::repeat_byte(1)],
+        pkCommitment: KEY_COMMITMENT,
+        proof: (Bytes::new(), inputs).abi_encode_params().into(),
+    };
     let ciphertext = IInterfold::CiphertextOutputReferencePublished {
         e3Id: U256::from(7),
         contentHash: B256::repeat_byte(0xc7),
@@ -136,7 +153,8 @@ fn reads(block: u64) -> Vec<RawLog> {
         log(RANDOMNESS, &fulfilled, block, 2, 1),
         log(c.interfold, &finalized, block, 3, 2),
         log(c.registry, &sortition, block, 3, 3),
-        log(c.interfold, &ciphertext, block, 4, 4),
+        log(c.registry, &key, block, 4, 4),
+        log(c.interfold, &ciphertext, block, 5, 5),
     ]
 }
 
@@ -189,6 +207,13 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
             members: vec![Address::repeat_byte(1)],
             dkg: TIMING,
         },
+        ChainFact::KeyPublished {
+            e3: e3(),
+            committee: vec![Address::repeat_byte(1)],
+            roster: vec![Address::repeat_byte(1)],
+            commitment: KEY_COMMITMENT,
+            compute_deadline: COMPUTE_DEADLINE,
+        },
         ChainFact::CiphertextReady {
             e3: e3(),
             ciphertext,
@@ -196,7 +221,13 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
         },
     ];
     assert_eq!(facts, expected);
-    assert_eq!(node.0.lock().unwrap().read_at, [1_000, 1_000, 1_000]);
+    assert!(node
+        .0
+        .lock()
+        .unwrap()
+        .read_at
+        .iter()
+        .all(|block| *block == 1_000));
 }
 
 #[tokio::test]
@@ -221,7 +252,7 @@ async fn a_failed_poll_returns_nothing_and_the_next_one_reads_the_same_blocks() 
     let mut reader = reader(&node, 1_000);
     assert!(matches!(reader.poll().await, Err(ReadError::Rpc(_))));
     node.with(|chain| chain.reads_fail = false);
-    assert_eq!(blocks(&reader.poll().await.unwrap()), [4, 5, 5, 5]);
+    assert_eq!(blocks(&reader.poll().await.unwrap()), [4, 5, 5, 5, 5]);
 }
 
 #[tokio::test]
@@ -285,7 +316,8 @@ async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
             ticket_price: TICKET_PRICE,
             owner_cap: false,
         },
-        seed: Some(SEED),
+        committee_deadline: SEED.deadline,
+        seed: Some(SEED.seed),
     };
     let seed = ChainFact::SeedReady {
         e3: e3(),

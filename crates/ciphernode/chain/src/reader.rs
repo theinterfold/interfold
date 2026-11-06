@@ -32,14 +32,15 @@ pub trait Rpc {
         block: u64,
     ) -> impl Future<Output = Result<Sortition, RpcError>> + Send;
 
-    /// The DKG deadline and window `e3` froze.
-    fn dkg_timing(
+    /// The stage deadlines of `e3`; each is zero until its stage begins.
+    fn deadlines(
         &self,
         e3: U256,
         block: u64,
-    ) -> impl Future<Output = Result<DkgTiming, RpcError>> + Send;
+    ) -> impl Future<Output = Result<Deadlines, RpcError>> + Send;
 
-    fn decryption_deadline(
+    /// The DKG window `e3` froze.
+    fn dkg_window(
         &self,
         e3: U256,
         block: u64,
@@ -50,8 +51,19 @@ pub trait Rpc {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sortition {
     pub ticket_price: U256,
+    /// The randomness deadline until the registry accepts the randomness, then the deadline for
+    /// tickets.
+    pub committee_deadline: UnixSecs,
     /// Once the registry accepted the randomness.
-    pub seed: Option<CommitteeSeed>,
+    pub seed: Option<U256>,
+}
+
+/// The deadlines after which the contract fails an E3 in each stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deadlines {
+    pub dkg: UnixSecs,
+    pub compute: UnixSecs,
+    pub decryption: UnixSecs,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,9 +144,10 @@ impl<R: Rpc> Reader<R> {
         Ok(events)
     }
 
-    /// The fact a read completes. Every value read here is written once, at or before its log's
-    /// block, so the state at the confirmed head `block` holds the log's value, and a node that
-    /// prunes old state still has it.
+    /// The fact a read completes, from the state at the confirmed head `block`, which a node that
+    /// prunes old state still has. Every value read here is written once, at or before its log's
+    /// block, except the committee deadline: the registry moves it when it accepts the
+    /// randomness, and a request read after that carries the seed too.
     async fn read(&self, read: PendingRead, block: u64) -> Result<Option<ChainEvent>, RpcError> {
         let (at, time, fact) = match read {
             PendingRead::Request {
@@ -158,6 +171,7 @@ impl<R: Rpc> Reader<R> {
                     interfold,
                     attestation,
                     request,
+                    committee_deadline: sortition.committee_deadline,
                     seed: sortition.seed,
                 };
                 (at, time, fact)
@@ -168,14 +182,39 @@ impl<R: Rpc> Reader<R> {
                 e3,
                 members,
             } => {
-                let dkg = self.rpc.dkg_timing(e3.number, block).await?;
+                let dkg = DkgTiming {
+                    deadline: self.rpc.deadlines(e3.number, block).await?.dkg,
+                    window: self.rpc.dkg_window(e3.number, block).await?,
+                };
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })
             }
             PendingRead::Seed { at, time, e3 } => {
-                let Some(seed) = self.rpc.sortition(e3.number, block).await?.seed else {
+                let sortition = self.rpc.sortition(e3.number, block).await?;
+                let Some(seed) = sortition.seed else {
                     return Ok(None);
                 };
+                let seed = CommitteeSeed {
+                    seed,
+                    deadline: sortition.committee_deadline,
+                };
                 (at, time, ChainFact::SeedReady { e3, seed })
+            }
+            PendingRead::Key {
+                at,
+                time,
+                e3,
+                committee,
+                roster,
+                commitment,
+            } => {
+                let fact = ChainFact::KeyPublished {
+                    e3,
+                    committee,
+                    roster,
+                    commitment,
+                    compute_deadline: self.rpc.deadlines(e3.number, block).await?.compute,
+                };
+                (at, time, fact)
             }
             PendingRead::Ciphertext {
                 at,
@@ -183,11 +222,10 @@ impl<R: Rpc> Reader<R> {
                 e3,
                 ciphertext,
             } => {
-                let deadline = self.rpc.decryption_deadline(e3.number, block).await?;
                 let fact = ChainFact::CiphertextReady {
                     e3,
                     ciphertext,
-                    deadline,
+                    deadline: self.rpc.deadlines(e3.number, block).await?.decryption,
                 };
                 (at, time, fact)
             }

@@ -16,7 +16,7 @@ use alloy_primitives::U256;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::{ChainFact, CommitteeSeed},
-    testing::{address, e3, params, ATTESTATION, INTERFOLD, REQUEST, TIMING},
+    testing::{address, e3, params, ATTESTATION, COMMITTEE_DEADLINE, INTERFOLD, REQUEST, TIMING},
 };
 
 const FAULTS: Faults = Faults {
@@ -64,6 +64,7 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
             interfold: INTERFOLD,
             attestation: ATTESTATION,
             request: REQUEST,
+            committee_deadline: COMMITTEE_DEADLINE,
             seed: None,
         },
     );
@@ -73,7 +74,7 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
             e3: e3(1),
             seed: CommitteeSeed {
                 seed: U256::from(seed),
-                deadline: 100,
+                deadline: COMMITTEE_DEADLINE,
             },
         },
     );

@@ -4,15 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Contracts, RawLog, Rpc, RpcError, Sortition};
+use crate::{Contracts, Deadlines, RawLog, Rpc, RpcError, Sortition};
 use alloy::{eips::BlockId, providers::Provider, rpc::types::Filter};
 use alloy_primitives::{Address, U256};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
-use e3_protocol::{
-    dkg::DkgTiming,
-    node::{CommitteeSeed, LogPosition},
-    UnixSecs,
-};
+use e3_protocol::{node::LogPosition, UnixSecs};
 use std::collections::BTreeMap;
 
 /// A chain node over JSON-RPC.
@@ -100,43 +96,33 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .map_err(RpcError::new)?;
         Ok(Sortition {
             ticket_price: request.ticketPrice,
-            seed: seed.ready.then(|| CommitteeSeed {
-                seed: seed.seed,
-                deadline: secs(request.committeeDeadline),
-            }),
+            committee_deadline: secs(request.committeeDeadline),
+            seed: seed.ready.then_some(seed.seed),
         })
     }
 
-    async fn dkg_timing(&self, e3: U256, block: u64) -> Result<DkgTiming, RpcError> {
-        let interfold = IInterfold::new(self.contracts.interfold, &self.provider);
-        let at = BlockId::number(block);
-        let deadlines = interfold
-            .getDeadlines(e3)
-            .block(at)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let windows = interfold
-            .getE3TimeoutConfig(e3)
-            .block(at)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        Ok(DkgTiming {
-            deadline: secs(deadlines.dkgDeadline),
-            window: secs(windows.dkgWindow),
-        })
-    }
-
-    async fn decryption_deadline(&self, e3: U256, block: u64) -> Result<UnixSecs, RpcError> {
-        let interfold = IInterfold::new(self.contracts.interfold, &self.provider);
-        let deadlines = interfold
+    async fn deadlines(&self, e3: U256, block: u64) -> Result<Deadlines, RpcError> {
+        let deadlines = IInterfold::new(self.contracts.interfold, &self.provider)
             .getDeadlines(e3)
             .block(BlockId::number(block))
             .call()
             .await
             .map_err(RpcError::new)?;
-        Ok(secs(deadlines.decryptionDeadline))
+        Ok(Deadlines {
+            dkg: secs(deadlines.dkgDeadline),
+            compute: secs(deadlines.computeDeadline),
+            decryption: secs(deadlines.decryptionDeadline),
+        })
+    }
+
+    async fn dkg_window(&self, e3: U256, block: u64) -> Result<UnixSecs, RpcError> {
+        let windows = IInterfold::new(self.contracts.interfold, &self.provider)
+            .getE3TimeoutConfig(e3)
+            .block(BlockId::number(block))
+            .call()
+            .await
+            .map_err(RpcError::new)?;
+        Ok(secs(windows.dkgWindow))
     }
 }
 

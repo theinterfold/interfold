@@ -9,9 +9,39 @@ use crate::RealJobs;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::Transaction,
-    testing::{e3, DECRYPTION_DEADLINE},
+    testing::{e3, COMPUTE_DEADLINE, DECRYPTION_DEADLINE},
 };
 use std::collections::BTreeSet;
+
+/// The ciphertext comes too late: after the compute deadline a member marks the E3 failed, a
+/// member settles it, and every node lets it go.
+#[test]
+fn a_stalled_e3_is_failed_and_settled_and_every_node_lets_it_go() {
+    for seed in 0..8 {
+        let mut sim = committee(CiphernodesCommitteeSize::Minimum, seed);
+        sim.set_ciphertext_at(COMPUTE_DEADLINE * 10);
+        sim.run_until(DECRYPTION_DEADLINE);
+        let submitted = |wanted: Transaction| {
+            let calls = sim.submissions().iter();
+            calls
+                .filter(|submission| submission.transaction == wanted)
+                .count()
+        };
+        assert!(
+            submitted(Transaction::MarkFailed) > 0,
+            "seed {seed}: marked"
+        );
+        assert!(
+            submitted(Transaction::SettleFailure) > 0,
+            "seed {seed}: settled"
+        );
+        for (index, node) in sim.nodes().iter().enumerate() {
+            assert_eq!(node.node(), node.shadow(), "seed {seed} node {index}");
+            let ended = node.node().e3(&e3(1)).is_none();
+            assert!(ended, "seed {seed} node {index}: ended");
+        }
+    }
+}
 
 #[test]
 fn the_committee_decrypts_one_plaintext_and_every_node_sees_the_e3_complete() {

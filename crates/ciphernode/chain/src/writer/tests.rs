@@ -194,6 +194,38 @@ async fn a_call_lands_after_a_long_outage_with_growing_waits() {
     assert!(waited > Duration::from_secs(60 * 60), "{waited:?}");
 }
 
+/// A node outside the committee marks a failure only after the grace period, and settlement
+/// stays closed while accusations can come.
+#[tokio::test(start_paused = true)]
+async fn failure_calls_wait_out_the_grace_period_and_closed_settlement() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    let e3 = U256::from(7);
+    account.script(|script| {
+        script.estimates.extend([
+            reverts(IInterfold::FailureConditionNotMet { e3Id: e3 }),
+            reverts(IInterfold::MarkE3FailedInGracePeriod {
+                e3Id: e3,
+                gracePeriodEnds: U256::from(3_600),
+            }),
+            Ok(Estimate::Gas(GAS)),
+            reverts(IInterfold::E3NotFailed { e3Id: e3 }),
+            reverts(IInterfold::SettlementBlocked {}),
+        ]);
+    });
+    let writer = writer(&account, &blobs);
+    writer
+        .submit(&submission(Transaction::MarkFailed))
+        .await
+        .unwrap();
+    writer
+        .submit(&submission(Transaction::SettleFailure))
+        .await
+        .unwrap();
+    assert_eq!(account.labels(), ["markE3Failed", "processE3Failure"]);
+    let interfold = contracts().interfold;
+    assert!(account.sent().iter().all(|(call, _)| call.to == interfold));
+}
+
 #[tokio::test]
 async fn a_ticket_gets_twice_its_estimated_gas() {
     let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());

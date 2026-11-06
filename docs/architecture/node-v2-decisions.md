@@ -127,6 +127,14 @@ Each rule is checkable in review.
   hash and its availability coordinates (`CiphertextOutputReferencePublished`). Decryption emits a
   fetch effect for them and starts its jobs when the bytes return, so a slow availability layer
   delays only that E3, and the outbox repeats the fetch after a restart.
+- **D24. Nodes fail stalled E3s and settle failed ones, in turns.** Each chain fact that starts a
+  stage gives the deadline after which the contract fails it. From one second after it, nodes call
+  `markE3Failed` in turns 30 seconds apart: committee members by party ID, and, while a request
+  waits for randomness, its eligible operators in address order. Once the randomness arrives, the
+  finalizer ends the Requested stage instead. After a failure the same turns call
+  `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement.
+  The finalizer takes the same turns. The node judges deadlines by its own clock, so a node that
+  replays old history submits these calls for E3s that ended long ago; each ends at its preflight.
 
 ## Problems in the current node, with the fix above them
 

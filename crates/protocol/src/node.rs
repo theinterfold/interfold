@@ -43,7 +43,7 @@ pub struct LogPosition {
     pub log_index: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Stage {
     Requested,
     CommitteeFinalized,
@@ -123,16 +123,18 @@ pub struct CommitteeSeed {
 pub enum ChainFact {
     /// `interfold` is the contract that emitted `E3Requested`. The chain adapter takes
     /// `attestation` and the owner cap from logs of the same transaction, and delivers no request
-    /// whose crypto configuration this node does not support. `seed` is set when the registry
-    /// already accepted the randomness: a provider can fulfill inside the request's own
-    /// transaction, before `E3Requested`.
+    /// whose crypto configuration this node does not support. `committee_deadline` is the
+    /// registry's: the randomness deadline until it accepts randomness. `seed` is set when the
+    /// registry already accepted it: a provider can fulfill inside the request's own transaction,
+    /// before `E3Requested`.
     E3Requested {
         e3: E3Id,
         params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
         request: CommitteeRequest,
-        seed: Option<CommitteeSeed>,
+        committee_deadline: UnixSecs,
+        seed: Option<U256>,
     },
     /// The registry accepted the request's randomness.
     SeedReady {
@@ -151,6 +153,8 @@ pub enum ChainFact {
         committee: Vec<Address>,
         roster: Vec<Address>,
         commitment: B256,
+        /// The deadline for the ciphertext.
+        compute_deadline: UnixSecs,
     },
     /// `CiphertextOutputReferencePublished`: where the ciphertext's bytes are, and the decryption
     /// deadline.
@@ -162,6 +166,10 @@ pub enum ChainFact {
     StageChanged {
         e3: E3Id,
         stage: Stage,
+    },
+    /// `E3FailureProcessed`: the chain settled a failed E3's payment.
+    FailureSettled {
+        e3: E3Id,
     },
     Failed {
         e3: E3Id,
@@ -357,6 +365,10 @@ pub enum Transaction {
     SubmitTicket { ticket: u64 },
     /// `finalizeCommittee`, after the committee deadline.
     FinalizeCommittee,
+    /// `markE3Failed`, once the E3's stage stalled past its deadline.
+    MarkFailed,
+    /// `processE3Failure`: refunds a failed E3's requester and pays its honest members.
+    SettleFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,14 +434,32 @@ impl Node {
                 interfold,
                 attestation,
                 request,
+                committee_deadline,
                 seed,
             } => {
                 if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
-                    let state = E3::new(e3, self.me, params, interfold, attestation, request);
+                    let slot = request_slot(registry, self.me, &request);
+                    let state = E3::new(
+                        e3,
+                        self.me,
+                        params,
+                        interfold,
+                        attestation,
+                        request,
+                        committee_deadline,
+                        slot,
+                    );
                     self.e3s.insert(e3, state);
                 }
                 match seed {
-                    Some(seed) => self.select(now, e3, seed),
+                    Some(seed) => self.select(
+                        now,
+                        e3,
+                        CommitteeSeed {
+                            seed,
+                            deadline: committee_deadline,
+                        },
+                    ),
                     None => Vec::new(),
                 }
             }
@@ -477,9 +507,10 @@ impl Node {
                 committee,
                 roster,
                 commitment,
+                compute_deadline,
             } => {
                 if let Some(state) = self.e3s.get_mut(&e3) {
-                    state.key_published(committee, roster, commitment);
+                    state.key_published(committee, roster, commitment, compute_deadline);
                 }
                 self.release_held(now, e3)
             }
@@ -494,22 +525,29 @@ impl Node {
             ChainFact::StageChanged { e3, stage } => {
                 match (stage, self.e3s.get_mut(&e3)) {
                     (Stage::Complete, _) => self.end(e3),
-                    (stage, Some(state)) => state.stage = stage,
+                    (stage, Some(state)) => state.advance(stage),
                     (_, None) => {}
                 }
                 Vec::new()
             }
             ChainFact::Failed { e3, reason } => {
-                if reason.ends_without_slashing() {
-                    self.end(e3);
-                } else if let Some(state) = self.e3s.get_mut(&e3) {
-                    let vote_validity = self
-                        .vote_validity
-                        .get(&event.at.chain_id)
-                        .copied()
-                        .unwrap_or_default();
-                    state.stage = Stage::Failed;
-                    state.ends_at = Some(now + SLASHABLE_FAILURE_GRACE + vote_validity);
+                let vote_validity = self
+                    .vote_validity
+                    .get(&event.at.chain_id)
+                    .copied()
+                    .unwrap_or_default();
+                let accusable = match reason.ends_without_slashing() {
+                    true => 0,
+                    false => SLASHABLE_FAILURE_GRACE + vote_validity,
+                };
+                if let Some(state) = self.e3s.get_mut(&e3) {
+                    state.failed(event.time, event.time + accusable);
+                }
+                Vec::new()
+            }
+            ChainFact::FailureSettled { e3 } => {
+                if let Some(state) = self.e3s.get_mut(&e3) {
+                    state.settled();
                 }
                 Vec::new()
             }
@@ -533,10 +571,13 @@ impl Node {
             seed,
             deadline: committee_deadline,
         } = seed;
+        if let Some(state) = self.e3s.get_mut(&e3) {
+            state.seeded();
+        }
         let active_jobs = self
             .e3s
             .values()
-            .filter(|state| state.ticket().is_some())
+            .filter(|state| state.ticket().is_some() && state.stage != Stage::Failed)
             .count() as u64;
         let Some(state) = self.e3s.get(&e3) else {
             return Vec::new();
@@ -629,7 +670,7 @@ impl Node {
         let due: Vec<E3Id> = self
             .e3s
             .iter()
-            .filter(|(_, state)| state.ends_at.is_some_and(|at| at <= now))
+            .filter(|(_, state)| state.ends_at().is_some_and(|at| at <= now))
             .map(|(e3, _)| *e3)
             .collect();
         for e3 in due {
@@ -637,6 +678,17 @@ impl Node {
         }
         effects
     }
+}
+
+/// This node's place among the operators eligible for `request`, in address order: the order in
+/// which they mark it failed while no committee exists.
+fn request_slot(registry: &Registry, me: Address, request: &CommitteeRequest) -> Option<u64> {
+    let at = request.time.saturating_sub(1);
+    registry
+        .eligible_at(at, request.ticket_price)
+        .iter()
+        .position(|eligible| eligible.operator == me)
+        .map(|slot| slot as u64)
 }
 
 impl Machine for Node {
@@ -783,6 +835,7 @@ mod tests {
                 interfold: INTERFOLD,
                 attestation: ATTESTATION,
                 request: CommitteeRequest { time, ..REQUEST },
+                committee_deadline: COMMITTEE_DEADLINE,
                 seed: None,
             },
         )
@@ -803,6 +856,21 @@ mod tests {
                 seed: committee_seed(seed, deadline),
             },
         )
+    }
+
+    fn failure(block: u64, e3: E3Id, reason: FailureReason) -> Input {
+        chain(block, ChainFact::Failed { e3, reason })
+    }
+
+    /// This node's place among `operators` in address order, which is its party ID in a
+    /// committee of them.
+    fn place(operators: &[u64]) -> u64 {
+        let mut addresses: Vec<Address> = operators.iter().copied().map(address).collect();
+        addresses.sort();
+        let place = addresses
+            .iter()
+            .position(|operator| *operator == address(ME));
+        place.expect("this node is one of them") as u64
     }
 
     fn submissions(effects: &[Effect]) -> Vec<Transaction> {
@@ -855,7 +923,7 @@ mod tests {
             unreachable!("a request is a chain fact")
         };
         if let ChainFact::E3Requested { seed, .. } = &mut request.fact {
-            *seed = Some(committee_seed(42, 100));
+            *seed = Some(U256::from(42));
         }
         let effects = node.step(5, Input::Chain(request));
         let (_, ticket) = rank(&[1, 2, ME], 42, true).unwrap();
@@ -1037,33 +1105,92 @@ mod tests {
     fn a_chain_fact_read_again_changes_nothing() {
         let mut node = node();
         node.step(0, requested(10, e3(1)));
-        let failure = chain(
-            11,
-            ChainFact::Failed {
-                e3: e3(1),
-                reason: FailureReason::DkgInvalidShares,
-            },
-        );
-        node.step(100, failure.clone());
-        node.step(500, failure);
-        assert_eq!(node.next_deadline(), Some(100 + SLASHABLE_FAILURE_GRACE));
+        let finalization = finalized(11, e3(1), members([1]));
+        node.step(0, finalization.clone());
+        let before = node.clone();
+        assert!(node.step(0, finalization).is_empty());
+        assert_eq!(node, before);
     }
 
     #[test]
-    fn a_failure_without_slashing_ends_the_e3_at_once() {
+    fn a_node_that_does_not_settle_lets_a_failure_without_slashing_go_at_once() {
         let mut node = node();
         node.step(0, requested(10, e3(1)));
-        node.step(
-            0,
-            chain(
-                11,
-                ChainFact::Failed {
-                    e3: e3(1),
-                    reason: FailureReason::DkgTimeout,
-                },
-            ),
-        );
+        node.step(11, failure(11, e3(1), FailureReason::DkgTimeout));
+        node.step(11, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
+    }
+
+    #[test]
+    fn a_member_settles_a_failed_e3_in_its_turn_and_keeps_it_until_the_chain_has() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        node.step(20, failure(20, e3(1), FailureReason::DkgTimeout));
+        let due = 20 + 1 + 30 * place(&[1, ME]);
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::SettleFailure]);
+        assert!(submissions(&node.step(due + 3_600, Input::Tick)).is_empty());
+        assert!(node.e3(&e3(1)).is_some());
+        node.step(
+            due + 3_600,
+            chain(30, ChainFact::FailureSettled { e3: e3(1) }),
+        );
+        node.step(due + 3_600, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
+    }
+
+    #[test]
+    fn a_stalled_stage_is_marked_failed_once_in_this_node_s_turn() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        let due = TIMING.deadline + 1 + 30 * place(&[1, 2, ME]);
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+        assert!(submissions(&node.step(due + 3_600, Input::Tick)).is_empty());
+    }
+
+    #[test]
+    fn a_published_key_moves_the_watch_from_the_dkg_to_the_ciphertext() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        node.step(0, key_published(12, e3(1), members([1]), members([1])));
+        let after_every_turn = TIMING.deadline + 30 * 20;
+        assert!(submissions(&node.step(after_every_turn, Input::Tick)).is_empty());
+        let due = COMPUTE_DEADLINE + 1 + 30 * place(&[1, ME]);
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
+    #[test]
+    fn a_request_whose_randomness_never_comes_is_marked_failed() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        let due = COMMITTEE_DEADLINE + 1 + 30 * place(&[1, 2, ME]);
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
+    #[test]
+    fn a_failed_e3_frees_its_ticket() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 1);
+        node.step(1, requested(1, e3(1)));
+        node.step(1, requested(2, e3(2)));
+        node.step(5, seed_ready(5, e3(1), 42, 100));
+        node.step(
+            6,
+            failure(6, e3(1), FailureReason::CommitteeFormationTimeout),
+        );
+        let effects = node.step(7, seed_ready(7, e3(2), 42, 100));
+        let ticket = |tx: &Transaction| matches!(tx, Transaction::SubmitTicket { .. });
+        assert!(submissions(&effects).iter().any(ticket));
     }
 
     #[test]
@@ -1073,13 +1200,7 @@ mod tests {
         node.step(0, requested(10, e3(1)));
         node.step(
             1_000,
-            chain(
-                11,
-                ChainFact::Failed {
-                    e3: e3(1),
-                    reason: FailureReason::DkgInvalidShares,
-                },
-            ),
+            failure(1_000, e3(1), FailureReason::DkgInvalidShares),
         );
         let deadline = 1_000 + SLASHABLE_FAILURE_GRACE + 600;
         assert_eq!(node.next_deadline(), Some(deadline));
@@ -1098,21 +1219,12 @@ mod tests {
             node.step(0, finalized(block + 1, e3(number), members([1])));
         }
         let effects = node.step(0, key_made(e3(2), own_key(0xee)));
-        let fail = |block, number| {
-            chain(
-                block,
-                ChainFact::Failed {
-                    e3: e3(number),
-                    reason: FailureReason::DkgInvalidShares,
-                },
-            )
-        };
-        node.step(100, fail(20, 1));
-        node.step(100, fail(21, 2));
+        node.step(100, failure(20, e3(1), FailureReason::DkgInvalidShares));
+        node.step(100, failure(21, e3(2), FailureReason::DkgInvalidShares));
+        node.step(100, Input::Tick);
         assert!(node.step(100, key_made(e3(1), own_key(0xee))).is_empty());
         assert!(node.step(100, sign(ME, signing(&effects))).is_empty());
         assert!(node.step(100, key_from(e3(2), 1)).is_empty());
-        assert_eq!(node.next_deadline(), Some(100 + SLASHABLE_FAILURE_GRACE));
     }
 
     #[test]

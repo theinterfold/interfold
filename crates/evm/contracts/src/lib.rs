@@ -151,6 +151,7 @@ sol! {
         event RewardClaimed(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
         event E3Failed(uint256 indexed e3Id, uint8 failedAtStage, uint8 reason);
         event E3StageChanged(uint256 indexed e3Id, uint8 previousStage, uint8 newStage);
+        event E3FailureProcessed(uint256 indexed e3Id, uint256 paymentAmount, uint256 honestNodeCount);
         event CommitteeFinalized(uint256 indexed e3Id);
 
         // ── Errors (only those our called functions can revert with) ────────
@@ -391,6 +392,8 @@ sol! {
 
         event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
 
+        event CommitteeBondOwnerCapEnabled(uint256 indexed e3Id);
+        event AccusationVoteValiditySet(uint256 accusationVoteValidity);
         event SortitionCommitteeFinalized(
             uint256 indexed e3Id,
             address[] committee,
@@ -467,6 +470,7 @@ sol! {
         error CommitteeAlreadyPublished();
         error SubmissionWindowClosed();
         error SubmissionWindowNotClosed();
+        error SortitionSeedUnavailable(uint256 e3Id, uint256 requestId);
         error ThresholdNotMet();
         error NodeAlreadySubmitted();
         error CommitteeDeadlineReached();
@@ -569,6 +573,7 @@ sol! {
         event CiphernodeDeregistrationRequested(address indexed operator, uint64 unlockAt);
 
         event OperatorActivationChanged(address indexed operator, bool active);
+        event IdentityPolicyUpdated(uint48 timepoint, address registry, bool required);
 
         event BondOwnerSet(address indexed operator, address indexed bondOwner);
 

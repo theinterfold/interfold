@@ -201,5 +201,5 @@ fn the_dkg_ends_at_its_deadline() {
     let mut node = dealt(ME);
     node.step(TIMING.deadline, Input::Tick);
     assert_eq!(dkg(&node).failure(), Some(DkgFailure::DeadlinePassed));
-    assert_eq!(node.next_deadline(), None);
+    assert_eq!(dkg(&node).next_deadline(), None);
 }

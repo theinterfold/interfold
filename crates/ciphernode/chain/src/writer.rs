@@ -22,8 +22,6 @@ use tracing::{debug, info, warn};
 /// What the shared bindings do not carry.
 mod extra {
     alloy_sol_types::sol! {
-        error SortitionSeedUnavailable(uint256 e3Id, uint256 requestId);
-
         /// `DkgFoldAttestationLib.Attestation`.
         struct Attestation {
             uint256 partyId;
@@ -171,18 +169,23 @@ fn calls(
     blobs: &impl Blobs,
     submission: &Submission,
 ) -> Result<Vec<Call>, WriteError> {
+    use IInterfold::{
+        E3NotFailed, FailureConditionNotMet, MarkE3FailedInGracePeriod, SettlementBlocked,
+    };
     use Registry::{
         CommitteeNotFinalized, CommitteeNotPublished, CommitteeNotRequested,
-        SubmissionWindowNotClosed,
+        SortitionSeedUnavailable, SubmissionWindowNotClosed,
     };
     let e3 = submission.e3.number;
-    let registry = |label, data: Vec<u8>, not_yet: &'static [[u8; 4]]| Call {
+    let call = |to, label, data: Vec<u8>, not_yet: &'static [[u8; 4]]| Call {
         label,
-        to: contracts.registry,
+        to,
         data: data.into(),
         gas_multiplier: 1,
         not_yet,
     };
+    let registry = |label, data, not_yet| call(contracts.registry, label, data, not_yet);
+    let interfold = |label, data, not_yet| call(contracts.interfold, label, data, not_yet);
     Ok(match &submission.transaction {
         Transaction::SubmitTicket { ticket } => {
             let data = Registry::submitTicketCall {
@@ -191,7 +194,7 @@ fn calls(
             };
             let not_yet = &[
                 CommitteeNotRequested::SELECTOR,
-                extra::SortitionSeedUnavailable::SELECTOR,
+                SortitionSeedUnavailable::SELECTOR,
             ];
             vec![Call {
                 gas_multiplier: TICKET_GAS_MULTIPLIER,
@@ -243,13 +246,23 @@ fn calls(
                 plaintextOutput: blobs.get(&publication.plaintext)?.into(),
                 proof: proof_calldata(blobs, &publication.proof)?,
             };
-            vec![Call {
-                label: "publishPlaintextOutput",
-                to: contracts.interfold,
-                data: data.abi_encode().into(),
-                gas_multiplier: 1,
-                not_yet: &[],
-            }]
+            vec![interfold("publishPlaintextOutput", data.abi_encode(), &[])]
+        }
+        // Before its grace period ends, the contract takes the call only from committee members.
+        Transaction::MarkFailed => {
+            let data = IInterfold::markE3FailedCall { e3Id: e3 };
+            let not_yet = &[
+                FailureConditionNotMet::SELECTOR,
+                MarkE3FailedInGracePeriod::SELECTOR,
+            ];
+            vec![interfold("markE3Failed", data.abi_encode(), not_yet)]
+        }
+        // With a committee, settlement opens a day after the E3's lifecycle deadline, once no
+        // accusation is open.
+        Transaction::SettleFailure => {
+            let data = IInterfold::processE3FailureCall { e3Id: e3 };
+            let not_yet = &[E3NotFailed::SELECTOR, SettlementBlocked::SELECTOR];
+            vec![interfold("processE3Failure", data.abi_encode(), not_yet)]
         }
     })
 }

@@ -210,7 +210,7 @@ fn a_published_key_ends_the_dkg() {
         key_published(12, e3(1), committee(), members(&[first, second])),
     );
     assert!(dkg(&node).published());
-    assert_eq!(node.next_deadline(), None);
+    assert_eq!(dkg(&node).next_deadline(), None);
     node.step(TIMING.deadline, Input::Tick);
     assert_eq!(dkg(&node).failure(), None);
 }

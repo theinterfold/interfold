@@ -375,6 +375,12 @@ pub const CIPHERTEXT_DATA: DataRef = DataRef {
 /// After the DKG window, so decryption has its own.
 pub const DECRYPTION_DEADLINE: UnixSecs = 200_000;
 
+/// The ciphertext's deadline: after the DKG window, before decryption's.
+pub const COMPUTE_DEADLINE: UnixSecs = 150_000;
+
+/// The committee deadline the registry reports for a request.
+pub const COMMITTEE_DEADLINE: UnixSecs = 100;
+
 /// The chain's key for `e3`, with the committee in the registry's order and the roster.
 pub fn key_published(block: u64, e3: E3Id, committee: Vec<Address>, roster: Vec<Address>) -> Input {
     chain(
@@ -384,6 +390,7 @@ pub fn key_published(block: u64, e3: E3Id, committee: Vec<Address>, roster: Vec<
             committee,
             roster,
             commitment: KEY_COMMITMENT,
+            compute_deadline: COMPUTE_DEADLINE,
         },
     )
 }
@@ -519,6 +526,7 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
             interfold: INTERFOLD,
             attestation: ATTESTATION,
             request: REQUEST,
+            committee_deadline: COMMITTEE_DEADLINE,
             seed: None,
         },
     )

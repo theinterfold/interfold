@@ -19,6 +19,7 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, B256};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct E3 {
@@ -33,11 +34,27 @@ pub struct E3 {
     pub dkg: Option<Dkg>,
     /// From the key's publication on.
     pub decryption: Option<Decryption>,
-    /// When a failed E3's accusation work ends.
-    pub ends_at: Option<UnixSecs>,
     pub request: CommitteeRequest,
     ticket: Option<Ticket>,
     resend: Resend,
+    /// The deadline of each stage whose failure this node watches, as the contract counts it.
+    deadlines: BTreeMap<Stage, UnixSecs>,
+    /// This node's turn to mark the E3 failed and to settle it: its party ID in the committee,
+    /// before that its place among the request's eligible operators.
+    slot: Option<u64>,
+    /// The stage whose failure this node asked for.
+    marked: Option<Stage>,
+    failure: Option<Failure>,
+}
+
+/// The chain failed the E3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Failure {
+    at: UnixSecs,
+    /// Accusations can still need the E3's work until then.
+    accusable_until: UnixSecs,
+    settle_sent: bool,
+    settled: bool,
 }
 
 /// This node's ticket, its rank among the candidates, and the committee deadline.
@@ -49,12 +66,24 @@ pub(crate) struct Ticket {
     finalize_sent: bool,
 }
 
-/// Candidates call `finalizeCommittee` in rank order, 30 seconds apart, because a ranked member
-/// can stay silent; ranks past the twentieth never call it.
-const FINALIZER_STAGGER: UnixSecs = 30;
-const FINALIZER_RANKS: usize = 20;
+/// Nodes that can make the same call take turns, 30 seconds apart from one second after its
+/// deadline, because any of them can stay silent; the contract takes the first call. Places past
+/// the twentieth never call.
+const TURN: UnixSecs = 30;
+const TURNS: u64 = 20;
+
+fn turn(deadline: UnixSecs, place: u64) -> Option<UnixSecs> {
+    (place < TURNS).then(|| deadline + 1 + TURN * place)
+}
+
+/// How long a node that settles a failed E3 keeps it if the settlement never lands, which happens
+/// only when the writer gives the call up. With a committee, the contract opens settlement a day
+/// after the E3's lifecycle deadline and keeps it closed while accusations are open, which appeals
+/// can stretch to 37 days; this bound assumes a lifecycle under three weeks.
+const SETTLEMENT_WAIT: UnixSecs = 60 * 24 * 60 * 60;
 
 impl E3 {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: E3Id,
         me: Address,
@@ -62,6 +91,8 @@ impl E3 {
         interfold: Address,
         attestation: AttestationContext,
         request: CommitteeRequest,
+        committee_deadline: UnixSecs,
+        slot: Option<u64>,
     ) -> Self {
         Self {
             id,
@@ -72,11 +103,61 @@ impl E3 {
             attestation,
             dkg: None,
             decryption: None,
-            ends_at: None,
             request,
             ticket: None,
             resend: Resend::default(),
+            deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
+            slot,
+            marked: None,
+            failure: None,
         }
+    }
+
+    /// Once the registry accepts the randomness, the finalizer ends the Requested stage:
+    /// `finalizeCommittee` fails a committee short of its threshold.
+    pub(crate) fn seeded(&mut self) {
+        self.deadlines.remove(&Stage::Requested);
+    }
+
+    /// The chain moved the E3 to `stage`, unless it already moved it past.
+    pub(crate) fn advance(&mut self, stage: Stage) {
+        self.stage = self.stage.max(stage);
+    }
+
+    /// A stage the chain reached, with the deadline after which the contract fails it.
+    fn reach(&mut self, stage: Stage, deadline: UnixSecs) {
+        self.advance(stage);
+        self.deadlines.insert(stage, deadline);
+    }
+
+    pub(crate) fn failed(&mut self, at: UnixSecs, accusable_until: UnixSecs) {
+        self.advance(Stage::Failed);
+        self.failure.get_or_insert(Failure {
+            at,
+            accusable_until,
+            settle_sent: false,
+            settled: false,
+        });
+    }
+
+    pub(crate) fn settled(&mut self) {
+        if let Some(failure) = &mut self.failure {
+            failure.settled = true;
+        }
+    }
+
+    /// When the node lets a failed E3 go: once accusations cannot need its work, and, if this
+    /// node settles it, once the chain settled it.
+    pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
+        let failure = self.failure?;
+        let settles = self
+            .slot
+            .is_some_and(|slot| turn(failure.at, slot).is_some());
+        let settlement = match settles && !failure.settled {
+            true => failure.at + SETTLEMENT_WAIT,
+            false => failure.at,
+        };
+        Some(failure.accusable_until.max(settlement))
     }
 
     pub(crate) fn finalize(
@@ -85,6 +166,11 @@ impl E3 {
         members: Vec<Address>,
         timing: DkgTiming,
     ) -> Vec<Effect> {
+        self.reach(Stage::CommitteeFinalized, timing.deadline);
+        self.slot = members
+            .iter()
+            .position(|member| *member == self.me)
+            .map(|party| party as u64);
         let (dkg, effects) = Dkg::start(
             self.id,
             self.me,
@@ -95,7 +181,6 @@ impl E3 {
             now,
         );
         self.dkg = Some(dkg);
-        self.stage = Stage::CommitteeFinalized;
         self.sent(now, effects)
     }
 
@@ -107,7 +192,9 @@ impl E3 {
         committee: Vec<Address>,
         roster: Vec<Address>,
         commitment: B256,
+        compute_deadline: UnixSecs,
     ) {
+        self.reach(Stage::KeyPublished, compute_deadline);
         let Some(dkg) = &mut self.dkg else {
             return;
         };
@@ -141,6 +228,7 @@ impl E3 {
         ciphertext: DataRef,
         deadline: UnixSecs,
     ) -> Vec<Effect> {
+        self.reach(Stage::CiphertextReady, deadline);
         let effects = match self.decryption_mut() {
             Some(decryption) => decryption.ciphertext_ready(ciphertext, deadline),
             None => Vec::new(),
@@ -250,6 +338,16 @@ impl E3 {
             }
             effects.push(self.submit(Transaction::FinalizeCommittee));
         }
+        if self.failure_due().is_some_and(|due| now >= due) {
+            self.marked = Some(self.stage);
+            effects.push(self.submit(Transaction::MarkFailed));
+        }
+        if self.settlement_due().is_some_and(|due| now >= due) {
+            if let Some(failure) = &mut self.failure {
+                failure.settle_sent = true;
+            }
+            effects.push(self.submit(Transaction::SettleFailure));
+        }
         if let Some(dkg) = self.dkg_mut() {
             effects.extend(dkg.pass_deadlines(now));
         }
@@ -279,16 +377,38 @@ impl E3 {
                 .chain(decryption)
                 .chain(resend)
                 .chain(self.finalizer_due())
+                .chain(self.failure_due())
                 .min()
         });
-        self.ends_at.into_iter().chain(work.flatten()).min()
+        [self.ends_at(), work.flatten(), self.settlement_due()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
-    /// After the committee deadline, while the chain has not finalized the committee.
+    /// This node's turn after the deadline of the stage it watches.
+    fn failure_due(&self) -> Option<UnixSecs> {
+        if self.marked == Some(self.stage) {
+            return None;
+        }
+        turn(*self.deadlines.get(&self.stage)?, self.slot?)
+    }
+
+    fn settlement_due(&self) -> Option<UnixSecs> {
+        let failure = self
+            .failure
+            .filter(|failure| !failure.settle_sent && !failure.settled)?;
+        turn(failure.at, self.slot?)
+    }
+
+    /// After the committee deadline, in rank order, while the chain has not finalized the
+    /// committee.
     fn finalizer_due(&self) -> Option<UnixSecs> {
         let ticket = self.ticket.filter(|ticket| !ticket.finalize_sent)?;
-        let waiting = self.stage == Stage::Requested && ticket.rank < FINALIZER_RANKS;
-        waiting.then(|| ticket.deadline + 1 + FINALIZER_STAGGER * ticket.rank as UnixSecs)
+        if self.stage != Stage::Requested {
+            return None;
+        }
+        turn(ticket.deadline, ticket.rank as u64)
     }
 
     fn submit(&self, transaction: Transaction) -> Effect {

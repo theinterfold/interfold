@@ -15,15 +15,6 @@ use e3_protocol::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Events the shared bindings do not carry.
-mod extra {
-    alloy_sol_types::sol! {
-        event CommitteeBondOwnerCapEnabled(uint256 indexed e3Id);
-        event AccusationVoteValiditySet(uint256 accusationVoteValidity);
-        event IdentityPolicyUpdated(uint48 timepoint, address registry, bool required);
-    }
-}
-
 /// The contracts of one chain whose logs the node reads.
 #[derive(Clone, Debug)]
 pub struct Contracts {
@@ -84,6 +75,16 @@ pub(crate) enum PendingRead {
         at: LogPosition,
         time: UnixSecs,
         e3: E3Id,
+    },
+    /// `CommitteeProofPublished`, with the roster its proof names: the ciphertext's deadline from
+    /// `getDeadlines`.
+    Key {
+        at: LogPosition,
+        time: UnixSecs,
+        e3: E3Id,
+        committee: Vec<Address>,
+        roster: Vec<Address>,
+        commitment: B256,
     },
     /// `CiphertextOutputReferencePublished`: its decryption deadline from `getDeadlines`.
     Ciphertext {
@@ -197,6 +198,12 @@ impl Decoder<'_> {
                     reason: failure(event.reason)?,
                 }
             }
+            I::E3FailureProcessed::SIGNATURE_HASH => {
+                let event: I::E3FailureProcessed = decode_event(log, "E3FailureProcessed")?;
+                ChainFact::FailureSettled {
+                    e3: self.e3(event.e3Id),
+                }
+            }
             _ => return Ok(None),
         };
         Ok(Some(self.fact(log, fact)))
@@ -214,8 +221,8 @@ impl Decoder<'_> {
                 });
                 return Ok(None);
             }
-            extra::CommitteeBondOwnerCapEnabled::SIGNATURE_HASH => {
-                let event: extra::CommitteeBondOwnerCapEnabled =
+            R::CommitteeBondOwnerCapEnabled::SIGNATURE_HASH => {
+                let event: R::CommitteeBondOwnerCapEnabled =
                     decode_event(log, "CommitteeBondOwnerCapEnabled")?;
                 self.parts(log.transaction, event.e3Id).owner_cap = true;
                 return Ok(None);
@@ -234,12 +241,14 @@ impl Decoder<'_> {
                 let event: R::CommitteeProofPublished =
                     decode_event(log, "CommitteeProofPublished")?;
                 let roster = roster(&event.nodes, &event.proof, event.pkCommitment)?;
-                ChainFact::KeyPublished {
+                return Ok(Some(Decoded::Read(PendingRead::Key {
+                    at: log.at,
+                    time: log.time,
                     e3: self.e3(event.e3Id),
                     committee: event.nodes,
                     roster,
                     commitment: event.pkCommitment,
-                }
+                })));
             }
             R::CommitteeMemberExpelled::SIGNATURE_HASH => {
                 let event: R::CommitteeMemberExpelled =
@@ -249,8 +258,8 @@ impl Decoder<'_> {
                     member: event.node,
                 }
             }
-            extra::AccusationVoteValiditySet::SIGNATURE_HASH => {
-                let event: extra::AccusationVoteValiditySet =
+            R::AccusationVoteValiditySet::SIGNATURE_HASH => {
+                let event: R::AccusationVoteValiditySet =
                     decode_event(log, "AccusationVoteValiditySet")?;
                 ChainFact::VoteValidity {
                     secs: u64::try_from(event.accusationVoteValidity).unwrap_or(u64::MAX),
@@ -296,9 +305,8 @@ impl Decoder<'_> {
                 }
                 ChainFact::EligibilityReset
             }
-            extra::IdentityPolicyUpdated::SIGNATURE_HASH => {
-                let event: extra::IdentityPolicyUpdated =
-                    decode_event(log, "IdentityPolicyUpdated")?;
+            B::IdentityPolicyUpdated::SIGNATURE_HASH => {
+                let event: B::IdentityPolicyUpdated = decode_event(log, "IdentityPolicyUpdated")?;
                 ChainFact::IdentityPolicy {
                     required: event.required,
                 }
