@@ -17,16 +17,32 @@ use alloy_primitives::{Address, Bytes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// What this node dealt: its contribution, which Ready reports and rosters name, and what its C4
-/// and its keyshare need.
+/// What this node dealt: its contribution, which Ready reports and rosters name, and what its C4,
+/// its keyshare, and its fold need.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Dealt {
     pub(super) contribution: Dealer,
     pub(super) pk_share: BlobRef,
     pub(super) own_share: BlobRef,
+    c0: ZkProof,
     pub(super) c1: SignedProof,
     pub(super) c2a: ZkProof,
     pub(super) c2b: ZkProof,
+    c3: Vec<(ProofType, ZkProof)>,
+}
+
+impl Dealt {
+    /// This node's C0-C3 proofs, in the order the fold takes them.
+    pub(super) fn proofs(&self) -> Vec<(ProofType, ZkProof)> {
+        let mut proofs = vec![
+            (ProofType::C0PkBfv, self.c0.clone()),
+            (ProofType::C1PkGeneration, self.c1.proof.clone()),
+            (ProofType::C2aSkShareComputation, self.c2a.clone()),
+            (ProofType::C2bESmShareComputation, self.c2b.clone()),
+        ];
+        proofs.extend(self.c3.iter().cloned());
+        proofs
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,9 +177,16 @@ impl Dkg {
             contribution: Dealer::new(self.me, made.pk_share, &made.c2a, &made.c2b),
             pk_share: made.pk_share,
             own_share: made.own_share,
+            c0: own.proof.clone(),
             c1: c1.clone(),
             c2a: made.c2a.clone(),
             c2b: made.c2b.clone(),
+            c3: made
+                .proofs()
+                .into_iter()
+                .skip(3)
+                .map(|(proof_type, proof)| (proof_type, proof.clone()))
+                .collect(),
         };
         self.phase = Phase::Dealt(own.clone(), Box::new(dealt));
         let mut effects: Vec<Effect> = messages

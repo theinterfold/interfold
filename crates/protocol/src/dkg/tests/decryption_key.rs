@@ -10,15 +10,6 @@ use crate::{
     node::{ChainFact, Job, Work},
 };
 
-/// The first member in party order, after it proposed and accepted the roster of itself and
-/// the second member. Returns the step's effects.
-fn first_with_roster() -> (Node, Vec<Effect>) {
-    let [first, second, third] = ordered();
-    let mut node = verified_all(first);
-    let effects = node.step(NOW, ready(second, &[first, second, third], first));
-    (node, effects)
-}
-
 fn decryption_key_jobs(effects: &[Effect]) -> Vec<&DkgWork> {
     effects
         .iter()
@@ -56,15 +47,6 @@ fn keyshares_sent(effects: &[Effect]) -> Vec<&KeyshareMessage> {
             _ => None,
         })
         .collect()
-}
-
-/// The first member after it made, signed, and sent its C4 proofs.
-fn first_with_decryption_key() -> Node {
-    let [first, ..] = ordered();
-    let (mut node, _) = first_with_roster();
-    let effects = node.step(NOW, decryption_key_made(e3(1), own_decryption_key(0xd4)));
-    node.step(NOW, sign(first, signing(&effects)));
-    node
 }
 
 #[test]

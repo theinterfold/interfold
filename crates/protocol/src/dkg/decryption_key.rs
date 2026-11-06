@@ -171,8 +171,17 @@ impl Dkg {
             c4a,
             c4b: signed.collect(),
         };
+        let mut proofs = dealt.proofs();
+        proofs.extend(
+            made.proofs()
+                .into_iter()
+                .map(|(proof_type, proof)| (proof_type, proof.clone())),
+        );
         self.phase = Phase::DecryptionKeySent(dealt.clone(), made.key);
-        let mut effects = vec![self.gossip(DkgMessage::DecryptionKey(message))];
+        let mut effects = vec![
+            self.gossip(DkgMessage::DecryptionKey(message)),
+            self.start_fold(proofs),
+        ];
         effects.extend(self.send_keyshare_if_due());
         effects
     }
@@ -214,6 +223,7 @@ impl Dkg {
             c1: dealt.c1.clone(),
         };
         self.phase = Phase::KeyshareSent(*key);
+        self.record_keyshare(self.me, message.clone());
         vec![self.gossip(DkgMessage::Keyshare(message))]
     }
 

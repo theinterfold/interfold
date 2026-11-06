@@ -8,7 +8,10 @@
 //! jobs and signatures, and the end of each E3's work.
 
 use crate::{
-    dkg::{Dkg, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult},
+    dkg::{
+        AttestationContext, Dkg, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
+        KeyPublication,
+    },
     E3Id, Machine, Tick, UnixSecs,
 };
 use alloy_primitives::{Address, Bytes, B256};
@@ -80,9 +83,12 @@ impl FailureReason {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainFact {
+    /// The chain adapter takes `attestation` from the `DkgFoldAttestationContextEstablished` log
+    /// that the same transaction emits just before `E3Requested`.
     E3Requested {
         e3: E3Id,
         committee_size: CiphernodesCommitteeSize,
+        attestation: AttestationContext,
     },
     CommitteeFinalized {
         e3: E3Id,
@@ -198,17 +204,34 @@ impl From<Tick> for Input {
     }
 }
 
+/// A transaction for the chain writer, which checks chain state before it submits and retries
+/// temporary failures.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Submission {
+    pub e3: E3Id,
+    pub transaction: Transaction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Transaction {
+    /// `publishCommittee`, then the key's chunks. Another aggregator's equal commitment completes
+    /// it.
+    PublishCommittee(KeyPublication),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
     Run(Job),
     Sign(Signing),
     Gossip(PeerMessage),
+    Submit(Submission),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct E3 {
     pub stage: Stage,
     pub committee_size: CiphernodesCommitteeSize,
+    pub attestation: AttestationContext,
     /// From the committee's finalization on; a node outside the committee ends the E3 instead.
     pub dkg: Option<Dkg>,
     /// When a failed E3's accusation work ends.
@@ -216,10 +239,11 @@ pub struct E3 {
 }
 
 impl E3 {
-    fn new(committee_size: CiphernodesCommitteeSize) -> Self {
+    fn new(committee_size: CiphernodesCommitteeSize, attestation: AttestationContext) -> Self {
         Self {
             stage: Stage::Requested,
             committee_size,
+            attestation,
             dkg: None,
             ends_at: None,
         }
@@ -292,7 +316,11 @@ impl Node {
         }
         self.applied.insert(event.at.chain_id, event.at);
         match event.fact {
-            ChainFact::E3Requested { e3, committee_size } => self.admit(e3, committee_size),
+            ChainFact::E3Requested {
+                e3,
+                committee_size,
+                attestation,
+            } => self.admit(e3, committee_size, attestation),
             ChainFact::CommitteeFinalized {
                 e3,
                 mut members,
@@ -307,8 +335,15 @@ impl Node {
                 let Some(state) = self.e3s.get_mut(&e3) else {
                     return Vec::new();
                 };
-                let (dkg, mut effects) =
-                    Dkg::start(e3, self.me, members, state.committee_size, dkg, now);
+                let (dkg, mut effects) = Dkg::start(
+                    e3,
+                    self.me,
+                    members,
+                    state.committee_size,
+                    dkg,
+                    state.attestation,
+                    now,
+                );
                 state.dkg = Some(dkg);
                 state.stage = Stage::CommitteeFinalized;
                 for message in self.held.take(&e3) {
@@ -321,6 +356,9 @@ impl Node {
                 stage => {
                     if let Some(state) = self.e3s.get_mut(&e3) {
                         state.stage = stage;
+                        if let (Stage::KeyPublished, Some(dkg)) = (stage, state.dkg.as_mut()) {
+                            dkg.key_published();
+                        }
                     }
                 }
             },
@@ -349,11 +387,16 @@ impl Node {
         Vec::new()
     }
 
-    fn admit(&mut self, e3: E3Id, committee_size: CiphernodesCommitteeSize) {
+    fn admit(
+        &mut self,
+        e3: E3Id,
+        committee_size: CiphernodesCommitteeSize,
+        attestation: AttestationContext,
+    ) {
         if self.e3s.contains_key(&e3) || self.ended.contains(&e3) {
             return;
         }
-        self.e3s.insert(e3, E3::new(committee_size));
+        self.e3s.insert(e3, E3::new(committee_size, attestation));
     }
 
     fn end(&mut self, e3: E3Id) {

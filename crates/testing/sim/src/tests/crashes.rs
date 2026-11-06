@@ -56,9 +56,9 @@ fn lifecycle() -> Vec<(UnixSecs, Input)> {
         ),
         (32, key_from(e3(2), 4)),
         (33, key_from(e3(4), 5)),
-        (9_100, Input::Tick),
+        (91_000, Input::Tick),
         (
-            9_200,
+            91_100,
             chain(
                 8,
                 ChainFact::Failed {
@@ -67,7 +67,7 @@ fn lifecycle() -> Vec<(UnixSecs, Input)> {
                 },
             ),
         ),
-        (200_000, Input::Tick),
+        (300_000, Input::Tick),
     ]
 }
 

@@ -7,6 +7,7 @@
 //! The DKG at the node boundary: inputs in, effects and DKG state out. The committee is
 //! Minimum: operators 1, 2, and ME, with H = 2.
 
+mod aggregation;
 mod decryption_key;
 mod keys;
 mod roster;
@@ -20,9 +21,9 @@ use crate::{
 };
 use alloy_primitives::Address;
 
-const NOW: u64 = 9_000;
-const KEY_CUTOFF: u64 = 9_100;
-const SHARE_CHECKPOINT: u64 = 9_750;
+const NOW: u64 = 90_000;
+const KEY_CUTOFF: u64 = 91_000;
+const SHARE_CHECKPOINT: u64 = 97_500;
 
 fn committee() -> Vec<Address> {
     [1, 2, ME].map(address).to_vec()
@@ -141,4 +142,22 @@ fn roster(proposer: u64, dealers: &[u64], node: u64) -> Input {
 fn accepted(node: &Node) -> Option<Vec<Address>> {
     let roster = dkg(node).roster()?;
     Some(roster.iter().map(|dealer| dealer.member).collect())
+}
+
+/// The first member in party order, after it proposed and accepted the roster of itself and
+/// the second member. Returns the step's effects.
+fn first_with_roster() -> (Node, Vec<Effect>) {
+    let [first, second, third] = ordered();
+    let mut node = verified_all(first);
+    let effects = node.step(NOW, ready(second, &[first, second, third], first));
+    (node, effects)
+}
+
+/// The first member after it made, signed, and sent its C4 proofs.
+fn first_with_decryption_key() -> Node {
+    let [first, ..] = ordered();
+    let (mut node, _) = first_with_roster();
+    let effects = node.step(NOW, decryption_key_made(e3(1), own_decryption_key(0xd4)));
+    node.step(NOW, sign(first, signing(&effects)));
+    node
 }

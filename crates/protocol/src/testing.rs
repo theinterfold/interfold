@@ -8,7 +8,8 @@
 
 use crate::{
     dkg::{
-        DecryptionKeyMessage, DkgMessage, DkgTiming, DkgWork, DkgWorkResult, KeyMessage,
+        AggregatedKey, AttestationContext, DecryptionKeyMessage, DkgMessage, DkgTiming, DkgWork,
+        DkgWorkResult, FoldAttestation, KeyMessage, KeyshareMessage, NodeFold, NodeFoldMessage,
         OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::{
@@ -270,6 +271,88 @@ pub fn decryption_key_checked(e3: E3Id, member: u64, valid: bool) -> Input {
     })
 }
 
+/// Operator `member`'s keyshare, its C1 signed by operator `signer`.
+pub fn keyshare(e3: E3Id, member: u64, signer: u64) -> Input {
+    let c1 = proof(member as u8);
+    Input::Peer(PeerMessage {
+        e3,
+        sender: address(member),
+        body: Body::Dkg(DkgMessage::Keyshare(KeyshareMessage {
+            pk_share: BlobRef {
+                hash: B256::repeat_byte(member as u8),
+                len: 1_000,
+            },
+            c1: SignedProof {
+                signature: signature(
+                    signer,
+                    c1.payload_signing_hash(e3, ProofType::C1PkGeneration),
+                ),
+                proof: c1,
+            },
+        })),
+    })
+}
+
+pub fn node_fold(fill: u8) -> NodeFold {
+    NodeFold {
+        proof: proof(fill),
+        sk_agg_commit: B256::repeat_byte(fill),
+        esm_agg_commit: B256::repeat_byte(!fill),
+    }
+}
+
+/// Operator `member`'s fold, attested for committee slot `party_id` by operator `signer`.
+pub fn fold(e3: E3Id, member: u64, party_id: u64, signer: u64) -> Input {
+    let fold = node_fold(member as u8);
+    let attestation = FoldAttestation {
+        e3,
+        verifier: ATTESTATION.verifier,
+        registry: ATTESTATION.registry,
+        party_id,
+        sk_agg_commit: fold.sk_agg_commit,
+        esm_agg_commit: fold.esm_agg_commit,
+    };
+    Input::Peer(PeerMessage {
+        e3,
+        sender: address(member),
+        body: Body::Dkg(DkgMessage::NodeFold(NodeFoldMessage {
+            fold,
+            attestation: signature(signer, attestation.signing_hash()),
+        })),
+    })
+}
+
+pub fn proofs_folded(e3: E3Id, fold: NodeFold) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::ProofsFolded(fold)),
+    })
+}
+
+pub fn keyshare_checked(e3: E3Id, member: u64, valid: bool) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::KeyshareChecked {
+            member: address(member),
+            valid,
+        }),
+    })
+}
+
+pub fn key_aggregated(e3: E3Id, fill: u8) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::KeyAggregated(AggregatedKey {
+            public_key: BlobRef {
+                hash: B256::repeat_byte(fill),
+                len: 2_000,
+            },
+            commitment: B256::repeat_byte(!fill),
+            proof: proof(fill),
+        })),
+    })
+}
+
 /// The members each Ready report among `effects` names, in order.
 pub fn ready_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
     effects
@@ -315,14 +398,21 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
         ChainFact::E3Requested {
             e3,
             committee_size: CiphernodesCommitteeSize::Minimum,
+            attestation: ATTESTATION,
         },
     )
 }
 
-/// DKG deadline 10,000 with a 1,000-second window: the key cutoff is at 9,100.
+pub const ATTESTATION: AttestationContext = AttestationContext {
+    registry: Address::repeat_byte(0x8e),
+    verifier: Address::repeat_byte(0x9f),
+};
+
+/// DKG deadline 100,000 with a 10,000-second window: the key cutoff is at 91,000 and the share
+/// checkpoint at 97,500, so the 10-minute roster and 40-minute key budgets fit.
 pub const TIMING: DkgTiming = DkgTiming {
-    deadline: 10_000,
-    window: 1_000,
+    deadline: 100_000,
+    window: 10_000,
 };
 
 pub fn finalized(block: u64, e3: E3Id, members: Vec<Address>) -> Input {

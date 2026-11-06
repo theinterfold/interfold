@@ -11,10 +11,13 @@
 use alloy_primitives::{keccak256, Address, B256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
-    dkg::{DkgWork, DkgWorkResult, OwnDecryptionKey, OwnKey, OwnShares, RecipientShares},
+    dkg::{
+        AggregatedKey, DkgWork, DkgWorkResult, NodeFold, OwnDecryptionKey, OwnKey, OwnShares,
+        RecipientShares,
+    },
     node::{
-        ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Work,
-        WorkResult,
+        ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Stage,
+        Submission, Transaction, Work, WorkResult,
     },
     proof::ZkProof,
     testing::{address, sign},
@@ -111,6 +114,7 @@ pub struct Sim {
     rng: ChaCha8Rng,
     faults: Faults,
     gossip: Vec<PeerMessage>,
+    submissions: Vec<Submission>,
 }
 
 struct Delivery {
@@ -139,6 +143,7 @@ impl Sim {
             rng,
             faults,
             gossip: Vec::new(),
+            submissions: Vec::new(),
         }
     }
 
@@ -183,6 +188,11 @@ impl Sim {
     /// Every peer message the nodes sent, in sending order.
     pub fn gossip(&self) -> &[PeerMessage] {
         &self.gossip
+    }
+
+    /// Every transaction the nodes asked the chain writer for, in order.
+    pub fn submissions(&self) -> &[Submission] {
+        &self.submissions
     }
 
     fn deliver(&mut self, delivery: Delivery) {
@@ -238,8 +248,31 @@ impl Sim {
                     }
                     self.gossip.push(message);
                 }
+                Effect::Submit(submission) => {
+                    self.nodes[node].acknowledge(key);
+                    self.submit(submission);
+                }
             }
         }
+    }
+
+    /// The chain accepts the first key for an E3 and rejects later ones, as `publishCommittee`
+    /// does once a key is set.
+    fn submit(&mut self, submission: Submission) {
+        let Transaction::PublishCommittee(_) = &submission.transaction;
+        let first = !self
+            .submissions
+            .iter()
+            .any(|earlier| earlier.e3 == submission.e3);
+        if first {
+            let published = ChainFact::StageChanged {
+                e3: submission.e3,
+                stage: Stage::KeyPublished,
+            };
+            let at = self.now + self.delay();
+            self.chain(at, published);
+        }
+        self.submissions.push(submission);
     }
 
     /// Mock work: no cryptography, but the same shape of results, drawn fresh on every run as real
@@ -277,10 +310,14 @@ impl Sim {
                         (*member, shares)
                     })
                     .collect();
+                let c1 = ZkProof {
+                    public_inputs: vec![pk_share.hash],
+                    ..self.proof()
+                };
                 DkgWorkResult::SharesMade(OwnShares {
                     pk_share,
                     own_share: blob(self.hash()),
-                    c1: self.proof(),
+                    c1,
                     c2a: self.proof(),
                     c2b: self.proof(),
                     recipients,
@@ -321,6 +358,29 @@ impl Sim {
                 member: *member,
                 valid: message.c4a.proof.public_inputs == [c2_commitment(c2)],
             },
+            Work::Dkg(DkgWork::FoldProofs { .. }) => DkgWorkResult::ProofsFolded(NodeFold {
+                proof: self.proof(),
+                sk_agg_commit: self.hash(),
+                esm_agg_commit: self.hash(),
+            }),
+            Work::Dkg(DkgWork::CheckKeyshare {
+                member, keyshare, ..
+            }) => DkgWorkResult::KeyshareChecked {
+                member: *member,
+                valid: keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash],
+            },
+            Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
+                let shares: Vec<u8> = keyshares
+                    .iter()
+                    .flat_map(|keyshare| keyshare.pk_share.hash.0)
+                    .collect();
+                let public_key = blob(keccak256(shares));
+                DkgWorkResult::KeyAggregated(AggregatedKey {
+                    public_key,
+                    commitment: keccak256(public_key.hash),
+                    proof: self.proof(),
+                })
+            }
         };
         WorkResult::Dkg(result)
     }

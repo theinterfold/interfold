@@ -23,6 +23,14 @@ mod typed {
 
 /// A committee member's attestation to its folded DKG proof, checked by
 /// `DkgFoldAttestationVerifier`.
+/// The registry and fold-attestation verifier that a request froze for its E3. Fold attestations
+/// are EIP-712 data under the verifier's domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AttestationContext {
+    pub registry: Address,
+    pub verifier: Address,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FoldAttestation {
     pub e3: E3Id,

@@ -9,8 +9,8 @@ use alloy_primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     dkg::DkgMessage,
-    node::{Body, ChainFact},
-    testing::{address, e3, TIMING},
+    node::{Body, ChainFact, Transaction},
+    testing::{address, e3, ATTESTATION, TIMING},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,6 +33,7 @@ fn run(size: CiphernodesCommitteeSize, seed: u64) -> (Sim, Vec<Address>) {
         ChainFact::E3Requested {
             e3: e3(1),
             committee_size: size,
+            attestation: ATTESTATION,
         },
     );
     sim.chain(
@@ -149,6 +150,32 @@ fn every_roster_member_and_only_they_send_one_keyshare() {
 }
 
 #[test]
+fn the_committee_publishes_one_key_and_every_member_sees_the_dkg_end() {
+    for size in [
+        CiphernodesCommitteeSize::Minimum,
+        CiphernodesCommitteeSize::Micro,
+    ] {
+        for seed in 0..16 {
+            let (sim, members) = run(size, seed);
+            let case = format!("{size:?} seed {seed}");
+            let commitments: BTreeSet<_> = sim
+                .submissions()
+                .iter()
+                .map(|submission| match &submission.transaction {
+                    Transaction::PublishCommittee(publication) => publication.commitment,
+                })
+                .collect();
+            assert_eq!(commitments.len(), 1, "{case}: one key");
+            for (index, node) in sim.nodes()[..members.len()].iter().enumerate() {
+                let dkg = node.node().e3(&e3(1)).and_then(|state| state.dkg.as_ref());
+                let published = dkg.is_some_and(|dkg| dkg.published());
+                assert!(published, "{case} node {index}: the DKG ended with the key");
+            }
+        }
+    }
+}
+
+#[test]
 fn no_member_sends_two_different_keys_or_shares() {
     for size in [
         CiphernodesCommitteeSize::Minimum,
@@ -172,7 +199,8 @@ fn no_member_sends_two_different_keys_or_shares() {
                         DkgMessage::Ready(_)
                         | DkgMessage::Roster(_)
                         | DkgMessage::DecryptionKey(_)
-                        | DkgMessage::Keyshare(_),
+                        | DkgMessage::Keyshare(_)
+                        | DkgMessage::NodeFold(_),
                     ) => {}
                 }
             }

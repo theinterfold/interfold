@@ -5,26 +5,31 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! One committee member's DKG for one E3: its encryption key (C0), the threshold shares it deals
-//! and receives (C1-C3), the roster, its decryption key (C4), and its keyshare.
+//! and receives (C1-C3), the roster, its decryption key (C4), its keyshare and proof fold, and,
+//! as the key aggregator, the committee key (C5) and its publication.
 
+mod aggregation;
 mod attestation;
 mod decryption_key;
+mod fold;
 mod keys;
 mod roster;
 mod shares;
 mod timing;
 
-pub use attestation::FoldAttestation;
+pub use attestation::{AttestationContext, FoldAttestation};
 pub use timing::DkgTiming;
 
 use crate::{
     node::{Body, Effect, Job, PeerMessage, Purpose, Signing, Work},
-    proof::{SignedProof, ZkProof},
+    proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
 };
+use aggregation::Aggregation;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use decryption_key::DecryptionKeys;
 use e3_committee::CiphernodesCommitteeSize;
+use fold::OwnFold;
 use keys::Keys;
 use roster::Rosters;
 use serde::{Deserialize, Serialize};
@@ -47,6 +52,41 @@ pub enum DkgMessage {
     DecryptionKey(DecryptionKeyMessage),
     /// A roster member's public-key share and its C1 proof, for the public-key aggregator.
     Keyshare(KeyshareMessage),
+    /// A roster member's recursive fold of its own DKG proofs, for the public-key aggregator.
+    NodeFold(NodeFoldMessage),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeFoldMessage {
+    pub fold: NodeFold,
+    /// The member's EIP-712 signature over the fold's commitments for its committee slot, which
+    /// the fold-attestation verifier checks.
+    pub attestation: Bytes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeFold {
+    pub proof: ZkProof,
+    pub sk_agg_commit: B256,
+    pub esm_agg_commit: B256,
+}
+
+/// What `publishCommittee` and the key chunks need.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyPublication {
+    pub commitment: B256,
+    pub public_key: BlobRef,
+    pub proof: ZkProof,
+    /// One per roster member, ascending by party ID.
+    pub attestations: Vec<SignedAttestation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedAttestation {
+    pub party_id: u64,
+    pub sk_agg_commit: B256,
+    pub esm_agg_commit: B256,
+    pub signature: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +166,9 @@ impl DkgMessage {
                 message.c4a.size() + message.c4b.iter().map(SignedProof::size).sum::<u64>()
             }
             Self::Keyshare(message) => message.pk_share.len + message.c1.size(),
+            Self::NodeFold(message) => {
+                message.fold.proof.size() + 64 + message.attestation.len() as u64
+            }
         }
     }
 }
@@ -176,6 +219,22 @@ pub enum DkgWork {
         c2: BTreeMap<Address, (ZkProof, ZkProof)>,
         message: Box<DecryptionKeyMessage>,
     },
+    /// Fold this node's DKG proofs, in the order given, into one recursive proof.
+    FoldProofs { proofs: Vec<(ProofType, ZkProof)> },
+    /// Check a roster member's C1 proof against its public-key share.
+    CheckKeyshare {
+        member: Address,
+        committee: Vec<Address>,
+        keyshare: Box<KeyshareMessage>,
+    },
+    /// Sum the roster's public-key shares into the committee key, prove C5, and combine the
+    /// roster members' folds. Keyshares and folds come in roster order.
+    AggregateKey {
+        committee: Vec<Address>,
+        roster: Vec<Address>,
+        keyshares: Vec<KeyshareMessage>,
+        folds: Vec<NodeFold>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +245,16 @@ pub enum DkgWorkResult {
     SharesChecked { dealer: Address, valid: bool },
     DecryptionKeyMade(OwnDecryptionKey),
     DecryptionKeyChecked { member: Address, valid: bool },
+    ProofsFolded(NodeFold),
+    KeyshareChecked { member: Address, valid: bool },
+    KeyAggregated(AggregatedKey),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregatedKey {
+    pub public_key: BlobRef,
+    pub commitment: B256,
+    pub proof: ZkProof,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +264,7 @@ pub enum DkgSignature {
     DealerProofs,
     /// C4a, then each C4b proof.
     DecryptionKeyProofs,
+    FoldAttestation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +348,7 @@ pub struct Dkg {
     members: Vec<Address>,
     size: CiphernodesCommitteeSize,
     timing: DkgTiming,
+    attestation: AttestationContext,
     expelled: BTreeSet<Address>,
     keys: Keys,
     shares: Shares,
@@ -285,7 +356,11 @@ pub struct Dkg {
     ready: BTreeMap<Address, Vec<Dealer>>,
     rosters: Rosters,
     decryption_keys: DecryptionKeys,
+    fold: OwnFold,
+    aggregation: Aggregation,
     phase: Phase,
+    /// The chain published the committee key: the DKG is over.
+    published: bool,
 }
 
 impl Dkg {
@@ -295,6 +370,7 @@ impl Dkg {
         members: Vec<Address>,
         size: CiphernodesCommitteeSize,
         timing: DkgTiming,
+        attestation: AttestationContext,
         now: UnixSecs,
     ) -> (Self, Vec<Effect>) {
         let mut dkg = Self {
@@ -303,13 +379,17 @@ impl Dkg {
             members,
             size,
             timing,
+            attestation,
             expelled: BTreeSet::new(),
             keys: Keys::default(),
             shares: Shares::default(),
             ready: BTreeMap::new(),
             rosters: Rosters::default(),
             decryption_keys: DecryptionKeys::default(),
+            fold: OwnFold::NotStarted,
+            aggregation: Aggregation::default(),
             phase: Phase::MakingKey,
+            published: false,
         };
         if now >= timing.key_cutoff() {
             dkg.phase = Phase::Failed(DkgFailure::StartedAfterKeyCutoff);
@@ -338,12 +418,23 @@ impl Dkg {
         }
     }
 
+    pub fn published(&self) -> bool {
+        self.published
+    }
+
+    pub(crate) fn key_published(&mut self) {
+        self.published = true;
+    }
+
     pub(crate) fn receive(
         &mut self,
         now: UnixSecs,
         sender: Address,
         message: DkgMessage,
     ) -> Vec<Effect> {
+        if !self.running() {
+            return Vec::new();
+        }
         let mut effects = match message {
             DkgMessage::EncryptionKey(message) => self.receive_key(sender, message),
             DkgMessage::Shares(message) => self.receive_shares(sender, *message),
@@ -356,13 +447,23 @@ impl Dkg {
                 Vec::new()
             }
             DkgMessage::DecryptionKey(message) => self.receive_decryption_key(sender, message),
-            DkgMessage::Keyshare(_) => Vec::new(),
+            DkgMessage::Keyshare(message) => {
+                self.receive_keyshare(sender, message);
+                Vec::new()
+            }
+            DkgMessage::NodeFold(message) => {
+                self.receive_fold(sender, message);
+                Vec::new()
+            }
         };
-        effects.extend(self.advance_roster(now));
+        effects.extend(self.advance(now));
         effects
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: DkgWorkResult) -> Vec<Effect> {
+        if !self.running() {
+            return Vec::new();
+        }
         let mut effects = match result {
             DkgWorkResult::EncryptionKeyMade(own) => self.key_made(own),
             DkgWorkResult::EncryptionKeyChecked { sender, valid } => {
@@ -374,8 +475,14 @@ impl Dkg {
             DkgWorkResult::DecryptionKeyChecked { member, valid } => {
                 self.decryption_key_checked(member, valid)
             }
+            DkgWorkResult::ProofsFolded(fold) => self.proofs_folded(fold),
+            DkgWorkResult::KeyshareChecked { member, valid } => {
+                self.keyshare_checked(member, valid);
+                Vec::new()
+            }
+            DkgWorkResult::KeyAggregated(key) => self.key_aggregated(key),
         };
-        effects.extend(self.advance_roster(now));
+        effects.extend(self.advance(now));
         effects
     }
 
@@ -385,17 +492,21 @@ impl Dkg {
         purpose: DkgSignature,
         signatures: Vec<Bytes>,
     ) -> Vec<Effect> {
+        if !self.running() {
+            return Vec::new();
+        }
         let mut effects = match purpose {
             DkgSignature::EncryptionKeyProof => self.key_signed(signatures),
             DkgSignature::DealerProofs => self.shares_signed(signatures),
             DkgSignature::DecryptionKeyProofs => self.decryption_key_signed(signatures),
+            DkgSignature::FoldAttestation => self.fold_signed(signatures),
         };
-        effects.extend(self.advance_roster(now));
+        effects.extend(self.advance(now));
         effects
     }
 
     pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
-        if !self.is_member(member) || !self.expelled.insert(member) {
+        if !self.running() || !self.is_member(member) || !self.expelled.insert(member) {
             return Vec::new();
         }
         if member == self.me {
@@ -412,10 +523,14 @@ impl Dkg {
         let mut effects = self.close_keys_if_all_in();
         effects.extend(self.send_ready_if_due());
         effects.extend(self.pass_roster_deadlines(now));
+        effects.extend(self.pass_aggregation_deadlines(now));
         effects
     }
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        if !self.running() {
+            return Vec::new();
+        }
         let mut effects = Vec::new();
         if self.collecting_keys() && now >= self.timing.key_cutoff() {
             effects.extend(self.close_keys_at_cutoff());
@@ -425,6 +540,7 @@ impl Dkg {
             effects.extend(self.send_ready_if_due());
         }
         effects.extend(self.pass_roster_deadlines(now));
+        effects.extend(self.pass_aggregation_deadlines(now));
         if self.running() && now >= self.timing.deadline {
             self.phase = Phase::Failed(DkgFailure::DeadlinePassed);
         }
@@ -441,6 +557,7 @@ impl Dkg {
             key_cutoff,
             checkpoint,
             self.roster_deadline(),
+            self.aggregation_deadline(),
             Some(self.timing.deadline),
         ]
         .into_iter()
@@ -448,8 +565,21 @@ impl Dkg {
         .min()
     }
 
+    /// Until the DKG fails or the chain publishes the key.
     fn running(&self) -> bool {
-        !matches!(self.phase, Phase::Failed(_))
+        !self.published && !matches!(self.phase, Phase::Failed(_))
+    }
+
+    /// Every input ends here, since any of them can complete a roster or an aggregation.
+    fn advance(&mut self, now: UnixSecs) -> Vec<Effect> {
+        let mut effects = self.advance_roster(now);
+        effects.extend(self.advance_aggregation(now));
+        effects
+    }
+
+    fn party_id(&self, member: Address) -> Option<u64> {
+        let index = self.members.binary_search(&member).ok()?;
+        Some(index as u64)
     }
 
     fn h(&self) -> usize {
