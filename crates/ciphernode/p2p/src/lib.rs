@@ -8,14 +8,12 @@
 //! fetches from the message's publisher before it delivers the message.
 
 mod inbound_ip_limits;
-mod memory;
 mod swarm;
 
-pub use memory::{MemoryNetwork, MemoryPeer};
 pub use swarm::{P2p, P2pConfig, P2pError};
 
-use e3_blobs::{BlobError, Blobs};
-use e3_protocol::{wire::Envelope, BlobRef};
+use e3_blobs::Blobs;
+use e3_protocol::wire::Envelope;
 use std::{future::Future, sync::Arc};
 
 /// What the node needs from the network. Inbound, an adapter delivers a peer message only if its
@@ -28,10 +26,6 @@ pub trait Network: Send + Sync + 'static {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
-    #[error(transparent)]
-    Blob(#[from] BlobError),
-    #[error("blob {0:?} came back with other bytes")]
-    WrongBlob(BlobRef),
     #[error("publishing: {0}")]
     Publish(String),
     #[error("the network stopped")]

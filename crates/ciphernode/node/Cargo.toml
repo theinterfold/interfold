@@ -7,8 +7,8 @@ description = "The v2 ciphernode: its engine wired to the chain, the network, jo
 repository.workspace = true
 
 [[bin]]
-name = "e3-node-cluster"
-path = "src/bin/cluster.rs"
+name = "e3-node"
+path = "src/bin/node.rs"
 
 [dependencies]
 e3-blobs = { workspace = true }

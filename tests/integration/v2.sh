@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The v2 nodes end to end on a local chain with mock verifiers: five operators, one Minimum
 # committee that selects itself, runs its DKG, publishes its key, and decrypts a ciphertext that
-# it fetches from the mock availability layer. The nodes run in one process on an in-memory network.
+# it fetches from the mock availability layer. Each node is its own process; the nodes find each
+# other through the first one.
 #
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
@@ -64,8 +65,8 @@ until_ok() {
 rm -rf "$OUT"
 mkdir -p "$AVAILABILITY_DIR"
 
-heading "Build the v2 cluster and the requester's encryption tool"
-(cd "$ROOT_DIR" && cargo build --bin e3-node-cluster && cargo build -p e3-tests --bin fake_encrypt)
+heading "Build the v2 node and the requester's encryption tool"
+(cd "$ROOT_DIR" && cargo build --bin e3-node && cargo build -p e3-tests --bin fake_encrypt)
 
 heading "Start the chain and the availability layer"
 anvil --host 127.0.0.1 --chain-id 31337 --block-time 1 \
@@ -87,29 +88,57 @@ for address in "${ADDRESSES[@]}"; do
 done
 
 heading "Start the v2 nodes"
-jq -n \
-  --arg interfold "$(jq -r '.localhost.Interfold.address' "$DEPLOYED")" \
-  --arg registry "$(jq -r '.localhost.CiphernodeRegistryOwnable.address' "$DEPLOYED")" \
-  --arg bonding "$(jq -r '.localhost.BondingRegistry.address' "$DEPLOYED")" \
-  --arg data_dir "$OUT/nodes" \
-  --args \
-  '{
-    rpc_url: "http://127.0.0.1:8545",
-    chain_id: 31337,
-    interfold: $interfold,
-    registry: $registry,
-    bonding: $bonding,
-    start_block: 0,
-    confirmations: 0,
-    poll_interval_ms: 250,
-    availability_url: "http://127.0.0.1:4000/availability",
-    data_dir: $data_dir,
-    operators: $ARGS.positional
-  }' "${KEYS[@]}" >"$OUT/cluster.json"
-RUST_LOG="${RUST_LOG:-info,e3_node=debug}" "$ROOT_DIR/target/debug/e3-node-cluster" \
-  "$OUT/cluster.json" >"$OUT/cluster.log" 2>&1 &
-STARTED+=($!)
-CLUSTER=$!
+NODES=()
+# Node `index` listens on its own port and dials `peer`, if any.
+start_node() {
+  local index="$1" peer="$2"
+  local dir="$OUT/nodes/node-$index"
+  mkdir -p "$dir"
+  jq -n \
+    --arg interfold "$(jq -r '.localhost.Interfold.address' "$DEPLOYED")" \
+    --arg registry "$(jq -r '.localhost.CiphernodeRegistryOwnable.address' "$DEPLOYED")" \
+    --arg bonding "$(jq -r '.localhost.BondingRegistry.address' "$DEPLOYED")" \
+    --arg data_dir "$dir" \
+    --arg operator "${KEYS[$index]}" \
+    --arg identity "$(printf '0x%064x' $((index + 1)))" \
+    --arg listen "/ip4/127.0.0.1/udp/$((9400 + index))/quic-v1" \
+    --arg peer "$peer" \
+    '{
+      rpc_url: "http://127.0.0.1:8545",
+      chain_id: 31337,
+      interfold: $interfold,
+      registry: $registry,
+      bonding: $bonding,
+      start_block: 0,
+      confirmations: 0,
+      poll_interval_ms: 250,
+      availability_url: "http://127.0.0.1:4000/availability",
+      data_dir: $data_dir,
+      operator: $operator,
+      cipher_password: "v2 end to end",
+      network: {
+        name: "localhost",
+        identity: $identity,
+        listen: [$listen],
+        peers: (if $peer == "" then [] else [$peer] end)
+      }
+    }' >"$dir/config.json"
+  RUST_LOG="${RUST_LOG:-info,e3_node=debug}" "$ROOT_DIR/target/debug/e3-node" "$dir/config.json" \
+    >"$dir/node.log" 2>&1 &
+  STARTED+=($!)
+  NODES+=($!)
+}
+nodes_running() {
+  for pid in "${NODES[@]}"; do
+    kill -0 "$pid"
+  done
+}
+start_node 0 ""
+until_ok 120 test -s "$OUT/nodes/node-0/listening"
+FIRST=$(head -n 1 "$OUT/nodes/node-0/listening")
+for index in 1 2 3 4; do
+  start_node "$index" "$FIRST"
+done
 
 heading "Wait until every operator acknowledged the release and is active"
 BONDING="$(jq -r '.localhost.BondingRegistry.address' "$DEPLOYED")"
@@ -119,7 +148,7 @@ operator_active() {
 for address in "${ADDRESSES[@]}"; do
   until_ok 180 operator_active "$address"
 done
-kill -0 "$CLUSTER"
+nodes_running
 
 heading "Request a committee"
 set_integration_input_window
@@ -135,7 +164,7 @@ E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 heading "Wait for the committee's key (E3 $E3_ID)"
 (cd "$ROOT_DIR" && until_ok "$TIMEOUT" pnpm committee:get-public-key \
   --network localhost --e3-id "$E3_ID" --out-file "$OUT/pubkey.bin")
-kill -0 "$CLUSTER"
+nodes_running
 advance_evm_time_past "$INPUT_WINDOW_START"
 
 heading "Encrypt the plaintext and publish the ciphertext"
