@@ -106,8 +106,10 @@ impl CiphernodeBuilder {
         info!("Setting up FheExtension");
         e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
         info!("Setting up PublicKeyAggregationExtension");
-        e3_builder =
-            e3_builder.with_recipient("publickey", PublicKeyAggregatorExtension::create(bus));
+        e3_builder = e3_builder.with_recipient(
+            "publickey",
+            PublicKeyAggregatorExtension::create(bus, storage.seq_eventstore.clone()),
+        );
 
         // ── Threshold plaintext aggregation ──
         info!("Setting up ThresholdPlaintextAggregatorExtension");

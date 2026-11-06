@@ -80,11 +80,15 @@ impl E3Extension for AggregatorRoleExtension {
 
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
+    eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
 }
 
 impl PublicKeyAggregatorExtension {
-    pub fn create(bus: &BusHandle) -> Box<Self> {
-        Box::new(Self { bus: bus.clone() })
+    pub fn create(bus: &BusHandle, eventstore: Recipient<EventStoreQueryBy<SeqAgg>>) -> Box<Self> {
+        Box::new(Self {
+            bus: bus.clone(),
+            eventstore,
+        })
     }
 }
 
@@ -165,7 +169,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 return;
             }
         };
-        let value = create_publickey_aggregator(
+        let value = PublicKeyAggregator::new(
             PublicKeyAggregatorParams {
                 fhe,
                 bus: self.bus.clone(),
@@ -182,7 +186,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             sync_state,
         );
 
-        ctx.set_event_recipient("publickey", Some(value));
+        ctx.set_event_recipient("publickey", Some(start_publickey_aggregator(value)));
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
@@ -257,7 +261,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             .await?
             .and_then(|stages| stages.get(&ctx.e3_id).cloned())
             .unwrap_or(E3Stage::None);
-        let value = create_publickey_aggregator(
+        let mut value = PublicKeyAggregator::new(
             PublicKeyAggregatorParams {
                 fhe: fhe.clone(),
                 bus: self.bus.clone(),
@@ -274,19 +278,19 @@ impl E3Extension for PublicKeyAggregatorExtension {
             },
             sync_state,
         );
+        value
+            .recover_dkg_folds(&self.eventstore, &ctx.repositories())
+            .await?;
 
         // send to context
-        ctx.set_event_recipient("publickey", Some(value));
+        ctx.set_event_recipient("publickey", Some(start_publickey_aggregator(value)));
 
         Ok(())
     }
 }
 
-fn create_publickey_aggregator(
-    params: PublicKeyAggregatorParams,
-    sync_state: Persistable<PublicKeyAggregatorState>,
-) -> Recipient<InterfoldEvent> {
-    KeyshareCreatedFilterBuffer::new(PublicKeyAggregator::new(params, sync_state).start())
+fn start_publickey_aggregator(aggregator: PublicKeyAggregator) -> Recipient<InterfoldEvent> {
+    KeyshareCreatedFilterBuffer::new(aggregator.start())
         .start()
         .into()
 }
@@ -582,7 +586,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         self.remember_canonical_committee(ctx);
 
         let mut ciphertext = None;
-        crate::actors::visit_plaintext_history(&self.eventstore, &ctx.e3_id, |event| {
+        crate::history::visit_e3_history(&self.eventstore, &ctx.e3_id, |event| {
             if let InterfoldEventData::CiphertextOutputPublished(data) = event.get_data() {
                 if event.source() != e3_events::EventSource::Net && ciphertext.is_none() {
                     ciphertext = Some((data.clone(), event.get_ctx().clone()));
@@ -773,7 +777,7 @@ impl DeferredPlaintextAggregator {
                     .await?;
                 let dest = value.start();
                 if let Some(range) = pending_range {
-                    crate::actors::visit_plaintext_history_range(&store, &e3_id, range, |event| {
+                    crate::history::visit_e3_history_range(&store, &e3_id, range, |event| {
                         let dest = dest.clone();
                         async move { Ok(dest.send(event).await?) }
                     })

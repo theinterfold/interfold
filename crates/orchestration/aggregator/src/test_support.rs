@@ -4,13 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use actix::Addr;
+use actix::{Actor, Addr, Recipient};
 use anyhow::Result;
-use e3_data::InMemStore;
+use e3_data::{InMemEventLog, InMemSequenceIndex, InMemStore};
 use e3_event_system::test_support::EventFixture;
 use e3_events::{
-    BusHandle, Event, EventContextAccessors, EventContextSeq, GetEvents, HistoryCollector, Insert,
-    InsertBatch, InterfoldEvent, InterfoldEventData, Seed, StoreKeys,
+    prelude::*, BusHandle, Event, EventContextAccessors, EventContextSeq, EventStore,
+    EventStoreQueryBy, EventStoreRouter, GetEvents, HistoryCollector, Insert, InsertBatch,
+    InterfoldEvent, InterfoldEventData, Seed, SeqAgg, StoreKeys, Unsequenced,
 };
 use e3_fhe_params::{
     build_bfv_params_arc, create_deterministic_crp_from_default_seed, BfvParamSet,
@@ -20,7 +21,29 @@ use e3_test_support::{create_seed_from_u64, create_shared_rng_from_u64};
 use e3_utils::SharedRng;
 use fhe::{bfv::BfvParameters, mbfv::CommonRandomPoly};
 use fhe_traits::Serialize;
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+/// Event-store reader whose chain aggregate 1 holds `events` in order.
+pub(crate) fn history_reader(
+    events: &[InterfoldEvent],
+) -> Result<Recipient<EventStoreQueryBy<SeqAgg>>> {
+    let mut store = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
+    for event in events {
+        store.store_event(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            event.get_data().clone(),
+            None,
+            event.ts(),
+            None,
+            event.source(),
+        ))?;
+    }
+    let global = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
+    Ok(
+        EventStoreRouter::new(HashMap::from([(0, global.start()), (1, store.start())]))
+            .start()
+            .recipient(),
+    )
+}
 
 #[allow(clippy::type_complexity)]
 pub(crate) fn get_common_setup(

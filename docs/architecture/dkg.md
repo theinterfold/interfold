@@ -142,7 +142,9 @@ not accuse dealers. Local compute errors retain the pending input/correlation fo
 C5 proof replayed before `EffectsEnabled` is applied when the C5 phase resumes, if its public inputs
 are the commitments of the current honest keyshares: the prover would re-sign the replayed proof
 identically, and the bus drops that duplicate. A resumed phase applies a held C1 or C5 result under
-a fresh chain-scoped `AggregationResumed`.
+a fresh chain-scoped `AggregationResumed`. Each roster member sends its NodeFold once, so hydration
+reads received folds back from the event log: folds received before C5 are held only in memory, and
+the snapshot can miss folds moved into C5.
 
 `publishCommittee` is permissionless. It requires a viable committee, an unset commitment, mandatory
 DKG proof verification, and fold attestations. The request freezes the registry and fold verifier in

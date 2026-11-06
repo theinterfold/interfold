@@ -3,14 +3,11 @@
 use super::*;
 use crate::{
     ext::{AggregatorRoleExtension, ThresholdPlaintextAggregatorExtension},
-    test_support::commit_replay_past,
+    test_support::{commit_replay_past, history_reader},
     TrBfvPlaintextRepositoryFactory,
 };
-use e3_data::{InMemEventLog, InMemSequenceIndex, RepositoriesFactory, Snapshot};
-use e3_events::{
-    CiphertextOutputPublished, EventSource, EventStore, EventStoreQueryBy, EventStoreRouter,
-    EventType, SeqAgg,
-};
+use e3_data::{RepositoriesFactory, Snapshot};
+use e3_events::{CiphertextOutputPublished, EventSource, EventStoreQueryBy, EventType, SeqAgg};
 use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_request::{
     ContextRepositoryFactory, E3Context, E3ContextParams, E3Extension, E3Meta, META_KEY,
@@ -146,25 +143,6 @@ fn share_event(id: &E3id, party: u64, wrong_domain: bool, seq: u64) -> Interfold
         },
         EventSource::Net,
         seq,
-    )
-}
-
-fn history_reader(events: &[InterfoldEvent]) -> Result<Recipient<EventStoreQueryBy<SeqAgg>>> {
-    let mut store = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
-    for event in events {
-        store.store_event(InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            event.get_data().clone(),
-            None,
-            event.ts(),
-            None,
-            event.source(),
-        ))?;
-    }
-    let global = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
-    Ok(
-        EventStoreRouter::new(HashMap::from([(0, global.start()), (1, store.start())]))
-            .start()
-            .recipient(),
     )
 }
 

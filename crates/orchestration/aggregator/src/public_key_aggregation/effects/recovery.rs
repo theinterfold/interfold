@@ -3,10 +3,64 @@
 //! Restart recovery for persisted public-key aggregation phases.
 
 use super::super::*;
+use crate::history::visit_e3_history;
+use crate::PublicKeyRepositoryFactory;
 use anyhow::ensure;
-use e3_events::EventSource;
+use e3_data::{AutoPersist, Repositories};
+use e3_events::{EventSource, EventStoreQueryBy, SeqAgg};
 
 impl PublicKeyAggregator {
+    /// Restore DKG folds that a restart loses. A party sends its fold once, but folds received
+    /// before GeneratingC5Proof are buffered only in memory, and folds drained into that phase keep
+    /// contexts older than its snapshot cursor, so the store drops their writes.
+    pub(crate) async fn recover_dkg_folds(
+        &mut self,
+        store: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        repositories: &Repositories,
+    ) -> Result<()> {
+        let (held, generating) = match self.state.get() {
+            Some(
+                PublicKeyAggregatorState::Collecting { .. }
+                | PublicKeyAggregatorState::VerifyingC1 { .. },
+            ) => (BTreeSet::new(), false),
+            Some(PublicKeyAggregatorState::GeneratingC5Proof {
+                dkg_node_proofs,
+                honest_party_ids,
+                ..
+            }) if honest_party_ids
+                .iter()
+                .any(|party| !dkg_node_proofs.contains_key(party)) =>
+            {
+                (dkg_node_proofs.into_keys().collect::<BTreeSet<_>>(), true)
+            }
+            _ => return Ok(()),
+        };
+        if generating {
+            self.state.stage();
+        }
+        let e3_id = self.e3_id.clone();
+        visit_e3_history(store, &e3_id, |event| {
+            let InterfoldEventData::DKGRecursiveAggregationComplete(fold) = event.get_data() else {
+                return Ok(());
+            };
+            if held.contains(&fold.party_id) {
+                return Ok(());
+            }
+            self.handle_dkg_recursive_aggregation_complete(TypedEvent::new(
+                fold.clone(),
+                event.get_ctx().clone(),
+            ))
+        })
+        .await?;
+        if generating {
+            // Save the folds without their historical contexts before replay resumes.
+            let repository = repositories.publickey(&self.e3_id);
+            repository.write_sync(&self.state.try_get()?).await?;
+            self.state = repository.load().await?;
+        }
+        Ok(())
+    }
+
     /// Every node assembled the whole key from the chain's chunks, so a restart has no key
     /// publication left to send again.
     pub(in crate::actors::publickey_aggregator) fn forget_saved_publication(

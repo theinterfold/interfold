@@ -1028,6 +1028,7 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod recovery;
 mod replay;
 
 /// A failed E3's aggregation does not resume after a restart: the stage change that ends it comes
