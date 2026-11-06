@@ -2049,16 +2049,17 @@ async fn test_trbfv_actor() -> Result<()> {
         let collector = nodes[active_aggregator_index]
             .history()
             .context("active aggregator has no history collector")?;
+        let is_c1_dispatch = |data: &InterfoldEventData| {
+            matches!(data, InterfoldEventData::ShareVerificationDispatched(event)
+                if event.e3_id == e3_id && event.kind == VerificationKind::PkGenerationProofs)
+        };
         wait_for_history_match(
             &nodes,
             active_aggregator_index,
             0,
             "C1 ShareVerificationDispatched before the aggregator restart",
             pubkey_flow_timeout,
-            |data| {
-                matches!(data, InterfoldEventData::ShareVerificationDispatched(event)
-                    if event.e3_id == e3_id && event.kind == VerificationKind::PkGenerationProofs)
-            },
+            is_c1_dispatch,
         )
         .await?;
         println!("Stopping active aggregator at node index {active_aggregator_index} during C1");
@@ -2072,6 +2073,25 @@ async fn test_trbfv_actor() -> Result<()> {
                 InterfoldEventData::ShareVerificationComplete(event)
                     if event.e3_id == e3_id && event.kind == VerificationKind::PkGenerationProofs)),
             "restart missed the C1 window: the aggregator logged its C1 verdict before it stopped"
+        );
+        // A party sends its fold once, so a selected fold that the old node logged reaches C5 only
+        // through recovery from the event log. A roster replaced after C1 started does not count.
+        let roster = logged
+            .iter()
+            .take_while(|event| !is_c1_dispatch(event.get_data()))
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
+                    Some(&data.party_ids)
+                }
+                _ => None,
+            })
+            .last()
+            .context("the aggregator dispatched C1 without a selected roster")?;
+        anyhow::ensure!(
+            logged.iter().any(|event| matches!(event.get_data(),
+                InterfoldEventData::DKGRecursiveAggregationComplete(fold)
+                    if fold.e3_id == e3_id && roster.contains(&fold.party_id))),
+            "no selected DKG fold reached the aggregator before it stopped"
         );
         Some(logged)
     } else {
