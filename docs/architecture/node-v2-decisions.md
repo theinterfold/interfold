@@ -116,9 +116,12 @@ Each rule is checkable in review.
   signed message with blob references. A receiver fetches each blob it needs from the message's
   publisher by request and response, checks that the bytes hash to the reference and have its
   length, and delivers the message only once every blob it needs is in its store. The protocol
-  says which blobs a node needs: a share message's only for its recipient. Open: until membership
-  reaches the network adapter, a non-member can make nodes fetch its blobs; per-peer limits bound
-  the cost.
+  says which blobs a node needs: a share message's only for its recipient. A publisher uploads a
+  broadcast blob once per receiver and a share once, where a DHT put of the current node goes to
+  twenty peers. A share comes only from its dealer, so members need direct connections: peers that
+  identify on the network enter Kademlia's routing table, whose lookups connect to the peers they
+  find. Open: until membership reaches the network adapter, a non-member can make nodes fetch its
+  blobs; per-peer limits bound the cost.
 
 - **D23. A ciphertext is fetched, not read from the log.** The deployed Interfold logs a content
   hash and its availability coordinates (`CiphertextOutputReferencePublished`). Decryption emits a
