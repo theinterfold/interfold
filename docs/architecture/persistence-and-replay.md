@@ -269,8 +269,11 @@ Only some types have per-type versions (for example BondOwnerState). Until a tes
 migration exists, every incompatible persisted layout/event variant change, even an added field,
 requires a manual `SCHEMA_VERSION` increase. Raw preflight runs before logs/index
 opening/repair/decoding; `node validate`, including `--repair`, uses it and leaves incompatible log
-bytes unchanged. Global storage schema is **not linked** to `protocol-release.toml`; wire major
-changes are separate.
+bytes unchanged. An appended `InterfoldEventData` variant keeps existing logs decodable without an
+increase, but preflight then cannot guard a rollback: once a node writes the new variant, an older
+binary passes preflight and fails to open the log ("event log integrity check failed during open"),
+so that node can only roll forward. Global storage schema is **not linked** to
+`protocol-release.toml`; wire major changes are separate.
 
 [Layout locks](../../crates/testing/layout-lock/) detect encoding drift and same-encoding field
 swaps/renames for roots explicitly listed by hand.
