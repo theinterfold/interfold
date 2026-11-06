@@ -558,7 +558,8 @@ fn fact_e3(fact: &ChainFact) -> Option<E3Id> {
         | ChainFact::BondOwner { .. }
         | ChainFact::EligibilityReset
         | ChainFact::IdentityPolicy { .. }
-        | ChainFact::RandomnessProvider { .. } => return None,
+        | ChainFact::RandomnessProvider { .. }
+        | ChainFact::SlashingManager { .. } => return None,
     };
     Some(*e3)
 }

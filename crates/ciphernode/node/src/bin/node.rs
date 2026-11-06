@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         interfold: config.interfold,
         registry: config.registry,
         bonding: config.bonding,
-        slashing,
+        slashing: BTreeSet::from([slashing]),
         randomness: BTreeSet::from([randomness]),
         crypto_configs: e3_jobs::crypto_configs(),
     };

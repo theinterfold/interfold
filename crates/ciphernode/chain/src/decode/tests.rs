@@ -134,7 +134,8 @@ fn only_the_slashing_manager_releases_an_e3() {
         chain_id: 1,
         number: U256::from(7),
     };
-    let from_manager = facts(&[log(c.slashing, &released, 8, 0)]);
+    let manager = *c.slashing.first().unwrap();
+    let from_manager = facts(&[log(manager, &released, 8, 0)]);
     assert_eq!(from_manager, vec![ChainFact::DependenciesReleased { e3 }]);
     assert!(facts(&[log(c.interfold, &released, 8, 0)]).is_empty());
 }

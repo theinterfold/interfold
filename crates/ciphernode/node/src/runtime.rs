@@ -140,8 +140,13 @@ where
         .map_or(settings.start_block, |at| at.block);
     let (events, mut receiver) = mpsc::channel(1_024);
     let mut contracts = settings.contracts.clone();
-    let providers = engine.machine().randomness_providers(chain_id);
-    contracts.randomness.extend(providers);
+    let machine = engine.machine();
+    contracts
+        .randomness
+        .extend(machine.randomness_providers(chain_id));
+    contracts
+        .slashing
+        .extend(machine.slashing_managers(chain_id));
     let reader = Reader::new(
         parts.rpc,
         contracts,

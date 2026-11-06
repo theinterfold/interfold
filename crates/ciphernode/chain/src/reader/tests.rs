@@ -8,7 +8,7 @@ use super::*;
 use crate::testing::{contracts, e3_requested, log, CONFIG, RANDOMNESS};
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolValue;
-use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider};
+use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager};
 use e3_protocol::{
     dkg::AttestationContext,
     node::{CommitteeSeed, CryptoParams, DataRef},
@@ -73,6 +73,8 @@ impl Rpc for FakeNode {
         from: u64,
         to: u64,
     ) -> Result<Vec<RawLog>, RpcError> {
+        // A chain node answers over the network, so the reader waits here like it does there.
+        tokio::task::yield_now().await;
         let chain = self.0.lock().unwrap();
         if chain.cap.is_some_and(|cap| to - from + 1 > cap) {
             return Err(RpcError("block range too large".into()));
@@ -165,6 +167,13 @@ fn reads(block: u64) -> Vec<RawLog> {
 
 fn reader(node: &FakeNode, max_range: u64) -> Reader<FakeNode> {
     Reader::new(node.clone(), contracts(), CONFIRMATIONS, max_range, 0)
+}
+
+/// A poll that finds a contract it did not know reads its blocks again; a reader that never
+/// learns the contract would read them forever.
+async fn discovering_poll(reader: &mut Reader<FakeNode>) -> Vec<ChainEvent> {
+    let poll = tokio::time::timeout(std::time::Duration::from_secs(10), reader.poll());
+    poll.await.expect("the poll ends").unwrap()
 }
 
 fn blocks(events: &[ChainEvent]) -> Vec<u64> {
@@ -306,7 +315,7 @@ async fn a_request_s_new_randomness_provider_is_read_in_the_same_poll() {
         ];
         chain.seed = Some(SEED);
     });
-    let events = reader(&node, 1_000).poll().await.unwrap();
+    let events = discovering_poll(&mut reader(&node, 1_000)).await;
     let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
     let seed = ChainFact::SeedReady {
         e3: e3(),
@@ -316,6 +325,35 @@ async fn a_request_s_new_randomness_provider_is_read_in_the_same_poll() {
         facts,
         vec![seed, ChainFact::RandomnessProvider { provider }]
     );
+}
+
+/// Governance replaced the slashing manager; the new one closes an E3 in a later block of the same
+/// poll.
+#[tokio::test]
+async fn a_slashing_manager_the_interfold_sets_is_read_in_the_same_poll() {
+    let c = contracts();
+    let manager = Address::repeat_byte(0x55);
+    let set = IInterfold::SlashingManagerSet {
+        slashingManager: manager,
+    };
+    let released = ISlashingManager::E3DependenciesReleased {
+        e3Id: U256::from(7),
+    };
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.logs = vec![
+            log(c.interfold, &set, 5, 2, 0),
+            log(manager, &released, 6, 3, 0),
+        ];
+    });
+    let events = discovering_poll(&mut reader(&node, 1_000)).await;
+    let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
+    let expected = vec![
+        ChainFact::SlashingManager { manager },
+        ChainFact::DependenciesReleased { e3: e3() },
+    ];
+    assert_eq!(facts, expected);
 }
 
 /// A provider can fulfill inside the request's own transaction, before `E3Requested`: the node

@@ -151,6 +151,7 @@ sol! {
         event RewardClaimed(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
         event E3Failed(uint256 indexed e3Id, uint8 failedAtStage, uint8 reason);
         event E3StageChanged(uint256 indexed e3Id, uint8 previousStage, uint8 newStage);
+        event SlashingManagerSet(address indexed slashingManager);
         event E3FailureProcessed(uint256 indexed e3Id, uint256 paymentAmount, uint256 honestNodeCount);
         event CommitteeFinalized(uint256 indexed e3Id);
 

@@ -196,6 +196,11 @@ pub enum ChainFact {
     RandomnessProvider {
         provider: Address,
     },
+    /// A slashing manager the Interfold contract uses: governance can set another, and an E3 keeps
+    /// the one of its request.
+    SlashingManager {
+        manager: Address,
+    },
     /// `OperatorActivationChanged`.
     OperatorActive {
         operator: Address,
@@ -453,9 +458,10 @@ pub struct Node {
     ended: VecDeque<E3Id>,
     applied: BTreeMap<u64, LogPosition>,
     vote_validity: BTreeMap<u64, u64>,
-    /// Each chain's randomness providers, so the chain adapter reads their fulfillments after a
-    /// restart too.
+    /// Each chain's randomness providers and slashing managers, so the chain adapter reads their
+    /// logs after a restart too.
     providers: BTreeMap<u64, BTreeSet<Address>>,
+    managers: BTreeMap<u64, BTreeSet<Address>>,
 }
 
 impl Node {
@@ -469,11 +475,16 @@ impl Node {
             applied: BTreeMap::new(),
             vote_validity: BTreeMap::new(),
             providers: BTreeMap::new(),
+            managers: BTreeMap::new(),
         }
     }
 
     pub fn randomness_providers(&self, chain_id: u64) -> impl Iterator<Item = &Address> {
         self.providers.get(&chain_id).into_iter().flatten()
+    }
+
+    pub fn slashing_managers(&self, chain_id: u64) -> impl Iterator<Item = &Address> {
+        self.managers.get(&chain_id).into_iter().flatten()
     }
 
     /// The E3s whose DKG or decryption work still needs their blobs.
@@ -645,6 +656,11 @@ impl Node {
             ChainFact::RandomnessProvider { provider } => {
                 let providers = self.providers.entry(event.at.chain_id).or_default();
                 providers.insert(provider);
+                Vec::new()
+            }
+            ChainFact::SlashingManager { manager } => {
+                let managers = self.managers.entry(event.at.chain_id).or_default();
+                managers.insert(manager);
                 Vec::new()
             }
         }
@@ -1277,9 +1293,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                3,
+                4,
                 alloy_primitives::b256!(
-                    "019bfa5aafafe90302f3d71356e3954cbb568acdac4ede822f0b6f5842a32b35"
+                    "126c093bf7ae9e25c84b2056fde6451052c663d7288adadc03403ae1fbc97ef7"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

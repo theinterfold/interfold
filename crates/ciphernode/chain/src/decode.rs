@@ -24,8 +24,9 @@ pub struct Contracts {
     pub interfold: Address,
     pub registry: Address,
     pub bonding: Address,
-    /// The slashing manager, whose release of an E3 ends accusations about it.
-    pub slashing: Address,
+    /// The slashing managers, whose release of an E3 ends accusations about it: the Interfold's
+    /// at start, then each one it sets.
+    pub slashing: BTreeSet<Address>,
     /// The randomness providers whose fulfillments the node reads: the registry's at start, then
     /// each one a request names or governance sets.
     pub randomness: BTreeSet<Address>,
@@ -37,9 +38,10 @@ pub struct Contracts {
 impl Contracts {
     /// The contracts whose logs the node reads.
     pub fn addresses(&self) -> Vec<Address> {
-        [self.interfold, self.registry, self.bonding, self.slashing]
+        [self.interfold, self.registry, self.bonding]
             .into_iter()
             .chain(self.randomness.iter().copied())
+            .chain(self.slashing.iter().copied())
             .collect()
     }
 }
@@ -163,7 +165,7 @@ impl Decoder<'_> {
             self.registry(log, topic)
         } else if log.address == c.bonding {
             self.bonding(log, topic)
-        } else if log.address == c.slashing
+        } else if c.slashing.contains(&log.address)
             && topic == ISlashingManager::E3DependenciesReleased::SIGNATURE_HASH
         {
             let event: ISlashingManager::E3DependenciesReleased =
@@ -218,6 +220,12 @@ impl Decoder<'_> {
                 ChainFact::Failed {
                     e3: self.e3(event.e3Id),
                     reason: failure(event.reason)?,
+                }
+            }
+            I::SlashingManagerSet::SIGNATURE_HASH => {
+                let event: I::SlashingManagerSet = decode_event(log, "SlashingManagerSet")?;
+                ChainFact::SlashingManager {
+                    manager: event.slashingManager,
                 }
             }
             I::E3FailureProcessed::SIGNATURE_HASH => {

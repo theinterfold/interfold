@@ -21,7 +21,7 @@ pub fn contracts() -> Contracts {
         interfold: Address::repeat_byte(0x1f),
         registry: Address::repeat_byte(0x2e),
         bonding: Address::repeat_byte(0x3b),
-        slashing: Address::repeat_byte(0x4c),
+        slashing: BTreeSet::from([Address::repeat_byte(0x4c)]),
         randomness: BTreeSet::from([RANDOMNESS]),
         crypto_configs: BTreeMap::from([(1, CONFIG)]),
     }

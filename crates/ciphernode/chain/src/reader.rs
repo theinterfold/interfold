@@ -140,22 +140,30 @@ impl<R: Rpc> Reader<R> {
                 }
             };
             let decoded = decode(&self.contracts, &logs)?;
-            let providers: BTreeSet<Address> = decoded
-                .iter()
-                .filter_map(|decoded| match decoded {
+            let (mut providers, mut managers) = (BTreeSet::new(), BTreeSet::new());
+            for decoded in &decoded {
+                match decoded {
                     Decoded::Fact(ChainEvent {
                         fact: ChainFact::RandomnessProvider { provider },
                         ..
-                    }) => Some(*provider),
-                    _ => None,
-                })
-                .filter(|provider| !self.contracts.randomness.contains(provider))
-                .collect();
-            if providers.is_empty() {
+                    }) if !self.contracts.randomness.contains(provider) => {
+                        providers.insert(*provider);
+                    }
+                    Decoded::Fact(ChainEvent {
+                        fact: ChainFact::SlashingManager { manager },
+                        ..
+                    }) if !self.contracts.slashing.contains(manager) => {
+                        managers.insert(*manager);
+                    }
+                    _ => {}
+                }
+            }
+            if providers.is_empty() && managers.is_empty() {
                 break decoded;
             }
-            // The new providers' fulfillments in these blocks were filtered out.
+            // The new contracts' logs in these blocks were filtered out.
             self.contracts.randomness.extend(providers);
+            self.contracts.slashing.extend(managers);
         };
         let mut events = Vec::new();
         for decoded in decoded {

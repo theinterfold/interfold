@@ -143,9 +143,10 @@ Each rule is checkable in review.
   contract fails a committee that met its threshold too. After a failure the same turns call
   `processE3Failure`. A node that has a turn keeps the E3 until the chain logs the settlement,
   however long the contract keeps it closed. A node that holds a committee's work keeps it, and
-  its blobs, until the slashing manager logs `E3DependenciesReleased`: accusations that expel no
+  its blobs, until a slashing manager logs `E3DependenciesReleased`: accusations that expel no
   member can come, and be appealed, even after settlement, until governance closes the E3 there.
-  A failed E3 that governance never closes keeps its committee's work. The finalizer takes the same turns. The node judges deadlines by
+  The node watches the Interfold's manager at start and each one it sets later, and keeps them
+  across restarts. A failed E3 that governance never closes keeps its committee's work. The finalizer takes the same turns. The node judges deadlines by
   its own clock, so a node that replays old history submits these calls for E3s that ended long
   ago; each ends at its preflight.
 - **D25. The node refreshes its operator in each owner capacity window, whatever the identity
