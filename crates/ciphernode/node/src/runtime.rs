@@ -201,6 +201,9 @@ where
             if let Err(error) = effects.blobs.close(*e3) {
                 warn!(%e3, %error, "deleting the blobs of ended work failed");
             }
+            if let Err(error) = effects.jobs.close(*e3) {
+                warn!(%e3, %error, "deleting the proving files of ended work failed");
+            }
         }
     }
 }

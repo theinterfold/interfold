@@ -19,6 +19,7 @@ e3-data-availability = { workspace = true }
 e3-engine = { workspace = true }
 e3-evm-contracts = { workspace = true }
 e3-jobs = { workspace = true }
+e3-zk-prover = { workspace = true }
 e3-journal = { workspace = true }
 e3-p2p = { workspace = true }
 e3-protocol = { workspace = true }

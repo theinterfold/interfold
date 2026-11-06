@@ -7,7 +7,7 @@
 //! A Minimum committee through every job with real threshold-BFV math: keys, shares, decryption
 //! keys, the committee key, encryption, decryption shares, and the plaintext.
 
-use crate::{trbfv, BlobStore, Blobs, JobRunner, MemoryBlobs};
+use crate::{trbfv, BlobStore, Blobs, JobRunner, MemoryBlobs, Proofs};
 use alloy_primitives::{Address, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
@@ -78,7 +78,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         let cipher = Cipher::from_password(&format!("node {member}"))
             .await
             .unwrap();
-        runners.push(JobRunner::new(blobs.clone(), cipher));
+        runners.push(JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder));
     }
 
     let keys: Vec<OwnKey> = runners
@@ -132,7 +132,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         SharesMessage {
             recipient: members[recipient],
             pk_share: dealt[dealer].pk_share,
-            shares: shares.shares,
+            shares: shares.shares.expect("every member has a key"),
             c2a: unsigned(dealt[dealer].c2a.clone()),
             c2b: unsigned(dealt[dealer].c2b.clone()),
             c3a: shares.c3a.iter().cloned().map(unsigned).collect(),
@@ -190,6 +190,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             match dkg(
                 &runners[member],
                 DkgWork::MakeDecryptionKey {
+                    member: members[member],
                     committee: members.clone(),
                     secret: keys[member].secret,
                     own_share: dealt[member].own_share,
@@ -311,7 +312,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
 async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_check() {
     let blobs = MemoryBlobs::default();
     let cipher = Cipher::from_password("node").await.unwrap();
-    let runner = JobRunner::new(blobs.clone(), cipher);
+    let runner = JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder);
     let DkgWorkResult::EncryptionKeyMade(own) = dkg(&runner, DkgWork::MakeEncryptionKey) else {
         panic!("a key");
     };
@@ -346,4 +347,36 @@ async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_chec
             valid: false
         }
     );
+}
+
+#[test]
+fn a_node_runs_at_most_its_limit_of_proofs_at_once() {
+    use crate::Circuits;
+    use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Duration,
+    };
+
+    let backend = ZkBackend::new(
+        BBPath::Custom("bb".into()),
+        "circuits".into(),
+        "work".into(),
+    );
+    let circuits = Circuits::new(ZkProver::new(&backend), 2).unwrap();
+    let (running, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    thread::scope(|scope| {
+        for _ in 0..6 {
+            scope.spawn(|| {
+                circuits.proving(|_| {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(now, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(50));
+                    running.fetch_sub(1, Ordering::SeqCst);
+                })
+            });
+        }
+    });
+    assert_eq!(most.load(Ordering::SeqCst), 2);
 }

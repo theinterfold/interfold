@@ -22,7 +22,7 @@ pub use timing::DkgTiming;
 
 use crate::{
     node::{Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Work},
-    proof::{ProofType, SignedProof, ZkProof},
+    proof::{SignedProof, ZkProof},
     BlobRef, E3Id, UnixSecs,
 };
 use aggregation::Aggregation;
@@ -190,8 +190,8 @@ pub enum DkgWork {
         proof: ZkProof,
     },
     /// This node's threshold shares and their C1-C3 proofs. Every member in `keys` gets its
-    /// encrypted shares. Every other member's C3 slot but the dealer's own gets a placeholder
-    /// encrypted under `own_key`, which that member never receives.
+    /// encrypted shares. Every other member's slot but the dealer's own is encrypted under
+    /// `own_key` and proved, and that member never receives it.
     MakeShares {
         dealer: Address,
         committee: Vec<Address>,
@@ -210,6 +210,7 @@ pub enum DkgWork {
     /// proofs. `shares` holds the encrypted shares of every roster dealer but this node, which
     /// uses `own_share`; `c2` holds every roster dealer's C2a and C2b proofs, which C4 binds.
     MakeDecryptionKey {
+        member: Address,
         committee: Vec<Address>,
         secret: BlobRef,
         own_share: BlobRef,
@@ -223,8 +224,12 @@ pub enum DkgWork {
         c2: BTreeMap<Address, (ZkProof, ZkProof)>,
         message: Box<DecryptionKeyMessage>,
     },
-    /// Fold this node's DKG proofs, in the order given, into one recursive proof.
-    FoldProofs { proofs: Vec<(ProofType, ZkProof)> },
+    /// Fold this node's DKG proofs into one recursive proof.
+    FoldProofs {
+        member: Address,
+        committee: Vec<Address>,
+        proofs: Box<DkgProofs>,
+    },
     /// Check a roster member's C1 proof against its public-key share.
     CheckKeyshare {
         member: Address,
@@ -264,7 +269,7 @@ pub struct AggregatedKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DkgSignature {
     EncryptionKeyProof,
-    /// C1, C2a, C2b, then each recipient's C3a and C3b proofs, recipients ascending.
+    /// C1, C2a, C2b, then each delivered recipient's C3a and C3b proofs, recipients ascending.
     DealerProofs,
     /// C4a, then each C4b proof.
     DecryptionKeyProofs,
@@ -286,6 +291,7 @@ pub struct OwnShares {
     pub c1: ZkProof,
     pub c2a: ZkProof,
     pub c2b: ZkProof,
+    /// Every other member's shares and their C3 proofs.
     pub recipients: BTreeMap<Address, RecipientShares>,
 }
 
@@ -300,9 +306,28 @@ pub struct OwnDecryptionKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipientShares {
-    pub shares: BlobRef,
+    /// None for a member without a valid key: C3 still proves its slot, encrypted under the
+    /// dealer's own key, and the member receives nothing.
+    pub shares: Option<BlobRef>,
+    /// One proof per share row.
     pub c3a: Vec<ZkProof>,
     pub c3b: Vec<ZkProof>,
+}
+
+/// A member's own DKG proofs, which its node fold combines.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DkgProofs {
+    pub c0: ZkProof,
+    pub c1: ZkProof,
+    pub c2a: ZkProof,
+    pub c2b: ZkProof,
+    /// Every other member's C3a proofs, one per share row.
+    pub c3a: BTreeMap<Address, Vec<ZkProof>>,
+    /// Every other member's C3b proofs, one per share row.
+    pub c3b: BTreeMap<Address, Vec<ZkProof>>,
+    pub c4a: ZkProof,
+    /// One proof per smudging-noise set.
+    pub c4b: Vec<ZkProof>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

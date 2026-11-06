@@ -161,10 +161,10 @@ pub fn own_shares(recipients: &[u64]) -> OwnShares {
             .iter()
             .map(|n| {
                 let shares = RecipientShares {
-                    shares: BlobRef {
+                    shares: Some(BlobRef {
                         hash: B256::repeat_byte(*n as u8),
                         len: 1_000,
-                    },
+                    }),
                     c3a: vec![proof(0x3a); 3],
                     c3b: vec![proof(0x3b); 3],
                 };

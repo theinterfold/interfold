@@ -911,7 +911,7 @@ impl Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{selection::Eligible, testing::*};
+    use crate::{dkg::DkgProofs, selection::Eligible, testing::*};
 
     fn node() -> Node {
         Node::new(address(ME))
@@ -1273,29 +1273,57 @@ mod tests {
     #[test]
     fn the_persisted_encoding_is_the_one_its_version_names() {
         let mut node = node();
-        let inputs = [
-            requested(10, e3(1)),
-            finalized(11, e3(1), members([1, 2])),
-            announced(key_from(e3(1), 1)),
-            key_from(e3(1), 1),
-            key_published(12, e3(1), members([1, 2]), members([1, 2])),
-            failure(20, e3(1), FailureReason::DkgInvalidShares),
-            Input::Tick,
-        ];
         let mut journal = Vec::new();
-        for input in inputs {
+        let mut step = |input: Input| {
             journal.extend(bincode::serialize(&(30u64, &input)).unwrap());
-            for effect in node.step(30, input) {
-                journal.extend(bincode::serialize(&effect).unwrap());
+            let effects = node.step(30, input);
+            for effect in &effects {
+                journal.extend(bincode::serialize(effect).unwrap());
             }
+            effects
+        };
+        step(requested(10, e3(1)));
+        step(finalized(11, e3(1), members([1, 2])));
+        let effects = step(key_made(e3(1), own_key(0xee)));
+        step(sign(ME, signing(&effects)));
+        for n in [1, 2] {
+            step(announced(key_from(e3(1), n)));
+            step(key_from(e3(1), n));
+            step(key_checked(e3(1), n, true));
         }
+        let mut made = own_shares(&[1, 2]);
+        made.recipients
+            .get_mut(&address(2))
+            .expect("a recipient")
+            .shares = None;
+        let effects = step(shares_made(e3(1), made));
+        step(sign(ME, signing(&effects)));
+        step(key_published(12, e3(1), members([1, 2]), members([1, 2])));
+        step(failure(20, e3(1), FailureReason::DkgInvalidShares));
+        step(Input::Tick);
         journal.extend(bincode::serialize(&node).unwrap());
+        // The fold's input, which this sample's DKG does not reach.
+        let fold = DkgWork::FoldProofs {
+            member: address(ME),
+            committee: members([1, 2]),
+            proofs: Box::new(DkgProofs {
+                c0: proof(0xc0),
+                c1: proof(0xc1),
+                c2a: proof(0xca),
+                c2b: proof(0xcb),
+                c3a: [(address(1), vec![proof(0x3a)])].into(),
+                c3b: [(address(1), vec![proof(0x3b)])].into(),
+                c4a: proof(0x4a),
+                c4b: vec![proof(0x4b)],
+            }),
+        };
+        journal.extend(bincode::serialize(&fold).unwrap());
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                4,
+                5,
                 alloy_primitives::b256!(
-                    "126c093bf7ae9e25c84b2056fde6451052c663d7288adadc03403ae1fbc97ef7"
+                    "40c5d0e4777490b4468501d6914bd838880d53ba8b5680e3dcc85b82cc8a8312"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

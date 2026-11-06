@@ -87,6 +87,7 @@ impl Dkg {
                 .filter_map(|member| Some((*member, self.shares.received.get(member)?.shares)))
                 .collect();
             effects.push(self.run(DkgWork::MakeDecryptionKey {
+                member: self.me,
                 committee: self.members.clone(),
                 secret,
                 own_share: dealt.own_share,
@@ -174,12 +175,7 @@ impl Dkg {
             c4a,
             c4b: signed.collect(),
         };
-        let mut proofs = dealt.proofs();
-        proofs.extend(
-            made.proofs()
-                .into_iter()
-                .map(|(proof_type, proof)| (proof_type, proof.clone())),
-        );
+        let proofs = dealt.proofs(made);
         self.sealed_key = Some(made.key);
         self.phase = Phase::DecryptionKeySent(dealt.clone());
         let mut effects = vec![

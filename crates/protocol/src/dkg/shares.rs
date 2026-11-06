@@ -7,7 +7,10 @@
 //! C1-C3: the threshold shares each member deals to the others, and the Ready report in which a
 //! member names the dealers whose shares it verified.
 
-use super::{Dealer, Dkg, DkgMessage, DkgSignature, DkgWork, OwnShares, Phase, SharesMessage};
+use super::{
+    Dealer, Dkg, DkgMessage, DkgProofs, DkgSignature, DkgWork, OwnDecryptionKey, OwnShares, Phase,
+    RecipientShares, SharesMessage,
+};
 use crate::{
     node::Effect,
     proof::{ProofType, SignedProof, ZkProof},
@@ -28,20 +31,23 @@ pub(super) struct Dealt {
     pub(super) c1: SignedProof,
     pub(super) c2a: ZkProof,
     pub(super) c2b: ZkProof,
-    c3: Vec<(ProofType, ZkProof)>,
+    c3a: BTreeMap<Address, Vec<ZkProof>>,
+    c3b: BTreeMap<Address, Vec<ZkProof>>,
 }
 
 impl Dealt {
-    /// This node's C0-C3 proofs, in the order the fold takes them.
-    pub(super) fn proofs(&self) -> Vec<(ProofType, ZkProof)> {
-        let mut proofs = vec![
-            (ProofType::C0PkBfv, self.c0.clone()),
-            (ProofType::C1PkGeneration, self.c1.proof.clone()),
-            (ProofType::C2aSkShareComputation, self.c2a.clone()),
-            (ProofType::C2bESmShareComputation, self.c2b.clone()),
-        ];
-        proofs.extend(self.c3.iter().cloned());
-        proofs
+    /// Every proof the node fold combines, with the decryption key's.
+    pub(super) fn proofs(&self, decryption_key: &OwnDecryptionKey) -> DkgProofs {
+        DkgProofs {
+            c0: self.c0.clone(),
+            c1: self.c1.proof.clone(),
+            c2a: self.c2a.clone(),
+            c2b: self.c2b.clone(),
+            c3a: self.c3a.clone(),
+            c3b: self.c3b.clone(),
+            c4a: decryption_key.c4a.clone(),
+            c4b: decryption_key.c4b.clone(),
+        }
     }
 }
 
@@ -63,7 +69,7 @@ impl OwnShares {
             (ProofType::C2aSkShareComputation, &self.c2a),
             (ProofType::C2bESmShareComputation, &self.c2b),
         ];
-        for recipient in self.recipients.values() {
+        for recipient in self.delivered().map(|(_, recipient, _)| recipient) {
             proofs.extend(
                 recipient
                     .c3a
@@ -78,6 +84,13 @@ impl OwnShares {
             );
         }
         proofs
+    }
+
+    /// The recipients with a valid key, which receive their shares.
+    fn delivered(&self) -> impl Iterator<Item = (Address, &RecipientShares, BlobRef)> {
+        self.recipients
+            .iter()
+            .filter_map(|(member, recipient)| Some((*member, recipient, recipient.shares?)))
     }
 }
 
@@ -162,17 +175,23 @@ impl Dkg {
         };
         let mut c3 = c3.iter().cloned();
         let mut messages = Vec::new();
-        for (recipient, shares) in &made.recipients {
+        for (recipient, proofs, shares) in made.delivered() {
             messages.push(SharesMessage {
-                recipient: *recipient,
+                recipient,
                 pk_share: made.pk_share,
-                shares: shares.shares,
+                shares,
                 c2a: c2a.clone(),
                 c2b: c2b.clone(),
-                c3a: c3.by_ref().take(shares.c3a.len()).collect(),
-                c3b: c3.by_ref().take(shares.c3b.len()).collect(),
+                c3a: c3.by_ref().take(proofs.c3a.len()).collect(),
+                c3b: c3.by_ref().take(proofs.c3b.len()).collect(),
             });
         }
+        let c3 = |proofs: fn(&RecipientShares) -> &Vec<ZkProof>| {
+            made.recipients
+                .iter()
+                .map(|(member, recipient)| (*member, proofs(recipient).clone()))
+                .collect()
+        };
         let dealt = Dealt {
             contribution: Dealer::new(self.me, made.pk_share, &made.c2a, &made.c2b),
             pk_share: made.pk_share,
@@ -181,12 +200,8 @@ impl Dkg {
             c1: c1.clone(),
             c2a: made.c2a.clone(),
             c2b: made.c2b.clone(),
-            c3: made
-                .proofs()
-                .into_iter()
-                .skip(3)
-                .map(|(proof_type, proof)| (proof_type, proof.clone()))
-                .collect(),
+            c3a: c3(|recipient| &recipient.c3a),
+            c3b: c3(|recipient| &recipient.c3b),
         };
         self.phase = Phase::Dealt(own.clone(), Box::new(dealt));
         let mut effects: Vec<Effect> = messages

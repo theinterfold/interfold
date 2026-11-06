@@ -68,6 +68,34 @@ fn a_dealer_signs_every_proof_and_sends_each_member_shares_it_accepts() {
 }
 
 #[test]
+fn a_dealer_never_signs_or_sends_a_slot_it_withholds() {
+    let mut node = with_its_key(ME);
+    add_valid_key(&mut node, 1);
+    add_valid_key(&mut node, 2);
+    let mut made = own_shares(&[1, 2]);
+    made.recipients
+        .get_mut(&address(2))
+        .expect("a recipient")
+        .shares = None;
+    let effects = node.step(NOW, shares_made(e3(1), made));
+    let c3_per_recipient = 3 + 3;
+    assert_eq!(signing(&effects).hashes.len(), 3 + c3_per_recipient);
+
+    let effects = node.step(NOW, sign(ME, signing(&effects)));
+    let recipients: Vec<Address> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Gossip(PeerMessage {
+                body: Body::Dkg(DkgMessage::Shares(shares)),
+                ..
+            }) => Some(shares.recipient),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(recipients, [address(1)]);
+}
+
+#[test]
 fn a_member_without_a_valid_key_gets_no_shares() {
     let mut node = with_its_key(ME);
     add_valid_key(&mut node, 1);

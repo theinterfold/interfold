@@ -71,15 +71,24 @@ impl MockJobs {
                     valid: key.hash == keccak256(proof.data.hash),
                 }
             }
-            Work::Dkg(DkgWork::MakeShares { keys, .. }) => {
+            Work::Dkg(DkgWork::MakeShares {
+                dealer,
+                committee,
+                keys,
+                ..
+            }) => {
                 let pk_share = blob(self.hash());
-                let recipients = keys
-                    .keys()
+                let recipients = committee
+                    .iter()
+                    .filter(|member| *member != dealer)
                     .map(|member| {
-                        let shares = RecipientShares {
-                            shares: blob(keccak256(
+                        let delivered = keys.contains_key(member).then(|| {
+                            blob(keccak256(
                                 [pk_share.hash.as_slice(), member.as_slice()].concat(),
-                            )),
+                            ))
+                        });
+                        let shares = RecipientShares {
+                            shares: delivered,
                             c3a: (0..3).map(|_| self.proof()).collect(),
                             c3b: (0..3).map(|_| self.proof()).collect(),
                         };

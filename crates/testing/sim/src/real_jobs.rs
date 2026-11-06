@@ -6,7 +6,7 @@
 
 use crate::Jobs;
 use e3_crypto::Cipher;
-use e3_jobs::{BlobStore, Blobs, JobRunner, MemoryBlobs};
+use e3_jobs::{BlobStore, Blobs, JobRunner, MemoryBlobs, Proofs};
 use e3_protocol::{
     node::{CryptoParams, Job, WorkResult},
     BlobRef, E3Id,
@@ -29,7 +29,7 @@ impl RealJobs {
                 let cipher = runtime
                     .block_on(Cipher::from_password(&format!("node {node}")))
                     .expect("a cipher");
-                JobRunner::new(blobs.clone(), cipher)
+                JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder)
             })
             .collect();
         Self {

@@ -29,8 +29,8 @@ Each rule is checkable in review.
 ## Decisions
 
 - **D1. A rewrite beside the current node.** No step has to keep the current node working, so no
-  compatibility scaffolding is built. New crates sit in the existing families; the current crates are
-  deleted after the switch.
+  compatibility scaffolding is built. New crates sit in the existing families; the current crates
+  are deleted after the switch.
 - **D2. One embedded transactional store (redb).** One transaction per machine step holds the
   journaled input, the new state, and the outbox entries. Pure Rust, ACID, no C++ build.
 - **D3. tokio tasks and bounded channels; no actix.** No task awaits another in a cycle. The outbox
@@ -40,19 +40,20 @@ Each rule is checkable in review.
 - **D5. Randomness is an input.** Machines never draw randomness. A random value arrives as a job
   result and is journaled before any effect that uses it leaves the node.
 - **D6. Identity by source, not by clock.** Chain facts by (chain, block, log index). Peer messages
-  by slot (E3, sender, kind, subject). Job results by semantic job id. Effects by a deterministic id.
+  by slot (E3, sender, kind, subject). Job results by semantic job id. Effects by a deterministic
+  id.
 - **D7. Contract-verified bytes are locked by golden tests first.** Vectors are taken from the
   current code before any port; the v2 code must reproduce them.
 
-- **D8. One pure `Node` machine, one journal.** The node's whole protocol state is one
-  deterministic machine; each E3 is a plain struct inside it, and admission and routing are pure
-  code. The engine journals every input with its time, commits the effects and a periodic snapshot
-  in the same transaction, and replays the journal after the latest snapshot on restart. Large
-  payloads are stored once by hash, so snapshots stay small. A failed commit consumes the engine,
-  because its state may be ahead of the store.
-- **D9. Machines are deterministic.** State uses ordered maps, never iteration order of hash maps;
-  a machine reads no clock, draws no randomness, and holds no secret key. Signatures are effects
-  whose results come back as inputs.
+- **D8. One pure `Node` machine, one journal.** The node's whole protocol state is one deterministic
+  machine; each E3 is a plain struct inside it, and admission and routing are pure code. The engine
+  journals every input with its time, commits the effects and a periodic snapshot in the same
+  transaction, and replays the journal after the latest snapshot on restart. Large payloads are
+  stored once by hash, so snapshots stay small. A failed commit consumes the engine, because its
+  state may be ahead of the store.
+- **D9. Machines are deterministic.** State uses ordered maps, never iteration order of hash maps; a
+  machine reads no clock, draws no randomness, and holds no secret key. Signatures are effects whose
+  results come back as inputs.
 
 - **D10. Peer messages wait in the bounded hold until the chain fact that lets the node judge
   them:** the committee's finalization for DKG messages, the key's publication for decryption
@@ -65,10 +66,10 @@ Each rule is checkable in review.
 
 - **D12. Ready reports only grow.** A member's later Ready must contain its earlier one; each
   receiver drops expelled dealers itself when it chooses a roster. Today a reporter drops expelled
-  dealers, so a receiver that has not seen the expulsion yet must hold the update
-  ([dkg](dkg.md), "One H-roster").
-- **D13. One verification job per dealer.** A verdict covers one dealer's exact message, so a verdict
-  can never apply to a batch it was not made for, and growth needs no new batch.
+  dealers, so a receiver that has not seen the expulsion yet must hold the update ([dkg](dkg.md),
+  "One H-roster").
+- **D13. One verification job per dealer.** A verdict covers one dealer's exact message, so a
+  verdict can never apply to a batch it was not made for, and growth needs no new batch.
 - **D14. Signatures are requested in batches.** One request carries every hash of a step (a dealer's
   C1, C2, and per-recipient C3 proofs), and its answer returns every signature in order.
 
@@ -95,38 +96,38 @@ Each rule is checkable in review.
 
 - **D19. One re-send rule for every message a node sends.** While the work a message feeds still
   runs at the node, its latest message of each kind goes again after one minute, then at doubling
-  intervals up to ten minutes, for at most eight hours ([threshold decryption](threshold-decryption.md),
-  "Restart and redelivery limits"). Receivers keep the first copy. This replaces per-phase timers,
-  document re-announcement as the only DKG recovery, and the promoted aggregator's roster
-  re-proposal.
+  intervals up to ten minutes, for at most eight hours
+  ([threshold decryption](threshold-decryption.md), "Restart and redelivery limits"). Receivers keep
+  the first copy. This replaces per-phase timers, document re-announcement as the only DKG recovery,
+  and the promoted aggregator's roster re-proposal.
 
 - **D20. Selection reads the node's own registry history.** Activity, ticket balances, bond owners,
-  and the identity policy are chain facts with their block times; selection reads them at T−1 for
-  a request at T ([committee selection](committee-selection.md)). The node's load limit counts the
-  live E3s it holds a ticket for, so no separate counter can drift. Under a required identity
-  policy v2 ranks every eligible operator, which is today's fallback when the eligibility read
-  fails; porting that read, which keeps the owner shortlist, is still open.
+  and the identity policy are chain facts with their block times; selection reads them at T−1 for a
+  request at T ([committee selection](committee-selection.md)). The node's load limit counts the
+  live E3s it holds a ticket for, so no separate counter can drift. Under a required identity policy
+  v2 ranks every eligible operator, which is today's fallback when the eligibility read fails;
+  porting that read, which keeps the owner shortlist, is still open.
 
 - **D21. No history sync.** A node that restarts or joins late gets each peer message whose work
-  still runs from the peer's re-sends (D19), and every chain fact from the reader, which resumes
-  at its last applied log. No protocol replays gossip history, so no history can outgrow a
-  transfer limit or be gossiped again by its readers.
+  still runs from the peer's re-sends (D19), and every chain fact from the reader, which resumes at
+  its last applied log. No protocol replays gossip history, so no history can outgrow a transfer
+  limit or be gossiped again by its readers.
 
 - **D22. Blobs travel from their publisher, not through DHT records.** Gossip carries the operator
   signed message with blob references, and the network adapter delivers it at once. The machine
   fetches a message's blobs only once the message's E3 admits it (a member's first message of its
   kind, correctly signed), with an effect the adapter carries out: it asks the peers that sent the
-  message, publisher first, and keeps only bytes that hash to the reference and have its length.
-  The machine takes the message once the blobs are in the store. So a sender outside the
-  committee costs a node no download, and a member at most one message of each kind; the adapter
-  bounds the bytes on their way at once. A sender's message of a kind is the only one of that kind
-  fetched from it until the node takes it, even when a blob of it never comes. Each E3 keeps its
-  own blobs, a blob request names the E3, and the node closes an E3's blobs once its work ends:
-  the store waits for writes under way, deletes them, and refuses later ones for as long as it
-  runs. At a start the node drops the outbox work of E3s it no longer holds before running any. The protocol says which blobs a node needs: a share
-  message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
-  share once, where a DHT put of the current node goes to twenty peers. A share comes only from
-  its dealer, so members need direct connections: peers that identify on the network enter
+  message, publisher first, and keeps only bytes that hash to the reference and have its length. The
+  machine takes the message once the blobs are in the store. So a sender outside the committee costs
+  a node no download, and a member at most one message of each kind; the adapter bounds the bytes on
+  their way at once. A sender's message of a kind is the only one of that kind fetched from it until
+  the node takes it, even when a blob of it never comes. Each E3 keeps its own blobs, a blob request
+  names the E3, and the node closes an E3's blobs once its work ends: the store waits for writes
+  under way, deletes them, and refuses later ones for as long as it runs. At a start the node drops
+  the outbox work of E3s it no longer holds before running any. The protocol says which blobs a node
+  needs: a share message's only for its recipient. A publisher uploads a broadcast blob once per
+  receiver and a share once, where a DHT put of the current node goes to twenty peers. A share comes
+  only from its dealer, so members need direct connections: peers that identify on the network enter
   Kademlia's routing table, whose lookups connect to the peers they find. Open: gossip still
   forwards a non-member's envelopes, since the adapter does not know the committees.
 
@@ -137,18 +138,18 @@ Each rule is checkable in review.
 - **D24. Nodes fail stalled E3s and settle failed ones, in turns.** Each chain fact that starts a
   stage gives the deadline after which the contract fails it. From one second after it, nodes call
   `markE3Failed` in turns 30 seconds apart: committee members by party ID, and, before a committee
-  exists, the request's eligible operators in address order. While the request waits for
-  randomness the deadline is the randomness deadline; once the seed arrives, ticket holders
-  finalize after the committee deadline, and the others wait the DKG window more, after which the
-  contract fails a committee that met its threshold too. After a failure the same turns call
-  `processE3Failure`. A node that has a turn keeps the E3 until the chain logs the settlement,
-  however long the contract keeps it closed. A node that holds a committee's work keeps it, and
-  its blobs, until a slashing manager logs `E3DependenciesReleased`: accusations that expel no
-  member can come, and be appealed, even after settlement, until governance closes the E3 there.
-  The node watches the Interfold's manager at start and each one it sets later, and keeps them
-  across restarts. A failed E3 that governance never closes keeps its committee's work. The finalizer takes the same turns. The node judges deadlines by
-  its own clock, so a node that replays old history submits these calls for E3s that ended long
-  ago; each ends at its preflight.
+  exists, the request's eligible operators in address order. While the request waits for randomness
+  the deadline is the randomness deadline; once the seed arrives, ticket holders finalize after the
+  committee deadline, and the others wait the DKG window more, after which the contract fails a
+  committee that met its threshold too. After a failure the same turns call `processE3Failure`. A
+  node that has a turn keeps the E3 until the chain logs the settlement, however long the contract
+  keeps it closed. A node that holds a committee's work keeps it, and its blobs, until a slashing
+  manager logs `E3DependenciesReleased`: accusations that expel no member can come, and be appealed,
+  even after settlement, until governance closes the E3 there. The node watches the Interfold's
+  manager at start and each one it sets later, and keeps them across restarts. A failed E3 that
+  governance never closes keeps its committee's work. The finalizer takes the same turns. The node
+  judges deadlines by its own clock, so a node that replays old history submits these calls for E3s
+  that ended long ago; each ends at its preflight.
 - **D25. The node refreshes its operator in each owner capacity window, whatever the identity
   policy.** Under a required policy an owner's capacity reads zero from the start of each 30-day
   window until its operators refresh, so requests can fail with `InsufficientBondOwners`. The chain
@@ -157,10 +158,23 @@ Each rule is checkable in review.
   each window starts, since a refresh counts for the window of its block.
 - **D26. A data directory carries its layout.** The node writes the layout beside its files: the
   protocol's `ENCODING_VERSION` for the journal and snapshots, and the store's version for the blob
-  folders and the wallet file. It refuses a directory in another layout, so an update never
-  misreads an old journal or deletes old blobs as foreign. A test fingerprints a sample journal and
-  snapshot, so an encoding change fails until its version changes. v2 has no migrations before its
-  first release: a layout change means starting from an empty directory.
+  folders and the wallet file. It refuses a directory in another layout, so an update never misreads
+  an old journal or deletes old blobs as foreign. A test fingerprints a sample journal and snapshot,
+  so an encoding change fails until its version changes. v2 has no migrations before its first
+  release: a layout change means starting from an empty directory.
+- **D27. Jobs prove with the circuits directly, and a check binds what it received to the proof.** A
+  job builds each circuit's input from the values it already holds and runs `bb`; no proof requests
+  travel as events. A dealer proves C3 for every other member's slot, a member without a valid key
+  included (encrypted under the dealer's own key and never sent), because the node fold proves one
+  C3 per slot. A check verifies the proof and compares the bytes it received with the proof's public
+  commitments: a key with its C0, a keyshare with its C1, the shares a member decrypted with the
+  dealer's C2 rows for its slot, a member's C4 rows with the roster dealers' C2 rows, and a
+  decryption share with its C6 (ciphertext, share, and domain). A valid proof of other bytes counts
+  for nothing. A bad key or bad shares keep their sender out of the roster, and a bad decryption
+  share out of the T+1 shares the plaintext uses; after the roster is fixed, a bad keyshare or C4
+  fails the DKG. The committee key's commitment is the DKG aggregation proof's last public input,
+  which `BfvPkVerifier` checks, not a hash of the key bytes. A node without a prover makes
+  placeholders, which only the mock verifiers of a test deployment accept.
 
 ## Problems in the current node, with the fix above them
 
@@ -171,10 +185,10 @@ Each rule is checkable in review.
   - `crates/net/src/events.rs:107`: the gossip payload is the bincode of the internal event.
 - **One durability rule: journal + state + outbox per machine, in one transaction; replay runs the
   pure step and ignores effects.**
-  - `crates/events/src/store_keys.rs`: 11 recovery and checkpoint records next to actor snapshots and
-    the event log.
-  - `crates/state/request/src/context.rs`: each extension must pass `effects_enabled` to the actors it
-    creates; nothing enforces it (the bugs fixed by #2439 and #2443).
+  - `crates/events/src/store_keys.rs`: 11 recovery and checkpoint records next to actor snapshots
+    and the event log.
+  - `crates/state/request/src/context.rs`: each extension must pass `effects_enabled` to the actors
+    it creates; nothing enforces it (the bugs fixed by #2439 and #2443).
   - `crates/ciphernode/multithread/src/effect_gate.rs`: a 1,288-line gate dedupes job requests that
     replay sends again.
 - **Jobs are a typed service with semantic ids, not events.**
@@ -194,8 +208,8 @@ Each rule is checkable in review.
   - `crates/net/src/network.rs:185`: `validate_event` checks only the E3 and the chain; the operator
     is a payload field that each consumer checks.
 - **A pure protocol crate at the bottom of the graph.**
-  - `e3-events` links `e3-trbfv`, `e3-zk-config`, `e3-evm-contracts`, `e3-crypto`; `e3-zk-prover` links
-    `e3-slashing` and `e3-request`; `e3-evm` links `e3-sortition` and `e3-request`.
+  - `e3-events` links `e3-trbfv`, `e3-zk-config`, `e3-evm-contracts`, `e3-crypto`; `e3-zk-prover`
+    links `e3-slashing` and `e3-request`; `e3-evm` links `e3-sortition` and `e3-request`.
 
 ## Special cases kept
 

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# The v2 nodes end to end on a local chain with mock verifiers: five operators, one Minimum
-# committee that selects itself, runs its DKG, publishes its key, and decrypts a ciphertext that
-# it fetches from the mock availability layer. Each node is its own process; the nodes find each
-# other through the first one.
+# The v2 nodes end to end on a local chain, with placeholder proofs that mock verifiers accept:
+# five operators, one Minimum committee that selects itself, runs its DKG, publishes its key, and
+# decrypts a ciphertext that it fetches from the mock availability layer. Each node is its own
+# process; the nodes find each other through the first one.
 #
 # With V2_RESTART=true it kills the decryption aggregator once the key is out and starts it again
 # from its journal and blob store before the ciphertext arrives.
+#
+# With V2_NOIR_DIR set to a directory that holds `bin/bb` and the compiled `circuits`, the nodes
+# make real proofs and the contracts verify them.
 #
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
@@ -17,7 +20,8 @@ OUT="$SCRIPT_DIR/output/v2"
 AVAILABILITY_DIR="$OUT/data-availability"
 DEPLOYED="$ROOT_DIR/packages/interfold-contracts/deployed_contracts.json"
 PLAINTEXT="4,0"
-TIMEOUT="${V2_TIMEOUT:-900}"
+NOIR_DIR="${V2_NOIR_DIR:-}"
+TIMEOUT="${V2_TIMEOUT:-$([[ -n "$NOIR_DIR" ]] && echo 3600 || echo 900)}"
 # The committee cannot publish its key after the input window closes; it must outlast the DKG.
 INTEGRATION_DKG_TIMEOUT="$TIMEOUT"
 
@@ -82,8 +86,13 @@ until_ok 120 curl -sf -X POST http://127.0.0.1:8545 -H 'Content-Type: applicatio
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 until_ok 60 curl -sf http://127.0.0.1:4000/health
 
-heading "Deploy the contracts with mock verifiers"
-(cd "$ROOT_DIR" && pnpm evm:clean && pnpm evm:deploy)
+if [[ -n "$NOIR_DIR" ]]; then
+  heading "Deploy the contracts with the circuit verifiers"
+  (cd "$ROOT_DIR" && pnpm evm:clean && ENABLE_ZK_VERIFICATION=true pnpm evm:deploy)
+else
+  heading "Deploy the contracts with mock verifiers"
+  (cd "$ROOT_DIR" && pnpm evm:clean && pnpm evm:deploy)
+fi
 
 heading "Register the operators"
 for address in "${ADDRESSES[@]}"; do
@@ -106,6 +115,7 @@ start_node() {
     --arg identity "$(printf '0x%064x' $((index + 1)))" \
     --arg listen "/ip4/127.0.0.1/udp/$((9400 + index))/quic-v1" \
     --arg peer "$peer" \
+    --arg noir "$NOIR_DIR" \
     '{
       rpc_url: "http://127.0.0.1:8545",
       chain_id: 31337,
@@ -125,7 +135,7 @@ start_node() {
         listen: [$listen],
         peers: (if $peer == "" then [] else [$peer] end)
       }
-    }' >"$dir/config.json"
+    } + (if $noir == "" then {} else {noir_dir: $noir} end)' >"$dir/config.json"
   RUST_LOG="${RUST_LOG:-info,e3_node=debug}" "$ROOT_DIR/target/debug/e3-node" "$dir/config.json" \
     >"$dir/node.log" 2>&1 &
   STARTED+=($!)

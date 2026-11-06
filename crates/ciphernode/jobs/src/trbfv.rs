@@ -34,7 +34,7 @@ pub fn crypto_configs() -> BTreeMap<u8, B256> {
         .collect()
 }
 
-fn threshold_preset(params: &CryptoParams) -> Result<BfvPreset, JobError> {
+pub(crate) fn threshold_preset(params: &CryptoParams) -> Result<BfvPreset, JobError> {
     BfvPreset::from_on_chain_param_set(params.param_set)
         .ok_or(JobError::UnsupportedParams(params.param_set))
 }

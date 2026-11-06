@@ -11,6 +11,7 @@
 mod decryption;
 mod dkg;
 mod placeholder;
+mod proofs;
 #[cfg(any(test, feature = "testing"))]
 mod requester;
 #[cfg(test)]
@@ -18,6 +19,7 @@ mod tests;
 mod trbfv;
 
 pub use e3_blobs::{BlobStore, Blobs, E3Blobs, MemoryBlobs};
+pub use proofs::{Circuits, Proofs};
 #[cfg(any(test, feature = "testing"))]
 pub use requester::encrypt;
 pub use trbfv::crypto_configs;
@@ -73,11 +75,25 @@ pub(crate) struct SealedDecryptionKey {
 pub struct JobRunner<S> {
     blobs: S,
     cipher: Cipher,
+    proofs: Proofs,
 }
 
 impl<S: BlobStore> JobRunner<S> {
-    pub fn new(blobs: S, cipher: Cipher) -> Self {
-        Self { blobs, cipher }
+    pub fn new(blobs: S, cipher: Cipher, proofs: Proofs) -> Self {
+        Self {
+            blobs,
+            cipher,
+            proofs,
+        }
+    }
+
+    /// Deletes the proving files of an E3 whose work ended. A proof still under way removes its
+    /// own files when it ends.
+    pub fn close(&self, e3: E3Id) -> std::io::Result<()> {
+        match &self.proofs {
+            Proofs::Circuits(circuits) => circuits.close(e3),
+            Proofs::Placeholder => Ok(()),
+        }
     }
 
     pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {
@@ -94,16 +110,20 @@ impl<S: BlobStore> JobRunner<S> {
 impl<S: BlobStore> JobRunner<S> {
     fn jobs(&self, e3: E3Id) -> Jobs<'_, E3Blobs<S>> {
         Jobs {
+            e3,
             blobs: self.blobs.of(e3),
             cipher: &self.cipher,
+            proofs: &self.proofs,
         }
     }
 }
 
 /// A job's view: the blobs of its E3.
 struct Jobs<'a, B> {
+    e3: E3Id,
     blobs: B,
     cipher: &'a Cipher,
+    proofs: &'a Proofs,
 }
 
 impl<B: Blobs> Jobs<'_, B> {

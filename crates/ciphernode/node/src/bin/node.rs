@@ -15,10 +15,11 @@ use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{DataAvailabilityReader, HttpObjectReader};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
-use e3_jobs::JobRunner;
+use e3_jobs::{Circuits, JobRunner, Proofs};
 use e3_journal::Journal;
 use e3_node::{run, Parts, Settings};
 use e3_p2p::{P2p, P2pConfig};
+use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
@@ -44,6 +45,14 @@ struct Config {
     operator: String,
     /// Seals the node's secrets at rest.
     cipher_password: String,
+    /// Where `bin/bb` and the compiled `circuits` are, for real proofs. Without it the node makes
+    /// placeholder proofs, which only the mock verifiers of a test deployment accept.
+    #[serde(default)]
+    noir_dir: Option<PathBuf>,
+    /// How many proofs run at once, two unless set: under the secure parameters each one can
+    /// hold gigabytes.
+    #[serde(default)]
+    concurrent_proofs: Option<usize>,
     network: NetworkConfig,
 }
 
@@ -92,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         node_generation: built.node_generation,
     };
     open_data_dir(&config.data_dir)?;
+    let proofs = proofs(&config)?;
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
         .connect_http(url);
@@ -129,7 +139,11 @@ async fn main() -> anyhow::Result<()> {
         operator,
         journal: Journal::open(config.data_dir.join("journal.redb"))?,
         blobs: blobs.clone(),
-        jobs: JobRunner::new(blobs, Cipher::from_password(&config.cipher_password).await?),
+        jobs: JobRunner::new(
+            blobs,
+            Cipher::from_password(&config.cipher_password).await?,
+            proofs,
+        ),
         rpc: ChainNode::new(chain, contracts),
         account: wallet,
         network,
@@ -137,6 +151,24 @@ async fn main() -> anyhow::Result<()> {
         availability,
     };
     Err(run(settings, parts).await.into())
+}
+
+fn proofs(config: &Config) -> anyhow::Result<Proofs> {
+    let Some(noir) = &config.noir_dir else {
+        return Ok(Proofs::Placeholder);
+    };
+    // Proofs that a stop cut short run again from the start, so their files go.
+    let proving = config.data_dir.join("proving");
+    if let Err(error) = std::fs::remove_dir_all(&proving) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+    }
+    let bb = BBPath::Custom(noir.join("bin").join("bb"));
+    let backend = ZkBackend::new(bb, noir.join("circuits"), proving);
+    let prover = ZkProver::new(&backend);
+    let circuits = Circuits::new(prover, config.concurrent_proofs.unwrap_or(2))?;
+    Ok(Proofs::Circuits(Box::new(circuits)))
 }
 
 /// The layout of the node's files in a data directory: the machine's encoding, and the version of

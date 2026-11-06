@@ -7,9 +7,9 @@
 use super::*;
 use crate::{
     decryption::DecryptionWork,
-    dkg::{DkgWork, FoldAttestation, KeyPublication},
+    dkg::{DkgProofs, DkgWork, FoldAttestation, KeyPublication, OwnShares, RecipientShares},
     node::{Job, Submission, Transaction, Work},
-    proof::ProofType,
+    proof::ZkProof,
 };
 use alloy_primitives::B256;
 
@@ -78,37 +78,68 @@ fn first_with_checked_keyshares() -> Node {
     node
 }
 
-#[test]
-fn a_roster_member_folds_all_its_dkg_proofs_and_attests_the_fold_for_its_slot() {
-    let [first, ..] = ordered();
-    let (mut node, _) = first_with_roster();
+/// The first member after it dealt `made`, verified every other member's shares, and sent its
+/// C4 proofs for the full roster, with the effects of that last step.
+fn first_dealing(made: OwnShares) -> (Node, Vec<Effect>) {
+    let [first, second, third] = ordered();
+    let mut node = with_its_key(first);
+    for n in others(first) {
+        add_valid_key(&mut node, n);
+    }
+    let effects = node.step(NOW, shares_made(e3(1), made));
+    node.step(NOW, sign(first, signing(&effects)));
+    for n in others(first) {
+        node.step(NOW, shares_from(e3(1), n, first));
+        node.step(NOW, shares_checked(e3(1), n, true));
+    }
+    node.step(NOW, ready(second, &[first, second, third], first));
     let effects = node.step(NOW, decryption_key_made(e3(1), own_decryption_key(0xd4)));
     let effects = node.step(NOW, sign(first, signing(&effects)));
-    let folds: Vec<Vec<ProofType>> = jobs(&effects)
-        .into_iter()
-        .filter_map(|work| match work {
-            DkgWork::FoldProofs { proofs } => Some(proofs.iter().map(|(t, _)| *t).collect()),
-            _ => None,
-        })
-        .collect();
-    let [types] = folds.as_slice() else {
-        panic!("one fold job, got {effects:?}");
+    (node, effects)
+}
+
+fn folds(effects: &[Effect]) -> Vec<(Address, &[Address], &DkgProofs)> {
+    let folds = jobs(effects).into_iter().filter_map(|work| match work {
+        DkgWork::FoldProofs {
+            member,
+            committee,
+            proofs,
+        } => Some((*member, committee.as_slice(), &**proofs)),
+        _ => None,
+    });
+    folds.collect()
+}
+
+#[test]
+fn a_roster_member_folds_every_dkg_proof_it_made_and_attests_the_fold_for_its_slot() {
+    let [first, ..] = ordered();
+    let mut made = own_shares(&others(first));
+    // A withheld slot is never sent, but its C3 proofs still go into the fold.
+    let withheld = address(others(first)[0]);
+    made.recipients
+        .get_mut(&withheld)
+        .expect("a recipient")
+        .shares = None;
+    let (mut node, effects) = first_dealing(made.clone());
+    let c3 = |proofs: fn(&RecipientShares) -> &Vec<ZkProof>| {
+        made.recipients
+            .iter()
+            .map(|(member, recipient)| (*member, proofs(recipient).clone()))
+            .collect()
     };
-    use ProofType::*;
-    let c3_for_two_members = 2 * (3 + 3);
-    assert_eq!(types.len(), 4 + c3_for_two_members + 2);
+    let expected = DkgProofs {
+        c0: own_key(0xee).proof,
+        c1: made.c1.clone(),
+        c2a: made.c2a.clone(),
+        c2b: made.c2b.clone(),
+        c3a: c3(|recipient| &recipient.c3a),
+        c3b: c3(|recipient| &recipient.c3b),
+        c4a: own_decryption_key(0xd4).c4a,
+        c4b: own_decryption_key(0xd4).c4b,
+    };
     assert_eq!(
-        types[..4],
-        [
-            C0PkBfv,
-            C1PkGeneration,
-            C2aSkShareComputation,
-            C2bESmShareComputation
-        ]
-    );
-    assert_eq!(
-        types[types.len() - 2..],
-        [C4aSkShareDecryption, C4bESmShareDecryption]
+        folds(&effects),
+        [(address(first), members(&ordered()).as_slice(), &expected)]
     );
 
     let effects = node.step(NOW, proofs_folded(e3(1), node_fold(0xf0)));

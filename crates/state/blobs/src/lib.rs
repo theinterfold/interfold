@@ -52,7 +52,7 @@ pub trait BlobStore: Clone + Send + Sync + 'static {
 }
 
 /// The blobs of one E3, for code that works on one.
-pub trait Blobs {
+pub trait Blobs: Sync {
     fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, blob: &BlobRef) -> bool;

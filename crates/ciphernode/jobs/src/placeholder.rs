@@ -4,13 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Stand-ins for proofs until the prover is wired in: a placeholder's public input commits to the
-//! bytes that the real proof binds, so checks that compare commitments still run, and it proves
-//! nothing.
+//! Stand-ins for proofs where no prover runs: a placeholder's public input commits to the bytes
+//! that the real proof binds, so checks that compare commitments still run, and it proves nothing.
+//! Only the mock verifiers of a test deployment accept them.
 
 use crate::{Blobs, JobError};
 use alloy_primitives::{keccak256, Address, B256, U256};
-use e3_protocol::proof::{ProofType, ZkProof};
+use e3_protocol::{
+    dkg::DkgProofs,
+    proof::{ProofType, ZkProof},
+};
 
 pub(crate) fn proof(
     blobs: &impl Blobs,
@@ -53,9 +56,18 @@ pub(crate) fn commits_to(proof: &ZkProof, bound: &[u8]) -> bool {
     proof.public_inputs == [keccak256(bound)]
 }
 
-pub(crate) fn statements(proofs: &[(ProofType, ZkProof)]) -> Vec<u8> {
-    proofs
-        .iter()
-        .flat_map(|(_, proof)| proof.public_inputs.iter().flat_map(|word| word.0))
-        .collect()
+pub(crate) fn statements(proofs: &DkgProofs) -> Vec<u8> {
+    let c3 = proofs.c3a.values().chain(proofs.c3b.values()).flatten();
+    [
+        &proofs.c0,
+        &proofs.c1,
+        &proofs.c2a,
+        &proofs.c2b,
+        &proofs.c4a,
+    ]
+    .into_iter()
+    .chain(c3)
+    .chain(&proofs.c4b)
+    .flat_map(|proof| proof.public_inputs.iter().flat_map(|word| word.0))
+    .collect()
 }

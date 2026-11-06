@@ -8,11 +8,10 @@
 //! aggregator combines with the other roster members' folds. The member attests the fold's
 //! commitments for its committee slot.
 
-use super::{Dkg, DkgMessage, DkgSignature, DkgWork, FoldAttestation, NodeFold, NodeFoldMessage};
-use crate::{
-    node::Effect,
-    proof::{ProofType, ZkProof},
+use super::{
+    Dkg, DkgMessage, DkgProofs, DkgSignature, DkgWork, FoldAttestation, NodeFold, NodeFoldMessage,
 };
+use crate::node::Effect;
 use alloy_primitives::{Address, Bytes, Signature};
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +24,13 @@ pub(super) enum OwnFold {
 }
 
 impl Dkg {
-    pub(super) fn start_fold(&mut self, proofs: Vec<(ProofType, ZkProof)>) -> Effect {
+    pub(super) fn start_fold(&mut self, proofs: DkgProofs) -> Effect {
         self.fold = OwnFold::Folding;
-        self.run(DkgWork::FoldProofs { proofs })
+        self.run(DkgWork::FoldProofs {
+            member: self.me,
+            committee: self.members.clone(),
+            proofs: Box::new(proofs),
+        })
     }
 
     pub(super) fn proofs_folded(&mut self, fold: NodeFold) -> Vec<Effect> {
