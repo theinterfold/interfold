@@ -6,17 +6,17 @@
 
 use crate::{Account, Call, Contracts, Estimate, RpcError};
 use alloy::{
-    eips::BlockId,
+    eips::{eip1559::Eip1559Estimation, BlockId},
     network::TransactionBuilder,
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
 };
-use alloy_primitives::B256;
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolCall;
 use e3_evm_contracts::{IBondingRegistry, IInterfold, INodeReleaseRegistry};
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -33,8 +33,42 @@ pub struct Wallet<P> {
     chain_id: u64,
     /// Blocks closer to the head than this may still be replaced.
     confirmations: u64,
+    nonces: Mutex<Nonces>,
+}
+
+#[derive(Default)]
+struct Nonces {
     /// The nonces this process sent, with their send times.
-    sent: Mutex<BTreeMap<u64, Instant>>,
+    sent: BTreeMap<u64, Instant>,
+    /// The last send of each call whose nonce the chain has not used yet.
+    unmined: HashMap<(Address, Bytes), Sent>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sent {
+    nonce: u64,
+    fees: Eip1559Estimation,
+}
+
+/// A call sent again while its last send waits replaces that transaction at higher fees, so it
+/// does not queue behind a transaction stuck on low fees. Nodes take a replacement only for at
+/// least a tenth more on both fees.
+fn replacement(earlier: Sent, fees: Eip1559Estimation) -> Sent {
+    let raise = |fee: u128| fee + fee / 4 + 1;
+    let max_fee_per_gas = fees
+        .max_fee_per_gas
+        .max(raise(earlier.fees.max_fee_per_gas));
+    let max_priority_fee_per_gas = fees
+        .max_priority_fee_per_gas
+        .max(raise(earlier.fees.max_priority_fee_per_gas))
+        .min(max_fee_per_gas);
+    Sent {
+        nonce: earlier.nonce,
+        fees: Eip1559Estimation {
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+        },
+    }
 }
 
 impl<P: Provider + WalletProvider> Wallet<P> {
@@ -43,7 +77,7 @@ impl<P: Provider + WalletProvider> Wallet<P> {
             provider,
             chain_id,
             confirmations,
-            sent: Mutex::new(BTreeMap::new()),
+            nonces: Mutex::default(),
         }
     }
 
@@ -82,7 +116,7 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
 
     /// Fees are estimated before the nonce is chosen, so the turn only signs and broadcasts. An
     /// RPC node's pending count can miss a transaction that another node behind the same endpoint
-    /// accepted a moment ago, so the nonce also skips the ones this process sent recently. The
+    /// accepted a moment ago, so a new nonce also skips the ones this process sent recently. The
     /// turn ends before the receipt, so a slow confirmation holds up no other call.
     async fn send(&self, call: &Call, gas: u64) -> Result<bool, RpcError> {
         let fees = self
@@ -90,32 +124,48 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .estimate_eip1559_fees()
             .await
             .map_err(RpcError::new)?;
-        let request = self
-            .request(call)
-            .with_gas_limit(gas)
-            .with_max_fee_per_gas(fees.max_fee_per_gas)
-            .with_max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
-            .with_chain_id(self.chain_id);
+        let account = self.provider.default_signer_address();
+        let key = (call.to, call.data.clone());
         let pending = {
-            let mut sent = self.sent.lock().await;
-            let count = self
+            let mut nonces = self.nonces.lock().await;
+            let mined = self
                 .provider
-                .get_transaction_count(self.provider.default_signer_address())
-                .pending()
+                .get_transaction_count(account)
+                .latest()
                 .await
                 .map_err(RpcError::new)?;
-            let nonce = next_free_nonce(&mut sent, count, Instant::now());
-            sent.insert(nonce, Instant::now());
-            match self
-                .provider
-                .send_transaction(request.with_nonce(nonce))
-                .await
-            {
-                Ok(pending) => pending,
+            nonces.unmined.retain(|_, sent| sent.nonce >= mined);
+            let replaced = nonces.unmined.get(&key).copied();
+            let send = match replaced {
+                Some(earlier) => replacement(earlier, fees),
+                None => {
+                    let count = self
+                        .provider
+                        .get_transaction_count(account)
+                        .pending()
+                        .await
+                        .map_err(RpcError::new)?;
+                    let nonce = next_free_nonce(&mut nonces.sent, count, Instant::now());
+                    Sent { nonce, fees }
+                }
+            };
+            nonces.sent.insert(send.nonce, Instant::now());
+            let request = self
+                .request(call)
+                .with_gas_limit(gas)
+                .with_max_fee_per_gas(send.fees.max_fee_per_gas)
+                .with_max_priority_fee_per_gas(send.fees.max_priority_fee_per_gas)
+                .with_chain_id(self.chain_id)
+                .with_nonce(send.nonce);
+            match self.provider.send_transaction(request).await {
+                Ok(pending) => {
+                    nonces.unmined.insert(key.clone(), send);
+                    pending
+                }
                 Err(error) => {
                     let error = alloy::contract::Error::TransportError(error);
-                    if broadcast_refused(&error) {
-                        sent.remove(&nonce);
+                    if replaced.is_none() && broadcast_refused(&error) {
+                        nonces.sent.remove(&send.nonce);
                     }
                     return Err(RpcError::new(error));
                 }
@@ -127,6 +177,7 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .get_receipt()
             .await
             .map_err(RpcError::new)?;
+        self.nonces.lock().await.unmined.remove(&key);
         Ok(receipt.status())
     }
 }
@@ -237,5 +288,31 @@ impl<P: Provider + WalletProvider + Send + Sync> Wallet<P> {
             true => Ok(()),
             false => Err(ReleaseError::Reverted),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fees(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Eip1559Estimation {
+        Eip1559Estimation {
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+        }
+    }
+
+    /// Nodes refuse a replacement that raises either fee by less than a tenth.
+    #[test]
+    fn a_retry_replaces_the_stuck_transaction_at_fees_nodes_take() {
+        let earlier = Sent {
+            nonce: 7,
+            fees: fees(100, 10),
+        };
+        let again = replacement(earlier, fees(90, 9));
+        assert_eq!(again.nonce, 7);
+        assert!(again.fees.max_fee_per_gas * 10 >= 100 * 11);
+        assert!(again.fees.max_priority_fee_per_gas * 10 >= 10 * 11);
+        assert_eq!(replacement(earlier, fees(500, 50)).fees, fees(500, 50));
     }
 }
