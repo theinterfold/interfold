@@ -22,7 +22,7 @@ individual item.
 
 The stream order is header, every ciphertext, then the selected ciphertexts in the prescribed
 second-pass order. The [host](../openvm-host/src/lib.rs) writes this stream for the
-[OpenVM worker](../../openvm-prover/README.md); native encoding alone does not prove guest parity.
+[OpenVM worker](../openvm-prover/README.md); native encoding alone does not prove guest parity.
 
 ## Public journal
 
@@ -40,5 +40,5 @@ application, guest, and contract boundary.
 Run `cargo test --locked -p e3-openvm-types`. Inline tests pin journal word order, header exact
 consumption, item framing, and rejection of truncated/padded streams; no worker or GPU is needed.
 Real proof compatibility requires the matching
-[OpenVM setup and parity flow](../../openvm-prover/README.md). Format-change responsibilities are in
+[OpenVM setup and parity flow](../openvm-prover/README.md). Format-change responsibilities are in
 [AGENTS.md](AGENTS.md).

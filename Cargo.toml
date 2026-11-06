@@ -63,7 +63,7 @@ members = [
 ]
 exclude = [
   # Built with the OpenVM SDK as a workspace of its own.
-  "crates/openvm-prover",
+  "crates/program/openvm-prover",
   "templates/default"
 ]
 resolver = "3"

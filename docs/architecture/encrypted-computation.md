@@ -1,7 +1,7 @@
 # Encrypted computation and application input binding
 
 Owners: [compute-provider](../../crates/program/compute-provider/),
-[OpenVM prover](../../crates/openvm-prover/), the
+[OpenVM prover](../../crates/program/openvm-prover/), the
 [CRISP program](https://github.com/theinterfold/CRISP/tree/main/program), and the
 [CRISP contracts](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-contracts).
 Protocol verification creates decryption duty; application verification decides what computation is
@@ -87,7 +87,7 @@ RISC Zero image ID or another VM configuration's aggregation key. `interfold pro
 prepares artifacts/config; `program start` checks the selected CPU/CUDA worker (CUDA only after a
 successful GPU probe) before accepting work. Worker runs have deadlines; machine-local paths, keys,
 proofs, and benchmarks stay outside Git. See
-[OpenVM operations](../../crates/openvm-prover/README.md) and
+[OpenVM operations](../../crates/program/openvm-prover/README.md) and
 [provenance](../pages/build/e3-program/verify-compute-provider.mdx).
 
 The CLI's `program_support.rs` owns project-root compile/start and cache purge. Development compile

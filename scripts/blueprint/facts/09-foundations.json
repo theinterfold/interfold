@@ -1076,7 +1076,7 @@
         { "title": "Computation trust boundary", "path": "docs/architecture/encrypted-computation.md" }
       ],
       "kind": "crate",
-      "path": "crates/openvm-prover",
+      "path": "crates/program/openvm-prover",
       "one_line": "Separate OpenVM worker binary, CPU or CUDA, that prepares keys, executes, proves and verifies E3 rounds.",
       "actors": [],
       "consumes": [],
@@ -1085,53 +1085,53 @@
         {
           "name": "prepared output directory holding aggregation.pk and identity.json",
           "where": "disk",
-          "ref": "crates/openvm-prover/src/main.rs@356@fs::create_dir(&paths[2])?;"
+          "ref": "crates/program/openvm-prover/src/main.rs@356@fs::create_dir(&paths[2])?;"
         }
       ],
       "key_types": [
         {
           "name": "Config",
           "what": "worker configuration loaded from a JSON file, with paths such as halo2_pk and halo2_params_dir",
-          "ref": "crates/openvm-prover/src/main.rs@45@struct Config {"
+          "ref": "crates/program/openvm-prover/src/main.rs@45@struct Config {"
         }
       ],
       "read_first": [
         {
           "why": "the entry point and the subcommand dispatch",
-          "ref": "crates/openvm-prover/src/main.rs@325@fn main() -> Result<()> {"
+          "ref": "crates/program/openvm-prover/src/main.rs@325@fn main() -> Result<()> {"
         },
         {
           "why": "the configuration the worker loads",
-          "ref": "crates/openvm-prover/src/main.rs@45@struct Config {"
+          "ref": "crates/program/openvm-prover/src/main.rs@45@struct Config {"
         },
         {
           "why": "validation of the configuration, run whenever it is loaded",
-          "ref": "crates/openvm-prover/src/main.rs@66@fn validate(config: &Config) -> Result<()> {"
+          "ref": "crates/program/openvm-prover/src/main.rs@66@fn validate(config: &Config) -> Result<()> {"
         },
         {
           "why": "verify: checks the EVM proof against the journal",
-          "ref": "crates/openvm-prover/src/main.rs@151@fn verify(proof: &EvmProof"
+          "ref": "crates/program/openvm-prover/src/main.rs@151@fn verify(proof: &EvmProof"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "serde-derive",
           "note": "Config derives Deserialize and Serialize",
-          "ref": "crates/openvm-prover/src/main.rs@43@#[derive(Deserialize, Serialize)]"
+          "ref": "crates/program/openvm-prover/src/main.rs@43@#[derive(Deserialize, Serialize)]"
         },
         {
           "pattern": "result-question-mark",
           "note": "each step returns eyre::Result and propagates errors with ?",
-          "ref": "crates/openvm-prover/src/main.rs@378@read_halo2_pk_from_file(&config.halo2_pk)?"
+          "ref": "crates/program/openvm-prover/src/main.rs@378@read_halo2_pk_from_file(&config.halo2_pk)?"
         },
         {
           "pattern": "unit-test",
           "note": "the tests sit in a cfg(test) module near the end of the file",
-          "ref": "crates/openvm-prover/src/main.rs@445@#[test]"
+          "ref": "crates/program/openvm-prover/src/main.rs@445@#[test]"
         }
       ],
       "depends_on": [],
-      "tests": "Five unit tests in src/main.rs (cfg(test) module). The package is excluded from the root workspace, so run: cargo test --manifest-path crates/openvm-prover/Cargo.toml.",
+      "tests": "Five unit tests in src/main.rs (cfg(test) module). The package is excluded from the root workspace, so run: cargo test --manifest-path crates/program/openvm-prover/Cargo.toml.",
       "unverified": ["That e3-openvm-host's Prover starts this binary was taken from the architecture doc and was not traced in code."]
     }
   ]

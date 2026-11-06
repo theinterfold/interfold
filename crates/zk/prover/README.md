@@ -4,7 +4,7 @@
 
 Noir witness/proof execution, verification, recursive folding, and artifact installation for
 ciphernode protocol proofs. This is separate from the
-[OpenVM computation worker](../../openvm-prover/README.md). Static bounds/layouts belong in
+[OpenVM computation worker](../../program/openvm-prover/README.md). Static bounds/layouts belong in
 [e3-zk-config](../config/README.md), and production input preparation/encoding belongs in
 [e3-zk-witness](../witness/README.md).
 

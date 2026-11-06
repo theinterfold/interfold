@@ -14,4 +14,4 @@ belongs in adapters. [Readme.md](Readme.md) explains policies and provider usage
 
 Use the [README test variants](Readme.md#tests), including parallel batching for batching changes.
 Guest-specific changes need the prepared host/guest parity flow from the
-[OpenVM README](../../openvm-prover/README.md), not just native tests.
+[OpenVM README](../openvm-prover/README.md), not just native tests.

@@ -16,10 +16,10 @@ scenarios.
 
 ## Setup and usage
 
-Follow the [OpenVM worker setup](../../crates/openvm-prover/README.md) for pinned tooling and
-artifacts. For example, `pnpm openvm prover-check` checks the independent worker workspace, while
-`pnpm openvm service-test` tests the root workspace's service crates. The root Node dependencies are
-required for provenance's contract/RPC helpers.
+Follow the [OpenVM worker setup](../../crates/program/openvm-prover/README.md) for pinned tooling
+and artifacts. For example, `pnpm openvm prover-check` checks the independent worker workspace,
+while `pnpm openvm service-test` tests the root workspace's service crates. The root Node
+dependencies are required for provenance's contract/RPC helpers.
 
 ## Guest provenance
 

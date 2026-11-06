@@ -33,7 +33,7 @@ interfold program compile   # the guest, its keys and receipt identity, and the 
 
 A machine with a working CUDA GPU proves on it when `prover_bin_cuda` is set; any other machine
 proves on the CPU. See the OpenVM guide in the Interfold repository
-(`crates/openvm-prover/README.md`) for the workers and the Halo2 artifacts.
+(`crates/program/openvm-prover/README.md`) for the workers and the Halo2 artifacts.
 
 Contract deployment reads the receipt identity and verifier artifact that `compile` wrote, unless
 `OPENVM_*` settings name another. Without either, deployment stops; it does not select a mock

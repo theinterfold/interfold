@@ -25,7 +25,7 @@ test('OpenVM dispatcher retains workspace ownership, arguments, target override 
     })
   for (const [task, manifest] of [
     ['cli-build', 'Cargo.toml'],
-    ['prover-check', 'crates/openvm-prover/Cargo.toml'],
+    ['prover-check', 'crates/program/openvm-prover/Cargo.toml'],
   ]) {
     const result = run(task, ['argument with spaces'])
     assert.equal(result.status, 0, result.stderr)

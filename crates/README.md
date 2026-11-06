@@ -27,8 +27,8 @@ compile-only flag does not establish proof readiness. Choose the smallest applic
 root `pnpm rust:test`, `pnpm rust:test:proofs`, and `pnpm rust:test:slashing` cover different
 scopes, with additional prerequisites documented by their owners.
 
-The [OpenVM worker](openvm-prover/README.md) is an independent excluded workspace with its own
-pinned tools. [e3-program-runner](program/runner/README.md) supplies shared development/OpenVM
+The [OpenVM worker](program/openvm-prover/README.md) is an independent excluded workspace with its
+own pinned tools. [e3-program-runner](program/runner/README.md) supplies shared development/OpenVM
 modes. Each generated project's separate `runner/` binary links its own program and calls that
 library; the CLI owns compile/start orchestration.
 

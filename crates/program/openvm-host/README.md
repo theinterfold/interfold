@@ -5,7 +5,7 @@
 Native adapter for proving an E3 program's Secure Process through a separate OpenVM worker. It
 computes the result/journal natively, writes guest input, then requires the worker to prove and
 verify the expected journal before accepting the seal. The OpenVM SDK lives in the
-[independent worker workspace](../../openvm-prover/README.md), not this crate.
+[independent worker workspace](../openvm-prover/README.md), not this crate.
 
 ## Map and proving lifecycle
 
@@ -29,7 +29,7 @@ At least one worker is required. `OPENVM_BACKEND=auto|cpu|cuda` selects executio
 configured CUDA and may fall back to CPU; explicit `cuda` fails if unavailable.
 `OPENVM_CHECK_TIMEOUT_SECS` and `OPENVM_PROVE_TIMEOUT_SECS` bound artifact checks and proving
 (defaults: 30 minutes and 24 hours). Prepare pinned tooling, guest artifacts, and keys through the
-[worker setup guide](../../openvm-prover/README.md) before starting.
+[worker setup guide](../openvm-prover/README.md) before starting.
 
 ## Prove a computation
 
@@ -48,5 +48,5 @@ behind. Resource failures never select a mock proof.
 
 Run `cargo test --locked -p e3-openvm-host`. Inline fake-worker tests cover backend selection,
 envelope bytes, deadlines, and wrapper-child cleanup without preparing OpenVM keys. Real host/guest
-parity and proof acceptance are separate [OpenVM workflows](../../openvm-prover/README.md). See
+parity and proof acceptance are separate [OpenVM workflows](../openvm-prover/README.md). See
 [AGENTS.md](AGENTS.md) for process/verification change rules.

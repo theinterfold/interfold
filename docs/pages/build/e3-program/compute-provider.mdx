@@ -46,7 +46,7 @@ that made it.
 | `e3-program-server`       | `crates/program/server`           | HTTP server with `POST /run_compute` and `GET /health`. It calls a runner function. |
 | `e3-program-runner`       | `crates/program/runner`           | `run(processor, policy)`: the dev runner and the OpenVM service, chosen by argument |
 | `e3-openvm-host`          | `crates/program/openvm-host`      | The OpenVM runner: native run, guest input, worker selection, proof envelope        |
-| `interfold-openvm-prover` | `crates/openvm-prover`            | The worker that proves the guest. A CPU build and a CUDA build.                     |
+| `interfold-openvm-prover` | `crates/program/openvm-prover`    | The worker that proves the guest. A CPU build and a CUDA build.                     |
 | Guest                     | `guest/` in your project          | The OpenVM guest. It links your `program/` crate.                                   |
 | Program runner            | `runner/` in your project         | The `program-runner` binary. It passes your `program/` crate to `e3-program-runner` |
 | Coordination server       | `server/index.ts` (template)      | Sends the job, receives the webhook, and calls `publishCiphertextOutput`            |
@@ -299,7 +299,7 @@ and verifier instead. Check their provenance before you use them.
 Build the worker from the Interfold repository at the same revision as your project:
 
 ```bash
-cargo build --locked --release --manifest-path crates/openvm-prover/Cargo.toml
+cargo build --locked --release --manifest-path crates/program/openvm-prover/Cargo.toml
 ```
 
 On a machine with an NVIDIA GPU, also build the CUDA worker into its own directory. It needs the
@@ -307,7 +307,7 @@ CUDA toolkit:
 
 ```bash
 CARGO_TARGET_DIR=target/cuda cargo build --locked --release --features cuda \
-  --manifest-path crates/openvm-prover/Cargo.toml
+  --manifest-path crates/program/openvm-prover/Cargo.toml
 ```
 
 ### Configure the program section
