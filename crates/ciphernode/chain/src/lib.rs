@@ -20,7 +20,7 @@ use decode::{decode, Decoded, PendingRead};
 pub use decode::{Contracts, DecodeError, RawLog};
 pub use reader::{ReadError, Reader, Rpc, Sortition};
 pub use rpc::ChainNode;
-pub use wallet::Wallet;
+pub use wallet::{Release, ReleaseError, Wallet};
 pub use writer::{Account, Call, Estimate, WriteError, Writer};
 
 /// A chain node request that failed.

@@ -26,7 +26,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 /// How long a failed job, fetch, or chain read waits before it runs again.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -148,6 +148,7 @@ where
             }
             Event::Fatal(error) => return Err(error),
         };
+        debug!(input = %brief(&input), "applying");
         let (next, pending) = engine.apply(now(), input)?;
         engine = next;
         if let Some(key) = answers {
@@ -174,6 +175,16 @@ async fn sleep(wait: Option<Duration>) {
         Some(wait) => tokio::time::sleep(wait).await,
         None => std::future::pending().await,
     }
+}
+
+/// The start of a value's debug form, for logs.
+fn brief(value: &impl std::fmt::Debug) -> String {
+    let mut text = format!("{value:?}");
+    if let Some((cut, _)) = text.char_indices().nth(200) {
+        text.truncate(cut);
+        text.push('…');
+    }
+    text
 }
 
 fn now() -> UnixSecs {
@@ -241,6 +252,7 @@ where
     fn dispatch(&self, pending: Vec<Pending<Effect>>) -> Vec<Event> {
         let mut now = Vec::new();
         for Pending { key, effect } in pending {
+            debug!(effect = %brief(&effect), "dispatching");
             match effect {
                 Effect::Run(job) => self.run(key, job),
                 Effect::Sign(signing) => now.push(Event::Result(key, self.sign(signing))),

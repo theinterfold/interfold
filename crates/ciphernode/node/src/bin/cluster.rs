@@ -12,7 +12,7 @@ use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_blobs::FileBlobs;
-use e3_chain::{ChainNode, Contracts, Wallet};
+use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{DataAvailabilityReader, HttpObjectReader};
 use e3_evm_contracts::ICiphernodeRegistry;
@@ -71,6 +71,12 @@ async fn main() -> anyhow::Result<()> {
         poll_interval: Duration::from_millis(config.poll_interval_ms),
         snapshot_every: 100,
     };
+    let built = e3_ciphernode_config::current_node_release();
+    let release = Release {
+        id: built.release_id(),
+        protocol_version: built.protocol_version,
+        node_generation: built.node_generation,
+    };
     let availability: Arc<dyn DataAvailabilityReader> =
         Arc::new(HttpObjectReader::new(config.availability_url)?);
     let network = MemoryNetwork::default();
@@ -85,6 +91,11 @@ async fn main() -> anyhow::Result<()> {
         let wallet = ProviderBuilder::new()
             .wallet(EthereumWallet::from(operator.clone()))
             .connect_http(url.clone());
+        let wallet = Wallet::new(wallet, config.chain_id);
+        wallet
+            .acknowledge_release(&settings.contracts, release)
+            .await
+            .with_context(|| format!("node {index} cannot join"))?;
         let parts = Parts {
             operator: operator.clone(),
             journal: Journal::open(dir.join("journal.redb"))?,
@@ -97,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
                 ProviderBuilder::new().connect_http(url.clone()),
                 settings.contracts.clone(),
             ),
-            account: Wallet::new(wallet, config.chain_id),
+            account: wallet,
             network: peer,
             inbound,
             availability: availability.clone(),

@@ -60,7 +60,7 @@ pub struct Call {
     /// The gas limit as a multiple of the estimate.
     pub gas_multiplier: u64,
     /// Errors that mean the operator's chain node has not seen what the call needs yet.
-    not_yet: &'static [[u8; 4]],
+    pub(crate) not_yet: &'static [[u8; 4]],
 }
 
 impl Call {

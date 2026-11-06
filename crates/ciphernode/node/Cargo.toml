@@ -13,6 +13,7 @@ path = "src/bin/cluster.rs"
 [dependencies]
 e3-blobs = { workspace = true }
 e3-chain = { workspace = true }
+e3-ciphernode-config = { workspace = true }
 e3-crypto = { workspace = true }
 e3-data-availability = { workspace = true }
 e3-engine = { workspace = true }

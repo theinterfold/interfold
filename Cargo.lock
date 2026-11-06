@@ -4383,6 +4383,7 @@ dependencies = [
  "anyhow",
  "e3-blobs",
  "e3-chain",
+ "e3-ciphernode-config",
  "e3-crypto",
  "e3-data-availability",
  "e3-engine",
