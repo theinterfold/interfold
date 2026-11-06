@@ -15,7 +15,7 @@ use crate::{Faults, Jobs, MockJobs, Sim};
 use alloy_primitives::U256;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
-    node::ChainFact,
+    node::{ChainFact, CommitteeSeed},
     testing::{address, e3, params, ATTESTATION, INTERFOLD, REQUEST, TIMING},
 };
 
@@ -64,14 +64,17 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
             interfold: INTERFOLD,
             attestation: ATTESTATION,
             request: REQUEST,
+            seed: None,
         },
     );
     sim.chain(
         5,
         ChainFact::SeedReady {
             e3: e3(1),
-            seed: U256::from(seed),
-            committee_deadline: 100,
+            seed: CommitteeSeed {
+                seed: U256::from(seed),
+                deadline: 100,
+            },
         },
     );
     sim.set_ciphertext_at(TIMING.deadline + 500);

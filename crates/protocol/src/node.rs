@@ -111,26 +111,33 @@ pub struct CommitteeRequest {
     pub owner_cap: bool,
 }
 
+/// The registry accepted a request's randomness: the committee seed, and the deadline by which
+/// tickets must arrive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitteeSeed {
+    pub seed: U256,
+    pub deadline: UnixSecs,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainFact {
     /// `interfold` is the contract that emitted `E3Requested`. The chain adapter takes
-    /// `attestation` from the `DkgFoldAttestationContextEstablished` log that the same transaction
-    /// emits just before it, and delivers no request whose crypto configuration this node does
-    /// not support.
+    /// `attestation` and the owner cap from logs of the same transaction, and delivers no request
+    /// whose crypto configuration this node does not support. `seed` is set when the registry
+    /// already accepted the randomness: a provider can fulfill inside the request's own
+    /// transaction, before `E3Requested`.
     E3Requested {
         e3: E3Id,
         params: CryptoParams,
         interfold: Address,
         attestation: AttestationContext,
         request: CommitteeRequest,
+        seed: Option<CommitteeSeed>,
     },
-    /// The registry accepted the request's randomness: the committee seed, and the deadline by
-    /// which tickets must arrive. The chain adapter reads both from the registry at the
-    /// fulfillment's block.
+    /// The registry accepted the request's randomness.
     SeedReady {
         e3: E3Id,
-        seed: U256,
-        committee_deadline: UnixSecs,
+        seed: CommitteeSeed,
     },
     CommitteeFinalized {
         e3: E3Id,
@@ -415,18 +422,18 @@ impl Node {
                 interfold,
                 attestation,
                 request,
+                seed,
             } => {
                 if !self.e3s.contains_key(&e3) && !self.ended.contains(&e3) {
                     let state = E3::new(e3, self.me, params, interfold, attestation, request);
                     self.e3s.insert(e3, state);
                 }
-                Vec::new()
+                match seed {
+                    Some(seed) => self.select(now, e3, seed),
+                    None => Vec::new(),
+                }
             }
-            ChainFact::SeedReady {
-                e3,
-                seed,
-                committee_deadline,
-            } => self.select(now, e3, seed, committee_deadline),
+            ChainFact::SeedReady { e3, seed } => self.select(now, e3, seed),
             ChainFact::OperatorActive { operator, active } => {
                 registry.set_active(time, operator, active);
                 Vec::new()
@@ -521,13 +528,11 @@ impl Node {
     /// is one of them, before the committee deadline. Under a required identity policy the node
     /// cannot tell which owners hold a credential, so it ranks every eligible operator, and the
     /// contract rejects the others. A node takes at most as many E3s at once as it has tickets.
-    fn select(
-        &mut self,
-        now: UnixSecs,
-        e3: E3Id,
-        seed: U256,
-        committee_deadline: UnixSecs,
-    ) -> Vec<Effect> {
+    fn select(&mut self, now: UnixSecs, e3: E3Id, seed: CommitteeSeed) -> Vec<Effect> {
+        let CommitteeSeed {
+            seed,
+            deadline: committee_deadline,
+        } = seed;
         let active_jobs = self
             .e3s
             .values()
@@ -778,17 +783,24 @@ mod tests {
                 interfold: INTERFOLD,
                 attestation: ATTESTATION,
                 request: CommitteeRequest { time, ..REQUEST },
+                seed: None,
             },
         )
     }
 
-    fn seed_ready(block: u64, e3: E3Id, seed: u64, committee_deadline: UnixSecs) -> Input {
+    fn committee_seed(seed: u64, deadline: UnixSecs) -> CommitteeSeed {
+        CommitteeSeed {
+            seed: U256::from(seed),
+            deadline,
+        }
+    }
+
+    fn seed_ready(block: u64, e3: E3Id, seed: u64, deadline: UnixSecs) -> Input {
         chain(
             block,
             ChainFact::SeedReady {
                 e3,
-                seed: U256::from(seed),
-                committee_deadline,
+                seed: committee_seed(seed, deadline),
             },
         )
     }
@@ -833,6 +845,25 @@ mod tests {
             submissions(&effects),
             vec![Transaction::SubmitTicket { ticket }]
         );
+    }
+
+    #[test]
+    fn a_request_whose_randomness_came_in_its_own_transaction_selects_at_once() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        let Input::Chain(mut request) = requested(1, e3(1)) else {
+            unreachable!("a request is a chain fact")
+        };
+        if let ChainFact::E3Requested { seed, .. } = &mut request.fact {
+            *seed = Some(committee_seed(42, 100));
+        }
+        let effects = node.step(5, Input::Chain(request));
+        let (_, ticket) = rank(&[1, 2, ME], 42, true).unwrap();
+        assert_eq!(
+            submissions(&effects),
+            vec![Transaction::SubmitTicket { ticket }]
+        );
+        assert!(submissions(&node.step(6, seed_ready(6, e3(1), 42, 100))).is_empty());
     }
 
     #[test]

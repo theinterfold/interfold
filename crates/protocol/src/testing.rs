@@ -519,6 +519,7 @@ pub fn requested(block: u64, e3: E3Id) -> Input {
             interfold: INTERFOLD,
             attestation: ATTESTATION,
             request: REQUEST,
+            seed: None,
         },
     )
 }

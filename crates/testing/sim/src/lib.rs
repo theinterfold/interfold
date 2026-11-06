@@ -193,14 +193,10 @@ impl<J: Jobs> Sim<J> {
             ChainFact::E3Requested { e3, params, .. } => {
                 self.requests.insert(*e3, Request::new(*params));
             }
-            ChainFact::SeedReady {
-                e3,
-                seed,
-                committee_deadline,
-            } => {
+            ChainFact::SeedReady { e3, seed } => {
                 if let Some(request) = self.requests.get_mut(e3) {
-                    request.seed = *seed;
-                    request.deadline = *committee_deadline;
+                    request.seed = seed.seed;
+                    request.deadline = seed.deadline;
                 }
             }
             ChainFact::CommitteeFinalized { e3, members, .. } => {

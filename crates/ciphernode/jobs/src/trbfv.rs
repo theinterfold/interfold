@@ -8,17 +8,31 @@
 //! node derives it: the request's threshold preset, and its DKG counterpart for share encryption.
 
 use crate::JobError;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use e3_fhe_params::{
-    create_deterministic_crp_from_default_seed, encode_bfv_params, BfvParamSet, BfvPreset,
-    LambdaConfig,
+    create_deterministic_crp_from_default_seed, current_bfv_crypto_config_id, encode_bfv_params,
+    BfvParamSet, BfvPreset, LambdaConfig,
 };
 use e3_protocol::node::CryptoParams;
 use e3_trbfv::TrBFVConfig;
 use e3_utils::utility_types::ArcBytes;
 use fhe::{bfv::BfvParameters, mbfv::CommonRandomPoly};
 use fhe_traits::Serialize as _;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// The crypto configuration of each on-chain parameter set this build runs, as the Interfold
+/// contract records it for a request.
+pub fn crypto_configs() -> BTreeMap<u8, B256> {
+    BfvPreset::ON_CHAIN_PARAMETER_SETS
+        .iter()
+        .map(|&(param_set, preset)| {
+            let params = BfvParamSet::from(preset).build_arc();
+            let config = current_bfv_crypto_config_id(&encode_bfv_params(&params));
+            (param_set, config)
+        })
+        .collect()
+}
 
 fn threshold_preset(params: &CryptoParams) -> Result<BfvPreset, JobError> {
     BfvPreset::from_on_chain_param_set(params.param_set)

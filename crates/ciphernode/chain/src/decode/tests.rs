@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use crate::testing::{contracts, CONFIG, RANDOMNESS};
+use crate::testing::{contracts, e3_requested, CONFIG, RANDOMNESS};
 
 /// `event` as the contract at `address` logs it in block 10, in transaction `transaction`.
 fn log(address: Address, event: &impl SolEvent, transaction: u8, index: u64) -> RawLog {
@@ -24,30 +24,6 @@ fn facts(logs: &[RawLog]) -> Vec<ChainFact> {
         .collect()
 }
 
-fn e3_requested(config: B256) -> IInterfold::E3Requested {
-    IInterfold::E3Requested {
-        e3Id: U256::from(7),
-        e3: IInterfold::E3 {
-            seed: U256::from(42),
-            committeeSize: 0,
-            requestBlock: U256::from(999),
-            inputWindow: [U256::ZERO; 2],
-            encryptionSchemeId: B256::ZERO,
-            e3Program: Address::ZERO,
-            paramSet: 1,
-            customParams: Bytes::new(),
-            decryptionVerifier: Address::ZERO,
-            pkVerifier: Address::ZERO,
-            committeePublicKey: B256::ZERO,
-            ciphertextOutput: B256::ZERO,
-            plaintextOutput: Bytes::new(),
-            requester: Address::ZERO,
-            ciphertextCommitment: B256::ZERO,
-        },
-        cryptoConfigId: config,
-    }
-}
-
 /// The logs of one request transaction: the registry's parts, then `E3Requested`.
 fn request(config: B256) -> Vec<RawLog> {
     let c = contracts();
@@ -56,55 +32,46 @@ fn request(config: B256) -> Vec<RawLog> {
         registry: c.registry,
         dkgFoldAttestationVerifier: Address::repeat_byte(0x5f),
     };
-    let requested = ICiphernodeRegistry::CommitteeRequested {
-        e3Id: U256::from(7),
-        entropyBlock: U256::ZERO,
-        threshold: [1, 3],
-        requestBlock: U256::from(999),
-        committeeDeadline: U256::from(2_000),
-        ticketPrice: U256::from(5),
-    };
     let cap = extra::CommitteeBondOwnerCapEnabled {
         e3Id: U256::from(7),
     };
     vec![
         log(c.registry, &attestation, 1, 0),
-        log(c.registry, &requested, 1, 1),
-        log(c.registry, &cap, 1, 2),
-        log(c.interfold, &e3_requested(config), 1, 3),
+        log(c.registry, &cap, 1, 1),
+        log(c.interfold, &e3_requested(config), 1, 2),
     ]
 }
 
 #[test]
-fn a_request_becomes_one_fact_with_the_parts_its_transaction_logged_first() {
-    let facts = facts(&request(CONFIG));
-    let expected = ChainFact::E3Requested {
-        e3: E3Id {
-            chain_id: 1,
-            number: U256::from(7),
-        },
-        params: CryptoParams {
-            param_set: 1,
-            committee_size: CiphernodesCommitteeSize::Minimum,
-            seed: B256::from(U256::from(42)),
-        },
-        interfold: contracts().interfold,
-        attestation: AttestationContext {
-            registry: contracts().registry,
-            verifier: Address::repeat_byte(0x5f),
-        },
-        request: CommitteeRequest {
-            time: 999,
-            ticket_price: U256::from(5),
-            owner_cap: true,
-        },
+fn a_request_is_read_with_the_parts_its_transaction_logged_first() {
+    let decoded = decode(&contracts(), &request(CONFIG)).unwrap();
+    let [Decoded::Read(PendingRead::Request {
+        time,
+        params,
+        interfold,
+        attestation,
+        owner_cap,
+        ..
+    })] = decoded.as_slice()
+    else {
+        panic!("a request read, got {decoded:?}");
     };
-    assert_eq!(facts, vec![expected]);
+    let expected = CryptoParams {
+        param_set: 1,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+        seed: B256::from(U256::from(42)),
+    };
+    assert_eq!(*params, expected);
+    assert_eq!(*time, request(CONFIG)[2].time);
+    assert_eq!(*interfold, contracts().interfold);
+    assert_eq!(attestation.verifier, Address::repeat_byte(0x5f));
+    assert!(*owner_cap);
 }
 
 #[test]
 fn a_request_for_another_crypto_configuration_is_skipped() {
-    assert!(facts(&request(B256::repeat_byte(0xdd))).is_empty());
+    let other = request(B256::repeat_byte(0xdd));
+    assert!(decode(&contracts(), &other).unwrap().is_empty());
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcErr
 use alloy_primitives::U256;
 use e3_protocol::{
     dkg::DkgTiming,
-    node::{ChainEvent, ChainFact},
+    node::{ChainEvent, ChainFact, CommitteeRequest, CommitteeSeed},
     UnixSecs,
 };
 use std::future::Future;
@@ -25,13 +25,12 @@ pub trait Rpc {
         to: u64,
     ) -> impl Future<Output = Result<Vec<RawLog>, RpcError>> + Send;
 
-    /// The committee seed and committee deadline of `e3`, once the registry accepted its
-    /// randomness.
-    fn seed(
+    /// The registry's sortition state of `e3`.
+    fn sortition(
         &self,
         e3: U256,
         block: u64,
-    ) -> impl Future<Output = Result<Option<(U256, UnixSecs)>, RpcError>> + Send;
+    ) -> impl Future<Output = Result<Sortition, RpcError>> + Send;
 
     /// The DKG deadline and window `e3` froze.
     fn dkg_timing(
@@ -45,6 +44,14 @@ pub trait Rpc {
         e3: U256,
         block: u64,
     ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
+}
+
+/// The registry's sortition state of one E3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sortition {
+    pub ticket_price: U256,
+    /// Once the registry accepted the randomness.
+    pub seed: Option<CommitteeSeed>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -130,6 +137,31 @@ impl<R: Rpc> Reader<R> {
     /// prunes old state still has it.
     async fn read(&self, read: PendingRead, block: u64) -> Result<Option<ChainEvent>, RpcError> {
         let (at, time, fact) = match read {
+            PendingRead::Request {
+                at,
+                time,
+                e3,
+                params,
+                interfold,
+                attestation,
+                owner_cap,
+            } => {
+                let sortition = self.rpc.sortition(e3.number, block).await?;
+                let request = CommitteeRequest {
+                    time,
+                    ticket_price: sortition.ticket_price,
+                    owner_cap,
+                };
+                let fact = ChainFact::E3Requested {
+                    e3,
+                    params,
+                    interfold,
+                    attestation,
+                    request,
+                    seed: sortition.seed,
+                };
+                (at, time, fact)
+            }
             PendingRead::DkgTiming {
                 at,
                 time,
@@ -140,16 +172,10 @@ impl<R: Rpc> Reader<R> {
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })
             }
             PendingRead::Seed { at, time, e3 } => {
-                let Some((seed, committee_deadline)) = self.rpc.seed(e3.number, block).await?
-                else {
+                let Some(seed) = self.rpc.sortition(e3.number, block).await?.seed else {
                     return Ok(None);
                 };
-                let fact = ChainFact::SeedReady {
-                    e3,
-                    seed,
-                    committee_deadline,
-                };
-                (at, time, fact)
+                (at, time, ChainFact::SeedReady { e3, seed })
             }
             PendingRead::Ciphertext {
                 at,

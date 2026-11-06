@@ -20,6 +20,7 @@ mod trbfv;
 pub use e3_blobs::{Blobs, MemoryBlobs};
 #[cfg(any(test, feature = "testing"))]
 pub use requester::encrypt;
+pub use trbfv::crypto_configs;
 
 use e3_crypto::Cipher;
 use e3_protocol::{

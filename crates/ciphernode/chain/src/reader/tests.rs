@@ -5,10 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use crate::testing::{contracts, log, RANDOMNESS};
+use crate::testing::{contracts, e3_requested, log, CONFIG, RANDOMNESS};
 use alloy_primitives::{Address, B256};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider};
-use e3_protocol::{node::DataRef, E3Id};
+use e3_protocol::{
+    dkg::AttestationContext,
+    node::{CommitteeSeed, CryptoParams, DataRef},
+    E3Id,
+};
 use std::sync::{Arc, Mutex};
 
 const CONFIRMATIONS: u64 = 3;
@@ -17,13 +21,18 @@ const TIMING: DkgTiming = DkgTiming {
     window: 300,
 };
 const DECRYPTION_DEADLINE: UnixSecs = 2_000;
+const TICKET_PRICE: U256 = U256::from_limbs([5, 0, 0, 0]);
+const SEED: CommitteeSeed = CommitteeSeed {
+    seed: U256::from_limbs([42, 0, 0, 0]),
+    deadline: 500,
+};
 
 #[derive(Default)]
 struct Chain {
     head: u64,
     logs: Vec<RawLog>,
     /// The registry's accepted seed and committee deadline.
-    seed: Option<(U256, UnixSecs)>,
+    seed: Option<CommitteeSeed>,
     /// Requests for more blocks than this fail, as a provider's cap does.
     cap: Option<u64>,
     reads_fail: bool,
@@ -66,8 +75,11 @@ impl Rpc for FakeNode {
         Ok(logs.cloned().collect())
     }
 
-    async fn seed(&self, _: U256, block: u64) -> Result<Option<(U256, UnixSecs)>, RpcError> {
-        self.read(block, |chain| chain.seed)
+    async fn sortition(&self, _: U256, block: u64) -> Result<Sortition, RpcError> {
+        self.read(block, |chain| Sortition {
+            ticket_price: TICKET_PRICE,
+            seed: chain.seed,
+        })
     }
 
     async fn dkg_timing(&self, _: U256, block: u64) -> Result<DkgTiming, RpcError> {
@@ -158,7 +170,7 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
     node.with(|chain| {
         chain.head = 1_003;
         chain.logs = reads(5);
-        chain.seed = Some((U256::from(42), 500));
+        chain.seed = Some(SEED);
     });
     let events = reader(&node, 100).poll().await.unwrap();
     let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
@@ -170,8 +182,7 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
     let expected = vec![
         ChainFact::SeedReady {
             e3: e3(),
-            seed: U256::from(42),
-            committee_deadline: 500,
+            seed: SEED,
         },
         ChainFact::CommitteeFinalized {
             e3: e3(),
@@ -204,7 +215,7 @@ async fn a_failed_poll_returns_nothing_and_the_next_one_reads_the_same_blocks() 
     node.with(|chain| {
         chain.head = 10;
         chain.logs = [vec![stage_changed(4)], reads(5)].concat();
-        chain.seed = Some((U256::from(42), 500));
+        chain.seed = Some(SEED);
         chain.reads_fail = true;
     });
     let mut reader = reader(&node, 1_000);
@@ -229,4 +240,56 @@ async fn a_range_the_provider_rejects_is_requested_again_in_halves() {
         }
     }
     assert_eq!(read, [100, 600, 1_900]);
+}
+
+/// A provider can fulfill inside the request's own transaction, before `E3Requested`: the node
+/// cannot take that seed yet, so the request carries it.
+#[tokio::test]
+async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
+    let c = contracts();
+    let attestation = ICiphernodeRegistry::DkgFoldAttestationContextEstablished {
+        e3Id: U256::from(7),
+        registry: c.registry,
+        dkgFoldAttestationVerifier: Address::repeat_byte(0x5f),
+    };
+    let fulfilled = &reads(5)[0];
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.logs = vec![
+            log(c.registry, &attestation, 5, 9, 0),
+            RawLog {
+                transaction: B256::repeat_byte(9),
+                ..fulfilled.clone()
+            },
+            log(c.interfold, &e3_requested(CONFIG), 5, 9, 2),
+        ];
+        chain.seed = Some(SEED);
+    });
+    let events = reader(&node, 1_000).poll().await.unwrap();
+    let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
+    let request = ChainFact::E3Requested {
+        e3: e3(),
+        params: CryptoParams {
+            param_set: 1,
+            committee_size: e3_committee::CiphernodesCommitteeSize::Minimum,
+            seed: B256::from(U256::from(42)),
+        },
+        interfold: c.interfold,
+        attestation: AttestationContext {
+            registry: c.registry,
+            verifier: Address::repeat_byte(0x5f),
+        },
+        request: CommitteeRequest {
+            time: 50,
+            ticket_price: TICKET_PRICE,
+            owner_cap: false,
+        },
+        seed: Some(SEED),
+    };
+    let seed = ChainFact::SeedReady {
+        e3: e3(),
+        seed: SEED,
+    };
+    assert_eq!(facts, vec![seed, request]);
 }

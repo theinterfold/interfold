@@ -10,10 +10,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold, IRandomnessProvider};
 use e3_protocol::{
     dkg::AttestationContext,
-    node::{
-        ChainEvent, ChainFact, CommitteeRequest, CryptoParams, DataRef, FailureReason, LogPosition,
-        Stage,
-    },
+    node::{ChainEvent, ChainFact, CryptoParams, DataRef, FailureReason, LogPosition, Stage},
     E3Id, UnixSecs,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,8 +33,9 @@ pub struct Contracts {
     pub bonding: Address,
     /// Every randomness provider the registry used, so a restart reads old fulfillments too.
     pub randomness: BTreeSet<Address>,
-    /// The crypto configuration this build supports; requests for another are skipped.
-    pub crypto_config: B256,
+    /// The crypto configuration this build runs for each parameter set; a request for another is
+    /// skipped.
+    pub crypto_configs: BTreeMap<u8, B256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,9 +55,21 @@ pub(crate) enum Decoded {
     Read(PendingRead),
 }
 
-/// A fact that needs contract state at its block before the node can take it.
+/// A fact that needs contract state before the node can take it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PendingRead {
+    /// `E3Requested`, with the parts its transaction logged: the ticket price the registry froze,
+    /// and the committee seed if the registry already accepted it. `CommitteeRequested`, which
+    /// would carry the price, is declared but never emitted.
+    Request {
+        at: LogPosition,
+        time: UnixSecs,
+        e3: E3Id,
+        params: CryptoParams,
+        interfold: Address,
+        attestation: AttestationContext,
+        owner_cap: bool,
+    },
     /// `CommitteeFinalized`: its DKG deadline from `getDeadlines` and window from
     /// `getE3TimeoutConfig`.
     DkgTiming {
@@ -101,7 +111,6 @@ pub enum DecodeError {
 #[derive(Default)]
 struct RequestParts {
     attestation: Option<AttestationContext>,
-    request: Option<(UnixSecs, U256)>,
     owner_cap: bool,
 }
 
@@ -221,12 +230,6 @@ impl Decoder<'_> {
                 });
                 return Ok(None);
             }
-            R::CommitteeRequested::SIGNATURE_HASH => {
-                let event: R::CommitteeRequested = decode_event(log, "CommitteeRequested")?;
-                let time = UnixSecs::try_from(event.requestBlock).unwrap_or(UnixSecs::MAX);
-                self.parts(log.transaction, event.e3Id).request = Some((time, event.ticketPrice));
-                return Ok(None);
-            }
             extra::CommitteeBondOwnerCapEnabled::SIGNATURE_HASH => {
                 let event: extra::CommitteeBondOwnerCapEnabled =
                     decode_event(log, "CommitteeBondOwnerCapEnabled")?;
@@ -318,18 +321,20 @@ impl Decoder<'_> {
         Ok(Some(self.fact(log, fact)))
     }
 
-    /// A request becomes a fact with the parts its transaction logged before it. A request for a
-    /// crypto configuration or committee size this build does not support is skipped.
+    /// A request with the parts its transaction logged before it. Its time is its block's: the
+    /// registry records the request's `block.timestamp`. A request for a crypto configuration or
+    /// committee size this build does not support is skipped.
     fn requested(&mut self, log: &RawLog, event: IInterfold::E3Requested) -> Option<Decoded> {
         let parts = self.requests.remove(&(log.transaction, event.e3Id))?;
-        let supported = event.cryptoConfigId == self.contracts.crypto_config;
+        let supported =
+            self.contracts.crypto_configs.get(&event.e3.paramSet) == Some(&event.cryptoConfigId);
         let size = committee_size(event.e3.committeeSize)?;
-        let (Some(attestation), Some((time, ticket_price)), true) =
-            (parts.attestation, parts.request, supported)
-        else {
+        let (Some(attestation), true) = (parts.attestation, supported) else {
             return None;
         };
-        let fact = ChainFact::E3Requested {
+        Some(Decoded::Read(PendingRead::Request {
+            at: log.at,
+            time: log.time,
             e3: self.e3(event.e3Id),
             params: CryptoParams {
                 param_set: event.e3.paramSet,
@@ -338,13 +343,8 @@ impl Decoder<'_> {
             },
             interfold: log.address,
             attestation,
-            request: CommitteeRequest {
-                time,
-                ticket_price,
-                owner_cap: parts.owner_cap,
-            },
-        };
-        Some(self.fact(log, fact))
+            owner_cap: parts.owner_cap,
+        }))
     }
 
     fn parts(&mut self, transaction: B256, e3: U256) -> &mut RequestParts {

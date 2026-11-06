@@ -4,11 +4,15 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Contracts, RawLog, Rpc, RpcError};
+use crate::{Contracts, RawLog, Rpc, RpcError, Sortition};
 use alloy::{eips::BlockId, providers::Provider, rpc::types::Filter};
 use alloy_primitives::{Address, U256};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
-use e3_protocol::{dkg::DkgTiming, node::LogPosition, UnixSecs};
+use e3_protocol::{
+    dkg::DkgTiming,
+    node::{CommitteeSeed, LogPosition},
+    UnixSecs,
+};
 use std::collections::BTreeMap;
 
 /// A chain node over JSON-RPC.
@@ -79,25 +83,28 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
         Ok(raw)
     }
 
-    async fn seed(&self, e3: U256, block: u64) -> Result<Option<(U256, UnixSecs)>, RpcError> {
+    async fn sortition(&self, e3: U256, block: u64) -> Result<Sortition, RpcError> {
         let registry = ICiphernodeRegistry::new(self.contracts.registry, &self.provider);
         let at = BlockId::number(block);
-        let seed = registry
-            .sortitionSeed(e3)
-            .block(at)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        if !seed.ready {
-            return Ok(None);
-        }
         let request = registry
             .getSortitionRequest(e3)
             .block(at)
             .call()
             .await
             .map_err(RpcError::new)?;
-        Ok(Some((seed.seed, secs(request.committeeDeadline))))
+        let seed = registry
+            .sortitionSeed(e3)
+            .block(at)
+            .call()
+            .await
+            .map_err(RpcError::new)?;
+        Ok(Sortition {
+            ticket_price: request.ticketPrice,
+            seed: seed.ready.then(|| CommitteeSeed {
+                seed: seed.seed,
+                deadline: secs(request.committeeDeadline),
+            }),
+        })
     }
 
     async fn dkg_timing(&self, e3: U256, block: u64) -> Result<DkgTiming, RpcError> {
