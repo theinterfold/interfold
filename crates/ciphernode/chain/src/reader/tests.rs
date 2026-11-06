@@ -134,8 +134,8 @@ fn reads(block: u64) -> Vec<RawLog> {
     };
     vec![
         log(RANDOMNESS, &fulfilled, block, 2, 1),
-        log(c.registry, &sortition, block, 3, 2),
-        log(c.interfold, &finalized, block, 3, 3),
+        log(c.interfold, &finalized, block, 3, 2),
+        log(c.registry, &sortition, block, 3, 3),
         log(c.interfold, &ciphertext, block, 4, 4),
     ]
 }

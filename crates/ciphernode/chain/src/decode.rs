@@ -70,7 +70,8 @@ pub(crate) enum PendingRead {
         attestation: AttestationContext,
         owner_cap: bool,
     },
-    /// `CommitteeFinalized`: its DKG deadline from `getDeadlines` and window from
+    /// `SortitionCommitteeFinalized`, which the registry logs only for a finalized committee,
+    /// with its members: their DKG deadline from `getDeadlines` and window from
     /// `getE3TimeoutConfig`.
     DkgTiming {
         at: LogPosition,
@@ -114,13 +115,12 @@ struct RequestParts {
     owner_cap: bool,
 }
 
-/// Decodes `logs`, whole blocks in chain order. A request and a finalization each pair logs of one
-/// transaction, and a transaction never spans blocks, so nothing carries over between calls.
+/// Decodes `logs`, whole blocks in chain order. A request pairs logs of one transaction, and a
+/// transaction never spans blocks, so nothing carries over between calls.
 pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog]) -> Result<Vec<Decoded>, DecodeError> {
     let mut decoder = Decoder {
         contracts,
         requests: BTreeMap::new(),
-        finalized: BTreeMap::new(),
     };
     let mut decoded = Vec::new();
     for log in logs {
@@ -133,9 +133,6 @@ struct Decoder<'a> {
     contracts: &'a Contracts,
     /// Request parts per transaction and E3, until its `E3Requested`.
     requests: BTreeMap<(B256, U256), RequestParts>,
-    /// `SortitionCommitteeFinalized` members per transaction and E3, until its
-    /// `CommitteeFinalized`.
-    finalized: BTreeMap<(B256, U256), Vec<Address>>,
 }
 
 impl Decoder<'_> {
@@ -171,19 +168,6 @@ impl Decoder<'_> {
             I::E3Requested::SIGNATURE_HASH => {
                 let event: I::E3Requested = decode_event(log, "E3Requested")?;
                 return Ok(self.requested(log, event));
-            }
-            I::CommitteeFinalized::SIGNATURE_HASH => {
-                let event: I::CommitteeFinalized = decode_event(log, "CommitteeFinalized")?;
-                let members = self
-                    .finalized
-                    .remove(&(log.transaction, event.e3Id))
-                    .unwrap_or_default();
-                return Ok(Some(Decoded::Read(PendingRead::DkgTiming {
-                    at: log.at,
-                    time: log.time,
-                    e3: self.e3(event.e3Id),
-                    members,
-                })));
             }
             I::CiphertextOutputReferencePublished::SIGNATURE_HASH => {
                 let event: I::CiphertextOutputReferencePublished =
@@ -239,9 +223,12 @@ impl Decoder<'_> {
             R::SortitionCommitteeFinalized::SIGNATURE_HASH => {
                 let event: R::SortitionCommitteeFinalized =
                     decode_event(log, "SortitionCommitteeFinalized")?;
-                self.finalized
-                    .insert((log.transaction, event.e3Id), event.committee);
-                return Ok(None);
+                return Ok(Some(Decoded::Read(PendingRead::DkgTiming {
+                    at: log.at,
+                    time: log.time,
+                    e3: self.e3(event.e3Id),
+                    members: event.committee,
+                })));
             }
             R::CommitteeProofPublished::SIGNATURE_HASH => {
                 let event: R::CommitteeProofPublished =

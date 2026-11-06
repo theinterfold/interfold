@@ -74,8 +74,10 @@ fn a_request_for_another_crypto_configuration_is_skipped() {
     assert!(decode(&contracts(), &other).unwrap().is_empty());
 }
 
+/// `finalizeCommittee` calls the Interfold, which logs `CommitteeFinalized`, before the registry
+/// logs the committee.
 #[test]
-fn finalization_reads_the_dkg_timing_for_the_committee_its_transaction_logged() {
+fn a_finalized_committee_reads_its_dkg_timing() {
     let c = contracts();
     let members = vec![Address::repeat_byte(1), Address::repeat_byte(2)];
     let sortition = ICiphernodeRegistry::SortitionCommitteeFinalized {
@@ -87,8 +89,8 @@ fn finalization_reads_the_dkg_timing_for_the_committee_its_transaction_logged() 
         e3Id: U256::from(7),
     };
     let logs = [
-        log(c.registry, &sortition, 2, 0),
-        log(c.interfold, &finalized, 2, 1),
+        log(c.interfold, &finalized, 2, 0),
+        log(c.registry, &sortition, 2, 1),
     ];
     let decoded = decode(&c, &logs).unwrap();
     let [Decoded::Read(PendingRead::DkgTiming { members: read, .. })] = decoded.as_slice() else {
