@@ -120,7 +120,7 @@ impl Dkg {
         let work = DkgWork::MakeShares {
             dealer: self.me,
             committee: self.members.clone(),
-            secret: own.secret,
+            own_key: own.public,
             keys,
         };
         self.phase = Phase::MakingShares(own.clone());

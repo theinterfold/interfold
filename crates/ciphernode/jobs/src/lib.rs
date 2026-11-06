@@ -9,16 +9,23 @@
 //! cipher, so the machine and its journal only ever hold a reference to ciphertext.
 
 mod blobs;
+mod decryption;
 mod dkg;
+mod placeholder;
+#[cfg(test)]
+mod tests;
+mod trbfv;
 
 pub use blobs::{Blobs, MemoryBlobs};
 
 use e3_crypto::Cipher;
-use e3_fhe_params::BfvPreset;
 use e3_protocol::{
-    node::{CryptoParams, Job, Work, WorkResult},
+    node::{Job, Work, WorkResult},
     BlobRef,
 };
+use e3_trbfv::shares::{BfvEncryptedShare, ShamirShare};
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
@@ -30,8 +37,33 @@ pub enum JobError {
     Seal(String),
     #[error("{0}")]
     Crypto(String),
-    #[error("{0} is not implemented yet")]
-    NotImplemented(&'static str),
+}
+
+impl JobError {
+    pub(crate) fn crypto(error: impl Display) -> Self {
+        Self::Crypto(error.to_string())
+    }
+}
+
+/// A dealer's own shares, kept in plaintext and sealed, for its decryption key.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct OwnShareRows {
+    pub(crate) sk: ShamirShare,
+    pub(crate) esi: Vec<ShamirShare>,
+}
+
+/// What a dealer sends one recipient: its shares, encrypted to the recipient's C0 key.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct RecipientCiphertexts {
+    pub(crate) sk: BfvEncryptedShare,
+    pub(crate) esi: Vec<BfvEncryptedShare>,
+}
+
+/// A member's decryption key: its summed secret-key and smudging-noise shares, sealed.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct SealedDecryptionKey {
+    pub(crate) sk_poly_sum: Vec<u8>,
+    pub(crate) es_poly_sum: Vec<Vec<u8>>,
 }
 
 pub struct JobRunner<B> {
@@ -47,7 +79,9 @@ impl<B: Blobs> JobRunner<B> {
     pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {
         match &job.work {
             Work::Dkg(work) => self.run_dkg(&job.params, work).map(WorkResult::Dkg),
-            Work::Decryption(_) => Err(JobError::NotImplemented("decryption")),
+            Work::Decryption(work) => self
+                .run_decryption(&job.params, work)
+                .map(WorkResult::Decryption),
         }
     }
 
@@ -59,16 +93,10 @@ impl<B: Blobs> JobRunner<B> {
             .map_err(|error| JobError::Seal(error.to_string()))?;
         Ok(self.blobs.put(&sealed))
     }
-}
 
-/// The request's threshold preset; the DKG encrypts shares under its DKG counterpart.
-fn threshold_preset(params: &CryptoParams) -> Result<BfvPreset, JobError> {
-    BfvPreset::from_on_chain_param_set(params.param_set)
-        .ok_or(JobError::UnsupportedParams(params.param_set))
-}
-
-fn dkg_preset(params: &CryptoParams) -> Result<BfvPreset, JobError> {
-    threshold_preset(params)?
-        .dkg_counterpart()
-        .ok_or(JobError::UnsupportedParams(params.param_set))
+    fn unseal(&self, blob: &BlobRef) -> Result<Vec<u8>, JobError> {
+        self.cipher
+            .decrypt_data(&self.blobs.get(blob)?)
+            .map_err(|error| JobError::Seal(error.to_string()))
+    }
 }

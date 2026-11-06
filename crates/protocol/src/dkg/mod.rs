@@ -186,11 +186,12 @@ pub enum DkgWork {
         proof: ZkProof,
     },
     /// This node's threshold shares and their C1-C3 proofs. Every member in `keys` gets its
-    /// encrypted shares; every other member's C3 slot gets a placeholder.
+    /// encrypted shares. Every other member's C3 slot but the dealer's own gets a placeholder
+    /// encrypted under `own_key`, which that member never receives.
     MakeShares {
         dealer: Address,
         committee: Vec<Address>,
-        secret: BlobRef,
+        own_key: BlobRef,
         keys: BTreeMap<Address, BlobRef>,
     },
     /// Check what `dealer` sent this node: decrypt the shares with this node's secret key and

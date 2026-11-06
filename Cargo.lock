@@ -4197,15 +4197,18 @@ name = "e3-jobs"
 version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
+ "bincode",
  "e3-committee",
  "e3-crypto",
  "e3-fhe-params",
  "e3-protocol",
  "e3-trbfv",
+ "e3-utils",
  "fhe",
  "fhe-traits",
  "rand 0.9.5",
  "rand_core 0.9.5",
+ "serde",
  "thiserror 1.0.69",
  "tokio",
 ]
