@@ -107,6 +107,24 @@ Each rule is checkable in review.
   policy v2 ranks every eligible operator, which is today's fallback when the eligibility read
   fails; porting that read, which keeps the owner shortlist, is still open.
 
+- **D21. No history sync.** A node that restarts or joins late gets each peer message whose work
+  still runs from the peer's re-sends (D19), and every chain fact from the reader, which resumes
+  at its last applied log. No protocol replays gossip history, so no history can outgrow a
+  transfer limit or be gossiped again by its readers.
+
+- **D22. Blobs travel from their publisher, not through DHT records.** Gossip carries the operator
+  signed message with blob references. A receiver fetches each blob it needs from the message's
+  publisher by request and response, checks that the bytes hash to the reference and have its
+  length, and delivers the message only once every blob it needs is in its store. The protocol
+  says which blobs a node needs: a share message's only for its recipient. Open: until membership
+  reaches the network adapter, a non-member can make nodes fetch its blobs; per-peer limits bound
+  the cost.
+
+- **D23. A ciphertext is fetched, not read from the log.** The deployed Interfold logs a content
+  hash and its availability coordinates (`CiphertextOutputReferencePublished`). Decryption emits a
+  fetch effect for them and starts its jobs when the bytes return, so a slow availability layer
+  delays only that E3, and the outbox repeats the fetch after a restart.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**
