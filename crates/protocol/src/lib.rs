@@ -12,9 +12,11 @@
 pub mod accusation;
 pub mod dkg;
 mod ids;
+mod machine;
 pub mod proof;
 
 pub use ids::E3Id;
+pub use machine::{Machine, Tick, UnixSecs};
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::Eip712Domain;

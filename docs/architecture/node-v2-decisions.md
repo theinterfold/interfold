@@ -44,6 +44,16 @@ Each rule is checkable in review.
 - **D7. Contract-verified bytes are locked by golden tests first.** Vectors are taken from the
   current code before any port; the v2 code must reproduce them.
 
+- **D8. One pure `Node` machine, one journal.** The node's whole protocol state is one
+  deterministic machine; each E3 is a plain struct inside it, and admission and routing are pure
+  code. The engine journals every input with its time, commits the effects and a periodic snapshot
+  in the same transaction, and replays the journal after the latest snapshot on restart. Large
+  payloads are stored once by hash, so snapshots stay small. A failed commit consumes the engine,
+  because its state may be ahead of the store.
+- **D9. Machines are deterministic.** State uses ordered maps, never iteration order of hash maps;
+  a machine reads no clock, draws no randomness, and holds no secret key. Signatures are effects
+  whose results come back as inputs.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

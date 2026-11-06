@@ -3882,6 +3882,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-engine"
+version = "0.20.0-dev.3"
+dependencies = [
+ "bincode",
+ "e3-protocol",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "e3-entrypoint"
 version = "0.20.0-dev.3"
 dependencies = [
