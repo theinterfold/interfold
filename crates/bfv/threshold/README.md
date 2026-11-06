@@ -4,8 +4,8 @@
 
 Threshold-BFV calculations and typed request/response payloads for distributed key generation and
 threshold decryption. Actors, authenticated dealer admission, and timing belong in
-[keyshare](../orchestration/keyshare/README.md) and
-[aggregation](../orchestration/aggregator/README.md).
+[keyshare](../../orchestration/keyshare/README.md) and
+[aggregation](../../orchestration/aggregator/README.md).
 
 ## Map
 
@@ -36,7 +36,7 @@ Each public module exposes a typed request/response and its calculation function
 
 `TrBFVRequest`, `TrBFVResponse`, and `TrBFVError` provide the worker dispatch envelope.
 `TrBFVFailure` retains structured threshold error/party attribution when available, in addition to a
-human-readable message. The [compute dispatcher](../ciphernode/multithread/src/multithread.rs) is
+human-readable message. The [compute dispatcher](../../ciphernode/multithread/src/multithread.rs) is
 the production caller showing RNG/cipher/request handling.
 
 `TrBFVRequest::execute(&rng, &cipher)` is the synchronous native execution boundary. It dispatches
@@ -51,7 +51,7 @@ policy stay with the compute runtime.
 `TrBFVConfig::new(encoded_params, num_parties, threshold)` receives T, not T+1. Runtime `PartyId` is
 zero-based; Shamir reconstruction coordinates are one-based at the mathematical boundary. Share
 ordering must retain the corresponding party IDs. Use paired threshold/DKG metadata from
-[e3-fhe-params](../fhe-params/README.md), not interchangeable parameter sets.
+[e3-fhe-params](../../fhe-params/README.md), not interchangeable parameter sets.
 
 ## Secret inputs and outputs
 
@@ -65,7 +65,7 @@ different shares.
 Run `cargo test --locked -p e3-trbfv`; no EVM/prover fixture setup is required. Inline cases cover
 encrypted share serialization/indices and structured error extraction;
 [`tests/integration.rs`](tests/integration.rs) exercises threshold computation in isolation, using
-private share fixtures under `tests/common` and shared [ballots](../bfv-test-support/README.md). See
-[DKG](../../docs/architecture/dkg.md) and
-[threshold decryption](../../docs/architecture/threshold-decryption.md) for dimensions and proofs.
-See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.
+private share fixtures under `tests/common` and shared [ballots](../../bfv-test-support/README.md).
+See [DKG](../../../docs/architecture/dkg.md) and
+[threshold decryption](../../../docs/architecture/threshold-decryption.md) for dimensions and
+proofs. See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.

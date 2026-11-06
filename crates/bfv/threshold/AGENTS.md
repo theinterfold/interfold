@@ -14,5 +14,5 @@ with the keyshare/aggregation capabilities.
   shares/raw secrets out of logs and ordinary snapshots.
 
 Use the [README tests/prerequisites](README.md#tests). Math changes need independent reconstruction
-cases and the affected [DKG](../../docs/architecture/dkg.md)/decryption flow, not only encryption
+cases and the affected [DKG](../../../docs/architecture/dkg.md)/decryption flow, not only encryption
 round trips.

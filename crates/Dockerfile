@@ -46,7 +46,7 @@ COPY --from=evm-builder /build/packages/interfold-contracts/deployed_contracts.j
 
 # find crates/* -name "Cargo.toml" -not -path "*/support/*" -printf "COPY %p %p\n" | sed 's|COPY \(.*\) crates/|COPY \1 ./|'
 COPY crates/orchestration/aggregator/Cargo.toml ./orchestration/aggregator/Cargo.toml
-COPY crates/bfv-client/Cargo.toml ./bfv-client/Cargo.toml
+COPY crates/bfv/client/Cargo.toml ./bfv/client/Cargo.toml
 COPY crates/bfv-test-support/Cargo.toml ./bfv-test-support/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
 COPY crates/ciphernode/builder/Cargo.toml ./ciphernode/builder/Cargo.toml
@@ -95,7 +95,7 @@ COPY crates/state/sync/Cargo.toml ./state/sync/Cargo.toml
 COPY crates/test-support/Cargo.toml ./test-support/Cargo.toml
 COPY crates/task-pool/Cargo.toml ./task-pool/Cargo.toml
 COPY crates/tests/Cargo.toml ./tests/Cargo.toml
-COPY crates/trbfv/Cargo.toml ./trbfv/Cargo.toml
+COPY crates/bfv/threshold/Cargo.toml ./bfv/threshold/Cargo.toml
 COPY crates/utils/Cargo.toml ./utils/Cargo.toml
 COPY crates/utils-derive/Cargo.toml ./utils-derive/Cargo.toml
 COPY crates/wasm/Cargo.toml ./wasm/Cargo.toml

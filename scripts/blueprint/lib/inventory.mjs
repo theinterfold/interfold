@@ -76,8 +76,8 @@ export const LAYERS = {
     'zk/prover',
     'fhe',
     'ciphernode/multithread',
-    'trbfv',
-    'bfv-client',
+    'bfv/threshold',
+    'bfv/client',
   ],
   adapters: ['evm/runtime', 'net', 'state/sync', 'state/event-system', 'state/storage', 'data-availability', 'logger'],
   vocabulary: [

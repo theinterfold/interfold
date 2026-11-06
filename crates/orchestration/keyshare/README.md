@@ -4,8 +4,8 @@
 
 Per-E3 DKG and secret-share lifecycle for a ciphernode: collect authenticated dealer material,
 produce threshold contributions, assemble this node's decryption key, and later emit proven
-decryption shares. Arithmetic runs through [e3-trbfv](../../trbfv/README.md) and shared workers;
-this capability coordinates protocol state and recovery.
+decryption shares. Arithmetic runs through [e3-trbfv](../../bfv/threshold/README.md) and shared
+workers; this capability coordinates protocol state and recovery.
 
 ## Map
 

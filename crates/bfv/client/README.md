@@ -3,7 +3,7 @@
 ## Purpose
 
 Native client helpers for BFV encryption, circuit-compatible public-key/ciphertext commitments, and
-plaintext byte conversion. The same implementation backs the [WASM API](../wasm/README.md) and is
+plaintext byte conversion. The same implementation backs the [WASM API](../../wasm/README.md) and is
 re-exported as `e3_sdk::bfv_client` with the SDK's `bfv` feature.
 
 ## Map
@@ -22,7 +22,7 @@ whichever key serialization the caller received.
 
 `client::bfv_encrypt(data, public_key, degree, plaintext_modulus, moduli)` takes serialized
 public-key bytes and BFV parameters and returns serialized ciphertext bytes. Parameters must match
-the committee key; use [e3-fhe-params](../fhe-params/README.md) rather than copying presets.
+the committee key; use [e3-fhe-params](../../fhe-params/README.md) rather than copying presets.
 
 For inputs that need an encryption proof, `client::bfv_verifiable_encrypt(...)` returns
 `VerifiableEncryptionResult { encrypted_data, circuit_inputs }`. The JSON circuit inputs contain the
@@ -55,5 +55,5 @@ Run `cargo test --locked -p e3-bfv-client` from the root. Inline tests in
 admission. The word-conversion snippet above illustrates the separate `lib.rs` helpers; there are no
 dedicated inline tests for those helpers today. No node or external prover process is needed.
 Real-proof acceptance is described in
-[proof statements](../../docs/architecture/proof-statements.md); [AGENTS.md](AGENTS.md) covers
+[proof statements](../../../docs/architecture/proof-statements.md); [AGENTS.md](AGENTS.md) covers
 changes to the shared boundary.

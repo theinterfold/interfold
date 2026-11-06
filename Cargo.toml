@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "crates/orchestration/aggregator",
-  "crates/bfv-client",
+  "crates/bfv/client",
   "crates/bfv-test-support",
   "crates/ciphernode/builder",
   "crates/ciphernode/config",
@@ -49,7 +49,7 @@ members = [
   "crates/task-pool",
   "crates/test-support",
   "crates/tests",
-  "crates/trbfv",
+  "crates/bfv/threshold",
   "crates/utils",
   "crates/utils-derive",
   "crates/wasm",
@@ -88,7 +88,7 @@ repository = "https://github.com/theinterfold/interfold"
 
 [workspace.dependencies]
 e3-aggregator = { version = "0.20.0-dev.3", path = "./crates/orchestration/aggregator" }
-e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv-client" }
+e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv/client" }
 e3-bfv-test-support = { path = "./crates/bfv-test-support" }
 e3-committee = { version = "0.20.0-dev.3", path = "./crates/committee" }
 e3-console = { version = "0.20.0-dev.3", path = "./crates/console" }
@@ -133,7 +133,7 @@ e3-layout-lock = { version = "0.20.0-dev.3", path = "./crates/layout-lock" }
 e3-task-pool = { version = "0.20.0-dev.3", path = "./crates/task-pool" }
 e3-test-support = { path = "./crates/test-support" }
 e3-tests = { version = "0.20.0-dev.3", path = "./crates/tests" }
-e3-trbfv = { version = "0.20.0-dev.3", path = "./crates/trbfv" }
+e3-trbfv = { version = "0.20.0-dev.3", path = "./crates/bfv/threshold" }
 e3-utils = { version = "0.20.0-dev.3", path = "./crates/utils" }
 e3-utils-derive = { version = "0.20.0-dev.3", path = "./crates/utils-derive" }
 e3-safe = { version = "0.20.0-dev.3", path = "./crates/safe" }

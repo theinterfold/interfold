@@ -935,31 +935,31 @@
         { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" }
       ],
       "kind": "crate",
-      "path": "crates/trbfv",
+      "path": "crates/bfv/threshold",
       "one_line": "Threshold BFV protocol steps: DKG key and Shamir share generation, decryption-key sums, decryption shares and threshold decryption.",
       "actors": [],
       "consumes": [
         {
           "name": "TrBFVRequest variants: generate, sum, share and combine",
           "by": "handle_trbfv_request in crates/ciphernode/multithread",
-          "ref": "crates/trbfv/src/trbfv_request.rs@27@pub enum TrBFVRequest {"
+          "ref": "crates/bfv/threshold/src/trbfv_request.rs@27@pub enum TrBFVRequest {"
         },
         {
           "name": "collected Shamir shares, held as Encrypted values under the node's own Cipher",
           "by": "calculate_decryption_key",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@27@pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@27@pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,"
         }
       ],
       "emits": [
         {
           "name": "TrBFVResponse variants",
           "by": "TrBFVRequest::execute",
-          "ref": "crates/trbfv/src/trbfv_request.rs@37@pub enum TrBFVResponse {"
+          "ref": "crates/bfv/threshold/src/trbfv_request.rs@37@pub enum TrBFVResponse {"
         },
         {
           "name": "TrBFVError, carrying a TrBFVFailure",
           "by": "TrBFVRequest::execute and failure",
-          "ref": "crates/trbfv/src/trbfv_request.rs@46@pub enum TrBFVError {"
+          "ref": "crates/bfv/threshold/src/trbfv_request.rs@46@pub enum TrBFVError {"
         }
       ],
       "state": [],
@@ -967,76 +967,76 @@
         {
           "name": "TrBFVConfig",
           "what": "BFV params bytes plus the number of parties and the threshold (u64 each)",
-          "ref": "crates/trbfv/src/trbfv_config.rs@15@pub struct TrBFVConfig {"
+          "ref": "crates/bfv/threshold/src/trbfv_config.rs@15@pub struct TrBFVConfig {"
         },
         {
           "name": "Encrypted<T>",
           "what": "a serialized value sealed with the node's Cipher, opened only when used",
-          "ref": "crates/trbfv/src/shares/encrypted.rs@21@pub struct Encrypted<T>(SensitiveBytes, std::marker::PhantomData<T>);"
+          "ref": "crates/bfv/threshold/src/shares/encrypted.rs@21@pub struct Encrypted<T>(SensitiveBytes, std::marker::PhantomData<T>);"
         },
         {
           "name": "SharedSecret",
           "what": "Shamir share data for one secret, with one array per modulus",
-          "ref": "crates/trbfv/src/shares/shares.rs@12@pub struct SharedSecret {"
+          "ref": "crates/bfv/threshold/src/shares/shares.rs@12@pub struct SharedSecret {"
         },
         {
           "name": "BfvEncryptedShares",
           "what": "the Shamir rows of one dealer, each BFV-encrypted to a recipient's public key",
-          "ref": "crates/trbfv/src/shares/bfv_encrypted.rs@161@pub struct BfvEncryptedShares {"
+          "ref": "crates/bfv/threshold/src/shares/bfv_encrypted.rs@161@pub struct BfvEncryptedShares {"
         }
       ],
       "read_first": [
         {
           "why": "the native execution boundary over typed requests, caller RNG and cipher",
-          "ref": "crates/trbfv/src/request_execution.rs@45@pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {"
+          "ref": "crates/bfv/threshold/src/request_execution.rs@45@pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {"
         },
         {
           "why": "DKG: the public-key share and the secret Shamir shares",
-          "ref": "crates/trbfv/src/gen_pk_share_and_sk_sss.rs@111@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
+          "ref": "crates/bfv/threshold/src/gen_pk_share_and_sk_sss.rs@111@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
         },
         {
           "why": "summing the shares a node collected",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@107@pub fn calculate_decryption_key("
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@107@pub fn calculate_decryption_key("
         },
         {
           "why": "one decryption share per ciphertext",
-          "ref": "crates/trbfv/src/calculate_decryption_share.rs@102@pub fn calculate_decryption_share("
+          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@102@pub fn calculate_decryption_share("
         },
         {
           "why": "combining the shares of a threshold of nodes into plaintext",
-          "ref": "crates/trbfv/src/calculate_threshold_decryption.rs@126@pub fn calculate_threshold_decryption("
+          "ref": "crates/bfv/threshold/src/calculate_threshold_decryption.rs@126@pub fn calculate_threshold_decryption("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-impl",
           "note": "each request converts into an InnerRequest with TryFrom, so the wire type and the math type differ",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@38@impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@38@impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {"
         },
         {
           "pattern": "impl-from",
           "note": "an internal response converts into its serializable form with From",
-          "ref": "crates/trbfv/src/calculate_decryption_share.rs@90@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@90@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
         },
         {
           "pattern": "iterator-chain",
           "note": "per-ciphertext aggregation is collected into one Result",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@134@.collect::<Result<Vec<_>>>()?;"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@134@.collect::<Result<Vec<_>>>()?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a failed aggregation names the step that failed",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@132@.context(\"Failed to aggregate es_sss\")"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@132@.context(\"Failed to aggregate es_sss\")"
         },
         {
           "pattern": "serde-derive",
           "note": "requests and responses derive serde so they can cross the worker boundary",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@22@#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@22@#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
         },
         {
           "pattern": "async-test",
           "note": "the integration test runs under tokio",
-          "ref": "crates/trbfv/tests/integration.rs@30@#[tokio::test]"
+          "ref": "crates/bfv/threshold/tests/integration.rs@30@#[tokio::test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params", "e3-crypto", "e3-utils"],
@@ -1047,7 +1047,7 @@
       "id": "e3-bfv-client",
       "documentation": [{ "title": "Rust BFV client", "path": "docs/architecture/rust-client-integration.md" }],
       "kind": "crate",
-      "path": "crates/bfv-client",
+      "path": "crates/bfv/client",
       "one_line": "Client-side BFV helpers: encrypt a value under a BFV public key, optionally with circuit inputs, and compute or check key and ciphertext commitments.",
       "actors": [],
       "consumes": [],
@@ -1057,61 +1057,61 @@
         {
           "name": "VerifiableEncryptionResult",
           "what": "ciphertext bytes plus the circuit inputs as a JSON string",
-          "ref": "crates/bfv-client/src/client.rs@72@pub struct VerifiableEncryptionResult {"
+          "ref": "crates/bfv/client/src/client.rs@72@pub struct VerifiableEncryptionResult {"
         },
         {
           "name": "Error",
           "what": "PlaintextDecodeFailed or BadEncoding, for the byte helpers in lib.rs",
-          "ref": "crates/bfv-client/src/lib.rs@20@pub enum Error {"
+          "ref": "crates/bfv/client/src/lib.rs@20@pub enum Error {"
         }
       ],
       "read_first": [
         {
           "why": "module list: the client module holds the functions",
-          "ref": "crates/bfv-client/src/lib.rs@7@pub mod client;"
+          "ref": "crates/bfv/client/src/lib.rs@7@pub mod client;"
         },
         {
           "why": "encryption under a public key",
-          "ref": "crates/bfv-client/src/client.rs@45@pub fn bfv_encrypt<T>("
+          "ref": "crates/bfv/client/src/client.rs@45@pub fn bfv_encrypt<T>("
         },
         {
           "why": "verifiable encryption, with the circuit inputs",
-          "ref": "crates/bfv-client/src/client.rs@96@pub fn bfv_verifiable_encrypt<T>("
+          "ref": "crates/bfv/client/src/client.rs@96@pub fn bfv_verifiable_encrypt<T>("
         },
         {
           "why": "the public-key commitment check used before a key is trusted",
-          "ref": "crates/bfv-client/src/client.rs@197@pub fn validate_pk_commitment("
+          "ref": "crates/bfv/client/src/client.rs@197@pub fn validate_pk_commitment("
         },
         {
           "why": "the ciphertext commitment, with a variant that reuses built parameters",
-          "ref": "crates/bfv-client/src/client.rs@221@pub fn compute_ct_commitment("
+          "ref": "crates/bfv/client/src/client.rs@221@pub fn compute_ct_commitment("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "thiserror-enum",
           "note": "the crate's Error derives thiserror::Error with a message per variant",
-          "ref": "crates/bfv-client/src/lib.rs@19@#[derive(ThisError, Debug)]"
+          "ref": "crates/bfv/client/src/lib.rs@19@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "generic-where",
           "note": "the encrypt functions take any value T that fhe.rs can encode, through a where bound",
-          "ref": "crates/bfv-client/src/client.rs@53@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
+          "ref": "crates/bfv/client/src/client.rs@53@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "building the parameters returns early on error",
-          "ref": "crates/bfv-client/src/client.rs@55@build_client_params(degree, plaintext_modulus, moduli, None)?;"
+          "ref": "crates/bfv/client/src/client.rs@55@build_client_params(degree, plaintext_modulus, moduli, None)?;"
         },
         {
           "pattern": "option-combinators",
           "note": "an unsupported parameter tuple becomes an anyhow error through ok_or_else",
-          "ref": "crates/bfv-client/src/client.rs@107@.ok_or_else(|| {"
+          "ref": "crates/bfv/client/src/client.rs@107@.ok_or_else(|| {"
         },
         {
           "pattern": "unit-test",
           "note": "the encryption round trips are plain #[test] functions",
-          "ref": "crates/bfv-client/src/client.rs@382@fn test_bfv_encrypt_a64() {"
+          "ref": "crates/bfv/client/src/client.rs@382@fn test_bfv_encrypt_a64() {"
         }
       ],
       "depends_on": ["e3-fhe-params", "e3-zk-config", "e3-zk-witness", "e3-polynomial"],
