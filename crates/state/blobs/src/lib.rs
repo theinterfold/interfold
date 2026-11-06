@@ -32,6 +32,7 @@ pub enum BlobError {
 pub trait Blobs {
     fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
+    fn has(&self, blob: &BlobRef) -> bool;
 }
 
 /// Blobs in memory; clones share them.
@@ -52,6 +53,11 @@ impl Blobs for MemoryBlobs {
             .get(&blob.hash)
             .cloned()
             .ok_or(BlobError::Missing(*blob))
+    }
+
+    fn has(&self, blob: &BlobRef) -> bool {
+        let blobs = self.0.lock().expect("no holder of the lock panics");
+        blobs.contains_key(&blob.hash)
     }
 }
 
@@ -110,6 +116,10 @@ impl Blobs for FileBlobs {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Err(BlobError::Missing(*blob)),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn has(&self, blob: &BlobRef) -> bool {
+        self.path(&blob.hash).exists()
     }
 }
 

@@ -78,7 +78,7 @@ impl Network for MemoryPeer {
                 continue;
             }
             for blob in message.blobs() {
-                if member.blobs.get(&blob).is_ok() {
+                if member.blobs.has(&blob) {
                     continue;
                 }
                 let bytes = self.blobs.get(&blob)?;

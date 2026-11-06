@@ -7,9 +7,12 @@
 //! The v2 node's network: operator-signed peer messages, and the blobs they name, which a node
 //! fetches from the message's publisher before it delivers the message.
 
+mod inbound_ip_limits;
 mod memory;
+mod swarm;
 
 pub use memory::{MemoryNetwork, MemoryPeer};
+pub use swarm::{P2p, P2pConfig, P2pError};
 
 use e3_blobs::{BlobError, Blobs};
 use e3_protocol::{wire::Envelope, BlobRef};
@@ -29,6 +32,10 @@ pub enum NetworkError {
     Blob(#[from] BlobError),
     #[error("blob {0:?} came back with other bytes")]
     WrongBlob(BlobRef),
+    #[error("publishing: {0}")]
+    Publish(String),
+    #[error("the network stopped")]
+    Stopped,
 }
 
 pub type SharedBlobs = Arc<dyn Blobs + Send + Sync>;

@@ -4426,10 +4426,17 @@ name = "e3-p2p"
 version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer",
  "e3-blobs",
  "e3-protocol",
+ "futures",
+ "libp2p",
+ "serde_bytes",
+ "sha2 0.10.9",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
