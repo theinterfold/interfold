@@ -29,7 +29,7 @@ jobs:
       - name: Test dependency-free checks and blueprint navigation
         run: node --test scripts/checks/*.test.mjs scripts/blueprint/documentation.test.mjs
 
-      - name: Check feature containment, Docker coverage, and shutdown grace
+      - name: Check feature containment, dependency boundaries, Docker coverage, and shutdown grace
         run: ./scripts/checks/repository.sh
 
       - name: Check committee configuration

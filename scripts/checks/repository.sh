@@ -5,7 +5,8 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Check production configuration, the startup proof guard, and the fire-and-forget send ceiling.
+# Check production configuration, Cargo dependency boundaries, the startup proof guard, and the
+# fire-and-forget send ceiling.
 # These static checks do not establish runtime delivery or proof-verification behavior.
 
 set -euo pipefail
@@ -32,7 +33,7 @@ elif ((count < DO_SEND_BASELINE)); then
   echo "  Please ratchet: set DO_SEND_BASELINE=$count in $baseline_file."
 fi
 
-# --- 1. skip-proof feature containment --------------------------------------------
+# --- 1. skip-proof feature containment and dependency boundaries ------------------
 # The containment check parses Cargo.toml with tomllib, which is stdlib only from
 # Python 3.11. macOS still ships 3.9 as `python3`, so find an interpreter that has it
 # rather than failing the gate on the environment. The check also falls back to the
@@ -54,6 +55,9 @@ if [[ -z "$python_bin" ]]; then
   echo "  unverified. Install Python 3.11 or newer, or 'pip install tomli' for python3."
   fail=1
 elif ! "$python_bin" scripts/checks/cargo-feature-containment.py; then
+  fail=1
+fi
+if [[ -n "$python_bin" ]] && ! "$python_bin" scripts/checks/cargo-dependency-boundaries.py; then
   fail=1
 fi
 
@@ -111,6 +115,6 @@ if ! grep -rq 'fn validate_proof_aggregation_mode' crates/ciphernode/entrypoint/
 fi
 
 if ((fail == 0)); then
-  echo "✓ check:repository: do_send=$count (≤ $DO_SEND_BASELINE), feature containment, runtime proof guard, Docker coverage, and shutdown grace verified"
+  echo "✓ check:repository: do_send=$count (≤ $DO_SEND_BASELINE), feature containment, dependency boundaries, runtime proof guard, Docker coverage, and shutdown grace verified"
 fi
 exit "$fail"
