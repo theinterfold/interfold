@@ -8,7 +8,7 @@
 //! feeds a shadow copy of its machine that never crashes and never touches a store; the node must
 //! always produce the same effects as its shadow and end in the same state.
 
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{keccak256, Address, B256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
     dkg::{DkgWork, DkgWorkResult, OwnDecryptionKey, OwnKey, OwnShares, RecipientShares},
@@ -249,7 +249,7 @@ impl Sim {
         let result = match &job.work {
             Work::Dkg(DkgWork::MakeEncryptionKey) => {
                 let proof = self.proof();
-                let public = blob(keccak256(&proof.data));
+                let public = blob(keccak256(proof.data.hash));
                 DkgWorkResult::EncryptionKeyMade(OwnKey {
                     public,
                     secret: blob(keccak256(public.hash)),
@@ -259,7 +259,7 @@ impl Sim {
             Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
                 DkgWorkResult::EncryptionKeyChecked {
                     sender: *sender,
-                    valid: key.hash == keccak256(&proof.data),
+                    valid: key.hash == keccak256(proof.data.hash),
                 }
             }
             Work::Dkg(DkgWork::MakeShares { keys, .. }) => {
@@ -331,7 +331,7 @@ impl Sim {
 
     fn proof(&mut self) -> ZkProof {
         ZkProof {
-            data: Bytes::from(self.rng.random::<[u8; 32]>().to_vec()),
+            data: blob(self.hash()),
             public_inputs: vec![self.hash()],
         }
     }

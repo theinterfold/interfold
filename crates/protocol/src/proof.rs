@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::E3Id;
+use crate::{BlobRef, E3Id};
 use alloy_primitives::{eip191_hash_message, keccak256, Address, Bytes, Signature, B256, U256};
 use alloy_sol_types::SolValue;
 use serde::{Deserialize, Serialize};
@@ -32,21 +32,22 @@ impl ProofType {
     }
 }
 
-/// A prover's output: the proof bytes and its public inputs.
+/// A prover's output: its proof bytes, kept in the blob store, and its public inputs. Signing and
+/// signature checks need only the bytes' hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ZkProof {
-    pub data: Bytes,
+    pub data: BlobRef,
     pub public_inputs: Vec<B256>,
 }
 
-impl ZkProof {
-    /// The layout every verifier contract decodes: `abi.encode(bytes proof, bytes32[] inputs)`.
-    pub fn calldata(&self) -> Bytes {
-        (self.data.clone(), self.public_inputs.clone())
-            .abi_encode_params()
-            .into()
-    }
+/// The layout every verifier contract decodes: `abi.encode(bytes proof, bytes32[] inputs)`.
+pub fn verifier_calldata(proof: &[u8], public_inputs: &[B256]) -> Bytes {
+    (Bytes::copy_from_slice(proof), public_inputs.to_vec())
+        .abi_encode_params()
+        .into()
+}
 
+impl ZkProof {
     /// The hash an operator signs to vouch for this proof. `SlashingManager` rebuilds the
     /// `ProofPayload` digest and recovers the signer with the EIP-191 message prefix.
     pub fn payload_signing_hash(&self, e3: E3Id, proof_type: ProofType) -> B256 {
@@ -64,7 +65,7 @@ impl ZkProof {
                 U256::from(e3.chain_id),
                 e3.number,
                 proof_type.word(),
-                keccak256(&self.data),
+                self.data.hash,
                 keccak256(public_signals),
             )
                 .abi_encode(),
@@ -82,7 +83,9 @@ pub struct SignedProof {
 
 impl SignedProof {
     pub(crate) fn size(&self) -> u64 {
-        (self.proof.data.len() + 32 * self.proof.public_inputs.len() + self.signature.len()) as u64
+        self.proof.data.len
+            + 32 * self.proof.public_inputs.len() as u64
+            + self.signature.len() as u64
     }
 
     pub fn is_signed_by(&self, signer: Address, e3: E3Id, proof_type: ProofType) -> bool {
@@ -101,9 +104,11 @@ mod tests {
     /// Anvil's first development account; it signed the reference vectors below.
     const SIGNER: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
+    const PROOF_BYTES: [u8; 64] = [0x11; 64];
+
     fn proof() -> ZkProof {
         ZkProof {
-            data: Bytes::from(vec![0x11; 64]),
+            data: BlobRef::of(&PROOF_BYTES),
             public_inputs: vec![B256::repeat_byte(0x22); 3],
         }
     }
@@ -140,6 +145,7 @@ mod tests {
             "2222222222222222222222222222222222222222222222222222222222222222",
         ))
         .unwrap();
-        assert_eq!(proof().calldata(), Bytes::from(expected));
+        let calldata = verifier_calldata(&PROOF_BYTES, &proof().public_inputs);
+        assert_eq!(calldata, Bytes::from(expected));
     }
 }

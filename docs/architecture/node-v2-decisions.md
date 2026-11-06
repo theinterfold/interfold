@@ -81,6 +81,12 @@ Each rule is checkable in review.
   live today; the current node's replacement by a lower proposer only happens while effects are
   disabled during replay, which v2 does not have.
 
+- **D17. Proof bytes are blobs.** A proof in machine state is its bytes' blob reference plus its
+  public inputs. The contracts sign and compare only the Keccak-256 of proof bytes, which is the
+  blob reference's hash, so signing and signature checks need no bytes; jobs and the chain writer
+  read the bytes from the blob store. A Small committee's DKG holds hundreds of proofs, and inline
+  bytes would put megabytes into every snapshot.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -21,9 +21,19 @@ impl fmt::Display for E3Id {
     }
 }
 
-/// A large payload, stored once by the node and referenced by its hash.
+/// A large payload, stored once by the node and referenced by the Keccak-256 hash of its bytes,
+/// which is also the hash the contracts take of such bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BlobRef {
     pub hash: B256,
     pub len: u64,
+}
+
+impl BlobRef {
+    pub fn of(bytes: &[u8]) -> Self {
+        Self {
+            hash: keccak256(bytes),
+            len: bytes.len() as u64,
+        }
+    }
 }

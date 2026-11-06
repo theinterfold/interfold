@@ -74,7 +74,7 @@ pub fn signing(effects: &[Effect]) -> &Signing {
 
 pub fn proof(fill: u8) -> ZkProof {
     ZkProof {
-        data: Bytes::from(vec![fill; 8]),
+        data: BlobRef::of(&[fill; 8]),
         public_inputs: vec![B256::repeat_byte(fill)],
     }
 }
@@ -93,7 +93,7 @@ pub fn key(e3: E3Id, sender: u64, proof: ZkProof, signer: u64) -> Input {
         sender: address(sender),
         body: Body::Dkg(DkgMessage::EncryptionKey(KeyMessage {
             key: BlobRef {
-                hash: keccak256(&proof.data),
+                hash: keccak256(proof.data.hash),
                 len: 1_000,
             },
             proof: SignedProof {
