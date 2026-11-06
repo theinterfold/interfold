@@ -102,10 +102,12 @@ pub struct Faults {
     pub max_delay: UnixSecs,
     /// The chance that a peer message arrives twice.
     pub duplicate: f64,
+    /// The chance that a peer message never reaches a peer.
+    pub drop: f64,
 }
 
 /// Nodes with an operator signer each, a mock job runner, one chain, and a network that delays,
-/// reorders, and duplicates peer messages but never loses them.
+/// reorders, duplicates, and drops peer messages.
 pub struct Sim {
     nodes: Vec<SimNode>,
     chain_lags: Vec<UnixSecs>,
@@ -255,6 +257,9 @@ impl Sim {
                 Effect::Gossip(message) => {
                     self.nodes[node].acknowledge(key);
                     for peer in (0..self.nodes.len()).filter(|&peer| peer != node) {
+                        if self.rng.random_bool(self.faults.drop) {
+                            continue;
+                        }
                         let copies = 1 + u32::from(self.rng.random_bool(self.faults.duplicate));
                         for _ in 0..copies {
                             let at = self.now + self.delay();

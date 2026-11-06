@@ -11,6 +11,7 @@ use crate::{
     decryption::{Decryption, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming},
     node::{Body, Effect, PeerMessage, Purpose, Stage, WorkResult},
+    resend::Resend,
     BlobRef, E3Id, UnixSecs,
 };
 use alloy_primitives::{Address, Bytes, B256};
@@ -32,6 +33,7 @@ pub struct E3 {
     pub decryption: Option<Decryption>,
     /// When a failed E3's accusation work ends.
     pub ends_at: Option<UnixSecs>,
+    resend: Resend,
 }
 
 impl E3 {
@@ -52,6 +54,7 @@ impl E3 {
             dkg: None,
             decryption: None,
             ends_at: None,
+            resend: Resend::default(),
         }
     }
 
@@ -72,7 +75,7 @@ impl E3 {
         );
         self.dkg = Some(dkg);
         self.stage = Stage::CommitteeFinalized;
-        effects
+        self.sent(now, effects)
     }
 
     /// The chain's key, committee order, and roster are the authority for decryption. This node's
@@ -113,10 +116,11 @@ impl E3 {
         ciphertext: BlobRef,
         deadline: UnixSecs,
     ) -> Vec<Effect> {
-        match self.decryption_mut() {
+        let effects = match self.decryption_mut() {
             Some(decryption) => decryption.ciphertext_ready(now, ciphertext, deadline),
             None => Vec::new(),
-        }
+        };
+        self.sent(now, effects)
     }
 
     /// Whether a message of `body`'s kind has its handler here yet; until then it waits in the
@@ -129,7 +133,7 @@ impl E3 {
     }
 
     pub(crate) fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
-        match message.body {
+        let effects = match message.body {
             Body::Dkg(body) => match self.dkg_mut() {
                 Some(dkg) => dkg.receive(now, message.sender, body),
                 None => Vec::new(),
@@ -138,11 +142,12 @@ impl E3 {
                 Some(decryption) => decryption.receive(now, message.sender, body),
                 None => Vec::new(),
             },
-        }
+        };
+        self.sent(now, effects)
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: WorkResult) -> Vec<Effect> {
-        match result {
+        let effects = match result {
             WorkResult::Dkg(result) => match self.dkg_mut() {
                 Some(dkg) => dkg.job_done(now, result),
                 None => Vec::new(),
@@ -151,7 +156,8 @@ impl E3 {
                 Some(decryption) => decryption.job_done(now, result),
                 None => Vec::new(),
             },
-        }
+        };
+        self.sent(now, effects)
     }
 
     pub(crate) fn signed(
@@ -160,7 +166,7 @@ impl E3 {
         purpose: Purpose,
         signatures: Vec<Bytes>,
     ) -> Vec<Effect> {
-        match purpose {
+        let effects = match purpose {
             Purpose::Dkg(purpose) => match self.dkg_mut() {
                 Some(dkg) => dkg.signed(now, purpose, signatures),
                 None => Vec::new(),
@@ -169,7 +175,8 @@ impl E3 {
                 Some(decryption) => decryption.signed(now, purpose, signatures),
                 None => Vec::new(),
             },
-        }
+        };
+        self.sent(now, effects)
     }
 
     pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
@@ -180,7 +187,7 @@ impl E3 {
         if let Some(decryption) = self.decryption_mut() {
             effects.extend(decryption.expel(now, member));
         }
-        effects
+        self.sent(now, effects)
     }
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
@@ -191,16 +198,45 @@ impl E3 {
         if let Some(decryption) = self.decryption_mut() {
             effects.extend(decryption.pass_deadlines(now));
         }
+        let mut effects = self.sent(now, effects);
+        let (dkg_runs, decryption_runs) = self.work_running();
+        let again = self.resend.due(now, |body| match body {
+            Body::Dkg(_) => dkg_runs,
+            Body::Decryption(_) => decryption_runs,
+        });
+        effects.extend(again.into_iter().map(Effect::Gossip));
         effects
     }
 
     pub(crate) fn next_deadline(&self) -> Option<UnixSecs> {
+        let (dkg_runs, decryption_runs) = self.work_running();
         let work = self.running().then(|| {
             let dkg = self.dkg.as_ref().and_then(Dkg::next_deadline);
             let decryption = self.decryption.as_ref().and_then(Decryption::next_deadline);
-            dkg.into_iter().chain(decryption).min()
+            let resend = self.resend.next_deadline(|body| match body {
+                Body::Dkg(_) => dkg_runs,
+                Body::Decryption(_) => decryption_runs,
+            });
+            dkg.into_iter().chain(decryption).chain(resend).min()
         });
         self.ends_at.into_iter().chain(work.flatten()).min()
+    }
+
+    /// Keep this node's messages for sending again while their work runs.
+    fn sent(&mut self, now: UnixSecs, effects: Vec<Effect>) -> Vec<Effect> {
+        for effect in &effects {
+            if let Effect::Gossip(message) = effect {
+                self.resend.record(now, message.clone());
+            }
+        }
+        effects
+    }
+
+    /// Whether the DKG, and decryption, still run here.
+    fn work_running(&self) -> (bool, bool) {
+        let dkg = self.dkg.as_ref().is_some_and(Dkg::running);
+        let decryption = self.decryption.as_ref().is_some_and(Decryption::running);
+        (self.running() && dkg, self.running() && decryption)
     }
 
     /// The chain has not failed the E3; after a failure only accusation work remains.

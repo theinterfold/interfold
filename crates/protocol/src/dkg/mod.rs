@@ -582,7 +582,7 @@ impl Dkg {
     }
 
     /// Until the DKG fails or the chain publishes the key.
-    fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         !self.published && !matches!(self.phase, Phase::Failed(_))
     }
 

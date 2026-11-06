@@ -206,6 +206,10 @@ impl Decryption {
         self.failure
     }
 
+    pub(crate) fn running(&self) -> bool {
+        self.failure.is_none()
+    }
+
     pub fn shares_of(&self, member: &Address) -> Option<&SharesMessage> {
         self.shares.get(member)
     }

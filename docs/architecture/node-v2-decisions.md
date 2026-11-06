@@ -93,6 +93,13 @@ Each rule is checkable in review.
   ([threshold decryption](threshold-decryption.md), "Authority before work"). The DKG only supplies
   this node's sealed decryption key, and only when it summed that key over the chain's roster.
 
+- **D19. One re-send rule for every message a node sends.** While the work a message feeds still
+  runs at the node, its latest message of each kind goes again after one minute, then at doubling
+  intervals up to ten minutes, for at most eight hours ([threshold decryption](threshold-decryption.md),
+  "Restart and redelivery limits"). Receivers keep the first copy. This replaces per-phase timers,
+  document re-announcement as the only DKG recovery, and the promoted aggregator's roster
+  re-proposal.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

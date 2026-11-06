@@ -74,14 +74,14 @@ fn a_member_without_a_valid_key_gets_no_shares() {
     node.step(NOW, key_from(e3(1), 2));
     node.step(NOW, key_checked(e3(1), 2, false));
     let effects = node.step(KEY_CUTOFF, Input::Tick);
-    let [Effect::Run(Job {
-        work: Work::Dkg(DkgWork::MakeShares { keys, .. }),
-        ..
-    })] = effects.as_slice()
-    else {
-        panic!("a share job, got {effects:?}");
-    };
-    assert_eq!(keys.keys().copied().collect::<Vec<_>>(), members(&[1]));
+    let keys = effects.iter().find_map(|effect| match effect {
+        Effect::Run(Job {
+            work: Work::Dkg(DkgWork::MakeShares { keys, .. }),
+            ..
+        }) => Some(keys.keys().copied().collect::<Vec<_>>()),
+        _ => None,
+    });
+    assert_eq!(keys, Some(members(&[1])));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn ready_names_this_node_and_every_dealer_whose_shares_passed() {
 fn ready_waits_for_a_missing_dealer_until_the_share_checkpoint() {
     let mut node = dealt(ME);
     assert!(ready_sent(&add_valid_shares(&mut node, 1)).is_empty());
-    assert!(node.step(SHARE_CHECKPOINT - 1, Input::Tick).is_empty());
+    assert!(ready_sent(&node.step(SHARE_CHECKPOINT - 1, Input::Tick)).is_empty());
     let effects = node.step(SHARE_CHECKPOINT, Input::Tick);
     assert_eq!(ready_sent(&effects), vec![members(&[1, ME])]);
 }

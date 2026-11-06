@@ -23,6 +23,7 @@ const FAULTS: Faults = Faults {
     crash: 0.1,
     max_delay: 5,
     duplicate: 0.2,
+    drop: 0.1,
 };
 
 /// A committee, then one operator outside it; the first member reads the chain 30 seconds late.

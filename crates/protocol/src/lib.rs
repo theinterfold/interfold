@@ -18,6 +18,7 @@ mod ids;
 mod machine;
 pub mod node;
 pub mod proof;
+mod resend;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 

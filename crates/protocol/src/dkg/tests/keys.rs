@@ -7,7 +7,7 @@
 use super::*;
 use crate::{
     dkg::{DkgFailure, DkgMessage, DkgWork},
-    node::{Body, ChainFact, Input, Job, Work},
+    node::{Body, ChainFact, Input, Job, PeerMessage, Work},
     proof::ProofType,
 };
 
@@ -102,7 +102,6 @@ fn key_collection_does_not_wait_for_an_expelled_member() {
 fn at_the_key_cutoff_h_valid_keys_suffice() {
     let mut node = with_its_key(ME);
     add_valid_key(&mut node, 1);
-    assert_eq!(node.next_deadline(), Some(KEY_CUTOFF));
     node.step(KEY_CUTOFF - 1, Input::Tick);
     assert!(!dkg(&node).keys_collected());
     node.step(KEY_CUTOFF, Input::Tick);
@@ -159,4 +158,27 @@ fn a_repeated_key_job_never_replaces_the_first_key() {
         panic!("a key, got {sent:?}");
     };
     assert_eq!(message.key, own_key(0xee).public);
+}
+
+#[test]
+fn a_member_sends_its_key_again_until_the_dkg_ends() {
+    let mut node = with_its_key(ME);
+    let keys_sent = |effects: &[Effect]| {
+        let keys = effects.iter().filter(|effect| {
+            matches!(
+                effect,
+                Effect::Gossip(PeerMessage {
+                    body: Body::Dkg(DkgMessage::EncryptionKey(_)),
+                    ..
+                })
+            )
+        });
+        keys.count()
+    };
+    assert_eq!(keys_sent(&node.step(NOW + 59, Input::Tick)), 0);
+    assert_eq!(keys_sent(&node.step(NOW + 60, Input::Tick)), 1);
+    assert_eq!(keys_sent(&node.step(NOW + 179, Input::Tick)), 0);
+    assert_eq!(keys_sent(&node.step(NOW + 180, Input::Tick)), 1);
+    node.step(NOW + 200, key_published(12, e3(1), committee(), Vec::new()));
+    assert_eq!(keys_sent(&node.step(NOW + 5_000, Input::Tick)), 0);
 }
