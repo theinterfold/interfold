@@ -25,7 +25,8 @@ Recovery restores the phase and inputs before effects resume.
 Use the extensions in `e3_aggregator::ext` with an `e3_request::E3RouterBuilder`:
 
 - `AggregatorRoleExtension::create(initial_roles)` supplies restored per-E3 aggregator roles.
-- `PublicKeyAggregatorExtension::create(bus)` creates or hydrates the `publickey` recipient.
+- `PublicKeyAggregatorExtension::create(bus, eventstore)` creates or hydrates the `publickey`
+  recipient, using the bus and sequence-history reader.
 - `ThresholdPlaintextAggregatorExtension::create(...)` creates or hydrates `plaintext`, using the
   bus, sortition actor, proof-aggregation setting, canonical keys, and sequence-history reader.
 
