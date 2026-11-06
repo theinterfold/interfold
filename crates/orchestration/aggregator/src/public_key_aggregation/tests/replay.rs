@@ -532,3 +532,62 @@ async fn a_former_aggregator_demoted_while_collecting_finishes_c1_and_c5() -> Re
     );
     Ok(())
 }
+
+/// Recovery records ownership when the active aggregator resumes, even while it still collects.
+/// A node demoted before it dispatched C1 holds no verdict of its own, so the keyshares that
+/// complete the inputs of the selected roster must not start C1 there.
+#[actix::test]
+async fn a_node_demoted_before_it_dispatched_c1_does_not_start_it() -> Result<()> {
+    let replayed = replay_selection().await?;
+    let ReplayedAggregator {
+        bus,
+        history,
+        e3_id,
+        fhe,
+        committee,
+        states,
+        ..
+    } = &replayed;
+    replayed.publish_committee()?;
+    bus.publish_without_context(EffectsEnabled::new())?;
+    bus.flush_event_pipeline().await?;
+    bus.publish_without_context(AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    })?;
+    let h = CiphernodesCommitteeSize::Minimum.values().h;
+    bus.publish_without_context(CommitmentRosterSelected {
+        e3_id: e3_id.clone(),
+        party_ids: (0..h as u64).collect(),
+    })?;
+    bus.flush_event_pipeline().await?;
+    for (party, node) in committee.iter().take(h).enumerate() {
+        let (pubkey, proof) = keyshare_with_c1_proof(fhe, e3_id)?;
+        bus.publish_without_context(KeyshareCreated {
+            pubkey,
+            e3_id: e3_id.clone(),
+            node: node.clone(),
+            party_id: party as u64,
+            signed_pk_generation_proof: Some(proof),
+        })?;
+    }
+    assert!(
+        reaches_state(states, bus, |state| matches!(
+            state,
+            PublicKeyAggregatorState::VerifyingC1 { .. }
+        ))
+        .await?,
+        "the node did not collect the selected keyshares"
+    );
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::ShareVerificationDispatched(_)
+        )),
+        "a demoted node started C1 that it never dispatched"
+    );
+    Ok(())
+}
