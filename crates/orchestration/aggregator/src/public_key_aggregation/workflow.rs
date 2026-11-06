@@ -9,16 +9,18 @@
 //! This module holds the [`PublicKeyAggregatorState`] state machine plus the pure
 //! transition/decision functions used by the `PublicKeyAggregator` actor. Nothing here
 //! touches actix, `Persistable`, or the event bus: the actor feeds inputs in, gets a
-//! next-state or a [decision](C1Dispatch)/[`HonestSelection`] back, and performs the
-//! persistence/publish/dispatch side effects itself.
+//! next-state or a [decision](PublicKeyAggregation::plan_c1_dispatch)/[`HonestSelection`]
+//! back, and performs the persistence/publish/dispatch side effects itself.
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Context as _, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
-    E3id, PartyProofsToVerify, Proof, Seed, SignedDkgFoldAttestation, SignedProofPayload,
+    E3id, PartyProofsToVerify, Proof, Seed, ShareVerificationDispatched, SignedDkgFoldAttestation,
+    SignedProofPayload, VerificationKind,
 };
 use e3_fhe::Fhe;
+use e3_fhe_params::BfvPreset;
 use e3_utils::{ArcBytes, OrderedSet};
 use e3_zk_config::CircuitName;
 use e3_zk_prover::extract_node_fold_agg_commits;
@@ -51,7 +53,7 @@ pub use state::{
     PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
     PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
 };
-pub(crate) use transitions::{C1Dispatch, HonestSelection, PublicKeyAggregation};
+pub(crate) use transitions::{HonestSelection, PublicKeyAggregation};
 pub(crate) use validation::{
     c5_proof_matches_keyshares, check_c1_keyshare_commitments, committee_h_for,
     extract_pk_commitment, verify_dkg_fold_attestation,

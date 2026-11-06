@@ -99,17 +99,42 @@ impl PublicKeyAggregator {
         Ok(())
     }
 
+    /// The C1 verification request of the selected keyshares, and the parties that submitted no
+    /// proof. Present only during `VerifyingC1`.
+    pub(in crate::actors::publickey_aggregator) fn c1_verification_request(
+        &self,
+    ) -> Option<(ShareVerificationDispatched, Vec<u64>)> {
+        let Some(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order,
+            c1_proofs,
+            ..
+        }) = self.state.get()
+        else {
+            return None;
+        };
+        let dispatch = PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs);
+        let request = dispatch.request(&self.e3_id, self.params_preset, self.committee_size);
+        Some((request, dispatch.no_proof_parties))
+    }
+
+    fn c1_request_id(&self) -> Option<EventId> {
+        self.c1_verification_request()
+            .map(|(request, _)| EventId::hash(InterfoldEventData::from(request)))
+    }
+
+    /// Whether a held verdict answers the C1 verification request of the selected keyshares.
+    pub(in crate::actors::publickey_aggregator) fn holds_c1_verification(&self) -> bool {
+        self.c1_request_id()
+            .is_some_and(|request_id| self.early_c1_verifications.contains_key(&request_id))
+    }
+
     pub(in crate::actors::publickey_aggregator) fn dispatch_c1_verification(
         &mut self,
-        submission_order: &[(u64, String, ArcBytes)],
-        c1_proofs: &[Option<SignedProofPayload>],
+        request: ShareVerificationDispatched,
+        no_proof_parties: Vec<u64>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         self.mark_started_as_aggregator(&ec)?;
-        let C1Dispatch {
-            party_proofs,
-            no_proof_parties,
-        } = PublicKeyAggregation::plan_c1_dispatch(submission_order, c1_proofs);
 
         // Store no-proof parties in state for the response handler
         if !no_proof_parties.is_empty() {
@@ -125,7 +150,7 @@ impl PublicKeyAggregator {
             })?;
         }
 
-        if party_proofs.is_empty() {
+        if request.share_proofs.is_empty() {
             return Err(anyhow::anyhow!(
                 "No C1 proofs to verify — all keyshares must include a signed C1 proof"
             ));
@@ -133,22 +158,11 @@ impl PublicKeyAggregator {
 
         info!(
             "Dispatching C1 proof verification for {} parties ({} missing proofs)",
-            party_proofs.len(),
+            request.share_proofs.len(),
             no_proof_parties.len()
         );
 
-        self.bus.publish(
-            ShareVerificationDispatched {
-                e3_id: self.e3_id.clone(),
-                kind: VerificationKind::PkGenerationProofs,
-                share_proofs: party_proofs,
-                decryption_proofs: vec![],
-                pre_dishonest: no_proof_parties.into_iter().collect(),
-                params_preset: self.params_preset,
-                committee_size: self.committee_size,
-            },
-            ec,
-        )?;
+        self.bus.publish(request, ec)?;
         Ok(())
     }
 
@@ -156,45 +170,48 @@ impl PublicKeyAggregator {
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        let Some(PublicKeyAggregatorState::VerifyingC1 {
-            submission_order,
-            c1_proofs,
-            ..
-        }) = self.state.get()
-        else {
+        let Some((request, no_proof_parties)) = self.c1_verification_request() else {
             return Ok(());
         };
-
-        if let Some((buffered_roster, verification)) = self.early_c1_verification.take() {
-            let selected_roster = self.recovery.try_get()?.selected_roster;
-            if selected_roster.as_ref() == Some(&buffered_roster) {
-                info!(
-                    e3_id = %self.e3_id,
-                    "Applying C1 verification buffered during restart recovery"
-                );
-                // Replay can commit a snapshot past the verdict's own event, and the store rejects
-                // writes under that event's revision.
-                let (verification, _) = verification.into_components();
-                return self.handle_c1_verification_complete(TypedEvent::new(verification, ec));
-            }
+        let request_id = EventId::hash(InterfoldEventData::from(request.clone()));
+        let mut held = std::mem::take(&mut self.early_c1_verifications);
+        let verification = held.remove(&request_id);
+        if !held.is_empty() {
             warn!(
                 e3_id = %self.e3_id,
-                "Discarding C1 verification because the selected roster changed"
+                discarded = held.len(),
+                "Discarding C1 verification of another DKG roster"
             );
         }
-
-        self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)
+        let Some(verification) = verification else {
+            return self.dispatch_c1_verification(request, no_proof_parties, ec);
+        };
+        if self.key_published {
+            info!(
+                e3_id = %self.e3_id,
+                "Ignoring a C1 verification result after the key was published"
+            );
+            return Ok(());
+        }
+        info!(
+            e3_id = %self.e3_id,
+            "Applying C1 verification buffered during restart recovery"
+        );
+        // Replay can commit a snapshot past the verdict's own event, and the store rejects writes
+        // under that event's revision.
+        let (verification, _) = verification.into_components();
+        self.apply_c1_verification(verification.dishonest_parties, ec)
     }
 
+    /// Keep a verdict until the selected keyshares produce the request that it answers.
     fn buffer_c1_verification(
         &mut self,
-        selected_roster: BTreeSet<u64>,
         verification: TypedEvent<ShareVerificationComplete>,
     ) -> Result<()> {
-        if let Some((existing_roster, existing)) = &self.early_c1_verification {
+        let request_id = verification.get_ctx().causation_id();
+        if let Some(existing) = self.early_c1_verifications.get(&request_id) {
             anyhow::ensure!(
-                *existing_roster == selected_roster
-                    && existing.dishonest_parties == verification.dishonest_parties,
+                existing.dishonest_parties == verification.dishonest_parties,
                 "conflicting C1 verification results arrived during restart recovery"
             );
             return Ok(());
@@ -203,14 +220,14 @@ impl PublicKeyAggregator {
             e3_id = %self.e3_id,
             "Buffering C1 verification until its inputs and effects are restored"
         );
-        self.early_c1_verification = Some((selected_roster, verification));
+        self.early_c1_verifications.insert(request_id, verification);
         Ok(())
     }
 
-    /// Startup replay delivers this node's earlier C1 verdict while effects are fenced. Replay put
-    /// its payload-derived delivery ID in the bus dedup window, so the identical verdict to a new
-    /// dispatch after `EffectsEnabled` would be dropped. Keep the replayed verdict for
-    /// `continue_c1_verification`.
+    /// Startup replay delivers this node's earlier C1 verdict while effects are fenced. Replay
+    /// also put the request's delivery ID in the bus dedup window, so the identical request
+    /// dispatched again after `EffectsEnabled` would be dropped and never answered. Keep the
+    /// replayed verdict for `continue_c1_verification`.
     ///
     /// C1 dispatches and verdicts stay local, and only an active aggregator dispatches, so a local
     /// verdict also proves that this node started the C1 verification. Persist that ownership: a
@@ -233,11 +250,8 @@ impl PublicKeyAggregator {
         {
             return Ok(());
         }
-        let Some(selected_roster) = self.recovery.try_get()?.selected_roster else {
-            return Ok(());
-        };
         let ec = msg.get_ctx().clone();
-        self.buffer_c1_verification(selected_roster, msg)?;
+        self.buffer_c1_verification(msg)?;
         self.record_started_as_aggregator(&ec)
     }
 
@@ -245,13 +259,11 @@ impl PublicKeyAggregator {
         &mut self,
         msg: TypedEvent<ShareVerificationComplete>,
     ) -> Result<()> {
-        let (msg, ec) = msg.into_components();
-
-        if msg.kind != VerificationKind::PkGenerationProofs {
-            return Ok(());
-        }
-
-        if msg.e3_id != self.e3_id {
+        // Only this node's verifier answers its C1 requests.
+        if msg.kind != VerificationKind::PkGenerationProofs
+            || msg.e3_id != self.e3_id
+            || msg.get_ctx().source() != EventSource::Local
+        {
             return Ok(());
         }
         // A key on chain ends the C1 phase. A late result, such as one that a demoted node
@@ -265,26 +277,39 @@ impl PublicKeyAggregator {
         }
 
         match self.state.get().as_ref() {
-            Some(PublicKeyAggregatorState::Collecting { .. }) => {
-                let selected_roster =
-                    self.recovery.try_get()?.selected_roster.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "C1 verification arrived before its selected roster was recovered"
-                        )
-                    })?;
-                return self.buffer_c1_verification(selected_roster, TypedEvent::new(msg, ec));
-            }
+            Some(PublicKeyAggregatorState::Collecting { .. }) => self.buffer_c1_verification(msg),
             Some(
                 PublicKeyAggregatorState::GeneratingC5Proof { .. }
                 | PublicKeyAggregatorState::Complete { .. },
             ) => {
                 info!("Ignoring late C1 verification after C1 aggregation completed");
-                return Ok(());
+                Ok(())
             }
-            Some(PublicKeyAggregatorState::VerifyingC1 { .. }) => {}
-            None => return Err(anyhow::anyhow!("Expected public-key aggregation state")),
+            // A verdict judges only the keyshares of the request that it answers. The verdict of a
+            // replaced roster's request must not select keyshares that nobody verified.
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+                if self.c1_request_id() == Some(msg.get_ctx().causation_id()) =>
+            {
+                let (msg, ec) = msg.into_components();
+                self.apply_c1_verification(msg.dishonest_parties, ec)
+            }
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. }) => {
+                warn!(
+                    e3_id = %self.e3_id,
+                    "Ignoring a C1 verification of another DKG roster"
+                );
+                Ok(())
+            }
+            None => Err(anyhow::anyhow!("Expected public-key aggregation state")),
         }
+    }
 
+    /// Aggregate the keyshares that passed C1 verification and start the C5 proof.
+    fn apply_c1_verification(
+        &mut self,
+        mut dishonest_parties: BTreeSet<u64>,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
         let PublicKeyAggregatorState::VerifyingC1 {
             submission_order,
             threshold_m,
@@ -299,11 +324,10 @@ impl PublicKeyAggregator {
             .ok_or_else(|| anyhow::anyhow!("Expected VerifyingC1 state"))?
         else {
             return Err(anyhow::anyhow!(
-                "handle_c1_verification_complete called outside VerifyingC1 state"
+                "apply_c1_verification called outside VerifyingC1 state"
             ));
         };
 
-        let mut dishonest_parties = msg.dishonest_parties.clone();
         let collected = submission_order.len();
         let circuit_h = circuit_committee_h;
 

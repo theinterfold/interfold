@@ -243,16 +243,38 @@ fn micro_aggregator(
     (aggregator, repository)
 }
 
-fn c1_verified(
-    e3_id: &E3id,
+/// The local verifier's answer to `request`, published under the request's event.
+fn c1_verdict_for(
+    request: ShareVerificationDispatched,
     dishonest_parties: BTreeSet<u64>,
 ) -> TypedEvent<ShareVerificationComplete> {
     let verified = ShareVerificationComplete {
-        e3_id: e3_id.clone(),
+        e3_id: request.e3_id.clone(),
         kind: VerificationKind::PkGenerationProofs,
         dishonest_parties,
     };
-    TypedEvent::new(verified.clone(), test_ctx(verified))
+    let ec = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        verified.clone().into(),
+        Some(test_ctx(request)),
+        0,
+        None,
+        e3_events::EventSource::Local,
+    )
+    .into_sequenced(0)
+    .get_ctx()
+    .clone();
+    TypedEvent::new(verified, ec)
+}
+
+/// The verdict on the C1 request of the keyshares that `aggregator` verifies.
+fn c1_verified(
+    aggregator: &PublicKeyAggregator,
+    dishonest_parties: BTreeSet<u64>,
+) -> TypedEvent<ShareVerificationComplete> {
+    let (request, _) = aggregator
+        .c1_verification_request()
+        .expect("the aggregator verifies C1");
+    c1_verdict_for(request, dishonest_parties)
 }
 
 /// Wait until the history holds a C5 proof request for `e3_id`.
@@ -284,6 +306,10 @@ async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Resu
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
     let (mut aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
     aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    let verified = c1_verified(
+        &aggregator,
+        (circuit_h as u64..threshold_n as u64).collect(),
+    );
 
     // A failover moves aggregation to another party while C1 verification runs.
     let aggregator = aggregator.start();
@@ -295,12 +321,7 @@ async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Resu
     aggregator
         .send(TypedEvent::new(demotion.clone(), test_ctx(demotion)))
         .await?;
-    aggregator
-        .send(c1_verified(
-            &e3_id,
-            (circuit_h as u64..threshold_n as u64).collect(),
-        ))
-        .await?;
+    aggregator.send(verified).await?;
 
     assert!(matches!(
         repository.read().await?,
@@ -368,13 +389,11 @@ async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_rest
         recoveries.load().await?,
     );
     second_boot.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
-    let second_boot = second_boot.start();
-    second_boot
-        .send(c1_verified(
-            &e3_id,
-            (circuit_h as u64..threshold_n as u64).collect(),
-        ))
-        .await?;
+    let verified = c1_verified(
+        &second_boot,
+        (circuit_h as u64..threshold_n as u64).collect(),
+    );
+    second_boot.start().send(verified).await?;
 
     assert!(matches!(
         states.read().await?,
@@ -393,6 +412,8 @@ async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Resul
     let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
     let (mut aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
     aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    // Its own C1 check fails every dealer.
+    let all_failed = c1_verified(&aggregator, (0..threshold_n as u64).collect());
     let aggregator = aggregator.start();
 
     // A failover demotes this node, and its successor publishes the key.
@@ -421,10 +442,8 @@ async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Resul
             .into_sequenced(1),
         )
         .await?;
-    // Its own C1 check then fails every dealer.
-    aggregator
-        .send(c1_verified(&e3_id, (0..threshold_n as u64).collect()))
-        .await?;
+    // The failing verdict arrives after the key is on chain.
+    aggregator.send(all_failed).await?;
 
     actix::clock::sleep(std::time::Duration::from_millis(50)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
@@ -450,8 +469,8 @@ async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3(
     // A demoted predecessor finished first and published the key.
     aggregator.observe_stage(&E3Stage::KeyPublished);
 
-    aggregator
-        .handle_c1_verification_complete(c1_verified(&e3_id, (0..threshold_n as u64).collect()))?;
+    let all_failed = c1_verified(&aggregator, (0..threshold_n as u64).collect());
+    aggregator.handle_c1_verification_complete(all_failed)?;
 
     actix::clock::sleep(std::time::Duration::from_millis(50)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
@@ -496,14 +515,14 @@ async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
     let (aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, false, state);
-    let aggregator = aggregator.start();
+    // The verdict answers the request for these keyshares, so only the check that this node
+    // dispatched it stops the verdict.
+    let verified = c1_verified(
+        &aggregator,
+        (circuit_h as u64..threshold_n as u64).collect(),
+    );
 
-    aggregator
-        .send(c1_verified(
-            &e3_id,
-            (circuit_h as u64..threshold_n as u64).collect(),
-        ))
-        .await?;
+    aggregator.start().send(verified).await?;
 
     assert!(
         matches!(
@@ -512,6 +531,52 @@ async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()
         ),
         "a standby applied a C1 verification that it did not dispatch"
     );
+    Ok(())
+}
+
+/// A C1 verdict judges only the keyshares of the request that it answers. A verdict on other
+/// keyshares, such as those of a replaced roster, leaves C1 waiting for its own verdict.
+#[actix::test]
+async fn a_c1_verdict_on_other_keyshares_does_not_complete_c1() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let PublicKeyAggregatorState::VerifyingC1 {
+        submission_order,
+        c1_proofs,
+        ..
+    } = &state
+    else {
+        unreachable!();
+    };
+    let other_keyshares =
+        PublicKeyAggregation::plan_c1_dispatch(&submission_order[1..], &c1_proofs[1..]).request(
+            &e3_id,
+            BfvPreset::InsecureThreshold64,
+            CiphernodesCommitteeSize::Micro,
+        );
+    let (mut aggregator, _repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
+    aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    let dishonest: BTreeSet<u64> = (circuit_h as u64..threshold_n as u64).collect();
+
+    aggregator
+        .handle_c1_verification_complete(c1_verdict_for(other_keyshares, dishonest.clone()))?;
+    assert!(
+        matches!(
+            aggregator.state.get(),
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ),
+        "a verdict on other keyshares completed C1"
+    );
+
+    let verified = c1_verified(&aggregator, dishonest);
+    aggregator.handle_c1_verification_complete(verified)?;
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
     Ok(())
 }
 

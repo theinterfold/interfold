@@ -11,6 +11,27 @@ pub(crate) struct C1Dispatch {
     pub no_proof_parties: Vec<u64>,
 }
 
+impl C1Dispatch {
+    /// The verification request for these keyshares. The verifier publishes its verdict under the
+    /// request's event, so the verdict's causation ID names the keyshares that it judged.
+    pub(crate) fn request(
+        &self,
+        e3_id: &E3id,
+        params_preset: BfvPreset,
+        committee_size: CiphernodesCommitteeSize,
+    ) -> ShareVerificationDispatched {
+        ShareVerificationDispatched {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::PkGenerationProofs,
+            share_proofs: self.party_proofs.clone(),
+            decryption_proofs: vec![],
+            pre_dishonest: self.no_proof_parties.iter().copied().collect(),
+            params_preset,
+            committee_size,
+        }
+    }
+}
+
 /// Outcome of [`PublicKeyAggregation::select_honest_set`].
 pub(crate) enum HonestSelection {
     /// Too few honest parties cleared C1 — caller must fail the E3.
