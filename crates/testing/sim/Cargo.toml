@@ -13,3 +13,6 @@ e3-protocol = { workspace = true, features = ["testing"] }
 alloy-primitives = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+
+[dev-dependencies]
+e3-committee = { workspace = true }

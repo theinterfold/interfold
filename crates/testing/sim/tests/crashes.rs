@@ -75,7 +75,7 @@ fn lifecycle() -> Vec<(UnixSecs, Input)> {
 fn a_node_that_crashes_at_random_steps_ends_where_an_uncrashed_node_ends() {
     for seed in 0..64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut node = SimNode::new(address(ME), rng.random_range(1..=4));
+        let mut node = SimNode::new(ME, rng.random_range(1..=4));
         for (now, input) in lifecycle() {
             if rng.random_bool(0.3) {
                 node.crash_and_restart();

@@ -4473,6 +4473,7 @@ name = "e3-sim"
 version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
+ "e3-committee",
  "e3-engine",
  "e3-protocol",
  "rand 0.9.5",
