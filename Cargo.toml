@@ -49,6 +49,7 @@ members = [
   "crates/state/sync",
   "crates/protocol",
   "crates/ciphernode/engine",
+  "crates/state/journal",
   "crates/task-pool",
   "crates/testing/support",
   "crates/testing/system",
@@ -150,6 +151,7 @@ e3-zk-samples = { path = "./crates/zk/samples" }
 e3-parity-matrix = { version = "0.20.0-dev.3", path = "./crates/parity-matrix" }
 e3-protocol = { version = "0.20.0-dev.3", path = "./crates/protocol" }
 e3-engine = { version = "0.20.0-dev.3", path = "./crates/ciphernode/engine" }
+e3-journal = { version = "0.20.0-dev.3", path = "./crates/state/journal" }
 
 actix = "=0.13.5"
 actix-web = "=4.11.0"
@@ -212,6 +214,7 @@ proptest = "=1.11.0"
 proc-macro2 = "=1.0.106"
 quote = "=1.0.45"
 rand_chacha = "=0.9.0"
+redb = "=4.5.0"
 rand = "=0.9.5"
 rand_core = "=0.9.5"
 rayon = "=1.10.0"

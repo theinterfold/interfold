@@ -4193,6 +4193,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-journal"
+version = "0.20.0-dev.3"
+dependencies = [
+ "e3-engine",
+ "redb",
+ "tempfile",
+]
+
+[[package]]
 name = "e3-keyshare"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -9409,6 +9418,15 @@ name = "recvmsg"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
+
+[[package]]
+name = "redb"
+version = "4.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b317ef681e18f6091efbfab532eaf924a135c492d9d0299d0fbfae07e92a39b"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "redox_syscall"
