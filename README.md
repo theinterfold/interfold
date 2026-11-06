@@ -176,17 +176,17 @@ pnpm test:integration --no-prebuild
 		</tr>
 		<tr>
 			<td align="center">
-				<a href="https://github.com/samepant">
-					<img src="https://avatars.githubusercontent.com/u/6718506?v=4" width="100;" alt="samepant"/>
-					<br />
-					<sub><b>samepant</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/neogiacomo">
 					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
 					<br />
 					<sub><b>Giacomo Corrias</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/samepant">
+					<img src="https://avatars.githubusercontent.com/u/6718506?v=4" width="100;" alt="samepant"/>
+					<br />
+					<sub><b>samepant</b></sub>
 				</a>
 			</td>
 			<td align="center">
