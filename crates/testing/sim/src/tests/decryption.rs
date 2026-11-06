@@ -9,18 +9,18 @@ use crate::RealJobs;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::Transaction,
-    testing::{e3, COMPUTE_DEADLINE, DECRYPTION_DEADLINE},
+    testing::{e3, COMPUTE_DEADLINE, DECRYPTION_DEADLINE, LIFECYCLE_DEADLINE},
 };
 use std::collections::BTreeSet;
 
 /// The ciphertext comes too late: after the compute deadline a member marks the E3 failed, a
-/// member settles it, and every node lets it go.
+/// member settles it, and every node lets it go once accusations close.
 #[test]
 fn a_stalled_e3_is_failed_and_settled_and_every_node_lets_it_go() {
     for seed in 0..8 {
         let mut sim = committee(CiphernodesCommitteeSize::Minimum, seed);
         sim.set_ciphertext_at(COMPUTE_DEADLINE * 10);
-        sim.run_until(DECRYPTION_DEADLINE);
+        sim.run_until(LIFECYCLE_DEADLINE + 24 * 60 * 60);
         let submitted = |wanted: Transaction| {
             let calls = sim.submissions().iter();
             calls

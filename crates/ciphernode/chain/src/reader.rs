@@ -49,6 +49,13 @@ pub trait Rpc {
         e3: U256,
         block: u64,
     ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
+
+    /// The request-time bound of `e3`'s lifecycle.
+    fn lifecycle_deadline(
+        &self,
+        e3: U256,
+        block: u64,
+    ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
 }
 
 /// The registry's sortition state of one E3.
@@ -189,6 +196,7 @@ impl<R: Rpc> Reader<R> {
                     ticket_price: sortition.ticket_price,
                     owner_cap,
                     dkg_window: self.rpc.dkg_window(e3.number, block).await?,
+                    lifecycle_deadline: self.rpc.lifecycle_deadline(e3.number, block).await?,
                 };
                 let fact = ChainFact::E3Requested {
                     e3,

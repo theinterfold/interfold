@@ -121,8 +121,8 @@ Each rule is checkable in review.
   committee costs a node no download, and a member at most one message of each kind; the adapter
   bounds the bytes on their way at once. A sender's message of a kind is the only one of that kind
   fetched from it until the node takes it, even when a blob of it never comes. Each E3 keeps its
-  own blobs, a blob request names the E3, and the node deletes an E3's blobs once its work ends;
-  the store then refuses late blobs of that E3. The protocol says which blobs a node needs: a share
+  own blobs, a blob request names the E3, and the node closes an E3's blobs once its work ends:
+  the store waits for writes under way, deletes them, and refuses later ones. The protocol says which blobs a node needs: a share
   message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
   share once, where a DHT put of the current node goes to twenty peers. A share comes only from
   its dealer, so members need direct connections: peers that identify on the network enter
@@ -141,8 +141,9 @@ Each rule is checkable in review.
   finalize after the committee deadline, and the others wait the DKG window more, after which the
   contract fails a committee that met its threshold too. After a failure the same turns call
   `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement,
-  however long the contract keeps settlement closed, without its DKG and decryption once
-  accusations cannot need them. The finalizer takes the same turns. The node judges deadlines by
+  however long the contract keeps settlement closed. A committee's DKG and decryption, and their
+  blobs, stay until the slashing manager stops taking accusations: a day after the lifecycle
+  deadline the request froze, whatever the failure. The finalizer takes the same turns. The node judges deadlines by
   its own clock, so a node that replays old history submits these calls for E3s that ended long
   ago; each ends at its preflight.
 - **D25. The node refreshes its operator in each owner capacity window, whatever the identity

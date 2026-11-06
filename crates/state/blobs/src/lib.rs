@@ -18,7 +18,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex, MutexGuard,
     },
 };
 
@@ -37,7 +37,10 @@ pub trait BlobStore: Clone + Send + Sync + 'static {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool;
-    /// Deletes the blobs of every E3 that `keep` rejects.
+    /// Deletes the blobs of `e3` and refuses its later ones. A job or fetch can finish after its
+    /// E3 ended, so a write under way finishes first and none outlives the deletion.
+    fn close(&self, e3: E3Id) -> Result<(), BlobError>;
+    /// Closes every E3 with blobs here that `keep` rejects.
     fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError>;
 
     fn of(&self, e3: E3Id) -> E3Blobs<Self> {
@@ -75,73 +78,140 @@ impl<S: BlobStore> Blobs for E3Blobs<S> {
     }
 }
 
+/// The writes under way by E3, and the E3s closed lately, whose writes the store refuses.
+#[derive(Default)]
+struct Closing {
+    writes: Mutex<Writes>,
+    finished: Condvar,
+}
+
+#[derive(Default)]
+struct Writes {
+    running: HashMap<E3Id, usize>,
+    closed: BTreeSet<E3Id>,
+    order: VecDeque<E3Id>,
+}
+
+const CLOSED_MEMORY: usize = 4_096;
+
+impl Closing {
+    fn lock(&self) -> MutexGuard<'_, Writes> {
+        self.writes.lock().expect("no holder of the lock panics")
+    }
+
+    fn write<T>(
+        &self,
+        e3: E3Id,
+        write: impl FnOnce() -> Result<T, BlobError>,
+    ) -> Result<T, BlobError> {
+        {
+            let mut writes = self.lock();
+            if writes.closed.contains(&e3) {
+                return Err(BlobError::Deleted(e3));
+            }
+            *writes.running.entry(e3).or_default() += 1;
+        }
+        let _running = Running { closing: self, e3 };
+        write()
+    }
+
+    fn close(&self, e3: E3Id) {
+        let mut writes = self.lock();
+        if writes.closed.insert(e3) {
+            writes.order.push_back(e3);
+        }
+        while writes.order.len() > CLOSED_MEMORY {
+            if let Some(oldest) = writes.order.pop_front() {
+                writes.closed.remove(&oldest);
+            }
+        }
+        while writes.running.contains_key(&e3) {
+            writes = self
+                .finished
+                .wait(writes)
+                .expect("no holder of the lock panics");
+        }
+    }
+}
+
+/// A write under way, until it ends, even by a panic.
+struct Running<'a> {
+    closing: &'a Closing,
+    e3: E3Id,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        let mut writes = self.closing.lock();
+        if let Some(running) = writes.running.get_mut(&self.e3) {
+            *running -= 1;
+            if *running == 0 {
+                writes.running.remove(&self.e3);
+            }
+        }
+        self.closing.finished.notify_all();
+    }
+}
+
 /// Blobs in memory; clones share them.
 #[derive(Clone, Default)]
-pub struct MemoryBlobs(Arc<Mutex<HashMap<BlobKey, Vec<u8>>>>);
+pub struct MemoryBlobs {
+    blobs: Arc<Mutex<HashMap<BlobKey, Vec<u8>>>>,
+    closing: Arc<Closing>,
+}
 
 type BlobKey = (E3Id, B256);
 
+impl MemoryBlobs {
+    fn lock(&self) -> MutexGuard<'_, HashMap<BlobKey, Vec<u8>>> {
+        self.blobs.lock().expect("no holder of the lock panics")
+    }
+}
+
 impl BlobStore for MemoryBlobs {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        let blob = BlobRef::of(bytes);
-        let mut blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs
-            .entry((e3, blob.hash))
-            .or_insert_with(|| bytes.to_vec());
-        Ok(blob)
+        self.closing.write(e3, || {
+            let blob = BlobRef::of(bytes);
+            let mut blobs = self.lock();
+            blobs
+                .entry((e3, blob.hash))
+                .or_insert_with(|| bytes.to_vec());
+            Ok(blob)
+        })
     }
 
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        let blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs
+        self.lock()
             .get(&(e3, blob.hash))
             .cloned()
             .ok_or(BlobError::Missing(*blob))
     }
 
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
-        let blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs.contains_key(&(e3, blob.hash))
+        self.lock().contains_key(&(e3, blob.hash))
+    }
+
+    fn close(&self, e3: E3Id) -> Result<(), BlobError> {
+        self.closing.close(e3);
+        self.lock().retain(|(held, _), _| *held != e3);
+        Ok(())
     }
 
     fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
-        let mut blobs = self.0.lock().expect("no holder of the lock panics");
-        blobs.retain(|(e3, _), _| keep(e3));
+        let e3s: BTreeSet<E3Id> = self.lock().keys().map(|(e3, _)| *e3).collect();
+        for e3 in e3s.into_iter().filter(|e3| !keep(e3)) {
+            self.close(e3)?;
+        }
         Ok(())
     }
 }
 
 /// Blobs as files, one directory per E3, each file named by its hash. A step that names a blob is
 /// journaled after `put` returns, so `put` returns only once the file is complete on disk.
-///
-/// A job or fetch can finish after its E3 ended, so the store refuses to store blobs for an E3
-/// whose blobs it deleted, instead of making its directory again.
 #[derive(Clone)]
 pub struct FileBlobs {
     dir: PathBuf,
-    deleted: Arc<Mutex<Deleted>>,
-}
-
-/// The E3s whose blobs the store deleted lately.
-#[derive(Default)]
-struct Deleted {
-    e3s: BTreeSet<E3Id>,
-    order: VecDeque<E3Id>,
-}
-
-const DELETED_MEMORY: usize = 4_096;
-
-impl Deleted {
-    fn insert(&mut self, e3: E3Id) {
-        if self.e3s.insert(e3) {
-            self.order.push_back(e3);
-        }
-        while self.order.len() > DELETED_MEMORY {
-            if let Some(oldest) = self.order.pop_front() {
-                self.e3s.remove(&oldest);
-            }
-        }
-    }
+    closing: Arc<Closing>,
 }
 
 /// Numbers each write's partial file, so two writers of one blob never share one.
@@ -169,7 +239,7 @@ impl FileBlobs {
         }
         Ok(Self {
             dir,
-            deleted: Arc::default(),
+            closing: Arc::default(),
         })
     }
 
@@ -180,15 +250,8 @@ impl FileBlobs {
     fn path(&self, e3: E3Id, hash: &B256) -> PathBuf {
         self.e3_dir(e3).join(hash.to_string())
     }
-}
 
-impl BlobStore for FileBlobs {
-    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        let deleted = self.deleted.lock().expect("no holder of the lock panics");
-        if deleted.e3s.contains(&e3) {
-            return Err(BlobError::Deleted(e3));
-        }
-        drop(deleted);
+    fn write(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
         let blob = BlobRef::of(bytes);
         let path = self.path(e3, &blob.hash);
         if path.exists() {
@@ -208,6 +271,12 @@ impl BlobStore for FileBlobs {
         File::open(&dir)?.sync_all()?;
         Ok(blob)
     }
+}
+
+impl BlobStore for FileBlobs {
+    fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
+        self.closing.write(e3, || self.write(e3, bytes))
+    }
 
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
         match fs::read(self.path(e3, &blob.hash)) {
@@ -219,6 +288,14 @@ impl BlobStore for FileBlobs {
 
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
         self.path(e3, &blob.hash).exists()
+    }
+
+    fn close(&self, e3: E3Id) -> Result<(), BlobError> {
+        self.closing.close(e3);
+        match fs::remove_dir_all(self.e3_dir(e3)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
     }
 
     /// Also deletes anything in the store's directory that is not an E3's.
@@ -236,17 +313,10 @@ impl BlobStore for FileBlobs {
                     })
                 });
             match e3 {
-                Some(e3) if keep(&e3) => continue,
-                Some(e3) => self
-                    .deleted
-                    .lock()
-                    .expect("no holder of the lock panics")
-                    .insert(e3),
-                None => {}
-            }
-            match path.is_dir() {
-                true => fs::remove_dir_all(path)?,
-                false => fs::remove_file(path)?,
+                Some(e3) if keep(&e3) => {}
+                Some(e3) => self.close(e3)?,
+                None if path.is_dir() => fs::remove_dir_all(path)?,
+                None => fs::remove_file(path)?,
             }
         }
         Ok(())
@@ -298,17 +368,52 @@ mod tests {
         assert_eq!(blobs.get(e3(1), &BlobRef::of(&bytes)).unwrap(), bytes);
     }
 
+    /// An E3 can end before its first job stores anything.
     #[test]
-    fn a_blob_stored_after_its_e3_s_blobs_were_deleted_is_refused() {
+    fn a_closed_e3_s_blobs_are_refused_even_before_its_first() {
         let dir = tempfile::tempdir().unwrap();
         let blobs = FileBlobs::open(dir.path()).unwrap();
         blobs.put(e3(1), b"share").unwrap();
-        blobs.retain(|_| false).unwrap();
-        assert!(matches!(
-            blobs.put(e3(1), b"late"),
-            Err(BlobError::Deleted(_))
-        ));
+        blobs.close(e3(1)).unwrap();
+        blobs.close(e3(2)).unwrap();
+        for e3 in [e3(1), e3(2)] {
+            assert!(matches!(blobs.put(e3, b"late"), Err(BlobError::Deleted(_))));
+        }
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// A job's blocking work can still be writing when its E3 ends.
+    #[test]
+    fn closing_waits_for_a_write_under_way() {
+        use std::{sync::atomic::AtomicBool, sync::mpsc, thread, time::Duration};
+        let closing = Arc::new(Closing::default());
+        let (started, write_started) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let writer = thread::spawn({
+            let closing = closing.clone();
+            move || {
+                closing.write(e3(1), || {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    Ok(())
+                })
+            }
+        });
+        write_started.recv().unwrap();
+        let closed = Arc::new(AtomicBool::new(false));
+        let closer = thread::spawn({
+            let (closing, closed) = (closing.clone(), closed.clone());
+            move || {
+                closing.close(e3(1));
+                closed.store(true, Ordering::SeqCst);
+            }
+        });
+        thread::sleep(Duration::from_millis(200));
+        assert!(!closed.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        writer.join().unwrap().unwrap();
+        closer.join().unwrap();
+        assert!(closed.load(Ordering::SeqCst));
     }
 
     /// Placeholder proofs of one kind have the same bytes in every E3.

@@ -24,6 +24,7 @@ const TIMING: DkgTiming = DkgTiming {
 const COMPUTE_DEADLINE: UnixSecs = 1_500;
 const DECRYPTION_DEADLINE: UnixSecs = 2_000;
 const RANDOMNESS_DEADLINE: UnixSecs = 60;
+const LIFECYCLE_DEADLINE: UnixSecs = 9_000;
 const TICKET_PRICE: U256 = U256::from_limbs([5, 0, 0, 0]);
 const KEY_COMMITMENT: B256 = B256::repeat_byte(0x99);
 const SEED: CommitteeSeed = CommitteeSeed {
@@ -102,6 +103,10 @@ impl Rpc for FakeNode {
 
     async fn dkg_window(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
         self.read(block, |_| TIMING.window)
+    }
+
+    async fn lifecycle_deadline(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
+        self.read(block, |_| LIFECYCLE_DEADLINE)
     }
 }
 
@@ -361,6 +366,7 @@ async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
             ticket_price: TICKET_PRICE,
             owner_cap: false,
             dkg_window: TIMING.window,
+            lifecycle_deadline: LIFECYCLE_DEADLINE,
         },
         committee_deadline: SEED.deadline,
         seed: Some(SEED.seed),

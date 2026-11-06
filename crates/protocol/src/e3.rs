@@ -77,6 +77,9 @@ pub(crate) struct Ticket {
 const TURN: UnixSecs = 30;
 const TURNS: u64 = 20;
 
+/// The slashing manager's `ACCUSATION_REPORTING_WINDOW`.
+const ACCUSATION_REPORTING_WINDOW: UnixSecs = 24 * 60 * 60;
+
 fn turn(deadline: UnixSecs, place: u64) -> Option<UnixSecs> {
     (place < TURNS).then(|| deadline + 1 + TURN * place)
 }
@@ -133,7 +136,14 @@ impl E3 {
         self.deadlines.insert(stage, deadline);
     }
 
+    /// A committee's E3 keeps its work for accusations until the slashing manager stops taking
+    /// them: a day after the lifecycle deadline the request froze, whatever the failure.
     pub(crate) fn failed(&mut self, at: UnixSecs, accusable_until: UnixSecs) {
+        let reporting_ends = self.request.lifecycle_deadline + ACCUSATION_REPORTING_WINDOW;
+        let accusable_until = match self.dkg {
+            Some(_) => accusable_until.max(reporting_ends),
+            None => accusable_until,
+        };
         self.advance(Stage::Failed);
         self.failure.get_or_insert(Failure {
             at,

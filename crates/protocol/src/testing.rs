@@ -559,7 +559,11 @@ pub const REQUEST: CommitteeRequest = CommitteeRequest {
     ticket_price: U256::from_limbs([1, 0, 0, 0]),
     owner_cap: true,
     dkg_window: TIMING.window,
+    lifecycle_deadline: LIFECYCLE_DEADLINE,
 };
+
+/// After the decryption deadline, as the contract bounds a request's lifecycle.
+pub const LIFECYCLE_DEADLINE: UnixSecs = 300_000;
 
 pub fn params(committee_size: CiphernodesCommitteeSize) -> CryptoParams {
     CryptoParams {

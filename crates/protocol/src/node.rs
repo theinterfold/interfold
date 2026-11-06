@@ -111,6 +111,8 @@ pub struct CommitteeRequest {
     /// The contract keeps one candidate per request-time bond owner.
     pub owner_cap: bool,
     pub dkg_window: UnixSecs,
+    /// The request-time bound of the E3's lifecycle, from which accusations have one more day.
+    pub lifecycle_deadline: UnixSecs,
 }
 
 /// The registry accepted a request's randomness: the committee seed, and the deadline by which
@@ -1266,8 +1268,24 @@ mod tests {
             due + 3_600,
             chain(30, ChainFact::FailureSettled { e3: e3(1) }),
         );
-        node.step(due + 3_600, Input::Tick);
+        node.step(ACCUSATIONS_CLOSE, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
+    }
+
+    /// The slashing manager takes accusations until a day after the request's lifecycle
+    /// deadline, whatever the failure.
+    const ACCUSATIONS_CLOSE: UnixSecs = LIFECYCLE_DEADLINE + 24 * 60 * 60;
+
+    #[test]
+    fn a_failed_committee_keeps_its_evidence_until_accusations_close() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        node.step(20, failure(20, e3(1), FailureReason::DkgTimeout));
+        node.step(ACCUSATIONS_CLOSE - 1, Input::Tick);
+        assert!(node.e3(&e3(1)).is_some_and(|state| state.has_work()));
+        node.step(ACCUSATIONS_CLOSE, Input::Tick);
+        assert!(!node.e3(&e3(1)).is_some_and(|state| state.has_work()));
     }
 
     #[test]

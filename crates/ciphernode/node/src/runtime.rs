@@ -22,7 +22,7 @@ use e3_protocol::{
     E3Id, UnixSecs,
 };
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     convert::Infallible,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -174,7 +174,7 @@ where
             Event::Fatal(error) => return Err(error),
         };
         debug!(input = %brief(&input), "applying");
-        let working = engine.machine().working().count();
+        let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
         let (next, pending) = engine.apply(now(), input)?;
         engine = next;
         if let Some(key) = answers {
@@ -184,8 +184,11 @@ where
         for key in effects.stop_ended(engine.machine()) {
             engine.acknowledge(key)?;
         }
-        if engine.machine().working().count() < working {
-            sweep(&effects.blobs, engine.machine());
+        let still: BTreeSet<&E3Id> = engine.machine().working().collect();
+        for e3 in working.iter().filter(|e3| !still.contains(e3)) {
+            if let Err(error) = effects.blobs.close(*e3) {
+                warn!(%e3, %error, "deleting the blobs of ended work failed");
+            }
         }
     }
 }
@@ -216,7 +219,8 @@ async fn sleep_until(at: UnixSecs) {
     tokio::time::sleep(Duration::from_secs(at.saturating_sub(now()))).await;
 }
 
-/// Deletes the blobs of the E3s whose work `machine` no longer holds.
+/// Deletes the blobs of the E3s whose work `machine` no longer holds, at a start: the node closes
+/// each E3 whose work ends while it runs.
 fn sweep(blobs: &impl BlobStore, machine: &Node) {
     let working = |e3: &E3Id| machine.e3(e3).is_some_and(|state| state.has_work());
     if let Err(error) = blobs.retain(working) {

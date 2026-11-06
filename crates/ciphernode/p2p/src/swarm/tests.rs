@@ -81,6 +81,10 @@ impl BlobStore for Forging {
         self.0.has(e3, blob)
     }
 
+    fn close(&self, e3: E3Id) -> Result<(), BlobError> {
+        self.0.close(e3)
+    }
+
     fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
         self.0.retain(keep)
     }

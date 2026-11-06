@@ -18,7 +18,8 @@ use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
-    fs, io,
+    fs,
+    io::{self, Write},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -96,8 +97,14 @@ impl Unmined {
 
     fn save(&self) -> io::Result<()> {
         let partial = self.path.with_extension("partial");
-        fs::write(&partial, serde_json::to_vec(&self.sends)?)?;
-        fs::rename(&partial, &self.path)
+        let mut file = fs::File::create(&partial)?;
+        file.write_all(&serde_json::to_vec(&self.sends)?)?;
+        file.sync_all()?;
+        fs::rename(&partial, &self.path)?;
+        match self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            Some(dir) => fs::File::open(dir)?.sync_all(),
+            None => Ok(()),
+        }
     }
 }
 
@@ -233,6 +240,9 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 }
             };
             nonces.sent.insert(send.nonce, Instant::now());
+            // Kept before the broadcast: the node can take the transaction and lose its answer, or
+            // this process can stop before the answer.
+            nonces.unmined.insert(key, send).map_err(RpcError::new)?;
             let request = self
                 .request(call)
                 .with_gas_limit(gas)
@@ -241,17 +251,12 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 .with_chain_id(self.chain_id)
                 .with_nonce(send.nonce);
             match self.provider.send_transaction(request).await {
-                Ok(pending) => {
-                    nonces.unmined.insert(key, send).map_err(RpcError::new)?;
-                    pending
-                }
+                Ok(pending) => pending,
                 Err(error) => {
                     let error = alloy::contract::Error::TransportError(error);
-                    if !broadcast_refused(&error) {
-                        // The node may hold the transaction, so a retry replaces it.
-                        nonces.unmined.insert(key, send).map_err(RpcError::new)?;
-                    } else if replaced.is_none() {
+                    if broadcast_refused(&error) && replaced.is_none() {
                         nonces.sent.remove(&send.nonce);
+                        nonces.unmined.remove(&key).map_err(RpcError::new)?;
                     }
                     return Err(RpcError::new(error));
                 }
