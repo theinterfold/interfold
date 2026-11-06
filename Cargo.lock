@@ -4193,6 +4193,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-jobs"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy-primitives",
+ "e3-committee",
+ "e3-crypto",
+ "e3-fhe-params",
+ "e3-protocol",
+ "e3-trbfv",
+ "fhe",
+ "fhe-traits",
+ "rand 0.9.5",
+ "rand_core 0.9.5",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "e3-journal"
 version = "0.20.0-dev.3"
 dependencies = [

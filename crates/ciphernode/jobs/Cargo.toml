@@ -1,0 +1,23 @@
+[package]
+name = "e3-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runs the v2 node's jobs: the cryptography and proofs that protocol work asks for"
+repository.workspace = true
+
+[dependencies]
+e3-protocol = { workspace = true }
+e3-crypto = { workspace = true }
+e3-fhe-params = { workspace = true }
+e3-trbfv = { workspace = true }
+alloy-primitives = { workspace = true }
+fhe = { workspace = true }
+fhe-traits = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+e3-committee = { workspace = true }
+tokio = { workspace = true }
