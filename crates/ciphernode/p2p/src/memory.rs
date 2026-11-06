@@ -4,32 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::{Network, NetworkError, SharedBlobs};
 use alloy_primitives::Address;
-use e3_blobs::{BlobError, Blobs};
 use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef};
-use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-
-/// What the node needs from the network. Inbound, an adapter delivers a peer message only if its
-/// envelope opens, the message is for this node, and every blob the node needs from it is in the
-/// node's store.
-pub trait Network: Send + Sync + 'static {
-    /// Sends `envelope` to the other nodes; its blobs are in this node's store.
-    fn publish(&self, envelope: Envelope) -> impl Future<Output = Result<(), NetworkError>> + Send;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum NetworkError {
-    #[error(transparent)]
-    Blob(#[from] BlobError),
-    #[error("blob {0:?} came back with other bytes")]
-    WrongBlob(BlobRef),
-}
-
-pub type SharedBlobs = Arc<dyn Blobs + Send + Sync>;
 
 /// Nodes in one process. A published envelope reaches every other node that uses its message once
 /// the blobs that node needs are copied from the publisher's store, as a network adapter fetches

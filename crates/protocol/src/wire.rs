@@ -8,7 +8,7 @@
 //! of it, so a relay can change no field, and a receiver knows the sender without trusting the
 //! peer that forwarded it.
 
-use crate::node::PeerMessage;
+use crate::{node::PeerMessage, UnixSecs};
 use alloy_primitives::{keccak256, Bytes, Signature, B256};
 use bincode::Options;
 use serde::{Deserialize, Serialize};
@@ -19,13 +19,16 @@ const DOMAIN: &[u8] = b"interfold v2 peer message";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
     pub message: PeerMessage,
+    /// When the sender sent this copy. Gossip drops repeats of the same bytes for a while, so
+    /// each re-send is a new copy, and only the sender can make one.
+    pub sent_at: UnixSecs,
     pub signature: Bytes,
 }
 
 impl Envelope {
     /// The hash the sender's operator key signs.
-    pub fn signing_hash(message: &PeerMessage) -> B256 {
-        let encoded = bincode::serialize(message).expect("a peer message encodes");
+    pub fn signing_hash(message: &PeerMessage, sent_at: UnixSecs) -> B256 {
+        let encoded = bincode::serialize(&(message, sent_at)).expect("a peer message encodes");
         keccak256([DOMAIN, &encoded].concat())
     }
 
@@ -33,7 +36,7 @@ impl Envelope {
     pub fn open(self) -> Option<PeerMessage> {
         let signature = Signature::try_from(self.signature.as_ref()).ok()?;
         let signer = signature
-            .recover_address_from_prehash(&Self::signing_hash(&self.message))
+            .recover_address_from_prehash(&Self::signing_hash(&self.message, self.sent_at))
             .ok()?;
         (signer == self.message.sender).then_some(self.message)
     }
@@ -64,10 +67,11 @@ mod tests {
 
     fn signed(message: PeerMessage, by: u64) -> Envelope {
         let signature = operator(by)
-            .sign_hash_sync(&Envelope::signing_hash(&message))
+            .sign_hash_sync(&Envelope::signing_hash(&message, 100))
             .unwrap();
         Envelope {
             message,
+            sent_at: 100,
             signature: signature.as_bytes().into(),
         }
     }
@@ -90,9 +94,13 @@ mod tests {
         relabeled.message.sender = address(2);
         assert_eq!(relabeled.open(), None);
 
-        let mut moved = envelope;
+        let mut moved = envelope.clone();
         moved.message.e3 = e3(2);
         assert_eq!(moved.open(), None);
+
+        let mut copied = envelope;
+        copied.sent_at = 101;
+        assert_eq!(copied.open(), None, "only the sender makes a new copy");
 
         assert_eq!(signed(ready(1), 2).open(), None);
     }

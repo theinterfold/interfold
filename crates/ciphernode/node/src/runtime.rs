@@ -4,7 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::network::Network;
 use alloy_primitives::keccak256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -14,6 +13,7 @@ use e3_data_availability::{DataAvailabilityReader, DataReference};
 use e3_engine::{EffectKey, Engine, Pending};
 use e3_jobs::JobRunner;
 use e3_journal::Journal;
+use e3_p2p::Network;
 use e3_protocol::{
     node::{Effect, Fetch, Fetched, Input, Job, JobDone, Node, PeerMessage, Signed, Signing},
     wire::Envelope,
@@ -313,12 +313,14 @@ where
     }
 
     fn gossip(&self, key: EffectKey, message: PeerMessage) {
+        let sent_at = now();
         let signature = self
             .operator
-            .sign_hash_sync(&Envelope::signing_hash(&message))
+            .sign_hash_sync(&Envelope::signing_hash(&message, sent_at))
             .expect("a local key signs any hash");
         let envelope = Envelope {
             message,
+            sent_at,
             signature: signature.as_bytes().to_vec().into(),
         };
         let (network, events) = (self.network.clone(), self.events.clone());

@@ -4390,6 +4390,7 @@ dependencies = [
  "e3-evm-contracts",
  "e3-jobs",
  "e3-journal",
+ "e3-p2p",
  "e3-protocol",
  "serde",
  "serde_json",
@@ -4418,6 +4419,17 @@ dependencies = [
  "bincode",
  "e3-compute-provider",
  "serde",
+]
+
+[[package]]
+name = "e3-p2p"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy-primitives",
+ "e3-blobs",
+ "e3-protocol",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

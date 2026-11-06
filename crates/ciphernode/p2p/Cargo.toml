@@ -1,0 +1,14 @@
+[package]
+name = "e3-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The v2 node's network: signed peer messages and the blobs they name"
+repository.workspace = true
+
+[dependencies]
+e3-blobs = { workspace = true }
+e3-protocol = { workspace = true }
+alloy-primitives = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
