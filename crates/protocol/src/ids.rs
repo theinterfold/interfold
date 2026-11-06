@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -19,4 +19,11 @@ impl fmt::Display for E3Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.chain_id, self.number)
     }
+}
+
+/// A large payload, stored once by the node and referenced by its hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct BlobRef {
+    pub hash: B256,
+    pub len: u64,
 }
