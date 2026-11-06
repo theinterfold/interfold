@@ -206,8 +206,7 @@ impl Dkg {
         let Some(own) = self.own_key() else {
             return Vec::new();
         };
-        if message.recipient != self.me
-            || dealer == self.me
+        if dealer == self.me
             || !self.is_member(dealer)
             || self.shares.received.contains_key(&dealer)
             || !message.is_signed_by(dealer, self.e3)

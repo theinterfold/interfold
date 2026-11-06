@@ -16,6 +16,7 @@ alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer = { workspace = true, optional = true }
 alloy-signer-local = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true }
+bincode = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

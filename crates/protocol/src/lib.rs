@@ -23,6 +23,7 @@ mod resend;
 pub mod selection;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod wire;
 
 pub use ids::{BlobRef, E3Id};
 pub use machine::{Machine, Tick, UnixSecs};

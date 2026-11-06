@@ -225,11 +225,28 @@ pub enum Body {
 }
 
 impl PeerMessage {
-    fn size(&self) -> u64 {
+    /// Whether `node` uses this message: a share message only reaches its recipient's DKG.
+    pub fn is_for(&self, node: Address) -> bool {
         match &self.body {
-            Body::Dkg(message) => message.size(),
-            Body::Decryption(message) => message.size(),
+            Body::Dkg(DkgMessage::Shares(shares)) => shares.recipient == node,
+            _ => true,
         }
+    }
+
+    /// The blobs a node that uses this message needs in its store.
+    pub fn blobs(&self) -> Vec<BlobRef> {
+        match &self.body {
+            Body::Dkg(message) => message.blobs(),
+            Body::Decryption(message) => message.blobs(),
+        }
+    }
+
+    /// Its encoded bytes and its blobs' bytes.
+    fn size(&self) -> u64 {
+        let encoded = bincode::serialized_size(self).unwrap_or(u64::MAX);
+        self.blobs()
+            .iter()
+            .fold(encoded, |size, blob| size.saturating_add(blob.len))
     }
 }
 
@@ -565,7 +582,7 @@ impl Node {
     /// A message waits in the bounded hold until the chain fact that lets the node judge it:
     /// the committee's finalization for the DKG, the key's publication for decryption.
     fn apply_peer(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
-        if self.ended.contains(&message.e3) {
+        if self.ended.contains(&message.e3) || !message.is_for(self.me) {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {

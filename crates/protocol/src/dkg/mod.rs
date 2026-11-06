@@ -150,26 +150,28 @@ impl Dealer {
 }
 
 impl DkgMessage {
-    pub(crate) fn size(&self) -> u64 {
+    pub(crate) fn blobs(&self) -> Vec<BlobRef> {
         match self {
-            Self::EncryptionKey(message) => message.key.len + message.proof.size(),
+            Self::EncryptionKey(message) => vec![message.key, message.proof.proof.data],
             Self::Shares(message) => {
                 let proofs = [&message.c2a, &message.c2b]
                     .into_iter()
                     .chain(&message.c3a)
-                    .chain(&message.c3b);
-                message.pk_share.len
-                    + message.shares.len
-                    + proofs.map(SignedProof::size).sum::<u64>()
+                    .chain(&message.c3b)
+                    .map(|signed| signed.proof.data);
+                [message.pk_share, message.shares]
+                    .into_iter()
+                    .chain(proofs)
+                    .collect()
             }
-            Self::Ready(dealers) | Self::Roster(dealers) => 52 * dealers.len() as u64,
-            Self::DecryptionKey(message) => {
-                message.c4a.size() + message.c4b.iter().map(SignedProof::size).sum::<u64>()
-            }
-            Self::Keyshare(message) => message.pk_share.len + message.c1.size(),
-            Self::NodeFold(message) => {
-                message.fold.proof.size() + 64 + message.attestation.len() as u64
-            }
+            Self::Ready(_) | Self::Roster(_) => Vec::new(),
+            Self::DecryptionKey(message) => [&message.c4a]
+                .into_iter()
+                .chain(&message.c4b)
+                .map(|signed| signed.proof.data)
+                .collect(),
+            Self::Keyshare(message) => vec![message.pk_share, message.c1.proof.data],
+            Self::NodeFold(message) => vec![message.fold.proof.data],
         }
     }
 }

@@ -48,10 +48,6 @@ pub fn verifier_calldata(proof: &[u8], public_inputs: &[B256]) -> Bytes {
 }
 
 impl ZkProof {
-    pub(crate) fn size(&self) -> u64 {
-        self.data.len + 32 * self.public_inputs.len() as u64
-    }
-
     /// The hash an operator signs to vouch for this proof. `SlashingManager` rebuilds the
     /// `ProofPayload` digest and recovers the signer with the EIP-191 message prefix.
     pub fn payload_signing_hash(&self, e3: E3Id, proof_type: ProofType) -> B256 {
@@ -86,10 +82,6 @@ pub struct SignedProof {
 }
 
 impl SignedProof {
-    pub(crate) fn size(&self) -> u64 {
-        self.proof.size() + self.signature.len() as u64
-    }
-
     pub fn is_signed_by(&self, signer: Address, e3: E3Id, proof_type: ProofType) -> bool {
         let hash = self.proof.payload_signing_hash(e3, proof_type);
         Signature::try_from(self.signature.as_ref())

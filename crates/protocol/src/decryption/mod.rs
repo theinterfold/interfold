@@ -46,10 +46,10 @@ pub struct SharesMessage {
 }
 
 impl DecryptionMessage {
-    pub(crate) fn size(&self) -> u64 {
+    pub(crate) fn blobs(&self) -> Vec<BlobRef> {
         let Self::Shares(message) = self;
-        let shares: u64 = message.shares.iter().map(|share| share.len).sum();
-        shares + message.c6.iter().map(SignedProof::size).sum::<u64>()
+        let proofs = message.c6.iter().map(|signed| signed.proof.data);
+        message.shares.iter().copied().chain(proofs).collect()
     }
 }
 

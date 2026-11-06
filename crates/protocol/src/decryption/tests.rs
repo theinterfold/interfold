@@ -330,3 +330,14 @@ fn decryption_stops_at_its_deadline() {
     );
     assert_eq!(decryption.next_deadline(), None);
 }
+
+/// After a restart the outbox repeats the fetch, so the bytes can arrive twice.
+#[test]
+fn bytes_fetched_twice_start_decryption_once() {
+    let [a, b, ..] = ordered();
+    let mut decryption = decryption(a, &[a, b], true);
+    let first = ciphertext(&mut decryption);
+    let again = deliver(&mut decryption, NOW, ciphertext_fetched(e3(1)));
+    assert_eq!(works(&first).len(), 1);
+    assert!(works(&again).is_empty());
+}
