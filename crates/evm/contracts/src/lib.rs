@@ -231,6 +231,7 @@ sol! {
         function getSlashPolicy(bytes32 reason) external view returns (SlashPolicy memory policy);
 
         // ── Events ──────────────────────────────────────────────────────────
+        event E3DependenciesReleased(uint256 indexed e3Id);
         event SlashExecuted(
             uint256 indexed proposalId,
             uint256 e3Id,

@@ -14,7 +14,7 @@ use e3_blobs::FileBlobs;
 use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{DataAvailabilityReader, HttpObjectReader};
-use e3_evm_contracts::ICiphernodeRegistry;
+use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
 use e3_jobs::JobRunner;
 use e3_journal::Journal;
 use e3_node::{run, Parts, Settings};
@@ -72,11 +72,16 @@ async fn main() -> anyhow::Result<()> {
         .randomnessProvider()
         .call()
         .await?;
+    let slashing = IInterfold::new(config.interfold, &chain)
+        .slashingManager()
+        .call()
+        .await?;
     let contracts = Contracts {
         chain_id: config.chain_id,
         interfold: config.interfold,
         registry: config.registry,
         bonding: config.bonding,
+        slashing,
         randomness: BTreeSet::from([randomness]),
         crypto_configs: e3_jobs::crypto_configs(),
     };

@@ -141,10 +141,11 @@ Each rule is checkable in review.
   randomness the deadline is the randomness deadline; once the seed arrives, ticket holders
   finalize after the committee deadline, and the others wait the DKG window more, after which the
   contract fails a committee that met its threshold too. After a failure the same turns call
-  `processE3Failure`. A node that has a turn, or holds a committee's work, keeps the E3 until the
-  chain logs the settlement, however long the contract keeps it closed: settlement opens only once
-  the slashing manager takes no more accusations and none is open, so until then accusations and
-  appeals can need the committee's work and its blobs. The finalizer takes the same turns. The node judges deadlines by
+  `processE3Failure`. A node that has a turn keeps the E3 until the chain logs the settlement,
+  however long the contract keeps it closed. A node that holds a committee's work keeps it, and
+  its blobs, until the slashing manager logs `E3DependenciesReleased`: accusations that expel no
+  member can come, and be appealed, even after settlement, until governance closes the E3 there.
+  A failed E3 that governance never closes keeps its committee's work. The finalizer takes the same turns. The node judges deadlines by
   its own clock, so a node that replays old history submits these calls for E3s that ended long
   ago; each ends at its preflight.
 - **D25. The node refreshes its operator in each owner capacity window, whatever the identity

@@ -60,6 +60,7 @@ struct Failure {
     accusable_until: UnixSecs,
     settle_sent: bool,
     settled: bool,
+    released: bool,
 }
 
 /// This node's ticket, its rank among the candidates, and the committee deadline.
@@ -140,6 +141,7 @@ impl E3 {
             accusable_until,
             settle_sent: false,
             settled: false,
+            released: false,
         });
     }
 
@@ -149,18 +151,23 @@ impl E3 {
         }
     }
 
-    /// When the node lets a failed E3 go: once accusations cannot need its work, and, if this
-    /// node settles it or holds a committee's work, once the chain settled it.
-    ///
-    /// With a committee, the contract opens settlement only once the slashing manager takes no
-    /// more accusations and none is open, which can take months. Until then accusations and
-    /// appeals can need the committee's work and its blobs.
+    pub(crate) fn released(&mut self) {
+        if let Some(failure) = &mut self.failure {
+            failure.released = true;
+        }
+    }
+
+    /// When the node lets a failed E3 go: once accusations cannot need its work, once the chain
+    /// settled it if this node settles it, and, if this node holds a committee's work, once
+    /// governance released the E3's slashing dependencies. Accusations that expel no member can
+    /// come, and be appealed, even after settlement, until that release; they can need the
+    /// committee's work and its blobs.
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
         let failure = self.failure?;
         let settles = self
             .slot
             .is_some_and(|slot| turn(failure.at, slot).is_some());
-        if (settles || self.has_work()) && !failure.settled {
+        if (settles && !failure.settled) || (self.has_work() && !failure.released) {
             return None;
         }
         Some(failure.accusable_until.max(failure.at))

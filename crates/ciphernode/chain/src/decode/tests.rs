@@ -125,6 +125,21 @@ fn the_key_proof_names_the_roster_by_committee_slot() {
 }
 
 #[test]
+fn only_the_slashing_manager_releases_an_e3() {
+    let c = contracts();
+    let released = ISlashingManager::E3DependenciesReleased {
+        e3Id: U256::from(7),
+    };
+    let e3 = E3Id {
+        chain_id: 1,
+        number: U256::from(7),
+    };
+    let from_manager = facts(&[log(c.slashing, &released, 8, 0)]);
+    assert_eq!(from_manager, vec![ChainFact::DependenciesReleased { e3 }]);
+    assert!(facts(&[log(c.interfold, &released, 8, 0)]).is_empty());
+}
+
+#[test]
 fn an_unknown_stage_stops_ingestion() {
     let c = contracts();
     let changed = IInterfold::E3StageChanged {

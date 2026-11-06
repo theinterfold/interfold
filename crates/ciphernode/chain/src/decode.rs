@@ -7,7 +7,9 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolEvent, SolValue};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold, IRandomnessProvider};
+use e3_evm_contracts::{
+    IBondingRegistry, ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager,
+};
 use e3_protocol::{
     dkg::AttestationContext,
     node::{ChainEvent, ChainFact, CryptoParams, DataRef, FailureReason, LogPosition, Stage},
@@ -22,6 +24,8 @@ pub struct Contracts {
     pub interfold: Address,
     pub registry: Address,
     pub bonding: Address,
+    /// The slashing manager, whose release of an E3 ends accusations about it.
+    pub slashing: Address,
     /// The randomness providers whose fulfillments the node reads: the registry's at start, then
     /// each one a request names or governance sets.
     pub randomness: BTreeSet<Address>,
@@ -33,7 +37,7 @@ pub struct Contracts {
 impl Contracts {
     /// The contracts whose logs the node reads.
     pub fn addresses(&self) -> Vec<Address> {
-        [self.interfold, self.registry, self.bonding]
+        [self.interfold, self.registry, self.bonding, self.slashing]
             .into_iter()
             .chain(self.randomness.iter().copied())
             .collect()
@@ -159,6 +163,13 @@ impl Decoder<'_> {
             self.registry(log, topic)
         } else if log.address == c.bonding {
             self.bonding(log, topic)
+        } else if log.address == c.slashing
+            && topic == ISlashingManager::E3DependenciesReleased::SIGNATURE_HASH
+        {
+            let event: ISlashingManager::E3DependenciesReleased =
+                decode_event(log, "E3DependenciesReleased")?;
+            let e3 = self.e3(event.e3Id);
+            Ok(Some(self.fact(log, ChainFact::DependenciesReleased { e3 })))
         } else if c.randomness.contains(&log.address)
             && topic == IRandomnessProvider::RandomnessFulfilled::SIGNATURE_HASH
         {

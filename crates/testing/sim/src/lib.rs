@@ -407,9 +407,15 @@ impl<J: Jobs> Sim<J> {
             }
             _ => None,
         };
+        let settled = matches!(fact, Some(ChainFact::FailureSettled { .. }));
         if let Some(fact) = fact {
             let at = self.now + self.delay();
             self.chain(at, fact);
+        }
+        if settled {
+            // Governance closes the E3 in its slashing manager after settlement.
+            let at = self.now + self.delay();
+            self.chain(at, ChainFact::DependenciesReleased { e3 });
         }
         if let Some(ciphertext) = ciphertext {
             self.available.insert(ciphertext.hash, ciphertext);
@@ -543,6 +549,7 @@ fn fact_e3(fact: &ChainFact) -> Option<E3Id> {
         | ChainFact::CiphertextReady { e3, .. }
         | ChainFact::StageChanged { e3, .. }
         | ChainFact::FailureSettled { e3 }
+        | ChainFact::DependenciesReleased { e3 }
         | ChainFact::Failed { e3, .. }
         | ChainFact::MemberExpelled { e3, .. } => e3,
         ChainFact::VoteValidity { .. }

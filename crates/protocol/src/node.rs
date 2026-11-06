@@ -173,6 +173,11 @@ pub enum ChainFact {
     FailureSettled {
         e3: E3Id,
     },
+    /// `E3DependenciesReleased`: governance closed the E3 in its slashing manager, which then takes
+    /// no more accusations or appeals about it.
+    DependenciesReleased {
+        e3: E3Id,
+    },
     Failed {
         e3: E3Id,
         reason: FailureReason,
@@ -620,6 +625,12 @@ impl Node {
             ChainFact::FailureSettled { e3 } => {
                 if let Some(state) = self.e3s.get_mut(&e3) {
                     state.settled();
+                }
+                Vec::new()
+            }
+            ChainFact::DependenciesReleased { e3 } => {
+                if let Some(state) = self.e3s.get_mut(&e3) {
+                    state.released();
                 }
                 Vec::new()
             }
@@ -1266,9 +1277,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                2,
+                3,
                 alloy_primitives::b256!(
-                    "4b126eaf42b320600db4a1fec587ac3005dd66b45d8541b07fbcb7b435b18968"
+                    "019bfa5aafafe90302f3d71356e3954cbb568acdac4ede822f0b6f5842a32b35"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
@@ -1311,8 +1322,13 @@ mod tests {
             due + 3_600,
             chain(30, ChainFact::FailureSettled { e3: e3(1) }),
         );
+        node.step(due + 3_600, chain(31, released(e3(1))));
         node.step(due + 3_600, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
+    }
+
+    fn released(e3: E3Id) -> ChainFact {
+        ChainFact::DependenciesReleased { e3 }
     }
 
     #[test]
@@ -1365,10 +1381,11 @@ mod tests {
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
     }
 
-    /// Settlement can stay closed for months after a failure, while accusations and appeals can
-    /// need the committee's work. A member past the settling turns keeps it too.
+    /// Settlement can stay closed for months after a failure, and accusations that expel no
+    /// member can come and be appealed even after it, until governance closes the E3. A member
+    /// past the settling turns keeps the work too.
     #[test]
-    fn a_failed_committee_keeps_its_work_until_the_chain_settles_the_e3() {
+    fn a_failed_committee_keeps_its_work_until_governance_releases_the_e3() {
         let operators: Vec<u64> = (20..)
             .map(|n| (1..=n).collect::<Vec<u64>>())
             .find(|operators| place(&[operators.as_slice(), &[ME]].concat()) >= 20)
@@ -1382,6 +1399,9 @@ mod tests {
         let state = node.e3(&e3(1)).expect("the E3 waits for its settlement");
         assert!(state.has_work());
         node.step(months, chain(30, ChainFact::FailureSettled { e3: e3(1) }));
+        node.step(months, Input::Tick);
+        assert!(node.e3(&e3(1)).is_some_and(|state| state.has_work()));
+        node.step(months, chain(31, released(e3(1))));
         node.step(months, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
     }
