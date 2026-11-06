@@ -4386,6 +4386,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-protocol"
+version = "0.20.0-dev.3"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "e3-request"
 version = "0.20.0-dev.3"
 dependencies = [

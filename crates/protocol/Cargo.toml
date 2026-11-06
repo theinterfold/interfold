@@ -1,0 +1,16 @@
+[package]
+name = "e3-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure protocol rules of the ciphernode: machines, wire messages, and contract encodings"
+repository.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["k256"] }
+alloy-sol-types = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
