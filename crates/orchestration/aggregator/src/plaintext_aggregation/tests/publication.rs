@@ -3,6 +3,7 @@
 use super::*;
 use crate::{
     ext::{AggregatorRoleExtension, PublicKeyAggregatorExtension},
+    test_support::history_reader,
     DecryptionshareCreatedBuffer, KeyshareCreatedFilterBuffer, PublicKeyAggregator,
     PublicKeyAggregatorParams, PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
     PublicKeyRepositoryFactory, TrBfvPlaintextRepositoryFactory,
@@ -211,7 +212,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                 AggregatorRoleExtension::create(HashMap::from([(e3_id.clone(), active)]))
                     .hydrate(&mut ctx, &snapshot)
                     .await?;
-                PublicKeyAggregatorExtension::create(&bus)
+                PublicKeyAggregatorExtension::create(&bus, history_reader(&[])?)
                     .hydrate(&mut ctx, &snapshot)
                     .await?;
                 bus.subscribe_all(

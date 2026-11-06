@@ -242,7 +242,6 @@ impl ThresholdPlaintextAggregator {
 
 #[path = "effects/mod.rs"]
 mod effects;
-pub(crate) use effects::recovery::{visit_plaintext_history, visit_plaintext_history_range};
 #[path = "handlers.rs"]
 mod handlers;
 

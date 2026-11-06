@@ -510,6 +510,9 @@ A member that restarts recovers its work from the durable event log:
   It does not make new random shares that conflict with its published C1 to C3 proofs.
 - `NodeProofAggregator` restores saved inner proofs and fold metadata, then issues the fold again or
   publishes the saved result.
+- The public-key aggregator reads received `DKGRecursiveAggregationComplete` folds back from the
+  event log. Each roster member sends its fold once, so a restart during C1 verification or C5 keeps
+  every fold that arrived.
 - A persisted `Failed` state publishes the same `E3Failed` payload again after `EffectsEnabled`.
 - A local prover, verifier, or worker failure retries the same request. It never counts as proof
   that a peer sent invalid data.

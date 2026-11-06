@@ -155,6 +155,14 @@ impl PublicKeyAggregator {
             ..
         }) = state.as_ref()
         else {
+            // Restart recovery reads the whole history, so replay can deliver a buffered fold again.
+            if self
+                .early_dkg_proofs
+                .iter()
+                .any(|early| early.id() == ec.id())
+            {
+                return Ok(());
+            }
             info!(
                 "PublicKeyAggregator: early DKG proof from party {} — buffering until GeneratingC5Proof",
                 msg.party_id

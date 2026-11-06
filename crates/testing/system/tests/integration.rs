@@ -21,7 +21,7 @@ use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
     ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
+    E3id, EventType, GetEvents, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
     PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, Unsubscribe,
     VerificationKind, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
@@ -1526,9 +1526,11 @@ async fn test_trbfv_actor() -> Result<()> {
     // Setup ZK backend for proof generation/verification
     let (zk_backend, _zk_temp) = setup_test_zk_backend(benchmark_params.preset_subdir).await?;
     let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
-    let restart_storage = std::env::var("BENCHMARK_RESTART_PARTY_ID")
-        .ok()
-        .map(|_| tempfile::tempdir())
+    let restart_party_requested = std::env::var("BENCHMARK_RESTART_PARTY_ID").is_ok();
+    let restart_aggregator_during_c1 =
+        std::env::var("BENCHMARK_RESTART_AGGREGATOR_DURING_C1").is_ok_and(|value| value == "1");
+    let restart_storage = (restart_party_requested || restart_aggregator_during_c1)
+        .then(tempfile::tempdir)
         .transpose()?;
     let restart_root = restart_storage.as_ref().map(|dir| dir.path().to_path_buf());
     let restart_identities = Arc::new(std::sync::Mutex::new(HashMap::<
@@ -1549,13 +1551,63 @@ async fn test_trbfv_actor() -> Result<()> {
     let restart_during_decryption =
         std::env::var("BENCHMARK_RESTART_DURING_DECRYPTION").is_ok_and(|value| value == "1");
     anyhow::ensure!(
-        !restart_during_decryption || (restart_storage.is_some() && !restart_during_dkg),
+        !restart_during_decryption || (restart_party_requested && !restart_during_dkg),
         "decryption restart requires BENCHMARK_RESTART_PARTY_ID and excludes the DKG restart"
     );
     anyhow::ensure!(
-        !restart_during_dkg || restart_storage.is_some(),
+        !restart_during_dkg || restart_party_requested,
         "BENCHMARK_RESTART_DURING_DKG requires BENCHMARK_RESTART_PARTY_ID"
     );
+    // A party restart runs whenever BENCHMARK_RESTART_PARTY_ID is set.
+    anyhow::ensure!(
+        !restart_aggregator_during_c1 || !restart_party_requested,
+        "BENCHMARK_RESTART_AGGREGATOR_DURING_C1 excludes BENCHMARK_RESTART_PARTY_ID"
+    );
+    // Stop a node and rebuild it from its persisted identity with the original configuration.
+    let restart_persisted_node = async |nodes: &mut CiphernodeSystem, index: usize| -> Result<()> {
+        let address = nodes[index].address();
+        let identity = restart_identities
+            .lock()
+            .unwrap()
+            .get(&address)
+            .cloned()
+            .context("restart identity is missing")?;
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&address)
+            .context("restart event pipe is missing")?;
+        bus.event_bus()
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
+            .await?;
+        nodes
+            .restart_node(
+                index,
+                Box::pin(async {
+                    let mut builder =
+                        CiphernodeBuilder::full(identity.rng, cipher.clone(), zk_backend.clone())
+                            .with_history_collector()
+                            .with_shared_taskpool(&task_pool)
+                            .with_multithread_concurrent_jobs(concurrent_jobs)
+                            .with_shared_multithread_report(&multithread_report)
+                            .with_signer(identity.signer)
+                            .with_eventstore_aggregate_config_for_testing(
+                                benchmark_aggregate_config.clone(),
+                            )
+                            .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                            .with_chains(std::slice::from_ref(&bench_chain_config))
+                            .with_persistence(&identity.log_path, &identity.kv_path)
+                            .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
+            .await
+    };
 
     let mut nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
@@ -1962,48 +2014,8 @@ async fn test_trbfv_actor() -> Result<()> {
             }
         })
         .await??;
-        let identity = restart_identities
-            .lock()
-            .unwrap()
-            .get(&nodes[node_index].address())
-            .cloned()
-            .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} during C4");
-        let trigger_pipe = trigger_pipes
-            .lock()
-            .unwrap()
-            .remove(&nodes[node_index].address())
-            .context("restart event pipe is missing")?;
-        bus.event_bus()
-            .send(Unsubscribe::new(EventType::All, trigger_pipe))
-            .await?;
-        nodes
-            .restart_node(
-                node_index,
-                Box::pin(async {
-                    let mut builder =
-                        CiphernodeBuilder::full(identity.rng, cipher.clone(), zk_backend.clone())
-                            .with_history_collector()
-                            .with_shared_taskpool(&task_pool)
-                            .with_multithread_concurrent_jobs(concurrent_jobs)
-                            .with_shared_multithread_report(&multithread_report)
-                            .with_signer(identity.signer)
-                            .with_eventstore_aggregate_config_for_testing(
-                                benchmark_aggregate_config.clone(),
-                            )
-                            .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                            .with_chains(std::slice::from_ref(&bench_chain_config))
-                            .with_persistence(&identity.log_path, &identity.kv_path)
-                            .with_logging();
-                    if !proof_aggregation_enabled {
-                        builder = builder.with_proof_aggregation_disabled_for_testing();
-                    }
-                    let node = builder.build().await?;
-                    connect_trigger(&node);
-                    Ok(node)
-                }),
-            )
-            .await?;
+        restart_persisted_node(&mut nodes, node_index).await?;
         println!("Restarted committee party {restart_party_id} during C4");
     }
 
@@ -2029,6 +2041,62 @@ async fn test_trbfv_actor() -> Result<()> {
             active_aggregator_index, active_aggregator_addr
         );
     }
+
+    // Restart the active aggregator after it logged its C1 dispatch and before it logged the
+    // verdict. It resumes C1 verification from persisted state and must reach the verdict again
+    // through the verifier and the compute gate.
+    let aggregator_history_before_restart = if restart_aggregator_during_c1 {
+        let collector = nodes[active_aggregator_index]
+            .history()
+            .context("active aggregator has no history collector")?;
+        let is_c1_dispatch = |data: &InterfoldEventData| {
+            matches!(data, InterfoldEventData::ShareVerificationDispatched(event)
+                if event.e3_id == e3_id && event.kind == VerificationKind::PkGenerationProofs)
+        };
+        wait_for_history_match(
+            &nodes,
+            active_aggregator_index,
+            0,
+            "C1 ShareVerificationDispatched before the aggregator restart",
+            pubkey_flow_timeout,
+            is_c1_dispatch,
+        )
+        .await?;
+        println!("Stopping active aggregator at node index {active_aggregator_index} during C1");
+        restart_persisted_node(&mut nodes, active_aggregator_index).await?;
+        println!("Restarted active aggregator at node index {active_aggregator_index} during C1");
+        // Shutdown closes bus admission and waits until every admitted event is fanned out, so
+        // the old collector holds every event the node logged.
+        let logged = collector.send(GetEvents::new()).await?;
+        anyhow::ensure!(
+            !logged.iter().any(|event| matches!(event.get_data(),
+                InterfoldEventData::ShareVerificationComplete(event)
+                    if event.e3_id == e3_id && event.kind == VerificationKind::PkGenerationProofs)),
+            "restart missed the C1 window: the aggregator logged its C1 verdict before it stopped"
+        );
+        // A party sends its fold once, so a selected fold that the old node logged reaches C5 only
+        // through recovery from the event log. A roster replaced after C1 started does not count.
+        let roster = logged
+            .iter()
+            .take_while(|event| !is_c1_dispatch(event.get_data()))
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
+                    Some(&data.party_ids)
+                }
+                _ => None,
+            })
+            .last()
+            .context("the aggregator dispatched C1 without a selected roster")?;
+        anyhow::ensure!(
+            logged.iter().any(|event| matches!(event.get_data(),
+                InterfoldEventData::DKGRecursiveAggregationComplete(fold)
+                    if fold.e3_id == e3_id && roster.contains(&fold.party_id))),
+            "no selected DKG fold reached the aggregator before it stopped"
+        );
+        Some(logged)
+    } else {
+        None
+    };
 
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
@@ -2111,6 +2179,38 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
+    // The plaintext flow reads the live collector from this offset.
+    let active_aggregator_pubkey_history_len = active_aggregator_history.len();
+    // The verifier requests each commitment-consistency check under a fresh correlation ID, so the
+    // check of the resumed C1 dispatch does not repeat one that the node logged before the restart.
+    let consistency_checks_before_restart = aggregator_history_before_restart
+        .as_deref()
+        .map(|logged| {
+            project_history(logged, |data| {
+                publickey_aggregator_marker(data, &e3_id).filter(|marker| {
+                    matches!(
+                        *marker,
+                        "CommitmentConsistencyCheckRequested"
+                            | "CommitmentConsistencyCheckComplete"
+                    )
+                })
+            })
+        })
+        .unwrap_or_default();
+    // A restarted aggregator's collector starts at a replay that skips snapshotted events. Join it
+    // with the events the node logged before the restart. An event emitted again after the restart
+    // has the same delivery ID; keep one copy, as the bus does within one run.
+    let active_aggregator_history: Vec<InterfoldEvent> = match aggregator_history_before_restart {
+        Some(logged) => {
+            let delivered: HashSet<_> = logged.iter().map(Event::delivery_id).collect();
+            let after_restart = active_aggregator_history
+                .iter()
+                .filter(|event| !delivered.contains(&event.delivery_id()))
+                .cloned();
+            logged.into_iter().chain(after_restart).collect()
+        }
+        None => active_aggregator_history.to_vec(),
+    };
     if offline_node_index.is_some() {
         assert!(
             !active_aggregator_history.iter().any(|event| {
@@ -2177,13 +2277,13 @@ async fn test_trbfv_actor() -> Result<()> {
         .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
         .collect();
     assert_eq!(selected_addresses, pk_agg.honest_committee_addresses);
-    let active_aggregator_pubkey_history_len = active_aggregator_history.len();
     let mut expected_active_aggregator_pubkey_events = vec![
         "CommitteeFinalized",
         "CiphernodeSelected",
         "AggregatorChanged",
     ];
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
+    expected_active_aggregator_pubkey_events.extend(consistency_checks_before_restart);
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
     // The active aggregator is also a selected committee member, so its node history contains
@@ -2389,12 +2489,6 @@ async fn test_trbfv_actor() -> Result<()> {
             .get(restart_party_id)
             .ok_or_else(|| anyhow::anyhow!("restart party is outside the finalized committee"))?;
         let node_index = find_node_index_by_address(&nodes, address)?;
-        let identity = restart_identities
-            .lock()
-            .unwrap()
-            .get(&nodes[node_index].address())
-            .cloned()
-            .context("restart identity is missing")?;
         if restart_during_decryption {
             let history = wait_for_history_match(
                 &nodes,
@@ -2416,41 +2510,7 @@ async fn test_trbfv_actor() -> Result<()> {
             );
         }
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
-        let trigger_pipe = trigger_pipes
-            .lock()
-            .unwrap()
-            .remove(&nodes[node_index].address())
-            .context("restart event pipe is missing")?;
-        bus.event_bus()
-            .send(Unsubscribe::new(EventType::All, trigger_pipe))
-            .await?;
-        nodes
-            .restart_node(
-                node_index,
-                Box::pin(async {
-                    let mut builder =
-                        CiphernodeBuilder::full(identity.rng, cipher.clone(), zk_backend.clone())
-                            .with_history_collector()
-                            .with_shared_taskpool(&task_pool)
-                            .with_multithread_concurrent_jobs(concurrent_jobs)
-                            .with_shared_multithread_report(&multithread_report)
-                            .with_signer(identity.signer)
-                            .with_eventstore_aggregate_config_for_testing(
-                                benchmark_aggregate_config.clone(),
-                            )
-                            .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                            .with_chains(std::slice::from_ref(&bench_chain_config))
-                            .with_persistence(&identity.log_path, &identity.kv_path)
-                            .with_logging();
-                    if !proof_aggregation_enabled {
-                        builder = builder.with_proof_aggregation_disabled_for_testing();
-                    }
-                    let node = builder.build().await?;
-                    connect_trigger(&node);
-                    Ok(node)
-                }),
-            )
-            .await?;
+        restart_persisted_node(&mut nodes, node_index).await?;
         println!("Restarted committee party {restart_party_id} at node index {node_index}");
     }
 

@@ -14,6 +14,7 @@
 mod actors;
 mod domain;
 pub mod ext;
+mod history;
 mod repo;
 #[cfg(test)]
 mod test_support;

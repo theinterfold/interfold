@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::ext::{AggregatorRoleExtension, PublicKeyAggregatorExtension};
-use crate::test_support::commit_replay_past;
+use crate::test_support::{commit_replay_past, history_reader};
 use crate::PublicKeyRepositoryFactory;
 use e3_data::{RepositoriesFactory, Snapshot};
 use e3_events::{
@@ -115,7 +115,7 @@ async fn replay_selection() -> Result<ReplayedAggregator> {
         party_id: 0,
         committee: committee.clone(),
     };
-    PublicKeyAggregatorExtension::create(&bus).on_event(
+    PublicKeyAggregatorExtension::create(&bus, history_reader(&[])?).on_event(
         &mut ctx,
         &InterfoldEvent::<Unsequenced>::new_with_timestamp(
             selected.into(),
