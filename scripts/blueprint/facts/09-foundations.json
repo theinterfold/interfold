@@ -711,7 +711,7 @@
       "id": "e3-test-support",
       "documentation": [{ "title": "Test harness boundaries", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
-      "path": "crates/test-support",
+      "path": "crates/testing/support",
       "one_line": "Unpublished mechanical test support: seeded RNGs, scoped tracing and bb discovery, with no internal dependencies.",
       "actors": [],
       "consumes": [],
@@ -721,11 +721,11 @@
       "read_first": [
         {
           "why": "per-node RNGs preserve distinct mutexes",
-          "ref": "crates/test-support/src/lib.rs@22@pub fn derive_shared_rng("
+          "ref": "crates/testing/support/src/lib.rs@22@pub fn derive_shared_rng("
         },
         {
           "why": "read-only discovery of an existing proof backend",
-          "ref": "crates/test-support/src/lib.rs@31@pub async fn find_bb()"
+          "ref": "crates/testing/support/src/lib.rs@31@pub async fn find_bb()"
         }
       ],
       "rust_patterns": [],
@@ -737,7 +737,7 @@
       "id": "e3-bfv-test-support",
       "documentation": [{ "title": "Test harness boundaries", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
-      "path": "crates/bfv-test-support",
+      "path": "crates/testing/bfv-support",
       "one_line": "Unpublished random encrypted-ballot and tally fixtures shared by TrBFV and system tests.",
       "actors": [],
       "consumes": [],
@@ -747,11 +747,11 @@
       "read_first": [
         {
           "why": "random ballots encrypted with the supplied public key",
-          "ref": "crates/bfv-test-support/src/lib.rs@18@pub fn generate_ciphertexts("
+          "ref": "crates/testing/bfv-support/src/lib.rs@18@pub fn generate_ciphertexts("
         },
         {
           "why": "column-wise encrypted tally",
-          "ref": "crates/bfv-test-support/src/lib.rs@56@pub fn run_application("
+          "ref": "crates/testing/bfv-support/src/lib.rs@56@pub fn run_application("
         }
       ],
       "rust_patterns": [],
@@ -763,13 +763,13 @@
       "id": "e3-tests",
       "documentation": [{ "title": "Integration evidence", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
-      "path": "crates/tests",
+      "path": "crates/testing/system",
       "one_line": "System-test scenarios, local mock transport and registration, plus the external integration fixture bins. Node assembly dependencies are dev-only.",
       "actors": [
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3059@struct StoredEvents("
+          "ref": "crates/testing/system/tests/integration.rs@3059@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -778,69 +778,69 @@
         {
           "name": "the mock transport's record store",
           "where": "memory",
-          "ref": "crates/tests/tests/ciphernode_system/libp2p_mock.rs@26@store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,"
+          "ref": "crates/testing/system/tests/ciphernode_system/libp2p_mock.rs@26@store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,"
         }
       ],
       "key_types": [
         {
           "name": "CiphernodeSystemBuilder",
           "what": "integration-local builder for groups of nodes and their optional network mock",
-          "ref": "crates/tests/tests/ciphernode_system/mod.rs@37@pub struct CiphernodeSystemBuilder<'a> {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@37@pub struct CiphernodeSystemBuilder<'a> {"
         },
         {
           "name": "CiphernodeSystem",
           "what": "built nodes and network mock, with restart support",
-          "ref": "crates/tests/tests/ciphernode_system/mod.rs@114@pub struct CiphernodeSystem {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@114@pub struct CiphernodeSystem {"
         },
         {
           "name": "Libp2pMock",
           "what": "local gossip/DHT and restart transport, not peer authorization",
-          "ref": "crates/tests/tests/ciphernode_system/libp2p_mock.rs@25@pub struct Libp2pMock {"
+          "ref": "crates/testing/system/tests/ciphernode_system/libp2p_mock.rs@25@pub struct Libp2pMock {"
         },
         {
           "name": "AddToCommittee",
           "what": "synthetic registration events for the integration suite",
-          "ref": "crates/tests/tests/common/committee.rs@12@pub struct AddToCommittee {"
+          "ref": "crates/testing/system/tests/common/committee.rs@12@pub struct AddToCommittee {"
         }
       ],
       "read_first": [
         {
           "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/tests/tests/integration.rs@1328@async fn test_trbfv_actor()"
+          "ref": "crates/testing/system/tests/integration.rs@1328@async fn test_trbfv_actor()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/tests/tests/integration.rs@1614@.simulate_libp2p()"
+          "ref": "crates/testing/system/tests/integration.rs@1614@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/tests/tests/integration.rs@365@async fn setup_test_zk_backend("
+          "ref": "crates/testing/system/tests/integration.rs@365@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
-          "ref": "crates/tests/tests/layout_lock.rs@249@fn persisted_layouts_match_the_locked_fixture()"
+          "ref": "crates/testing/system/tests/layout_lock.rs@249@fn persisted_layouts_match_the_locked_fixture()"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/tests/tests/integration.rs@1326@#[actix::test]"
+          "ref": "crates/testing/system/tests/integration.rs@1326@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/tests/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/testing/system/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3061@impl actix::Actor for StoredEvents {"
+          "ref": "crates/testing/system/tests/integration.rs@3061@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",
           "note": "the layout test is a plain #[test] that calls the fixture check",
-          "ref": "crates/tests/tests/layout_lock.rs@248@#[test]"
+          "ref": "crates/testing/system/tests/layout_lock.rs@248@#[test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],
@@ -851,7 +851,7 @@
       "id": "e3-layout-lock",
       "documentation": [{ "title": "Schema and layout validation", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
-      "path": "crates/layout-lock",
+      "path": "crates/testing/layout-lock",
       "one_line": "Test helper that samples persisted and wire types from their serde layout and checks their bincode encoding against a fixture.",
       "actors": [],
       "consumes": [],
@@ -860,59 +860,59 @@
         {
           "name": "checked-in fixture file, read by assert_fixture and rewritten under LAYOUT_LOCK_UPDATE",
           "where": "disk",
-          "ref": "crates/layout-lock/src/lib.rs@892@let fixture = std::fs::read_to_string(path)"
+          "ref": "crates/testing/layout-lock/src/lib.rs@892@let fixture = std::fs::read_to_string(path)"
         }
       ],
       "key_types": [
         {
           "name": "Synth",
           "what": "serde Deserializer that fills a type with samples built from its layout",
-          "ref": "crates/layout-lock/src/lib.rs@156@struct Synth<'a> {"
+          "ref": "crates/testing/layout-lock/src/lib.rs@156@struct Synth<'a> {"
         },
         {
           "name": "SynthError",
           "what": "error type used while building samples",
-          "ref": "crates/layout-lock/src/lib.rs@82@struct SynthError(String);"
+          "ref": "crates/testing/layout-lock/src/lib.rs@82@struct SynthError(String);"
         }
       ],
       "read_first": [
         {
           "why": "module docs: how samples are built and the limits of the check",
-          "ref": "crates/layout-lock/src/lib.rs@7@Sample values built from serde layouts"
+          "ref": "crates/testing/layout-lock/src/lib.rs@7@Sample values built from serde layouts"
         },
         {
           "why": "sample_rows: builds the rows for one root type",
-          "ref": "crates/layout-lock/src/lib.rs@724@pub fn sample_rows<T, F>"
+          "ref": "crates/testing/layout-lock/src/lib.rs@724@pub fn sample_rows<T, F>"
         },
         {
           "why": "assert_fixture: compares the rows with the checked-in file",
-          "ref": "crates/layout-lock/src/lib.rs@876@pub fn assert_fixture(path: &Path, rows: &[String]) {"
+          "ref": "crates/testing/layout-lock/src/lib.rs@876@pub fn assert_fixture(path: &Path, rows: &[String]) {"
         },
         {
           "why": "the update switch, which the CI check guards",
-          "ref": "crates/layout-lock/src/lib.rs@878@if std::env::var_os(UPDATE_ENV).is_some() {"
+          "ref": "crates/testing/layout-lock/src/lib.rs@878@if std::env::var_os(UPDATE_ENV).is_some() {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-impl",
           "note": "Synth implements serde's Deserializer, so serde drives the sample build",
-          "ref": "crates/layout-lock/src/lib.rs@360@impl<'de> de::Deserializer<'de> for Synth<'_> {"
+          "ref": "crates/testing/layout-lock/src/lib.rs@360@impl<'de> de::Deserializer<'de> for Synth<'_> {"
         },
         {
           "pattern": "newtype",
           "note": "SynthError wraps a String",
-          "ref": "crates/layout-lock/src/lib.rs@82@struct SynthError(String);"
+          "ref": "crates/testing/layout-lock/src/lib.rs@82@struct SynthError(String);"
         },
         {
           "pattern": "generic-where",
           "note": "sample_rows bounds T in a where clause",
-          "ref": "crates/layout-lock/src/lib.rs@726@T: Serialize + DeserializeOwned,"
+          "ref": "crates/testing/layout-lock/src/lib.rs@726@T: Serialize + DeserializeOwned,"
         },
         {
           "pattern": "unit-test",
           "note": "the crate's own tests sit in a cfg(test) module",
-          "ref": "crates/layout-lock/src/lib.rs@971@#[test]"
+          "ref": "crates/testing/layout-lock/src/lib.rs@971@#[test]"
         }
       ],
       "depends_on": ["e3-utils"],

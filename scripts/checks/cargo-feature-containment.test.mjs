@@ -122,7 +122,7 @@ test('shared fixture support stays dev-only, unpublished and independent of inte
 test('fixture-bin dependencies exclude node assembly, including aliases and target tables', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-fixture-bin-boundary-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
-  for (const path of ['scripts/checks', 'crates/tests']) mkdirSync(join(dir, path), { recursive: true })
+  for (const path of ['scripts/checks', 'crates/testing/system']) mkdirSync(join(dir, path), { recursive: true })
   copyFileSync(new URL('cargo-feature-containment.py', import.meta.url), join(dir, 'scripts/checks/check.py'))
   writeFileSync(
     join(dir, 'Cargo.toml'),
@@ -137,7 +137,7 @@ test('fixture-bin dependencies exclude node assembly, including aliases and targ
   assert.ok(python, 'install Python with tomllib or tomli')
   const check = (table, dependency) => {
     writeFileSync(
-      join(dir, 'crates/tests/Cargo.toml'),
+      join(dir, 'crates/testing/system/Cargo.toml'),
       `[package]\nname = "e3-tests"\nversion = "0.1.0"\npublish = false\n[${table}]\n${dependency}\n`,
     )
     return spawnSync(python, ['scripts/checks/check.py'], { cwd: dir, encoding: 'utf8' })

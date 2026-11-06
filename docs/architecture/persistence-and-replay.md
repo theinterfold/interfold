@@ -268,11 +268,11 @@ opening/repair/decoding; `node validate`, including `--repair`, uses it and leav
 bytes unchanged. Global storage schema is **not linked** to `protocol-release.toml`; wire major
 changes are separate.
 
-[Layout locks](../../crates/layout-lock/) detect encoding drift and same-encoding field
+[Layout locks](../../crates/testing/layout-lock/) detect encoding drift and same-encoding field
 swaps/renames for roots explicitly listed by hand.
-[Shared fixtures](../../crates/tests/tests/layout_lock.rs) cover events, keyshares, gossip, public
-repositories; e3-slashing/e3-zk-prover cover private roots and e3-net covers DHT documents and
-sample wire frames. **Not covered:** unlisted roots, repository store keys, hand-written log
+[Shared fixtures](../../crates/testing/system/tests/layout_lock.rs) cover events, keyshares, gossip,
+public repositories; e3-slashing/e3-zk-prover cover private roots and e3-net covers DHT documents
+and sample wire frames. **Not covered:** unlisted roots, repository store keys, hand-written log
 framing, or opaque encoded/encrypted contents (SharedSecret shares, fhe.rs keys in SensitiveBytes).
 Rewriting a fixture does not raise a version; review must connect the diff to schema or wire
 rollout. Rust type compatibility is not a migration strategy.

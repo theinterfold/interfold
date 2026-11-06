@@ -67,5 +67,6 @@ Run `cargo test --locked -p e3-request`. Routing/lifecycle `workflow_tests.rs` c
 [`routing/tests.rs`](src/routing/tests.rs) exercises checkpoint hydration and failed-context
 teardown. Buffer/capacity tests cover per-E3/global limits and retained allocation; pre-admission
 cases cover ordered delivery, overflow, teardown, and completed-E3 rejection. Context/typed-map
-tests cover recipient order and lookup. Whole-node restart is in [e3-tests](../../tests/README.md).
-See [AGENTS.md](AGENTS.md) for routing/checkpoint changes.
+tests cover recipient order and lookup. Whole-node restart is in
+[e3-tests](../../testing/system/README.md). See [AGENTS.md](AGENTS.md) for routing/checkpoint
+changes.

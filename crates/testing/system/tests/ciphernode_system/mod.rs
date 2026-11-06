@@ -22,7 +22,7 @@ type SetupFn<'a> =
     Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<CiphernodeHandle>> + 'a>> + 'a>;
 
 /// This builds a ciphernode system using the actor model only. This helps us simulate the network
-/// in tests that we can run in the /crates/tests crate
+/// in tests that we can run in the /crates/testing/system crate
 /// ```ignore
 /// let nodes = CiphernodeSystemBuilder::new()
 ///     .add_group(6, || async {

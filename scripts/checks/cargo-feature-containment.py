@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # tomllib is stdlib only from Python 3.11
 
 TARGET = "test-only-skip-proof-aggregation"
 ROOT = Path(__file__).resolve().parents[2]
-ALLOWED_ENABLER = Path("crates/tests/Cargo.toml")
+ALLOWED_ENABLER = Path("crates/testing/system/Cargo.toml")
 SAMPLES = "e3-zk-samples"
 # Unpublished development-tool crates that link samples as a normal dependency because
 # their executable itself, not only their tests, prepares artificial material.
@@ -178,7 +178,7 @@ def main() -> int:
     for failure in failures:
         print(f"  - {failure}")
     print(
-        "  Only crates/tests can enable proof skipping. ZK samples require dev-dependencies,"
+        "  Only crates/testing/system can enable proof skipping. ZK samples require dev-dependencies,"
         " except in the unpublished development benchmark owner. Mechanical/BFV support must remain"
         " unpublished, dev-only and independent of internal crates."
     )

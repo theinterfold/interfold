@@ -16,4 +16,4 @@ Choose the affected target using the
 [README test map/prerequisites](README.md#tests-choose-a-target). Encoding changes need the consumer
 layout lock; behavioral changes need a named history/restart scenario. Ignored/skipped scenarios and
 layout checks are not full restart or cryptographic assurance; see
-[persistence](../../docs/architecture/persistence-and-replay.md).
+[persistence](../../../docs/architecture/persistence-and-replay.md).

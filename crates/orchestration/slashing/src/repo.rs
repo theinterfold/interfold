@@ -31,7 +31,7 @@ impl CommitmentConsistencyRepositoryFactory for Repositories {
 #[cfg(test)]
 mod layout_lock {
     //! Locks the encoded layout of the commitment consistency snapshot. `e3-tests` locks the public
-    //! roots (`crates/tests/tests/layout_lock.rs`) but cannot reach this one.
+    //! roots (`crates/testing/system/tests/layout_lock.rs`) but cannot reach this one.
 
     use super::*;
     use serde::{de::DeserializeOwned, Serialize};

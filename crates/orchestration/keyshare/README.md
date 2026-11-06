@@ -56,11 +56,12 @@ dimensions, roster transitions, proof batches, and recovery limits are in
 ## Tests
 
 Run `cargo test --locked -p e3-keyshare` after the
-[system prerequisites](../../tests/README.md#prerequisites-and-assurance). Its test graph includes
-EVM/prover build steps. Actor/mock coverage is separate from matching real-proof acceptance.
+[system prerequisites](../../testing/system/README.md#prerequisites-and-assurance). Its test graph
+includes EVM/prover build steps. Actor/mock coverage is separate from matching real-proof
+acceptance.
 
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,
 state-transition, and payload-digest cases sit beside their pure modules. For complete
-DKG/decryption scenarios use [e3-tests](../../tests/README.md). [AGENTS.md](AGENTS.md) carries
-phase-order and secret-lifecycle editing rules.
+DKG/decryption scenarios use [e3-tests](../../testing/system/README.md). [AGENTS.md](AGENTS.md)
+carries phase-order and secret-lifecycle editing rules.

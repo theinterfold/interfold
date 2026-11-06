@@ -296,7 +296,7 @@ jobs:
           timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y gettext-base python3-websocket python3-yaml
           PATH="/usr/bin:$PATH" npm test --prefix dappnode
       - name: Test the ciphernode image state location
-        run: bash crates/tests/docker/test-ciphernode-entrypoint.sh
+        run: bash crates/testing/system/docker/test-ciphernode-entrypoint.sh
 
   test_dappnode_image:
     needs: [detect_changes]
