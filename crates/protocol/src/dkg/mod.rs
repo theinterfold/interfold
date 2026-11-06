@@ -5,9 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! One committee member's DKG for one E3: its encryption key (C0), the threshold shares it deals
-//! and receives (C1-C3), and its Ready report.
+//! and receives (C1-C3), the roster, its decryption key (C4), and its keyshare.
 
 mod attestation;
+mod decryption_key;
 mod keys;
 mod roster;
 mod shares;
@@ -22,10 +23,12 @@ use crate::{
     BlobRef, E3Id, UnixSecs,
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256};
+use decryption_key::DecryptionKeys;
+use e3_committee::CiphernodesCommitteeSize;
 use keys::Keys;
 use roster::Rosters;
 use serde::{Deserialize, Serialize};
-use shares::Shares;
+use shares::{Dealt, Shares};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What committee members send each other during the DKG.
@@ -40,6 +43,23 @@ pub enum DkgMessage {
     Ready(Vec<Dealer>),
     /// The H dealers whose shares every member sums into its decryption key, ascending by member.
     Roster(Vec<Dealer>),
+    /// A roster member's proofs that its decryption key sums the roster's shares (C4).
+    DecryptionKey(DecryptionKeyMessage),
+    /// A roster member's public-key share and its C1 proof, for the public-key aggregator.
+    Keyshare(KeyshareMessage),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecryptionKeyMessage {
+    pub c4a: SignedProof,
+    /// One proof per smudging-noise set.
+    pub c4b: Vec<SignedProof>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyshareMessage {
+    pub pk_share: BlobRef,
+    pub c1: SignedProof,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +122,10 @@ impl DkgMessage {
                     + proofs.map(SignedProof::size).sum::<u64>()
             }
             Self::Ready(dealers) | Self::Roster(dealers) => 52 * dealers.len() as u64,
+            Self::DecryptionKey(message) => {
+                message.c4a.size() + message.c4b.iter().map(SignedProof::size).sum::<u64>()
+            }
+            Self::Keyshare(message) => message.pk_share.len + message.c1.size(),
         }
     }
 }
@@ -135,6 +159,23 @@ pub enum DkgWork {
         secret: BlobRef,
         message: Box<SharesMessage>,
     },
+    /// This node's decryption key, the sum of the roster dealers' shares for it, and its C4
+    /// proofs. `shares` holds the encrypted shares of every roster dealer but this node, which
+    /// uses `own_share`; `c2` holds every roster dealer's C2a and C2b proofs, which C4 binds.
+    MakeDecryptionKey {
+        committee: Vec<Address>,
+        secret: BlobRef,
+        own_share: BlobRef,
+        shares: BTreeMap<Address, BlobRef>,
+        c2: BTreeMap<Address, (ZkProof, ZkProof)>,
+    },
+    /// Check a roster member's C4 proofs against the roster dealers' C2 proofs.
+    CheckDecryptionKey {
+        member: Address,
+        committee: Vec<Address>,
+        c2: BTreeMap<Address, (ZkProof, ZkProof)>,
+        message: Box<DecryptionKeyMessage>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +184,8 @@ pub enum DkgWorkResult {
     EncryptionKeyChecked { sender: Address, valid: bool },
     SharesMade(OwnShares),
     SharesChecked { dealer: Address, valid: bool },
+    DecryptionKeyMade(OwnDecryptionKey),
+    DecryptionKeyChecked { member: Address, valid: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +193,8 @@ pub enum DkgSignature {
     EncryptionKeyProof,
     /// C1, C2a, C2b, then each recipient's C3a and C3b proofs, recipients ascending.
     DealerProofs,
+    /// C4a, then each C4b proof.
+    DecryptionKeyProofs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +216,15 @@ pub struct OwnShares {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnDecryptionKey {
+    /// The summed secret-key and smudging-noise shares, sealed in the job runner's blob store,
+    /// for decryption.
+    pub key: BlobRef,
+    pub c4a: ZkProof,
+    pub c4b: Vec<ZkProof>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipientShares {
     pub shares: BlobRef,
     pub c3a: Vec<ZkProof>,
@@ -185,6 +239,11 @@ pub enum DkgFailure {
     TooFewKeys,
     /// The chain expelled this node from the committee.
     Expelled,
+    /// The chain expelled a roster member before the key was published. The key needs every
+    /// roster dealer, so the DKG cannot finish.
+    RosterMemberExpelled,
+    /// T or fewer roster members have a valid decryption key, too few to ever decrypt.
+    TooFewValidDecryptionKeys,
     /// The canonical DKG deadline passed.
     DeadlinePassed,
 }
@@ -198,8 +257,16 @@ enum Phase {
     CollectingKeys(OwnKey),
     MakingShares(OwnKey),
     SigningShares(OwnKey, Box<OwnShares>),
-    /// Shares sent; the contribution is what Ready reports name for this node.
-    Dealt(OwnKey, Dealer),
+    /// Shares sent: collecting shares, Ready reports, and a roster.
+    Dealt(OwnKey, Box<Dealt>),
+    MakingDecryptionKey(Box<Dealt>),
+    SigningDecryptionKey(Box<Dealt>, Box<OwnDecryptionKey>),
+    /// C4 sent: the keyshare waits for every other roster member's C4 verdict.
+    DecryptionKeySent(Box<Dealt>, BlobRef),
+    /// The sealed decryption key, kept for decryption.
+    KeyshareSent(BlobRef),
+    /// Outside the roster: this node only checks the roster members' C4 proofs.
+    Observing,
     Failed(DkgFailure),
 }
 
@@ -209,7 +276,7 @@ pub struct Dkg {
     me: Address,
     /// The finalized committee, ascending by address; a party's ID is its index.
     members: Vec<Address>,
-    h: usize,
+    size: CiphernodesCommitteeSize,
     timing: DkgTiming,
     expelled: BTreeSet<Address>,
     keys: Keys,
@@ -217,6 +284,7 @@ pub struct Dkg {
     /// The latest Ready report of each member, this node's included.
     ready: BTreeMap<Address, Vec<Dealer>>,
     rosters: Rosters,
+    decryption_keys: DecryptionKeys,
     phase: Phase,
 }
 
@@ -225,7 +293,7 @@ impl Dkg {
         e3: E3Id,
         me: Address,
         members: Vec<Address>,
-        h: usize,
+        size: CiphernodesCommitteeSize,
         timing: DkgTiming,
         now: UnixSecs,
     ) -> (Self, Vec<Effect>) {
@@ -233,13 +301,14 @@ impl Dkg {
             e3,
             me,
             members,
-            h,
+            size,
             timing,
             expelled: BTreeSet::new(),
             keys: Keys::default(),
             shares: Shares::default(),
             ready: BTreeMap::new(),
             rosters: Rosters::default(),
+            decryption_keys: DecryptionKeys::default(),
             phase: Phase::MakingKey,
         };
         if now >= timing.key_cutoff() {
@@ -255,10 +324,7 @@ impl Dkg {
     }
 
     pub fn keys_collected(&self) -> bool {
-        matches!(
-            self.phase,
-            Phase::MakingShares(_) | Phase::SigningShares(..) | Phase::Dealt(..)
-        )
+        self.running() && !self.collecting_keys()
     }
 
     pub fn ready(&self, member: &Address) -> Option<&[Dealer]> {
@@ -289,6 +355,8 @@ impl Dkg {
                 self.receive_roster(sender, dealers);
                 Vec::new()
             }
+            DkgMessage::DecryptionKey(message) => self.receive_decryption_key(sender, message),
+            DkgMessage::Keyshare(_) => Vec::new(),
         };
         effects.extend(self.advance_roster(now));
         effects
@@ -302,6 +370,10 @@ impl Dkg {
             }
             DkgWorkResult::SharesMade(made) => self.shares_made(made),
             DkgWorkResult::SharesChecked { dealer, valid } => self.shares_checked(dealer, valid),
+            DkgWorkResult::DecryptionKeyMade(made) => self.decryption_key_made(made),
+            DkgWorkResult::DecryptionKeyChecked { member, valid } => {
+                self.decryption_key_checked(member, valid)
+            }
         };
         effects.extend(self.advance_roster(now));
         effects
@@ -316,6 +388,7 @@ impl Dkg {
         let mut effects = match purpose {
             DkgSignature::EncryptionKeyProof => self.key_signed(signatures),
             DkgSignature::DealerProofs => self.shares_signed(signatures),
+            DkgSignature::DecryptionKeyProofs => self.decryption_key_signed(signatures),
         };
         effects.extend(self.advance_roster(now));
         effects
@@ -327,6 +400,13 @@ impl Dkg {
         }
         if member == self.me {
             self.phase = Phase::Failed(DkgFailure::Expelled);
+            return Vec::new();
+        }
+        if self
+            .roster()
+            .is_some_and(|roster| roster.iter().any(|d| d.member == member))
+        {
+            self.phase = Phase::Failed(DkgFailure::RosterMemberExpelled);
             return Vec::new();
         }
         let mut effects = self.close_keys_if_all_in();
@@ -370,6 +450,14 @@ impl Dkg {
 
     fn running(&self) -> bool {
         !matches!(self.phase, Phase::Failed(_))
+    }
+
+    fn h(&self) -> usize {
+        self.size.values().h
+    }
+
+    fn t(&self) -> usize {
+        self.size.values().threshold
     }
 
     fn is_member(&self, address: Address) -> bool {

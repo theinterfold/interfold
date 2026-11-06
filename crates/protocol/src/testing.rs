@@ -8,8 +8,8 @@
 
 use crate::{
     dkg::{
-        DkgMessage, DkgTiming, DkgWork, DkgWorkResult, KeyMessage, OwnKey, OwnShares,
-        RecipientShares, SharesMessage,
+        DecryptionKeyMessage, DkgMessage, DkgTiming, DkgWork, DkgWorkResult, KeyMessage,
+        OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::{
         Body, ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, PeerMessage, Signed,
@@ -216,6 +216,55 @@ pub fn shares_checked(e3: E3Id, dealer: u64, valid: bool) -> Input {
         e3,
         result: WorkResult::Dkg(DkgWorkResult::SharesChecked {
             dealer: address(dealer),
+            valid,
+        }),
+    })
+}
+
+/// A decryption key the job runner made for this node, with one smudging-noise set.
+pub fn own_decryption_key(fill: u8) -> OwnDecryptionKey {
+    OwnDecryptionKey {
+        key: BlobRef {
+            hash: B256::repeat_byte(fill),
+            len: 100,
+        },
+        c4a: proof(fill),
+        c4b: vec![proof(!fill)],
+    }
+}
+
+pub fn decryption_key_made(e3: E3Id, own: OwnDecryptionKey) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::DecryptionKeyMade(own)),
+    })
+}
+
+/// Operator `member`'s C4 proofs, signed by operator `signer`.
+pub fn decryption_key(e3: E3Id, member: u64, signer: u64) -> Input {
+    let signed = |proof_type, proof: ZkProof| SignedProof {
+        signature: signature(signer, proof.payload_signing_hash(e3, proof_type)),
+        proof,
+    };
+    Input::Peer(PeerMessage {
+        e3,
+        sender: address(member),
+        body: Body::Dkg(DkgMessage::DecryptionKey(DecryptionKeyMessage {
+            c4a: signed(ProofType::C4aSkShareDecryption, proof(member as u8)),
+            c4b: vec![signed(
+                ProofType::C4bESmShareDecryption,
+                proof(!(member as u8)),
+            )],
+        })),
+    })
+}
+
+/// The job runner's verdict on operator `member`'s C4 proofs.
+pub fn decryption_key_checked(e3: E3Id, member: u64, valid: bool) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::DecryptionKeyChecked {
+            member: address(member),
             valid,
         }),
     })

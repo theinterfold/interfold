@@ -307,8 +307,8 @@ impl Node {
                 let Some(state) = self.e3s.get_mut(&e3) else {
                     return Vec::new();
                 };
-                let h = state.committee_size.values().h;
-                let (dkg, mut effects) = Dkg::start(e3, self.me, members, h, dkg, now);
+                let (dkg, mut effects) =
+                    Dkg::start(e3, self.me, members, state.committee_size, dkg, now);
                 state.dkg = Some(dkg);
                 state.stage = Stage::CommitteeFinalized;
                 for message in self.held.take(&e3) {

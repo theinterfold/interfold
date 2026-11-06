@@ -72,6 +72,15 @@ Each rule is checkable in review.
 - **D14. Signatures are requested in batches.** One request carries every hash of a step (a dealer's
   C1, C2, and per-recipient C3 proofs), and its answer returns every signature in order.
 
+- **D15. Only roster members make a decryption key (C4) and send a keyshare.** Decryption admits
+  only roster members' C6 shares ([threshold decryption](threshold-decryption.md)), and the key
+  aggregates only roster keyshares, so a C4 or keyshare from outside the roster changes nothing.
+  Every member still checks the roster members' C4 proofs, so accusations against them can reach
+  quorum.
+- **D16. Accepting a roster fixes it.** C4 starts in the step that accepts the roster, as it does
+  live today; the current node's replacement by a lower proposer only happens while effects are
+  disabled during replay, which v2 does not have.
+
 ## Problems in the current node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

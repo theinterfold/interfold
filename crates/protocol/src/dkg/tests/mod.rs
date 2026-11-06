@@ -7,6 +7,7 @@
 //! The DKG at the node boundary: inputs in, effects and DKG state out. The committee is
 //! Minimum: operators 1, 2, and ME, with H = 2.
 
+mod decryption_key;
 mod keys;
 mod roster;
 mod shares;
@@ -127,4 +128,17 @@ fn from(sender: u64, message: DkgMessage) -> Input {
         sender: address(sender),
         body: Body::Dkg(message),
     })
+}
+
+fn ready(sender: u64, dealers: &[u64], node: u64) -> Input {
+    from(sender, DkgMessage::Ready(named(dealers, node)))
+}
+
+fn roster(proposer: u64, dealers: &[u64], node: u64) -> Input {
+    from(proposer, DkgMessage::Roster(named(dealers, node)))
+}
+
+fn accepted(node: &Node) -> Option<Vec<Address>> {
+    let roster = dkg(node).roster()?;
+    Some(roster.iter().map(|dealer| dealer.member).collect())
 }

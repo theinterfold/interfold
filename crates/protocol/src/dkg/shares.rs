@@ -11,16 +11,28 @@ use super::{Dealer, Dkg, DkgMessage, DkgSignature, DkgWork, OwnShares, Phase, Sh
 use crate::{
     node::Effect,
     proof::{ProofType, SignedProof, ZkProof},
-    E3Id,
+    BlobRef, E3Id,
 };
 use alloy_primitives::{Address, Bytes};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// What this node dealt: its contribution, which Ready reports and rosters name, and what its C4
+/// and its keyshare need.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Dealt {
+    pub(super) contribution: Dealer,
+    pub(super) pk_share: BlobRef,
+    pub(super) own_share: BlobRef,
+    pub(super) c1: SignedProof,
+    pub(super) c2a: ZkProof,
+    pub(super) c2b: ZkProof,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Shares {
     /// The first signed shares each dealer sent this node.
-    received: BTreeMap<Address, SharesMessage>,
+    pub(super) received: BTreeMap<Address, SharesMessage>,
     /// Each received dealer's verdict: whether its shares match their proofs.
     checked: BTreeMap<Address, bool>,
     /// After the share checkpoint, Ready no longer waits for missing dealers.
@@ -129,7 +141,7 @@ impl Dkg {
                 signature,
             })
             .collect();
-        let [_c1, c2a, c2b, c3 @ ..] = signed.as_slice() else {
+        let [c1, c2a, c2b, c3 @ ..] = signed.as_slice() else {
             return Vec::new();
         };
         let mut c3 = c3.iter().cloned();
@@ -145,8 +157,15 @@ impl Dkg {
                 c3b: c3.by_ref().take(shares.c3b.len()).collect(),
             });
         }
-        let contribution = Dealer::new(self.me, made.pk_share, &made.c2a, &made.c2b);
-        self.phase = Phase::Dealt(own.clone(), contribution);
+        let dealt = Dealt {
+            contribution: Dealer::new(self.me, made.pk_share, &made.c2a, &made.c2b),
+            pk_share: made.pk_share,
+            own_share: made.own_share,
+            c1: c1.clone(),
+            c2a: made.c2a.clone(),
+            c2b: made.c2b.clone(),
+        };
+        self.phase = Phase::Dealt(own.clone(), Box::new(dealt));
         let mut effects: Vec<Effect> = messages
             .into_iter()
             .map(|message| self.gossip(DkgMessage::Shares(Box::new(message))))
@@ -195,7 +214,7 @@ impl Dkg {
         let accepted = reporter != self.me
             && self.is_member(reporter)
             && self.is_live(&reporter)
-            && dealers.len() >= self.h
+            && dealers.len() >= self.h()
             && dealers
                 .windows(2)
                 .all(|pair| pair[0].member < pair[1].member)
@@ -215,7 +234,7 @@ impl Dkg {
     /// a valid key at this node are missing: this node dealt those no shares, so no roster can
     /// hold both, and waiting for them gains nothing.
     pub(super) fn send_ready_if_due(&mut self) -> Vec<Effect> {
-        let Phase::Dealt(_, contribution) = &self.phase else {
+        let Phase::Dealt(_, dealt) = &self.phase else {
             return Vec::new();
         };
         let missing: Vec<&Address> = self
@@ -240,7 +259,7 @@ impl Dkg {
         if !(complete || self.shares.checkpoint_passed || only_keyless_missing) {
             return Vec::new();
         }
-        let mut dealers = vec![*contribution];
+        let mut dealers = vec![dealt.contribution];
         dealers.extend(
             self.shares
                 .checked
@@ -257,7 +276,7 @@ impl Dkg {
                 }),
         );
         dealers.sort_by_key(|dealer| dealer.member);
-        if dealers.len() < self.h || self.ready.get(&self.me) == Some(&dealers) {
+        if dealers.len() < self.h() || self.ready.get(&self.me) == Some(&dealers) {
             return Vec::new();
         }
         self.ready.insert(self.me, dealers.clone());

@@ -8,10 +8,10 @@
 //! feeds a shadow copy of its machine that never crashes and never touches a store; the node must
 //! always produce the same effects as its shadow and end in the same state.
 
-use alloy_primitives::{keccak256, Bytes, B256};
+use alloy_primitives::{keccak256, Address, Bytes, B256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
-    dkg::{DkgWork, DkgWorkResult, OwnKey, OwnShares, RecipientShares},
+    dkg::{DkgWork, DkgWorkResult, OwnDecryptionKey, OwnKey, OwnShares, RecipientShares},
     node::{
         ChainEvent, ChainFact, Effect, Input, Job, JobDone, LogPosition, Node, PeerMessage, Work,
         WorkResult,
@@ -301,6 +301,26 @@ impl Sim {
                     valid: message.shares.hash == expected,
                 }
             }
+            Work::Dkg(DkgWork::MakeDecryptionKey { c2, .. }) => {
+                let binds = |proof: ZkProof| ZkProof {
+                    public_inputs: vec![c2_commitment(c2)],
+                    ..proof
+                };
+                DkgWorkResult::DecryptionKeyMade(OwnDecryptionKey {
+                    key: blob(self.hash()),
+                    c4a: binds(self.proof()),
+                    c4b: vec![binds(self.proof())],
+                })
+            }
+            Work::Dkg(DkgWork::CheckDecryptionKey {
+                member,
+                c2,
+                message,
+                ..
+            }) => DkgWorkResult::DecryptionKeyChecked {
+                member: *member,
+                valid: message.c4a.proof.public_inputs == [c2_commitment(c2)],
+            },
         };
         WorkResult::Dkg(result)
     }
@@ -340,6 +360,16 @@ impl Sim {
 
 fn blob(hash: B256) -> BlobRef {
     BlobRef { hash, len: 1_000 }
+}
+
+/// What a mock C4 proof commits to: the roster dealers' C2 statements, in roster order.
+fn c2_commitment(c2: &BTreeMap<Address, (ZkProof, ZkProof)>) -> B256 {
+    let statements: Vec<u8> = c2
+        .values()
+        .flat_map(|(c2a, c2b)| c2a.public_inputs.iter().chain(&c2b.public_inputs))
+        .flat_map(|word| word.0)
+        .collect();
+    keccak256(statements)
 }
 
 #[cfg(test)]

@@ -9,14 +9,6 @@ use crate::node::ChainFact;
 
 const ROSTER_BUDGET: u64 = 600;
 
-fn ready(sender: u64, dealers: &[u64], node: u64) -> Input {
-    from(sender, DkgMessage::Ready(named(dealers, node)))
-}
-
-fn roster(proposer: u64, dealers: &[u64], node: u64) -> Input {
-    from(proposer, DkgMessage::Roster(named(dealers, node)))
-}
-
 fn rosters_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
     effects
         .iter()
@@ -28,11 +20,6 @@ fn rosters_sent(effects: &[Effect]) -> Vec<Vec<Address>> {
             _ => None,
         })
         .collect()
-}
-
-fn accepted(node: &Node) -> Option<Vec<Address>> {
-    let roster = dkg(node).roster()?;
-    Some(roster.iter().map(|dealer| dealer.member).collect())
 }
 
 #[test]
@@ -82,7 +69,7 @@ fn a_later_member_s_roster_waits_until_the_aggregator_s_budget_runs_out() {
 }
 
 #[test]
-fn a_lower_proposer_s_roster_replaces_an_accepted_one() {
+fn an_accepted_roster_is_fixed() {
     let [first, second, third] = ordered();
     let mut node = verified_all(third);
     node.step(NOW, ready(second, &[first, second, third], third));
@@ -93,7 +80,7 @@ fn a_lower_proposer_s_roster_replaces_an_accepted_one() {
         ready(first, &[first, second, third], third),
     );
     node.step(NOW + ROSTER_BUDGET, roster(first, &[first, third], third));
-    assert_eq!(accepted(&node), Some(members(&[first, third])));
+    assert_eq!(accepted(&node), Some(members(&[second, third])));
 }
 
 #[test]

@@ -111,6 +111,44 @@ fn every_member_accepts_the_same_roster_of_h_dealers() {
 }
 
 #[test]
+fn every_roster_member_and_only_they_send_one_keyshare() {
+    for size in [
+        CiphernodesCommitteeSize::Minimum,
+        CiphernodesCommitteeSize::Micro,
+    ] {
+        for seed in 0..16 {
+            let (sim, members) = run(size, seed);
+            let case = format!("{size:?} seed {seed}");
+            let roster: BTreeSet<Address> = sim.nodes()[0]
+                .node()
+                .e3(&e3(1))
+                .and_then(|state| state.dkg.as_ref())
+                .and_then(|dkg| dkg.roster())
+                .expect("a roster")
+                .iter()
+                .map(|dealer| dealer.member)
+                .collect();
+            let mut keyshares: BTreeMap<Address, BTreeSet<_>> = BTreeMap::new();
+            for message in sim.gossip() {
+                if let Body::Dkg(DkgMessage::Keyshare(keyshare)) = &message.body {
+                    keyshares
+                        .entry(message.sender)
+                        .or_default()
+                        .insert(keyshare.pk_share);
+                }
+            }
+            let senders: BTreeSet<Address> = keyshares.keys().copied().collect();
+            assert_eq!(senders, roster, "{case}: keyshare senders");
+            assert!(keyshares.values().all(|sent| sent.len() == 1), "{case}");
+            assert!(
+                roster.iter().all(|member| members.contains(member)),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
 fn no_member_sends_two_different_keys_or_shares() {
     for size in [
         CiphernodesCommitteeSize::Minimum,
@@ -130,7 +168,12 @@ fn no_member_sends_two_different_keys_or_shares() {
                         let pair = (message.sender, dealt.recipient);
                         shares.entry(pair).or_default().insert(dealt.shares);
                     }
-                    Body::Dkg(DkgMessage::Ready(_) | DkgMessage::Roster(_)) => {}
+                    Body::Dkg(
+                        DkgMessage::Ready(_)
+                        | DkgMessage::Roster(_)
+                        | DkgMessage::DecryptionKey(_)
+                        | DkgMessage::Keyshare(_),
+                    ) => {}
                 }
             }
             assert_eq!(

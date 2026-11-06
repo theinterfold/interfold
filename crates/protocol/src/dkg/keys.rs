@@ -103,7 +103,7 @@ impl Dkg {
             .filter(|member| self.is_live(member))
             .count();
         // This node's key is among the valid ones from the moment it is sent.
-        if matches!(self.phase, Phase::CollectingKeys(_)) && live_keys >= self.h {
+        if matches!(self.phase, Phase::CollectingKeys(_)) && live_keys >= self.h() {
             return self.start_shares();
         }
         self.phase = Phase::Failed(DkgFailure::TooFewKeys);
@@ -117,14 +117,22 @@ impl Dkg {
         )
     }
 
-    /// This node's key, from the moment it is sent until the DKG fails.
+    /// This node's key, from the moment it is sent until the roster is accepted, which ends share
+    /// collection.
     pub(super) fn own_key(&self) -> Option<&OwnKey> {
         match &self.phase {
             Phase::CollectingKeys(own)
             | Phase::MakingShares(own)
             | Phase::SigningShares(own, _)
             | Phase::Dealt(own, _) => Some(own),
-            Phase::MakingKey | Phase::SigningKey(_) | Phase::Failed(_) => None,
+            Phase::MakingKey
+            | Phase::SigningKey(_)
+            | Phase::MakingDecryptionKey(_)
+            | Phase::SigningDecryptionKey(..)
+            | Phase::DecryptionKeySent(..)
+            | Phase::KeyshareSent(_)
+            | Phase::Observing
+            | Phase::Failed(_) => None,
         }
     }
 }

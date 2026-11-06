@@ -6,7 +6,8 @@
 
 //! The H-roster: the dealers whose shares every member sums into its decryption key. The roster
 //! aggregator proposes the first H mutually ready dealers, and each member accepts the supported
-//! roster of the lowest proposer that is not later than the current aggregator.
+//! roster of the lowest proposer that is not later than the current aggregator. Acceptance starts
+//! C4, which fixes the roster.
 
 use super::{Dealer, Dkg, DkgMessage, Phase};
 use crate::{failover::Failover, node::Effect, UnixSecs};
@@ -47,16 +48,16 @@ impl Dkg {
         Some(&accepted.dealers)
     }
 
+    pub(super) fn roster_members(&self) -> Option<Vec<Address>> {
+        let roster = self.roster()?;
+        Some(roster.iter().map(|dealer| dealer.member).collect())
+    }
+
     pub(super) fn receive_roster(&mut self, proposer: Address, dealers: Vec<Dealer>) {
-        let can_replace_accepted = self
-            .rosters
-            .accepted
-            .as_ref()
-            .is_none_or(|accepted| proposer < accepted.proposer);
-        let well_formed = can_replace_accepted
+        let well_formed = self.rosters.accepted.is_none()
             && self.is_member(proposer)
             && self.is_live(&proposer)
-            && dealers.len() == self.h
+            && dealers.len() == self.h()
             && dealers
                 .windows(2)
                 .all(|pair| pair[0].member < pair[1].member)
@@ -104,7 +105,7 @@ impl Dkg {
             self.rosters.proposed.insert(self.me, dealers.clone());
             effects.push(self.gossip(DkgMessage::Roster(dealers)));
         }
-        self.accept_best_roster();
+        effects.extend(self.accept_best_roster());
         effects
     }
 
@@ -125,39 +126,31 @@ impl Dkg {
         }
     }
 
-    fn accept_best_roster(&mut self) {
-        let Some(aggregator) = self
+    fn accept_best_roster(&mut self) -> Vec<Effect> {
+        let aggregator = self
             .rosters
             .failover
-            .aggregator(&self.members, &self.expelled)
-        else {
-            return;
+            .aggregator(&self.members, &self.expelled);
+        let (Some(aggregator), None) = (aggregator, &self.rosters.accepted) else {
+            return Vec::new();
         };
-        let accepted_proposer = self
-            .rosters
-            .accepted
-            .as_ref()
-            .map(|accepted| accepted.proposer);
         let best = self
             .rosters
             .proposed
             .iter()
-            .filter(|(proposer, roster)| {
-                **proposer <= aggregator
-                    && accepted_proposer.is_none_or(|accepted| **proposer < accepted)
-                    && self.is_usable(**proposer, roster)
+            .find(|(proposer, roster)| {
+                **proposer <= aggregator && self.is_usable(**proposer, roster)
             })
             .map(|(proposer, roster)| Accepted {
                 proposer: *proposer,
                 dealers: roster.clone(),
-            })
-            .next();
-        if let Some(best) = best {
-            self.rosters
-                .proposed
-                .retain(|proposer, _| *proposer <= best.proposer);
-            self.rosters.accepted = Some(best);
-        }
+            });
+        let Some(best) = best else {
+            return Vec::new();
+        };
+        self.rosters.proposed.clear();
+        self.rosters.accepted = Some(best);
+        self.start_decryption_key()
     }
 
     /// A roster is usable when no member of it is expelled and it is supported: this node's
@@ -195,8 +188,8 @@ impl Dkg {
                     .copied()
             })
             .collect();
-        let mut selected = Vec::with_capacity(self.h);
-        select(&reports, &candidates, self.h, &mut selected).then_some(selected)
+        let mut selected = Vec::with_capacity(self.h());
+        select(&reports, &candidates, self.h(), &mut selected).then_some(selected)
     }
 }
 
