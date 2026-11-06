@@ -8,6 +8,7 @@ use super::*;
 use crate::test_support::get_common_setup;
 use alloy::primitives::Address;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
+use e3_event_system::test_support::EventFixture;
 use e3_events::EventConstructorWithTimestamp;
 use e3_events::{
     ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector, ProofPayload, ProofType,
@@ -357,12 +358,13 @@ fn booted_micro_aggregator(
     )
 }
 
-/// The aggregator dispatched C1 verification, and a failover demoted it while it was down. After
-/// the restart it still finishes the C1 work and requests the key proof.
+/// The aggregator dispatched C1 verification, and a failover demoted it while it was down. No
+/// verdict arrived before the restart, so the node sends its C1 request again, then finishes the
+/// C1 work and requests the key proof.
 #[actix::test]
 async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_restart() -> Result<()>
 {
-    let (bus, rng, _seed, params, crp, _errors, history) =
+    let (bus, rng, _seed, params, crp, _errors, _history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
@@ -380,8 +382,11 @@ async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_rest
     first_boot.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
     drop(first_boot);
 
+    // The restarted node has a new event bus, which does not deduplicate the resent request
+    // against the first one.
+    let restarted = EventFixture::new()?;
     let mut second_boot = booted_micro_aggregator(
-        &bus,
+        &restarted.bus,
         &fhe,
         &e3_id,
         false,
@@ -389,17 +394,21 @@ async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_rest
         recoveries.load().await?,
     );
     second_boot.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
-    let verified = c1_verified(
-        &second_boot,
-        (circuit_h as u64..threshold_n as u64).collect(),
-    );
+    let (request, _) = second_boot
+        .c1_verification_request()
+        .expect("the aggregator verifies C1");
+    assert!(matches!(
+        next_event(&restarted.history).await?.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(resent) if resent == request
+    ));
+    let verified = c1_verdict_for(request, (circuit_h as u64..threshold_n as u64).collect());
     second_boot.start().send(verified).await?;
 
     assert!(matches!(
         states.read().await?,
         Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
     ));
-    assert!(c5_proof_requested(&history, &e3_id).await?);
+    assert!(c5_proof_requested(&restarted.history, &e3_id).await?);
     Ok(())
 }
 
