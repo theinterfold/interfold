@@ -1,0 +1,18 @@
+[package]
+name = "e3-chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The v2 node's chain adapter: contract logs in as facts, transactions out"
+repository.workspace = true
+
+[dependencies]
+e3-committee = { workspace = true }
+e3-evm-contracts = { workspace = true }
+e3-protocol = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+e3-protocol = { workspace = true, features = ["testing"] }
