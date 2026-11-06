@@ -12,7 +12,7 @@
 use alloy_primitives::{B256, U256};
 use e3_protocol::{BlobRef, E3Id};
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, HashMap},
     fs::{self, File},
     io::{self, Write},
     path::PathBuf,
@@ -78,7 +78,8 @@ impl<S: BlobStore> Blobs for E3Blobs<S> {
     }
 }
 
-/// The writes under way by E3, and the E3s closed lately, whose writes the store refuses.
+/// The writes under way by E3, and the closed E3s, whose writes the store refuses for as long as
+/// it runs: a job's blocking work can outlast any bound. A restart starts with no writer.
 #[derive(Default)]
 struct Closing {
     writes: Mutex<Writes>,
@@ -89,10 +90,7 @@ struct Closing {
 struct Writes {
     running: HashMap<E3Id, usize>,
     closed: BTreeSet<E3Id>,
-    order: VecDeque<E3Id>,
 }
-
-const CLOSED_MEMORY: usize = 4_096;
 
 impl Closing {
     fn lock(&self) -> MutexGuard<'_, Writes> {
@@ -117,14 +115,7 @@ impl Closing {
 
     fn close(&self, e3: E3Id) {
         let mut writes = self.lock();
-        if writes.closed.insert(e3) {
-            writes.order.push_back(e3);
-        }
-        while writes.order.len() > CLOSED_MEMORY {
-            if let Some(oldest) = writes.order.pop_front() {
-                writes.closed.remove(&oldest);
-            }
-        }
+        writes.closed.insert(e3);
         while writes.running.contains_key(&e3) {
             writes = self
                 .finished

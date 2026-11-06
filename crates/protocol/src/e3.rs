@@ -77,9 +77,6 @@ pub(crate) struct Ticket {
 const TURN: UnixSecs = 30;
 const TURNS: u64 = 20;
 
-/// The slashing manager's `ACCUSATION_REPORTING_WINDOW`.
-const ACCUSATION_REPORTING_WINDOW: UnixSecs = 24 * 60 * 60;
-
 fn turn(deadline: UnixSecs, place: u64) -> Option<UnixSecs> {
     (place < TURNS).then(|| deadline + 1 + TURN * place)
 }
@@ -136,14 +133,7 @@ impl E3 {
         self.deadlines.insert(stage, deadline);
     }
 
-    /// A committee's E3 keeps its work for accusations until the slashing manager stops taking
-    /// them: a day after the lifecycle deadline the request froze, whatever the failure.
     pub(crate) fn failed(&mut self, at: UnixSecs, accusable_until: UnixSecs) {
-        let reporting_ends = self.request.lifecycle_deadline + ACCUSATION_REPORTING_WINDOW;
-        let accusable_until = match self.dkg {
-            Some(_) => accusable_until.max(reporting_ends),
-            None => accusable_until,
-        };
         self.advance(Stage::Failed);
         self.failure.get_or_insert(Failure {
             at,
@@ -160,17 +150,17 @@ impl E3 {
     }
 
     /// When the node lets a failed E3 go: once accusations cannot need its work, and, if this
-    /// node settles it, once the chain settled it.
+    /// node settles it or holds a committee's work, once the chain settled it.
     ///
-    /// The contract can keep settlement closed for months: with a committee it opens a day after
-    /// the E3's lifecycle deadline, and only once no accusation is open. A node that settles keeps
-    /// the E3 until then, without its DKG and decryption once accusations cannot need them.
+    /// With a committee, the contract opens settlement only once the slashing manager takes no
+    /// more accusations and none is open, which can take months. Until then accusations and
+    /// appeals can need the committee's work and its blobs.
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
         let failure = self.failure?;
         let settles = self
             .slot
             .is_some_and(|slot| turn(failure.at, slot).is_some());
-        if settles && !failure.settled {
+        if (settles || self.has_work()) && !failure.settled {
             return None;
         }
         Some(failure.accusable_until.max(failure.at))
@@ -179,12 +169,6 @@ impl E3 {
     /// Whether the E3 still has DKG or decryption work, which the blobs of the E3 serve.
     pub fn has_work(&self) -> bool {
         self.dkg.is_some() || self.decryption.is_some()
-    }
-
-    /// When accusations stop needing a failed E3's work.
-    fn work_ends_at(&self) -> Option<UnixSecs> {
-        let failure = self.failure.filter(|_| self.has_work())?;
-        Some(failure.accusable_until)
     }
 
     pub(crate) fn finalize(
@@ -390,10 +374,6 @@ impl E3 {
     }
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
-        if self.work_ends_at().is_some_and(|at| now >= at) {
-            self.dkg = None;
-            self.decryption = None;
-        }
         let mut effects = Vec::new();
         if self.finalizer_due().is_some_and(|due| now >= due) {
             if let Some(ticket) = &mut self.ticket {
@@ -443,15 +423,10 @@ impl E3 {
                 .chain(self.failure_due())
                 .min()
         });
-        [
-            self.ends_at(),
-            work.flatten(),
-            self.settlement_due(),
-            self.work_ends_at(),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        [self.ends_at(), work.flatten(), self.settlement_due()]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// The stage the E3 is in, and its deadline if this node watches it.

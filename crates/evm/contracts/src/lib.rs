@@ -119,8 +119,6 @@ sol! {
 
         function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
 
-        function getE3LifecycleDeadline(uint256 e3Id) external view returns (uint256 deadline);
-
         function getE3TimeoutConfig(
             uint256 e3Id
         ) external view returns (E3TimeoutConfig memory config);

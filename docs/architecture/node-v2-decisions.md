@@ -122,7 +122,8 @@ Each rule is checkable in review.
   bounds the bytes on their way at once. A sender's message of a kind is the only one of that kind
   fetched from it until the node takes it, even when a blob of it never comes. Each E3 keeps its
   own blobs, a blob request names the E3, and the node closes an E3's blobs once its work ends:
-  the store waits for writes under way, deletes them, and refuses later ones. The protocol says which blobs a node needs: a share
+  the store waits for writes under way, deletes them, and refuses later ones for as long as it
+  runs. At a start the node drops the outbox work of E3s it no longer holds before running any. The protocol says which blobs a node needs: a share
   message's only for its recipient. A publisher uploads a broadcast blob once per receiver and a
   share once, where a DHT put of the current node goes to twenty peers. A share comes only from
   its dealer, so members need direct connections: peers that identify on the network enter
@@ -140,10 +141,10 @@ Each rule is checkable in review.
   randomness the deadline is the randomness deadline; once the seed arrives, ticket holders
   finalize after the committee deadline, and the others wait the DKG window more, after which the
   contract fails a committee that met its threshold too. After a failure the same turns call
-  `processE3Failure`, and a node that has a turn keeps the E3 until the chain logs the settlement,
-  however long the contract keeps settlement closed. A committee's DKG and decryption, and their
-  blobs, stay until the slashing manager stops taking accusations: a day after the lifecycle
-  deadline the request froze, whatever the failure. The finalizer takes the same turns. The node judges deadlines by
+  `processE3Failure`. A node that has a turn, or holds a committee's work, keeps the E3 until the
+  chain logs the settlement, however long the contract keeps it closed: settlement opens only once
+  the slashing manager takes no more accusations and none is open, so until then accusations and
+  appeals can need the committee's work and its blobs. The finalizer takes the same turns. The node judges deadlines by
   its own clock, so a node that replays old history submits these calls for E3s that ended long
   ago; each ends at its preflight.
 - **D25. The node refreshes its operator in each owner capacity window, whatever the identity
@@ -152,10 +153,12 @@ Each rule is checkable in review.
   offers no view of the policy, and a node that starts after the policy's event would not know it,
   so the node refreshes unconditionally: ten minutes after a start, then a minute and an hour after
   each window starts, since a refresh counts for the window of its block.
-- **D26. A data directory carries its layout.** The node writes the layout of its journal,
-  snapshots, blob folders and wallet file beside them, and refuses a directory in another layout,
-  so an update never misreads an old journal or deletes old blobs as foreign. v2 has no migrations
-  before its first release: a layout change means starting from an empty directory.
+- **D26. A data directory carries its layout.** The node writes the layout beside its files: the
+  protocol's `ENCODING_VERSION` for the journal and snapshots, and the store's version for the blob
+  folders and the wallet file. It refuses a directory in another layout, so an update never
+  misreads an old journal or deletes old blobs as foreign. A test fingerprints a sample journal and
+  snapshot, so an encoding change fails until its version changes. v2 has no migrations before its
+  first release: a layout change means starting from an empty directory.
 
 ## Problems in the current node, with the fix above them
 

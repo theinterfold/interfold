@@ -111,8 +111,6 @@ pub struct CommitteeRequest {
     /// The contract keeps one candidate per request-time bond owner.
     pub owner_cap: bool,
     pub dkg_window: UnixSecs,
-    /// The request-time bound of the E3's lifecycle, from which accusations have one more day.
-    pub lifecycle_deadline: UnixSecs,
 }
 
 /// The registry accepted a request's randomness: the committee seed, and the deadline by which
@@ -426,6 +424,18 @@ pub enum Effect {
     /// Bring the blobs a peer's message names into the store, from the peers that sent it; the
     /// message comes back as `Input::Peer` once they are there.
     FetchBlobs(PeerMessage),
+}
+
+impl Effect {
+    pub fn e3(&self) -> E3Id {
+        match self {
+            Effect::Run(job) => job.e3,
+            Effect::Sign(signing) => signing.e3,
+            Effect::Gossip(message) | Effect::FetchBlobs(message) => message.e3,
+            Effect::Submit(submission) => submission.e3,
+            Effect::Fetch(fetch) => fetch.e3,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1232,6 +1242,39 @@ mod tests {
         assert!(!fetched.contains(&address(1)));
     }
 
+    /// A sample of what the node journals and snapshots, through a DKG and a failure.
+    #[test]
+    fn the_persisted_encoding_is_the_one_its_version_names() {
+        let mut node = node();
+        let inputs = [
+            requested(10, e3(1)),
+            finalized(11, e3(1), members([1, 2])),
+            announced(key_from(e3(1), 1)),
+            key_from(e3(1), 1),
+            key_published(12, e3(1), members([1, 2]), members([1, 2])),
+            failure(20, e3(1), FailureReason::DkgInvalidShares),
+            Input::Tick,
+        ];
+        let mut journal = Vec::new();
+        for input in inputs {
+            journal.extend(bincode::serialize(&(30u64, &input)).unwrap());
+            for effect in node.step(30, input) {
+                journal.extend(bincode::serialize(&effect).unwrap());
+            }
+        }
+        journal.extend(bincode::serialize(&node).unwrap());
+        assert_eq!(
+            (crate::ENCODING_VERSION, keccak256(&journal)),
+            (
+                2,
+                alloy_primitives::b256!(
+                    "4b126eaf42b320600db4a1fec587ac3005dd66b45d8541b07fbcb7b435b18968"
+                )
+            ),
+            "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
+        );
+    }
+
     #[test]
     fn a_chain_fact_read_again_changes_nothing() {
         let mut node = node();
@@ -1268,24 +1311,8 @@ mod tests {
             due + 3_600,
             chain(30, ChainFact::FailureSettled { e3: e3(1) }),
         );
-        node.step(ACCUSATIONS_CLOSE, Input::Tick);
+        node.step(due + 3_600, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
-    }
-
-    /// The slashing manager takes accusations until a day after the request's lifecycle
-    /// deadline, whatever the failure.
-    const ACCUSATIONS_CLOSE: UnixSecs = LIFECYCLE_DEADLINE + 24 * 60 * 60;
-
-    #[test]
-    fn a_failed_committee_keeps_its_evidence_until_accusations_close() {
-        let mut node = node();
-        node.step(0, requested(10, e3(1)));
-        node.step(0, finalized(11, e3(1), members([1, 2])));
-        node.step(20, failure(20, e3(1), FailureReason::DkgTimeout));
-        node.step(ACCUSATIONS_CLOSE - 1, Input::Tick);
-        assert!(node.e3(&e3(1)).is_some_and(|state| state.has_work()));
-        node.step(ACCUSATIONS_CLOSE, Input::Tick);
-        assert!(!node.e3(&e3(1)).is_some_and(|state| state.has_work()));
     }
 
     #[test]
@@ -1338,17 +1365,22 @@ mod tests {
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
     }
 
-    /// Settlement can stay closed for months after a failure, while accusations can come.
+    /// Settlement can stay closed for months after a failure, while accusations and appeals can
+    /// need the committee's work. A member past the settling turns keeps it too.
     #[test]
-    fn a_settler_keeps_an_unsettled_failure_without_its_work_until_the_chain_settles_it() {
+    fn a_failed_committee_keeps_its_work_until_the_chain_settles_the_e3() {
+        let operators: Vec<u64> = (20..)
+            .map(|n| (1..=n).collect::<Vec<u64>>())
+            .find(|operators| place(&[operators.as_slice(), &[ME]].concat()) >= 20)
+            .expect("a committee where this node has no settling turn");
         let mut node = node();
         node.step(0, requested(10, e3(1)));
-        node.step(0, finalized(11, e3(1), members([1])));
-        node.step(20, failure(20, e3(1), FailureReason::DkgInvalidShares));
+        node.step(0, finalized(11, e3(1), members(operators.clone())));
+        node.step(20, failure(20, e3(1), FailureReason::DkgTimeout));
         let months = 20 + 200 * 24 * 60 * 60;
         node.step(months, Input::Tick);
         let state = node.e3(&e3(1)).expect("the E3 waits for its settlement");
-        assert!(!state.has_work());
+        assert!(state.has_work());
         node.step(months, chain(30, ChainFact::FailureSettled { e3: e3(1) }));
         node.step(months, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());

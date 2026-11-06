@@ -125,6 +125,13 @@ where
 {
     let genesis = Node::new(parts.operator.address());
     let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
+    // A stop can come between ending an E3 and finishing its effects; their work is over.
+    let (pending, over): (Vec<_>, Vec<_>) = pending
+        .into_iter()
+        .partition(|pending| engine.machine().e3(&pending.effect.e3()).is_some());
+    for pending in over {
+        engine.acknowledge(pending.key)?;
+    }
     sweep(&parts.blobs, engine.machine());
     let chain_id = settings.contracts.chain_id;
     let from = engine

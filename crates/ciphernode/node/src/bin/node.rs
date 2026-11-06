@@ -134,21 +134,25 @@ async fn main() -> anyhow::Result<()> {
     Err(run(settings, parts).await.into())
 }
 
-/// The layout of the node's files in a data directory: the journal's and snapshots' encodings,
-/// the blob store's folders, and the wallet's file. A node refuses a directory in another layout
-/// rather than misread its journal or delete its blobs; change this whenever one of them changes.
-const DATA_LAYOUT: &str = "interfold-node-v2 1";
+/// The layout of the node's files in a data directory: the machine's encoding, and the version of
+/// the blob store's folders and the wallet's file, which changes with either. A node refuses a
+/// directory in another layout rather than misread its journal or delete its blobs.
+fn data_layout() -> String {
+    const STORE_VERSION: u32 = 1;
+    let encoding = e3_protocol::ENCODING_VERSION;
+    format!("interfold-node-v2 encoding {encoding} store {STORE_VERSION}")
+}
 
 /// The files of the node in a data directory; others, such as its configuration, may share it.
 const NODE_FILES: [&str; 3] = ["journal.redb", "blobs", "unmined.json"];
 
 fn open_data_dir(dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let marker = dir.join("LAYOUT");
+    let (marker, layout) = (dir.join("LAYOUT"), data_layout());
     match std::fs::read_to_string(&marker) {
         Ok(found) => anyhow::ensure!(
-            found.trim() == DATA_LAYOUT,
-            "{} holds node data in layout '{}', not '{DATA_LAYOUT}': use an empty directory",
+            found.trim() == layout,
+            "{} holds node data in layout '{}', not '{layout}': use an empty directory",
             dir.display(),
             found.trim()
         ),
@@ -159,7 +163,7 @@ fn open_data_dir(dir: &Path) -> anyhow::Result<()> {
                 "{} holds node data of an unknown layout: use an empty directory",
                 dir.display()
             );
-            std::fs::write(&marker, DATA_LAYOUT)?;
+            std::fs::write(&marker, layout)?;
         }
         Err(error) => return Err(error.into()),
     }

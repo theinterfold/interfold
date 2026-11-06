@@ -116,16 +116,6 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
         })
     }
 
-    async fn lifecycle_deadline(&self, e3: U256, block: u64) -> Result<UnixSecs, RpcError> {
-        let deadline = IInterfold::new(self.contracts.interfold, &self.provider)
-            .getE3LifecycleDeadline(e3)
-            .block(BlockId::number(block))
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        Ok(secs(deadline))
-    }
-
     async fn dkg_window(&self, e3: U256, block: u64) -> Result<UnixSecs, RpcError> {
         let windows = IInterfold::new(self.contracts.interfold, &self.provider)
             .getE3TimeoutConfig(e3)
