@@ -34,14 +34,15 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .map_err(RpcError::new)
     }
 
-    async fn logs(&self, from: u64, to: u64) -> Result<Vec<RawLog>, RpcError> {
+    async fn logs(
+        &self,
+        addresses: &[Address],
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<RawLog>, RpcError> {
         let c = &self.contracts;
-        let addresses: Vec<Address> = [c.interfold, c.registry, c.bonding]
-            .into_iter()
-            .chain(c.randomness.iter().copied())
-            .collect();
         let filter = Filter::new()
-            .address(addresses)
+            .address(addresses.to_vec())
             .from_block(from)
             .to_block(to);
         let logs = self

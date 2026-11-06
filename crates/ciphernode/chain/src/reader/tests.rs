@@ -67,7 +67,12 @@ impl Rpc for FakeNode {
         Ok(self.0.lock().unwrap().head)
     }
 
-    async fn logs(&self, from: u64, to: u64) -> Result<Vec<RawLog>, RpcError> {
+    async fn logs(
+        &self,
+        addresses: &[Address],
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<RawLog>, RpcError> {
         let chain = self.0.lock().unwrap();
         if chain.cap.is_some_and(|cap| to - from + 1 > cap) {
             return Err(RpcError("block range too large".into()));
@@ -75,7 +80,7 @@ impl Rpc for FakeNode {
         let logs = chain
             .logs
             .iter()
-            .filter(|log| (from..=to).contains(&log.at.block));
+            .filter(|log| addresses.contains(&log.address) && (from..=to).contains(&log.at.block));
         Ok(logs.cloned().collect())
     }
 
@@ -271,6 +276,42 @@ async fn a_range_the_provider_rejects_is_requested_again_in_halves() {
         }
     }
     assert_eq!(read, [100, 600, 1_900]);
+}
+
+/// Governance replaced the provider, so the node did not know the one this request names. A mock
+/// provider fulfills inside the request, before the registry logs it.
+#[tokio::test]
+async fn a_request_s_new_randomness_provider_is_read_in_the_same_poll() {
+    let c = contracts();
+    let provider = Address::repeat_byte(0x77);
+    let requested = ICiphernodeRegistry::CommitteeRandomnessRequested {
+        e3Id: U256::from(7),
+        requestId: U256::from(1),
+        provider,
+        randomnessDeadline: U256::from(60),
+    };
+    let fulfilled = IRandomnessProvider::RandomnessFulfilled {
+        requestId: U256::from(1),
+        e3Id: U256::from(7),
+        randomWord: U256::from(3),
+        fulfilledAt: U256::from(50),
+    };
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.logs = vec![
+            log(provider, &fulfilled, 5, 2, 0),
+            log(c.registry, &requested, 5, 2, 1),
+        ];
+        chain.seed = Some(SEED);
+    });
+    let events = reader(&node, 1_000).poll().await.unwrap();
+    let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
+    let seed = ChainFact::SeedReady {
+        e3: e3(),
+        seed: SEED,
+    };
+    assert_eq!(facts, vec![seed]);
 }
 
 /// A provider can fulfill inside the request's own transaction, before `E3Requested`: the node

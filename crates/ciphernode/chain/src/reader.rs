@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError};
+use crate::{
+    decode, decode::new_providers, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError,
+};
+use alloy_primitives::Address;
 use alloy_primitives::U256;
 use e3_protocol::{
     dkg::DkgTiming,
@@ -18,9 +21,11 @@ pub trait Rpc {
     /// The newest block's number.
     fn head(&self) -> impl Future<Output = Result<u64, RpcError>> + Send;
 
-    /// The contracts' logs in blocks `from..=to`, with their blocks' timestamps.
+    /// The logs of the contracts at `addresses` in blocks `from..=to`, with their blocks'
+    /// timestamps.
     fn logs(
         &self,
+        addresses: &[Address],
         from: u64,
         to: u64,
     ) -> impl Future<Output = Result<Vec<RawLog>, RpcError>> + Send;
@@ -123,15 +128,24 @@ impl<R: Rpc> Reader<R> {
             return Ok(Vec::new());
         };
         let to = confirmed.min(self.next.saturating_add(self.range - 1));
-        let logs = match self.rpc.logs(self.next, to).await {
-            Ok(logs) => {
-                self.range = self.range.saturating_mul(2).min(self.max_range);
-                logs
+        let logs = loop {
+            let addresses = self.contracts.addresses();
+            let logs = match self.rpc.logs(&addresses, self.next, to).await {
+                Ok(logs) => {
+                    self.range = self.range.saturating_mul(2).min(self.max_range);
+                    logs
+                }
+                Err(error) => {
+                    self.range = (self.range / 2).max(1);
+                    return Err(error.into());
+                }
+            };
+            let providers = new_providers(&self.contracts, &logs);
+            if providers.is_empty() {
+                break logs;
             }
-            Err(error) => {
-                self.range = (self.range / 2).max(1);
-                return Err(error.into());
-            }
+            // The new providers' fulfillments in these blocks were filtered out.
+            self.contracts.randomness.extend(providers);
         };
         let mut events = Vec::new();
         for decoded in decode(&self.contracts, &logs)? {

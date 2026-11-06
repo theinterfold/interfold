@@ -22,11 +22,22 @@ pub struct Contracts {
     pub interfold: Address,
     pub registry: Address,
     pub bonding: Address,
-    /// Every randomness provider the registry used, so a restart reads old fulfillments too.
+    /// The randomness providers whose fulfillments the node reads: the registry's at start, then
+    /// each one a request names or governance sets.
     pub randomness: BTreeSet<Address>,
     /// The crypto configuration this build runs for each parameter set; a request for another is
     /// skipped.
     pub crypto_configs: BTreeMap<u8, B256>,
+}
+
+impl Contracts {
+    /// The contracts whose logs the node reads.
+    pub fn addresses(&self) -> Vec<Address> {
+        [self.interfold, self.registry, self.bonding]
+            .into_iter()
+            .chain(self.randomness.iter().copied())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,6 +125,29 @@ pub enum DecodeError {
 struct RequestParts {
     attestation: Option<AttestationContext>,
     owner_cap: bool,
+}
+
+/// The randomness providers that the registry names in `logs` and `contracts` lacks: a request
+/// names the provider it is bound to, and governance can set a new one.
+pub(crate) fn new_providers(contracts: &Contracts, logs: &[RawLog]) -> BTreeSet<Address> {
+    use ICiphernodeRegistry as R;
+    logs.iter()
+        .filter(|log| log.address == contracts.registry)
+        .filter_map(|log| match *log.topics.first()? {
+            R::CommitteeRandomnessRequested::SIGNATURE_HASH => {
+                let event: R::CommitteeRandomnessRequested =
+                    decode_event(log, "CommitteeRandomnessRequested").ok()?;
+                Some(event.provider)
+            }
+            R::RandomnessProviderSet::SIGNATURE_HASH => {
+                let event: R::RandomnessProviderSet =
+                    decode_event(log, "RandomnessProviderSet").ok()?;
+                Some(event.randomnessProvider)
+            }
+            _ => None,
+        })
+        .filter(|provider| !contracts.randomness.contains(provider))
+        .collect()
 }
 
 /// Decodes `logs`, whole blocks in chain order. A request pairs logs of one transaction, and a
