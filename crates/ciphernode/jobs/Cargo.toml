@@ -6,6 +6,10 @@ license.workspace = true
 description = "Runs the v2 node's jobs: the cryptography and proofs that protocol work asks for"
 repository.workspace = true
 
+[features]
+# What a requester does outside the node, for simulator and integration tests.
+testing = []
+
 [dependencies]
 e3-protocol = { workspace = true }
 e3-crypto = { workspace = true }

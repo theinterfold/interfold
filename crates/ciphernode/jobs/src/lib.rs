@@ -12,11 +12,15 @@ mod blobs;
 mod decryption;
 mod dkg;
 mod placeholder;
+#[cfg(any(test, feature = "testing"))]
+mod requester;
 #[cfg(test)]
 mod tests;
 mod trbfv;
 
 pub use blobs::{Blobs, MemoryBlobs};
+#[cfg(any(test, feature = "testing"))]
+pub use requester::encrypt;
 
 use e3_crypto::Cipher;
 use e3_protocol::{

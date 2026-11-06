@@ -8,11 +8,14 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+e3-crypto = { workspace = true }
 e3-engine = { workspace = true }
+e3-jobs = { workspace = true, features = ["testing"] }
 e3-protocol = { workspace = true, features = ["testing"] }
 alloy-primitives = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 e3-committee = { workspace = true }

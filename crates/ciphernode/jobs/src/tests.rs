@@ -19,10 +19,6 @@ use e3_protocol::{
     proof::SignedProof,
     BlobRef, E3Id,
 };
-use fhe::bfv::{Encoding, Plaintext, PublicKey};
-use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
-use rand::rngs::OsRng;
-use rand_core::UnwrapErr;
 use std::collections::BTreeMap;
 
 fn params() -> CryptoParams {
@@ -242,14 +238,8 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         other => panic!("{other:?}"),
     };
 
-    let threshold = trbfv::threshold_params(&params()).unwrap();
-    let public = PublicKey::from_bytes(&blobs.get(&key.public_key).unwrap(), &threshold).unwrap();
     let message_values = vec![7u64, 11, 13];
-    let plaintext = Plaintext::try_encode(&message_values, Encoding::poly(), &threshold).unwrap();
-    let encrypted = public
-        .try_encrypt(&plaintext, &mut UnwrapErr(OsRng))
-        .unwrap();
-    let ciphertext = blobs.put(&bincode::serialize(&vec![encrypted.to_bytes()]).unwrap());
+    let ciphertext = crate::encrypt(&blobs, &params(), &key.public_key, &message_values).unwrap();
 
     let domain = B256::repeat_byte(0xd0);
     let shares: BTreeMap<Address, DecryptionShares> = roster

@@ -8,24 +8,22 @@
 //! feeds a shadow copy of its machine that never crashes and never touches a store; the node must
 //! always produce the same effects as its shadow and end in the same state.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+mod jobs;
+mod real_jobs;
+
+pub use jobs::{Jobs, MockJobs};
+pub use real_jobs::RealJobs;
+
+use alloy_primitives::{Address, U256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
-    decryption::{
-        DecryptionWork, DecryptionWorkResult, OwnShares as DecryptionShares, PlaintextPublication,
-    },
-    dkg::{
-        AggregatedKey, DkgWork, DkgWorkResult, NodeFold, OwnDecryptionKey, OwnKey, OwnShares,
-        RecipientShares,
-    },
     node::{
-        ChainEvent, ChainFact, Effect, FailureReason, Input, Job, JobDone, LogPosition, Node,
-        PeerMessage, Stage, Submission, Transaction, Work, WorkResult,
+        ChainEvent, ChainFact, CryptoParams, Effect, FailureReason, Input, JobDone, LogPosition,
+        Node, PeerMessage, Stage, Submission, Transaction,
     },
-    proof::ZkProof,
     selection::ticket_score,
     testing::{address, sign, TIMING},
-    BlobRef, E3Id, Machine, UnixSecs,
+    E3Id, Machine, UnixSecs,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -111,9 +109,9 @@ pub struct Faults {
     pub drop: f64,
 }
 
-/// Nodes with an operator signer each, a mock job runner, one chain, and a network that delays,
+/// Nodes with an operator signer each, a job runner, one chain, and a network that delays,
 /// reorders, duplicates, and drops peer messages.
-pub struct Sim {
+pub struct Sim<J = MockJobs> {
     nodes: Vec<SimNode>,
     chain_lags: Vec<UnixSecs>,
     ticks: Vec<Option<UnixSecs>>,
@@ -129,6 +127,9 @@ pub struct Sim {
     faults: Faults,
     gossip: Vec<PeerMessage>,
     submissions: Vec<Submission>,
+    jobs: J,
+    /// The earliest time the chain publishes an E3's ciphertext once its key is out.
+    ciphertext_at: UnixSecs,
 }
 
 struct Delivery {
@@ -141,6 +142,12 @@ struct Delivery {
 
 impl Sim {
     pub fn new(seed: u64, operators: &[u64], faults: Faults) -> Self {
+        Self::with_jobs(seed, operators, faults, MockJobs::new(seed))
+    }
+}
+
+impl<J: Jobs> Sim<J> {
+    pub fn with_jobs(seed: u64, operators: &[u64], faults: Faults, jobs: J) -> Self {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let nodes = operators
             .iter()
@@ -159,7 +166,17 @@ impl Sim {
             faults,
             gossip: Vec::new(),
             submissions: Vec::new(),
+            jobs,
+            ciphertext_at: 0,
         }
+    }
+
+    pub fn set_ciphertext_at(&mut self, at: UnixSecs) {
+        self.ciphertext_at = at;
+    }
+
+    pub fn jobs(&self) -> &J {
+        &self.jobs
     }
 
     pub fn set_chain_lag(&mut self, node: usize, lag: UnixSecs) {
@@ -171,8 +188,7 @@ impl Sim {
         let at = at.max(self.now);
         match &fact {
             ChainFact::E3Requested { e3, params, .. } => {
-                self.requests
-                    .insert(*e3, Request::new(params.committee_size.values().n));
+                self.requests.insert(*e3, Request::new(*params));
             }
             ChainFact::SeedReady {
                 e3,
@@ -275,7 +291,7 @@ impl Sim {
                 Effect::Run(job) => {
                     let done = Input::Job(JobDone {
                         e3: job.e3,
-                        result: self.run(&job),
+                        result: self.jobs.run(node, &job),
                     });
                     let at = self.now + self.delay();
                     self.schedule(at, node, done, Some(key));
@@ -356,170 +372,27 @@ impl Sim {
                     stage: Stage::Complete,
                 }),
         };
+        let ciphertext = match (&fact, &submission.transaction) {
+            (Some(_), Transaction::PublishCommittee(publication)) => {
+                let params = request.params;
+                Some(self.jobs.ciphertext(&params, publication.public_key))
+            }
+            _ => None,
+        };
         if let Some(fact) = fact {
             let at = self.now + self.delay();
             self.chain(at, fact);
         }
-        self.submissions.push(submission);
-    }
-
-    /// Mock work: no cryptography, but the same shape of results, drawn fresh on every run as real
-    /// key and share generation are. A check passes when the checked bytes are the ones the mock
-    /// derived for them.
-    fn run(&mut self, job: &Job) -> WorkResult {
-        let result = match &job.work {
-            Work::Dkg(DkgWork::MakeEncryptionKey) => {
-                let proof = self.proof();
-                let public = blob(keccak256(proof.data.hash));
-                DkgWorkResult::EncryptionKeyMade(OwnKey {
-                    public,
-                    secret: blob(keccak256(public.hash)),
-                    proof,
-                })
-            }
-            Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
-                DkgWorkResult::EncryptionKeyChecked {
-                    sender: *sender,
-                    valid: key.hash == keccak256(proof.data.hash),
-                }
-            }
-            Work::Dkg(DkgWork::MakeShares { keys, .. }) => {
-                let pk_share = blob(self.hash());
-                let recipients = keys
-                    .keys()
-                    .map(|member| {
-                        let shares = RecipientShares {
-                            shares: blob(keccak256(
-                                [pk_share.hash.as_slice(), member.as_slice()].concat(),
-                            )),
-                            c3a: (0..3).map(|_| self.proof()).collect(),
-                            c3b: (0..3).map(|_| self.proof()).collect(),
-                        };
-                        (*member, shares)
-                    })
-                    .collect();
-                let c1 = ZkProof {
-                    public_inputs: vec![pk_share.hash],
-                    ..self.proof()
-                };
-                DkgWorkResult::SharesMade(OwnShares {
-                    pk_share,
-                    own_share: blob(self.hash()),
-                    c1,
-                    c2a: self.proof(),
-                    c2b: self.proof(),
-                    recipients,
-                })
-            }
-            Work::Dkg(DkgWork::CheckShares {
-                dealer, message, ..
-            }) => {
-                let expected = keccak256(
-                    [
-                        message.pk_share.hash.as_slice(),
-                        message.recipient.as_slice(),
-                    ]
-                    .concat(),
-                );
-                DkgWorkResult::SharesChecked {
-                    dealer: *dealer,
-                    valid: message.shares.hash == expected,
-                }
-            }
-            Work::Dkg(DkgWork::MakeDecryptionKey { c2, .. }) => {
-                let binds = |proof: ZkProof| ZkProof {
-                    public_inputs: vec![c2_commitment(c2)],
-                    ..proof
-                };
-                DkgWorkResult::DecryptionKeyMade(OwnDecryptionKey {
-                    key: blob(self.hash()),
-                    c4a: binds(self.proof()),
-                    c4b: vec![binds(self.proof())],
-                })
-            }
-            Work::Dkg(DkgWork::CheckDecryptionKey {
-                member,
-                c2,
-                message,
-                ..
-            }) => DkgWorkResult::DecryptionKeyChecked {
-                member: *member,
-                valid: message.c4a.proof.public_inputs == [c2_commitment(c2)],
-            },
-            Work::Dkg(DkgWork::FoldProofs { .. }) => DkgWorkResult::ProofsFolded(NodeFold {
-                proof: self.proof(),
-                sk_agg_commit: self.hash(),
-                esm_agg_commit: self.hash(),
-            }),
-            Work::Dkg(DkgWork::CheckKeyshare {
-                member, keyshare, ..
-            }) => DkgWorkResult::KeyshareChecked {
-                member: *member,
-                valid: keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash],
-            },
-            Work::Decryption(work) => return self.decrypt(work),
-            Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
-                let shares: Vec<u8> = keyshares
-                    .iter()
-                    .flat_map(|keyshare| keyshare.pk_share.hash.0)
-                    .collect();
-                let public_key = blob(keccak256(shares));
-                DkgWorkResult::KeyAggregated(AggregatedKey {
-                    public_key,
-                    commitment: keccak256(public_key.hash),
-                    proof: self.proof(),
-                })
-            }
-        };
-        WorkResult::Dkg(result)
-    }
-
-    /// Mock decryption: a share binds the domain in its C6 inputs, and the plaintext follows from
-    /// the ciphertext alone, so every aggregator gets the same one.
-    fn decrypt(&mut self, work: &DecryptionWork) -> WorkResult {
-        let result = match work {
-            DecryptionWork::MakeShares {
-                key,
+        if let Some(ciphertext) = ciphertext {
+            let at = self.ciphertext_at.max(self.now + 100);
+            let ready = ChainFact::CiphertextReady {
+                e3,
                 ciphertext,
-                domain,
-            } => DecryptionWorkResult::SharesMade(DecryptionShares {
-                shares: vec![blob(keccak256([key.hash, ciphertext.hash].concat()))],
-                c6: vec![ZkProof {
-                    public_inputs: vec![*domain],
-                    ..self.proof()
-                }],
-            }),
-            DecryptionWork::CheckShares {
-                member,
-                domain,
-                message,
-                ..
-            } => DecryptionWorkResult::SharesChecked {
-                member: *member,
-                valid: message
-                    .c6
-                    .iter()
-                    .all(|proof| proof.proof.public_inputs == [*domain]),
-            },
-            DecryptionWork::AggregatePlaintext { ciphertext, .. } => {
-                DecryptionWorkResult::PlaintextMade(PlaintextPublication {
-                    plaintext: blob(keccak256(ciphertext.hash)),
-                    proof: self.proof(),
-                })
-            }
-        };
-        WorkResult::Decryption(result)
-    }
-
-    fn hash(&mut self) -> B256 {
-        B256::from(self.rng.random::<[u8; 32]>())
-    }
-
-    fn proof(&mut self) -> ZkProof {
-        ZkProof {
-            data: blob(self.hash()),
-            public_inputs: vec![self.hash()],
+                deadline: at + 100_000,
+            };
+            self.chain(at, ready);
         }
+        self.submissions.push(submission);
     }
 
     fn schedule_tick(&mut self, node: usize) {
@@ -544,25 +417,9 @@ impl Sim {
     }
 }
 
-fn blob(hash: B256) -> BlobRef {
-    BlobRef { hash, len: 1_000 }
-}
-
-/// What a mock C4 proof commits to: the roster dealers' C2 statements, in roster order.
-fn c2_commitment(c2: &BTreeMap<Address, (ZkProof, ZkProof)>) -> B256 {
-    let statements: Vec<u8> = c2
-        .values()
-        .flat_map(|(c2a, c2b)| c2a.public_inputs.iter().chain(&c2b.public_inputs))
-        .flat_map(|word| word.0)
-        .collect();
-    keccak256(statements)
-}
-
-#[cfg(test)]
-mod tests;
-
 /// One E3 as the simulated contracts keep it.
 struct Request {
+    params: CryptoParams,
     n: usize,
     seed: U256,
     deadline: UnixSecs,
@@ -574,9 +431,10 @@ struct Request {
 }
 
 impl Request {
-    fn new(n: usize) -> Self {
+    fn new(params: CryptoParams) -> Self {
         Self {
-            n,
+            params,
+            n: params.committee_size.values().n,
             seed: U256::ZERO,
             deadline: UnixSecs::MAX,
             tickets: BTreeMap::new(),
@@ -610,3 +468,6 @@ impl Request {
         Some(Some(members))
     }
 }
+
+#[cfg(test)]
+mod tests;

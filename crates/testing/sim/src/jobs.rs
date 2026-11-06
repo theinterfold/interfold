@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use alloy_primitives::{keccak256, Address, B256};
+use e3_protocol::{
+    decryption::{
+        DecryptionWork, DecryptionWorkResult, OwnShares as DecryptionShares, PlaintextPublication,
+    },
+    dkg::{
+        AggregatedKey, DkgWork, DkgWorkResult, NodeFold, OwnDecryptionKey, OwnKey, OwnShares,
+        RecipientShares,
+    },
+    node::{CryptoParams, Job, Work, WorkResult},
+    proof::ZkProof,
+    BlobRef,
+};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use std::collections::BTreeMap;
+
+/// What runs the nodes' jobs, and what a requester's computation publishes as ciphertext.
+pub trait Jobs {
+    fn run(&mut self, node: usize, job: &Job) -> WorkResult;
+    /// The ciphertext the chain publishes once the committee key `public_key` is out.
+    fn ciphertext(&mut self, params: &CryptoParams, public_key: BlobRef) -> BlobRef;
+}
+
+pub struct MockJobs {
+    rng: ChaCha8Rng,
+}
+
+impl MockJobs {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: ChaCha8Rng::seed_from_u64(seed),
+        }
+    }
+}
+
+impl Jobs for MockJobs {
+    fn run(&mut self, _node: usize, job: &Job) -> WorkResult {
+        self.mock(job)
+    }
+
+    fn ciphertext(&mut self, _params: &CryptoParams, public_key: BlobRef) -> BlobRef {
+        blob(keccak256(public_key.hash))
+    }
+}
+
+impl MockJobs {
+    /// Mock work: no cryptography, but the same shape of results, drawn fresh on every run as real
+    /// key and share generation are. A check passes when the checked bytes are the ones the mock
+    /// derived for them.
+    fn mock(&mut self, job: &Job) -> WorkResult {
+        let result = match &job.work {
+            Work::Dkg(DkgWork::MakeEncryptionKey) => {
+                let proof = self.proof();
+                let public = blob(keccak256(proof.data.hash));
+                DkgWorkResult::EncryptionKeyMade(OwnKey {
+                    public,
+                    secret: blob(keccak256(public.hash)),
+                    proof,
+                })
+            }
+            Work::Dkg(DkgWork::CheckEncryptionKey { sender, key, proof }) => {
+                DkgWorkResult::EncryptionKeyChecked {
+                    sender: *sender,
+                    valid: key.hash == keccak256(proof.data.hash),
+                }
+            }
+            Work::Dkg(DkgWork::MakeShares { keys, .. }) => {
+                let pk_share = blob(self.hash());
+                let recipients = keys
+                    .keys()
+                    .map(|member| {
+                        let shares = RecipientShares {
+                            shares: blob(keccak256(
+                                [pk_share.hash.as_slice(), member.as_slice()].concat(),
+                            )),
+                            c3a: (0..3).map(|_| self.proof()).collect(),
+                            c3b: (0..3).map(|_| self.proof()).collect(),
+                        };
+                        (*member, shares)
+                    })
+                    .collect();
+                let c1 = ZkProof {
+                    public_inputs: vec![pk_share.hash],
+                    ..self.proof()
+                };
+                DkgWorkResult::SharesMade(OwnShares {
+                    pk_share,
+                    own_share: blob(self.hash()),
+                    c1,
+                    c2a: self.proof(),
+                    c2b: self.proof(),
+                    recipients,
+                })
+            }
+            Work::Dkg(DkgWork::CheckShares {
+                dealer, message, ..
+            }) => {
+                let expected = keccak256(
+                    [
+                        message.pk_share.hash.as_slice(),
+                        message.recipient.as_slice(),
+                    ]
+                    .concat(),
+                );
+                DkgWorkResult::SharesChecked {
+                    dealer: *dealer,
+                    valid: message.shares.hash == expected,
+                }
+            }
+            Work::Dkg(DkgWork::MakeDecryptionKey { c2, .. }) => {
+                let binds = |proof: ZkProof| ZkProof {
+                    public_inputs: vec![c2_commitment(c2)],
+                    ..proof
+                };
+                DkgWorkResult::DecryptionKeyMade(OwnDecryptionKey {
+                    key: blob(self.hash()),
+                    c4a: binds(self.proof()),
+                    c4b: vec![binds(self.proof())],
+                })
+            }
+            Work::Dkg(DkgWork::CheckDecryptionKey {
+                member,
+                c2,
+                message,
+                ..
+            }) => DkgWorkResult::DecryptionKeyChecked {
+                member: *member,
+                valid: message.c4a.proof.public_inputs == [c2_commitment(c2)],
+            },
+            Work::Dkg(DkgWork::FoldProofs { .. }) => DkgWorkResult::ProofsFolded(NodeFold {
+                proof: self.proof(),
+                sk_agg_commit: self.hash(),
+                esm_agg_commit: self.hash(),
+            }),
+            Work::Dkg(DkgWork::CheckKeyshare {
+                member, keyshare, ..
+            }) => DkgWorkResult::KeyshareChecked {
+                member: *member,
+                valid: keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash],
+            },
+            Work::Decryption(work) => return self.decrypt(work),
+            Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
+                let shares: Vec<u8> = keyshares
+                    .iter()
+                    .flat_map(|keyshare| keyshare.pk_share.hash.0)
+                    .collect();
+                let public_key = blob(keccak256(shares));
+                DkgWorkResult::KeyAggregated(AggregatedKey {
+                    public_key,
+                    commitment: keccak256(public_key.hash),
+                    proof: self.proof(),
+                })
+            }
+        };
+        WorkResult::Dkg(result)
+    }
+
+    /// Mock decryption: a share binds the domain in its C6 inputs, and the plaintext follows from
+    /// the ciphertext alone, so every aggregator gets the same one.
+    fn decrypt(&mut self, work: &DecryptionWork) -> WorkResult {
+        let result = match work {
+            DecryptionWork::MakeShares {
+                key,
+                ciphertext,
+                domain,
+            } => DecryptionWorkResult::SharesMade(DecryptionShares {
+                shares: vec![blob(keccak256([key.hash, ciphertext.hash].concat()))],
+                c6: vec![ZkProof {
+                    public_inputs: vec![*domain],
+                    ..self.proof()
+                }],
+            }),
+            DecryptionWork::CheckShares {
+                member,
+                domain,
+                message,
+                ..
+            } => DecryptionWorkResult::SharesChecked {
+                member: *member,
+                valid: message
+                    .c6
+                    .iter()
+                    .all(|proof| proof.proof.public_inputs == [*domain]),
+            },
+            DecryptionWork::AggregatePlaintext { ciphertext, .. } => {
+                DecryptionWorkResult::PlaintextMade(PlaintextPublication {
+                    plaintext: blob(keccak256(ciphertext.hash)),
+                    proof: self.proof(),
+                })
+            }
+        };
+        WorkResult::Decryption(result)
+    }
+
+    fn hash(&mut self) -> B256 {
+        B256::from(self.rng.random::<[u8; 32]>())
+    }
+
+    fn proof(&mut self) -> ZkProof {
+        ZkProof {
+            data: blob(self.hash()),
+            public_inputs: vec![self.hash()],
+        }
+    }
+}
+
+fn blob(hash: B256) -> BlobRef {
+    BlobRef { hash, len: 1_000 }
+}
+
+/// What a mock C4 proof commits to: the roster dealers' C2 statements, in roster order.
+fn c2_commitment(c2: &BTreeMap<Address, (ZkProof, ZkProof)>) -> B256 {
+    let statements: Vec<u8> = c2
+        .values()
+        .flat_map(|(c2a, c2b)| c2a.public_inputs.iter().chain(&c2b.public_inputs))
+        .flat_map(|word| word.0)
+        .collect();
+    keccak256(statements)
+}

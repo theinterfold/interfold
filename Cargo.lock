@@ -4495,10 +4495,13 @@ version = "0.20.0-dev.3"
 dependencies = [
  "alloy-primitives",
  "e3-committee",
+ "e3-crypto",
  "e3-engine",
+ "e3-jobs",
  "e3-protocol",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
+ "tokio",
 ]
 
 [[package]]

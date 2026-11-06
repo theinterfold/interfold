@@ -11,15 +11,12 @@ mod crashes;
 mod decryption;
 mod dkg;
 
-use crate::{Faults, Sim};
+use crate::{Faults, Jobs, MockJobs, Sim};
 use alloy_primitives::U256;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::ChainFact,
-    testing::{
-        address, e3, params, ATTESTATION, CIPHERTEXT, DECRYPTION_DEADLINE, INTERFOLD, REQUEST,
-        TIMING,
-    },
+    testing::{address, e3, params, ATTESTATION, INTERFOLD, REQUEST, TIMING},
 };
 
 const FAULTS: Faults = Faults {
@@ -30,12 +27,16 @@ const FAULTS: Faults = Faults {
 };
 
 /// One operator more than the committee needs, each active with ten tickets and its own bond
-/// owner; the first reads the chain 30 seconds late. The chain requests the E3, readies its seed,
-/// and publishes the ciphertext once the DKG window has passed; the operators select and finalize
-/// the committee themselves.
+/// owner; the first reads the chain 30 seconds late. The chain requests the E3 and readies its
+/// seed, and publishes the ciphertext after the key, once the DKG window has passed; the operators
+/// select and finalize the committee themselves.
 fn committee(size: CiphernodesCommitteeSize, seed: u64) -> Sim {
+    committee_with(size, seed, MockJobs::new(seed))
+}
+
+fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -> Sim<J> {
     let operators: Vec<u64> = (1..=size.values().n as u64 + 1).collect();
-    let mut sim = Sim::new(seed, &operators, FAULTS);
+    let mut sim = Sim::with_jobs(seed, &operators, FAULTS, jobs);
     sim.set_chain_lag(0, 30);
     for operator in operators.iter().map(|operator| address(*operator)) {
         sim.chain(
@@ -73,13 +74,6 @@ fn committee(size: CiphernodesCommitteeSize, seed: u64) -> Sim {
             committee_deadline: 100,
         },
     );
-    sim.chain(
-        TIMING.deadline + 500,
-        ChainFact::CiphertextReady {
-            e3: e3(1),
-            ciphertext: CIPHERTEXT,
-            deadline: DECRYPTION_DEADLINE,
-        },
-    );
+    sim.set_ciphertext_at(TIMING.deadline + 500);
     sim
 }
