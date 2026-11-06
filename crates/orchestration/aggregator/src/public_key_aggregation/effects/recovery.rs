@@ -4,6 +4,7 @@
 
 use super::super::*;
 use anyhow::ensure;
+use e3_events::EventSource;
 
 impl PublicKeyAggregator {
     /// Every node assembled the whole key from the chain's chunks, so a restart has no key
@@ -77,7 +78,7 @@ impl PublicKeyAggregator {
 
         match state {
             PublicKeyAggregatorState::VerifyingC1 { .. } => {
-                self.continue_c1_verification(effects_context)
+                self.start_c1_verification(effects_context)
             }
             PublicKeyAggregatorState::GeneratingC5Proof {
                 public_key,
@@ -106,23 +107,29 @@ impl PublicKeyAggregator {
                     Ok(state)
                 })?;
 
+                let replayed_c5_proof = self.take_replayed_c5_proof(&keyshare_bytes);
                 if c5_proof_pending.is_none() {
-                    self.bus.publish(
-                        PkAggregationProofPending {
-                            e3_id: self.e3_id.clone(),
-                            proof_request: PkAggregationProofRequest {
-                                keyshare_bytes,
-                                aggregated_pk_bytes: public_key.clone(),
-                                params_preset: self.params_preset,
-                                committee_n: circuit_committee_n,
-                                committee_h: circuit_committee_h,
-                                committee_threshold: self.committee_size.values().threshold,
+                    if let Some(c5_proof) = replayed_c5_proof {
+                        self.replayed_c5_proof = Some(c5_proof);
+                        self.publish_aggregation_resumed(effects_context)?;
+                    } else {
+                        self.bus.publish(
+                            PkAggregationProofPending {
+                                e3_id: self.e3_id.clone(),
+                                proof_request: PkAggregationProofRequest {
+                                    keyshare_bytes,
+                                    aggregated_pk_bytes: public_key.clone(),
+                                    params_preset: self.params_preset,
+                                    committee_n: circuit_committee_n,
+                                    committee_h: circuit_committee_h,
+                                    committee_threshold: self.committee_size.values().threshold,
+                                },
+                                public_key,
+                                nodes,
                             },
-                            public_key,
-                            nodes,
-                        },
-                        causal_context.clone(),
-                    )?;
+                            causal_context.clone(),
+                        )?;
+                    }
                 }
 
                 self.try_dispatch_nodes_fold_step(&causal_context)?;
@@ -130,6 +137,62 @@ impl PublicKeyAggregator {
             }
             PublicKeyAggregatorState::Complete { .. }
             | PublicKeyAggregatorState::Collecting { .. } => Ok(()),
+        }
+    }
+
+    /// Start C1 verification of the collected keyshares, or apply the verdict held for them.
+    pub(in crate::actors::publickey_aggregator) fn start_c1_verification(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self.early_c1_verification.is_some() {
+            return self.publish_aggregation_resumed(ec);
+        }
+        self.continue_c1_verification(ec)
+    }
+
+    /// A restart can hold a C1 verdict or a C5 proof of this node, and replay can commit a
+    /// snapshot past the result's own event. `EffectsEnabled` belongs to aggregate zero, and the
+    /// committee filter releases replayed keyshares with their logged contexts, so a fresh event
+    /// of this E3's chain carries the writes that apply the result.
+    fn publish_aggregation_resumed(&self, cause: EventContext<Sequenced>) -> Result<()> {
+        self.bus.publish(
+            AggregationResumed {
+                e3_id: self.e3_id.clone(),
+                phase: AggregationPhase::PublicKey,
+                correlation_id: CorrelationId::new(),
+            },
+            cause,
+        )
+    }
+
+    /// Apply the held result under the resume event's revision.
+    pub(in crate::actors::publickey_aggregator) fn handle_aggregation_resume(
+        &mut self,
+        msg: TypedEvent<AggregationResumed>,
+    ) -> Result<()> {
+        let (msg, ec) = msg.into_components();
+        if msg.e3_id != self.e3_id
+            || msg.phase != AggregationPhase::PublicKey
+            || ec.source() != EventSource::Local
+            || !self.can_continue_aggregation_effects()
+        {
+            return Ok(());
+        }
+        match self.state.get() {
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+                if self.early_c1_verification.is_some() =>
+            {
+                self.continue_c1_verification(ec)
+            }
+            Some(PublicKeyAggregatorState::GeneratingC5Proof { keyshare_bytes, .. }) => {
+                let Some(c5_proof) = self.take_replayed_c5_proof(&keyshare_bytes) else {
+                    return Ok(());
+                };
+                let (c5_proof, _) = c5_proof.into_components();
+                self.handle_pk_aggregation_proof_signed(TypedEvent::new(c5_proof, ec))
+            }
+            _ => Ok(()),
         }
     }
 }

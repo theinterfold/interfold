@@ -47,6 +47,11 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
                     self.handle_c6_resume(TypedEvent::new(data, ec))
                 });
             }
+            InterfoldEventData::AggregationResumed(data) => {
+                trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                    self.handle_aggregation_resume(TypedEvent::new(data, ec))
+                });
+            }
             InterfoldEventData::AggregationProofSigned(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -316,6 +321,9 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
         msg: TypedEvent<AggregationProofSigned>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            return self.buffer_replayed_c7_result(msg);
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }

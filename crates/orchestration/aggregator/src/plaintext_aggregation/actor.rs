@@ -18,14 +18,14 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregationProofPending,
-    AggregationProofSigned, AggregatorChanged, BusHandle, CommitteeMemberExcluded,
-    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind,
-    ComputeResponse, ComputeResponseKind, CorrelationId, DecryptedSharesAggregationProofRequest,
-    DecryptionAggregationRequest, DecryptionshareCreated, Die, E3Failed, E3Stage, E3id, EType,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, PlaintextAggregated,
-    PlaintextVerificationResumed, Proof, Sequenced, ShareVerificationComplete,
-    ShareVerificationDispatched, SignedProofPayload, TypedEvent, VerificationKind, ZkRequest,
-    ZkResponse,
+    AggregationProofSigned, AggregationResumed, AggregatorChanged, BusHandle,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
+    ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind, CorrelationId,
+    DecryptedSharesAggregationProofRequest, DecryptionAggregationRequest, DecryptionshareCreated,
+    Die, E3Failed, E3Stage, E3id, EType, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, PlaintextAggregated, PlaintextVerificationResumed, Proof, Sequenced,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::BfvPreset;
 use e3_sortition::{E3CommitteeContainsRequest, E3CommitteeContainsResponse, Sortition};
@@ -59,6 +59,8 @@ struct PendingDecryptionWork {
     decryption_aggregation_correlation: Option<CorrelationId>,
     /// C7 proofs stored while waiting for decryption aggregation.
     c7_proofs_pending: Option<Vec<Proof>>,
+    /// C7 results replayed while effects were fenced, applied once this node reaches C7.
+    replayed_c7_results: Vec<TypedEvent<AggregationProofSigned>>,
     /// DecryptionAggregator outputs (set when ZK completes).
     decryption_aggregator_proofs: Option<Vec<Proof>>,
     /// Last event context, reused for ZK and final publish.

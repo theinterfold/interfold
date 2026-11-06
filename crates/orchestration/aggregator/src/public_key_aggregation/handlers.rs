@@ -54,6 +54,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     self.resume_in_flight_work(ec)
                 });
             }
+            InterfoldEventData::AggregationResumed(data) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.handle_aggregation_resume(TypedEvent::new(data, ec))
+                });
+            }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&E3Stage::KeyPublished);
@@ -167,10 +172,15 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
                 self.publish_inputs_ready(ec.clone())?;
             }
 
-            // If we just transitioned to VerifyingC1, dispatch verification
-            // using c1_proofs stored in the new state.
-            if became_ready && self.can_run_aggregation_effects() {
-                self.continue_c1_verification(ec)?;
+            // If we just transitioned to VerifyingC1, start verification
+            // of the c1_proofs stored in the new state. A node that replay demoted still
+            // applies the C1 verdict it holds: the verdict shows that it dispatched C1.
+            if became_ready
+                && (self.can_run_aggregation_effects()
+                    || (self.early_c1_verification.is_some()
+                        && self.can_continue_aggregation_effects()))
+            {
+                self.start_c1_verification(ec)?;
             }
 
             Ok(())
@@ -186,6 +196,13 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {
         msg: TypedEvent<ShareVerificationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            return trap(
+                EType::PublickeyAggregation,
+                &self.bus.with_ec(msg.get_ctx()),
+                || self.buffer_replayed_c1_verification(msg),
+            );
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }
@@ -205,6 +222,10 @@ impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {
         msg: TypedEvent<PkAggregationProofSigned>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if !self.effects_enabled {
+            self.buffer_replayed_c5_proof(msg);
+            return;
+        }
         if !self.can_continue_aggregation_effects() {
             return;
         }

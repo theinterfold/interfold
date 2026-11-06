@@ -156,6 +156,7 @@ interfold_event_data!(
     EligibilityConfigurationVersionUpdatedAt,
     BondingAssetConfigUpdated,
     BondingAssetConfigUpdatedAt,
+    AggregationResumed,
 );
 
 impl fmt::Display for EventType {
@@ -241,6 +242,7 @@ impl InterfoldEventData {
             InterfoldEventData::AggregationProofPending(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::AggregationProofSigned(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PlaintextVerificationResumed(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::AggregationResumed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DKGRecursiveAggregationComplete(ref data) => {
                 Some(data.e3_id.clone())
             }

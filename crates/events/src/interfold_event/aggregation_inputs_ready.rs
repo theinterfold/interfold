@@ -63,6 +63,28 @@ impl Display for PlaintextVerificationResumed {
     }
 }
 
+/// Apply a C1, C5, or C7 result that startup replay held, under a fresh, chain-scoped event after
+/// recovery. Replay can commit a snapshot past the result's own event, and the store rejects writes
+/// under that event's revision.
+#[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct AggregationResumed {
+    pub e3_id: E3id,
+    pub phase: AggregationPhase,
+    /// Local delivery IDs derive from the payload: this makes each resume a distinct event.
+    pub correlation_id: CorrelationId,
+}
+
+impl Display for AggregationResumed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "AggregationResumed {{ e3_id: {}, phase: {} }}",
+            self.e3_id, self.phase
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AggregationPhase;

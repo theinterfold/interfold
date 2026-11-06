@@ -69,9 +69,11 @@ any other share/party count. Sort runtime IDs and convert **once** to one-based 
 one to locate registry slots. C7 proves every plaintext coefficient, including claimed zeros.
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
-plaintext. Deduplicate by request, not merely E3. Replacing a batch invalidates all old worker
-correlations and regenerates matching proofs. Each final job folds its C6 leaves, checks C7, and
-surfaces the common domain, selected coordinates, and DKG anchors. Missing proofs or a final
+plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds
+to the batch this node reaches; a resumed C7 phase applies it under a fresh chain-scoped
+`AggregationResumed`. Deduplicate by request, not merely E3. Replacing a batch invalidates all old
+worker correlations and regenerates matching proofs. Each final job folds its C6 leaves, checks C7,
+and surfaces the common domain, selected coordinates, and DKG anchors. Missing proofs or a final
 proof-count mismatch follows `DecryptionInvalidShares`, not a silent local trap.
 
 ## Failover and publication

@@ -3,8 +3,61 @@
 //! Correlate C5 and per-node DKG fold artifacts.
 
 use super::super::*;
+use e3_events::EventSource;
 
 impl PublicKeyAggregator {
+    /// Startup replay delivers this node's earlier C5 proof while effects are fenced. The prover
+    /// answers the replayed request with the replayed compute response and a deterministic
+    /// signature, so its proof after `EffectsEnabled` repeats the replayed delivery ID and the bus
+    /// drops it. Keep the replayed proof for the C5 phase instead. The committee filter can hold
+    /// the keyshares until after `EffectsEnabled`, so keep it while collecting, too.
+    pub(in crate::actors::publickey_aggregator) fn buffer_replayed_c5_proof(
+        &mut self,
+        msg: TypedEvent<PkAggregationProofSigned>,
+    ) {
+        if msg.e3_id != self.e3_id
+            || msg.get_ctx().source() != EventSource::Local
+            || self.key_published
+            || !matches!(
+                self.state.get(),
+                Some(
+                    PublicKeyAggregatorState::Collecting { .. }
+                        | PublicKeyAggregatorState::VerifyingC1 { .. }
+                        | PublicKeyAggregatorState::GeneratingC5Proof { .. }
+                )
+            )
+        {
+            return;
+        }
+        info!(
+            e3_id = %self.e3_id,
+            "Buffering C5 proof until effects resume public-key aggregation"
+        );
+        self.replayed_c5_proof = Some(msg);
+    }
+
+    /// Take the C5 proof replayed during restart if it proves the aggregation of `keyshares`, the
+    /// honest keyshares of the current C5 request. Its holder applies it instead of requesting the
+    /// proof again.
+    pub(in crate::actors::publickey_aggregator) fn take_replayed_c5_proof(
+        &mut self,
+        keyshares: &[ArcBytes],
+    ) -> Option<TypedEvent<PkAggregationProofSigned>> {
+        let replayed = self.replayed_c5_proof.take()?;
+        let payload = &replayed.signed_proof.payload;
+        if payload.e3_id != self.e3_id
+            || payload.proof_type != ProofType::C5PkAggregation
+            || !c5_proof_matches_keyshares(&payload.proof, keyshares, &self.fhe)
+        {
+            warn!(
+                e3_id = %self.e3_id,
+                "Discarding a replayed C5 proof that does not prove the current key aggregation"
+            );
+            return None;
+        }
+        Some(replayed)
+    }
+
     pub(in crate::actors::publickey_aggregator) fn handle_pk_aggregation_proof_signed(
         &mut self,
         msg: TypedEvent<PkAggregationProofSigned>,

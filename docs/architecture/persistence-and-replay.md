@@ -202,7 +202,11 @@ shared verification request). Before release/reuse, canonical C6 admission still
 `E3Context::effects_enabled` stays false until the router receives `EffectsEnabled`. Extensions must
 propagate it to actors created during replay, not only hydrated actors. Keyshare collectors and
 accusation signing wait for that signal; replay records their inputs without starting timers or
-signing another accusation.
+signing another accusation. Replay puts each event's delivery ID in the dedup window, so a fenced
+actor must keep a replayed result whose identity is payload-only: re-dispatching after
+`EffectsEnabled` cannot obtain it again. Replay can also commit a snapshot past that result's
+sequence, so apply it under a later event of the same E3 chain, never under the result's own context
+or `EffectsEnabled`.
 
 After ten minutes without an outcome for a fresh ID, resend only once no identical request remains
 queued/running. A hung run waits for its prover cap. Terminal E3 cancels queued node-scoped compute
@@ -265,8 +269,11 @@ Only some types have per-type versions (for example BondOwnerState). Until a tes
 migration exists, every incompatible persisted layout/event variant change, even an added field,
 requires a manual `SCHEMA_VERSION` increase. Raw preflight runs before logs/index
 opening/repair/decoding; `node validate`, including `--repair`, uses it and leaves incompatible log
-bytes unchanged. Global storage schema is **not linked** to `protocol-release.toml`; wire major
-changes are separate.
+bytes unchanged. An appended `InterfoldEventData` variant keeps existing logs decodable without an
+increase, but preflight then cannot guard a rollback: once a node writes the new variant, an older
+binary passes preflight and fails to open the log ("event log integrity check failed during open"),
+so that node can only roll forward. Global storage schema is **not linked** to
+`protocol-release.toml`; wire major changes are separate.
 
 [Layout locks](../../crates/testing/layout-lock/) detect encoding drift and same-encoding field
 swaps/renames for roots explicitly listed by hand.

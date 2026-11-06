@@ -6,8 +6,8 @@
 
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
-    check_c1_keyshare_commitments, extract_pk_commitment, verify_dkg_fold_attestation, C1Dispatch,
-    HonestSelection, PublicKeyAggregation,
+    c5_proof_matches_keyshares, check_c1_keyshare_commitments, extract_pk_commitment,
+    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
 };
 use actix::prelude::*;
 use anyhow::Result;
@@ -15,9 +15,9 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_data::Persistable;
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
-    prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
-    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
+    prelude::*, AggregationInputsReady, AggregationPhase, AggregationResumed, AggregatorChanged,
+    BusHandle, CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled,
+    ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
     DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
     EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     NodesFoldStepRequest, PkAggregationProofPending, PkAggregationProofRequest,
@@ -57,6 +57,8 @@ pub struct PublicKeyAggregator {
     key_published: bool,
     /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
     early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
+    /// This node's C5 proof replayed during restart, kept until effects resume the C5 phase.
+    replayed_c5_proof: Option<TypedEvent<PkAggregationProofSigned>>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
 }
@@ -111,6 +113,7 @@ impl PublicKeyAggregator {
             effects_enabled: params.effects_enabled,
             key_published: false,
             early_c1_verification: None,
+            replayed_c5_proof: None,
             early_dkg_proofs: Vec::new(),
         };
         actor.observe_stage(&params.initial_stage);
@@ -151,7 +154,14 @@ impl PublicKeyAggregator {
     /// Record that this node, as the active aggregator, starts aggregation work. The record is
     /// persisted, so that a restart after a failover still resumes the C1 verification.
     fn mark_started_as_aggregator(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
-        if !self.can_run_aggregation_effects() || self.started_as_aggregator {
+        if !self.can_run_aggregation_effects() {
+            return Ok(());
+        }
+        self.record_started_as_aggregator(ec)
+    }
+
+    fn record_started_as_aggregator(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
+        if self.started_as_aggregator {
             return Ok(());
         }
         self.started_as_aggregator = true;
