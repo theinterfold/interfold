@@ -472,11 +472,11 @@ impl E3 {
         }
         let mut effects = self.sent(now, effects);
         let (dkg_runs, decryption_runs) = self.work_running();
-        let accusing = self.accuses();
+        let accusations = self.accusations.as_ref();
         let again = self.resend.due(now, |body| match body {
             Body::Dkg(_) => dkg_runs,
             Body::Decryption(_) => decryption_runs,
-            Body::Accusation(_) => accusing,
+            Body::Accusation(message) => accusations.is_some_and(|open| open.open(message)),
         });
         effects.extend(again.into_iter().map(Effect::Gossip));
         effects
@@ -484,7 +484,7 @@ impl E3 {
 
     pub(crate) fn next_deadline(&self) -> Option<UnixSecs> {
         let (dkg_runs, decryption_runs) = self.work_running();
-        let accusing = self.accuses();
+        let accusations = self.accusations.as_ref();
         let work = self.running().then(|| {
             let dkg = self.dkg.as_ref().and_then(Dkg::next_deadline);
             let decryption = self.decryption.as_ref().and_then(Decryption::next_deadline);
@@ -497,14 +497,14 @@ impl E3 {
         let resend = self.resend.next_deadline(|body| match body {
             Body::Dkg(_) => dkg_runs,
             Body::Decryption(_) => decryption_runs,
-            Body::Accusation(_) => accusing,
+            Body::Accusation(message) => accusations.is_some_and(|open| open.open(message)),
         });
-        let accusations = self.accusations.as_ref().and_then(Accusations::next_deadline);
+        let accusation_due = self.accusations.as_ref().and_then(Accusations::next_deadline);
         [
             self.ends_at(),
             work.flatten(),
             resend,
-            accusations,
+            accusation_due,
             self.settlement_due(),
         ]
         .into_iter()

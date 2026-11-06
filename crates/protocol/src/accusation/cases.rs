@@ -375,9 +375,22 @@ impl Accusations {
     pub(crate) fn expel(&mut self, member: Address) {
         self.expelled.insert(member);
         self.cases.retain(|_, case| case.accused != member);
-        for case in self.cases.values_mut() {
-            case.votes.remove(&member);
+        for votes in self
+            .cases
+            .values_mut()
+            .map(|case| &mut case.votes)
+            .chain(self.early.values_mut())
+        {
+            votes.remove(&member);
         }
+    }
+
+    /// Whether the window `message` belongs to is still open, so sending it again can help.
+    pub(crate) fn open(&self, message: &AccusationMessage) -> bool {
+        let vote = match message {
+            AccusationMessage::Accuse { vote, .. } | AccusationMessage::Vote(vote) => vote,
+        };
+        self.cases.contains_key(&Ballot::of(&vote.vote))
     }
 
     /// Whether any accusation is open: its window has not passed.
