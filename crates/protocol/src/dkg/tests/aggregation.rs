@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::{
+    decryption::DecryptionWork,
     dkg::{DkgWork, FoldAttestation, KeyPublication},
     node::{Job, Submission, Transaction, Work},
     proof::ProofType,
@@ -245,4 +246,31 @@ fn decryption_gets_this_node_s_key_only_for_the_roster_it_summed() {
     };
     assert_eq!(decryption_work(&mut summed), 1);
     assert_eq!(decryption_work(&mut other), 0);
+}
+
+/// The DKG deadline can pass before the node reads the key's publication: it restarted, or its
+/// chain node is behind. Its local failure keeps the key it made for the chain's key over its
+/// roster.
+#[test]
+fn a_key_read_after_the_local_deadline_still_gets_this_node_s_key() {
+    let [first, second, _] = ordered();
+    let (mut node, _) = first_with_keyshare();
+    let late = TIMING.deadline + 1;
+    node.step(late, Input::Tick);
+    node.step(
+        late,
+        key_published(12, e3(1), committee(), members(&[first, second])),
+    );
+    node.step(late, ciphertext_ready(13, e3(1)));
+    let effects = node.step(late, ciphertext_fetched(e3(1)));
+    let makes_shares = effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::Run(Job {
+                work: Work::Decryption(DecryptionWork::MakeShares { .. }),
+                ..
+            })
+        )
+    });
+    assert!(makes_shares);
 }

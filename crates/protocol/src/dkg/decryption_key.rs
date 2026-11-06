@@ -177,7 +177,8 @@ impl Dkg {
                 .into_iter()
                 .map(|(proof_type, proof)| (proof_type, proof.clone())),
         );
-        self.phase = Phase::DecryptionKeySent(dealt.clone(), made.key);
+        self.sealed_key = Some(made.key);
+        self.phase = Phase::DecryptionKeySent(dealt.clone());
         let mut effects = vec![
             self.gossip(DkgMessage::DecryptionKey(message)),
             self.start_fold(proofs),
@@ -197,8 +198,7 @@ impl Dkg {
     }
 
     fn send_keyshare_if_due(&mut self) -> Vec<Effect> {
-        let (Some(roster), Phase::DecryptionKeySent(dealt, key)) =
-            (self.roster_members(), &self.phase)
+        let (Some(roster), Phase::DecryptionKeySent(dealt)) = (self.roster_members(), &self.phase)
         else {
             return Vec::new();
         };
@@ -222,7 +222,7 @@ impl Dkg {
             pk_share: dealt.pk_share,
             c1: dealt.c1.clone(),
         };
-        self.phase = Phase::KeyshareSent(*key);
+        self.phase = Phase::KeyshareSent;
         self.record_keyshare(self.me, message.clone());
         vec![self.gossip(DkgMessage::Keyshare(message))]
     }

@@ -130,7 +130,7 @@ impl Dkg {
             | Phase::MakingDecryptionKey(_)
             | Phase::SigningDecryptionKey(..)
             | Phase::DecryptionKeySent(..)
-            | Phase::KeyshareSent(_)
+            | Phase::KeyshareSent
             | Phase::Observing
             | Phase::Failed(_) => None,
         }

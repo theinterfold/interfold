@@ -336,9 +336,8 @@ enum Phase {
     MakingDecryptionKey(Box<Dealt>),
     SigningDecryptionKey(Box<Dealt>, Box<OwnDecryptionKey>),
     /// C4 sent: the keyshare waits for every other roster member's C4 verdict.
-    DecryptionKeySent(Box<Dealt>, BlobRef),
-    /// The sealed decryption key, kept for decryption.
-    KeyshareSent(BlobRef),
+    DecryptionKeySent(Box<Dealt>),
+    KeyshareSent,
     /// Outside the roster: this node only checks the roster members' C4 proofs.
     Observing,
     Failed(DkgFailure),
@@ -363,6 +362,10 @@ pub struct Dkg {
     fold: OwnFold,
     aggregation: Aggregation,
     phase: Phase,
+    /// This node's sealed decryption key, once made. The chain's key over the same roster needs it
+    /// even when this node's DKG failed locally, as when the deadline passes before the node reads
+    /// the key's publication.
+    sealed_key: Option<BlobRef>,
     /// The chain published the committee key: the DKG is over.
     published: bool,
 }
@@ -393,6 +396,7 @@ impl Dkg {
             fold: OwnFold::NotStarted,
             aggregation: Aggregation::default(),
             phase: Phase::MakingKey,
+            sealed_key: None,
             published: false,
         };
         if now >= timing.key_cutoff() {
@@ -436,10 +440,7 @@ impl Dkg {
 
     /// This node's sealed decryption key, once it sent its keyshare.
     pub(crate) fn decryption_key(&self) -> Option<BlobRef> {
-        match self.phase {
-            Phase::KeyshareSent(key) => Some(key),
-            _ => None,
-        }
+        self.sealed_key
     }
 
     pub(crate) fn key_published(&mut self) {
