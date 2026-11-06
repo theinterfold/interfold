@@ -554,7 +554,7 @@ h = \operatorname{keccak256}(a_0 \,\|\, a_1 \,\|\, \cdots \,\|\, a_{N-1}), \qqua
 $$
 
 Solidity computes it in `CommitteeHashLib.hash`. Rust computes it in
-`e3_committee_hash::hash_committee_addresses` (`crates/committee-hash`). Noir computes it in
+`e3_committee_hash::hash_committee_addresses` (`crates/committee/hash`). Noir computes it in
 `committee_hash_limbs`. A shared test vector checks that the three implementations agree.
 
 ### What the DKG proof enforces

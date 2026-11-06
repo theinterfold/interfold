@@ -1,6 +1,7 @@
 # e3-committee
 
-This owns canonical committee parameters and ordered membership/lookup, not runtime selection.
+This owns canonical committee parameters and ordered membership/lookup, not runtime selection. The
+child `hash/` is the separate `e3-committee-hash` package with its own [AGENTS.md](hash/AGENTS.md).
 
 - Enum variant order is a bincode wire contract; names also appear in JSON, CLI values, and active
   circuit stamps. Do not reorder or rename variants as cosmetic cleanup.

@@ -17,7 +17,7 @@ is not a package or nested workspace, and the grouping does not merge their stat
   quorum, and checks commitment consistency across proofs.
 
 Shared committee parameters and ordered membership stay in [committee](../committee/README.md), and
-committee/decryption-domain hashes in [committee hashes](../committee-hash/README.md). The
+committee/decryption-domain hashes in [committee hashes](../committee/hash/README.md). The
 [ciphernode builder](../ciphernode/builder/README.md) dispatches these workflows into a node; the
 [ZK prover](../zk/prover/README.md) and other execution backends remain separate owners.
 

@@ -12,4 +12,4 @@ This crate is the shared Rust owner of EVM committee and decryption-domain hash 
 
 Use the [README tests](README.md#tests), retaining cross-language vectors. Hash-layout changes also
 need the affected Solidity/Noir coverage and compatibility review in
-[threshold decryption](../../docs/architecture/threshold-decryption.md).
+[threshold decryption](../../../docs/architecture/threshold-decryption.md).

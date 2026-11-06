@@ -135,7 +135,7 @@
         { "title": "Committee identity", "path": "docs/architecture/dkg.md" }
       ],
       "kind": "crate",
-      "path": "crates/committee-hash",
+      "path": "crates/committee/hash",
       "one_line": "Canonical keccak256 hashes of the ordered committee and of the E3 decryption domain, matching the Solidity contracts.",
       "actors": [],
       "consumes": [],
@@ -145,31 +145,31 @@
         {
           "name": "CommitteeHashLimbs",
           "what": "the committee hash split into hi and lo 128-bit halves, each as a bytes32 word",
-          "ref": "crates/committee-hash/src/lib.rs@20@pub struct CommitteeHashLimbs {"
+          "ref": "crates/committee/hash/src/lib.rs@20@pub struct CommitteeHashLimbs {"
         },
         {
           "name": "DecryptionDomainContext",
           "what": "the Interfold address, committee hash and committee public key that a domain hash binds",
-          "ref": "crates/committee-hash/src/lib.rs@28@pub struct DecryptionDomainContext {"
+          "ref": "crates/committee/hash/src/lib.rs@28@pub struct DecryptionDomainContext {"
         },
         {
           "name": "DecryptionDomainLimbs",
           "what": "the decryption-domain hash split into two u128 values",
-          "ref": "crates/committee-hash/src/lib.rs@36@pub struct DecryptionDomainLimbs {"
+          "ref": "crates/committee/hash/src/lib.rs@36@pub struct DecryptionDomainLimbs {"
         }
       ],
       "read_first": [
         {
           "why": "the committee hash: keccak256 over the raw addresses in order",
-          "ref": "crates/committee-hash/src/lib.rs@42@pub fn hash_committee_addresses"
+          "ref": "crates/committee/hash/src/lib.rs@42@pub fn hash_committee_addresses"
         },
         {
           "why": "the E3 decryption domain: the ABI-encoded fields hashed together",
-          "ref": "crates/committee-hash/src/lib.rs@82@pub fn hash_decryption_domain("
+          "ref": "crates/committee/hash/src/lib.rs@82@pub fn hash_decryption_domain("
         },
         {
           "why": "the limb split that feeds the Noir public inputs",
-          "ref": "crates/committee-hash/src/lib.rs@52@pub fn split_committee_hash"
+          "ref": "crates/committee/hash/src/lib.rs@52@pub fn split_committee_hash"
         },
         {
           "why": "the Solidity library the committee hash must match",
@@ -180,17 +180,17 @@
         {
           "pattern": "iterator-chain",
           "note": "the addresses are flattened into one byte buffer before hashing",
-          "ref": "crates/committee-hash/src/lib.rs@45@.flat_map(|addr| addr.into_array())"
+          "ref": "crates/committee/hash/src/lib.rs@45@.flat_map(|addr| addr.into_array())"
         },
         {
           "pattern": "serde-derive",
           "note": "the domain context and the limbs derive Serialize and Deserialize",
-          "ref": "crates/committee-hash/src/lib.rs@27@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
+          "ref": "crates/committee/hash/src/lib.rs@27@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
         },
         {
           "pattern": "unit-test",
           "note": "unit tests sit in the same file",
-          "ref": "crates/committee-hash/src/lib.rs@133@#[test]"
+          "ref": "crates/committee/hash/src/lib.rs@133@#[test]"
         }
       ],
       "depends_on": [],
