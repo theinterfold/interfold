@@ -103,7 +103,12 @@ async fn network() -> [Node; 3] {
     [first, second, third]
 }
 
-fn signed(message: PeerMessage, signer: u64, sent_at: u64) -> Envelope {
+/// Copy `copy` of `message`, signed now; copies with different numbers are different bytes.
+fn signed(message: PeerMessage, signer: u64, copy: u64) -> Envelope {
+    signed_at(message, signer, unix_now() - 300 + copy)
+}
+
+fn signed_at(message: PeerMessage, signer: u64, sent_at: u64) -> Envelope {
     let hash = Envelope::signing_hash(&message, sent_at);
     let signature = operator(signer).sign_hash_sync(&hash).unwrap();
     Envelope {
@@ -251,6 +256,21 @@ async fn a_copy_sent_again_arrives_again() {
     publish(&first, signed(message.clone(), 1, 10)).await;
     assert_eq!(received(&mut second).await, message);
     publish(&first, signed(message.clone(), 1, 70)).await;
+    assert_eq!(received(&mut second).await, message);
+}
+
+/// After gossip forgot a copy, a relay can send it again; an old copy is not delivered, and
+/// neither is one from far ahead of this node's clock.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_or_future_copy_is_not_delivered() {
+    let [first, mut second, _third] = network().await;
+    let message = key(&first, 1);
+    let old = unix_now() - MAX_COPY_AGE - 60;
+    publish(&first, signed_at(message.clone(), 1, old)).await;
+    let ahead = unix_now() + MAX_CLOCK_AHEAD + 60;
+    publish(&first, signed_at(message.clone(), 1, ahead)).await;
+    nothing(&mut second, Duration::from_secs(3)).await;
+    publish(&first, signed(message.clone(), 1, 10)).await;
     assert_eq!(received(&mut second).await, message);
 }
 

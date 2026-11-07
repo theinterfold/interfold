@@ -25,7 +25,7 @@ use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, warn};
@@ -47,6 +47,11 @@ const PUBLISH_ATTEMPTS: u32 = 6;
 const PUBLISH_RETRY: Duration = Duration::from_secs(5);
 const REDIAL: Duration = Duration::from_secs(15);
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(10);
+/// A copy counts from `MAX_COPY_AGE` seconds before this node's clock to `MAX_CLOCK_AHEAD` after
+/// it. Every send and re-send signs a new copy, so an older one is a replay, which gossip's
+/// duplicate cache stops for only a minute.
+const MAX_COPY_AGE: u64 = 10 * 60;
+const MAX_CLOCK_AHEAD: u64 = 2 * 60;
 
 /// How a node joins its network.
 #[derive(Clone, Debug)]
@@ -496,15 +501,21 @@ impl<S: BlobStore> Driver<S> {
         }
     }
 
-    /// Passes on every envelope that opens and comes from an admitted sender, whoever it is for;
-    /// delivers the ones for this node at once, and remembers who sent each, to fetch its blobs
-    /// from. Another sender's envelope is ignored without blaming the peer that passed it on: a
-    /// node whose chain reader is ahead may know an operator this one does not yet.
+    /// Passes on every fresh envelope that opens and comes from an admitted sender, whoever it is
+    /// for; delivers the ones for this node at once, and remembers who sent each, to fetch its
+    /// blobs from. Another sender's envelope, or an old copy, is ignored without blaming the peer
+    /// that passed it on: a node whose chain reader is ahead may know an operator this one does
+    /// not yet, and a clock may be off.
     fn on_gossip(&mut self, propagation: PeerId, id: MessageId, message: gossipsub::Message) {
-        let opened = Envelope::decode(&message.data).and_then(Envelope::open);
-        let admitted = opened
+        let envelope = Envelope::decode(&message.data);
+        let fresh = envelope
             .as_ref()
-            .is_some_and(|opened| self.senders.borrow().contains(&opened.sender));
+            .is_some_and(|envelope| fresh(envelope.sent_at, unix_now()));
+        let opened = envelope.and_then(Envelope::open);
+        let admitted = fresh
+            && opened
+                .as_ref()
+                .is_some_and(|opened| self.senders.borrow().contains(&opened.sender));
         let acceptance = match (&opened, admitted) {
             (Some(_), true) => MessageAcceptance::Accept,
             (Some(_), false) => MessageAcceptance::Ignore,
@@ -715,6 +726,17 @@ impl<S: BlobStore> Driver<S> {
             kademlia.add_address(&peer, address);
         }
     }
+}
+
+/// Whether a copy sent at `sent_at` counts at `now`.
+fn fresh(sent_at: u64, now: u64) -> bool {
+    sent_at.saturating_add(MAX_COPY_AGE) >= now && sent_at <= now.saturating_add(MAX_CLOCK_AHEAD)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// The addresses a peer gave that the node shares through Kademlia. A loopback address reaches
