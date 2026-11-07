@@ -9,6 +9,7 @@
 
 use crate::{
     heartbeat::Heartbeat,
+    memory,
     runtime::{now, run, Parts, Settings},
 };
 use alloy::{
@@ -225,7 +226,8 @@ fn proofs(config: &Config) -> anyhow::Result<Proofs> {
     }
     let bb = BBPath::Custom(prover.bb.clone());
     let backend = ZkBackend::new(bb, prover.circuits.clone(), proving);
-    let circuits = Circuits::new(ZkProver::new(&backend), prover.concurrent)?;
+    let jobs = memory::proof_jobs(prover.concurrent);
+    let circuits = Circuits::new(ZkProver::new(&backend), jobs)?;
     Ok(Proofs::Circuits(Box::new(circuits)))
 }
 
