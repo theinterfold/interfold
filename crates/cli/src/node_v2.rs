@@ -43,6 +43,14 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         &contracts.ciphernode_registry,
         &contracts.bonding_registry,
     ];
+    // Reading a public chain from genesis would take days of log requests.
+    if !chain.rpc_url()?.is_local()
+        && read
+            .iter()
+            .any(|contract| contract.deploy_block().unwrap_or(0) == 0)
+    {
+        bail!("name each contract's deploy_block: a non-local chain is not read from genesis");
+    }
     let start_block = read
         .iter()
         .filter_map(|contract| contract.deploy_block())
@@ -70,6 +78,7 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         bonding: contracts.bonding_registry.address()?,
         start_block,
         confirmations: chain.ingestion_confirmations()?,
+        max_log_range: chain.rpc_log_range_blocks()?,
         poll_interval: chain.rpc_poll_interval()?,
         availability,
         data_dir: config.node_data_dir().join("v2"),

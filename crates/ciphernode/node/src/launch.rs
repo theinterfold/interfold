@@ -55,6 +55,8 @@ pub struct Config {
     pub bonding: Address,
     pub start_block: u64,
     pub confirmations: u64,
+    /// The most blocks one log request covers; the reader halves it while requests fail.
+    pub max_log_range: u64,
     pub poll_interval: Duration,
     pub availability: Availability,
     pub data_dir: PathBuf,
@@ -160,7 +162,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         contracts: contracts.clone(),
         start_block: config.start_block,
         confirmations: config.confirmations,
-        max_log_range: 2_000,
+        max_log_range: config.max_log_range,
         poll_interval: config.poll_interval,
         snapshot_every: 100,
     };

@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         bonding: config.bonding,
         start_block: config.start_block,
         confirmations: config.confirmations,
+        max_log_range: 2_000,
         poll_interval: Duration::from_millis(config.poll_interval_ms),
         availability: Availability::Http(config.availability_url),
         data_dir: config.data_dir,
