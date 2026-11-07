@@ -54,6 +54,9 @@ pub struct Accusations {
     /// The (accused, proof type) pairs this node accused.
     accused: BTreeSet<(Address, ProofType)>,
     expelled: BTreeSet<Address>,
+    /// Once the chain completed the E3: until when an accusation issued before the completion
+    /// can still come.
+    keep_until: Option<UnixSecs>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +125,7 @@ impl Accusations {
             verdicts: BTreeMap::new(),
             accused: BTreeSet::new(),
             expelled: BTreeSet::new(),
+            keep_until: None,
         }
     }
 
@@ -388,7 +392,20 @@ impl Accusations {
         self.pass_deadlines(now)
     }
 
+    /// The chain completed the E3 at `at`. A peer may see the completion before an accusation
+    /// issued just before it, so accusations stay open until a vote in such a window could no
+    /// longer count.
+    pub(crate) fn keep_for_completion(&mut self, at: UnixSecs) {
+        if self.validity > 0 {
+            let until = at + self.validity + CLOCK_SKEW;
+            self.keep_until = self.keep_until.max(Some(until));
+        }
+    }
+
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        if self.keep_until.is_some_and(|until| now > until) {
+            self.keep_until = None;
+        }
         let (e3, manager) = (self.e3, self.manager);
         let mut effects = Vec::new();
         for (ballot, case) in &mut self.cases {
@@ -423,7 +440,8 @@ impl Accusations {
             .keys()
             .chain(self.early.keys())
             .map(|ballot| ballot.deadline.saturating_add(1));
-        submissions.chain(windows).min()
+        let kept = self.keep_until.map(|until| until + 1);
+        submissions.chain(windows).chain(kept).min()
     }
 
     /// The chain expelled `member`: its accusations end, and its votes no longer count. A window
@@ -455,15 +473,16 @@ impl Accusations {
         self.cases.contains_key(&Ballot::of(&vote.vote))
     }
 
-    /// Whether any accusation is open: its window has not passed.
+    /// Whether any accusation is open, or can still come after the E3's completion.
     pub(crate) fn running(&self) -> bool {
-        !self.cases.is_empty() || !self.early.is_empty()
+        !self.cases.is_empty() || !self.early.is_empty() || self.keep_until.is_some()
     }
 
-    /// When the last open window closes.
+    /// When the last open window closes, and accusations of a completed E3 stop coming.
     pub(crate) fn closes_at(&self) -> Option<UnixSecs> {
         let ballots = self.cases.keys().chain(self.early.keys());
-        ballots.map(|ballot| ballot.deadline + 1).max()
+        let windows = ballots.map(|ballot| ballot.deadline + 1);
+        windows.chain(self.keep_until.map(|until| until + 1)).max()
     }
 
     fn is_member(&self, member: Address) -> bool {

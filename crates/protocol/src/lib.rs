@@ -30,7 +30,7 @@ pub use ids::{BlobRef, E3Id};
 /// The version of what a node persists of the machine: its inputs and effects in the journal, and
 /// its snapshots. Change it with any change to their encoding; a node refuses a data directory
 /// written in another version.
-pub const ENCODING_VERSION: u32 = 10;
+pub const ENCODING_VERSION: u32 = 11;
 pub use machine::{Machine, Tick, UnixSecs};
 
 use alloy_primitives::{Address, U256};

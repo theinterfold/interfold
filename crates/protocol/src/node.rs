@@ -716,12 +716,16 @@ impl Node {
                 None => Vec::new(),
             },
             ChainFact::StageChanged { e3, stage } => {
-                match (stage, self.e3s.get_mut(&e3)) {
-                    // Open accusations keep a completed E3 until their windows close.
-                    (Stage::Complete, Some(state)) if state.accuses() => state.advance(stage),
-                    (Stage::Complete, _) => self.end(e3),
-                    (stage, Some(state)) => state.advance(stage),
-                    (_, None) => {}
+                let kept = match (stage, self.e3s.get_mut(&e3)) {
+                    (Stage::Complete, Some(state)) => state.completed(event.time),
+                    (stage, Some(state)) => {
+                        state.advance(stage);
+                        true
+                    }
+                    (_, None) => true,
+                };
+                if !kept {
+                    self.end(e3);
                 }
                 Vec::new()
             }
@@ -829,7 +833,7 @@ impl Node {
         let active_jobs = self
             .e3s
             .values()
-            .filter(|state| state.ticket().is_some() && state.stage != Stage::Failed)
+            .filter(|state| state.ticket().is_some() && state.running())
             .count() as u64;
         let Some(state) = self.e3s.get(&e3) else {
             return Vec::new();
@@ -1568,9 +1572,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                10,
+                11,
                 alloy_primitives::b256!(
-                    "27909775ab9c8bfe35c17655cab82cf0a0a9fda443d3f97e22633af24d88b271"
+                    "0409d6cfc64fed4d26f6878c9ca4e57aa4a91c19b62575b8e7f7c634517eb63f"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
@@ -1709,6 +1713,29 @@ mod tests {
             failure(6, e3(1), FailureReason::CommitteeFormationTimeout),
         );
         let effects = node.step(7, seed_ready(7, e3(2), 42, 100));
+        let ticket = |tx: &Transaction| matches!(tx, Transaction::SubmitTicket { .. });
+        assert!(submissions(&effects).iter().any(ticket));
+    }
+
+    /// A completed E3 that the node keeps for late accusations no longer takes a ticket's place.
+    #[test]
+    fn a_completed_e3_kept_for_accusations_frees_its_ticket() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 1);
+        let manager = Address::repeat_byte(0x5a);
+        node.step(1, chain(1, ChainFact::SlashingManager { manager }));
+        node.step(1, chain(2, ChainFact::VoteValidity { secs: 600 }));
+        node.step(3, requested(3, e3(1)));
+        node.step(4, requested(4, e3(2)));
+        node.step(5, seed_ready(5, e3(1), 42, 100));
+        node.step(6, finalized(6, e3(1), members([1, 2])));
+        let completed = ChainFact::StageChanged {
+            e3: e3(1),
+            stage: Stage::Complete,
+        };
+        node.step(7, chain(7, completed));
+        assert!(node.e3(&e3(1)).is_some());
+        let effects = node.step(8, seed_ready(8, e3(2), 42, 100));
         let ticket = |tx: &Transaction| matches!(tx, Transaction::SubmitTicket { .. });
         assert!(submissions(&effects).iter().any(ticket));
     }
