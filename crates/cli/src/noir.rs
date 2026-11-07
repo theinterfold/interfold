@@ -316,7 +316,7 @@ mod tests {
     use e3_zk_prover::ZkConfig;
 
     #[cfg(unix)]
-    #[actix::test]
+    #[tokio::test]
     async fn setup_requires_explicit_archive_subset() {
         use crate::cli::Cli;
         use clap::Parser;

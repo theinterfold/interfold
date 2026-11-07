@@ -15,7 +15,6 @@ name = "interfold"
 path = "src/main.rs"
 
 [dependencies]
-actix = { workspace = true }
 alloy = { workspace = true }
 bincode = { workspace = true }
 anyhow = { workspace = true }

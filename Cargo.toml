@@ -130,7 +130,6 @@ e3-journal = { version = "0.20.0-dev.3", path = "./crates/state/journal" }
 e3-node = { version = "0.20.0-dev.3", path = "./crates/ciphernode/node" }
 e3-p2p = { version = "0.20.0-dev.3", path = "./crates/ciphernode/p2p" }
 
-actix = "=0.13.5"
 actix-web = "=4.11.0"
 aes-gcm = "=0.10.3"
 alloy = { version = "=1.0.41", features = ["node-bindings", "full"] }

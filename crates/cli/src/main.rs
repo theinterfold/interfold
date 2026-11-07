@@ -70,8 +70,13 @@ pub fn owo() {
     println!("\n\n\n\n");
 }
 
-#[actix::main]
+#[tokio::main]
 pub async fn main() -> Result<()> {
+    // The control socket serves each command with `spawn_local`.
+    tokio::task::LocalSet::new().run_until(run()).await
+}
+
+async fn run() -> Result<()> {
     info!("COMPILATION ID: '{}'", helpers::compile_id::generate_id());
     let handle = Console::stdout();
     let out = handle.writer();

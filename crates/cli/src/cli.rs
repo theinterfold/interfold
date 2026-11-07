@@ -674,7 +674,7 @@ mod tests {
 
     /// Without `--yes`, the purge commands refuse before they touch any node state, and they
     /// create no password or wallet.
-    #[actix::test]
+    #[tokio::test]
     async fn purge_without_confirmation_changes_nothing() -> Result<()> {
         // The purge works on the current directory. It must hold no state, so a regression of the
         // confirmation cannot delete real state.
