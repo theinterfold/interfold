@@ -132,9 +132,11 @@ Every committee member buffers authenticated keyshares and the accepted roster i
 actor state. Once all H keyshares exist, save `VerifyingC1` before
 `AggregationInputsReady(PublicKey)`. Only the active aggregator starts effects. A demoted aggregator
 that started C1 finishes and publishes, including after restart, but stops when the key is
-canonical; late C1 results then change nothing. A result arriving before recovered keyshares is held
-once, tied to that roster, never a replacement. A local result replayed before `EffectsEnabled` is
-held the same way and restores the record that this node started C1, also when replay demotes it.
+canonical; late C1 results then change nothing. A local C1 result authorizes only the keyshares of
+its exact dispatch event ID, never those of a replacement roster; equal verdicts for different
+rosters have different delivery IDs. A result arriving before recovered keyshares is held until they
+rebuild its request. A local result replayed before `EffectsEnabled` is held the same way and
+restores the record that this node started C1, also when replay demotes it.
 
 Verify C1 for all H dealers, aggregate their public shares, prove C5, and combine exactly H
 NodeFolds. A mixed Some/None NodeFold set is a local test-configuration mismatch: retain inputs, do

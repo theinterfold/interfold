@@ -235,15 +235,17 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.block(),
                 self.ctx.ts(),
             )),
-            // Equal C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
-            // and C6 batches are replaced. An error's ID is its payload, so the same failure of two
-            // different events has one ID. The cause tells such occurrences apart without changing
-            // persisted or network event payloads; a repeat of one occurrence stays one delivery.
+            // Equal C1, C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
+            // and C1 rosters and C6 batches are replaced. An error's ID is its payload, so the same
+            // failure of two different events has one ID. The cause tells such occurrences apart
+            // without changing persisted or network event payloads; a repeat of one occurrence
+            // stays one delivery.
             EventSource::Local
                 if matches!(
                     self.payload,
                     InterfoldEventData::ShareVerificationComplete(ShareVerificationComplete {
-                        kind: VerificationKind::ShareProofs
+                        kind: VerificationKind::PkGenerationProofs
+                            | VerificationKind::ShareProofs
                             | VerificationKind::ThresholdDecryptionProofs,
                         ..
                     }) | InterfoldEventData::InterfoldError(_)
@@ -458,6 +460,7 @@ mod tests {
     #[test]
     fn local_batch_verdicts_distinguish_batches_but_deduplicate_retries() {
         for kind in [
+            VerificationKind::PkGenerationProofs,
             VerificationKind::ShareProofs,
             VerificationKind::ThresholdDecryptionProofs,
         ] {

@@ -7,7 +7,7 @@
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
     c5_proof_matches_keyshares, check_c1_keyshare_commitments, extract_pk_commitment,
-    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
+    verify_dkg_fold_attestation, HonestSelection, PublicKeyAggregation,
 };
 use actix::prelude::*;
 use anyhow::Result;
@@ -19,7 +19,7 @@ use e3_events::{
     BusHandle, CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
     DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     NodesFoldStepRequest, PkAggregationProofPending, PkAggregationProofRequest,
     PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated, Sequenced,
     ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
@@ -30,7 +30,7 @@ use e3_fhe::{Fhe, GetAggregatePublicKey};
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, OrderedSet, MAILBOX_LIMIT};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tracing::{error, info, warn};
 
 // The state machine and pure transition logic live in `crate::workflow::publickey_aggregation`.
@@ -55,8 +55,9 @@ pub struct PublicKeyAggregator {
     effects_enabled: bool,
     /// Canonical publication is independent of this node's local DKG phase.
     key_published: bool,
-    /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
-    early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
+    /// C1 verdicts that arrive before effects resume or before replayed keyshares restore
+    /// VerifyingC1, keyed by the ID of the verification request that each one answers.
+    early_c1_verifications: HashMap<EventId, TypedEvent<ShareVerificationComplete>>,
     /// This node's C5 proof replayed during restart, kept until effects resume the C5 phase.
     replayed_c5_proof: Option<TypedEvent<PkAggregationProofSigned>>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
@@ -112,7 +113,7 @@ impl PublicKeyAggregator {
             started_as_aggregator,
             effects_enabled: params.effects_enabled,
             key_published: false,
-            early_c1_verification: None,
+            early_c1_verifications: HashMap::new(),
             replayed_c5_proof: None,
             early_dkg_proofs: Vec::new(),
         };

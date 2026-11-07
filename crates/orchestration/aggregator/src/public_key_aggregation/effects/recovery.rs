@@ -8,6 +8,7 @@ use crate::PublicKeyRepositoryFactory;
 use anyhow::ensure;
 use e3_data::{AutoPersist, Repositories};
 use e3_events::{EventSource, EventStoreQueryBy, SeqAgg};
+use std::collections::BTreeSet;
 
 impl PublicKeyAggregator {
     /// Restore DKG folds that a restart loses. A party sends its fold once, but folds received
@@ -199,7 +200,7 @@ impl PublicKeyAggregator {
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        if self.early_c1_verification.is_some() {
+        if self.holds_c1_verification() {
             return self.publish_aggregation_resumed(ec);
         }
         self.continue_c1_verification(ec)
@@ -234,9 +235,7 @@ impl PublicKeyAggregator {
             return Ok(());
         }
         match self.state.get() {
-            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
-                if self.early_c1_verification.is_some() =>
-            {
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. }) if self.holds_c1_verification() => {
                 self.continue_c1_verification(ec)
             }
             Some(PublicKeyAggregatorState::GeneratingC5Proof { keyshare_bytes, .. }) => {
