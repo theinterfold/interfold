@@ -11,7 +11,19 @@ use crate::{
     heartbeat::Heartbeat,
     runtime::{now, run, Parts, Settings},
 };
-use alloy::{network::EthereumWallet, providers::Provider, providers::ProviderBuilder};
+use alloy::{
+    network::EthereumWallet,
+    providers::{Provider, ProviderBuilder},
+    rpc::client::{ClientBuilder, RpcClient},
+    transports::{
+        http::reqwest::{
+            header::{HeaderMap, HeaderValue, AUTHORIZATION},
+            Client,
+        },
+        ws::WsConnect,
+        Authorization,
+    },
+};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
@@ -33,6 +45,8 @@ use std::{
 pub struct Config {
     /// An `http(s)://` or `ws(s)://` URL of the chain's RPC node.
     pub rpc_url: String,
+    /// The credentials the RPC node asks for, if any.
+    pub rpc_auth: Option<Authorization>,
     /// The chain the contracts are on; read from the RPC node when unset.
     pub chain_id: Option<u64>,
     pub interfold: Address,
@@ -80,7 +94,8 @@ pub struct Network {
 
 /// Runs the node until it fails.
 pub async fn launch(config: Config) -> anyhow::Result<()> {
-    let chain = ProviderBuilder::new().connect(&config.rpc_url).await?;
+    let rpc = || rpc_client(&config.rpc_url, config.rpc_auth.as_ref());
+    let chain = ProviderBuilder::new().connect_client(rpc().await?);
     let chain_id = match config.chain_id {
         Some(chain_id) => chain_id,
         None => chain.get_chain_id().await?,
@@ -115,8 +130,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     let operator = config.operator;
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
-        .connect(&config.rpc_url)
-        .await?;
+        .connect_client(rpc().await?);
     let unmined = config.data_dir.join("unmined.json");
     let wallet = Wallet::new(wallet, chain_id, config.confirmations, unmined)?;
     wallet.acknowledge_release(&contracts, release).await?;
@@ -162,6 +176,25 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         heartbeat,
     };
     Err(run(settings, parts).await.into())
+}
+
+/// A connection to the RPC node at `url` that presents `auth`.
+async fn rpc_client(url: &str, auth: Option<&Authorization>) -> anyhow::Result<RpcClient> {
+    if url.starts_with("ws://") || url.starts_with("wss://") {
+        let mut connect = WsConnect::new(url);
+        if let Some(auth) = auth {
+            connect = connect.with_auth(auth.clone());
+        }
+        return Ok(ClientBuilder::default().ws(connect).await?);
+    }
+    let mut headers = HeaderMap::new();
+    if let Some(auth) = auth {
+        let mut value = HeaderValue::from_str(&auth.to_string())?;
+        value.set_sensitive(true);
+        headers.insert(AUTHORIZATION, value);
+    }
+    let client = Client::builder().default_headers(headers).build()?;
+    Ok(ClientBuilder::default().http_with_client(client, url.parse()?))
 }
 
 /// Runs a node that only helps the others find each other: it answers their lookups and takes no
@@ -240,4 +273,54 @@ where
         .iter()
         .map(|value| value.parse())
         .collect::<Result<_, _>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    /// An RPC node that asks for credentials gets them with each request.
+    #[tokio::test]
+    async fn the_rpc_node_gets_the_configured_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let node = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            let body = loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                if let Some((_, body)) = text.split_once("\r\n\r\n") {
+                    if let Ok(body) = serde_json::from_str::<serde_json::Value>(body) {
+                        break body;
+                    }
+                }
+            };
+            let answer =
+                serde_json::json!({ "jsonrpc": "2.0", "id": body["id"], "result": "0x7a69" })
+                    .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
+                answer.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&request).to_lowercase()
+        });
+        let client = rpc_client(&url, Some(&Authorization::bearer("secret")))
+            .await
+            .unwrap();
+        let chain_id = ProviderBuilder::new()
+            .connect_client(client)
+            .get_chain_id()
+            .await
+            .unwrap();
+        assert_eq!(chain_id, 31337);
+        assert!(node.await.unwrap().contains("authorization: bearer secret"));
+    }
 }

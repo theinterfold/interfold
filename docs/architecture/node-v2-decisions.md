@@ -194,12 +194,11 @@ Each rule is checkable in review.
   `interfold wallet set` sealed them: the operator key, and the network key, which an older release
   could set apart from the operator key, so every operator keeps its peer ID. The network's ID, not
   its name, goes into the protocol names, so two custom networks that share a name stay apart. It
-  reads ciphertexts from Avail, or from an object service on a test deployment. What the node does
-  not support yet stops it at start: more than one chain, and RPC authentication. A bootstrap node
-  runs the network alone: it answers lookups under the stored network key, so its peer ID stays the
-  one peers are given, and takes no part in messages, the chain, or proofs. It does not subscribe to
-  the message topic, so peers keep it out of their message mesh, and it needs no gas, which a node
-  that acknowledges a release does.
+  reads ciphertexts from Avail, or from an object service on a test deployment. A configuration with
+  more than one chain stops it at start. A bootstrap node runs the network alone: it answers lookups
+  under the stored network key, so its peer ID stays the one peers are given, and takes no part in
+  messages, the chain, or proofs. It does not subscribe to the message topic, so peers keep it out
+  of their message mesh, and it needs no gas, which a node that acknowledges a release does.
 
 ## Problems in the current node, with the fix above them
 

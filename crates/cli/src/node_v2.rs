@@ -7,7 +7,7 @@
 //! The v2 node's configuration from the CLI's: one chain with its contracts and availability
 //! service, the operator key that `interfold wallet set` stored, and the node's port and peers.
 
-use alloy::signers::local::PrivateKeySigner;
+use alloy::{signers::local::PrivateKeySigner, transports::Authorization};
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
@@ -30,9 +30,6 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
             chains.len()
         );
     };
-    if chain.rpc_auth != RpcAuth::None {
-        bail!("the node does not authenticate to its RPC node yet: use an RPC URL without auth");
-    }
     let availability = match &chain.data_availability {
         Some(availability) => match availability.mode {
             DataAvailabilityMode::Avail => Availability::Avail(availability.rpc_url.clone()),
@@ -62,6 +59,11 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
     });
     Ok(Config {
         rpc_url: chain.rpc_url.clone(),
+        rpc_auth: match &chain.rpc_auth {
+            RpcAuth::None => None,
+            RpcAuth::Basic { username, password } => Some(Authorization::basic(username, password)),
+            RpcAuth::Bearer(token) => Some(Authorization::bearer(token)),
+        },
         chain_id: chain.chain_id,
         interfold: contracts.interfold.address()?,
         registry: contracts.ciphernode_registry.address()?,

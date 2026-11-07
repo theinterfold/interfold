@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let operator: PrivateKeySigner = config.operator.parse()?;
     launch(Config {
         rpc_url: config.rpc_url,
+        rpc_auth: None,
         chain_id: Some(config.chain_id),
         interfold: config.interfold,
         registry: config.registry,
