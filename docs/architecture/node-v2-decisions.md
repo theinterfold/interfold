@@ -177,14 +177,16 @@ Each rule is checkable in review.
   C3 per slot. A check verifies the proof and compares the bytes it received with the proof's public
   commitments: a key with its C0, a keyshare with its C1, the shares a member decrypted with the
   dealer's C2 rows for its slot, each C3 with the member's key (its C0 commitment) and those rows,
-  one C3 per row, a member's C4 rows with the roster dealers' C2 rows, and a decryption share with
-  its C6 (ciphertext, share, domain, and the member's key commitments that the DKG proof the chain
-  verified carries, which the registry stores as its anchors). A valid proof of other bytes, or
-  another member's proof, counts for nothing. A bad key or bad shares keep their sender out of the
-  roster, and a bad decryption share out of the T+1 shares the plaintext uses; after the roster is
-  fixed, a bad keyshare or C4 fails the DKG. The committee key's commitment is the DKG aggregation
-  proof's last public input, which `BfvPkVerifier` checks, not a hash of the key bytes. A node
-  without a prover makes placeholders, which only the mock verifiers of a test deployment accept.
+  one C3 per row (no circuit consumes C3's ciphertext commitment: the shares count by what they
+  decrypt to, and C4 binds those rows), a member's C4 rows with the roster dealers' C2 rows, and a
+  decryption share with its C6 (ciphertext, share, domain, and the member's key commitments that the
+  DKG proof the chain verified carries, which the registry stores as its anchors). A valid proof of
+  other bytes, or another member's proof, counts for nothing. A bad key or bad shares keep their
+  sender out of the roster, and a bad decryption share out of the T+1 shares the plaintext uses;
+  after the roster is fixed, a bad keyshare or C4 fails the DKG. The committee key's commitment is
+  the DKG aggregation proof's last public input, which `BfvPkVerifier` checks, not a hash of the key
+  bytes. A node without a prover makes placeholders, which only the mock verifiers of a test
+  deployment accept.
 - **D28. An accusation carries the failing proof, and H votes slash.** A check that finds a signed
   proof failing names it. The node accuses the signer once per proof type, in a window as long as
   the vote validity the request snapshotted, and signs under the slashing manager the request
