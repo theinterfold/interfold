@@ -36,9 +36,11 @@ use tokio::{
 use tracing::{debug, error, warn};
 
 /// How long a failed job or chain read waits before it runs again, and the first wait of a failed
-/// fetch or submission; each later attempt of those waits twice as long, up to ten minutes.
+/// fetch or submission; each later attempt of those waits twice as long, up to ten minutes, or a
+/// minute for a ciphertext fetch: the decryption window that needs it is short.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
 const LONGEST_RETRY: Duration = Duration::from_secs(600);
+const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(60);
 
 /// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
 /// for its inputs fails every time.
@@ -564,7 +566,7 @@ where
                     }
                 }
                 tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(LONGEST_RETRY);
+                wait = (wait * 2).min(LONGEST_FETCH_RETRY);
             }
         })
     }
