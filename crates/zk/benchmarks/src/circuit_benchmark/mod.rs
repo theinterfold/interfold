@@ -27,7 +27,7 @@ use std::{
     about = "Benchmark production Rust witness preparation, Noir execution, and proof backends."
 )]
 pub(crate) struct Options {
-    /// Operation: run, protocol, gas, replay, report, or list.
+    /// Operation: run, replay, report, or list.
     #[arg(default_value = "run")]
     pub command: String,
     /// Saved run directory for report, or saved summary/run directory for replay.
@@ -61,8 +61,6 @@ pub(crate) struct Options {
     #[arg(long)]
     pub witness_only: bool,
     #[arg(long)]
-    pub leaf_only: bool,
-    #[arg(long)]
     pub skip_gates: bool,
     /// Measure the canonical source-build command. This explicitly changes the active selection.
     #[arg(long)]
@@ -75,8 +73,6 @@ pub(crate) struct Options {
     pub export_toml: bool,
     #[arg(long)]
     pub dry_run: bool,
-    #[arg(long, default_value_t = 1)]
-    pub multithread_jobs: usize,
     #[arg(long)]
     pub verbose: bool,
 }
@@ -153,12 +149,9 @@ pub(crate) fn main() -> Result<()> {
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
     if !matches!(
         options.command.as_str(),
-        "run" | "protocol" | "gas" | "replay" | "report" | "list"
+        "run" | "replay" | "report" | "list"
     ) {
         bail!("Unknown benchmark operation: {}", options.command);
-    }
-    if options.multithread_jobs == 0 {
-        bail!("--multithread-jobs must be positive");
     }
     if options.bench_compile && options.artifacts.is_some() {
         bail!("--bench-compile writes canonical dist artifacts; omit --artifacts");
@@ -257,18 +250,12 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         }
         return Ok(());
     }
-    if matches!(options.command.as_str(), "protocol" | "gas") && options.artifacts.is_some() {
-        bail!("The integration scenario reads canonical dist artifacts; omit --artifacts");
-    }
     let output = new_output(root, options)?;
     let work = tempfile::Builder::new()
         .prefix(".work-")
         .tempdir_in(&output)?;
     let mut compilation = records::Stage::unmeasured("canonical_build_command_wall");
-    if options.bench_compile
-        && (matches!(options.command.as_str(), "protocol" | "gas")
-            || cases.iter().any(|case| *case != selection::Case::Config))
-    {
+    if options.bench_compile && cases.iter().any(|case| *case != selection::Case::Config) {
         let start = std::time::Instant::now();
         let build = e3_zk_build::Request {
             operation: e3_zk_build::Operation::Build,
@@ -334,25 +321,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         options,
     )?;
     write_json(&output.join("benchmark_run_meta.json"), &metadata)?;
-    let protocol_config = protocol::Configuration {
-        mode: mode.into(),
-        preset: preset_name.into(),
-        committee,
-        jobs: options.multithread_jobs,
-        bb_binary: Some(prover.bb_binary().clone()),
-    };
-    if matches!(options.command.as_str(), "protocol" | "gas") {
-        let result = protocol::collect(
-            root,
-            &output,
-            &protocol_config,
-            options.command == "gas",
-            None,
-        );
-        render_saved(&output)?;
-        println!("Protocol output: {}", output.display());
-        return result;
-    }
     let material = inputs::Material::new(preset, committee)?;
     let mut ude = None;
     let mut failures = Vec::new();
@@ -394,11 +362,6 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         )?;
     }
     write_json(&output.join("benchmark_run_meta.json"), &metadata)?;
-    if !options.leaf_only && !options.witness_only && failures.is_empty() {
-        if let Err(error) = protocol::collect(root, &output, &protocol_config, true, None) {
-            failures.push(format!("Protocol/gas stage incomplete: {error:#}"));
-        }
-    }
     render_saved(&output)?;
     println!("Benchmark output: {}", output.display());
     if !failures.is_empty() {

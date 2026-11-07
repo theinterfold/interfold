@@ -227,8 +227,8 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
 #[test]
 fn replay_rejects_bad_proofs_and_wrong_configuration_before_evm_execution() {
     let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1},"folded_artifacts":{"dkg_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"},"decryption_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"}}});
-    assert!(protocol::configuration(&doc, Some("secure"), None, 1).is_err());
-    assert!(protocol::configuration(&doc, None, Some("micro"), 1).is_err());
+    assert!(protocol::configuration(&doc, Some("secure"), None).is_err());
+    assert!(protocol::configuration(&doc, None, Some("micro")).is_err());
     assert!(protocol::folded(&doc).is_err());
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("summary.json");
@@ -335,35 +335,6 @@ fn replay_rejects_an_evm_replay_that_omits_decryption_verifier_gas() {
     let result = protocol::read_json(&output.join("protocol_results.json")).unwrap();
     assert_eq!(result["complete"], false);
     assert!(result["replay"]["error"].is_string());
-}
-
-#[test]
-fn integration_launcher_delivers_full_proof_controls_and_structured_export_paths() {
-    use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
-    let bin = temp.path().join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let executable = bin.join("cargo");
-    fs::write(&executable, "#!/bin/sh\n[ \"$1\" = test ] || exit 1\n[ \"$CIPHERNODE_SKIP_PROOF_AGGREGATION\" = false ] || exit 2\n[ \"$BENCHMARK_MODE\" = secure ] || exit 3\n[ \"$BENCHMARK_MULTITHREAD_JOBS\" = 3 ] || exit 4\ncase \" $* \" in *' --release '*test_trbfv_actor*) ;; *) exit 5 ;; esac\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_SUMMARY_OUTPUT\"\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_FOLDED_OUTPUT\"\n").unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-    let output = temp.path().join("outputs with spaces");
-    fs::create_dir_all(&output).unwrap();
-    let cfg = protocol::Configuration {
-        mode: "secure".into(),
-        preset: "secure-8192".into(),
-        committee: e3_committee::CiphernodesCommitteeSize::Micro,
-        jobs: 3,
-        bb_binary: Some(PathBuf::from("/validated/bb")),
-    };
-    let mut command = protocol::integration_command(temp.path(), &output, &cfg).unwrap();
-    command.env("PATH", bin);
-    run_logged(&mut command, &output.join("launch.log")).unwrap();
-    assert_eq!(
-        protocol::read_json(&output.join("integration_summary.json")).unwrap()
-            ["synthetic_transport_fixture"],
-        true
-    );
-    assert!(output.join("folded_artifacts.json").is_file());
 }
 
 #[test]
@@ -515,39 +486,4 @@ fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity()
         fs::read(&stale).unwrap(),
         b"unrelated stale config artifact"
     );
-}
-
-#[test]
-fn integration_child_uses_validated_bb_even_when_path_selects_another_binary() {
-    use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path();
-    let bin = root.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let selected = root.join("selected bb");
-    for (path, script) in [(&selected, "#!/bin/sh\nprintf '5.2.0\\n'\n"), (&bin.join("bb"), "#!/bin/sh\nprintf 'wrong-version\\n'\n"), (&bin.join("cargo"), "#!/bin/sh\nversion=$(\"${E3_CUSTOM_BB:-bb}\" --version)\n[ \"$version\" = 5.2.0 ] || exit 7\nprintf '%s' \"$E3_CUSTOM_BB\" > \"$BENCHMARK_SUMMARY_OUTPUT\"\n")] {
-        fs::write(path, script).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let selected = artifacts::bb_binary(Some(&selected)).unwrap();
-    let observed = run(Command::new(&selected).arg("--version")).unwrap();
-    assert!(e3_zk_build::reports_version(&observed, "5.2.0"));
-    let cfg = protocol::Configuration {
-        mode: "insecure".into(),
-        preset: "insecure-64".into(),
-        committee: e3_committee::CiphernodesCommitteeSize::Minimum,
-        jobs: 1,
-        bb_binary: Some(selected.clone()),
-    };
-    let mut command = protocol::integration_command(root, root, &cfg).unwrap();
-    command.env("PATH", &bin);
-    run_logged(&mut command, &root.join("child.log")).unwrap();
-    assert_eq!(
-        fs::read_to_string(root.join("integration_summary.json")).unwrap(),
-        selected.to_string_lossy()
-    );
-    let mut without_forwarding = protocol::integration_command(root, root, &cfg).unwrap();
-    without_forwarding
-        .env_remove("E3_CUSTOM_BB")
-        .env("PATH", &bin);
-    assert!(run_logged(&mut without_forwarding, &root.join("negative-control.log")).is_err());
 }

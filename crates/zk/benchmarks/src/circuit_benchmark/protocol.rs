@@ -18,11 +18,8 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct Configuration {
-    pub mode: String,
     pub preset: String,
     pub committee: CiphernodesCommitteeSize,
-    pub jobs: usize,
-    pub bb_binary: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -131,7 +128,6 @@ pub(crate) fn configuration(
     document: &serde_json::Value,
     mode: Option<&str>,
     committee: Option<&str>,
-    jobs: usize,
 ) -> Result<Configuration> {
     let cfg = &summary(document)["benchmark_config"];
     let stored_mode = cfg["mode"]
@@ -204,11 +200,8 @@ pub(crate) fn configuration(
         .or(stored_committee)
         .context("Specify --committee for an export without committee metadata")?;
     Ok(Configuration {
-        mode: mode.into(),
         preset: preset.into(),
         committee,
-        jobs,
-        bb_binary: None,
     })
 }
 
@@ -244,46 +237,6 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
         }
     }
     Ok(stamp)
-}
-
-pub(crate) fn integration_command(
-    root: &Path,
-    output: &Path,
-    cfg: &Configuration,
-) -> Result<Command> {
-    let bb = cfg
-        .bb_binary
-        .as_deref()
-        .context("Integration requires the runner's validated BB selection")?;
-    let mut command = Command::new("cargo");
-    command
-        .args([
-            "test",
-            "--locked",
-            "--release",
-            "-p",
-            "e3-tests",
-            "--test",
-            "integration",
-            "test_trbfv_actor",
-            "--",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .current_dir(root)
-        .env("BENCHMARK_MODE", &cfg.mode)
-        .env("E3_CUSTOM_BB", bb)
-        .env("CIPHERNODE_SKIP_PROOF_AGGREGATION", "false")
-        .env("BENCHMARK_MULTITHREAD_JOBS", cfg.jobs.to_string())
-        .env(
-            "BENCHMARK_FOLDED_OUTPUT",
-            output.join("folded_artifacts.json"),
-        )
-        .env(
-            "BENCHMARK_SUMMARY_OUTPUT",
-            output.join("integration_summary.json"),
-        );
-    Ok(command)
 }
 
 pub(crate) fn evm_command(
@@ -323,21 +276,16 @@ struct Results {
     complete: bool,
 }
 
-pub(crate) fn collect(
+fn collect(
     root: &Path,
     output: &Path,
     cfg: &Configuration,
-    gas: bool,
-    existing: Option<&serde_json::Value>,
+    document: &serde_json::Value,
 ) -> Result<()> {
     let mut results = Results {
         schema_version: 2,
         artifact_stamp: serde_json::Value::Null,
-        source: if existing.is_some() {
-            "saved_folded_proof_evm_replay"
-        } else {
-            "integration_and_evm_measurements"
-        },
+        source: "saved_folded_proof_evm_replay",
         verify_gas: VerifyGas::default(),
         artifacts: BTreeMap::new(),
         integration: Outcome::pending(),
@@ -347,33 +295,7 @@ pub(crate) fn collect(
     };
     let result = (|| -> Result<()> {
         results.artifact_stamp = validate_active(root, cfg)?;
-        let document = if let Some(document) = existing {
-            document.clone()
-        } else {
-            results.integration.execute(
-                &mut integration_command(root, output, cfg)?,
-                &output.join("integration.log"),
-            )?;
-            let export = (|| -> Result<serde_json::Value> {
-                let document = read_json(&output.join("integration_summary.json"))?;
-                configuration(
-                    &document,
-                    Some(&cfg.mode),
-                    Some(&cfg.committee.to_string()),
-                    cfg.jobs,
-                )?;
-                if summary(&document)["benchmark_config"]["proof_aggregation_enabled"] != true {
-                    bail!("Integration export has proof aggregation disabled");
-                }
-                folded(&document)?;
-                Ok(document)
-            })();
-            if let Err(error) = &export {
-                results.integration.export_failure(error);
-            }
-            export?
-        };
-        let artifacts = folded(&document)?;
+        let artifacts = folded(document)?;
         results
             .artifacts
             .insert("dkg".into(), artifact_measures(&artifacts.dkg_aggregator)?);
@@ -381,18 +303,12 @@ pub(crate) fn collect(
             "dec".into(),
             artifact_measures(&artifacts.decryption_aggregator)?,
         );
-        if existing.is_some() {
-            write_json(&output.join("integration_summary.json"), summary(&document))?;
-        }
+        write_json(&output.join("integration_summary.json"), summary(document))?;
         let folded_path = output.join("folded_artifacts.json");
         write_json(
             &folded_path,
             &serde_json::json!({ "preset": cfg.preset, "committee": cfg.committee.to_string(), "folded_artifacts": artifacts }),
         )?;
-        if !gas {
-            results.complete = true;
-            return Ok(());
-        }
         results.replay.execute(
             &mut evm_command(root, output, &folded_path, cfg),
             &output.join("evm-replay.log"),
@@ -444,9 +360,9 @@ pub(crate) fn replay(
             input.to_path_buf()
         };
         let document = read_json(&path)?;
-        let cfg = configuration(&document, mode, committee, 1)?;
+        let cfg = configuration(&document, mode, committee)?;
         folded(&document)?;
-        collect(root, output, &cfg, true, Some(&document))
+        collect(root, output, &cfg, &document)
     })();
     if let Err(error) = &result {
         if !output.join("protocol_results.json").exists() {

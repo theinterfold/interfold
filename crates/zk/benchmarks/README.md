@@ -17,16 +17,14 @@ rules that the recorded numbers depend on.
 | [selection.rs](src/circuit_benchmark/selection.rs)                                           | Configured cases, modes, and committee selection.             |
 | [inputs.rs](src/circuit_benchmark/inputs.rs), [leaf.rs](src/circuit_benchmark/leaf.rs)       | Samples, production preparation, and measured leaf execution. |
 | [artifacts.rs](src/circuit_benchmark/artifacts.rs)                                           | Pair, digest, compiler, and config-cache provenance.          |
-| [protocol.rs](src/circuit_benchmark/protocol.rs)                                             | Existing integration and gas child-process orchestration.     |
+| [protocol.rs](src/circuit_benchmark/protocol.rs)                                             | Verifier gas replay of saved folded proofs.                   |
 | [records.rs](src/circuit_benchmark/records.rs), [report.rs](src/circuit_benchmark/report.rs) | Schema-preserving records and metric rendering.               |
 
 ## Commands
 
 ```bash
 pnpm bench:circuits list --mode insecure --committee minimum
-pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
-pnpm bench:circuits protocol --mode insecure --committee minimum --multithread-jobs 2
-pnpm bench:circuits gas --mode insecure --committee minimum
+pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk
 pnpm bench:circuits replay --input <saved-run-or-summary> --output <new-directory>
 pnpm bench:circuits report --input <saved-run> [--output <new-report.md>]
 pnpm test:circuit-bench
@@ -70,12 +68,9 @@ canonical builder (`pnpm build:circuits`).
 
 ## Protocol, gas, replay, and report
 
-`protocol` runs the existing release-profile `e3-tests` integration scenario with full proof
-aggregation. `gas` adds the existing Hardhat verifier replay tool. `run` includes these stages
-unless `--leaf-only` or `--witness-only` is set. The driver copies no protocol workflow and
-implements no EVM: it sets export paths and concurrency controls, then reads structured JSON
-exports. The integration child receives the runner's validated canonical BB path through
-`E3_CUSTOM_BB`, never a PATH lookup; run metadata records that path and version.
+`run` measures leaf circuits. The protocol stage, which proved a whole E3 through the old node's
+integration test and replayed its folded proofs, went with that node; the folded proofs saved under
+`circuits/benchmarks/` remain replay input.
 
 Install workspace dependencies with `pnpm install --frozen-lockfile`. Select a complete archived
 node pair before gas collection. Run benchmarks serially: they change shared Noir selectors.
@@ -88,11 +83,11 @@ pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only
 ```
 
 Verifier gas and calldata gas stay separate measurements; calldata cost never substitutes for
-verifier gas. The gas stage measures the DKG and decryption verifiers. It does not measure the CRISP
-user verifier, which the CRISP repository owns. Saved results that contain a user-verifier gas value
-keep it in reports.
+verifier gas. Replay measures the DKG and decryption verifiers. It does not measure the CRISP user
+verifier, which the CRISP repository owns. Saved results that contain a user-verifier gas value keep
+it in reports.
 
-To measure gas again for saved protocol proofs without another integration run:
+To measure verifier gas for saved folded proofs:
 
 ```bash
 pnpm bench:circuits replay --input <saved-integration-summary> --output <new-directory>
@@ -107,7 +102,7 @@ runs no compiler, prover, integration, or EVM tool, reads schema 1 (historical) 
 records without relabeling, and never overwrites saved output.
 
 Each run writes a new directory under `circuits/benchmarks/runs/` (or `--output`): raw per-case
-records, `benchmark_run_meta.json`, `report.md`, protocol exports, and process logs. The runner
+records, `benchmark_run_meta.json`, `report.md`, replay exports, and process logs. The runner
 refuses to reuse a non-empty directory.
 
 ## Focused checks

@@ -167,8 +167,6 @@ pub(crate) struct RunMetadata {
     pub os: String,
     pub arch: String,
     pub logical_cpus: Option<usize>,
-    pub proof_aggregation: bool,
-    pub multithread_jobs: usize,
     pub verbose: bool,
     pub compilation: Stage,
     pub shared_preparations: Vec<SharedPreparation>,
@@ -223,9 +221,6 @@ impl RunMetadata {
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             logical_cpus: std::thread::available_parallelism().ok().map(usize::from),
-            proof_aggregation: matches!(options.command.as_str(), "protocol" | "gas")
-                || (!options.leaf_only && !options.witness_only),
-            multithread_jobs: options.multithread_jobs,
             verbose: options.verbose,
             compilation,
             shared_preparations: Vec::new(),
