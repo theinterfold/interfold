@@ -4,28 +4,32 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The inbound connection limit per remote address group.
+//! The inbound connection limits per remote address group.
 //!
 //! A peer ID costs nothing to make, so the per-peer limit does not stop one host from holding every
 //! inbound slot. This behaviour counts the pending and established inbound connections of each IPv4
 //! address and each IPv6 /56 prefix, and refuses a new connection at the limit before it is
-//! established. Loopback connections do not count: they come from this host, and local networks
-//! run many nodes on one address.
+//! established. Until its peer identifies on this network, an established inbound connection also
+//! waits in a bounded set; past the bound, the oldest waiting connection of the group with the
+//! most waiting closes, so a few hosts cannot fill the inbound slots with peers that never
+//! identify. Loopback connections do not count: they come from this host, and local networks run
+//! many nodes on one address.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     convert::Infallible,
     fmt,
     net::{IpAddr, Ipv6Addr},
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 use libp2p::{
     core::{transport::PortUse, Endpoint},
     multiaddr::Protocol,
     swarm::{
-        behaviour::ListenFailure, dummy, ConnectionClosed, ConnectionDenied, ConnectionId,
-        FromSwarm, NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
+        behaviour::ListenFailure, dummy, CloseConnection, ConnectionClosed, ConnectionDenied,
+        ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent, THandlerOutEvent,
+        ToSwarm,
     },
     Multiaddr, PeerId,
 };
@@ -35,6 +39,8 @@ use libp2p::{
 pub(crate) const MAX_INBOUND_PER_ADDRESS_GROUP: usize = 8;
 /// One host can use every address of its IPv6 allocation, so a group covers a /56 prefix.
 const IPV6_GROUP_PREFIX_BITS: u32 = 56;
+/// The established inbound connections that may wait for their peers to identify at once.
+pub(crate) const MAX_WAITING_FOR_IDENTIFY: usize = 16;
 
 /// An IPv4 address, or an IPv6 address masked to its /56 prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,6 +97,37 @@ impl std::error::Error for AddressGroupLimit {}
 pub struct InboundIpLimits {
     /// The address group of each pending or established inbound connection that counts.
     connections: HashMap<ConnectionId, AddressGroup>,
+    /// The established inbound connections whose peers have not identified yet, oldest first.
+    waiting: VecDeque<(ConnectionId, PeerId, AddressGroup)>,
+    /// Waiting connections closed to make room, for the swarm to close.
+    closing: VecDeque<(PeerId, ConnectionId)>,
+    waker: Option<Waker>,
+}
+
+impl InboundIpLimits {
+    /// `peer` identified on this network: its connections no longer wait.
+    pub(crate) fn identified(&mut self, peer: &PeerId) {
+        self.waiting.retain(|(_, waiting, _)| waiting != peer);
+    }
+
+    /// Closes the oldest waiting connection of the address group with the most waiting.
+    fn make_room(&mut self) {
+        let mut counts: HashMap<AddressGroup, usize> = HashMap::new();
+        for (_, _, group) in &self.waiting {
+            *counts.entry(*group).or_default() += 1;
+        }
+        let most = counts.values().copied().max().unwrap_or_default();
+        let oldest = self
+            .waiting
+            .iter()
+            .position(|(_, _, group)| counts[group] == most);
+        if let Some((connection, peer, _)) = oldest.and_then(|index| self.waiting.remove(index)) {
+            self.closing.push_back((peer, connection));
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
+            }
+        }
+    }
 }
 
 /// The swarm calls the pending check of every inbound connection before its handshake, and reports
@@ -122,11 +159,17 @@ impl NetworkBehaviour for InboundIpLimits {
 
     fn handle_established_inbound_connection(
         &mut self,
-        _: ConnectionId,
-        _: PeerId,
+        connection_id: ConnectionId,
+        peer: PeerId,
         _: &Multiaddr,
-        _: &Multiaddr,
+        remote: &Multiaddr,
     ) -> Result<THandler<Self>, ConnectionDenied> {
+        if let Some(group) = address_group(remote) {
+            self.waiting.push_back((connection_id, peer, group));
+            if self.waiting.len() > MAX_WAITING_FOR_IDENTIFY {
+                self.make_room();
+            }
+        }
         Ok(dummy::ConnectionHandler)
     }
 
@@ -146,6 +189,8 @@ impl NetworkBehaviour for InboundIpLimits {
             FromSwarm::ConnectionClosed(ConnectionClosed { connection_id, .. })
             | FromSwarm::ListenFailure(ListenFailure { connection_id, .. }) => {
                 self.connections.remove(&connection_id);
+                self.waiting
+                    .retain(|(waiting, ..)| *waiting != connection_id);
             }
             _ => {}
         }
@@ -160,7 +205,17 @@ impl NetworkBehaviour for InboundIpLimits {
         match event {}
     }
 
-    fn poll(&mut self, _: &mut Context<'_>) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
+    fn poll(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
+        if let Some((peer_id, connection)) = self.closing.pop_front() {
+            return Poll::Ready(ToSwarm::CloseConnection {
+                peer_id,
+                connection: CloseConnection::One(connection),
+            });
+        }
+        self.waker = Some(cx.waker().clone());
         Poll::Pending
     }
 }
@@ -224,6 +279,55 @@ mod tests {
             peer_id: None,
         }));
         open(&mut limits, 104, "203.0.113.7").unwrap();
+    }
+
+    fn established(limits: &mut InboundIpLimits, id: usize, ip: &str) -> PeerId {
+        open(limits, id, ip).unwrap();
+        let peer = PeerId::random();
+        let (local, remote) = (quic("0.0.0.0", 9091), quic(ip, 4000 + id));
+        let id = ConnectionId::new_unchecked(id);
+        limits
+            .handle_established_inbound_connection(id, peer, &local, &remote)
+            .unwrap();
+        peer
+    }
+
+    fn closed(limits: &mut InboundIpLimits) -> Vec<ConnectionId> {
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut closed = Vec::new();
+        while let Poll::Ready(ToSwarm::CloseConnection {
+            connection: CloseConnection::One(id),
+            ..
+        }) = limits.poll(&mut cx)
+        {
+            closed.push(id);
+        }
+        closed
+    }
+
+    #[test]
+    fn a_connection_past_the_identify_limit_closes_the_oldest_of_the_busiest_group() {
+        let mut limits = InboundIpLimits::default();
+        for id in 0..8 {
+            established(&mut limits, id, "203.0.113.1");
+        }
+        for id in 8..12 {
+            established(&mut limits, id, "203.0.113.2");
+        }
+        let identifies = established(&mut limits, 12, "203.0.113.3");
+        for id in 13..MAX_WAITING_FOR_IDENTIFY {
+            established(&mut limits, id, "203.0.113.3");
+        }
+        for id in 100..110 {
+            established(&mut limits, id, "127.0.0.1");
+        }
+        assert!(closed(&mut limits).is_empty());
+
+        established(&mut limits, 16, "203.0.113.4");
+        assert_eq!(closed(&mut limits), [ConnectionId::new_unchecked(0)]);
+        limits.identified(&identifies);
+        established(&mut limits, 17, "203.0.113.4");
+        assert!(closed(&mut limits).is_empty());
     }
 
     #[test]

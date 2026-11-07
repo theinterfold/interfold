@@ -42,6 +42,11 @@ const MAX_FETCHING_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_SERVABLE: usize = 65_536;
 /// Messages whose senders a node remembers, to fetch their blobs from.
 const MAX_SOURCES: usize = 4_096;
+/// The addresses of one peer that the node shares, and their encoded bytes; the latest Identify
+/// replaces them, for this many peers.
+const MAX_ADVERTISED: usize = 8;
+const MAX_ADVERTISED_BYTES: usize = 2 * 1024;
+const MAX_ADVERTISING_PEERS: usize = 1_024;
 /// A publish waits this long for a peer on the topic, as a node that just started has none.
 const PUBLISH_ATTEMPTS: u32 = 6;
 const PUBLISH_RETRY: Duration = Duration::from_secs(5);
@@ -267,6 +272,7 @@ impl P2p {
             reached: HashMap::new(),
             servable: Recent::default(),
             sources: Recent::default(),
+            advertised: Recent::default(),
             fetching: BTreeMap::new(),
             fetch_of: HashMap::new(),
             fetching_bytes: 0,
@@ -384,6 +390,8 @@ struct Driver<S> {
     servable: Recent<(E3Id, B256), BlobRef, MAX_SERVABLE>,
     /// The peers that sent each message, by its ID.
     sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
+    /// The addresses of each peer that the node put into Kademlia from its last Identify.
+    advertised: Recent<PeerId, Vec<Multiaddr>, MAX_ADVERTISING_PEERS>,
     fetching: BTreeMap<u64, Fetching>,
     /// The fetch on its way for each message, by its ID.
     fetch_of: HashMap<B256, u64>,
@@ -714,18 +722,50 @@ impl<S: BlobStore> Driver<S> {
     }
 
     /// A peer of another network or protocol version is dropped; a peer of this one becomes a
-    /// routing entry at the addresses it listens on.
+    /// routing entry at the addresses it listens on, which replace those it gave before, so a
+    /// peer cannot make the node keep and dial addresses without end.
     fn on_identify(&mut self, peer: PeerId, info: identify::Info) {
         if info.protocol_version != self.protocols.identify {
             let _ = self.swarm.disconnect_peer_id(peer);
             return;
         }
+        self.swarm
+            .behaviour_mut()
+            .inbound_ip_limits
+            .identified(&peer);
         let listeners: Vec<Multiaddr> = self.swarm.listeners().cloned().collect();
+        let advertised = advertised(&listeners, info.listen_addrs);
+        let before = self.advertised.get(&peer).cloned().unwrap_or_default();
         let kademlia = &mut self.swarm.behaviour_mut().kademlia;
-        for address in routable(&listeners, info.listen_addrs).take(8) {
-            kademlia.add_address(&peer, address);
+        for address in before
+            .iter()
+            .filter(|address| !advertised.contains(address))
+        {
+            kademlia.remove_address(&peer, address);
+        }
+        for address in &advertised {
+            kademlia.add_address(&peer, address.clone());
+        }
+        self.advertised.insert(peer, advertised);
+    }
+}
+
+/// The addresses the node shares of those a peer gave: routable ones, each once, within
+/// `MAX_ADVERTISED` and `MAX_ADVERTISED_BYTES`.
+fn advertised(listeners: &[Multiaddr], given: Vec<Multiaddr>) -> Vec<Multiaddr> {
+    let mut kept: Vec<Multiaddr> = Vec::new();
+    let mut bytes = 0;
+    for address in routable(listeners, given) {
+        if kept.contains(&address) || bytes + address.len() > MAX_ADVERTISED_BYTES {
+            continue;
+        }
+        bytes += address.len();
+        kept.push(address);
+        if kept.len() == MAX_ADVERTISED {
+            break;
         }
     }
+    kept
 }
 
 /// Whether a copy sent at `sent_at` counts at `now`.

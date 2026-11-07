@@ -338,6 +338,34 @@ fn a_node_that_other_hosts_reach_shares_no_loopback_address() {
     assert_eq!(reached, vec![lan]);
 }
 
+/// A peer's Identify can list the same address again, many addresses, or long ones; the node
+/// shares each once, and few of them.
+#[test]
+fn a_peer_s_addresses_are_shared_once_and_within_bounds() {
+    let lan = |port: u16| -> Multiaddr {
+        format!("/ip4/192.168.1.5/udp/{port}/quic-v1")
+            .parse()
+            .unwrap()
+    };
+    let listeners = [lan(1)];
+    let repeated = vec![lan(9000), lan(9000), lan(9001)];
+    assert_eq!(advertised(&listeners, repeated), vec![lan(9000), lan(9001)]);
+    let many: Vec<Multiaddr> = (0..20).map(|port| lan(9000 + port)).collect();
+    assert_eq!(advertised(&listeners, many.clone()), many[..MAX_ADVERTISED]);
+    let long = |n: usize| -> Multiaddr {
+        let name = ["a", "b", "c", "d", "e", "f"]
+            .map(|label| label.repeat(60))
+            .join(".");
+        format!("/dns4/{name}.n{n}.example/udp/9000/quic-v1")
+            .parse()
+            .unwrap()
+    };
+    let longs: Vec<Multiaddr> = (0..8).map(long).collect();
+    let kept = advertised(&listeners, longs);
+    let bytes: usize = kept.iter().map(|address| address.len()).sum();
+    assert!(bytes <= MAX_ADVERTISED_BYTES && !kept.is_empty() && kept.len() < MAX_ADVERTISED);
+}
+
 /// After a restart the node has not heard the message, so it knows no peer to ask.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_the_node_never_heard_cannot_be_fetched() {
