@@ -49,6 +49,7 @@ async fn started<S: BlobStore>(
     let (p2p, inbound) = P2p::start(config(n, peers), address(n), serve(blobs.clone()))
         .await
         .unwrap();
+    p2p.admit((1..=3).map(address).collect());
     Node {
         p2p,
         inbound,
@@ -287,6 +288,20 @@ async fn nodes_that_know_only_a_bootstrap_node_find_each_other() {
     let mut second = node(2, bootstrap.listening().to_vec()).await;
     let message = key(&first, 1);
     publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
+}
+
+/// A node takes a message only from an operator its chain reader has named; until then it
+/// neither delivers the message nor passes it on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_from_an_operator_the_node_does_not_know_is_not_taken() {
+    let [first, mut second, _third] = network().await;
+    second.p2p.admit([2, 3].map(address).into());
+    let message = key(&first, 1);
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    nothing(&mut second, Duration::from_secs(3)).await;
+    second.p2p.admit((1..=3).map(address).collect());
+    publish(&first, signed(message.clone(), 1, 70)).await;
     assert_eq!(received(&mut second).await, message);
 }
 

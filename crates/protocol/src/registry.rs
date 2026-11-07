@@ -86,6 +86,11 @@ impl Registry {
         }
     }
 
+    /// Every operator the registry's logs named.
+    pub(crate) fn operators(&self) -> impl Iterator<Item = Address> + '_ {
+        self.operators.keys().copied()
+    }
+
     pub(crate) fn set_identity_required(&mut self, time: UnixSecs, required: bool) {
         self.identity_required.set(time, required);
     }

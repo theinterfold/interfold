@@ -513,6 +513,14 @@ impl Node {
         self.managers.get(&chain_id).into_iter().flatten()
     }
 
+    /// Every operator a chain's registry named: the senders whose messages the network takes.
+    pub fn operators(&self) -> BTreeSet<Address> {
+        self.registries
+            .values()
+            .flat_map(Registry::operators)
+            .collect()
+    }
+
     /// The E3s whose DKG or decryption work still needs their blobs.
     pub fn working(&self) -> impl Iterator<Item = &E3Id> {
         let working = self.e3s.iter().filter(|(_, state)| state.has_work());
@@ -557,7 +565,11 @@ impl Node {
                     // vote validity of now.
                     let slashing = self.slashing.get(&chain_id).map(|manager| Slashing {
                         manager: *manager,
-                        validity: self.vote_validity.get(&chain_id).copied().unwrap_or_default(),
+                        validity: self
+                            .vote_validity
+                            .get(&chain_id)
+                            .copied()
+                            .unwrap_or_default(),
                     });
                     let state = E3::new(
                         e3,
@@ -646,9 +658,7 @@ impl Node {
             ChainFact::StageChanged { e3, stage } => {
                 match (stage, self.e3s.get_mut(&e3)) {
                     // Open accusations keep a completed E3 until their windows close.
-                    (Stage::Complete, Some(state)) if state.accuses() => {
-                        state.advance(stage)
-                    }
+                    (Stage::Complete, Some(state)) if state.accuses() => state.advance(stage),
                     (Stage::Complete, _) => self.end(e3),
                     (stage, Some(state)) => state.advance(stage),
                     (_, None) => {}
@@ -1320,7 +1330,12 @@ mod tests {
             }
             effects
         };
-        step(chain(2, ChainFact::SlashingManager { manager: address(9) }));
+        step(chain(
+            2,
+            ChainFact::SlashingManager {
+                manager: address(9),
+            },
+        ));
         step(chain(3, ChainFact::VoteValidity { secs: 600 }));
         step(requested(10, e3(1)));
         step(finalized(11, e3(1), members([1, 2])));

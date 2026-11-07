@@ -128,8 +128,11 @@ Each rule is checkable in review.
   needs: a share message's only for its recipient. A publisher uploads a broadcast blob once per
   receiver and a share once, where a DHT put of the current node goes to twenty peers. A share comes
   only from its dealer, so members need direct connections: peers that identify on the network enter
-  Kademlia's routing table, whose lookups connect to the peers they find. Open: gossip still
-  forwards a non-member's envelopes, since the adapter does not know the committees.
+  Kademlia's routing table, whose lookups connect to the peers they find. The network takes and
+  passes on a message only from an operator a registry's logs named; it ignores another's without
+  blaming the peer that passed it on, since a node whose chain reader is ahead may already know that
+  operator. So a sender that never registered reaches neither a node's hold nor the mesh, and a node
+  that lags gets such a message again from its sender's re-sends.
 
 - **D23. A ciphertext is fetched, not read from the log.** The deployed Interfold logs a content
   hash and its availability coordinates (`CiphertextOutputReferencePublished`). Decryption emits a

@@ -133,6 +133,8 @@ where
         engine.acknowledge(pending.key)?;
     }
     sweep(&parts.blobs, engine.machine());
+    let mut admitted = engine.machine().operators();
+    parts.network.admit(admitted.clone());
     let chain_id = settings.contracts.chain_id;
     let from = engine
         .machine()
@@ -189,6 +191,11 @@ where
         let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
         let (next, pending) = engine.apply(now(), input)?;
         engine = next;
+        let operators = engine.machine().operators();
+        if operators != admitted {
+            effects.network.admit(operators.clone());
+            admitted = operators;
+        }
         if let Some(key) = answers {
             engine.acknowledge(key)?;
         }

@@ -24,10 +24,10 @@ use libp2p::{
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, warn};
 
 /// The largest envelope: proofs travel as blobs, so an envelope holds references and public inputs.
@@ -169,6 +169,7 @@ impl Behaviour {
 /// The node's place on the peer-to-peer network.
 pub struct P2p {
     commands: mpsc::Sender<Command>,
+    admitted: watch::Sender<BTreeSet<Address>>,
     peer: PeerId,
     listening: Vec<Multiaddr>,
 }
@@ -249,12 +250,14 @@ impl P2p {
         .map_err(|_| P2pError::Listen(Multiaddr::empty(), "no address in time".into()))??;
         let (inbound, receiver) = mpsc::channel(1_024);
         let (commands, command_receiver) = mpsc::channel(1_024);
+        let (admitted, senders) = watch::channel(BTreeSet::new());
         let mut driver = Driver {
             swarm,
             protocols,
             me,
             blobs,
             inbound,
+            senders,
             peers: config.peers,
             reached: HashMap::new(),
             servable: Recent::default(),
@@ -270,6 +273,7 @@ impl P2p {
         tokio::spawn(driver.run(command_receiver));
         let p2p = Self {
             commands,
+            admitted,
             peer,
             listening,
         };
@@ -303,6 +307,10 @@ impl Network for P2p {
             .await
             .map_err(|_| NetworkError::Stopped)?;
         result.await.map_err(|_| NetworkError::Stopped)?
+    }
+
+    fn admit(&self, senders: BTreeSet<Address>) {
+        self.admitted.send_replace(senders);
     }
 }
 
@@ -361,6 +369,8 @@ struct Driver<S> {
     me: Address,
     blobs: S,
     inbound: mpsc::Sender<PeerMessage>,
+    /// The operators whose messages the node takes.
+    senders: watch::Receiver<BTreeSet<Address>>,
     peers: Vec<Multiaddr>,
     /// The peer at each configured address without a `/p2p/` identity, once a connection to the
     /// address showed it.
@@ -486,19 +496,25 @@ impl<S: BlobStore> Driver<S> {
         }
     }
 
-    /// Accepts for forwarding every envelope that opens, whoever it is for; delivers the ones for
-    /// this node at once, and remembers who sent each, to fetch its blobs from.
+    /// Passes on every envelope that opens and comes from an admitted sender, whoever it is for;
+    /// delivers the ones for this node at once, and remembers who sent each, to fetch its blobs
+    /// from. Another sender's envelope is ignored without blaming the peer that passed it on: a
+    /// node whose chain reader is ahead may know an operator this one does not yet.
     fn on_gossip(&mut self, propagation: PeerId, id: MessageId, message: gossipsub::Message) {
         let opened = Envelope::decode(&message.data).and_then(Envelope::open);
-        let acceptance = match opened {
-            Some(_) => MessageAcceptance::Accept,
-            None => MessageAcceptance::Reject,
+        let admitted = opened
+            .as_ref()
+            .is_some_and(|opened| self.senders.borrow().contains(&opened.sender));
+        let acceptance = match (&opened, admitted) {
+            (Some(_), true) => MessageAcceptance::Accept,
+            (Some(_), false) => MessageAcceptance::Ignore,
+            (None, _) => MessageAcceptance::Reject,
         };
         self.swarm
             .behaviour_mut()
             .gossipsub
             .report_message_validation_result(&id, &propagation, acceptance);
-        let Some(peer_message) = opened.filter(|opened| opened.is_for(self.me)) else {
+        let Some(peer_message) = opened.filter(|opened| admitted && opened.is_for(self.me)) else {
             return;
         };
         let mut peers: Vec<PeerId> = message.source.into_iter().collect();

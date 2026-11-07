@@ -12,8 +12,9 @@ mod swarm;
 
 pub use swarm::{P2p, P2pConfig, P2pError};
 
+use alloy_primitives::Address;
 use e3_protocol::{node::PeerMessage, wire::Envelope};
-use std::future::Future;
+use std::{collections::BTreeSet, future::Future};
 
 /// What the node needs from the network. Inbound, an adapter delivers each peer message whose
 /// envelope opens and that is for this node, before it fetches any blob the message names.
@@ -23,6 +24,10 @@ pub trait Network: Send + Sync + 'static {
 
     /// Brings the blobs `message` names into the node's store, from the peers that sent it.
     fn fetch(&self, message: PeerMessage) -> impl Future<Output = Result<(), NetworkError>> + Send;
+
+    /// Takes messages only from `senders` from now on: another sender's message is neither
+    /// delivered nor passed on.
+    fn admit(&self, senders: BTreeSet<Address>);
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
