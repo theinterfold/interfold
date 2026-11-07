@@ -7,7 +7,7 @@
 //! Builds a node from its configuration and runs it. The `e3-node` binary and `interfold start`
 //! both start the node here, each from its own configuration format.
 
-use crate::{run, Parts, Settings};
+use crate::{heartbeat::Heartbeat, run, runtime::now, Parts, Settings};
 use alloy::{network::EthereumWallet, providers::Provider, providers::ProviderBuilder};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
@@ -98,6 +98,8 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         node_generation: built.node_generation,
     };
     open_data_dir(&config.data_dir)?;
+    let journal = Journal::open(config.data_dir.join("journal.redb"))?;
+    let heartbeat = Heartbeat::start(&config.data_dir.join("ingestion"), chain_id, now())?;
     let proofs = proofs(&config)?;
     let operator = config.operator;
     let wallet = ProviderBuilder::new()
@@ -136,7 +138,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     };
     let parts = Parts {
         operator,
-        journal: Journal::open(config.data_dir.join("journal.redb"))?,
+        journal,
         blobs: blobs.clone(),
         jobs: JobRunner::new(blobs, config.cipher, proofs),
         rpc: ChainNode::new(chain, contracts),
@@ -144,6 +146,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         network,
         inbound,
         availability,
+        heartbeat,
     };
     Err(run(settings, parts).await.into())
 }

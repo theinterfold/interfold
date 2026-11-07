@@ -473,7 +473,8 @@ assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.
 health_dir="$TEST_ROOT/health"
-mkdir -p "$health_dir/proc/1" "$health_dir/bin" "$health_dir/data" "$health_dir/data/db" "$health_dir/data/log.0"
+mkdir -p "$health_dir/proc/1" "$health_dir/bin" "$health_dir/data" "$health_dir/data/db"
+: > "$health_dir/data/journal.redb"
 ln -s "$health_dir/bin/interfold" "$health_dir/proc/1/exe"
 : > "$health_dir/bin/interfold"
 printf '/usr/local/bin/interfold\0start\0-v\0--config\0%s\0' "$health_dir/data/config.yaml" > "$health_dir/proc/1/cmdline"
@@ -497,7 +498,7 @@ PROC_ROOT="$health_dir/proc" \
 CONFIG_FILE="$health_dir/data/config.yaml" \
 PASSWORD_FILE="$health_dir/data/password" \
 DB_PATH="$health_dir/data/db" \
-EVENT_LOG_PATH="$health_dir/data/log.0" \
+JOURNAL_PATH="$health_dir/data/journal.redb" \
 SS_BIN="$health_dir/bin/ss" \
 STAT_BIN="$health_dir/bin/stat" \
 sh "$ROOT_DIR/healthcheck.sh" || fail "healthy local state was rejected"
@@ -506,7 +507,7 @@ if PROC_ROOT="$health_dir/proc" \
     CONFIG_FILE="$health_dir/data/config.yaml" \
     PASSWORD_FILE="$health_dir/data/password" \
     DB_PATH="$health_dir/data/db" \
-    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    JOURNAL_PATH="$health_dir/data/journal.redb" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
     SS_READY=0 sh "$ROOT_DIR/healthcheck.sh"; then
@@ -517,7 +518,7 @@ if PROC_ROOT="$health_dir/proc" \
     CONFIG_FILE="$health_dir/data/config.yaml" \
     PASSWORD_FILE="$health_dir/data/password" \
     DB_PATH="$health_dir/data/db" \
-    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    JOURNAL_PATH="$health_dir/data/journal.redb" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
     STAT_MODE=644 sh "$ROOT_DIR/healthcheck.sh"; then
@@ -529,7 +530,7 @@ if PROC_ROOT="$health_dir/proc" \
     CONFIG_FILE="$health_dir/data/config.yaml" \
     PASSWORD_FILE="$health_dir/data/password" \
     DB_PATH="$health_dir/data/db" \
-    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    JOURNAL_PATH="$health_dir/data/journal.redb" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
     sh "$ROOT_DIR/healthcheck.sh"; then
@@ -537,22 +538,23 @@ if PROC_ROOT="$health_dir/proc" \
 fi
 
 ln -sfn "$health_dir/bin/interfold" "$health_dir/proc/1/exe"
-rmdir "$health_dir/data/log.0"
+rm "$health_dir/data/journal.redb"
 if PROC_ROOT="$health_dir/proc" \
     CONFIG_FILE="$health_dir/data/config.yaml" \
     PASSWORD_FILE="$health_dir/data/password" \
     DB_PATH="$health_dir/data/db" \
-    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    JOURNAL_PATH="$health_dir/data/journal.redb" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
     sh "$ROOT_DIR/healthcheck.sh"; then
-    fail "uninitialized event persistence was considered healthy"
+    fail "an uninitialized journal was considered healthy"
 fi
 
 # Chain ingestion heartbeat: the node writes one file per chain after each successful head read.
 # A stale poll, or a head and cursor that stopped moving, is unhealthy; no heartbeat yet is a node
 # that is still starting.
-mkdir -p "$health_dir/data/log.0" "$health_dir/data/ingestion"
+: > "$health_dir/data/journal.redb"
+mkdir -p "$health_dir/data/ingestion"
 ln -sfn "$health_dir/bin/interfold" "$health_dir/proc/1/exe"
 write_heartbeat() {
     printf 'chain_id=1\nhead=%s\ncursor=%s\npolled_at=%s\nprogressed_at=%s\n' \
@@ -563,7 +565,7 @@ run_healthcheck() {
     CONFIG_FILE="$health_dir/data/config.yaml" \
     PASSWORD_FILE="$health_dir/data/password" \
     DB_PATH="$health_dir/data/db" \
-    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    JOURNAL_PATH="$health_dir/data/journal.redb" \
     INGESTION_DIR="$health_dir/data/ingestion" \
     HEALTHCHECK_NOW=1000000 \
     SS_BIN="$health_dir/bin/ss" \

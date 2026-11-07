@@ -13,8 +13,8 @@ PROC_ROOT="${PROC_ROOT:-/proc}"
 CONFIG_FILE="${CONFIG_FILE:-/data/config.yaml}"
 PASSWORD_FILE="${PASSWORD_FILE:-/data/.interfold/config/_default/key}"
 DB_PATH="${DB_PATH:-/data/.interfold/data/_default/db}"
-EVENT_LOG_PATH="${EVENT_LOG_PATH:-/data/.interfold/data/_default/log.0}"
-INGESTION_DIR="${INGESTION_DIR:-/data/.interfold/data/_default/ingestion}"
+JOURNAL_PATH="${JOURNAL_PATH:-/data/.interfold/data/_default/v2/journal.redb}"
+INGESTION_DIR="${INGESTION_DIR:-/data/.interfold/data/_default/v2/ingestion}"
 INGESTION_MAX_AGE_SECS="${INGESTION_MAX_AGE_SECS:-120}"
 INGESTION_STALL_MAX_SECS="${INGESTION_STALL_MAX_SECS:-600}"
 INGESTION_START_GRACE_SECS="${INGESTION_START_GRACE_SECS:-900}"
@@ -41,7 +41,7 @@ printf '%s\n' "$cmdline" | grep -Fxq "$CONFIG_FILE" || fail "node uses an unexpe
 [ -s "$CONFIG_FILE" ] || fail "node configuration is missing; check startup Logs"
 [ -s "$PASSWORD_FILE" ] || fail "credential key is missing; restore the encrypted backup"
 [ -d "$DB_PATH" ] || fail "database is not initialized; check startup Logs"
-[ -d "$EVENT_LOG_PATH" ] || fail "event log is not initialized; check startup Logs"
+[ -f "$JOURNAL_PATH" ] || fail "journal is not initialized; check startup Logs"
 
 config_mode=$($STAT_BIN -c '%a' "$CONFIG_FILE")
 password_mode=$($STAT_BIN -c '%a' "$PASSWORD_FILE")

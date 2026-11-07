@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::heartbeat::Heartbeat;
 use alloy_primitives::{keccak256, Address};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -77,6 +78,7 @@ pub struct Parts<R, A, N, B> {
     /// Peer messages from the network.
     pub inbound: mpsc::Receiver<PeerMessage>,
     pub availability: Arc<dyn DataAvailabilityReader>,
+    pub heartbeat: Heartbeat,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,7 +158,12 @@ where
         settings.max_log_range,
         from,
     );
-    tokio::spawn(read_chain(reader, events.clone(), settings.poll_interval));
+    tokio::spawn(read_chain(
+        reader,
+        parts.heartbeat,
+        events.clone(),
+        settings.poll_interval,
+    ));
     tokio::spawn(forward_peers(parts.inbound, events.clone()));
     let mut effects = Effects {
         operator: parts.operator,
@@ -279,16 +286,25 @@ fn brief(value: &impl std::fmt::Debug) -> String {
     text
 }
 
-fn now() -> UnixSecs {
+pub(crate) fn now() -> UnixSecs {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("the clock is after 1970")
         .as_secs()
 }
 
-async fn read_chain<R: Rpc>(mut reader: Reader<R>, events: mpsc::Sender<Event>, poll: Duration) {
+async fn read_chain<R: Rpc>(
+    mut reader: Reader<R>,
+    mut heartbeat: Heartbeat,
+    events: mpsc::Sender<Event>,
+    poll: Duration,
+) {
     loop {
-        match reader.poll().await {
+        let read = reader.poll().await;
+        if read.is_ok() {
+            heartbeat.beat(now(), reader.head(), reader.read_to());
+        }
+        match read {
             Ok(facts) if facts.is_empty() => tokio::time::sleep(poll).await,
             Ok(facts) => {
                 for fact in facts {

@@ -93,6 +93,8 @@ pub struct Reader<R> {
     range: u64,
     /// The first block not read yet.
     next: u64,
+    /// The chain node's head at the last poll.
+    head: u64,
 }
 
 impl<R: Rpc> Reader<R> {
@@ -113,13 +115,25 @@ impl<R: Rpc> Reader<R> {
             max_range,
             range: max_range,
             next: from,
+            head: 0,
         }
+    }
+
+    /// The chain node's head at the last poll.
+    pub fn head(&self) -> u64 {
+        self.head
+    }
+
+    /// The last block whose logs the reader delivered.
+    pub fn read_to(&self) -> u64 {
+        self.next.saturating_sub(1)
     }
 
     /// The facts of the next confirmed blocks, in log order; none when no block was confirmed
     /// since the last poll. A failed poll returns no facts and leaves the reader where it was.
     pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {
         let head = self.rpc.head().await?;
+        self.head = head;
         let Some(confirmed) = head
             .checked_sub(self.confirmations)
             .filter(|confirmed| *confirmed >= self.next)
