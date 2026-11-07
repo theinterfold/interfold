@@ -8,6 +8,7 @@
 //! fetches from the message's publisher once its machine admits the message.
 
 mod inbound_ip_limits;
+mod subscription_health;
 mod swarm;
 
 pub use swarm::{P2p, P2pConfig, P2pError};

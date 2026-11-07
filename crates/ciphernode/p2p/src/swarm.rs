@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{inbound_ip_limits::InboundIpLimits, Network, NetworkError};
+use crate::{
+    inbound_ip_limits::InboundIpLimits, subscription_health::SubscriptionHealth, Network,
+    NetworkError,
+};
 use alloy_primitives::{Address, B256};
 use e3_blobs::{BlobStore, MemoryBlobs};
 use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef, E3Id};
@@ -24,8 +27,8 @@ use libp2p::{
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, warn};
@@ -52,6 +55,8 @@ const PUBLISH_ATTEMPTS: u32 = 6;
 const PUBLISH_RETRY: Duration = Duration::from_secs(5);
 const REDIAL: Duration = Duration::from_secs(15);
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often the node checks that its peers take part in the network's messages.
+const SUBSCRIPTION_CHECK: Duration = Duration::from_secs(5);
 /// A copy counts from `MAX_COPY_AGE` seconds before this node's clock to `MAX_CLOCK_AHEAD` after
 /// it. Every send and re-send signs a new copy, so an older one is a replay, which gossip's
 /// duplicate cache stops for only a minute.
@@ -112,6 +117,8 @@ pub(crate) struct Behaviour {
     /// Before the behaviours that prepare an inbound connection, so a refused one costs nothing.
     inbound_ip_limits: InboundIpLimits,
     connection_limits: connection_limits::Behaviour,
+    /// Holds back dials of peers that stayed connected without the network's topic.
+    subscription_health: SubscriptionHealth,
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
@@ -161,6 +168,7 @@ impl Behaviour {
                     .with_max_established_per_peer(Some(2))
                     .with_max_established(Some(128)),
             ),
+            subscription_health: SubscriptionHealth::default(),
             gossipsub,
             identify: identify::Behaviour::new(
                 identify::Config::new(protocols.identify.clone(), key.public())
@@ -264,6 +272,7 @@ impl P2p {
         let mut driver = Driver {
             swarm,
             protocols,
+            messages,
             me,
             blobs,
             inbound,
@@ -377,6 +386,8 @@ struct PendingPublish {
 struct Driver<S> {
     swarm: Swarm<Behaviour>,
     protocols: Protocols,
+    /// Whether the node takes part in the network's messages; a bootstrap node does not.
+    messages: bool,
     me: Address,
     blobs: S,
     inbound: mpsc::Sender<PeerMessage>,
@@ -407,6 +418,7 @@ impl<S: BlobStore> Driver<S> {
     async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
         let mut redial = tokio::time::interval(REDIAL);
         let mut retry = tokio::time::interval(PUBLISH_RETRY);
+        let mut subscriptions = tokio::time::interval(SUBSCRIPTION_CHECK);
         loop {
             tokio::select! {
                 command = commands.recv() => match command {
@@ -417,8 +429,60 @@ impl<S: BlobStore> Driver<S> {
                 event = self.swarm.select_next_some() => self.on_event(event),
                 _ = redial.tick() => self.dial_peers(),
                 _ = retry.tick() => self.retry_publishes(),
+                _ = subscriptions.tick() => self.check_subscriptions(),
             }
         }
+    }
+
+    /// Disconnects the peers that stayed connected without the network's topic for the grace
+    /// period. A configured peer is left alone: it can be a bootstrap node, which takes no part in
+    /// messages, and so does a bootstrap node itself.
+    fn check_subscriptions(&mut self) {
+        if !self.messages {
+            return;
+        }
+        let topic = self.protocols.topic.hash();
+        let subscribed: HashSet<PeerId> = self
+            .swarm
+            .behaviour()
+            .gossipsub
+            .all_peers()
+            .filter(|(_, topics)| topics.contains(&&topic))
+            .map(|(peer, _)| *peer)
+            .collect();
+        let configured = self.configured_peers();
+        let connected: HashSet<PeerId> = self
+            .swarm
+            .connected_peers()
+            .filter(|peer| !configured.contains(peer))
+            .copied()
+            .collect();
+        let now = Instant::now();
+        let behaviour = self.swarm.behaviour_mut();
+        let stale = behaviour
+            .subscription_health
+            .stale(&connected, &subscribed, now);
+        for peer in stale {
+            if self.swarm.disconnect_peer_id(peer).is_err() {
+                continue;
+            }
+            let behaviour = self.swarm.behaviour_mut();
+            behaviour.kademlia.remove_peer(&peer);
+            let wait = behaviour.subscription_health.disconnected(peer, now);
+            warn!(%peer, ?wait, "disconnected a peer that did not subscribe to the network's messages");
+        }
+    }
+
+    /// The peers the operator configured, by identity or by an address that reached them.
+    fn configured_peers(&self) -> HashSet<PeerId> {
+        let named = self
+            .peers
+            .iter()
+            .filter_map(|address| match address.iter().last() {
+                Some(Protocol::P2p(peer)) => Some(peer),
+                _ => None,
+            });
+        named.chain(self.reached.values().copied()).collect()
     }
 
     /// Dials the configured peers that are not connected. Kademlia finds the others: it looks
