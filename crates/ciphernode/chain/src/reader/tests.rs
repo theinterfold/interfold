@@ -44,6 +44,8 @@ struct Chain {
     /// Requests for more blocks than this fail, as a provider's cap does.
     cap: Option<u64>,
     reads_fail: bool,
+    /// Reads of contract state get no answer.
+    reads_held: bool,
     /// The block each read was made at.
     read_at: Vec<u64>,
     heads_asked: usize,
@@ -96,7 +98,11 @@ impl FakeNode {
         self.0.lock().unwrap().heads_asked
     }
 
-    fn read<T>(&self, block: u64, value: impl FnOnce(&Chain) -> T) -> Result<T, RpcError> {
+    async fn read<T>(&self, block: u64, value: impl FnOnce(&Chain) -> T) -> Result<T, RpcError> {
+        let held = self.0.lock().unwrap().reads_held;
+        if held {
+            std::future::pending::<()>().await;
+        }
         let mut chain = self.0.lock().unwrap();
         if chain.reads_fail {
             return Err(RpcError("the read failed".into()));
@@ -158,6 +164,7 @@ impl Rpc for FakeNode {
             committee_deadline: chain.seed.map_or(RANDOMNESS_DEADLINE, |seed| seed.deadline),
             seed: chain.seed.map(|seed| seed.seed),
         })
+        .await
     }
 
     async fn deadlines(&self, _: U256, block: u64) -> Result<Deadlines, RpcError> {
@@ -166,10 +173,11 @@ impl Rpc for FakeNode {
             compute: COMPUTE_DEADLINE,
             decryption: DECRYPTION_DEADLINE,
         })
+        .await
     }
 
     async fn dkg_window(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
-        self.read(block, |_| TIMING.window)
+        self.read(block, |_| TIMING.window).await
     }
 
     async fn eligible(
@@ -352,6 +360,25 @@ async fn a_failed_poll_returns_nothing_and_the_next_one_reads_the_same_blocks() 
     assert!(matches!(reader.poll().await, Err(ReadError::Rpc(_))));
     node.with(|chain| chain.reads_fail = false);
     assert_eq!(blocks(&reader.poll().await.unwrap()), [4, 5, 5, 5, 5]);
+}
+
+/// A chain node can hold a request without ever answering; the poll fails in time, and the next
+/// one reads the same blocks.
+#[tokio::test(start_paused = true)]
+async fn a_read_the_chain_node_never_answers_fails_the_poll_in_time() {
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.logs = reads(5);
+        chain.seed = Some(SEED);
+        chain.reads_held = true;
+    });
+    let mut reader = reader(&node, 1_000);
+    let poll = tokio::time::timeout(LONGEST_ANSWER * 2, reader.poll());
+    let failed = poll.await.expect("the poll ends");
+    assert!(matches!(failed, Err(ReadError::Rpc(_))));
+    node.with(|chain| chain.reads_held = false);
+    assert_eq!(blocks(&reader.poll().await.unwrap()), [5, 5, 5, 5]);
 }
 
 #[tokio::test]

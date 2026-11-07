@@ -24,6 +24,21 @@ use tracing::warn;
 /// never.
 const LONGEST_WAIT: Duration = Duration::from_secs(60);
 
+/// The longest the reader waits for one answer. A chain node can hold a request without ever
+/// answering it; the request then fails the poll, and the next poll asks again.
+const LONGEST_ANSWER: Duration = Duration::from_secs(30);
+
+#[derive(Debug, thiserror::Error)]
+#[error("the chain node did not answer in {LONGEST_ANSWER:?}")]
+struct Unanswered;
+
+/// The answer to `request`, or a failure once the chain node took too long.
+async fn answer<T>(request: impl Future<Output = Result<T, RpcError>>) -> Result<T, RpcError> {
+    tokio::time::timeout(LONGEST_ANSWER, request)
+        .await
+        .unwrap_or_else(|_| Err(RpcError::new(Unanswered)))
+}
+
 /// What the reader needs from a chain node.
 pub trait Rpc {
     /// The newest block's number.
@@ -184,7 +199,7 @@ impl<R: Rpc> Reader<R> {
     /// The facts of the next confirmed blocks, in log order; none when no block was confirmed
     /// since the last poll. A failed poll returns no facts and leaves the reader where it was.
     pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {
-        let head = self.rpc.head().await?;
+        let head = answer(self.rpc.head()).await?;
         self.head = head;
         let Some(confirmed) = head
             .checked_sub(self.confirmations)
@@ -195,7 +210,7 @@ impl<R: Rpc> Reader<R> {
         let to = confirmed.min(self.next.saturating_add(self.range - 1));
         let decoded = loop {
             let addresses = self.contracts.addresses();
-            let logs = match self.rpc.logs(&addresses, self.next, to).await {
+            let logs = match answer(self.rpc.logs(&addresses, self.next, to)).await {
                 Ok(logs) => {
                     self.range = self.range.saturating_mul(2).min(self.max_range);
                     logs
@@ -336,12 +351,12 @@ impl<R: Rpc> Reader<R> {
                 attestation,
                 owner_cap,
             } => {
-                let sortition = rpc.sortition(e3.number, block).await?;
+                let sortition = answer(rpc.sortition(e3.number, block)).await?;
                 let request = CommitteeRequest {
                     time,
                     ticket_price: sortition.ticket_price,
                     owner_cap,
-                    dkg_window: rpc.dkg_window(e3.number, block).await?,
+                    dkg_window: answer(rpc.dkg_window(e3.number, block)).await?,
                 };
                 let fact = ChainFact::E3Requested {
                     e3,
@@ -361,13 +376,13 @@ impl<R: Rpc> Reader<R> {
                 members,
             } => {
                 let dkg = DkgTiming {
-                    deadline: rpc.deadlines(e3.number, block).await?.dkg,
-                    window: rpc.dkg_window(e3.number, block).await?,
+                    deadline: answer(rpc.deadlines(e3.number, block)).await?.dkg,
+                    window: answer(rpc.dkg_window(e3.number, block)).await?,
                 };
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })
             }
             PendingRead::Seed { at, time, e3 } => {
-                let sortition = rpc.sortition(e3.number, block).await?;
+                let sortition = answer(rpc.sortition(e3.number, block)).await?;
                 let Some(seed) = sortition.seed else {
                     return Ok(None);
                 };
@@ -391,7 +406,7 @@ impl<R: Rpc> Reader<R> {
                     committee,
                     roster,
                     commitment,
-                    compute_deadline: rpc.deadlines(e3.number, block).await?.compute,
+                    compute_deadline: answer(rpc.deadlines(e3.number, block)).await?.compute,
                     anchors,
                 };
                 (at, time, fact)
@@ -405,7 +420,7 @@ impl<R: Rpc> Reader<R> {
                 let fact = ChainFact::CiphertextReady {
                     e3,
                     ciphertext,
-                    deadline: rpc.deadlines(e3.number, block).await?.decryption,
+                    deadline: answer(rpc.deadlines(e3.number, block)).await?.decryption,
                 };
                 (at, time, fact)
             }

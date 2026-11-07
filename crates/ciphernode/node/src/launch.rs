@@ -186,6 +186,9 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     Err(run(settings, parts).await.into())
 }
 
+/// The longest an HTTP request to the RPC node may take.
+const HTTP_ANSWER: Duration = Duration::from_secs(60);
+
 /// A connection to the RPC node at `url` that presents `auth` and polls every `poll`.
 async fn rpc_client(
     url: &str,
@@ -208,7 +211,12 @@ async fn rpc_client(
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
     }
-    let client = Client::builder().default_headers(headers).build()?;
+    // An RPC node can hold a request without ever answering; a send or a read then fails, and its
+    // caller tries again.
+    let client = Client::builder()
+        .default_headers(headers)
+        .timeout(HTTP_ANSWER)
+        .build()?;
     Ok(ClientBuilder::default()
         .http_with_client(client, url.parse()?)
         .with_poll_interval(poll))
