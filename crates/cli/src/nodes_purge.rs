@@ -12,6 +12,9 @@ use e3_entrypoint::fence::ProcessFence;
 use std::env;
 use std::path::{Path, PathBuf};
 
+/// What a purge deletes, relative to the folder it runs in.
+const DELETED: [&str; 2] = [".interfold/data", ".interfold/config"];
+
 /// Delete the data and configuration of the local node set.
 pub async fn execute(
     config: &NodeConfig,
@@ -61,10 +64,13 @@ pub(crate) async fn purge(
             refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
         }
     }
-    // Everything under the data folder goes: a profile's `data_dir` can nest a node anywhere in
-    // it, and a profile removed from the configuration leaves its folder behind.
+    // Everything under both folders goes: a profile's `data_dir` can put a node anywhere in them,
+    // and a profile removed from the configuration leaves its folder behind.
     let named: Vec<PathBuf> = nodes.iter().map(NodeConfig::node_data_dir).collect();
-    let unchecked = node_state::guard(&dir.join(".interfold/data"), &named, &mut fences)?;
+    let mut unchecked = Vec::new();
+    for root in DELETED {
+        unchecked.extend(node_state::guard(&dir.join(root), &named, &mut fences)?);
+    }
     if !allow_active_e3s {
         refusals.extend(unchecked.iter().map(|folder| {
             format!(
@@ -81,7 +87,7 @@ pub(crate) async fn purge(
             refusals.join("; ")
         );
     }
-    for folder in [".interfold/data", ".interfold/config"] {
+    for folder in DELETED {
         let folder = dir.join(folder);
         if folder.exists() {
             std::fs::remove_dir_all(&folder)?;
@@ -160,6 +166,17 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("cn2"), "{error:#}");
         assert!(journal.exists());
+
+        // The configuration folder goes too, so a node whose `data_dir` is in it counts.
+        let in_config = crate::node_state::journal_in(&dir.path().join(".interfold/config/cn8"));
+        std::fs::create_dir_all(in_config.parent().unwrap())?;
+        std::fs::write(&in_config, b"")?;
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cn8"), "{error:#}");
+        assert!(in_config.exists());
+        std::fs::remove_dir_all(dir.path().join(".interfold/config/cn8"))?;
 
         let running = ProcessFence::acquire(&data.join("group/cn3/db"), "cn3")?;
         purge(&config, config_file.clone(), dir.path(), true)
