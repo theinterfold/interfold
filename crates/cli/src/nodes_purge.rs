@@ -67,7 +67,11 @@ pub(crate) async fn purge(
     // checked, at any depth: a profile's `data_dir` can nest a node, and a profile removed from the
     // configuration leaves its folder behind.
     let mut contents = Contents::default();
-    scan(&dir.join(".interfold/data"), &mut contents)?;
+    scan(
+        &dir.join(".interfold/data"),
+        &mut BTreeSet::new(),
+        &mut contents,
+    )?;
     let canonical =
         |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
@@ -113,24 +117,33 @@ struct Contents {
     locks: Vec<PathBuf>,
 }
 
-/// Every folder counts as a node folder when its journal exists, also through a link and also
-/// inside another node's folder. The walk itself follows no link, so it stays inside `dir`.
-fn scan(dir: &Path, contents: &mut Contents) -> Result<()> {
+/// Every folder counts as a node folder when its journal exists, also inside another node's
+/// folder. The walk follows links, since a node's state may live elsewhere behind one, and visits
+/// each folder once, since a link may point back up. It only reads: the deletion follows no link.
+fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
+    if !visited.insert(std::fs::canonicalize(dir)?) {
+        return Ok(());
+    }
     if node_state::journal_in(dir).exists() {
         contents.nodes.push(dir.to_path_buf());
     }
     for entry in entries {
-        let entry = entry?;
-        let (path, kind) = (entry.path(), entry.file_type()?);
-        if kind.is_file() && entry.file_name() == LOCK_FILE_NAME {
+        let path = entry?.path();
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            // A link to nothing holds no node.
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.is_file() && path.file_name() == Some(LOCK_FILE_NAME.as_ref()) {
             contents.locks.push(path);
-        } else if kind.is_dir() {
-            scan(&path, contents)?;
+        } else if metadata.is_dir() {
+            scan(&path, visited, contents)?;
         }
     }
     Ok(())
@@ -219,8 +232,8 @@ mod tests {
         Ok(())
     }
 
-    /// A node folder inside another node's folder, or a node folder whose state is a link to
-    /// storage elsewhere, counts too.
+    /// A node folder inside another node's folder, or one whose state or whole folder is a link
+    /// to storage elsewhere, counts too.
     #[cfg(unix)]
     #[tokio::test]
     async fn node_folders_inside_another_or_behind_a_link_stop_the_purge() -> Result<()> {
@@ -249,10 +262,24 @@ mod tests {
         std::fs::write(elsewhere.path().join("journal.redb"), b"")?;
         std::fs::create_dir_all(data.join("cn3"))?;
         std::os::unix::fs::symlink(elsewhere.path(), data.join("cn3/v2"))?;
-        let error = purge(&config, config_file, dir.path(), false)
+        let error = purge(&config, config_file.clone(), dir.path(), false)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("cn3"), "{error:#}");
+        std::fs::remove_dir_all(data.join("cn3"))?;
+
+        // The whole node folder behind a link, with a link back up beside it.
+        let moved = tempfile::tempdir()?;
+        let journal = crate::node_state::journal_in(moved.path());
+        std::fs::create_dir_all(journal.parent().unwrap())?;
+        std::fs::write(&journal, b"")?;
+        std::os::unix::fs::symlink(moved.path(), data.join("cn5"))?;
+        std::os::unix::fs::symlink(&data, data.join("loop"))?;
+        let error = purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cn5"), "{error:#}");
+        assert!(journal.exists());
         Ok(())
     }
 }
