@@ -146,6 +146,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             dealer: members[0],
             committee: members.clone(),
             secret: keys[1].secret,
+            own_key: keys[1].proof.clone(),
             message: Box::new(message(0, 1)),
         },
     );
@@ -166,6 +167,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             dealer: members[0],
             committee: members.clone(),
             secret: keys[1].secret,
+            own_key: keys[1].proof.clone(),
             message: Box::new(swapped),
         },
     );
@@ -381,4 +383,52 @@ fn a_node_runs_at_most_its_limit_of_proofs_at_once() {
         }
     });
     assert_eq!(most.load(Ordering::SeqCst), 2);
+}
+
+/// A dealer's C3 proofs count only when each names this node's key and the row the dealer's C2
+/// commits to for this node's slot, one per row.
+#[test]
+fn c3_proofs_must_name_this_node_s_key_and_its_rows() {
+    use e3_protocol::proof::ZkProof;
+    let (rows, party) = (2, 1);
+    let word = B256::repeat_byte;
+    let proof = |inputs: Vec<B256>| ZkProof {
+        data: BlobRef::of(&[0]),
+        public_inputs: inputs,
+    };
+    let own_key = proof(vec![word(0xc0)]);
+    // C2: the secret's commitment, then three parties' row commitments.
+    let c2 = |base: u8| proof((0..1 + 3 * rows as u8).map(|i| word(base + i)).collect());
+    let (c2a, c2b) = (c2(0x10), c2(0x40));
+    let row = |c2: &ZkProof, party: usize, row: usize| c2.public_inputs[1 + party * rows + row];
+    // C3: this key and that message as its inputs, the ciphertext's commitment as its output.
+    let c3 = |key: u8, message: B256| unsigned(proof(vec![word(key), message, word(0xee)]));
+    let rows_for = |c2: &ZkProof| -> Vec<SignedProof> {
+        (0..rows).map(|n| c3(0xc0, row(c2, party, n))).collect()
+    };
+    let checks = |c3a: Vec<SignedProof>, c3b: Vec<SignedProof>| {
+        let message = SharesMessage {
+            recipient: Address::repeat_byte(1),
+            pk_share: BlobRef::of(&[1]),
+            shares: BlobRef::of(&[2]),
+            c2a: unsigned(c2a.clone()),
+            c2b: unsigned(c2b.clone()),
+            c3a,
+            c3b,
+        };
+        crate::dkg::c3_names_this_node(&own_key, party, rows, &message)
+    };
+    assert!(checks(rows_for(&c2a), rows_for(&c2b)));
+
+    let mut another_key = rows_for(&c2a);
+    another_key[0] = c3(0xc1, row(&c2a, party, 0));
+    assert!(!checks(another_key, rows_for(&c2b)));
+
+    let mut another_slot = rows_for(&c2b);
+    another_slot[1] = c3(0xc0, row(&c2b, 0, 1));
+    assert!(!checks(rows_for(&c2a), another_slot));
+
+    let mut missing = rows_for(&c2a);
+    missing.pop();
+    assert!(!checks(missing, rows_for(&c2b)));
 }

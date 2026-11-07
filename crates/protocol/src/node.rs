@@ -1471,6 +1471,8 @@ mod tests {
             step(key_from(e3(1), n));
             step(key_checked(e3(1), n, true));
         }
+        // A dealer's shares for this node, and the check they start.
+        step(shares_from(e3(1), 1, ME));
         let mut made = own_shares(&[1, 2]);
         made.recipients
             .get_mut(&address(2))
@@ -1535,9 +1537,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                8,
+                9,
                 alloy_primitives::b256!(
-                    "447aad4a857905fe9d13846bf14352a63cfc130462c9620205d3e6eff6bf0e61"
+                    "4f3382221fc505b818475aceb351a7247f335ea0464a4745f4414eda24e4f593"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

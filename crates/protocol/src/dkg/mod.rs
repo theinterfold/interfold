@@ -208,11 +208,13 @@ pub enum DkgWork {
         keys: BTreeMap<Address, BlobRef>,
     },
     /// Check what `dealer` sent this node: decrypt the shares with this node's secret key and
-    /// check them against their C2 and C3 proofs.
+    /// check them against their C2 and C3 proofs. Each C3 must name this node's key, as this
+    /// node's C0 proof `own_key` commits to it.
     CheckShares {
         dealer: Address,
         committee: Vec<Address>,
         secret: BlobRef,
+        own_key: ZkProof,
         message: Box<SharesMessage>,
     },
     /// This node's decryption key, the sum of the roster dealers' shares for it, and its C4

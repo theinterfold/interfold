@@ -234,6 +234,7 @@ impl Dkg {
             dealer,
             committee: self.members.clone(),
             secret: own.secret,
+            own_key: own.proof.clone(),
             message: Box::new(message.clone()),
         });
         self.shares.received.insert(dealer, message);

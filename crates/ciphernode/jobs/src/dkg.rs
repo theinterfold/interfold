@@ -23,7 +23,7 @@ use e3_protocol::{
         NodeFold, OwnDecryptionKey, OwnKey, OwnShares, RecipientShares, SharesMessage,
     },
     node::CryptoParams,
-    proof::{ProofType, ZkProof},
+    proof::{ProofType, SignedProof, ZkProof},
     BlobRef,
 };
 use e3_trbfv::{
@@ -96,10 +96,11 @@ impl<B: Blobs> Jobs<'_, B> {
                 dealer,
                 committee,
                 secret,
+                own_key,
                 message,
             } => DkgWorkResult::SharesChecked {
                 dealer: *dealer,
-                verdict: self.check_shares(params, committee, secret, message)?,
+                verdict: self.check_shares(params, committee, secret, own_key, message)?,
             },
             DkgWork::MakeDecryptionKey {
                 member,
@@ -488,12 +489,14 @@ impl<B: Blobs> Jobs<'_, B> {
     }
 
     /// Shares count when they decrypt, under this node's C0 secret, to the rows the dealer's C2
-    /// proofs commit to for this node's slot, and their C2 and C3 proofs hold.
+    /// proofs commit to for this node's slot, each C3 encrypts such a row to this node's key, and
+    /// their C2 and C3 proofs hold.
     fn check_shares(
         &self,
         params: &CryptoParams,
         committee: &[Address],
         secret: &BlobRef,
+        own_key: &ZkProof,
         message: &SharesMessage,
     ) -> Result<Verdict, JobError> {
         let bytes = self.blobs.get(&message.shares)?;
@@ -522,7 +525,10 @@ impl<B: Blobs> Jobs<'_, B> {
             return Ok(placeholder::verdict(committed));
         };
         let party = trbfv::party(committee, message.recipient)?;
-        if !self.dealt_as_committed(params, party, &shares, message)? {
+        let rows = trbfv::threshold_params(params)?.moduli().len();
+        if !self.dealt_as_committed(params, party, &shares, message)?
+            || !c3_names_this_node(own_key, party, rows, message)
+        {
             return Ok(Verdict::Invalid);
         }
         let c2 = [
@@ -995,4 +1001,29 @@ fn decrypt_shares(
             .map(decrypt)
             .collect::<Result<_, _>>()?,
     })
+}
+
+/// Whether the dealer's C3 proofs are the ones this node's fold can use: one per share row, each
+/// encrypting to this node's key (as its C0 proof commits to it) the row that the dealer's C2
+/// commits to for this node's slot. C4 binds those same row commitments, so a C3 made for
+/// another slot or row would not count.
+pub(crate) fn c3_names_this_node(
+    own_key: &ZkProof,
+    party: usize,
+    rows: usize,
+    message: &SharesMessage,
+) -> bool {
+    let Some(key) = proofs::field(own_key, CircuitName::PkBfv, "pk_commitment") else {
+        return false;
+    };
+    let names = |c3s: &[SignedProof], c2: &ZkProof| {
+        c3s.len() == rows
+            && c3s.iter().enumerate().all(|(row, c3)| {
+                let field = |name| proofs::field(&c3.proof, CircuitName::ShareEncryption, name);
+                field("expected_pk_commitment") == Some(key)
+                    && field("expected_message_commitment")
+                        == c2.public_inputs.get(1 + party * rows + row).copied()
+            })
+    };
+    names(&message.c3a, &message.c2a.proof) && names(&message.c3b, &message.c2b.proof)
 }
