@@ -63,10 +63,12 @@ pipeline's internal mailboxes, so one slow subscriber saturates publication for 
 Synchronous publication then returns a saturation error, which is not fatal by itself.
 `naked_dispatch_async` waits for capacity instead, within a quarter of the window, so bulk
 publishers such as the chain gateway and sync reconciliation cannot starve handlers that publish
-synchronously. An admitted event lost before its fanout ends (append failure, or a stopped
-Sequencer, store, or EventBus) sets the failure signal without replacing an earlier reason, and
-later publication fails. Once shutdown closes admission, publication returns `AdmissionClosed`; the
-chain gateway then drops its unpublished chain events instead of failing closed.
+synchronously. One event holds at most three quarters of the window's bytes, so even an event larger
+than the window leaves room for the events its handlers publish during its fanout. An admitted event
+lost before its fanout ends (append failure, or a stopped Sequencer, store, or EventBus) sets the
+failure signal without replacing an earlier reason, and later publication fails. Once shutdown
+closes admission, publication returns `AdmissionClosed`; the chain gateway then drops its
+unpublished chain events instead of failing closed.
 [event_admission.rs](../../crates/events/src/event_admission.rs) and
 [event_system.rs](../../crates/state/event-system/src/event_system.rs) test these paths.
 

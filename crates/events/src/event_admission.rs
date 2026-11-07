@@ -35,6 +35,10 @@ const WINDOW: Usage = Usage {
 /// for publishers that cannot wait, such as actors reacting to the events being waited in.
 const WAITING_SHARE: usize = 4;
 
+/// No event charges more than the window less this fraction of it, so even an event larger than
+/// the window leaves room for the events its handlers publish during its fanout.
+const FOLLOW_UP_SHARE: usize = 4;
+
 /// The event was not admitted because node shutdown has closed admission.
 #[derive(Debug, thiserror::Error)]
 #[error("event admission is closed because node shutdown has started")]
@@ -152,10 +156,11 @@ impl EventAdmission {
         if let Some(reason) = self.failure() {
             bail!("event admission is closed because the event pipeline failed: {reason}");
         }
-        // An event larger than the window counts as the whole window, which keeps the sums in range.
+        // The cap keeps the sums in range. Two capped events never fit together.
+        let max_charge = self.limit.bytes - self.limit.bytes / FOLLOW_UP_SHARE;
         let bytes = bincode::serialized_size(event)
             .unwrap_or(MAX_ENCODED_EVENT_BYTES)
-            .min(self.limit.bytes as u64) as usize;
+            .min(max_charge as u64) as usize;
         let mut window = self.window();
         if window.events > 0
             && (window.events >= limit.events || window.bytes + bytes > limit.bytes)
@@ -316,11 +321,15 @@ mod tests {
     }
 
     #[test]
-    fn oversized_event_is_admitted_alone() {
+    fn oversized_event_leaves_room_for_follow_ups() {
+        let small = event("a");
         let large = event(&"x".repeat(1_000));
-        let admission = admission(10, size(&large) / 2);
+        let admission = admission(10, FOLLOW_UP_SHARE * size(&small));
+        assert!(size(&large) > admission.limit.bytes);
+
         let receipt = admission.reserve(&large).unwrap();
-        assert!(admission.reserve(&event("a")).is_err());
+        admission.reserve(&small).unwrap().settle();
+        assert!(admission.reserve(&large).is_err());
         receipt.settle();
         assert_eq!(*admission.window(), Usage::default());
     }
