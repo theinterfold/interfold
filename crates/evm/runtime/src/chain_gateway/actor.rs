@@ -8,16 +8,17 @@ use crate::domain::chain_sync_state::SyncStatus;
 use crate::domain::evm_log_observation::interfold_slashing_manager_set;
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::InterfoldEvmEvent;
-use actix::{Actor, ActorContext, Handler};
+use actix::{Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, WrapFuture};
 use actix::{Addr, Recipient};
 use alloy::primitives::Address;
 use anyhow::{bail, ensure, Context, Result};
 use e3_events::EType;
+use e3_events::Event;
 use e3_events::{
-    BusHandle, ErrorDispatcher, EventSubscriber, EventType, HistoricalEvmEventsReceived,
-    HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, SyncEnded, Unsequenced,
+    AdmissionClosed, BusHandle, ErrorDispatcher, EventSubscriber, EventType,
+    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData,
+    SyncEnded, Unsequenced,
 };
-use e3_events::{Event, EventPublisher};
 use e3_utils::MAILBOX_LIMIT;
 use tokio::sync::{oneshot, watch};
 use tracing::warn;
@@ -142,14 +143,18 @@ impl EvmChainGateway {
         ctx.stop();
     }
 
-    fn handle_sync_start(&mut self, msg: HistoricalEvmSyncStart) -> Result<()> {
+    fn handle_sync_start(
+        &mut self,
+        msg: HistoricalEvmSyncStart,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
         let sender = msg
             .sender
             .context("No sender on HistoricalEvmSyncStart Message")?;
         let (mut buffer, pending_sync_complete) = self.status.forward_to_sync_actor(sender)?;
 
         for evt in buffer.drain(..) {
-            self.process_evm_event(evt)?;
+            self.process_evm_event(evt, ctx)?;
         }
 
         // HistoricalSyncComplete may have arrived before HistoricalEvmSyncStart
@@ -160,52 +165,54 @@ impl EvmChainGateway {
         Ok(())
     }
 
-    fn handle_sync_ended(&mut self, _: SyncEnded) -> Result<()> {
+    fn handle_sync_ended(&mut self, _: SyncEnded, ctx: &mut actix::Context<Self>) -> Result<()> {
         let buffer = self.status.live()?;
-        for evt in buffer {
-            self.publish_evm_event(evt)?;
-        }
-        self.signal_startup(Ok(()));
+        self.publish_evm_events(buffer, ctx);
         Ok(())
     }
 
-    fn publish_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
-        self.check_slashing_manager(&msg)?;
-        self.bus.naked_dispatch(msg);
-        Ok(())
-    }
-
-    /// The Interfold contract can replace its SlashingManager once requests are paused and
-    /// drained. This node signs accusation votes and submits slash proposals for the manager that
-    /// it read at startup, so a replacement after startup stops the chain: a restart reads the new
-    /// manager. Historical logs never reach this check.
-    fn check_slashing_manager(&self, msg: &InterfoldEvent<Unsequenced>) -> Result<()> {
-        let (Some(current), InterfoldEventData::EvmLogObserved(log)) =
-            (self.slashing_manager, msg.get_data())
-        else {
-            return Ok(());
-        };
-        let Some(replacement) = interfold_slashing_manager_set(log) else {
-            return Ok(());
-        };
-        let replacement = replacement?;
-        ensure!(
-            replacement == current,
-            "the Interfold contract replaced the SlashingManager {current} with {replacement}. \
-             Restart the node so that it signs accusation votes and submits slash proposals for \
-             the new manager"
+    /// Publishes `events` in order, waiting while the event pipeline is full. The gateway handles
+    /// no other message meanwhile, so later chain events keep their order.
+    fn publish_evm_events(
+        &mut self,
+        events: Vec<InterfoldEvent<Unsequenced>>,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        let bus = self.bus.clone();
+        let slashing_manager = self.slashing_manager;
+        ctx.wait(
+            async move {
+                for event in events {
+                    check_slashing_manager(slashing_manager, &event)?;
+                    bus.naked_dispatch_async(event).await?;
+                }
+                Ok(())
+            }
+            .into_actor(self)
+            .map(|result: Result<()>, actor, ctx| match result {
+                // The SyncEnded backlog is published: the chain is live. Later calls do nothing.
+                Ok(()) => actor.signal_startup(Ok(())),
+                Err(error) if error.is::<AdmissionClosed>() => {
+                    warn!(%error, "Dropping chain events because node shutdown has started");
+                    actor.signal_startup(Err(error.to_string()));
+                }
+                Err(error) => actor.fail_closed(error, ctx),
+            }),
         );
-        Ok(())
     }
 
-    fn handle_evm_event(&mut self, msg: InterfoldEvmEvent) -> Result<()> {
+    fn handle_evm_event(
+        &mut self,
+        msg: InterfoldEvmEvent,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
         match msg {
             InterfoldEvmEvent::HistoricalSyncComplete(e) => {
                 self.forward_historical_sync_complete(e)?;
                 Ok(())
             }
             InterfoldEvmEvent::Event(event) => {
-                self.process_evm_event(event.into_interfold_event(&self.bus)?)?;
+                self.process_evm_event(event.into_interfold_event(&self.bus)?, ctx)?;
                 Ok(())
             }
             InterfoldEvmEvent::Log(_) => {
@@ -252,13 +259,42 @@ impl EvmChainGateway {
         Ok(())
     }
 
-    fn process_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
+    fn process_evm_event(
+        &mut self,
+        msg: InterfoldEvent<Unsequenced>,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
         if matches!(self.status, SyncStatus::Live) {
-            return self.publish_evm_event(msg);
+            self.publish_evm_events(vec![msg], ctx);
+            return Ok(());
         }
         self.status
             .add_buffered_event(msg, self.max_buffered_events)
     }
+}
+
+/// The Interfold contract can replace its SlashingManager once requests are paused and drained.
+/// This node signs accusation votes and submits slash proposals for the manager that it read at
+/// startup, so a replacement after startup stops the chain: a restart reads the new manager.
+/// Historical logs never reach this check.
+fn check_slashing_manager(
+    current: Option<Address>,
+    msg: &InterfoldEvent<Unsequenced>,
+) -> Result<()> {
+    let (Some(current), InterfoldEventData::EvmLogObserved(log)) = (current, msg.get_data()) else {
+        return Ok(());
+    };
+    let Some(replacement) = interfold_slashing_manager_set(log) else {
+        return Ok(());
+    };
+    let replacement = replacement?;
+    ensure!(
+        replacement == current,
+        "the Interfold contract replaced the SlashingManager {current} with {replacement}. \
+         Restart the node so that it signs accusation votes and submits slash proposals for the \
+         new manager"
+    );
+    Ok(())
 }
 
 #[path = "handlers.rs"]

@@ -306,7 +306,7 @@ impl Handler<HistoricalEvmEventsReceived> for FakeSyncActor {
     ) -> Self::Result {
         trap(EType::Sync, &self.bus.clone(), || {
             for evt in msg.events.drain(..) {
-                self.bus.naked_dispatch(evt);
+                self.bus.naked_dispatch(evt)?;
             }
             self.bus.publish_without_context(SyncEnded::new())?;
             Ok(())

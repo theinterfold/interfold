@@ -711,7 +711,7 @@ mod recovery_tests {
     use e3_data::{DataStore, InMemStore};
     use e3_events::{
         hlc_factory::HlcFactory, EventBus, EventBusConfig, EventSource, GetEvents,
-        HistoryCollector, Sequencer, StoreEventRequested, StoreEventResponse, Unsequenced,
+        HistoryCollector, Sequencer, StoreEventRequested, Unsequenced,
     };
 
     #[derive(Default)]
@@ -727,11 +727,11 @@ mod recovery_tests {
         type Result = ();
 
         fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
-            let StoreEventRequested { event, sender } = msg;
             let seq = self.next_seq;
             self.next_seq += 1;
+            let (sender, response) = msg.into_stored(seq);
             sender
-                .try_send(StoreEventResponse(event.into_sequenced(seq)))
+                .try_send(response)
                 .expect("sequencer mailbox must accept the stored event response");
         }
     }

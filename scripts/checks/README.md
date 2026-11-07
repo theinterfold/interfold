@@ -36,13 +36,13 @@ and formatting. Cargo manifest checks need Python 3.11+ or `tomli`; the shell ch
 `check:bindings` requires `pnpm evm:build` first. Committee parity comparison additionally needs the
 Rust generator and Nargo; the command reports when that comparison is skipped.
 
-Until the acknowledged event pipeline in
-[#2266](https://github.com/theinterfold/interfold/issues/2266) is complete, retain the send-count
-ratchet and startup `validate_proof_aggregation_mode` checks. `repository-baselines.env` holds the
-ceiling. Lower it when calls disappear; do not increase it without reviewing new call sites. The
-count includes test sources and measures matching lines, not acknowledgment safety. The startup
-check verifies the guard and its configuration call exist; the entrypoint's behavior tests still own
-proof-skip rejection.
+`repository-baselines.env` holds the send-count ceiling. Lower it when calls disappear; do not
+increase it without reviewing new call sites.
+[Event admission](../../docs/architecture/persistence-and-replay.md) acknowledges only the event
+pipeline's own hops, so `do_send` elsewhere stays unacknowledged. The count includes test sources
+and measures matching lines, not acknowledgment safety. The startup check verifies the
+`validate_proof_aggregation_mode` guard and its configuration call exist; the entrypoint's behavior
+tests still own proof-skip rejection.
 
 ### Dependency boundaries
 

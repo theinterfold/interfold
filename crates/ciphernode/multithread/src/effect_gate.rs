@@ -526,8 +526,8 @@ pub(crate) mod tests {
         hlc_factory::HlcFactory, ComputeRequest, ComputeRequestErrorKind, ComputeResponseKind,
         E3RequestComplete, EffectsEnabled, EventBus, EventBusConfig, EventConstructorWithTimestamp,
         EventSource, HistoryCollector, PartyProofsToVerify, PkBfvProofRequest, Proof, ProofPayload,
-        Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents,
-        Unsequenced, VerifyShareProofsRequest, ZkError, ZkRequest, ZkResponse,
+        Sequencer, SignedProofPayload, StoreEventRequested, TakeEvents, Unsequenced,
+        VerifyShareProofsRequest, ZkError, ZkRequest, ZkResponse,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
@@ -576,10 +576,10 @@ pub(crate) mod tests {
         type Result = ();
 
         fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
-            let StoreEventRequested { event, sender } = msg;
             let seq = self.next_seq;
             self.next_seq += 1;
-            let _ = sender.try_send(StoreEventResponse(event.into_sequenced(seq)));
+            let (sender, response) = msg.into_stored(seq);
+            let _ = sender.try_send(response);
         }
     }
 

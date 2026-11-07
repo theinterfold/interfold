@@ -53,9 +53,24 @@ append/flush failure and stopping before dispatch; [CLI start](../../crates/cli/
 the health wait. The start command also installs `e3_entrypoint::actor_panics::ActorPanics`: the
 first panic on the thread running the node's actors triggers the shutdown barrier and an
 unsuccessful exit. Panics on other threads remain with their owners; compute-pool panics become job
-errors. Dead fire-and-forget mailboxes are not universally supervised. Logging/trapping a handler
-error is not itself a restart. Broader acknowledged pipeline work is tracked in
-[#2266](https://github.com/theinterfold/interfold/issues/2266).
+errors. Dead fire-and-forget mailboxes outside the live event pipeline are not universally
+supervised. Logging/trapping a handler error is not itself a restart.
+
+Live publication is bounded. `BusHandle` admits each event into one node-wide window, counted in
+events and encoded bytes, and the event holds its share until its EventBus fanout ends, whatever the
+outcome. A stalled store, EventBus, or subscriber therefore fills the window instead of the
+pipeline's internal mailboxes, so one slow subscriber saturates publication for the whole node.
+Synchronous publication then returns a saturation error, which is not fatal by itself.
+`naked_dispatch_async` waits for capacity instead, within a quarter of the window, so bulk
+publishers such as the chain gateway and sync reconciliation cannot starve handlers that publish
+synchronously. One event holds at most three quarters of the window's bytes, so even an event larger
+than the window leaves room for the events its handlers publish during its fanout. An admitted event
+lost before its fanout ends (append failure, or a stopped Sequencer, store, or EventBus) sets the
+failure signal without replacing an earlier reason, and later publication fails. Once shutdown
+closes admission, publication returns `AdmissionClosed`; the chain gateway then drops its
+unpublished chain events instead of failing closed.
+[event_admission.rs](../../crates/events/src/event_admission.rs) and
+[event_system.rs](../../crates/state/event-system/src/event_system.rs) test these paths.
 
 Before enabling EventBus, seed its HLC above the greatest timestamp in **all durable logs**,
 including post-snapshot suffixes. A snapshot alone is not a clock floor. Correlation IDs similarly
@@ -300,6 +315,9 @@ deleting identity or already matching history. It is not generic repair for comm
 
 - Live fanout logs an accept timeout and does not retry. Snapshot-suffix replay does not necessarily
   redeliver it. Thus at-least-once is a requirement, not a complete live guarantee.
+- Admission bounds only the event pipeline. Queues in front of it are not bounded: while the chain
+  gateway waits for capacity, the EVM parser's sends still grow the gateway's mailbox. A synchronous
+  publisher that traps a saturation error logs and drops that event; the pipeline does not retry it.
 - Snapshot `try_mutate` queues without acknowledgment; no general transactional outbox exists. Slash
   intent and BFV key DurableIntent are narrower protections, not replacements.
 - Current recovery needs matching snapshots, not log alone. No test compares full replay and
@@ -326,10 +344,10 @@ deleting identity or already matching history. It is not generic repair for comm
 
 Use `pnpm check:repository` for Cargo feature containment, Docker workspace coverage, configured
 shutdown grace, the startup proof-guard presence check, and the `.do_send(` line-count ratchet. The
-ceiling lives in `scripts/checks/repository-baselines.env`; retain both interim runtime guards until
-the acknowledged pipeline work in #2266 is complete. These static checks do not prove runtime
-delivery or a successful shutdown. The remaining `do_send` sites include correctness paths; a
-call-count ceiling cannot establish safe delivery. Proof-skipping rejection is tested in
+ceiling lives in `scripts/checks/repository-baselines.env`. Event admission acknowledges only the
+event pipeline's own hops, so keep the ratchet for `do_send` elsewhere. These static checks do not
+prove runtime delivery or a successful shutdown. The remaining `do_send` sites include correctness
+paths; a call-count ceiling cannot establish safe delivery. Proof-skipping rejection is tested in
 [`start/mod.rs`](../../crates/ciphernode/entrypoint/src/start/mod.rs), but those unit tests exercise
 the validation function rather than the full startup path.
 [Schema tests](../../crates/ciphernode/entrypoint/tests/validate_older_schema.rs) check failure

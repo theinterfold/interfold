@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::event_admission::{record_failure, EventReceipt};
 use crate::traits::Event;
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
@@ -200,7 +201,7 @@ impl<E: Event> EventBus<E> {
         let reason = format!("EventBus pre-fanout failed: {error:#}");
         for subscriber in &self.pre_fanout {
             if let Some(signal) = &subscriber.failure_signal {
-                signal.send_replace(Some(reason.clone()));
+                record_failure(signal, reason.clone());
             }
         }
     }
@@ -224,6 +225,50 @@ impl<E: Event> EventBus<E> {
         tracing::debug!("{} {}", colorize(">>>", Color::Yellow), event);
         self.track(event);
         Some((event_type, listeners))
+    }
+
+    /// Fans `event` out to pre-fanout recipients and then to subscribers, one event at a time.
+    /// The receipt is settled when the fanout ends, whatever its outcome.
+    fn dispatch(&mut self, event: E, receipt: EventReceipt, ctx: &mut Context<Self>) {
+        let admission_label = format!("{} pre-fanout", event.event_type());
+        let pre_fanout = self.pre_fanout_recipients();
+
+        // Admit the event to infrastructure before deduplication and domain delivery. Snapshot
+        // admission must observe every durable sequence, including replay, source-bus, and
+        // forked-bus events that do not pass through this node's Sequencer.
+        ctx.wait(
+            async move {
+                fanout(event.clone(), admission_label, pre_fanout)
+                    .await
+                    .map(|()| event)
+            }
+            .into_actor(self)
+            .map(|result, actor, _| match result {
+                Ok(event) => actor
+                    .prepare_fanout(&event)
+                    .map(|(event_type, listeners)| (event, event_type, listeners)),
+                Err(error) => {
+                    actor.record_pre_fanout_failure(&error);
+                    tracing::error!(%error, "EventBus pre-fanout did not complete");
+                    None
+                }
+            })
+            .then(|prepared, actor, _| {
+                async move {
+                    let Some((event, event_type, listeners)) = prepared else {
+                        return Ok(());
+                    };
+                    fanout(event, event_type, listeners).await
+                }
+                .into_actor(actor)
+            })
+            .map(move |result, _, _| {
+                receipt.settle();
+                if let Err(error) = result {
+                    tracing::error!(%error, "EventBus fanout did not complete");
+                }
+            }),
+        );
     }
 }
 
@@ -269,48 +314,27 @@ impl<E: Event> Default for EventBus<E> {
     }
 }
 
+/// A stored event from the Sequencer, with the receipt of its admission.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct Dispatch<E: Event> {
+    pub(crate) event: E,
+    pub(crate) receipt: EventReceipt,
+}
+
 impl<E: Event> Handler<E> for EventBus<E> {
     type Result = ();
 
     fn handle(&mut self, event: E, ctx: &mut Context<Self>) {
-        let admission_label = format!("{} pre-fanout", event.event_type());
-        let pre_fanout = self.pre_fanout_recipients();
+        self.dispatch(event, EventReceipt::untracked(), ctx);
+    }
+}
 
-        // Admit the event to infrastructure before deduplication and domain delivery. Snapshot
-        // admission must observe every durable sequence, including replay, source-bus, and
-        // forked-bus events that do not pass through this node's Sequencer.
-        ctx.wait(
-            async move {
-                fanout(event.clone(), admission_label, pre_fanout)
-                    .await
-                    .map(|()| event)
-            }
-            .into_actor(self)
-            .map(|result, actor, _| match result {
-                Ok(event) => actor
-                    .prepare_fanout(&event)
-                    .map(|(event_type, listeners)| (event, event_type, listeners)),
-                Err(error) => {
-                    actor.record_pre_fanout_failure(&error);
-                    tracing::error!(%error, "EventBus pre-fanout did not complete");
-                    None
-                }
-            })
-            .then(|prepared, actor, _| {
-                async move {
-                    let Some((event, event_type, listeners)) = prepared else {
-                        return Ok(());
-                    };
-                    fanout(event, event_type, listeners).await
-                }
-                .into_actor(actor)
-            })
-            .map(|result, _, _| {
-                if let Err(error) = result {
-                    tracing::error!(%error, "EventBus fanout did not complete");
-                }
-            }),
-        );
+impl<E: Event> Handler<Dispatch<E>> for EventBus<E> {
+    type Result = ();
+
+    fn handle(&mut self, msg: Dispatch<E>, ctx: &mut Context<Self>) {
+        self.dispatch(msg.event, msg.receipt, ctx);
     }
 }
 

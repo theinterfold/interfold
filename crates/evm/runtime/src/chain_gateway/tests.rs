@@ -9,7 +9,9 @@ use crate::{EvmEvent, EvmLogRejected, EvmReaderStopped};
 use super::*;
 use e3_event_system::EventSystem;
 
-use e3_events::{CorrelationId, EvmEventConfig, EvmEventConfigChain, TakeEvents, TestEvent};
+use e3_events::{
+    CorrelationId, EventPublisher, EvmEventConfig, EvmEventConfigChain, TakeEvents, TestEvent,
+};
 use tokio::sync::mpsc;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -475,7 +477,7 @@ async fn test_evm_chain_gateway() -> Result<()> {
     // the bus here we simulate it
     let received = rx.recv().await.unwrap();
     for event in received.events {
-        bus.naked_dispatch(event);
+        bus.naked_dispatch(event)?;
     }
 
     // Send EVM event while buffering - should be buffered (not received)

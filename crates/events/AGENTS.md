@@ -9,8 +9,11 @@ orchestration merely because many crates already import it.
 - Snapshot pre-fanout admission happens before domain dedup, including replay. Log sync precedes
   dispatch; enqueuing a send is not durable acceptance.
 - Route only configured aggregates. An unknown aggregate must signal fatal storage failure without
-  dispatch or misrouting, using the same health path as append/flush errors. Dead fire-and-forget
-  mailboxes do not automatically acquire that signal.
+  dispatch or misrouting, using the same health path as append/flush errors.
+- Every live pipeline hop carries the admission receipt. The EventBus settles it when fanout ends,
+  and the EventStore settles a duplicate's receipt without dispatching it. A dropped receipt reports
+  the event as lost. The window is what bounds the hops' `do_send` mailboxes, so a new hop must
+  carry the receipt, and mailboxes outside the pipeline get no signal.
 - Durable payload changes need schema/wire review beyond a Rust compile or updated layout fixture.
   Process readiness/effect/shutdown signals are current-boot control, not replayable instructions.
 

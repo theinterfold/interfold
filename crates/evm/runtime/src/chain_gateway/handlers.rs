@@ -25,8 +25,8 @@ impl Handler<InterfoldEvent> for EvmChainGateway {
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let result = (|| {
             match msg.into_data() {
-                InterfoldEventData::HistoricalEvmSyncStart(e) => self.handle_sync_start(e)?,
-                InterfoldEventData::SyncEnded(e) => self.handle_sync_ended(e)?,
+                InterfoldEventData::HistoricalEvmSyncStart(e) => self.handle_sync_start(e, ctx)?,
+                InterfoldEventData::SyncEnded(e) => self.handle_sync_ended(e, ctx)?,
                 _ => (),
             }
             Ok(())
@@ -41,7 +41,7 @@ impl Handler<InterfoldEvmEvent> for EvmChainGateway {
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvmEvent, ctx: &mut Self::Context) -> Self::Result {
-        if let Err(error) = self.handle_evm_event(msg) {
+        if let Err(error) = self.handle_evm_event(msg, ctx) {
             self.fail_closed(error, ctx);
         }
     }
