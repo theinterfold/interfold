@@ -23,6 +23,7 @@ mod live_history;
 mod net_interface;
 mod net_interface_handle;
 mod network;
+mod once_take;
 mod peer_admission;
 mod repo;
 mod seen_messages;
@@ -50,6 +51,7 @@ pub use live_history::LiveHistory;
 pub use net_interface::*;
 pub use net_interface_handle::*;
 pub use network::*;
+pub use once_take::OnceTake;
 pub use repo::*;
 
 pub async fn setup_libp2p_keypair(

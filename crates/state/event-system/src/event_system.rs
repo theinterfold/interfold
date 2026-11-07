@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::enumerate_path;
 use crate::get_interfold_event_bus;
 use crate::global_eventstore_cache::{share_eventstore_reader, EventStoreReader};
 use crate::global_store_cache::share_store;
@@ -19,7 +20,6 @@ use e3_events::{
     EventStoreClockFloor, EventStoreRouter, FlushEventStores, InsertBatch, InterfoldEvent,
     Sequencer, SnapshotBuffer, StoreEventRequested, SubscribePreFanout, UpdateDestination,
 };
-use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::path::PathBuf;

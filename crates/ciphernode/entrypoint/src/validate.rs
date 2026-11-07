@@ -41,6 +41,7 @@ use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
+use e3_event_system::enumerate_path;
 use e3_events::{
     AggregateId, Event, EventContextAccessors, EventContextSeq, InterfoldEvent, InterfoldEventData,
 };
@@ -51,7 +52,6 @@ use e3_sortition::{
 use e3_sync::{
     inspect_persisted_schema_version, SchemaVersionDecision, SyncRepositoryFactory, SCHEMA_VERSION,
 };
-use e3_utils::enumerate_path;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

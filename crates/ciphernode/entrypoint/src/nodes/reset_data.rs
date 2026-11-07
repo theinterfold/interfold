@@ -398,7 +398,7 @@ fn backup_path(config: &NodeConfig) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{event_log_paths, matches_enumeration_of};
-    use e3_utils::enumerate_path;
+    use e3_event_system::enumerate_path;
     use std::fs;
     use std::path::PathBuf;
 

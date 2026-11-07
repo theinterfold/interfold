@@ -8,7 +8,7 @@ use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     direct_responder::DirectResponder,
     domain::wire::{decode, MAX_GOSSIP_BYTES},
-    ContentHash,
+    ContentHash, OnceTake,
 };
 use actix::Message;
 use anyhow::{anyhow, bail, Context, Result};
@@ -17,7 +17,7 @@ use e3_events::{
     CorrelationId, DocumentMeta, EventContextAccessors, EventSource, InterfoldEvent, Sequenced,
     Unsequenced,
 };
-use e3_utils::{ArcBytes, OnceTake};
+use e3_utils::ArcBytes;
 use libp2p::{
     gossipsub::{MessageId, PublishError, TopicHash},
     kad::{store, GetRecordError, PutRecordError},

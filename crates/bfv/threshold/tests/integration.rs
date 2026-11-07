@@ -24,7 +24,7 @@ use e3_trbfv::{
     },
     TrBFVConfig, TrBFVRequest, TrBFVResponse,
 };
-use e3_utils::{to_ordered_vec, ArcBytes};
+use e3_utils::ArcBytes;
 use fhe_traits::Serialize;
 
 #[tokio::test]
@@ -143,4 +143,14 @@ async fn test_trbfv_isolation() -> Result<()> {
         println!("Tally {i} result = {res} / {exp}");
     }
     Ok(())
+}
+
+/// The values of `source` in key order.
+fn to_ordered_vec<K, T>(source: HashMap<K, T>) -> Vec<T>
+where
+    K: Ord + Copy,
+{
+    let mut pairs: Vec<_> = source.into_iter().collect();
+    pairs.sort_by_key(|&(key, _)| key);
+    pairs.into_iter().map(|(_, value)| value).collect()
 }
