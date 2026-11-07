@@ -2,57 +2,6 @@
   "group": "foundations",
   "units": [
     {
-      "id": "e3-task-pool",
-      "documentation": [{ "title": "Compute admission and cancellation", "path": "docs/architecture/persistence-and-replay.md" }],
-      "kind": "crate",
-      "path": "crates/task-pool",
-      "one_line": "Protocol-independent bounded Rayon execution with shared admission and caller-scoped cancellation groups.",
-      "actors": [],
-      "consumes": [],
-      "emits": [],
-      "state": [
-        {
-          "name": "Shared semaphore, Rayon pool and cancellation groups",
-          "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "TaskPool",
-          "what": "Cloneable shared CPU admission budget",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
-        },
-        {
-          "name": "TaskPoolError",
-          "what": "Admission, channel, cancellation and panic outcomes",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
-        }
-      ],
-      "read_first": [
-        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {" },
-        {
-          "why": "Admission, queued cancellation and worker execution",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "arc-shared",
-          "note": "Clones retain the same cancellation map",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
-        },
-        {
-          "pattern": "tokio-select",
-          "note": "Admission waits for a permit or cancellation",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
-        }
-      ],
-      "depends_on": [],
-      "tests": "cargo test --locked -p e3-task-pool: cancellation before admission and inside Rayon, retry cancellation and panic classification.",
-      "unverified": ["Already-running closures are not preempted; pool tests do not establish production memory use or proof validity."]
-    },
-    {
       "id": "e3-fhe-params",
       "documentation": [{ "title": "Preset and artifact identity", "path": "docs/architecture/circuit-artifacts.md" }],
       "kind": "crate",
@@ -71,18 +20,18 @@
         {
           "name": "BfvParamSet",
           "what": "one preset's degree, plaintext modulus and moduli, ready to build BFV parameters",
-          "ref": "crates/bfv/params/src/presets.rs@249@pub struct BfvParamSet {"
+          "ref": "crates/bfv/params/src/presets.rs@262@pub struct BfvParamSet {"
         },
         {
           "name": "PresetError",
           "what": "error type: unknown preset, missing threshold or DKG pair, or an insecure lambda",
-          "ref": "crates/bfv/params/src/presets.rs@206@pub enum PresetError {"
+          "ref": "crates/bfv/params/src/presets.rs@217@pub enum PresetError {"
         }
       ],
       "read_first": [
         {
           "why": "crate entry: the public re-exports of presets, builders and CRP helpers",
-          "ref": "crates/bfv/params/src/lib.rs@25@pub use presets::{"
+          "ref": "crates/bfv/params/src/lib.rs@32@pub use presets::{"
         },
         {
           "why": "the preset enum and the default preset constant",
@@ -90,7 +39,7 @@
         },
         {
           "why": "the insecure 64 constants: degree, moduli and party count per threshold or DKG set",
-          "ref": "crates/bfv/params/src/constants.rs@13@pub mod insecure_64 {"
+          "ref": "crates/bfv/params/src/constants.rs@19@pub mod insecure_64 {"
         },
         {
           "why": "turns a preset into its threshold and DKG BFV parameter pair",
@@ -101,17 +50,17 @@
         {
           "pattern": "enum-match",
           "note": "metadata() maps each preset to its degree, modulus count, party count and security tier",
-          "ref": "crates/bfv/params/src/presets.rs@387@pub fn metadata(&self) -> PresetMetadata"
+          "ref": "crates/bfv/params/src/presets.rs@400@pub fn metadata(&self) -> PresetMetadata"
         },
         {
           "pattern": "thiserror-enum",
           "note": "PresetError derives Debug and the thiserror Error impl through the ThisError alias",
-          "ref": "crates/bfv/params/src/presets.rs@205@#[derive(ThisError, Debug)]"
+          "ref": "crates/bfv/params/src/presets.rs@216@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "impl-from",
           "note": "a preset converts into its BfvParamSet with From",
-          "ref": "crates/bfv/params/src/presets.rs@497@impl From<BfvPreset> for BfvParamSet {"
+          "ref": "crates/bfv/params/src/presets.rs@536@impl From<BfvPreset> for BfvParamSet {"
         },
         {
           "pattern": "builder-pattern",
@@ -492,100 +441,12 @@
       "unverified": []
     },
     {
-      "id": "e3-hamt",
-      "documentation": [{ "title": "Storage representations", "path": "docs/architecture/persistence-and-replay.md" }],
-      "kind": "crate",
-      "path": "crates/hamt",
-      "one_line": "A persistent hash array mapped trie: insert and remove return a new map that shares unchanged nodes through Arc.",
-      "actors": [],
-      "consumes": [],
-      "emits": [],
-      "state": [
-        {
-          "name": "the trie of nodes, held in memory behind the root Arc",
-          "where": "memory",
-          "ref": "crates/hamt/src/lib.rs@34@root: Arc<Node<K, V>>,"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "Hamt",
-          "what": "the persistent map: a root node and an entry count",
-          "ref": "crates/hamt/src/lib.rs@33@pub struct Hamt<K, V> {"
-        },
-        {
-          "name": "Node",
-          "what": "Empty, Leaf, Internal with a 32-bit bitmap and children, or Collision",
-          "ref": "crates/hamt/src/lib.rs@16@enum Node<K, V> {"
-        }
-      ],
-      "read_first": [
-        {
-          "why": "the chunk size: 5 bits per level, so 32 slots per node",
-          "ref": "crates/hamt/src/lib.rs@11@const BITS_PER_LEVEL: u32 = 5;"
-        },
-        {
-          "why": "the node types",
-          "ref": "crates/hamt/src/lib.rs@16@enum Node<K, V> {"
-        },
-        {
-          "why": "the public insert, which returns a new map",
-          "ref": "crates/hamt/src/lib.rs@83@pub fn insert(&self, key: K, value: V) -> Self"
-        },
-        {
-          "why": "the recursive insert that rebuilds only the changed path",
-          "ref": "crates/hamt/src/lib.rs@93@fn insert_rec("
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "enum-match",
-          "note": "insert matches on the node kind and rebuilds the matched variant",
-          "ref": "crates/hamt/src/lib.rs@139@Node::Internal { bitmap, children } => {"
-        },
-        {
-          "pattern": "arc-shared",
-          "note": "nodes are shared through Arc, so versions reuse subtrees",
-          "ref": "crates/hamt/src/lib.rs@34@root: Arc<Node<K, V>>,"
-        },
-        {
-          "pattern": "ownership-clone",
-          "note": "Clone copies only the Arc to the root",
-          "ref": "crates/hamt/src/lib.rs@41@root: self.root.clone(),"
-        },
-        {
-          "pattern": "generic-where",
-          "note": "the Default impl bounds K and V in a where clause",
-          "ref": "crates/hamt/src/lib.rs@47@impl<K, V> Default for Hamt<K, V>"
-        }
-      ],
-      "depends_on": [],
-      "tests": "Four unit tests in src/lib.rs. Run: cargo test -p e3-hamt.",
-      "unverified": []
-    },
-    {
       "id": "e3-utils",
       "documentation": [{ "title": "Decoding and runtime boundaries", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/utils",
-      "one_line": "Shared helpers: actix channel adapters, size-bounded bincode, retry with backoff and byte newtypes.",
-      "actors": [
-        {
-          "name": "Oneshot<M>",
-          "role": "actix actor that forwards its first message into a tokio oneshot channel",
-          "ref": "crates/utils/src/actix/channel.rs@14@pub struct Oneshot<M>"
-        },
-        {
-          "name": "Mpsc<M>",
-          "role": "actix actor that forwards each message into a tokio mpsc channel",
-          "ref": "crates/utils/src/actix/channel.rs@46@pub struct Mpsc<M>"
-        },
-        {
-          "name": "OneShotRunner<F, M>",
-          "role": "actor that runs its closure once on the first message and logs any error",
-          "ref": "crates/utils/src/actix/oneshot_runner.rs@13@pub struct OneShotRunner<F, M>"
-        }
-      ],
+      "one_line": "Shared helpers: size-bounded bincode, retry with backoff, byte newtypes and formatters.",
+      "actors": [],
       "consumes": [],
       "emits": [],
       "state": [],
@@ -604,16 +465,9 @@
       "read_first": [
         {
           "why": "crate entry: module list and re-exports, including the BytesSerde derive",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@18@pub use e3_utils_derive::BytesSerde;"
         },
-        {
-          "why": "ArcBytes, the shared byte buffer",
-          "ref": "crates/utils/src/utility_types.rs@22@pub struct ArcBytes(Arc<Vec<u8>>);"
-        },
-        {
-          "why": "the oneshot adapter from actix to tokio",
-          "ref": "crates/utils/src/actix/channel.rs@36@pub fn oneshot<M>()"
-        },
+        { "why": "ArcBytes, the shared byte buffer", "ref": "crates/utils/src/utility_types.rs@22@pub struct ArcBytes(Arc<Vec<u8>>);" },
         {
           "why": "retry_with_backoff: retries an operation with a delay between attempts",
           "ref": "crates/utils/src/retry.rs@43@pub async fn retry_with_backoff<F, Fut, T>("
@@ -624,16 +478,6 @@
           "pattern": "newtype",
           "note": "ArcBytes wraps Arc<Vec<u8>>",
           "ref": "crates/utils/src/utility_types.rs@22@pub struct ArcBytes(Arc<Vec<u8>>);"
-        },
-        {
-          "pattern": "actix-actor",
-          "note": "OneShotRunner implements actix::Actor and handles one message",
-          "ref": "crates/utils/src/actix/oneshot_runner.rs@38@impl<F, M> Actor for OneShotRunner<F, M>"
-        },
-        {
-          "pattern": "actix-recipient",
-          "note": "oneshot() returns an actix Recipient, so any actor can send into it",
-          "ref": "crates/utils/src/actix/channel.rs@36@pub fn oneshot<M>()"
         },
         {
           "pattern": "async-await",
@@ -647,7 +491,7 @@
         }
       ],
       "depends_on": ["e3-utils-derive"],
-      "tests": "Unit tests in src/ (14 test attributes, for example test_one_shot_runner in src/actix/oneshot_runner.rs). Run: cargo test -p e3-utils.",
+      "tests": "Unit tests in src/ (utility_types.rs, formatters.rs, path.rs, bounded_bincode.rs, ordered_set.rs, retry.rs). Run: cargo test -p e3-utils.",
       "unverified": []
     },
     {
@@ -678,7 +522,7 @@
         },
         {
           "why": "where e3-utils re-exports the derive for other crates",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@18@pub use e3_utils_derive::BytesSerde;"
         }
       ],
       "rust_patterns": [
@@ -699,8 +543,8 @@
         }
       ],
       "depends_on": [],
-      "tests": "No test attributes in this crate. Its output is used by e3-utils (ArcBytes) and e3-events (EventId, Seed).",
-      "unverified": ["Whether any test in e3-utils or e3-events checks the derived hex and raw-byte forms was not checked."]
+      "tests": "No test attributes in this crate. Its output is used by e3-utils' ArcBytes.",
+      "unverified": []
     },
     {
       "id": "e3-test-support",
@@ -759,159 +603,21 @@
       "documentation": [{ "title": "Integration evidence", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
       "path": "crates/testing/system",
-      "one_line": "System-test scenarios, local mock transport and registration, plus the external integration fixture bins. Node assembly dependencies are dev-only.",
-      "actors": [
-        {
-          "name": "StoredEvents",
-          "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/testing/system/tests/integration.rs@3059@struct StoredEvents("
-        }
-      ],
-      "consumes": [],
-      "emits": [],
-      "state": [
-        {
-          "name": "the mock transport's record store",
-          "where": "memory",
-          "ref": "crates/testing/system/tests/ciphernode_system/libp2p_mock.rs@26@store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "CiphernodeSystemBuilder",
-          "what": "integration-local builder for groups of nodes and their optional network mock",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@37@pub struct CiphernodeSystemBuilder<'a> {"
-        },
-        {
-          "name": "CiphernodeSystem",
-          "what": "built nodes and network mock, with restart support",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@114@pub struct CiphernodeSystem {"
-        },
-        {
-          "name": "Libp2pMock",
-          "what": "local gossip/DHT and restart transport, not peer authorization",
-          "ref": "crates/testing/system/tests/ciphernode_system/libp2p_mock.rs@25@pub struct Libp2pMock {"
-        },
-        {
-          "name": "AddToCommittee",
-          "what": "synthetic registration events for the integration suite",
-          "ref": "crates/testing/system/tests/common/committee.rs@12@pub struct AddToCommittee {"
-        }
-      ],
-      "read_first": [
-        {
-          "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/testing/system/tests/integration.rs@1328@async fn test_trbfv_actor()"
-        },
-        {
-          "why": "the simulated network is switched on for the node group",
-          "ref": "crates/testing/system/tests/integration.rs@1614@.simulate_libp2p()"
-        },
-        {
-          "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/testing/system/tests/integration.rs@365@async fn setup_test_zk_backend("
-        },
-        {
-          "why": "the layout-lock test that compares the persisted layouts with the fixture",
-          "ref": "crates/testing/system/tests/layout_lock.rs@249@fn persisted_layouts_match_the_locked_fixture()"
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "async-test",
-          "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/testing/system/tests/integration.rs@1326@#[actix::test]"
-        },
-        {
-          "pattern": "builder-pattern",
-          "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/testing/system/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
-        },
-        {
-          "pattern": "actix-actor",
-          "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/testing/system/tests/integration.rs@3061@impl actix::Actor for StoredEvents {"
-        },
-        {
-          "pattern": "unit-test",
-          "note": "the layout test is a plain #[test] that calls the fixture check",
-          "ref": "crates/testing/system/tests/layout_lock.rs@248@#[test]"
-        }
-      ],
-      "depends_on": ["e3-bfv-client", "e3-fhe-params"],
-      "tests": "cargo test -p e3-tests --test integration includes the system scenarios and five local mock-network regressions; --test large_work_plan_recovery and --test layout_lock select persistence boundaries. Fixture bins build separately without the dev-only node graph. tests/docker covers the ciphernode entrypoint's state paths.",
-      "unverified": []
-    },
-    {
-      "id": "e3-layout-lock",
-      "documentation": [{ "title": "Schema and layout validation", "path": "docs/architecture/persistence-and-replay.md" }],
-      "kind": "crate",
-      "path": "crates/testing/layout-lock",
-      "one_line": "Test helper that samples persisted and wire types from their serde layout and checks their bincode encoding against a fixture.",
+      "one_line": "The fake_encrypt helper that end-to-end tests use to encrypt an input under a committee's public key.",
       "actors": [],
       "consumes": [],
       "emits": [],
-      "state": [
-        {
-          "name": "checked-in fixture file, read by assert_fixture and rewritten under LAYOUT_LOCK_UPDATE",
-          "where": "disk",
-          "ref": "crates/testing/layout-lock/src/lib.rs@892@let fixture = std::fs::read_to_string(path)"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "Synth",
-          "what": "serde Deserializer that fills a type with samples built from its layout",
-          "ref": "crates/testing/layout-lock/src/lib.rs@156@struct Synth<'a> {"
-        },
-        {
-          "name": "SynthError",
-          "what": "error type used while building samples",
-          "ref": "crates/testing/layout-lock/src/lib.rs@82@struct SynthError(String);"
-        }
-      ],
+      "state": [],
+      "key_types": [],
       "read_first": [
         {
-          "why": "module docs: how samples are built and the limits of the check",
-          "ref": "crates/testing/layout-lock/src/lib.rs@7@Sample values built from serde layouts"
-        },
-        {
-          "why": "sample_rows: builds the rows for one root type",
-          "ref": "crates/testing/layout-lock/src/lib.rs@724@pub fn sample_rows<T, F>"
-        },
-        {
-          "why": "assert_fixture: compares the rows with the checked-in file",
-          "ref": "crates/testing/layout-lock/src/lib.rs@876@pub fn assert_fixture(path: &Path, rows: &[String]) {"
-        },
-        {
-          "why": "the update switch, which the CI check guards",
-          "ref": "crates/testing/layout-lock/src/lib.rs@878@if std::env::var_os(UPDATE_ENV).is_some() {"
+          "why": "fake_encrypt: reads the committee key, encrypts the plaintext, writes the ciphertext and its commitment",
+          "ref": "crates/testing/system/src/bin/fake_encrypt.rs@52@fn main() -> Result<(), Box<dyn std::error::Error>> {"
         }
       ],
-      "rust_patterns": [
-        {
-          "pattern": "trait-impl",
-          "note": "Synth implements serde's Deserializer, so serde drives the sample build",
-          "ref": "crates/testing/layout-lock/src/lib.rs@360@impl<'de> de::Deserializer<'de> for Synth<'_> {"
-        },
-        {
-          "pattern": "newtype",
-          "note": "SynthError wraps a String",
-          "ref": "crates/testing/layout-lock/src/lib.rs@82@struct SynthError(String);"
-        },
-        {
-          "pattern": "generic-where",
-          "note": "sample_rows bounds T in a where clause",
-          "ref": "crates/testing/layout-lock/src/lib.rs@726@T: Serialize + DeserializeOwned,"
-        },
-        {
-          "pattern": "unit-test",
-          "note": "the crate's own tests sit in a cfg(test) module",
-          "ref": "crates/testing/layout-lock/src/lib.rs@971@#[test]"
-        }
-      ],
-      "depends_on": ["e3-utils"],
-      "tests": "15 test attributes in src/lib.rs. Run: cargo test -p e3-layout-lock. The fixture check runs in e3-tests: cargo test -p e3-tests --test layout_lock.",
+      "rust_patterns": [],
+      "depends_on": ["e3-bfv-client", "e3-fhe-params"],
+      "tests": "No tests of its own; tests/integration/v2.sh runs fake_encrypt.",
       "unverified": []
     },
     {

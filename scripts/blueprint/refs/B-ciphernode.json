@@ -3,315 +3,175 @@
     "id": "B1",
     "supported": true,
     "refs": [
-      "crates/evm/runtime/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)",
-      "crates/evm/runtime/src/chain_gateway/actor.rs@208@into_interfold_event(&self.bus)",
-      "crates/evm/runtime/src/chain_gateway/actor.rs@174@self.bus.naked_dispatch(msg);"
+      "crates/cli/src/start.rs@55@e3_node::launch::launch(node)",
+      "crates/ciphernode/node/src/launch.rs@101@pub async fn launch(config: Config) -> anyhow::Result<()> {"
     ],
     "line_text": [
-      "Ok(Some(event)) => self.next.do_send(InterfoldEvmEvent::Event(event)),",
-      "self.process_evm_event(event.into_interfold_event(&self.bus)?)?;",
-      "self.bus.naked_dispatch(msg);"
+      "result = e3_node::launch::launch(node) => result.context(\"the node stopped\"),",
+      "pub async fn launch(config: Config) -> anyhow::Result<()> {"
     ],
-    "note": "The decoder emits InterfoldEvmEvent::Event, and the chain gateway converts it and hands it to the bus with naked_dispatch."
+    "note": "interfold start runs e3_node::launch::launch, which builds the adapters and runs the node."
   },
   {
     "id": "B2",
     "supported": true,
-    "refs": [
-      "crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)",
-      "crates/evm/runtime/src/interfold_writing/handlers.rs@411@let result = publish_plaintext_output("
-    ],
-    "line_text": [".publishPlaintextOutput(e3_id, decrypted_output, proof)", "let result = publish_plaintext_output("],
-    "note": "publish_plaintext_output sends the publishPlaintextOutput transaction, and the InterfoldSolWriter handler calls it."
+    "refs": ["crates/cli/src/node_v2.rs@18@pub async fn config(config: &NodeConfig) -> Result<Config> {"],
+    "line_text": ["pub async fn config(config: &NodeConfig) -> Result<Config> {"],
+    "note": "The CLI maps the operator's configuration file into the node's launch configuration."
   },
   {
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/evm/runtime/src/ciphernode_registry/effects.rs@54@.submitTicket(e3_id_u256, ticket_number_u256)",
-      "crates/evm/runtime/src/ciphernode_registry/effects.rs@319@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
+      "crates/ciphernode/chain/src/writer.rs@216@let data = Registry::submitTicketCall {",
+      "crates/ciphernode/chain/src/writer.rs@269@let data = IInterfold::publishPlaintextOutputCall {",
+      "crates/ciphernode/chain/src/writer.rs@302@let data = ISlashingManager::proposeSlashCall {",
+      "crates/ciphernode/node/src/launch.rs@141@rpc_client(&http_url(&config.rpc_url)?, auth, poll)"
     ],
     "line_text": [
-      ".submitTicket(e3_id_u256, ticket_number_u256)",
-      ".publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
+      "let data = Registry::submitTicketCall {",
+      "let data = IInterfold::publishPlaintextOutputCall {",
+      "let data = ISlashingManager::proposeSlashCall {",
+      ".connect_client(rpc_client(&http_url(&config.rpc_url)?, auth, poll).await?);"
     ],
-    "note": "submit_ticket_to_registry sends submitTicket, and publish_committee_to_registry sends publishCommittee."
+    "note": "The writer turns submissions into contract calls; the wallet sends them over the HTTP form of the RPC URL."
   },
   {
     "id": "B4",
     "supported": true,
     "refs": [
-      "crates/evm/runtime/src/slashing_writing/effects.rs@82@.proposeSlashByDkgParty(e3_id, pid, proof)",
-      "crates/evm/runtime/src/slashing_writing/effects.rs@88@.proposeSlash(e3_id, operator, proof)"
+      "crates/ciphernode/chain/src/rpc.rs@58@.subscribe_logs(&filter)",
+      "crates/ciphernode/chain/src/reader.rs@186@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
+      "crates/ciphernode/chain/src/decode.rs@194@I::E3Requested::SIGNATURE_HASH => {"
     ],
-    "line_text": [".proposeSlashByDkgParty(e3_id, pid, proof)", ".proposeSlash(e3_id, operator, proof)"],
-    "note": "submit_slash_proposal sends proposeSlashByDkgParty when the operator resolves to a DKG party, and proposeSlash otherwise."
+    "line_text": [
+      ".subscribe_logs(&filter)",
+      "pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
+      "I::E3Requested::SIGNATURE_HASH => {"
+    ],
+    "note": "The RPC node announces the contracts' logs; the reader reads confirmed blocks with eth_getLogs and decodes each log into a chain fact."
   },
   {
     "id": "B5",
-    "supported": false,
+    "supported": true,
     "refs": [
-      "crates/net/src/event_translation/actor.rs@263@.publish_from_remote(data, ec.ts(), None, EventSource::Net)",
-      "crates/net/src/event_conversion/actor.rs@69@decode_received(&msg.meta, &msg.value)",
-      "crates/net/src/event_conversion/actor.rs@71@self.bus.publish(evt, ctx)?;"
+      "crates/ciphernode/node/src/runtime.rs@299@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@313@events.send(Event::Input(Input::Chain(fact)))"
     ],
-    "line_text": [
-      ".publish_from_remote(data, ec.ts(), None, EventSource::Net)",
-      "match EventConversionService::decode_received(&msg.meta, &msg.value)? {",
-      "self.bus.publish(evt, ctx)?;"
-    ],
-    "note": "Gossip becomes bus events in NetEventTranslator through publish_from_remote; EventConverter only publishes events decoded from DHT-fetched DocumentReceived documents."
+    "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
+    "note": "The chain reader's task sends each fact to the event loop as an input."
   },
   {
     "id": "B6",
     "supported": true,
-    "refs": [
-      "crates/net/src/document_publishing/effects.rs@83@NetCommand::DhtStoreLocal {",
-      "crates/net/src/document_publishing/effects.rs@214@NetCommand::DhtPutRecord {",
-      "crates/net/src/net_interface.rs@2237@.put_record(record, Quorum::One)",
-      "crates/net/src/document_publishing/effects.rs@275@NetCommand::gossip_republish("
-    ],
-    "line_text": [
-      "NetCommand::DhtStoreLocal {",
-      "NetCommand::DhtPutRecord {",
-      ".put_record(record, Quorum::One)",
-      "NetCommand::gossip_republish("
-    ],
-    "note": "The full document is stored in the Kademlia DHT (put_record), and a small notification is gossiped via gossip_republish."
+    "refs": ["crates/ciphernode/node/src/runtime.rs@331@async fn forward_peers("],
+    "line_text": ["async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::Sender<Event>) {"],
+    "note": "Admitted peer messages reach the event loop as inputs."
   },
   {
     "id": "B7",
     "supported": true,
     "refs": [
-      "crates/state/request/src/routing/handlers.rs@185@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
-      "crates/state/request/src/routing/handlers.rs@202@extension.on_event(context, &msg);",
-      "crates/state/request/src/routing/actor.rs@73@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
-      "crates/orchestration/keyshare/src/ext.rs@119@ThresholdKeyshare::new(ThresholdKeyshareParams {"
+      "crates/ciphernode/engine/src/lib.rs@125@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
+      "crates/protocol/src/node.rs@956@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
-      "let context = self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
-      "extension.on_event(context, &msg);",
-      "fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
-      "ThresholdKeyshare::new(ThresholdKeyshareParams {"
+      "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
+      "fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
-    "note": "The router gets or creates the E3's context and calls each extension's on_event, where keyshare's extension starts ThresholdKeyshare actors."
+    "note": "The engine applies each input to the machine's step and keeps the effects it returns."
   },
   {
     "id": "B8",
     "supported": true,
-    "refs": ["crates/orchestration/sortition/src/ciphernode_selection/handlers.rs@233@CiphernodeSelected {"],
-    "line_text": ["CiphernodeSelected {"],
-    "note": "On CommitteeFinalized, the selector publishes CiphernodeSelected when this node is in the finalized committee."
+    "refs": [
+      "crates/ciphernode/engine/src/lib.rs@149@self.store.commit(Step {",
+      "crates/state/journal/src/lib.rs@103@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
+    ],
+    "line_text": ["self.store.commit(Step {", "fn commit(&mut self, step: Step) -> Result<(), StoreError> {"],
+    "note": "Each step commits the input, the outbox changes and, at intervals, a snapshot in one redb transaction."
   },
   {
     "id": "B9",
     "supported": true,
-    "refs": ["crates/orchestration/keyshare/src/effects/verify_decryption_key.rs@288@KeyshareCreated {"],
-    "line_text": ["KeyshareCreated {"],
-    "note": "publish_keyshare_created publishes KeyshareCreated with the public key share and the signed C1 proof."
+    "refs": [
+      "crates/ciphernode/node/src/runtime.rs@130@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@212@queue.extend(effects.dispatch(pending));"
+    ],
+    "line_text": [
+      "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",
+      "queue.extend(effects.dispatch(pending));"
+    ],
+    "note": "The node opens the engine from its journal, then hands each new effect to its adapter; results come back as inputs."
   },
   {
     "id": "B10",
-    "supported": false,
+    "supported": true,
     "refs": [
-      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {",
-      "crates/orchestration/keyshare/src/effects/create_decryption_share.rs@259@let event = ShareDecryptionProofPending {",
-      "crates/orchestration/keyshare/src/effects/create_decryption_share.rs@102@let event = ComputeRequest::trbfv("
+      "crates/ciphernode/node/src/runtime.rs@381@Effect::Submit(submission)",
+      "crates/ciphernode/node/src/runtime.rs@416@match writer.submit(&submission).await {"
     ],
-    "line_text": ["DecryptionshareCreated {", "let event = ShareDecryptionProofPending {", "let event = ComputeRequest::trbfv("],
-    "note": "ThresholdKeyshare publishes ShareDecryptionProofPending and a TrBFV ComputeRequest; zk-prover's ProofRequestActor publishes DecryptionshareCreated after it signs the C6 proofs."
+    "line_text": [
+      "Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),",
+      "match writer.submit(&submission).await {"
+    ],
+    "note": "A submission effect goes to the writer."
   },
   {
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/orchestration/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {",
-      "crates/orchestration/aggregator/src/public_key_aggregation/effects/publish_result.rs@145@self.bus.publish(event, ec.clone())?;"
+      "crates/ciphernode/node/src/runtime.rs@376@Effect::Gossip(message) => {",
+      "crates/ciphernode/node/src/runtime.rs@485@network.publish(envelope)"
     ],
-    "line_text": ["let event = PublicKeyAggregated {", "self.bus.publish(event, ec.clone())?;"],
-    "note": "PublicKeyAggregator builds the PublicKeyAggregated event and publishes it on the bus."
+    "line_text": ["Effect::Gossip(message) => {", "if let Err(failure) = network.publish(envelope).await {"],
+    "note": "A gossip effect is signed and published to the peers."
   },
   {
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {",
-      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/publish_result.rs@126@self.bus.publish(event, ec.clone())?;"
+      "crates/ciphernode/node/src/runtime.rs@380@Effect::Run(job) => (job.e3, self.run(key, job)),",
+      "crates/ciphernode/jobs/src/lib.rs@100@pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"
     ],
-    "line_text": ["let event = PlaintextAggregated {", "self.bus.publish(event, ec.clone())?;"],
-    "note": "ThresholdPlaintextAggregator builds the PlaintextAggregated event and publishes it on the bus."
+    "line_text": ["Effect::Run(job) => (job.e3, self.run(key, job)),", "pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"],
+    "note": "A job effect runs on the job runner; its result comes back as an input."
   },
   {
     "id": "B13",
     "supported": true,
     "refs": [
-      "crates/orchestration/slashing/src/accusation_voting/effects/apply_actions.rs@37@self.bus.publish(quorum, ec)",
-      "crates/orchestration/slashing/src/accusation_voting/transitions/vote.rs@226@quorum: AccusationQuorumReached {",
-      "crates/orchestration/slashing/src/accusation_voting/actor.rs@100@pub struct AccusationManager {"
+      "crates/ciphernode/node/src/runtime.rs@382@Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),",
+      "crates/ciphernode/node/src/runtime.rs@548@availability.retrieve(reference)"
     ],
-    "line_text": [
-      "if let Err(err) = self.bus.publish(quorum, ec) {",
-      "quorum: AccusationQuorumReached {",
-      "pub struct AccusationManager {"
-    ],
-    "note": "AccusationManager publishes the quorum from its PublishQuorum action, and vote.rs builds it as AccusationQuorumReached."
+    "line_text": ["Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),", "match availability.retrieve(reference).await {"],
+    "note": "A fetch effect reads a ciphertext from the availability layer."
   },
   {
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/multithread/src/multithread.rs@526@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      "crates/ciphernode/multithread/src/multithread.rs@856@fn handle_compute_request(",
-      "crates/ciphernode/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+      "crates/ciphernode/p2p/src/swarm.rs@594@.send_request(&peer, (e3, blob.hash));",
+      "crates/ciphernode/p2p/src/swarm.rs@617@.send_response(channel, bytes);"
     ],
-    "line_text": [
-      "impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      ") -> (Result<ComputeResponse, ComputeRequestError>, Duration) {",
-      "bus.publish(value, ctx)?;"
-    ],
-    "note": "Multithread handles ComputeRequest and publishes the ComputeResponse from the worker's result."
+    "line_text": [".send_request(&peer, (e3, blob.hash));", ".send_response(channel, bytes);"],
+    "note": "A node fetches a message's blobs from its publisher with a request-response protocol and serves its own."
   },
   {
     "id": "B15",
     "supported": true,
-    "refs": [
-      "crates/zk/prover/src/proof_request/handlers.rs@134@impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
-      "crates/zk/prover/src/proof_request/effects/signing.rs@80@match SignedProofPayload::sign(payload, &self.signer) {",
-      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@84@PkAggregationProofSigned {",
-      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {"
-    ],
-    "line_text": [
-      "impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
-      "match SignedProofPayload::sign(payload, &self.signer) {",
-      "PkAggregationProofSigned {",
-      "DecryptionshareCreated {"
-    ],
-    "note": "ProofRequestActor handles pending proof requests, signs the proofs, and publishes them inside events such as PkAggregationProofSigned and DecryptionshareCreated."
+    "refs": ["crates/ciphernode/jobs/src/proofs.rs@52@self.pool.install(|| prove(&self.prover))"],
+    "line_text": ["self.pool.install(|| prove(&self.prover))"],
+    "note": "Proof jobs run on their own bounded thread pool."
   },
   {
     "id": "B16",
     "supported": true,
     "refs": [
-      "crates/events/src/eventbus.rs@425@impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {",
-      "crates/events/src/eventbus.rs@432@.push(msg.listener);",
-      "crates/events/src/eventbus.rs@188@if let Some(specific) = self.listeners.get_mut(event_type) {",
-      "crates/events/src/eventbus.rs@308@fanout(event, event_type, listeners).await"
+      "crates/ciphernode/jobs/src/lib.rs@140@Ok(self.blobs.put(&sealed)?)",
+      "crates/ciphernode/jobs/src/proofs.rs@92@store(&self.blobs, &proof)"
     ],
-    "line_text": [
-      "impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {",
-      ".push(msg.listener);",
-      "if let Some(specific) = self.listeners.get_mut(event_type) {",
-      "fanout(event, event_type, listeners).await"
-    ],
-    "note": "Subscribe adds the listener under its event type, and the live path looks up that type's listeners and fans the event out to them."
-  },
-  {
-    "id": "B17",
-    "supported": true,
-    "refs": [
-      "crates/events/src/sequencer.rs@62@.do_send(StoreEventRequested::new(msg, ctx.address()));",
-      "crates/events/src/eventstore.rs@75@let seq = self.log.append(&event)?;",
-      "crates/events/src/sequencer.rs@69@self.bus.do_send(msg.into_event());"
-    ],
-    "line_text": [
-      ".do_send(StoreEventRequested::new(msg, ctx.address()));",
-      "let seq = self.log.append(&event)?;",
-      "self.bus.do_send(msg.into_event());"
-    ],
-    "note": "The sequencer sends each event to the event store, which appends it and assigns its sequence, and only then forwards it to the bus."
-  },
-  {
-    "id": "B18",
-    "supported": true,
-    "refs": ["crates/state/storage/src/commit_log_event_log.rs@728@let bytes = bincode::serialize(event)?;"],
-    "line_text": ["let bytes = bincode::serialize(event)?;"],
-    "note": "CommitLogEventLog::append serializes each event with bincode before writing it to the log."
-  },
-  {
-    "id": "B19",
-    "supported": true,
-    "refs": [
-      "crates/state/storage/src/repository.rs@74@self.store.write(value)",
-      "crates/state/storage/src/data_store.rs@203@let Ok(serialized) = bincode::serialize(&value) else {",
-      "crates/state/storage/src/persistable.rs@184@.try_send(msg)",
-      "crates/state/storage/src/sled_store.rs@64@fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
-      "crates/state/storage/src/sled_db.rs@38@.insert(msg.key(), msg.value().to_vec())",
-      "crates/state/request/src/routing/handlers.rs@219@.write_with_context(&context.snapshot()?, &event_context)?;"
-    ],
-    "line_text": [
-      "self.store.write(value)",
-      "let Ok(serialized) = bincode::serialize(&value) else {",
-      ".try_send(msg)",
-      "fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
-      ".insert(msg.key(), msg.value().to_vec())",
-      ".write_with_context(&context.snapshot()?, &event_context)?;"
-    ],
-    "note": "Repository.write and Persistable send bincode-encoded snapshots to SledStore as Insert messages, which SledDb writes to a sled tree."
-  },
-  {
-    "id": "B20",
-    "supported": true,
-    "refs": [
-      "crates/state/sync/src/service.rs@387@pub async fn sync_with_net_ready<F>(",
-      "crates/state/sync/src/service.rs@434@let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;",
-      "crates/state/sync/src/replay_spool.rs@247@bus.event_bus().send(EventBusFanout(event)).await??;"
-    ],
-    "line_text": [
-      "pub async fn sync_with_net_ready<F>(",
-      "let replay_spool = ReplaySpool::load(eventstore, snapshot.to_sequence_map()).await?;",
-      "bus.event_bus().send(EventBusFanout(event)).await??;"
-    ],
-    "note": "The startup sync loads the EventStore events after the snapshot cursor and replays them onto the bus."
-  },
-  {
-    "id": "B21",
-    "supported": true,
-    "refs": [
-      "crates/ciphernode/builder/src/startup.rs@97@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode/builder/src/startup.rs@102@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode/builder/src/startup.rs@419@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
-      "crates/ciphernode/builder/src/sortition.rs@48@let ciphernode_selector = CiphernodeSelector::attach("
-    ],
-    "line_text": [
-      "pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
-      "async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
-      "let ciphernode_selector = CiphernodeSelector::attach("
-    ],
-    "note": "build() calls build_inner, which orders storage, recovery, live bus, protocol core, EVM, extensions, networking and sync; the full/bootstrap profile selects the work installed."
-  },
-  {
-    "id": "B22",
-    "supported": true,
-    "refs": [
-      "crates/cli/src/app_config.rs@46@pub fn load_config(",
-      "crates/cli/src/app_config.rs@56@DEFAULT_CONFIG_NAME,",
-      "crates/cli/src/app_config.rs@61@load_yaml_with_env(&resolved_config_path)",
-      "crates/ciphernode/config/src/paths_engine.rs@43@pub const DEFAULT_CONFIG_NAME"
-    ],
-    "line_text": [
-      "pub fn load_config(",
-      "DEFAULT_CONFIG_NAME,",
-      "load_yaml_with_env(&resolved_config_path).context(\"Configuration file not found\")?;",
-      "pub const DEFAULT_CONFIG_NAME: &str = \"interfold.config.yaml\";"
-    ],
-    "note": "The CLI loader resolves DEFAULT_CONFIG_NAME (interfold.config.yaml), reads it with load_yaml_with_env, and separates node and program settings."
-  },
-  {
-    "id": "B23",
-    "supported": true,
-    "refs": [
-      "crates/cli/src/cli.rs@236@Commands::Start { peers, bootstrap } => {",
-      "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap).await?",
-      "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::execute(config, bootstrap).await?;",
-      "crates/ciphernode/entrypoint/src/start/mod.rs@70@pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
-    ],
-    "line_text": [
-      "Commands::Start { peers, bootstrap } => {",
-      "start::execute(config, peers, bootstrap).await?",
-      "let node = e3_entrypoint::start::execute(config, bootstrap).await?;",
-      "pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
-    ],
-    "note": "The Start command calls the CLI start::execute, which calls e3_entrypoint's start::execute to build and start the node."
+    "line_text": ["Ok(self.blobs.put(&sealed)?)", "store(&self.blobs, &proof)"],
+    "note": "Jobs store their results, sealed secrets and proofs, in the E3's blobs and pass references back."
   }
 ]

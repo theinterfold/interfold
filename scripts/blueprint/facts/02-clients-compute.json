@@ -497,7 +497,7 @@
         {
           "name": "nonce reservations per (chain id, account), with the time each was sent",
           "where": "memory",
-          "ref": "crates/evm/client/src/nonce.rs@35@type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;"
+          "ref": "crates/evm/client/src/nonce.rs@27@type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;"
         },
         {
           "name": "live subscription progress flags, read by an owner that keeps a cursor",
@@ -562,7 +562,7 @@
         },
         {
           "why": "the single send path that every transaction helper uses for its nonce",
-          "ref": "crates/evm/client/src/nonce.rs@63@pub async fn send_with_next_nonce<P, D>("
+          "ref": "crates/evm/client/src/nonce.rs@55@pub async fn send_with_next_nonce<P, D>("
         }
       ],
       "rust_patterns": [
@@ -662,273 +662,6 @@
       ]
     },
     {
-      "id": "e3-fhe",
-      "documentation": [
-        { "title": "Threshold BFV", "path": "docs/pages/learn/cryptography.mdx" },
-        { "title": "DKG", "path": "docs/architecture/dkg.md" }
-      ],
-      "kind": "crate",
-      "path": "crates/bfv/runtime",
-      "one_line": "Ciphernode wrapper around the fhe.rs BFV library that sets up per-E3 parameters and runs key-share, decryption-share and aggregation steps.",
-      "actors": [],
-      "consumes": [
-        {
-          "name": "E3Requested, with the encoded BFV params and the E3 id",
-          "by": "FheExtension",
-          "ref": "crates/bfv/runtime/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
-        },
-        {
-          "name": "saved FheSnapshot, read back on restart",
-          "by": "FheExtension",
-          "ref": "crates/bfv/runtime/src/ext.rs@83@let Some(snap) = ctx.repositories().fhe(&ctx.e3_id).read().await? else {"
-        }
-      ],
-      "emits": [
-        {
-          "name": "KeyGeneration error report when the params do not decode",
-          "by": "FheExtension",
-          "ref": "crates/bfv/runtime/src/ext.rs@60@.err(EType::KeyGeneration, anyhow!(ERROR_FHE_FAILED_TO_DECODE));"
-        }
-      ],
-      "state": [
-        {
-          "name": "FheSnapshot (params and CRP bytes) written per E3 through the e3-data repository",
-          "where": "disk",
-          "ref": "crates/bfv/runtime/src/ext.rs@72@ctx.repositories().fhe(&e3_id).write(&snapshot);"
-        },
-        {
-          "name": "live Fhe handle in the E3 context, under FHE_KEY",
-          "where": "memory",
-          "ref": "crates/bfv/runtime/src/ext.rs@73@ctx.set_dependency(FHE_KEY, fhe);"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "FHE_KEY",
-          "what": "TypedKey under which the Fhe handle is stored in the E3 context",
-          "ref": "crates/bfv/runtime/src/ext.rs@18@pub const FHE_KEY: TypedKey<Arc<Fhe>> = TypedKey::new("
-        },
-        {
-          "name": "Fhe",
-          "what": "BFV parameters, common random polynomial and shared RNG, with key-share, decryption and aggregation methods",
-          "ref": "crates/bfv/runtime/src/runtime.rs@39@pub struct Fhe {"
-        },
-        {
-          "name": "FheSnapshot",
-          "what": "serializable params and CRP bytes that rebuild a Fhe in hydrate",
-          "ref": "crates/bfv/runtime/src/runtime.rs@149@pub struct FheSnapshot {"
-        },
-        {
-          "name": "DecryptCiphertext",
-          "what": "input to decrypt_ciphertext: the secret-key bytes and one ciphertext",
-          "ref": "crates/bfv/runtime/src/runtime.rs@32@pub struct DecryptCiphertext {"
-        }
-      ],
-      "read_first": [
-        {
-          "why": "the public surface: FheExtension, the repository factory and FHE_KEY",
-          "ref": "crates/bfv/runtime/src/lib.rs@10@pub use ext::{FheExtension, FheRepositoryFactory, FHE_KEY};"
-        },
-        {
-          "why": "setup on E3Requested",
-          "ref": "crates/bfv/runtime/src/ext.rs@49@impl E3Extension for FheExtension {"
-        },
-        {
-          "why": "restart path: rebuild the handle from the snapshot",
-          "ref": "crates/bfv/runtime/src/ext.rs@76@async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {"
-        },
-        {
-          "why": "the fhe.rs adaptor and its key-share step",
-          "ref": "crates/bfv/runtime/src/runtime.rs@73@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "trait-impl",
-          "note": "FheExtension implements the request crate's E3Extension trait, so the E3 context calls it",
-          "ref": "crates/bfv/runtime/src/ext.rs@49@impl E3Extension for FheExtension {"
-        },
-        {
-          "pattern": "let-else",
-          "note": "events that are not E3Requested return early through let-else",
-          "ref": "crates/bfv/runtime/src/ext.rs@52@let InterfoldEventData::E3Requested(data) = evt.get_data() else {"
-        },
-        {
-          "pattern": "anyhow-context",
-          "note": "a ciphertext that fails to deserialize gets a context message",
-          "ref": "crates/bfv/runtime/src/runtime.rs@93@.context(\"Error deserializing ciphertext\")?,"
-        },
-        {
-          "pattern": "iterator-chain",
-          "note": "public-key shares are deserialized and aggregated in one chain",
-          "ref": "crates/bfv/runtime/src/runtime.rs@104@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
-        }
-      ],
-      "depends_on": ["e3-data", "e3-events", "e3-utils", "e3-request", "e3-bfv-client", "e3-fhe-params"],
-      "tests": "No #[test] functions in this crate, so cargo test -p e3-fhe compiles it and runs nothing. It is a dependency of keyshare, aggregator and ciphernode-builder, which use it.",
-      "unverified": [
-        "Which store the e3-data repository uses for FheSnapshot (sled or in-memory) was not read in this group; the write call is at ext.rs:72."
-      ]
-    },
-    {
-      "id": "e3-multithread",
-      "documentation": [{ "title": "Compute effects and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
-      "kind": "crate",
-      "path": "crates/ciphernode/multithread",
-      "one_line": "Ciphernode worker actor that runs TrBFV and ZK compute requests on a Rayon pool and publishes results or errors back to the event bus.",
-      "actors": [
-        {
-          "name": "Multithread",
-          "role": "runs compute requests off the event path and publishes their responses",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@50@pub struct Multithread {"
-        },
-        {
-          "name": "ComputeEffectGate",
-          "role": "holds requests until EffectsEnabled and replays or deduplicates outcomes by request key",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@100@pub(crate) struct ComputeEffectGate {"
-        },
-        {
-          "name": "MultithreadReport",
-          "role": "records how long each operation took, for the report",
-          "ref": "crates/ciphernode/multithread/src/report.rs@30@pub struct MultithreadReport {"
-        }
-      ],
-      "consumes": [
-        {
-          "name": "ComputeRequest (a TrBFV or ZK job)",
-          "by": "ComputeEffectGate",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@491@InterfoldEventData::ComputeRequest(_) if self.enabled => {"
-        },
-        {
-          "name": "EffectsEnabled, which releases the queued requests",
-          "by": "ComputeEffectGate",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@498@InterfoldEventData::EffectsEnabled(_) => self.enable(),"
-        },
-        {
-          "name": "E3Failed, E3StageChanged and E3RequestComplete, which cancel the E3's task groups",
-          "by": "Multithread",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@176@EventType::E3Failed,"
-        }
-      ],
-      "emits": [
-        {
-          "name": "ComputeResponse",
-          "by": "Multithread",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
-        },
-        {
-          "name": "ComputeRequestError, for failures that are not retried",
-          "by": "Multithread",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@646@bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;"
-        },
-        {
-          "name": "stored outcomes sent to the other request IDs waiting on the same work",
-          "by": "ComputeEffectGate",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@386@ComputeOutcome::Response(response) => bus.publish("
-        }
-      ],
-      "state": [
-        {
-          "name": "task pool: Tokio semaphore, Rayon pool, and a cancellation sender per task group",
-          "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
-        },
-        {
-          "name": "requests the worker is running, counted per correlation ID",
-          "where": "memory",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@49@pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);"
-        },
-        {
-          "name": "pending, forwarded and replayed-outcome maps in the gate",
-          "where": "memory",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@104@pending: HashMap<RequestKey, InterfoldEvent>,"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "TaskPool",
-          "what": "bounded executor: spawn() takes a Tokio permit, runs the closure on Rayon, and returns its result or a TaskPoolError",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
-        },
-        {
-          "name": "TaskPoolError",
-          "what": "pool failures: semaphore, receive, a panic in the closure, or a cancelled group",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
-        },
-        {
-          "name": "ComputeCapacity",
-          "what": "job limit after the CPU and memory caps (13 GiB per prover job, 4 GiB reserved for the node)",
-          "ref": "crates/ciphernode/multithread/src/memory.rs@26@pub struct ComputeCapacity {"
-        },
-        {
-          "name": "ComputeOutcome",
-          "what": "a response or an error that the gate keeps for requests waiting on the same work",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@25@enum ComputeOutcome {"
-        }
-      ],
-      "read_first": [
-        {
-          "why": "wiring: attach creates the actor, subscribes it to the bus, and starts the gate",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@101@pub fn attach("
-        },
-        {
-          "why": "the gate: when a request goes to the worker, and when a stored result is reused",
-          "ref": "crates/ciphernode/multithread/src/effect_gate.rs@250@fn forward(&mut self, event: InterfoldEvent) -> bool {"
-        },
-        {
-          "why": "the actor's request handler and its retry loop",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@550@async fn handle_compute_request_event("
-        },
-        {
-          "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
-        },
-        {
-          "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@856@fn handle_compute_request("
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "actix-actor",
-          "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@505@impl Actor for Multithread {"
-        },
-        {
-          "pattern": "actix-handler",
-          "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@512@impl Handler<InterfoldEvent> for Multithread {"
-        },
-        {
-          "pattern": "actix-recipient",
-          "note": "the gate receives the actor as a Recipient, so it sends events without naming the actor type",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@125@addr.clone().recipient(),"
-        },
-        {
-          "pattern": "channel",
-          "note": "a oneshot channel carries each Rayon result back to the async caller",
-          "ref": "crates/task-pool/src/lib.rs@213@let (tx, rx) = tokio::sync::oneshot::channel();"
-        },
-        {
-          "pattern": "tokio-select",
-          "note": "the pool waits for either a group cancellation or a free semaphore permit",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
-        },
-        {
-          "pattern": "tokio-spawn",
-          "note": "a warning task logs long jobs and is aborted when the result arrives",
-          "ref": "crates/task-pool/src/lib.rs@178@let warning_handle = tokio::spawn(async move {"
-        }
-      ],
-      "depends_on": ["e3-request", "e3-trbfv", "e3-crypto", "e3-events", "e3-task-pool", "e3-utils", "e3-zk-prover"],
-      "tests": "cargo test -p e3-multithread covers dispatch, task-group lifetime, retries, replay/redrive and memory admission. Pool cancellation and panic cases live in e3-task-pool and run with cargo test -p e3-task-pool.",
-      "unverified": [
-        "The ZK prover (ZkProver) lives in crates/zk/prover and was not read; the proof side is described only from the dispatch in multithread.rs.",
-        "The memory constants (memory.rs:19 and memory.rs:22) are values in code; their effect on a real host was not measured.",
-        "The thread counts and job limits are set in crates/ciphernode/builder/src/lib.rs (with_multithread_config); the builder was checked only at the call sites."
-      ]
-    },
-    {
       "id": "e3-trbfv",
       "documentation": [
         { "title": "Threshold BFV", "path": "docs/pages/learn/cryptography.mdx" },
@@ -940,28 +673,12 @@
       "actors": [],
       "consumes": [
         {
-          "name": "TrBFVRequest variants: generate, sum, share and combine",
-          "by": "handle_trbfv_request in crates/ciphernode/multithread",
-          "ref": "crates/bfv/threshold/src/trbfv_request.rs@27@pub enum TrBFVRequest {"
-        },
-        {
           "name": "collected Shamir shares, held as Encrypted values under the node's own Cipher",
           "by": "calculate_decryption_key",
           "ref": "crates/bfv/threshold/src/calculate_decryption_key.rs@27@pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,"
         }
       ],
-      "emits": [
-        {
-          "name": "TrBFVResponse variants",
-          "by": "TrBFVRequest::execute",
-          "ref": "crates/bfv/threshold/src/trbfv_request.rs@37@pub enum TrBFVResponse {"
-        },
-        {
-          "name": "TrBFVError, carrying a TrBFVFailure",
-          "by": "TrBFVRequest::execute and failure",
-          "ref": "crates/bfv/threshold/src/trbfv_request.rs@46@pub enum TrBFVError {"
-        }
-      ],
+      "emits": [],
       "state": [],
       "key_types": [
         {
@@ -986,10 +703,6 @@
         }
       ],
       "read_first": [
-        {
-          "why": "the native execution boundary over typed requests, caller RNG and cipher",
-          "ref": "crates/bfv/threshold/src/request_execution.rs@45@pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {"
-        },
         {
           "why": "DKG: the public-key share and the secret Shamir shares",
           "ref": "crates/bfv/threshold/src/gen_pk_share_and_sk_sss.rs@111@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
@@ -1036,11 +749,11 @@
         {
           "pattern": "async-test",
           "note": "the integration test runs under tokio",
-          "ref": "crates/bfv/threshold/tests/integration.rs@30@#[tokio::test]"
+          "ref": "crates/bfv/threshold/tests/integration.rs@28@#[tokio::test]"
         }
       ],
-      "depends_on": ["e3-bfv-client", "e3-fhe-params", "e3-crypto", "e3-utils"],
-      "tests": "cargo test -p e3-trbfv. tests/integration.rs (test_trbfv_isolation, line 30) runs a 5-party, threshold-2 round through share generation, decryption shares and threshold decryption. Unit tests: shares/bfv_encrypted.rs (lines 257 and 276) and trbfv_request.rs (lines 217 and 232).",
+      "depends_on": ["e3-bfv-client", "e3-crypto", "e3-fhe-params", "e3-utils"],
+      "tests": "cargo test -p e3-trbfv. tests/integration.rs runs a 5-party, threshold-2 round through share generation, decryption shares and threshold decryption. Unit tests: shares/bfv_encrypted.rs.",
       "unverified": ["Witness preparation in crates/zk/witness and proof adapters in crates/zk/prover are not verified here."]
     },
     {

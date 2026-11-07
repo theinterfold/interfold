@@ -41,7 +41,7 @@
     "supported": true,
     "refs": [
       "templates/default/client/src/utils/input.ts@44@functionName: 'publishInput'",
-      "templates/default/contracts/MyProgram.sol@89@function publishInput("
+      "templates/default/contracts/MyProgram.sol@90@function publishInput("
     ],
     "line_text": ["functionName: 'publishInput',", "function publishInput(uint256 e3Id, bytes memory data) external override {"],
     "note": "The starter client sends publishInput to the E3 program contract, and MyProgram.publishInput records the input commitment."
@@ -146,19 +146,22 @@
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap)",
-      "crates/cli/src/start.rs@174@e3_entrypoint::start::execute(config, bootstrap)"
+      "crates/cli/src/cli.rs@236@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/start.rs@55@e3_node::launch::launch(node)"
     ],
-    "line_text": ["start::execute(config, peers, bootstrap).await?", "let node = e3_entrypoint::start::execute(config, bootstrap).await?;"],
-    "note": "The Start subcommand calls start::execute, which calls the e3-entrypoint start that launches the node."
+    "line_text": [
+      "start::execute(config, peers, bootstrap).await?",
+      "result = e3_node::launch::launch(node) => result.context(\"the node stopped\"),"
+    ],
+    "note": "The Start subcommand calls start::execute, which maps the configuration and runs e3_node::launch::launch."
   },
   {
     "id": "A18",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@605@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@670@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1374@require(msg.sender == bondOwner"
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@632@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@697@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1401@require(msg.sender == bondOwner"
     ],
     "line_text": [
       ") external noExitInProgress(operator) onlyBondOwner(operator) {",
@@ -181,8 +184,8 @@
     "id": "A20",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": ["contract DkgAggregatorVerifier is", "contract DecryptionAggregatorVerifier is"],
     "note": "Both generated Honk verifier contracts are declared at line 3248 of their generated files."
@@ -195,23 +198,20 @@
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },
   {
-    "id": "A22",
-    "supported": true,
-    "refs": [
-      "crates/evm/runtime/src/event_decoding/catalog.rs@35@pub(crate) fn find(",
-      "crates/evm/runtime/src/event_decoding/observation.rs@16@pub(crate) fn observe("
-    ],
-    "line_text": ["pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefinition> {", "pub(crate) fn observe("],
-    "note": "catalog.rs names a log by its topic0, observation.rs turns it into an EvmLogObserved node event, and protocol events use typed decoders."
-  },
-  {
     "id": "A23",
     "supported": true,
     "refs": [
-      "crates/net/src/net_interface.rs@415@gossipsub: GossipBehaviour,",
-      "crates/net/src/net_interface.rs@485@libp2p::quic::tokio::Transport::new("
+      "crates/ciphernode/p2p/src/swarm.rs@105@gossipsub: gossipsub::Behaviour,",
+      "crates/ciphernode/p2p/src/swarm.rs@107@kademlia: kad::Behaviour<MemoryStore>,",
+      "crates/ciphernode/p2p/src/swarm.rs@109@blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
+      "crates/ciphernode/p2p/src/swarm.rs@214@.with_quic()"
     ],
-    "line_text": ["gossipsub: GossipBehaviour,", "libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),"],
-    "note": "NodeBehaviour (derived at line 411) holds gossipsub (line 415) and Kademlia (line 416), and the swarm adds a QUIC transport (line 485)."
+    "line_text": [
+      "gossipsub: gossipsub::Behaviour,",
+      "kademlia: kad::Behaviour<MemoryStore>,",
+      "blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
+      ".with_quic()"
+    ],
+    "note": "The swarm holds gossipsub for messages, Kademlia for peer lookups and a request-response protocol for blobs, over QUIC."
   }
 ]

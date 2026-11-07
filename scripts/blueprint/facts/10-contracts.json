@@ -362,152 +362,152 @@
         {
           "name": "registerOperatorFor",
           "by": "operator (bond owner)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@603@function registerOperatorFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@630@function registerOperatorFor("
         },
         {
           "name": "deregisterOperatorFor",
           "by": "operator or bond owner",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@629@function deregisterOperatorFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@656@function deregisterOperatorFor("
         },
         {
           "name": "addTicketBalanceFor",
           "by": "operator (bond owner)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@667@function addTicketBalanceFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@694@function addTicketBalanceFor("
         },
         {
           "name": "bondCiphernodeFor",
           "by": "operator (bond owner)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@725@function bondCiphernodeFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@752@function bondCiphernodeFor("
         },
         {
           "name": "unbondCiphernodeFor",
           "by": "operator (bond owner)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@733@function unbondCiphernodeFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@760@function unbondCiphernodeFor("
         },
         {
           "name": "claimExitsFor",
           "by": "anyone (bond part needs the bond owner)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@771@function claimExitsFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@798@function claimExitsFor("
         },
         {
           "name": "slashTicketBalance",
           "by": "SlashingManager (authorized)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@821@function slashTicketBalance("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@848@function slashTicketBalance("
         },
         {
           "name": "slashCiphernodeBond",
           "by": "SlashingManager (authorized)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@876@function slashCiphernodeBond("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@903@function slashCiphernodeBond("
         },
         {
           "name": "reserveSlashedTicketFunds",
           "by": "SlashingManager (authorized)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1005@function reserveSlashedTicketFunds("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1032@function reserveSlashedTicketFunds("
         },
         {
           "name": "setCommitteeObligation",
           "by": "CiphernodeRegistryOwnable",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@782@function setCommitteeObligation("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@809@function setCommitteeObligation("
         },
         {
           "name": "distributeRewards",
           "by": "reward distributor (owner-authorized)",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1076@function distributeRewards("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1103@function distributeRewards("
         },
         {
           "name": "setRegistry",
           "by": "owner/governance",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1255@function setRegistry("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1282@function setRegistry("
         }
       ],
       "emits": [
         {
           "name": "CiphernodeDeregistrationRequested",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@662@emit CiphernodeDeregistrationRequested("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@689@emit CiphernodeDeregistrationRequested("
         },
         {
           "name": "TicketBalanceUpdated",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@680@emit TicketBalanceUpdated("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@707@emit TicketBalanceUpdated("
         },
         {
           "name": "CiphernodeBondUpdated",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@756@emit CiphernodeBondUpdated("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@783@emit CiphernodeBondUpdated("
         },
         {
           "name": "SlashedTicketFundsReserved",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1032@emit SlashedTicketFundsReserved("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1059@emit SlashedTicketFundsReserved("
         },
         {
           "name": "ReservedSlashedTicketFundsRouted",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1063@emit ReservedSlashedTicketFundsRouted("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1090@emit ReservedSlashedTicketFundsRouted("
         },
         {
           "name": "SlashedFundsWithdrawn",
           "by": "BondingRegistry",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1358@emit SlashedFundsWithdrawn("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1385@emit SlashedFundsWithdrawn("
         }
       ],
       "state": [
         {
           "name": "operators: per-operator bond, tickets and status",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@168@mapping(address operator => Operator data) internal operators"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@172@mapping(address operator => Operator data) internal operators"
         },
         {
           "name": "_exits: time-locked exit tranches (ExitQueueLib state)",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@181@ExitQueueLib.ExitQueueState private _exits;"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@185@ExitQueueLib.ExitQueueState private _exits;"
         },
         {
           "name": "ticketToken: InterfoldTicketToken holding ticket balances",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@94@InterfoldTicketToken public ticketToken;"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@98@InterfoldTicketToken public ticketToken;"
         },
         {
           "name": "registry: CiphernodeRegistryOwnable told about adds and removes",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@100@ICiphernodeRegistry public registry;"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@104@ICiphernodeRegistry public registry;"
         },
         {
           "name": "slashedTicketBalance: slashed tickets available for treasury withdrawal (reserved funds excluded)",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@171@uint256 public slashedTicketBalance;"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@175@uint256 public slashedTicketBalance;"
         },
         {
           "name": "authorized slashing managers (index map)",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@196@mapping(address manager => uint256 indexPlusOne)"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@200@mapping(address manager => uint256 indexPlusOne)"
         }
       ],
       "key_types": [
         {
           "name": "Operator",
           "what": "per-operator record: bond, tickets, registration and status",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@158@struct Operator {"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@162@struct Operator {"
         },
         {
           "name": "SlashedTicketReservation",
           "what": "funds reserved for one slash proposal, awaiting routing",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@67@struct SlashedTicketReservation {"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@71@struct SlashedTicketReservation {"
         }
       ],
       "read_first": [
         {
           "why": "the entry point: inheritance and the bonding asset configuration",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@53@contract BondingRegistry is"
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@55@contract BondingRegistry is"
         },
         {
           "why": "the registration path",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@603@function registerOperatorFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@630@function registerOperatorFor("
         },
         {
           "why": "the slash path that SlashingManager drives",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@821@function slashTicketBalance("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@848@function slashTicketBalance("
         },
         {
           "why": "registration logic delegated to the library",
@@ -1450,12 +1450,12 @@
         {
           "name": "BfvDecryptionVerifier.ciphernodeRegistry: source of the DKG anchors",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@108@ICiphernodeRegistry public immutable ciphernodeRegistry;"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@109@ICiphernodeRegistry public immutable ciphernodeRegistry;"
         },
         {
           "name": "BfvDecryptionVerifier.expectedC6FoldKeyHash: VK anchor for the decryption circuit",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@113@bytes32 public immutable expectedC6FoldKeyHash;"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@114@bytes32 public immutable expectedC6FoldKeyHash;"
         },
         {
           "name": "BfvPkVerifierRouter.routes: verifier builds the router can dispatch to",
@@ -1477,7 +1477,7 @@
         },
         {
           "why": "the decryption proof check and its public input layout",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@54@contract BfvDecryptionVerifier is IDecryptionVerifier {"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@56@contract BfvDecryptionVerifier is IDecryptionVerifier {"
         },
         {
           "why": "how the router chooses a build by VK anchors",
@@ -1695,32 +1695,32 @@
         {
           "name": "BondingOwnershipLib.proposeTransfer",
           "by": "BondingRegistry (proposeBondOwner)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@110@function proposeTransfer("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@111@function proposeTransfer("
         },
         {
           "name": "BondingOwnershipLib.completeTransfer",
           "by": "BondingRegistry (acceptBondOwner)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@73@function completeTransfer("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@74@function completeTransfer("
         },
         {
           "name": "BondingEligibilityLib.updateOperator",
           "by": "BondingRegistry (status refresh and register/ticket changes)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingEligibilityLib.sol@78@function updateOperator("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingEligibilityLib.sol@79@function updateOperator("
         },
         {
           "name": "BondingSlashingLib.openLock",
           "by": "SlashingManager (via BondingRegistry.openSlashLock)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@175@function openLock("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@203@function openLock("
         },
         {
           "name": "BondingSlashingLib.setBan",
           "by": "SlashingManager (via BondingRegistry.setOperatorBan)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@229@function setBan("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@257@function setBan("
         },
         {
           "name": "BondingSlashingLib.setCommitteeObligation",
           "by": "CiphernodeRegistryOwnable (msg.sender must be the registry)",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@51@function setCommitteeObligation("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@77@function setCommitteeObligation("
         }
       ],
       "emits": [
@@ -1742,29 +1742,29 @@
         {
           "name": "OperatorActivationChanged",
           "by": "BondingEligibilityLib",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingEligibilityLib.sol@130@emit IBondingRegistry.OperatorActivationChanged("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingEligibilityLib.sol@131@emit IBondingRegistry.OperatorActivationChanged("
         },
         {
           "name": "BondOwnerTransferProposed",
           "by": "BondingOwnershipLib",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@121@emit IBondingRegistry.BondOwnerTransferProposed("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingOwnershipLib.sol@122@emit IBondingRegistry.BondOwnerTransferProposed("
         },
         {
           "name": "SlashLockUpdated",
           "by": "BondingSlashingLib",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@198@emit IBondingRegistry.SlashLockUpdated("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@226@emit IBondingRegistry.SlashLockUpdated("
         },
         {
           "name": "ManagerBanUpdated",
           "by": "BondingSlashingLib",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@246@emit IBondingRegistry.ManagerBanUpdated("
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@274@emit IBondingRegistry.ManagerBanUpdated("
         }
       ],
       "state": [
         {
           "name": "BondingSlashingStorage.Layout: slash locks, bans and committee obligations",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/storage/BondingSlashingStorage.sol@26@struct Layout {"
+          "ref": "packages/interfold-contracts/contracts/storage/BondingSlashingStorage.sol@30@struct Layout {"
         },
         {
           "name": "BondingEligibilityStorage: eligibility history by request boundary",
@@ -1796,7 +1796,7 @@
         },
         {
           "why": "slash locks and bans",
-          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@23@library BondingSlashingLib {"
+          "ref": "packages/interfold-contracts/contracts/lib/BondingSlashingLib.sol@26@library BondingSlashingLib {"
         },
         {
           "why": "asset moves, exits and reward distribution; its NatSpec explains why checks live outside the registry",
@@ -1804,7 +1804,7 @@
         },
         {
           "why": "the caller that delegates into these libraries",
-          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@603@function registerOperatorFor("
+          "ref": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@630@function registerOperatorFor("
         }
       ],
       "rust_patterns": [],

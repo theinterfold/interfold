@@ -122,7 +122,7 @@
     "refs": [
       "packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol@431@e3.pkVerifier.verify(",
       "packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol@152@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is"
     ],
     "line_text": ["!e3.pkVerifier.verify(", "if (!circuitVerifier.verify(rawProof, publicInputs)) {", "contract DkgAggregatorVerifier is"],
     "note": "The registry calls e3.pkVerifier (BfvPkVerifier for the BFV scheme), which forwards the proof to its immutable circuitVerifier, the DkgAggregatorVerifier Honk contract."
@@ -133,8 +133,8 @@
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
       "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@218@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@221@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
       "address(e3.decryptionVerifier),",
@@ -171,75 +171,56 @@
     "id": "D13",
     "supported": true,
     "refs": [
-      "crates/zk/prover/src/proof_request/effects/dkg_proofs.rs@25@ZkRequest::PkBfv(PkBfvProofRequest::new(",
-      "crates/zk/prover/src/proof_request/transitions.rs@31@ZkRequest::PkGeneration(proof_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@36@ZkRequest::ShareComputation(sk_share_computation_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@41@ZkRequest::ShareComputation(e_sm_share_computation_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@52@ZkRequest::ShareEncryption(req)",
-      "crates/zk/prover/src/proof_request/transitions.rs@65@ZkRequest::ShareEncryption(req)",
-      "crates/zk/prover/src/proof_request/transitions.rs@91@ZkRequest::DkgShareDecryption(sk_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@97@ZkRequest::DkgShareDecryption(esm_req)"
+      "crates/ciphernode/jobs/src/dkg.rs@170@PkCircuit, &config, public, \"c0\"",
+      "crates/ciphernode/jobs/src/dkg.rs@462@PkGenerationCircuit, &c1_config, &c1, \"c1\"",
+      "crates/ciphernode/jobs/src/dkg.rs@444@let c2a = ShareComputationCircuitData {",
+      "crates/ciphernode/jobs/src/dkg.rs@449@let c2b = ShareComputationCircuitData {",
+      "crates/ciphernode/jobs/src/dkg.rs@327@let work = format!(\"{proof_type:?}-{slot}-{row}\");",
+      "crates/ciphernode/jobs/src/dkg.rs@715@let (c4a, c4b) = rayon::join("
     ],
     "line_text": [
-      "ZkRequest::PkBfv(PkBfvProofRequest::new(",
-      "request: ZkRequest::PkGeneration(proof_request),",
-      "request: ZkRequest::ShareComputation(sk_share_computation_request),",
-      "request: ZkRequest::ShareComputation(e_sm_share_computation_request),",
-      "request: ZkRequest::ShareEncryption(req),",
-      "request: ZkRequest::ShareEncryption(req),",
-      "request: ZkRequest::DkgShareDecryption(sk_request),",
-      "request: ZkRequest::DkgShareDecryption(esm_req),"
+      "self.prove(prover, params, PkCircuit, &config, public, \"c0\")",
+      "|| self.prove(prover, params, PkGenerationCircuit, &c1_config, &c1, \"c1\"),",
+      "let c2a = ShareComputationCircuitData {",
+      "let c2b = ShareComputationCircuitData {",
+      "let work = format!(\"{proof_type:?}-{slot}-{row}\");",
+      "let (c4a, c4b) = rayon::join("
     ],
-    "note": "Each node's proof-request code names the C0 PkBfv, C1 PkGeneration, C2 ShareComputation, C3 ShareEncryption and C4 DkgShareDecryption requests."
+    "note": "Each node's DKG jobs prove C0 PkBfv, C1 PkGeneration, C2 ShareComputation (a and b), C3 ShareEncryption per slot and row, and C4 DkgShareDecryption (a and b)."
   },
   {
     "id": "D14",
     "supported": true,
     "refs": [
-      "crates/orchestration/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
-      "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
-      "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
-      "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
-      "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
-      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"
+      "crates/ciphernode/jobs/src/dkg.rs@890@fn aggregate_key(",
+      "crates/ciphernode/jobs/src/dkg.rs@936@prove_with_variant(zk, &c5_config, &c5",
+      "crates/ciphernode/jobs/src/dkg.rs@956@prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
     ],
     "line_text": [
-      "GeneratingC5Proof {",
-      "if !self.can_continue_aggregation_effects() {",
-      "fn can_continue_aggregation_effects(&self) -> bool {",
-      "info!(\"Publishing PkAggregationProofPending for C5 proof generation...\");",
-      "PkAggregationProofPending {",
-      "ZkRequest::PkAggregation(msg.proof_request),"
+      "fn aggregate_key(",
+      ".prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)",
+      ".proving(|zk| prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size))"
     ],
-    "note": "The C5 request is published from the C1-complete path, gated by can_continue_aggregation_effects (the active aggregator, or a demoted one finishing its own work), and zk-prover generates it from ZkRequest::PkAggregation."
+    "note": "The committee key job proves C5 (PkAggregation), then the DKG aggregation that verifies C5 with the nodes' folded proofs."
   },
   {
     "id": "D15",
     "supported": true,
     "refs": [
-      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@18@AggregationProofPending {",
-      "crates/orchestration/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@20@DecryptedSharesAggregationProofRequest {",
-      "crates/orchestration/aggregator/src/plaintext_aggregation/handlers.rs@193@if !self.can_continue_aggregation_effects() {",
-      "crates/orchestration/aggregator/src/plaintext_aggregation/workflow.rs@38@GeneratingC7Proof",
-      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@135@ZkRequest::DecryptedSharesAggregation(msg.proof_request)"
+      "crates/ciphernode/jobs/src/decryption.rs@381@prove_with_variant(zk, &config, &c7",
+      "crates/ciphernode/jobs/src/decryption.rs@394@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
     ],
     "line_text": [
-      "AggregationProofPending {",
-      "proof_request: DecryptedSharesAggregationProofRequest {",
-      "if !self.can_continue_aggregation_effects() {",
-      "Collecting, Complete, Computing, GeneratingC7Proof, QueuedDecryptionShare,",
-      "ZkRequest::DecryptedSharesAggregation(msg.proof_request),"
+      ".prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)",
+      "prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
     ],
-    "note": "The plaintext aggregator publishes the C7 DecryptedSharesAggregation request from its compute-response path (gated at handlers.rs:193), and zk-prover generates the proof from that request."
+    "note": "The plaintext job proves C7 (DecryptedSharesAggregation), then the decryption aggregation over the C6 fold and C7."
   },
   {
     "id": "D16",
     "supported": true,
-    "refs": [
-      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@66@Requesting C6 ThresholdShareDecryption proof for E3",
-      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@71@ZkRequest::ThresholdShareDecryption(msg.proof_request)"
-    ],
-    "line_text": ["\"Requesting C6 ThresholdShareDecryption proof for E3 {}\",", "ZkRequest::ThresholdShareDecryption(msg.proof_request),"],
-    "note": "Each member's proof-request actor dispatches the C6 ThresholdShareDecryption proof on its ShareDecryptionProofPending, which is the proof for its own decryption share."
+    "refs": ["crates/ciphernode/jobs/src/decryption.rs@184@format!(\"c6-{index}\")"],
+    "line_text": ["let work = format!(\"c6-{index}\");"],
+    "note": "Each member proves C6 (ThresholdShareDecryption) for its own decryption share, one proof per ciphertext."
   }
 ]

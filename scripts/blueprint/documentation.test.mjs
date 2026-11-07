@@ -65,14 +65,14 @@ test('every authored unit has checked documentation, with existing source refere
   assert.ok(circuit.facts.read_first.some((r) => r.ref?.path.endsWith('.nr')))
 })
 
-test('generated unit and actor diagrams expose documentation without losing code navigation', () => {
+test('generated unit diagrams expose documentation without losing code navigation', () => {
   const { data } = buildData({ sourceRef: 'test-ref' })
   const circuit = data.diagrams['circuit:C1 pk_generation']
   assert.ok(circuit.documentation.every((d) => d.href.includes('/blob/test-ref/docs/')))
   assert.ok(circuit.nodes.find((n) => n.id === 'self').code)
-  const actor = Object.values(data.diagrams).find((d) => d.id.startsWith('actor:e3-keyshare:'))
-  assert.ok(actor.documentation.length)
-  assert.ok(actor.nodes.some((n) => n.code))
+  const crate = data.diagrams['crate:e3-protocol']
+  assert.ok(crate.documentation.length)
+  assert.ok(crate.nodes.some((n) => n.code))
   assert.match(pageHtml(data), /id="documentation"/)
 })
 

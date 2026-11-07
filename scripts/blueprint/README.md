@@ -1,7 +1,7 @@
 # Blueprint
 
 The blueprint is an interactive map of the Interfold architecture. It shows flat diagrams that open
-into each other, from the whole system down to one actor and its code.
+into each other, from the whole system down to one crate, contract or circuit and its code.
 
 ## Build and open
 

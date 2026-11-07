@@ -1,0 +1,581 @@
+{
+  "group": "node",
+  "units": [
+    {
+      "id": "e3-protocol",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Requests and committee selection", "path": "docs/architecture/committee-selection.md" },
+        { "title": "Distributed key generation", "path": "docs/architecture/dkg.md" },
+        { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/protocol",
+      "one_line": "The node as one pure state machine: committee selection, failover, DKG, decryption and accusations, with time and randomness as inputs.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "each E3's stage, committee, DKG and decryption work, inside Node",
+          "where": "memory",
+          "ref": "crates/protocol/src/node.rs@498@pub struct Node {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "Node",
+          "what": "the whole node's protocol state for one operator",
+          "ref": "crates/protocol/src/node.rs@498@pub struct Node {"
+        },
+        {
+          "name": "Machine",
+          "what": "a deterministic machine: step(now, input) returns effects",
+          "ref": "crates/protocol/src/machine.rs@18@pub trait Machine: Serialize + DeserializeOwned {"
+        },
+        {
+          "name": "Input",
+          "what": "what the node can be told: chain facts, peer messages, job results, ticks",
+          "ref": "crates/protocol/src/node.rs@416@pub enum Input {"
+        },
+        {
+          "name": "Effect",
+          "what": "what the node asks its adapters to do: send, publish, run a job, fetch",
+          "ref": "crates/protocol/src/node.rs@472@pub enum Effect {"
+        },
+        {
+          "name": "ChainFact",
+          "what": "a confirmed contract log, decoded with the state it needs",
+          "ref": "crates/protocol/src/node.rs@129@pub enum ChainFact {"
+        },
+        {
+          "name": "PeerMessage",
+          "what": "an operator-signed message from another member",
+          "ref": "crates/protocol/src/node.rs@253@pub struct PeerMessage {"
+        },
+        { "name": "DkgWork", "what": "the DKG jobs the machine asks for", "ref": "crates/protocol/src/dkg/mod.rs@191@pub enum DkgWork {" },
+        {
+          "name": "ZkProof",
+          "what": "a proof and its public inputs, as the verifiers take them",
+          "ref": "crates/protocol/src/proof.rs@38@pub struct ZkProof {"
+        },
+        {
+          "name": "Envelope",
+          "what": "the signed wire form of a peer message",
+          "ref": "crates/protocol/src/wire.rs@20@pub struct Envelope {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "crate entry: the capability modules and the encoding version of what a node persists: journal inputs, effects and snapshots",
+          "ref": "crates/protocol/src/lib.rs@33@pub const ENCODING_VERSION: u32 = 9;"
+        },
+        {
+          "why": "the machine: one step per input, returning the effects",
+          "ref": "crates/protocol/src/node.rs@956@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+        },
+        { "why": "every kind of input", "ref": "crates/protocol/src/node.rs@416@pub enum Input {" }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-committee"],
+      "tests": "cargo test -p e3-protocol: unit tests beside each capability module, including the encoding fingerprint. crates/testing/sim runs whole committees of these machines."
+    },
+    {
+      "id": "e3-engine",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Persistence, replay, and shutdown", "path": "docs/architecture/persistence-and-replay.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/ciphernode/engine",
+      "one_line": "Runs the machine durably: each input, the effects it causes and a periodic snapshot commit in one store transaction, and a restart replays the journal.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "effects not yet acknowledged, kept in the store's outbox until done",
+          "where": "disk",
+          "ref": "crates/ciphernode/engine/src/lib.rs@51@pub trait Store {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "Engine",
+          "what": "the machine with its store; apply returns the next engine and the new effects",
+          "ref": "crates/ciphernode/engine/src/lib.rs@78@pub struct Engine<M: Machine, S: Store> {"
+        },
+        {
+          "name": "Store",
+          "what": "one atomic commit per step: journal entry, outbox changes, snapshot",
+          "ref": "crates/ciphernode/engine/src/lib.rs@51@pub trait Store {"
+        },
+        { "name": "Step", "what": "what one commit writes", "ref": "crates/ciphernode/engine/src/lib.rs@33@pub struct Step {" },
+        {
+          "name": "Pending",
+          "what": "an effect that waits for its acknowledgment",
+          "ref": "crates/ciphernode/engine/src/lib.rs@27@pub struct Pending<E> {"
+        },
+        {
+          "name": "EffectKey",
+          "what": "the identity of an effect in the outbox",
+          "ref": "crates/ciphernode/engine/src/lib.rs@21@pub struct EffectKey {"
+        },
+        {
+          "name": "MemoryStore",
+          "what": "the in-memory store of tests and the simulator",
+          "ref": "crates/ciphernode/engine/src/memory.rs@14@pub struct MemoryStore(Arc<Mutex<Inner>>);"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "open: replay the journal from the latest snapshot and return the pending effects",
+          "ref": "crates/ciphernode/engine/src/lib.rs@89@pub fn open(store: S, genesis: M, snapshot_every: u64)"
+        },
+        {
+          "why": "apply: one input, one commit, the new effects",
+          "ref": "crates/ciphernode/engine/src/lib.rs@125@pub fn apply(mut self, now: UnixSecs, input: M::Input)"
+        },
+        {
+          "why": "acknowledge: an effect is done and leaves the outbox",
+          "ref": "crates/ciphernode/engine/src/lib.rs@163@pub fn acknowledge(&mut self, key: EffectKey)"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-protocol"],
+      "tests": "cargo test -p e3-engine. crates/testing/sim crashes nodes at random steps against this engine."
+    },
+    {
+      "id": "e3-journal",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Persistence, replay, and shutdown", "path": "docs/architecture/persistence-and-replay.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/state/journal",
+      "one_line": "The engine's store on disk: the journal, the latest snapshot and the outbox in one redb file, each commit one fsynced transaction.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "journal: the entries after the latest snapshot, in input order; a snapshot commit prunes the entries it covers",
+          "where": "disk",
+          "ref": "crates/state/journal/src/lib.rs@14@TableDefinition::new(\"journal\")"
+        },
+        {
+          "name": "the latest snapshot of the machine",
+          "where": "disk",
+          "ref": "crates/state/journal/src/lib.rs@15@TableDefinition::new(\"snapshot\")"
+        },
+        {
+          "name": "outbox: effects not yet acknowledged",
+          "where": "disk",
+          "ref": "crates/state/journal/src/lib.rs@16@TableDefinition::new(\"outbox\")"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "Journal",
+          "what": "a redb database that implements the engine's Store",
+          "ref": "crates/state/journal/src/lib.rs@18@pub struct Journal {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "open the redb file and its tables",
+          "ref": "crates/state/journal/src/lib.rs@23@pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {"
+        },
+        {
+          "why": "commit: one write transaction per step",
+          "ref": "crates/state/journal/src/lib.rs@103@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-engine"],
+      "tests": "cargo test -p e3-journal"
+    },
+    {
+      "id": "e3-blobs",
+      "documentation": [{ "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" }],
+      "kind": "crate",
+      "path": "crates/state/blobs",
+      "one_line": "Large payloads by hash, stored in files once per E3 and deleted when its work ends, so the journal holds only references.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        { "name": "one folder of blob files per E3", "where": "disk", "ref": "crates/state/blobs/src/lib.rs@203@pub struct FileBlobs {" }
+      ],
+      "key_types": [
+        {
+          "name": "BlobStore",
+          "what": "stores, reads, closes and sweeps blobs by E3",
+          "ref": "crates/state/blobs/src/lib.rs@36@pub trait BlobStore: Clone + Send + Sync + 'static {"
+        },
+        {
+          "name": "E3Blobs",
+          "what": "a store scoped to one E3, which the jobs use",
+          "ref": "crates/state/blobs/src/lib.rs@62@pub struct E3Blobs<S> {"
+        },
+        { "name": "FileBlobs", "what": "the store on disk", "ref": "crates/state/blobs/src/lib.rs@203@pub struct FileBlobs {" },
+        {
+          "name": "MemoryBlobs",
+          "what": "the store in memory, for tests",
+          "ref": "crates/state/blobs/src/lib.rs@149@pub struct MemoryBlobs {"
+        },
+        {
+          "name": "BlobError",
+          "what": "a missing blob, or a failed read or write",
+          "ref": "crates/state/blobs/src/lib.rs@26@pub enum BlobError {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "put: store bytes under their hash for one E3",
+          "ref": "crates/state/blobs/src/lib.rs@37@fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;"
+        },
+        {
+          "why": "open the store's folder",
+          "ref": "crates/state/blobs/src/lib.rs@213@pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BlobError> {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-protocol"],
+      "tests": "cargo test -p e3-blobs"
+    },
+    {
+      "id": "e3-chain",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Requests and committee selection", "path": "docs/architecture/committee-selection.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/ciphernode/chain",
+      "one_line": "The chain adapter: reads the contracts' confirmed logs as chain facts, waking on the RPC node's log announcements, and sends the operator's transactions.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "sends the chain has not mined, kept across restarts in unmined.json",
+          "where": "disk",
+          "ref": "crates/ciphernode/chain/src/wallet.rs@59@struct Unmined {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "Reader",
+          "what": "turns confirmed logs into chain facts, in order",
+          "ref": "crates/ciphernode/chain/src/reader.rs@125@pub struct Reader<R> {"
+        },
+        {
+          "name": "Rpc",
+          "what": "what the reader needs from a chain node",
+          "ref": "crates/ciphernode/chain/src/reader.rs@28@pub trait Rpc {"
+        },
+        {
+          "name": "ChainNode",
+          "what": "Rpc over an alloy provider",
+          "ref": "crates/ciphernode/chain/src/rpc.rs@26@pub struct ChainNode<P> {"
+        },
+        {
+          "name": "Contracts",
+          "what": "the contracts whose logs the reader decodes",
+          "ref": "crates/ciphernode/chain/src/decode.rs@22@pub struct Contracts {"
+        },
+        {
+          "name": "Writer",
+          "what": "turns submissions into calls, with retries and stage checks",
+          "ref": "crates/ciphernode/chain/src/writer.rs@111@pub struct Writer<A, B> {"
+        },
+        {
+          "name": "Account",
+          "what": "estimates and sends a call from the operator's account",
+          "ref": "crates/ciphernode/chain/src/writer.rs@92@pub trait Account {"
+        },
+        {
+          "name": "Wallet",
+          "what": "Account over an alloy wallet provider, sending over HTTP",
+          "ref": "crates/ciphernode/chain/src/wallet.rs@35@pub struct Wallet<P> {"
+        },
+        {
+          "name": "Call",
+          "what": "one contract call the writer sends",
+          "ref": "crates/ciphernode/chain/src/writer.rs@59@pub struct Call {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "poll: the facts of the next confirmed blocks",
+          "ref": "crates/ciphernode/chain/src/reader.rs@186@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {"
+        },
+        {
+          "why": "wait: until the RPC node announces a log, or a poll is due",
+          "ref": "crates/ciphernode/chain/src/reader.rs@250@pub async fn wait(&mut self) {"
+        },
+        {
+          "why": "announce: the log subscription that wakes the reader",
+          "ref": "crates/ciphernode/chain/src/rpc.rs@48@async fn announce("
+        },
+        {
+          "why": "decode: logs into facts and the contract reads they need",
+          "ref": "crates/ciphernode/chain/src/decode.rs@139@pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog])"
+        },
+        {
+          "why": "the writer of the operator's submissions",
+          "ref": "crates/ciphernode/chain/src/writer.rs@123@pub fn new(account: A, blobs: B, contracts: Contracts) -> Self {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-blobs", "e3-committee", "e3-data-availability", "e3-evm-contracts", "e3-evm-transactions", "e3-protocol"],
+      "tests": "cargo test -p e3-chain: reader, decoder and writer tests against fake chain nodes, and wallet tests for persisted unmined sends and replacement fees."
+    },
+    {
+      "id": "e3-p2p",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Peer admission and document delivery", "path": "docs/architecture/network-delivery.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/ciphernode/p2p",
+      "one_line": "The network adapter: operator-signed peer messages over libp2p, and the blobs they name, fetched from the publisher once the machine admits the message; only registered operators are heard.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [
+        {
+          "name": "Network",
+          "what": "what the node needs from the network: publish, fetch and admit operators",
+          "ref": "crates/ciphernode/p2p/src/lib.rs@21@pub trait Network: Send + Sync + 'static {"
+        },
+        { "name": "P2p", "what": "the libp2p implementation over QUIC", "ref": "crates/ciphernode/p2p/src/swarm.rs@170@pub struct P2p {" },
+        {
+          "name": "P2pConfig",
+          "what": "identity, network ID, listen addresses and peers",
+          "ref": "crates/ciphernode/p2p/src/swarm.rs@53@pub struct P2pConfig {"
+        },
+        {
+          "name": "InboundIpLimits",
+          "what": "caps the inbound connections of each address group",
+          "ref": "crates/ciphernode/p2p/src/inbound_ip_limits.rs@91@pub struct InboundIpLimits {"
+        }
+      ],
+      "read_first": [
+        { "why": "start the network for a node", "ref": "crates/ciphernode/p2p/src/swarm.rs@187@pub async fn start(" },
+        {
+          "why": "a bootstrap node: lookups only, no messages",
+          "ref": "crates/ciphernode/p2p/src/swarm.rs@197@pub async fn bootstrap(config: P2pConfig) -> Result<Self, P2pError> {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-blobs", "e3-protocol"],
+      "tests": "cargo test -p e3-p2p"
+    },
+    {
+      "id": "e3-jobs",
+      "documentation": [
+        { "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" },
+        { "title": "Distributed key generation", "path": "docs/architecture/dkg.md" },
+        { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" }
+      ],
+      "kind": "crate",
+      "path": "crates/ciphernode/jobs",
+      "one_line": "Runs the work the protocol asks for: BFV keys and threshold shares, decryption shares and the plaintext, accusation checks, and the C0-C7 proofs with bb or placeholders.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "bb's proving files, one folder per E3, deleted when its work ends",
+          "where": "disk",
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@64@fn directory(e3: E3Id) -> String {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "JobRunner",
+          "what": "runs one job from blob references and stores its results",
+          "ref": "crates/ciphernode/jobs/src/lib.rs@76@pub struct JobRunner<S> {"
+        },
+        {
+          "name": "Proofs",
+          "what": "real circuits, or placeholders for mock verifiers",
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@26@pub enum Proofs {"
+        },
+        {
+          "name": "Circuits",
+          "what": "the prover with its own bounded thread pool",
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@35@pub struct Circuits {"
+        },
+        {
+          "name": "JobError",
+          "what": "why a job failed: its inputs, the crypto, or a store",
+          "ref": "crates/ciphernode/jobs/src/lib.rs@38@pub enum JobError {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "run: one job, by kind",
+          "ref": "crates/ciphernode/jobs/src/lib.rs@100@pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"
+        },
+        { "why": "the DKG jobs, C0 to C5", "ref": "crates/ciphernode/jobs/src/dkg.rs@7@//! The DKG's jobs" },
+        { "why": "the decryption jobs, C6 and C7", "ref": "crates/ciphernode/jobs/src/decryption.rs@7@//! The decryption jobs" },
+        { "why": "the accusation check", "ref": "crates/ciphernode/jobs/src/accusation.rs@7@//! The accusation job" }
+      ],
+      "rust_patterns": [],
+      "depends_on": [
+        "e3-bfv-client",
+        "e3-blobs",
+        "e3-committee",
+        "e3-committee-hash",
+        "e3-crypto",
+        "e3-fhe-params",
+        "e3-polynomial",
+        "e3-polynomial-fhe",
+        "e3-protocol",
+        "e3-trbfv",
+        "e3-utils",
+        "e3-zk-config",
+        "e3-zk-prover",
+        "e3-zk-witness"
+      ],
+      "tests": "cargo test -p e3-jobs. Real proofs run end to end through tests/integration/v2.sh with V2_NOIR_DIR."
+    },
+    {
+      "id": "e3-node",
+      "documentation": [{ "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" }],
+      "kind": "crate",
+      "path": "crates/ciphernode/node",
+      "one_line": "The composition root: one engine fed by the chain reader, the network, the job runner and the availability layer, whose effects it hands back to them. The e3-node binary runs one node from a JSON file.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "journal.redb: the journal, snapshot and outbox",
+          "where": "disk",
+          "ref": "crates/ciphernode/node/src/launch.rs@133@Journal::open(config.data_dir.join(\"journal.redb\"))"
+        },
+        {
+          "name": "blobs folder",
+          "where": "disk",
+          "ref": "crates/ciphernode/node/src/launch.rs@146@FileBlobs::open(config.data_dir.join(\"blobs\"))"
+        },
+        {
+          "name": "unmined.json: sends the chain has not mined",
+          "where": "disk",
+          "ref": "crates/ciphernode/node/src/launch.rs@142@config.data_dir.join(\"unmined.json\")"
+        },
+        {
+          "name": "ingestion heartbeat for the health check",
+          "where": "disk",
+          "ref": "crates/ciphernode/node/src/heartbeat.rs@35@format!(\"chain-{chain_id}.heartbeat\")"
+        },
+        {
+          "name": "listening addresses",
+          "where": "disk",
+          "ref": "crates/ciphernode/node/src/launch.rs@160@config.data_dir.join(\"listening\")"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "Config",
+          "what": "everything a node needs to start",
+          "ref": "crates/ciphernode/node/src/launch.rs@46@pub struct Config {"
+        },
+        {
+          "name": "Settings",
+          "what": "the operator's settings the runtime uses",
+          "ref": "crates/ciphernode/node/src/runtime.rs@58@pub struct Settings {"
+        },
+        {
+          "name": "Parts",
+          "what": "the adapters the runtime drives",
+          "ref": "crates/ciphernode/node/src/runtime.rs@69@pub struct Parts<R, A, N, B> {"
+        },
+        { "name": "NodeError", "what": "why a node stops", "ref": "crates/ciphernode/node/src/runtime.rs@86@pub enum NodeError {" }
+      ],
+      "read_first": [
+        {
+          "why": "launch: build the adapters and run the node",
+          "ref": "crates/ciphernode/node/src/launch.rs@101@pub async fn launch(config: Config) -> anyhow::Result<()> {"
+        },
+        {
+          "why": "run: the event loop",
+          "ref": "crates/ciphernode/node/src/runtime.rs@106@pub async fn run<R, A, N, B>(settings: Settings, parts: Parts<R, A, N, B>) -> NodeError"
+        },
+        {
+          "why": "one step: apply an input and dispatch its effects",
+          "ref": "crates/ciphernode/node/src/runtime.rs@202@let (next, pending) = engine.apply(now(), input)?;"
+        },
+        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@299@async fn read_chain<R: Rpc>(" },
+        {
+          "why": "how many proofs run at once",
+          "ref": "crates/ciphernode/node/src/memory.rs@22@pub(crate) fn proof_jobs(requested: usize) -> usize {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": [
+        "e3-blobs",
+        "e3-chain",
+        "e3-ciphernode-config",
+        "e3-crypto",
+        "e3-data-availability",
+        "e3-engine",
+        "e3-evm-contracts",
+        "e3-jobs",
+        "e3-journal",
+        "e3-p2p",
+        "e3-protocol",
+        "e3-zk-prover"
+      ],
+      "tests": "cargo test -p e3-node. End to end: tests/integration/v2.sh (placeholder proofs; real proofs with V2_NOIR_DIR; the CLI with V2_CLI=true)."
+    },
+    {
+      "id": "e3-sim",
+      "documentation": [{ "title": "Ciphernode v2: decision log", "path": "docs/architecture/node-v2-decisions.md" }],
+      "kind": "crate",
+      "path": "crates/testing/sim",
+      "one_line": "Runs whole committees of v2 nodes in one process with virtual time, crashes and network delays; each node must match a shadow copy that never crashes.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [
+        {
+          "name": "Sim",
+          "what": "the committee, the clock and the network",
+          "ref": "crates/testing/sim/src/lib.rs@115@pub struct Sim<J = MockJobs> {"
+        },
+        {
+          "name": "SimNode",
+          "what": "one node with its store and its shadow",
+          "ref": "crates/testing/sim/src/lib.rs@33@pub struct SimNode {"
+        },
+        {
+          "name": "Faults",
+          "what": "crashes and network delays to inject",
+          "ref": "crates/testing/sim/src/lib.rs@101@pub struct Faults {"
+        },
+        {
+          "name": "RealJobs",
+          "what": "the real threshold-BFV jobs",
+          "ref": "crates/testing/sim/src/real_jobs.rs@17@pub struct RealJobs {"
+        },
+        { "name": "MockJobs", "what": "fast stand-in jobs", "ref": "crates/testing/sim/src/jobs.rs@32@pub struct MockJobs {" }
+      ],
+      "read_first": [
+        { "why": "what the simulator checks", "ref": "crates/testing/sim/src/lib.rs@7@//! Runs v2 nodes in one process with virtual time" },
+        {
+          "why": "a committee of operators with faults",
+          "ref": "crates/testing/sim/src/lib.rs@149@pub fn new(seed: u64, operators: &[u64], faults: Faults) -> Self {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": ["e3-crypto", "e3-engine", "e3-jobs", "e3-protocol"],
+      "tests": "cargo test -p e3-sim"
+    }
+  ]
+}

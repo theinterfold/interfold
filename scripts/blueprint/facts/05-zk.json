@@ -9,191 +9,13 @@
       ],
       "kind": "crate",
       "path": "crates/zk/prover",
-      "one_line": "Turns proof requests into Noir/bb proofs, verifies other nodes' proofs, and folds DKG proofs recursively.",
-      "actors": [
-        {
-          "name": "ZkActor",
-          "role": "Serial verification adapter: runs bb verification through the node's shared task pool and replies with the outcome",
-          "ref": "crates/zk/prover/src/zk_actor.rs@21@pub struct ZkActor"
-        },
-        {
-          "name": "ProofRequestActor",
-          "role": "Receives the *Pending triggers, publishes ComputeRequest jobs, and signs each returned proof; it never calls the prover itself",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@67@pub struct ProofRequestActor"
-        },
-        {
-          "name": "ProofVerificationActor",
-          "role": "Checks a peer's BFV public key (C0): recovers the signer, asks ZkActor to verify, then emits pass or fail",
-          "ref": "crates/zk/prover/src/proof_verification/actor.rs@72@pub struct ProofVerificationActor"
-        },
-        {
-          "name": "ShareVerificationActor",
-          "role": "Verifies peers' C1-C4 and C6 share proofs: ECDSA check, commitment consistency check, then ZK verification through ComputeRequest",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@57@pub struct ShareVerificationActor"
-        },
-        {
-          "name": "NodeProofAggregator",
-          "role": "Buffers a node's inner DKG proofs and dispatches one NodeDkgFold fold when the share set is ready",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@32@pub struct NodeProofAggregator"
-        }
-      ],
-      "consumes": [
-        {
-          "name": "EncryptionKeyPending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@180@EventType::EncryptionKeyPending"
-        },
-        {
-          "name": "ThresholdSharePending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@183@EventType::ThresholdSharePending"
-        },
-        {
-          "name": "DecryptionShareProofsPending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@184@EventType::DecryptionShareProofsPending"
-        },
-        {
-          "name": "ShareDecryptionProofPending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@185@EventType::ShareDecryptionProofPending"
-        },
-        {
-          "name": "PkAggregationProofPending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@186@EventType::PkAggregationProofPending"
-        },
-        {
-          "name": "AggregationProofPending",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@187@EventType::AggregationProofPending"
-        },
-        {
-          "name": "ComputeResponse",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@181@EventType::ComputeResponse"
-        },
-        {
-          "name": "EncryptionKeyReceived",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/actor.rs@148@EventType::EncryptionKeyReceived"
-        },
-        {
-          "name": "ZkVerificationResponse (message)",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/handlers.rs@107@impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor"
-        },
-        {
-          "name": "ShareVerificationDispatched",
-          "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@85@EventType::ShareVerificationDispatched"
-        },
-        {
-          "name": "CommitmentConsistencyCheckComplete",
-          "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@89@EventType::CommitmentConsistencyCheckComplete"
-        },
-        {
-          "name": "DKGInnerProofReady",
-          "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@119@EventType::DKGInnerProofReady"
-        },
-        {
-          "name": "ThresholdSharePending",
-          "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@118@EventType::ThresholdSharePending"
-        },
-        {
-          "name": "ZkVerificationRequest (message)",
-          "by": "ZkActor",
-          "ref": "crates/zk/prover/src/zk_actor.rs@310@impl Handler<TypedEvent<ZkVerificationRequest>> for ZkActor"
-        }
-      ],
-      "emits": [
-        {
-          "name": "ComputeRequest (ZkRequest::PkBfv, and the other circuit requests)",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/dkg_proofs.rs@24@let request = ComputeRequest::zk("
-        },
-        {
-          "name": "DKGInnerProofReady",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/encryption_key_result.rs@60@DKGInnerProofReady {"
-        },
-        {
-          "name": "EncryptionKeyCreated",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/encryption_key_result.rs@74@EncryptionKeyCreated {"
-        },
-        {
-          "name": "ThresholdShareCreated",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@158@ThresholdShareCreated {"
-        },
-        {
-          "name": "DkgProofSigned",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@90@DkgProofSigned {"
-        },
-        {
-          "name": "DecryptionShareProofSigned",
-          "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@150@DecryptionShareProofSigned {"
-        },
-        {
-          "name": "ZkVerificationRequest (message to ZkActor)",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/effects.rs@86@ZkVerificationRequest {"
-        },
-        {
-          "name": "ProofVerificationPassed",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/handlers.rs@158@ProofVerificationPassed {"
-        },
-        {
-          "name": "SignedProofFailed",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/handlers.rs@184@SignedProofFailed {"
-        },
-        {
-          "name": "ProofVerificationFailed",
-          "by": "ProofVerificationActor",
-          "ref": "crates/zk/prover/src/proof_verification/handlers.rs@205@ProofVerificationFailed {"
-        },
-        {
-          "name": "ComputeRequest (ZkRequest::VerifyShareProofs, VerifyShareDecryptionProofs)",
-          "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/consistency.rs@59@ComputeRequest::zk("
-        },
-        {
-          "name": "CommitmentConsistencyCheckRequested",
-          "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/ecdsa.rs@82@CommitmentConsistencyCheckRequested {"
-        },
-        {
-          "name": "ShareVerificationComplete",
-          "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/complete_verification.rs@16@ShareVerificationComplete {"
-        },
-        {
-          "name": "ComputeRequest (ZkRequest::NodeDkgFold)",
-          "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@245@ZkRequest::NodeDkgFold(req)"
-        },
-        {
-          "name": "DKGRecursiveAggregationComplete",
-          "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@31@DKGRecursiveAggregationComplete {"
-        },
-        {
-          "name": "ZkVerificationResponse (message to the sender)",
-          "by": "ZkActor",
-          "ref": "crates/zk/prover/src/zk_actor.rs@383@msg.sender.do_send(response)"
-        }
-      ],
+      "one_line": "The Noir and bb prover library: installs bb and the circuits, builds witnesses, proves and verifies each circuit, and folds proofs recursively. e3-jobs calls it.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
       "state": [
         {
-          "name": "bb binary, circuits and work dir under the node's noir install dir",
+          "name": "the configured bb binary and circuits folder; proving files in the node data folder's proving folder",
           "where": "disk",
           "ref": "crates/zk/prover/src/backend/mod.rs@96@let noir_dir = home_dir.join"
         },
@@ -206,26 +28,6 @@
           "name": "per-job witness and proof files in the bb work dir",
           "where": "disk",
           "ref": "crates/zk/prover/src/prover.rs@291@let job_dir = self"
-        },
-        {
-          "name": "node-fold inner proofs and fold metadata in Repositories",
-          "where": "disk",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@45@recovery_repositories: Option<Repositories>"
-        },
-        {
-          "name": "pending C0 verifications keyed by E3 and party",
-          "where": "memory",
-          "ref": "crates/zk/prover/src/proof_verification/actor.rs@75@pending: HashMap<(E3id, u64), PendingVerification>"
-        },
-        {
-          "name": "in-flight proof requests keyed by correlation id",
-          "where": "memory",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@76@pending: HashMap<CorrelationId, PendingProofRequest>"
-        },
-        {
-          "name": "finalized committee addresses per E3",
-          "where": "memory",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@61@committees: HashMap<E3id, Vec<Address>>"
         }
       ],
       "key_types": [
@@ -265,58 +67,29 @@
           "ref": "crates/zk/config/src/circuit.rs@19@pub enum CircuitVariant"
         },
         {
-          "name": "Proof",
-          "what": "proof bytes, public signals and the circuit name",
-          "ref": "crates/events/src/interfold_event/proof.rs@12@pub struct Proof"
-        },
-        {
           "name": "ZkError",
           "what": "thiserror enum for setup, witness, proving and verification errors",
           "ref": "crates/zk/prover/src/error.rs@10@pub enum ZkError"
         }
       ],
       "read_first": [
+        { "why": "inputs, then witness, then prove for one circuit", "ref": "crates/zk/prover/src/traits.rs@56@fn prove_with_variant(" },
+        { "why": "the exact bb prove arguments", "ref": "crates/zk/prover/src/prover.rs@313@let mut args = vec![" },
         {
-          "why": "wiring: the five ZK actors are created here and connected to the bus",
-          "ref": "crates/zk/prover/src/actor_system.rs@129@pub fn setup_zk_actors("
+          "why": "the backend: bb, the circuits and the work folder",
+          "ref": "crates/zk/prover/src/backend/mod.rs@53@pub fn new(bb_binary: BBPath, circuits_dir: PathBuf, work_dir: PathBuf) -> Self {"
         },
         {
-          "why": "the trigger events that start a proof request",
-          "ref": "crates/zk/prover/src/proof_request/actor.rs@180@EventType::EncryptionKeyPending"
+          "why": "install the pinned bb and circuits when missing",
+          "ref": "crates/zk/prover/src/backend/setup.rs@84@pub async fn ensure_installed(&self) -> Result<(), ZkError> {"
         },
-        {
-          "why": "inputs, then witness, then prove for one circuit",
-          "ref": "crates/zk/prover/src/traits.rs@56@fn prove_with_variant("
-        },
-        {
-          "why": "the exact bb prove arguments",
-          "ref": "crates/zk/prover/src/prover.rs@313@let mut args = vec!["
-        },
-        {
-          "why": "protocol request adaptation, witness decryption and prover execution without actor scheduling",
-          "ref": "crates/zk/prover/src/request_execution.rs@98@pub fn execute_zk_request("
-        }
+        { "why": "verify another node's proof", "ref": "crates/zk/prover/src/prover.rs@376@pub fn verify_proof(" }
       ],
       "rust_patterns": [
         {
           "pattern": "trait-def",
           "note": "Provable: default methods build inputs, witness and proof for each circuit",
           "ref": "crates/zk/prover/src/traits.rs@19@pub trait Provable: Send + Sync {"
-        },
-        {
-          "pattern": "actix-message",
-          "note": "a message struct carried between actors by derive",
-          "ref": "crates/zk/prover/src/proof_verification/actor.rs@35@#[derive(Debug, Clone, Message)]"
-        },
-        {
-          "pattern": "actix-recipient",
-          "note": "the verifier is a Recipient; the wiring passes ZkActor's recipient in (actor_system.rs:134)",
-          "ref": "crates/zk/prover/src/proof_verification/actor.rs@74@verifier: Recipient<TypedEvent<ZkVerificationRequest>>,"
-        },
-        {
-          "pattern": "actix-timer",
-          "note": "a pending verification is retried later with a doubling delay",
-          "ref": "crates/zk/prover/src/proof_verification/effects.rs@144@ctx.run_later(delay"
         },
         {
           "pattern": "thiserror-enum",
@@ -332,29 +105,17 @@
       "depends_on": [
         "e3-committee",
         "e3-committee-hash",
-        "e3-crypto",
-        "e3-bfv-client",
-        "e3-trbfv",
+        "e3-fhe-params",
         "e3-polynomial",
         "e3-polynomial-fhe",
-        "e3-data",
-        "e3-events",
-        "e3-fhe-params",
-        "e3-request",
-        "e3-slashing",
-        "e3-task-pool",
         "e3-utils",
         "e3-zk-config",
         "e3-zk-witness"
       ],
-      "tests": "cargo test -p e3-zk-prover (in-module tests and src/*_tests.rs). Integration: cargo test -p e3-zk-prover --features integration-tests (tests/integration_tests.rs). build.rs runs scripts/build_fixtures.sh unless E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 (build.rs:25). Tests marked #[ignore] need prepared artifacts; their message names pnpm rust:test:proofs.",
+      "tests": "cargo test -p e3-zk-prover (in-module tests and src/backend/tests.rs). Integration: cargo test -p e3-zk-prover --features integration-tests (tests/integration_tests.rs). build.rs runs scripts/build_fixtures.sh unless E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1. Tests marked #[ignore] need prepared artifacts; their message names pnpm rust:test:proofs.",
       "unverified": [
         "DkgAggregator and DecryptionAggregator witnesses are built from the Default-variant circuit JSON (node_dkg_fold.rs:528 and :592) and proved with the Evm target (:536 and :665); I did not confirm that the default and evm circuit JSON files are identical.",
-        "NodeProofAggregator publishes DKGRecursiveAggregationComplete without a proof when proof_aggregation_enabled is false (node_proof_aggregation/effects.rs:25-31); its log calls this test-only. I did not trace where the flag is set.",
-        "versions.json circuits_checksums lists only 0.18.0 while required_circuits_version is 0.19.0; the 0.19.0 digest is inserted at build time from E3_CIRCUITS_ARCHIVE_SHA256 (config.rs:80-85). I did not check how release builds set that variable.",
-        "NodeProofAggregator persists through e3-data Repositories (node_proof_aggregation/actor.rs:45); whether that store is sled-backed was not traced (crates/state/storage/src/lib.rs:18 declares sled_db).",
-        "The commitment_links/*.rs consistency rules and the ECDSA checks in share_verification/transitions/ecdsa.rs were not read beyond their names.",
-        "The TaskPool, retry and memory logic in crates/ciphernode/multithread was not read beyond the dispatch path."
+        "The pinned circuits version is 0.20.0-dev.3; the checked-in checksum map lists only 0.18.0, and a nonempty build-time archive digest from E3_CIRCUITS_ARCHIVE_SHA256 is added under CARGO_PKG_VERSION (config.rs:80). I did not check how release builds set that variable."
       ]
     },
     {
@@ -443,13 +204,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@201@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@232@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@391@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@438@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],
