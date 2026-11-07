@@ -683,19 +683,28 @@ impl Dkg {
     /// The proof that `member` signed and sent this node, for an accusation of it.
     pub(crate) fn signed_proof(&self, member: Address, proof: &ZkProof) -> Option<SignedProof> {
         let key = self.keys.received.get(&member).map(|key| &key.proof);
-        let shares = self.shares.received.get(&member).into_iter().flat_map(|shares| {
-            [&shares.c2a, &shares.c2b]
-                .into_iter()
-                .chain(&shares.c3a)
-                .chain(&shares.c3b)
-        });
+        let shares = self
+            .shares
+            .received
+            .get(&member)
+            .into_iter()
+            .flat_map(|shares| {
+                [&shares.c2a, &shares.c2b]
+                    .into_iter()
+                    .chain(&shares.c3a)
+                    .chain(&shares.c3b)
+            });
         let decryption_key = self
             .decryption_keys
             .received
             .get(&member)
             .into_iter()
             .flat_map(|key| std::iter::once(&key.c4a).chain(&key.c4b));
-        let keyshare = self.aggregation.keyshares.get(&member).map(|keyshare| &keyshare.c1);
+        let keyshare = self
+            .aggregation
+            .keyshares
+            .get(&member)
+            .map(|keyshare| &keyshare.c1);
         key.into_iter()
             .chain(shares)
             .chain(decryption_key)

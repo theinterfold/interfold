@@ -135,7 +135,12 @@ impl Accusations {
     /// Whether to take `message` from `sender`: both it and the accused are live members, the
     /// accused signed the proof, the vote is the sender's and counts, and the sender accuses each
     /// proof once in each window.
-    pub(crate) fn admits(&self, now: UnixSecs, sender: Address, message: &AccusationMessage) -> bool {
+    pub(crate) fn admits(
+        &self,
+        now: UnixSecs,
+        sender: Address,
+        message: &AccusationMessage,
+    ) -> bool {
         match message {
             AccusationMessage::Accuse {
                 accused,
@@ -152,7 +157,10 @@ impl Accusations {
                     && !self.cases.contains_key(&ballot)
             }
             AccusationMessage::Vote(vote) => {
-                let accused = self.cases.get(&Ballot::of(&vote.vote)).map(|case| case.accused);
+                let accused = self
+                    .cases
+                    .get(&Ballot::of(&vote.vote))
+                    .map(|case| case.accused);
                 accused != Some(sender) && self.counts(now, sender, vote)
             }
         }
@@ -367,7 +375,11 @@ impl Accusations {
             .values()
             .filter(|case| !case.submitted)
             .filter_map(|case| case.submit_at);
-        let windows = self.cases.keys().chain(self.early.keys()).map(|ballot| ballot.deadline + 1);
+        let windows = self
+            .cases
+            .keys()
+            .chain(self.early.keys())
+            .map(|ballot| ballot.deadline + 1);
         submissions.chain(windows).min()
     }
 

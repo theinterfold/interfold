@@ -499,7 +499,10 @@ impl E3 {
             Body::Decryption(_) => decryption_runs,
             Body::Accusation(message) => accusations.is_some_and(|open| open.open(message)),
         });
-        let accusation_due = self.accusations.as_ref().and_then(Accusations::next_deadline);
+        let accusation_due = self
+            .accusations
+            .as_ref()
+            .and_then(Accusations::next_deadline);
         [
             self.ends_at(),
             work.flatten(),
@@ -588,7 +591,9 @@ impl E3 {
 /// The member and the failing proof that a check found, if any.
 fn fault_of(result: &WorkResult) -> Option<(Address, Fault)> {
     let (member, verdict) = match result {
-        WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked { sender, verdict }) => (sender, verdict),
+        WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked { sender, verdict }) => {
+            (sender, verdict)
+        }
         WorkResult::Dkg(DkgWorkResult::SharesChecked { dealer, verdict }) => (dealer, verdict),
         WorkResult::Dkg(DkgWorkResult::DecryptionKeyChecked { member, verdict })
         | WorkResult::Dkg(DkgWorkResult::KeyshareChecked { member, verdict })

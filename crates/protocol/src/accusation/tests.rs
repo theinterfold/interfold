@@ -120,8 +120,8 @@ mod cases {
     use crate::{
         accusation::{accusation_id, SignedVote, Vote},
         node::{
-            Body, ChainFact, Effect, Input, JobDone, Node, PeerMessage, Purpose, Stage,
-            Submission, Transaction, Work, WorkResult,
+            Body, ChainFact, Effect, Input, JobDone, Node, PeerMessage, Purpose, Stage, Submission,
+            Transaction, Work, WorkResult,
         },
         proof::{ProofType, SignedProof},
         testing::*,
@@ -324,7 +324,10 @@ mod cases {
         let effects = node.step(NOW, verified(true));
         let effects = node.step(NOW, sign(ME, signing(&effects)));
         let later = node.step(NOW + 60, Input::Tick);
-        let slashes: Vec<_> = slashes(&effects).into_iter().chain(slashes(&later)).collect();
+        let slashes: Vec<_> = slashes(&effects)
+            .into_iter()
+            .chain(slashes(&later))
+            .collect();
         assert_eq!(slashes, [(address(1), 3)]);
     }
 

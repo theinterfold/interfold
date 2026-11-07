@@ -219,7 +219,11 @@ impl Decryption {
     /// The proof that `member` signed and sent this node, for an accusation of it.
     pub(crate) fn signed_proof(&self, member: Address, proof: &ZkProof) -> Option<SignedProof> {
         let shares = self.shares_of(&member)?;
-        shares.c6.iter().find(|signed| signed.proof == *proof).cloned()
+        shares
+            .c6
+            .iter()
+            .find(|signed| signed.proof == *proof)
+            .cloned()
     }
 
     pub fn shares_of(&self, member: &Address) -> Option<&SharesMessage> {

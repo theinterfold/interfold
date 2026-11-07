@@ -80,7 +80,10 @@ impl AccusationMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccusationWork {
     /// Whether `proof` fails, and the hash of its evidence.
-    Verify { proof_type: ProofType, proof: ZkProof },
+    Verify {
+        proof_type: ProofType,
+        proof: ZkProof,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
