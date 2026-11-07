@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
+    event_admission::record_failure,
     events::{EventStoreClockFloor, FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, HistoryProgress, InterfoldEvent, LogRecord, Seq, SequenceIndex,
@@ -342,7 +343,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         let detail = format!("{error:#}");
         error!(%detail, "Unrecoverable event storage failure");
         if let Some(signal) = &self.failure_signal {
-            signal.send_replace(Some(detail));
+            record_failure(signal, detail);
         }
     }
 
@@ -994,7 +995,8 @@ mod tests {
     #[actix::test]
     async fn append_failure_is_not_dispatched_and_closes_admission() -> Result<()> {
         use crate::{
-            hlc_factory::HlcFactory, BusHandle, EventBus, EventPublisher, GetEvents, Sequencer,
+            hlc_factory::HlcFactory, BusHandle, EventBus, EventBusBarrier, EventPublisher,
+            GetEvents, Sequencer, SequencerBarrier,
         };
 
         let (signal, mut health) = tokio::sync::watch::channel(None);
@@ -1004,7 +1006,7 @@ mod tests {
         let bus = EventBus::<InterfoldEvent>::default().start();
         let history = EventBus::history(&bus);
         let sequencer = Sequencer::new(&bus, store.recipient()).start();
-        let handle = BusHandle::new(bus, sequencer, HlcFactory::new())
+        let handle = BusHandle::new(bus.clone(), sequencer.clone(), HlcFactory::new())
             .with_failure_signal(signal)
             .enable("append-failure");
 
@@ -1021,6 +1023,9 @@ mod tests {
             reason.contains("simulated commit-log append failure"),
             "{reason}"
         );
+        // Anything the store sent before stopping has reached the history after these fences.
+        sequencer.send(SequencerBarrier).await?;
+        bus.send(EventBusBarrier).await?;
         assert!(history.send(GetEvents::new()).await?.is_empty());
         let error = handle
             .publish_without_context(TestEvent::new("after", 2))

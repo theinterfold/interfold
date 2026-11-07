@@ -3,6 +3,7 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
+use crate::event_admission::record_failure;
 use crate::eventstore::EventStore;
 use crate::{
     events::{EventStoreQueryResponse, FlushEventStores, StoreEventRequested},
@@ -182,7 +183,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             );
             error!(%detail, "Unrecoverable event storage failure");
             if let Some(signal) = &self.failure_signal {
-                signal.send_replace(Some(detail));
+                record_failure(signal, detail);
             }
             return;
         };

@@ -194,6 +194,7 @@ impl EvmChainGateway {
                 Ok(()) => actor.signal_startup(Ok(())),
                 Err(error) if error.is::<AdmissionClosed>() => {
                     warn!(%error, "Dropping chain events because node shutdown has started");
+                    actor.signal_startup(Err(error.to_string()));
                 }
                 Err(error) => actor.fail_closed(error, ctx),
             }),

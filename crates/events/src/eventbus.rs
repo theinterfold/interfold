@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::event_admission::EventReceipt;
+use crate::event_admission::{record_failure, EventReceipt};
 use crate::traits::Event;
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
@@ -201,7 +201,7 @@ impl<E: Event> EventBus<E> {
         let reason = format!("EventBus pre-fanout failed: {error:#}");
         for subscriber in &self.pre_fanout {
             if let Some(signal) = &subscriber.failure_signal {
-                signal.send_replace(Some(reason.clone()));
+                record_failure(signal, reason.clone());
             }
         }
     }

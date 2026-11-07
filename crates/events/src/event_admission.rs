@@ -9,7 +9,8 @@
 //! An admitted event holds capacity in a shared window until its EventBus fanout ends, so a
 //! stalled store, bus or subscriber fills the window and publishers get an error instead of
 //! growing mailboxes. An admitted event that leaves the pipeline before its fanout ends is lost:
-//! its receipt reports the loss on the event-pipeline failure signal, which stops the node.
+//! its receipt closes admission and reports the loss on the event-pipeline failure signal, which
+//! stops the node.
 
 use std::{
     fmt,
@@ -59,7 +60,8 @@ pub(crate) struct EventAdmission {
     window: Mutex<Usage>,
     released: Notify,
     failure_signal: OnceLock<watch::Sender<Option<String>>>,
-    loss_reported: AtomicBool,
+    /// The first loss, which closes admission even without a failure signal.
+    loss: OnceLock<String>,
 }
 
 impl EventAdmission {
@@ -76,7 +78,7 @@ impl EventAdmission {
             window: Mutex::new(Usage::default()),
             released: Notify::new(),
             failure_signal: OnceLock::new(),
-            loss_reported: AtomicBool::new(false),
+            loss: OnceLock::new(),
         }
     }
 
@@ -181,7 +183,11 @@ impl EventAdmission {
     }
 
     fn failure(&self) -> Option<String> {
-        self.failure_signal.get()?.borrow().clone()
+        let signalled = self
+            .failure_signal
+            .get()
+            .and_then(|signal| signal.borrow().clone());
+        signalled.or_else(|| self.loss.get().cloned())
     }
 
     fn release(&self, bytes: usize) {
@@ -195,22 +201,28 @@ impl EventAdmission {
     fn report_loss(&self, event_type: &str) {
         let reason =
             format!("an admitted {event_type} event was lost before its EventBus fanout ended");
-        if self.loss_reported.swap(true, Ordering::AcqRel) {
+        if self.loss.set(reason.clone()).is_err() {
             debug!(%reason, "Event pipeline lost another admitted event");
             return;
         }
         error!(%reason, "Event pipeline lost an admitted event");
         if let Some(signal) = self.failure_signal.get() {
-            // Keep an earlier reason, such as the storage failure that caused this loss.
-            signal.send_if_modified(|current| {
-                if current.is_some() {
-                    return false;
-                }
-                *current = Some(reason);
-                true
-            });
+            // Keeps an earlier reason, such as the storage failure that caused this loss.
+            record_failure(signal, reason);
         }
     }
+}
+
+/// Records `reason` on the event-pipeline failure signal unless it already holds one, so health
+/// reports the failure that came first rather than its consequences.
+pub(crate) fn record_failure(signal: &watch::Sender<Option<String>>, reason: String) {
+    signal.send_if_modified(|current| {
+        if current.is_some() {
+            return false;
+        }
+        *current = Some(reason);
+        true
+    });
 }
 
 /// Holds the shutdown fence open while a publisher admits and enqueues one event.
@@ -302,7 +314,7 @@ mod tests {
         assert!(error.to_string().contains("saturated"), "{error:#}");
         first.settle();
         by_count.reserve(&small).unwrap().settle();
-        assert!(!by_count.loss_reported.load(Ordering::Acquire));
+        assert!(by_count.failure().is_none());
 
         let by_bytes = admission(100, 2 * size(&small));
         let _first = by_bytes.reserve(&small).unwrap();
@@ -396,5 +408,16 @@ mod tests {
         signal.send_replace(Some("storage failed".to_owned()));
         drop(receipt);
         assert_eq!(health.borrow().as_deref(), Some("storage failed"));
+    }
+
+    #[test]
+    fn unsettled_receipt_closes_admission_without_a_failure_signal() {
+        let admission = admission(10, usize::MAX / 2);
+        drop(admission.reserve(&event("a")).unwrap());
+        let error = admission.reserve(&event("b")).unwrap_err();
+        assert!(
+            error.to_string().contains("TestEvent event was lost"),
+            "{error:#}"
+        );
     }
 }
