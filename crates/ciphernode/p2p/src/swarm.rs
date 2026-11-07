@@ -11,6 +11,7 @@ use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef, E3Id};
 use futures::StreamExt;
 use libp2p::{
     connection_limits::{self, ConnectionLimits},
+    core::ConnectedPoint,
     gossipsub::{self, IdentTopic, MessageAcceptance, MessageId, PublishError},
     identify,
     identity::Keypair,
@@ -57,7 +58,8 @@ pub struct P2pConfig {
     pub network: String,
     pub protocol_version: u32,
     pub listen: Vec<Multiaddr>,
-    /// Peers to dial, each with its `/p2p/` identity, again whenever the connection drops.
+    /// Peers to dial, again whenever the connection drops. One without its `/p2p/` identity is
+    /// dialed by address until a connection shows which peer it is.
     pub peers: Vec<Multiaddr>,
 }
 
@@ -234,6 +236,7 @@ impl P2p {
             blobs,
             inbound,
             peers: config.peers,
+            reached: HashMap::new(),
             servable: Recent::default(),
             sources: Recent::default(),
             fetching: BTreeMap::new(),
@@ -339,6 +342,9 @@ struct Driver<S> {
     blobs: S,
     inbound: mpsc::Sender<PeerMessage>,
     peers: Vec<Multiaddr>,
+    /// The peer at each configured address without a `/p2p/` identity, once a connection to the
+    /// address showed it.
+    reached: HashMap<Multiaddr, PeerId>,
     /// The blobs this node serves, with their E3s, by hash.
     servable: Recent<(E3Id, B256), BlobRef, MAX_SERVABLE>,
     /// The peers that sent each message, by its ID.
@@ -376,14 +382,15 @@ impl<S: BlobStore> Driver<S> {
     /// up the network whenever its routing table gains a peer, and connects to the peers it finds.
     fn dial_peers(&mut self) {
         for address in self.peers.clone() {
-            let Some(Protocol::P2p(peer)) = address.iter().last() else {
-                warn!(%address, "a configured peer needs its /p2p/ identity");
-                continue;
+            let peer = match address.iter().last() {
+                Some(Protocol::P2p(peer)) => Some(peer),
+                _ => self.reached.get(&address).copied(),
             };
-            if !self.swarm.is_connected(&peer) {
-                if let Err(error) = self.swarm.dial(address.clone()) {
-                    debug!(%address, %error, "dialing a configured peer failed");
-                }
+            if peer.is_some_and(|peer| self.swarm.is_connected(&peer)) {
+                continue;
+            }
+            if let Err(error) = self.swarm.dial(address.clone()) {
+                debug!(%address, %error, "dialing a configured peer failed");
             }
         }
     }
@@ -442,6 +449,19 @@ impl<S: BlobStore> Driver<S> {
                 info,
                 ..
             })) => self.on_identify(peer_id, info),
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                endpoint: ConnectedPoint::Dialer { address, .. },
+                ..
+            } => {
+                let bare: Multiaddr = address
+                    .iter()
+                    .filter(|protocol| !matches!(protocol, Protocol::P2p(_)))
+                    .collect();
+                if self.peers.contains(&bare) {
+                    self.reached.insert(bare, peer_id);
+                }
+            }
             _ => {}
         }
     }

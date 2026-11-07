@@ -10,6 +10,10 @@
 # With V2_NOIR_DIR set to a directory that holds `bin/bb` and the compiled `circuits`, the nodes
 # make real proofs and the contracts verify them.
 #
+# With V2_CLI=true the operators run their nodes as operators do: `interfold wallet set` stores
+# each key, and `interfold nodes up` runs `interfold start` for every node of one configuration
+# file. The restart is then `interfold nodes restart`, which stops the node with SIGTERM.
+#
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
 set -Eeuo pipefail
@@ -22,6 +26,9 @@ DEPLOYED="$ROOT_DIR/packages/interfold-contracts/deployed_contracts.json"
 PLAINTEXT="4,0"
 NOIR_DIR="${V2_NOIR_DIR:-}"
 TIMEOUT="${V2_TIMEOUT:-$([[ -n "$NOIR_DIR" ]] && echo 3600 || echo 900)}"
+CLI="${V2_CLI:-false}"
+INTERFOLD="$ROOT_DIR/target/debug/interfold"
+CONFIG="$OUT/cli/interfold.config.yaml"
 # The committee cannot publish its key after the input window closes; it must outlast the DKG.
 INTEGRATION_DKG_TIMEOUT="$TIMEOUT"
 
@@ -43,9 +50,12 @@ ADDRESSES=(
 )
 
 STARTED=()
+# Last started first, so the nodes stop before the chain they read.
 stop() {
-  for pid in "${STARTED[@]}"; do
-    kill "$pid" 2>/dev/null || true
+  local index
+  for ((index = ${#STARTED[@]} - 1; index >= 0; index--)); do
+    kill "${STARTED[index]}" 2>/dev/null || true
+    wait "${STARTED[index]}" 2>/dev/null || true
   done
 }
 trap stop EXIT
@@ -73,7 +83,13 @@ rm -rf "$OUT"
 mkdir -p "$AVAILABILITY_DIR"
 
 heading "Build the v2 node and the requester's encryption tool"
-(cd "$ROOT_DIR" && cargo build --bin e3-node && cargo build -p e3-tests --bin fake_encrypt)
+if [[ "$CLI" == "true" ]]; then
+  # Without the feature the CLI refuses a configuration that skips proofs.
+  (cd "$ROOT_DIR" && cargo build --bin interfold --features e3-cli/test-only-skip-proof-aggregation)
+else
+  (cd "$ROOT_DIR" && cargo build --bin e3-node)
+fi
+(cd "$ROOT_DIR" && cargo build -p e3-tests --bin fake_encrypt)
 
 heading "Start the chain and the availability layer"
 anvil --host 127.0.0.1 --chain-id 31337 --block-time 1 \
@@ -130,7 +146,7 @@ start_node() {
       operator: $operator,
       cipher_password: "v2 end to end",
       network: {
-        name: "localhost",
+        id: "localhost",
         identity: $identity,
         listen: [$listen],
         peers: (if $peer == "" then [] else [$peer] end)
@@ -141,17 +157,74 @@ start_node() {
   STARTED+=($!)
   NODE_PIDS[$index]=$!
 }
-nodes_running() {
-  for pid in "${NODE_PIDS[@]}"; do
-    kill -0 "$pid"
+# The operators' configuration for the CLI, with node `cnN` for operator N - 1. `nodes up` gives
+# every node the others as peers.
+write_cli_config() {
+  local skip=true
+  [[ -n "$NOIR_DIR" ]] && skip=false
+  cat <<EOF
+chains:
+  - name: localhost
+    rpc_url: ws://127.0.0.1:8545
+    ingestion_confirmations: 0
+    rpc_poll_interval_ms: 250
+    data_availability:
+      mode: mock_http
+      rpc_url: http://127.0.0.1:4000/availability
+    contracts:
+      interfold:
+        address: "$(jq -r '.localhost.Interfold.address' "$DEPLOYED")"
+        deploy_block: 0
+      ciphernode_registry:
+        address: "$(jq -r '.localhost.CiphernodeRegistryOwnable.address' "$DEPLOYED")"
+        deploy_block: 0
+      bonding_registry:
+        address: "$(jq -r '.localhost.BondingRegistry.address' "$DEPLOYED")"
+        deploy_block: 0
+nodes:
+EOF
+  for index in "${!ADDRESSES[@]}"; do
+    cat <<EOF
+  cn$((index + 1)):
+    address: "${ADDRESSES[$index]}"
+    quic_port: $((9400 + index))
+    ctrl_port: $((50610 + index))
+    autonetkey: true
+    autopassword: true
+    skip_proof_aggregation: $skip
+EOF
   done
 }
-start_node 0 ""
-until_ok 120 test -s "$OUT/nodes/node-0/listening"
-FIRST=$(head -n 1 "$OUT/nodes/node-0/listening")
-for index in 1 2 3 4; do
-  start_node "$index" "$FIRST"
-done
+nodes_running() {
+  if [[ "$CLI" == "true" ]]; then
+    for index in "${!ADDRESSES[@]}"; do
+      pgrep -f "start --name cn$((index + 1)) --config $CONFIG" >/dev/null
+    done
+  else
+    for pid in "${NODE_PIDS[@]}"; do
+      kill -0 "$pid"
+    done
+  fi
+}
+if [[ "$CLI" == "true" ]]; then
+  # The CLI finds the circuits and bb in the `.interfold` folder beside its configuration.
+  mkdir -p "$OUT/cli/.interfold"
+  [[ -n "$NOIR_DIR" ]] && ln -s "$NOIR_DIR" "$OUT/cli/.interfold/noir"
+  write_cli_config >"$CONFIG"
+  for index in "${!KEYS[@]}"; do
+    printf '%s\n' "${KEYS[$index]}" | "$INTERFOLD" wallet set --name "cn$((index + 1))" \
+      --config "$CONFIG" --private-key-stdin
+  done
+  "$INTERFOLD" nodes up -v --config "$CONFIG" >"$OUT/cli/nodes.log" 2>&1 &
+  STARTED+=($!)
+else
+  start_node 0 ""
+  until_ok 120 test -s "$OUT/nodes/node-0/listening"
+  FIRST=$(head -n 1 "$OUT/nodes/node-0/listening")
+  for index in 1 2 3 4; do
+    start_node "$index" "$FIRST"
+  done
+fi
 
 heading "Wait until every operator acknowledged the release and is active"
 BONDING="$(jq -r '.localhost.BondingRegistry.address' "$DEPLOYED")"
@@ -189,14 +262,18 @@ if [[ "${V2_RESTART:-false}" == "true" ]]; then
   for index in "${!ADDRESSES[@]}"; do
     if [[ "${ADDRESSES[$index],,}" == "${AGGREGATOR,,}" ]]; then
       echo "The aggregator $AGGREGATOR is node $index"
-      kill -9 "${NODE_PIDS[$index]}"
-      sleep 5
-      peer="$FIRST"
-      [[ "$index" == 0 ]] && peer=""
-      start_node "$index" "$peer"
+      if [[ "$CLI" == "true" ]]; then
+        "$INTERFOLD" nodes restart "cn$((index + 1))" --config "$CONFIG"
+      else
+        kill -9 "${NODE_PIDS[$index]}"
+        sleep 5
+        peer="$FIRST"
+        [[ "$index" == 0 ]] && peer=""
+        start_node "$index" "$peer"
+      fi
     fi
   done
-  until_ok 60 test -s "$OUT/nodes/node-0/listening"
+  [[ "$CLI" == "true" ]] || until_ok 60 test -s "$OUT/nodes/node-0/listening"
 fi
 
 heading "Encrypt the plaintext and publish the ciphertext"
@@ -224,10 +301,13 @@ fi
 
 heading "Wait for every node to delete the E3's blobs"
 no_blobs() {
-  local blobs
-  for blobs in "$OUT"/nodes/node-*/blobs; do
+  local blobs checked=0
+  for blobs in "$OUT"/nodes/node-*/blobs "$OUT"/cli/.interfold/data/*/v2/blobs; do
+    [[ -d "$blobs" ]] || continue
     [[ -z "$(ls -A "$blobs")" ]] || return 1
+    checked=$((checked + 1))
   done
+  ((checked == ${#ADDRESSES[@]}))
 }
 until_ok 120 no_blobs
 heading "PASSED"

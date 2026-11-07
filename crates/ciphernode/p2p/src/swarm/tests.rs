@@ -195,6 +195,27 @@ async fn a_broadcast_reaches_every_peer_and_its_blobs_come_on_request() {
     }
 }
 
+/// A launcher may know a peer's address but not its identity.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_given_by_its_address_alone_is_reached() {
+    let first = node(1, Vec::new()).await;
+    let bare = first
+        .p2p
+        .listening()
+        .iter()
+        .map(|address| {
+            address
+                .iter()
+                .filter(|protocol| !matches!(protocol, Protocol::P2p(_)))
+                .collect()
+        })
+        .collect();
+    let mut second = node(2, bare).await;
+    let message = key(&first, 1);
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_share_reaches_only_its_recipient() {
     let [first, mut second, mut third] = network().await;

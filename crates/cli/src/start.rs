@@ -6,25 +6,21 @@
 
 use crate::{
     cli::{Cli, RemoteCli},
-    owo,
+    node_v2, owo,
 };
 use anyhow::{bail, Context, Result};
-use e3_ciphernode_builder::CiphernodeHandle;
 use e3_ciphernode_config::NodeConfig;
 use e3_console::Console;
 use e3_daemon_server::start_daemon_server;
-use e3_events::NODE_SHUTDOWN_DEADLINE;
 use e3_utils::{colorize, Color};
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, info, instrument, warn};
+use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
 pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
     // Register signal listeners immediately at startup
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
-    // Before any actor starts, so that a panic during startup is also reported.
-    let mut actor_panics = e3_entrypoint::actor_panics::ActorPanics::watch();
 
     owo();
 
@@ -44,103 +40,28 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
 
     launch_socket_server(config.ctrl_port());
 
-    let node = tokio::select! {
-        // build the ciphernode and if it completes first return the result
-        result = build_ciphernode(&mut config, peers, bootstrap) => result,
-        // if the shutdown signal completes first then do shutdown without the node
-        _ = &mut shutdown => {
-            graceful_shutdown(None).await?;
-            return Ok(());
-        }
-    }?;
-
-    if let Some(dashboard_port) = config.dashboard_port() {
-        let chains = node
-            .aggregate_ids()
-            .iter()
-            .copied()
-            .filter(|aggregate| *aggregate != 0)
-            .map(|aggregate| {
-                let id = aggregate as u64;
-                let name = config
-                    .chains()
-                    .iter()
-                    .find(|chain| chain.chain_id == Some(id))
-                    .map(|chain| chain.name.clone())
-                    .unwrap_or_else(|| format!("Chain {id}"));
-                e3_dashboard::DashboardChain { id, name }
-            })
-            .collect();
-        let runtime = e3_dashboard::DashboardRuntime {
-            node_name: config.name(),
-            address: node.address.clone(),
-            peer_id: node.peer_id.to_string(),
-            quic_port: config.quic_port(),
-            dashboard_port,
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            chains,
-        };
-        let state = e3_dashboard::DashboardState::new(
-            runtime,
-            node.eventstore(),
-            node.aggregate_ids().to_vec(),
-            node.network_status(),
-            config.chains().clone(),
+    if bootstrap {
+        bail!("the node has no bootstrap mode yet: start it without --bootstrap");
+    }
+    if config.skip_proof_aggregation() && !cfg!(feature = "test-only-skip-proof-aggregation") {
+        bail!(
+            "`skip_proof_aggregation` is test/CI-only and this binary was built without the \
+             `test-only-skip-proof-aggregation` Cargo feature"
         );
-        tokio::task::spawn_local(async move {
-            if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {
-                error!(%error, "node dashboard stopped");
-            }
-        });
-        info!("Dashboard available at http://127.0.0.1:{dashboard_port}");
     }
-
+    config.add_peers(peers)?;
+    let node = node_v2::config(&config).await?;
     info!(
-        "LAUNCHING CIPHERNODE: ({}/{}/{})",
+        "LAUNCHING CIPHERNODE: ({}/{})",
         config.name(),
-        node.address,
-        node.peer_id
+        node.operator.address()
     );
-
-    let mut persistence_health = node.persistence_health();
-    let gateway_failure = node.gateway_failure();
-    tokio::pin!(gateway_failure);
     tokio::select! {
-        _ = &mut shutdown => graceful_shutdown(Some(node)).await?,
-        failure = &mut gateway_failure => {
-            error!(%failure, "Ciphernode stopped after a chain gateway failure");
-            graceful_shutdown(Some(node)).await?;
-            bail!("fatal chain gateway failure: {failure}");
+        result = e3_node::launch::launch(node) => result.context("the node stopped"),
+        _ = &mut shutdown => {
+            info!("stopped");
+            Ok(())
         }
-        failure = actor_panics.first() => {
-            error!(%failure, "Ciphernode stopped after an actor panicked");
-            graceful_shutdown(Some(node)).await?;
-            bail!("actor panic: {failure}");
-        }
-        failure = wait_for_persistence_failure(&mut persistence_health) => {
-            let failure = failure?;
-            error!(%failure, "Ciphernode stopped after a fatal event storage failure");
-            if let Some(logs) = e3_logger::LogCollector::global() {
-                logs.flush();
-            }
-            bail!("fatal event storage failure: {failure}");
-        }
-    }
-
-    Ok(())
-}
-
-async fn wait_for_persistence_failure(
-    health: &mut tokio::sync::watch::Receiver<Option<String>>,
-) -> Result<String> {
-    loop {
-        if let Some(failure) = health.borrow_and_update().clone() {
-            return Ok(failure);
-        }
-        health
-            .changed()
-            .await
-            .context("event storage health monitor stopped")?;
     }
 }
 
@@ -163,19 +84,6 @@ pub fn launch_socket_server(ctrl_port: u16) {
     }));
 }
 
-pub async fn build_ciphernode(
-    config: &mut NodeConfig,
-    peers: Vec<String>,
-    bootstrap: bool,
-) -> Result<CiphernodeHandle> {
-    // add cli peers to the config
-    config.add_peers(peers)?;
-
-    let node = e3_entrypoint::start::execute(config, bootstrap).await?;
-
-    Ok(node)
-}
-
 pub fn shutdown_signal() -> impl std::future::Future<Output = ()> {
     let mut sigint =
         signal(SignalKind::interrupt()).expect("Failed to create SIGINT signal stream");
@@ -187,50 +95,5 @@ pub fn shutdown_signal() -> impl std::future::Future<Output = ()> {
             _ = sigint.recv() => info!("SIGINT received"),
             _ = sigterm.recv() => info!("SIGTERM received"),
         }
-    }
-}
-
-pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) -> Result<()> {
-    info!("initiating graceful shutdown...");
-
-    let result = match node {
-        Some(node) => node.shutdown(NODE_SHUTDOWN_DEADLINE).await,
-        None => Ok(()),
-    };
-
-    if let Some(logs) = e3_logger::LogCollector::global() {
-        logs.flush();
-    }
-
-    match result {
-        Ok(()) => {
-            info!("Graceful shutdown barrier complete");
-            Ok(())
-        }
-        Err(error) => {
-            error!(%error, "Graceful shutdown failed; process will exit unsuccessfully");
-            Err(error)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn persistence_failure_is_reported_after_publish() -> Result<()> {
-        let (signal, mut health) = tokio::sync::watch::channel(None);
-        let failure = wait_for_persistence_failure(&mut health);
-        tokio::pin!(failure);
-        assert!(
-            tokio::time::timeout(std::time::Duration::ZERO, &mut failure)
-                .await
-                .is_err()
-        );
-
-        signal.send_replace(Some("append failed".to_string()));
-        assert_eq!(failure.await?, "append failed");
-        Ok(())
     }
 }

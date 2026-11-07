@@ -25,6 +25,7 @@ mod manifest;
 mod net;
 mod net_get_peer_id;
 mod node;
+mod node_v2;
 mod nodes;
 mod nodes_daemon;
 mod nodes_down;
