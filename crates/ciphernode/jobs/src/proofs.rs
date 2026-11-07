@@ -9,7 +9,6 @@
 
 use crate::{trbfv, Blobs, JobError, Jobs};
 use alloy_primitives::{keccak256, B256};
-use e3_zk_prover::Proof;
 use e3_protocol::{
     accusation::{disputed_proof, Fault, Verdict},
     node::CryptoParams,
@@ -18,6 +17,7 @@ use e3_protocol::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::CircuitName;
+use e3_zk_prover::Proof;
 use e3_zk_prover::{Provable, ZkProver};
 use num_bigint::BigInt;
 use rayon::{ThreadPool, ThreadPoolBuilder};

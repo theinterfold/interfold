@@ -4185,7 +4185,6 @@ dependencies = [
  "num-bigint 0.5.1",
  "petname",
  "rand 0.9.5",
- "rand_chacha 0.9.0",
  "serde",
  "tokio",
  "tracing",

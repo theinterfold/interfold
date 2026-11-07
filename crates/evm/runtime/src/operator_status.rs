@@ -9,10 +9,9 @@
 mod scan_cache;
 
 use crate::{
-    adapters::log_fetcher::{fetch_logs_adapting, LogProvider},
     contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold},
-    domain::reorg::confirmed_head,
     helpers::get_current_timestamp_from_provider,
+    log_fetcher::{fetch_logs_adapting, LogProvider},
     ProviderConfig,
 };
 use alloy::{
@@ -302,7 +301,10 @@ async fn tracked_obligations<P: Provider + Clone>(
 /// The confirmed head, named by its hash: two branches hold different states at one height, and a
 /// load-balanced endpoint can serve both, so reads at one number can see two states.
 async fn confirmed_block<P: Provider>(provider: &P, confirmations: u64) -> anyhow::Result<BlockId> {
-    let number = confirmed_head(provider.get_block_number().await?, confirmations);
+    let number = provider
+        .get_block_number()
+        .await?
+        .saturating_sub(confirmations);
     let block = provider
         .get_block_by_number(number.into())
         .await?
@@ -325,7 +327,10 @@ async fn scan_open_obligations<L: LogProvider>(
     key: &ScanKey,
     scan: &CommitteeScan,
 ) -> anyhow::Result<BTreeMap<U256, Address>> {
-    let head = confirmed_head(provider.fetch_block_number().await?, scan.confirmations);
+    let head = provider
+        .fetch_block_number()
+        .await?
+        .saturating_sub(scan.confirmations);
     let mut saved = scan
         .cache_dir
         .as_deref()

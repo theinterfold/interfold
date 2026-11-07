@@ -8,7 +8,7 @@ mod common;
 use common::shares;
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_crypto::Cipher;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
@@ -16,13 +16,11 @@ use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet};
 use e3_test_support::create_shared_rng_from_u64;
 use e3_trbfv::{
-    calculate_decryption_share::{
-        CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
-    },
+    calculate_decryption_share::{calculate_decryption_share, CalculateDecryptionShareRequest},
     calculate_threshold_decryption::{
-        CalculateThresholdDecryptionRequest, CalculateThresholdDecryptionResponse,
+        calculate_threshold_decryption, CalculateThresholdDecryptionRequest,
     },
-    TrBFVConfig, TrBFVRequest, TrBFVResponse,
+    TrBFVConfig,
 };
 use e3_utils::{to_ordered_vec, ArcBytes};
 use fhe_traits::Serialize;
@@ -82,19 +80,17 @@ async fn test_trbfv_isolation() -> Result<()> {
     for party_id in [1, 4, 2] {
         let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
-        let TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
-            d_share_poly,
-        }) = TrBFVRequest::CalculateDecryptionShare(CalculateDecryptionShareRequest {
-            name: format!("party_id({})", party_id),
-            sk_poly_sum: sk_poly_sum.clone(),
-            trbfv_config: trbfv_config.clone(),
-            es_poly_sum: es_poly_sum.clone(),
-            ciphertexts: ciphertexts.clone(),
-        })
-        .execute(&rng, &cipher)?
-        else {
-            bail!("wrong decryption-share response variant")
-        };
+        let d_share_poly = calculate_decryption_share(
+            &cipher,
+            CalculateDecryptionShareRequest {
+                name: format!("party_id({})", party_id),
+                sk_poly_sum: sk_poly_sum.clone(),
+                trbfv_config: trbfv_config.clone(),
+                es_poly_sum: es_poly_sum.clone(),
+                ciphertexts: ciphertexts.clone(),
+            },
+        )?
+        .d_share_poly;
 
         // store the decryption shares in a hash map indexed by party_id
         decryption_shares.insert(party_id as u64, d_share_poly);
@@ -104,17 +100,12 @@ async fn test_trbfv_isolation() -> Result<()> {
     let d_share_polys: Vec<(u64, Vec<ArcBytes>)> = decryption_shares.into_iter().collect();
 
     // Data preparation sorts the decryption shares by party_id.
-    let TrBFVResponse::CalculateThresholdDecryption(CalculateThresholdDecryptionResponse {
-        plaintext,
-    }) = TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
+    let plaintext = calculate_threshold_decryption(CalculateThresholdDecryptionRequest {
         ciphertexts,
         trbfv_config: trbfv_config.clone(),
         d_share_polys,
-    })
-    .execute(&rng, &cipher)?
-    else {
-        bail!("wrong plaintext response variant")
-    };
+    })?
+    .plaintext;
 
     let results = plaintext
         .into_iter()

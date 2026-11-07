@@ -8,4 +8,3 @@ pub mod fence;
 pub mod helpers;
 pub mod nodes;
 pub mod password;
-pub mod store_record;

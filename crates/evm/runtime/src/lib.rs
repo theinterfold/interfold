@@ -7,13 +7,13 @@
 //! What the CLI's chain commands share: providers with the operator's RPC settings, the scan of
 //! the committees that hold an operator's collateral, and readable contract errors.
 
-mod adapters;
-mod domain;
+pub mod error_decoder;
 pub mod helpers;
+mod log_fetcher;
+mod log_window;
 mod operator_status;
 
 use e3_evm_contracts as contracts;
 
-pub use domain::error_decoder;
 pub use helpers::*;
 pub use operator_status::*;

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::domain::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
+use crate::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
