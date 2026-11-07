@@ -1,26 +1,15 @@
 # Integration Tests
 
-You can run these tests like so:
-
-Run all tests:
+Run the v2 scenario (a local chain, five nodes, one Minimum committee, one decryption):
 
 ```
 pnpm test:integration
 ```
 
-Run an individual test:
+[v2.sh](v2.sh) says how to run its variants: the operators' CLI (`V2_CLI=true`), a restart of the
+decryption aggregator (`V2_RESTART=true`), and real proofs (`V2_NOIR_DIR`).
 
-```
-pnpm test:integration <test-name>
-```
-
-`<test-name>` is `base`, `persist`, `net`, or `prebuild` (build fixtures only; used by CI).
-
-Eg.
-
-```
-pnpm test:integration net
-```
+`pnpm test:integration prebuild` builds the fixtures that CI's proof jobs download.
 
 The local `ciphernode:admin-add` task funds each operator as its own bond owner. This gives the
 committee distinct owners under the on-chain seat cap. To test shared ownership, pass

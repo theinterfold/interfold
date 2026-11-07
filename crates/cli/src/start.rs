@@ -52,12 +52,7 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             }
         };
     }
-    if config.skip_proof_aggregation() && !cfg!(feature = "test-only-skip-proof-aggregation") {
-        bail!(
-            "`skip_proof_aggregation` is test/CI-only and this binary was built without the \
-             `test-only-skip-proof-aggregation` Cargo feature"
-        );
-    }
+    validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
     let node = node_v2::config(&config).await?;
     info!(
         "LAUNCHING CIPHERNODE: ({}/{})",
@@ -71,6 +66,16 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             Ok(())
         }
     }
+}
+
+fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
+    if skip_proof_aggregation && !cfg!(feature = "test-only-skip-proof-aggregation") {
+        bail!(
+            "`skip_proof_aggregation` is test/CI-only and this binary was built without the \
+             `test-only-skip-proof-aggregation` Cargo feature"
+        );
+    }
+    Ok(())
 }
 
 /// Launch a socket server to read RemoteCli commands
@@ -103,5 +108,20 @@ pub fn shutdown_signal() -> impl std::future::Future<Output = ()> {
             _ = sigint.recv() => info!("SIGINT received"),
             _ = sigterm.recv() => info!("SIGTERM received"),
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "test-only-skip-proof-aggregation")))]
+mod tests {
+    use super::validate_proof_aggregation_mode;
+
+    #[test]
+    fn production_build_rejects_proof_aggregation_skip() {
+        let error = validate_proof_aggregation_mode(true)
+            .expect_err("production build must reject proof aggregation skipping");
+        assert!(error
+            .to_string()
+            .contains("test-only-skip-proof-aggregation"));
+        assert!(validate_proof_aggregation_mode(false).is_ok());
     }
 }

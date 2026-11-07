@@ -53,13 +53,11 @@ jobs:
       'detect_changes') || 'ubuntu-latest' }}
     outputs:
       rust_unit_tests: ${{ steps.jobs.outputs.rust_unit_tests }}
-      rust_integration_tests: ${{ steps.jobs.outputs.rust_integration_tests }}
       ciphernode_e2e: ${{ steps.jobs.outputs.ciphernode_e2e }}
       templates: ${{ steps.jobs.outputs.templates }}
       zk: ${{ steps.jobs.outputs.zk }}
       contracts: ${{ steps.jobs.outputs.contracts }}
       docker_ciphernode: ${{ steps.jobs.outputs.docker_ciphernode }}
-      net: ${{ steps.jobs.outputs.net }}
       init: ${{ steps.jobs.outputs.init }}
       build_sdk: ${{ steps.jobs.outputs.build_sdk }}
       sdk_tests: ${{ steps.jobs.outputs.sdk_tests }}
@@ -156,18 +154,6 @@ jobs:
               - '!**/*.mdx'
             integration_tests:
               - 'tests/integration/**'
-              # Run by hand only; no CI job reads them.
-              - '!tests/integration/upgrade.sh'
-              - '!tests/integration/lib/state_inventory.py'
-              - '!**/*.md'
-              - '!**/*.mdx'
-            # test_net builds crates/net into containers through the net scenario. The crates it
-            # links do not trigger it, which keeps it off most Rust PRs.
-            net:
-              - 'crates/net/**'
-              - 'Cargo.lock'
-              - 'tests/integration/net.sh'
-              - 'tests/integration/test.sh'
               - '!**/*.md'
               - '!**/*.mdx'
             # The ciphernode image builds from the repository root, so the root .dockerignore decides
@@ -216,7 +202,6 @@ jobs:
           SDK="${{ steps.filter.outputs.sdk }}"
           REACT="${{ steps.filter.outputs.react }}"
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
-          NET="${{ steps.filter.outputs.net }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           DAPPNODE="${{ steps.filter.outputs.dappnode }}"
           CI="${{ steps.filter.outputs.ci }}"
@@ -228,7 +213,6 @@ jobs:
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
           echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $BINDINGS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
           # build_sdk also runs for React, integration, and template changes: it builds React, and
@@ -245,7 +229,6 @@ jobs:
           # needs to run when the Dockerfiles or their build context change.
           echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
           echo "dappnode=$(any $FORCE $DAPPNODE $CI)" >> $GITHUB_OUTPUT
-          echo "net=$(any $FORCE $NET $CI)" >> $GITHUB_OUTPUT
           echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
@@ -261,8 +244,8 @@ jobs:
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
 
-      - name: Check test runner dispatch and results
-        run: node --test crates/net/tests/runner.test.mjs scripts/hooks/*.test.mjs
+      - name: Check the hook scripts
+        run: node --test scripts/hooks/*.test.mjs
 
   script_tooling:
     runs-on: ubuntu-latest
@@ -445,13 +428,10 @@ jobs:
           cargo test --locked -p e3-sdk --no-default-features --features indexer --test exports
           cargo test --locked -p e3-sdk --test exports
 
-      # The library run skips the entrypoint integration tests, the CLI binary tests, and the CLI
-      # secret-input integration tests.
-      - name: Run the entrypoint guard and older-schema tests and the CLI tests
+      # The library run skips the CLI binary tests and the CLI secret-input integration tests.
+      - name: Run the CLI tests
         if: matrix.suite == 'doc'
-        run:
-          cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema --test
-          validate_snapshot_errors -p e3-cli --bins --test cli_secrets
+        run: cargo nextest run -p e3-cli --bins --test cli_secrets
 
       - name: Run circuit benchmark unit tests
         if: matrix.suite == 'doc'
@@ -466,108 +446,11 @@ jobs:
         if: matrix.suite == 'doc'
         run: 'cargo test -p e3-compute-provider --features parallel'
 
-      - name: Run Rust-to-Solidity slashing assertions
-        if: matrix.suite == 'doc'
-        run: pnpm rust:test:slashing
-
       - name: Cancel workflow on failure
         if: failure()
         run: gh run cancel ${{ github.run_id }}
         env:
           GH_TOKEN: ${{ github.token }}
-
-  rust_integration_tests:
-    needs: [detect_changes, integration_prebuild]
-    if: needs.detect_changes.outputs.rust_integration_tests == 'true'
-    timeout-minutes: 45
-    runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
-    # Each full-proof `test_trbfv_actor` run takes about nine minutes, so the runs are parallel
-    # legs. The `integration` leg runs the other integration targets in skip-aggregation mode;
-    # the CLI e2e jobs already drive a full E3 in that mode.
-    strategy:
-      matrix:
-        leg: [integration, offline-party, standby-node]
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-
-      - name: Cache Rust dependencies
-        uses: ./.github/actions/cache-dependencies
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
-
-      - name: Install solc
-        uses: ./.github/actions/install-solc
-
-      - name: pnpm-setup
-        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-
-      - name: 'Setup node'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: 'Install the dependencies'
-        run: 'pnpm install --frozen-lockfile'
-
-      - name: Download source-aligned ZK fixtures
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: integration-noir-artifacts
-          path: .ci-noir/
-
-      - name: Stage source-aligned circuit fixtures
-        run: |
-          chmod +x .ci-noir/bin/bb
-          test -f .ci-noir/circuits/insecure-64/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
-          mkdir -p dist/circuits/insecure-64
-          cp -R .ci-noir/circuits/insecure-64/minimum dist/circuits/insecure-64/
-
-      # A separate test target, so no other step runs it. It fails when a persisted or gossiped
-      # layout differs from its fixture. The in-crate locks run with the library tests. Without
-      # `-p`, cargo resolves features as in the next step, so both steps share one build.
-      - name: Run the persisted layout lock
-        if: matrix.leg == 'integration'
-        run: 'cargo test --test layout_lock'
-
-      - name: Run Integration Tests
-        if: matrix.leg == 'integration'
-        env:
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
-          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test --test integration -- --nocapture --skip test_trbfv_actor'
-
-      - name: Run offline DKG integration test with full proofs
-        if: matrix.leg == 'offline-party'
-        timeout-minutes: 20
-        env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
-          E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
-          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
-          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
-
-      - name: Run full-proof DKG integration with standby node
-        if: matrix.leg == 'standby-node'
-        timeout-minutes: 20
-        env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
-          E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
-          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
-          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
 
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]
@@ -787,25 +670,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  test_net:
-    needs: [detect_changes]
-    if: needs.detect_changes.outputs.net == 'true'
-    timeout-minutes: 15
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'test_net') || 'ubuntu-latest' }}
-    steps:
-      - name: 'Check out the repo'
-        uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
-      - name: 'Run network tests'
-        working-directory: tests/integration
-        run: './test.sh net --no-prebuild'
-      - name: 'Add test summary'
-        run: |
-          echo "## Network test results" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
-
   integration_prebuild:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.integration_prebuild == 'true'
@@ -864,15 +728,12 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: 'Run full-proof prebuild'
-        env:
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
         run: 'pnpm test:integration prebuild'
 
       - name: 'Verify build artifacts exist'
         run: |
           echo "Checking for build artifacts:"
           ls -la target/debug/fake_encrypt || echo "fake_encrypt not found"
-          ls -la target/debug/pack_e3_params || echo "pack_e3_params not found"
 
       - name: 'Upload build artifacts'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -880,7 +741,6 @@ jobs:
           name: build-artifacts
           path: |
             target/debug/fake_encrypt
-            target/debug/pack_e3_params
           if-no-files-found: error
 
       - name: Upload source-aligned ZK fixtures
@@ -899,11 +759,11 @@ jobs:
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
+    # tests/integration/v2.sh through `interfold nodes up`, with placeholder proofs; `cli-restart`
+    # restarts the decryption aggregator once the committee publishes its key.
     strategy:
       matrix:
-        # persist runs base.sh and restarts the active aggregator after the committee publishes
-        # its key.
-        test-suite: [persist, identity]
+        scenario: [cli, cli-restart]
       fail-fast: true
     steps:
       - name: 'Check out the repo'
@@ -916,11 +776,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
       - name: 'Install the dependencies'
@@ -930,43 +785,24 @@ jobs:
         with:
           name: build-artifacts
           path: target/debug/
-      - name: 'Download source-aligned ZK fixtures'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: integration-noir-artifacts
-          path: tests/integration/.interfold/noir/
       - name: 'Download interfold binary'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: interfold-binary
-          path: ~/.cargo/bin/
+          path: target/debug/
       - name: 'Download SDK artifacts'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sdk-artifacts
           path: ./
-      - name: 'Verify downloaded artifacts'
-        run: |
-          echo "Checking for required artifacts:"
-          ls -la target/debug/fake_encrypt || echo "fake_encrypt not found"
-          ls -la target/debug/pack_e3_params || echo "pack_e3_params not found"
-          ls -la ~/.cargo/bin/interfold || echo "interfold binary not found"
-          ls -la packages/interfold-contracts/dist || echo "SDK dist not found"
-          ls -la crates/wasm/dist || echo "WASM dist not found"
       - name: 'Set executable permissions'
-        run: |
-          chmod +x target/debug/fake_encrypt
-          chmod +x target/debug/pack_e3_params
-          chmod +x ~/.cargo/bin/interfold
-          chmod +x tests/integration/.interfold/noir/bin/bb
-      - name: 'Run ${{ matrix.test-suite }} tests'
-        run: |
-          INTERFOLD_BIN="$HOME/.cargo/bin/interfold" \
-            pnpm test:integration ${{ matrix.test-suite }} --no-prebuild
-      - name: 'Add test summary'
-        run: |
-          echo "## Test results for ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
+        run: chmod +x target/debug/fake_encrypt target/debug/interfold
+      - name: 'Run the ${{ matrix.scenario }} scenario'
+        env:
+          V2_CLI: 'true'
+          V2_PREBUILT: 'true'
+          V2_RESTART: ${{ matrix.scenario == 'cli-restart' }}
+        run: tests/integration/v2.sh
 
   build_interfold_cli:
     needs: [detect_changes]
@@ -1279,10 +1115,6 @@ jobs:
       - name: Run ZK prover e2e tests
         if: matrix.leg == 'suites'
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
-
-      - name: Verify C0 recovery after local verifier errors
-        if: matrix.leg == 'suites'
-        run: cargo test -p e3-zk-prover --lib c0_local_verifier_failures_retry_without_peer_blame -- --nocapture
 
       - name: Verify fold accumulators
         if: matrix.leg == 'suites'

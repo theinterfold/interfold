@@ -15,6 +15,8 @@
 # file, beside a bootstrap node. The restart is then `interfold nodes restart`, which stops the node
 # with SIGTERM.
 #
+# With V2_PREBUILT=true it builds nothing and runs the binaries already in target/debug, as CI does.
+#
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
 set -Eeuo pipefail
@@ -83,14 +85,16 @@ until_ok() {
 rm -rf "$OUT"
 mkdir -p "$AVAILABILITY_DIR"
 
-heading "Build the v2 node and the requester's encryption tool"
-if [[ "$CLI" == "true" ]]; then
-  # Without the feature the CLI refuses a configuration that skips proofs.
-  (cd "$ROOT_DIR" && cargo build --bin interfold --features e3-cli/test-only-skip-proof-aggregation)
-else
-  (cd "$ROOT_DIR" && cargo build --bin e3-node)
+if [[ "${V2_PREBUILT:-false}" != "true" ]]; then
+  heading "Build the v2 node and the requester's encryption tool"
+  if [[ "$CLI" == "true" ]]; then
+    # Without the feature the CLI refuses a configuration that skips proofs.
+    (cd "$ROOT_DIR" && cargo build --bin interfold --features e3-cli/test-only-skip-proof-aggregation)
+  else
+    (cd "$ROOT_DIR" && cargo build --bin e3-node)
+  fi
+  (cd "$ROOT_DIR" && cargo build -p e3-tests --bin fake_encrypt)
 fi
-(cd "$ROOT_DIR" && cargo build -p e3-tests --bin fake_encrypt)
 
 heading "Start the chain and the availability layer"
 anvil --host 127.0.0.1 --chain-id 31337 --block-time 1 \

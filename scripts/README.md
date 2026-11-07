@@ -19,8 +19,6 @@ with the capability they maintain.
 | [hooks/](hooks/README.md)                            | Shared helpers for `.husky/` entry points.                                                        |
 | [blueprint/](blueprint/README.md)                    | Architecture navigation, documentation checks, and PR previews.                                   |
 
-Network runner regressions live beside [their owner](../crates/net/tests/run.sh).
-
 ## Tests
 
 Use `pnpm test:scripts`, `pnpm test:release`, `pnpm test:circuit-tooling`, and `pnpm test:harnesses`

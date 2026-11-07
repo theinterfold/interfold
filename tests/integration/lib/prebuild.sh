@@ -10,7 +10,7 @@ VERSIONS_JSON="${ROOT_DIR}/crates/zk/prover/versions.json"
 echo ""
 echo "PREBUILDING BINARIES..."
 echo ""
-(cd "$ROOT_DIR" && cargo build --locked -p e3-tests --bin fake_encrypt --bin pack_e3_params)
+(cd "$ROOT_DIR" && cargo build --locked -p e3-tests --bin fake_encrypt)
 echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""
@@ -38,38 +38,28 @@ echo ""
 echo "PREPARING ZK CIRCUITS..."
 echo ""
 
-# The ciphernode generates leaf proofs even when recursive aggregation is skipped.
-# Full-proof runs reuse published artifacts; other runs compile their selected circuits.
+# The proof jobs use the published artifacts without requiring a local source-hash match.
 rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
+(cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
+(cd "$ROOT_DIR" && pnpm build:circuits \
+  --preset insecure-64 \
+  --committee minimum \
+  --hydrate-bin-only \
+  --no-clean-targets)
+(cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
+for preset in insecure-64 secure-8192; do
+  mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
+  cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
+    "${INTEGRATION_NOIR}/circuits/${preset}/"
+done
+# `--check`: verify the committed Honk Solidity verifiers in
+# packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
+# freshly-built circuits' recursive VKs. Fails loudly on drift instead of
+# silently rewriting committed contracts mid-test. If this errors, run
+# `pnpm generate:verifiers --write` and commit the diff.
+(cd "$ROOT_DIR" && pnpm generate:verifiers --check --no-compile --no-clean-targets)
 
-if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  # Full-proof tests use published artifacts without requiring a local source-hash match.
-  (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
-  (cd "$ROOT_DIR" && pnpm build:circuits \
-    --preset insecure-64 \
-    --committee minimum \
-    --hydrate-bin-only \
-    --no-clean-targets)
-  (cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
-  for preset in insecure-64 secure-8192; do
-    mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
-    cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
-      "${INTEGRATION_NOIR}/circuits/${preset}/"
-  done
-  # `--check`: verify the committed Honk Solidity verifiers in
-  # packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
-  # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
-  # silently rewriting committed contracts mid-test. If this errors, run
-  # `pnpm generate:verifiers --write` and commit the diff.
-  (cd "$ROOT_DIR" && pnpm generate:verifiers --check --no-compile --no-clean-targets)
-else
-  # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
-  # still execute. Build only those two source groups for the fast CI profile.
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-64 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
-fi
-
-source "$SCRIPT_DIR/utils.sh"
 (cd "$ROOT_DIR" && pnpm store:circuits checksums --dir "${INTEGRATION_NOIR}/circuits")
 CIRCUITS_MAP="$(jq '.files | with_entries(.value = {file: .key, checksum: .value})' \
   "${INTEGRATION_NOIR}/circuits/checksums.json")"
@@ -85,10 +75,6 @@ jq -n \
   > "${INTEGRATION_NOIR}/version.json"
 cp "$(command -v bb)" "${INTEGRATION_NOIR}/bin/bb"
 chmod +x "${INTEGRATION_NOIR}/bin/bb"
-
-# The upgrade reset scenario keeps this output for the candidate. The stamp lets it refuse a noir
-# folder that a released binary's setup replaced.
-noir_digest "$INTEGRATION_NOIR" >"${INTEGRATION_DIR}/.interfold/prebuild-noir.sha256"
 
 echo "Staged source-aligned integration circuits under ${INTEGRATION_NOIR}/circuits"
 echo "Pinned noir version.json (bb=${REQUIRED_BB}, circuits=${REQUIRED_CIRCUITS})"
