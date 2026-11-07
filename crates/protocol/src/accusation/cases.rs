@@ -433,25 +433,29 @@ impl Accusations {
         submissions.chain(windows).min()
     }
 
-    /// The chain expelled `member`: its accusations end, and its votes no longer count. A window
-    /// that falls short of H votes again waits for another vote before this node submits it.
-    pub(crate) fn expel(&mut self, member: Address) {
+    /// The chain expelled `member`: its accusations end, and its votes no longer count. The
+    /// contract rejects a slash that names an expelled voter, so a window that lost the member's
+    /// vote goes again with the votes left, once H members voted, even if this node sent it.
+    pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
         self.expelled.insert(member);
         self.cases.retain(|_, case| case.accused != member);
-        for votes in self
-            .cases
-            .values_mut()
-            .map(|case| &mut case.votes)
-            .chain(self.early.values_mut())
-        {
+        let mut rearmed = Vec::new();
+        for (ballot, case) in &mut self.cases {
+            if case.votes.remove(&member).is_some() {
+                case.submitted = false;
+                case.submit_at = None;
+                rearmed.push(*ballot);
+            }
+        }
+        for votes in self.early.values_mut() {
             votes.remove(&member);
         }
         self.early.retain(|_, votes| !votes.is_empty());
-        for case in self.cases.values_mut() {
-            if !case.submitted && case.votes.len() < self.quorum {
-                case.submit_at = None;
-            }
+        let mut effects = Vec::new();
+        for ballot in rearmed {
+            effects.extend(self.reached(now, ballot));
         }
+        effects
     }
 
     /// Whether the window `message` belongs to is still open, so sending it again can help.

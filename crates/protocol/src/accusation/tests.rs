@@ -483,4 +483,26 @@ mod cases {
         let effects = node.step(NOW + 40, from(2, AccusationMessage::Vote(vote(2, NOW))));
         assert_eq!(slashes(&effects), [(address(1), 2)]);
     }
+
+    /// A slash this node already sent can wait for the chain while a voter in it is expelled; the
+    /// contract rejects it then, so the window goes again with the votes left once H voted.
+    #[test]
+    fn a_sent_slash_that_loses_a_vote_to_an_expulsion_goes_again() {
+        let mut node = member_of(ME, &[1, 2, 33]);
+        node.step(NOW, accusation(33, NOW, 1));
+        let effects = node.step(NOW, verified(true));
+        node.step(NOW, sign(ME, signing(&effects)));
+        assert_eq!(
+            slashes(&node.step(NOW + 30, Input::Tick)),
+            [(address(1), 2)]
+        );
+        let expelled = ChainFact::MemberExpelled {
+            e3: e3(1),
+            member: address(33),
+        };
+        node.step(NOW + 35, chain(20, expelled));
+        assert!(slashes(&node.step(NOW + 60, Input::Tick)).is_empty());
+        let effects = node.step(NOW + 70, from(2, AccusationMessage::Vote(vote(2, NOW))));
+        assert_eq!(slashes(&effects), [(address(1), 2)]);
+    }
 }

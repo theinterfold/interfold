@@ -498,7 +498,7 @@ impl E3 {
             effects.extend(decryption.expel(now, member));
         }
         if let Some(accusations) = &mut self.accusations {
-            accusations.expel(member);
+            effects.extend(accusations.expel(now, member));
         }
         self.sent(now, effects)
     }
