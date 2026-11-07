@@ -5,13 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::node_state;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
-use std::collections::BTreeSet;
+use e3_entrypoint::fence::ProcessFence;
 use std::env;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 /// Delete the data and configuration of the local node set.
@@ -63,35 +61,18 @@ pub(crate) async fn purge(
             refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
         }
     }
-    // Everything under the data folder goes, so every node there is fenced and every journal there
-    // checked, at any depth: a profile's `data_dir` can nest a node, and a profile removed from the
-    // configuration leaves its folder behind.
-    let mut contents = Contents::default();
-    scan(
-        &dir.join(".interfold/data"),
-        &mut BTreeSet::new(),
-        &mut contents,
-    )?;
-    let canonical =
-        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
-    for lock in &contents.locks {
-        if !held.contains(&canonical(lock)) {
-            fences.push(ProcessFence::acquire_at(lock, &lock.display().to_string())?);
-        }
-    }
-    let named: BTreeSet<PathBuf> = nodes
-        .iter()
-        .map(|node| canonical(&node.node_data_dir()))
-        .collect();
-    for folder in &contents.nodes {
-        if !allow_active_e3s && !named.contains(&canonical(folder)) {
-            refusals.push(format!(
+    // Everything under the data folder goes: a profile's `data_dir` can nest a node anywhere in
+    // it, and a profile removed from the configuration leaves its folder behind.
+    let named: Vec<PathBuf> = nodes.iter().map(NodeConfig::node_data_dir).collect();
+    let unchecked = node_state::guard(&dir.join(".interfold/data"), &named, &mut fences)?;
+    if !allow_active_e3s {
+        refusals.extend(unchecked.iter().map(|folder| {
+            format!(
                 "{} holds the journal of a node that no profile in the configuration names, so \
                  its E3s cannot be checked (add the profile back to check them)",
                 folder.display()
-            ));
-        }
+            )
+        }));
     }
     if !refusals.is_empty() {
         bail!(
@@ -104,51 +85,6 @@ pub(crate) async fn purge(
         let folder = dir.join(folder);
         if folder.exists() {
             std::fs::remove_dir_all(&folder)?;
-        }
-    }
-    Ok(())
-}
-
-/// What a folder holds at any depth: the node folders, each with its journal at
-/// `v2/journal.redb`, and the lock files of the nodes that use them.
-#[derive(Default)]
-struct Contents {
-    nodes: Vec<PathBuf>,
-    locks: Vec<PathBuf>,
-}
-
-/// Every folder counts as a node folder when its journal exists, also inside another node's
-/// folder. The walk follows links to folders, since a node's state may live elsewhere behind one,
-/// and visits each folder once, since a link may point back up. The deletion follows no link.
-fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if !visited.insert(std::fs::canonicalize(dir)?) {
-        return Ok(());
-    }
-    if node_state::journal_in(dir).exists() {
-        contents.nodes.push(dir.to_path_buf());
-    }
-    for entry in entries {
-        let entry = entry?;
-        let (path, kind) = (entry.path(), entry.file_type()?);
-        if entry.file_name() == LOCK_FILE_NAME {
-            contents.locks.push(path);
-        } else if kind.is_dir() {
-            scan(&path, visited, contents)?;
-        } else if kind.is_symlink() {
-            match std::fs::metadata(&path) {
-                Ok(target) if target.is_dir() => scan(&path, visited, contents)?,
-                Ok(_) => {}
-                // A link to nothing holds no node.
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error).with_context(|| format!("reading {}", path.display()))
-                }
-            }
         }
     }
     Ok(())

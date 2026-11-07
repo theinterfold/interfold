@@ -13,9 +13,11 @@ use anyhow::{Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_engine::Engine;
+use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use e3_journal::Journal;
 use e3_protocol::{node::Node, E3Id};
 use std::{
+    collections::BTreeSet,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -53,4 +55,75 @@ pub async fn held_e3s(config: &NodeConfig) -> Result<Vec<E3Id>> {
     let journal = Journal::open(&path)?;
     let (engine, _) = Engine::open(journal, Node::new(operator), u64::MAX)?;
     Ok(engine.machine().held().copied().collect())
+}
+
+/// Fences every node whose lock is under `root` and returns the node folders under `root`, at any
+/// depth, that `checked` does not name: whatever deletes `root` deletes their E3s unchecked. A
+/// fence in `fences` already covers its lock.
+pub fn guard(
+    root: &Path,
+    checked: &[PathBuf],
+    fences: &mut Vec<ProcessFence>,
+) -> Result<Vec<PathBuf>> {
+    let mut contents = Contents::default();
+    scan(root, &mut BTreeSet::new(), &mut contents)?;
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
+    for lock in &contents.locks {
+        if !held.contains(&canonical(lock)) {
+            fences.push(ProcessFence::acquire_at(lock, &lock.display().to_string())?);
+        }
+    }
+    let checked: BTreeSet<PathBuf> = checked.iter().map(|folder| canonical(folder)).collect();
+    Ok(contents
+        .nodes
+        .into_iter()
+        .filter(|folder| !checked.contains(&canonical(folder)))
+        .collect())
+}
+
+/// What a folder holds at any depth: the node folders, each with its journal at
+/// `v2/journal.redb`, and the lock files of the nodes that use them.
+#[derive(Default)]
+struct Contents {
+    nodes: Vec<PathBuf>,
+    locks: Vec<PathBuf>,
+}
+
+/// Every folder counts as a node folder when its journal exists, also inside another node's
+/// folder. The walk follows links to folders, since a node's state may live elsewhere behind one,
+/// and visits each folder once, since a link may point back up. The deletion follows no link.
+fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !visited.insert(std::fs::canonicalize(dir)?) {
+        return Ok(());
+    }
+    if journal_in(dir).exists() {
+        contents.nodes.push(dir.to_path_buf());
+    }
+    for entry in entries {
+        let entry = entry?;
+        let (path, kind) = (entry.path(), entry.file_type()?);
+        if entry.file_name() == LOCK_FILE_NAME {
+            contents.locks.push(path);
+        } else if kind.is_dir() {
+            scan(&path, visited, contents)?;
+        } else if kind.is_symlink() {
+            match std::fs::metadata(&path) {
+                Ok(target) if target.is_dir() => scan(&path, visited, contents)?,
+                Ok(_) => {}
+                // A link to nothing holds no node.
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("reading {}", path.display()))
+                }
+            }
+        }
+    }
+    Ok(())
 }

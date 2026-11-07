@@ -24,7 +24,8 @@ pub enum NodeCommands {
     /// on it. The keys live in the keystore, apart from the data, so they stay.
     ///
     /// Refuses while the node runs, and while it holds an E3 that has not ended: the chain cannot
-    /// restore a deleted key share.
+    /// restore a deleted key share. Refuses too where it cannot tell: data in an older layout,
+    /// which this binary cannot read, and another node's journal inside the folder.
     ResetData {
         /// Confirm the deletion.
         #[arg(long)]
@@ -103,14 +104,29 @@ async fn reset_data(
         );
         return Ok(());
     }
-    let _fence = ProcessFence::acquire(&config.db_file(), &config.name())?;
+    let mut fences = vec![ProcessFence::acquire(&config.db_file(), &config.name())?];
     if !folder.exists() {
         log!(out, "The node has no data. Nothing to reset.");
         return Ok(());
     }
-    // This binary cannot read data of an older layout, so it cannot list its E3s; the release
-    // that changed the layout is the one that reset it.
-    if !allow_active_e3s && !older {
+    // Another node's `data_dir` may sit inside this folder: it is fenced, and its journal checked.
+    let others = node_state::guard(&folder, &[config.node_data_dir()], &mut fences)?;
+    if !allow_active_e3s {
+        if let Some(other) = others.first() {
+            bail!(
+                "{} holds the journal of another node, whose E3s this command cannot check. \
+                 Move it out, or rerun with --allow-active-e3s after checking its E3s on chain.",
+                other.display()
+            );
+        }
+        // This binary cannot read data of an older layout, so it cannot list its E3s.
+        if older && node_state::journal_in(&config.node_data_dir()).exists() {
+            bail!(
+                "The data uses an older layout that this binary cannot read, so it cannot check \
+                 for E3s that have not ended. Check on chain that none of this node's E3s still \
+                 runs, then rerun with --allow-active-e3s."
+            );
+        }
         let held = node_state::held_e3s(config).await?;
         if !held.is_empty() {
             let held: Vec<String> = held.iter().map(ToString::to_string).collect();
@@ -129,4 +145,68 @@ async fn reset_data(
         config.name()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reset_data;
+    use crate::node_state;
+    use anyhow::Result;
+    use e3_ciphernode_config::NodeConfig;
+    use e3_cli::app_config::load_config;
+    use e3_console::Console;
+
+    fn node(dir: &std::path::Path) -> Result<NodeConfig> {
+        let config_file = dir.join("config.yaml");
+        std::fs::write(&config_file, "node:\n  network: local\n")?;
+        Ok(load_config(
+            "_default",
+            Some(config_file.to_string_lossy().into_owned()),
+            None,
+        )?
+        .node)
+    }
+
+    async fn reset(config: &NodeConfig, allow_active_e3s: bool) -> Result<()> {
+        let (out, _messages) = Console::channel();
+        reset_data(out, config, true, allow_active_e3s, true).await
+    }
+
+    /// A journal in an older layout, which this binary cannot read, may hold E3s that have not
+    /// ended: the reset refuses unless told to go ahead.
+    #[tokio::test]
+    async fn a_journal_in_an_older_layout_is_kept_unless_the_reset_is_told() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = node(dir.path())?;
+        let folder = node_state::folder(&config);
+        std::fs::create_dir_all(&folder)?;
+        std::fs::write(folder.join("LAYOUT"), "0")?;
+        std::fs::write(node_state::journal_in(&config.node_data_dir()), b"")?;
+
+        let error = reset(&config, false).await.unwrap_err();
+        assert!(error.to_string().contains("older layout"), "{error:#}");
+        assert!(folder.exists());
+
+        reset(&config, true).await?;
+        assert!(!folder.exists());
+        Ok(())
+    }
+
+    /// Another node whose data folder sits inside this one's is not this command's to delete.
+    #[tokio::test]
+    async fn another_node_inside_the_folder_stops_the_reset() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = node(dir.path())?;
+        let folder = node_state::folder(&config);
+        std::fs::create_dir_all(&folder)?;
+        std::fs::write(folder.join("LAYOUT"), "0")?;
+        let other = node_state::journal_in(&folder.join("other"));
+        std::fs::create_dir_all(other.parent().unwrap())?;
+        std::fs::write(&other, b"")?;
+
+        let error = reset(&config, false).await.unwrap_err();
+        assert!(error.to_string().contains("other"), "{error:#}");
+        assert!(other.exists());
+        Ok(())
+    }
 }
