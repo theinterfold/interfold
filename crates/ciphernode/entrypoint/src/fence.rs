@@ -24,7 +24,7 @@
 //! it releases the lock.
 
 use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -98,25 +98,18 @@ impl ProcessFence {
                 format!("failed to create data directory for fence at {parent:?}")
             })?;
         }
-        // Taking the fence rewrites the lock file, which through a link would be another file.
-        match std::fs::symlink_metadata(lock_path) {
-            Ok(metadata) if !metadata.file_type().is_file() => bail!(
-                "the fence lock at {lock_path:?} is not a plain file; remove it, then try again"
-            ),
-            Err(error) if error.kind() != ErrorKind::NotFound => {
-                return Err(error)
-                    .with_context(|| format!("failed to read the fence lock at {lock_path:?}"));
-            }
-            _ => {}
+        // Taking the fence rewrites the lock file, which through a link would be another file: the
+        // open follows no link, and what it opened must be a plain file.
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
+        let mut file = options.open(lock_path).with_context(|| {
+            format!("failed to open fence lock file at {lock_path:?}; it must be a plain file")
+        })?;
+        if !file.metadata()?.is_file() {
+            bail!("the fence lock at {lock_path:?} is not a plain file; remove it, then try again");
         }
-
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock_path)
-            .with_context(|| format!("failed to open fence lock file at {lock_path:?}"))?;
 
         match file.try_lock() {
             Ok(()) => {}
@@ -177,7 +170,7 @@ mod tests {
         std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&target, &lock).unwrap();
         let error = ProcessFence::acquire_at(&lock, "node").unwrap_err();
-        assert!(error.to_string().contains("not a plain file"), "{error:#}");
+        assert!(error.to_string().contains("plain file"), "{error:#}");
         assert_eq!(std::fs::read(&target).unwrap(), b"key bytes");
     }
 

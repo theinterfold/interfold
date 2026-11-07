@@ -300,10 +300,7 @@ mod tests {
             let error = purge(&config, config_file.clone(), dir.path(), true)
                 .await
                 .unwrap_err();
-            assert!(
-                format!("{error:#}").contains("not a plain file"),
-                "{error:#}"
-            );
+            assert!(format!("{error:#}").contains("plain file"), "{error:#}");
             assert_eq!(std::fs::read(&outside)?, b"key bytes");
             std::fs::remove_file(&lock)?;
         }
