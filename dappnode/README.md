@@ -56,8 +56,9 @@ The reset keeps the operator key and the libp2p key, and the node then syncs aga
 This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.0, use the
 [one-off reset](https://docs.theinterfold.com/operate/upgrades#reset-node-state) instead.
 
-The reset refuses while the node holds an E3 that has not ended. The node then stays stopped, and
-the log lists each E3. Do the checks in
+The reset refuses while the node holds an E3 that has not ended, and when the data uses a layout
+that the new release cannot read, since it cannot tell which E3s that data holds. The node then
+stays stopped, and the log says why. Do the checks in
 [If the command refuses](https://docs.theinterfold.com/operate/upgrades#if-the-command-refuses).
 Where they say to start the release that the node ran before, install the previous package version,
 so that the node finishes its work. Set `ALLOW_ACTIVE_E3S_RESET` to `true` in package **Config**

@@ -250,6 +250,6 @@ Representative guards (not a complete protocol proof):
   and
   [fold attestation tests](../../packages/interfold-contracts/test/Registry/DkgFoldAttestationVerifier.spec.ts)
   own the contract boundary, not process crash recovery.
-- Run `cargo test -p e3-keyshare`, `pnpm evm:test`, and for changed proof statements
+- Run `cargo test -p e3-protocol -p e3-jobs`, `pnpm evm:test`, and for changed proof statements
   `pnpm rust:test:proofs` plus `pnpm noir:test` with the affected artifacts. Secure-only branches
   need secure witnesses; default insecure proof tests do not establish their completeness.

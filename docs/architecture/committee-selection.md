@@ -204,7 +204,7 @@ reachable cap is `2**TREE_DEPTH - 1` (1,048,575 at depth 20), matching LazyIMT's
 [owner tests](../../packages/interfold-contracts/test/Registry/BondOwnerSortition.spec.ts),
 [capacity tests](../../packages/interfold-contracts/test/Registry/CommitteeCapacity.spec.ts), and
 [VRF tests](../../packages/interfold-contracts/test/Randomness/ChainlinkVrfRandomnessProvider.spec.ts)
-own request/selection boundaries. Run `pnpm evm:test` and `cargo test -p e3-sortition` for affected
+own request/selection boundaries. Run `pnpm evm:test` and `cargo test -p e3-protocol` for affected
 behavior; cross-layer changes also need `pnpm test:integration` with the relevant scenario.
 
 Chain readers default to three confirmations even through a loopback proxy; only explicit

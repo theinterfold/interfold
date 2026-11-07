@@ -186,7 +186,7 @@ drain policy.
   [Expulsion tests](../../packages/interfold-contracts/test/Slashing/CommitteeExpulsion.spec.ts)
   cover atomic viability and callbacks. Run `pnpm evm:test`.
 - Typed accusation admission and writer workflow contain owner-level tests; use
-  `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
+  `cargo test -p e3-protocol` (accusations) and `cargo test -p e3-sim` as relevant.
 - Accusation actor tests and extension tests cover saved votes/timeouts and accusation deferral
   during replay. These do not prove every snapshot crash window.
 - `pnpm rust:test:slashing` exercises the proof/slashing integration harness. It does not prove the

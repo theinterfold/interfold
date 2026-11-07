@@ -143,8 +143,9 @@ chain history arrives. See [network delivery](network-delivery.md) for loss and 
 - Effect-gate tests, including `replayed_c6_compute_requires_canonical_public_inputs`, guard logged
   request release.
 - [BfvDecryptionVerifier tests](../../packages/interfold-contracts/test/BfvDecryptionVerifier.spec.ts)
-  own on-chain domain/anchor checks. Use `cargo test -p e3-aggregator`, `pnpm evm:test`, and
-  `pnpm rust:test:proofs` for changed recursive statements; unit hydration is not a full crash test.
+  own on-chain domain/anchor checks. Use `cargo test -p e3-protocol -p e3-jobs`, `pnpm evm:test`,
+  and `pnpm rust:test:proofs` for changed recursive statements; unit hydration is not a full crash
+  test.
 
 The [persistence gaps](persistence-and-replay.md) still apply. Do not infer exactly-once effects,
 full replay/snapshot equivalence, or crash-safe snapshots from these focused guards.

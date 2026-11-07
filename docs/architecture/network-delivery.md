@@ -217,6 +217,6 @@ targets.
 Network source tests cover admission, seen windows, replica accounting, document workflow, and
 result routing. Wire tests lock sample messages/frames;
 [layout locks](persistence-and-replay.md#schemas-and-validation) do not cover every future payload
-automatically. Run `cargo test -p e3-net` and the affected network restart scenario through
-`pnpm test:integration`. A stable-identity restart with topic readiness is stronger than counting
+automatically. Run `cargo test -p e3-p2p` and the restart scenario of `pnpm test:integration`
+(`V2_RESTART=true`). A stable-identity restart with topic readiness is stronger than counting
 connections; unit fairness tests do not establish persistence of peer-held replicas.
