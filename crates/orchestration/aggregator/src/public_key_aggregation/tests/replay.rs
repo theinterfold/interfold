@@ -33,11 +33,16 @@ struct ReplayedAggregator {
     fhe: Arc<Fhe>,
     /// The selected committee in party order.
     committee: Vec<String>,
-    /// The selected keyshares in party order.
-    keyshares: Vec<ArcBytes>,
+    /// The published keyshares in submission order, with their C1 proofs.
+    submissions: Vec<((u64, String, ArcBytes), Option<SignedProofPayload>)>,
     states: Repository<PublicKeyAggregatorState>,
     store: Addr<InMemStore>,
     _ctx: E3Context,
+}
+
+/// The first H parties, which the replayed roster selects unless a test replaces it.
+fn first_h_parties() -> Vec<u64> {
+    (0..CiphernodesCommitteeSize::Minimum.values().h as u64).collect()
 }
 
 impl ReplayedAggregator {
@@ -51,29 +56,72 @@ impl ReplayedAggregator {
         })
     }
 
-    /// Publish the keyshares of the first H parties, then the roster that selects them.
-    fn publish_selected_keyshares(&mut self, signed: bool) -> Result<()> {
-        let h = CiphernodesCommitteeSize::Minimum.values().h;
-        for (party, node) in self.committee.iter().take(h).enumerate() {
+    fn publish_keyshares(&mut self, parties: &[u64], signed: bool) -> Result<()> {
+        for &party_id in parties {
+            let node = self.committee[party_id as usize].clone();
             let (pubkey, signed_pk_generation_proof) = if signed {
                 let (keyshare, proof) = keyshare_with_c1_proof(&self.fhe, &self.e3_id)?;
                 (keyshare, Some(proof))
             } else {
                 (ArcBytes::from_bytes(&[1]), None)
             };
-            self.keyshares.push(pubkey.clone());
+            self.submissions.push((
+                (party_id, node.clone(), pubkey.clone()),
+                signed_pk_generation_proof.clone(),
+            ));
             self.bus.publish_without_context(KeyshareCreated {
                 pubkey,
                 e3_id: self.e3_id.clone(),
-                node: node.clone(),
-                party_id: party as u64,
+                node,
+                party_id,
                 signed_pk_generation_proof,
             })?;
         }
+        Ok(())
+    }
+
+    fn publish_roster(&self, roster: &[u64]) -> Result<()> {
         self.bus.publish_without_context(CommitmentRosterSelected {
             e3_id: self.e3_id.clone(),
-            party_ids: (0..h as u64).collect(),
+            party_ids: roster.to_vec(),
         })
+    }
+
+    /// Publish the keyshares of the first H parties, then the roster that selects them.
+    fn publish_selected_keyshares(&mut self, signed: bool) -> Result<()> {
+        let selected = first_h_parties();
+        self.publish_keyshares(&selected, signed)?;
+        self.publish_roster(&selected)
+    }
+
+    /// The published keyshares in submission order.
+    fn keyshares(&self) -> Vec<ArcBytes> {
+        self.submissions
+            .iter()
+            .map(|((_, _, keyshare), _)| keyshare.clone())
+            .collect()
+    }
+
+    /// The C1 request that the aggregator dispatches for the keyshares of `roster`.
+    fn c1_request(&self, roster: &[u64]) -> ShareVerificationDispatched {
+        let (submission_order, c1_proofs): (Vec<_>, Vec<_>) = self
+            .submissions
+            .iter()
+            .filter(|((party_id, _, _), _)| roster.contains(party_id))
+            .cloned()
+            .unzip();
+        PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs).request(
+            &self.e3_id,
+            BfvPreset::InsecureThreshold64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+    }
+
+    /// This node's verifier finds every keyshare of `roster` honest. It publishes its verdict
+    /// under the request's event.
+    fn publish_c1_verdict(&self, roster: &[u64]) -> Result<()> {
+        self.bus
+            .publish(c1_verdict(&self.e3_id), test_ctx(self.c1_request(roster)))
     }
 }
 
@@ -139,7 +187,7 @@ async fn replay_selection() -> Result<ReplayedAggregator> {
         e3_id,
         fhe,
         committee,
-        keyshares: Vec::new(),
+        submissions: Vec::new(),
         states,
         store,
         _ctx: ctx,
@@ -221,18 +269,19 @@ async fn an_aggregator_created_during_replay_waits_for_effects() -> Result<()> {
     panic!("aggregation did not resume at EffectsEnabled")
 }
 
-/// Replay also delivers this node's C1 verdict while effects are fenced. Replay put the verdict's
-/// payload-derived delivery ID in the bus dedup window, so the verdict to a new dispatch would be
-/// dropped: the aggregator must apply the replayed one.
+/// Replay also delivers this node's C1 request and verdict while effects are fenced, and puts their
+/// delivery IDs in the bus dedup window. The bus would drop the same request dispatched again: the
+/// aggregator must apply the replayed verdict.
 async fn replayed_c1_verdict_reaches_c5(demoted_before_effects: bool) -> Result<()> {
+    let replayed = replay_until_c1_verification(true).await?;
+    replayed.publish_c1_verdict(&first_h_parties())?;
     let ReplayedAggregator {
         bus,
         e3_id,
         states,
         _ctx,
         ..
-    } = replay_until_c1_verification(true).await?;
-    bus.publish_without_context(c1_verdict(&e3_id))?;
+    } = replayed;
     if demoted_before_effects {
         bus.publish_without_context(AggregatorChanged {
             e3_id: e3_id.clone(),
@@ -291,12 +340,18 @@ async fn a_restored_aggregator_applies_its_replayed_c1_verdict() -> Result<()> {
         })),
     );
     aggregator.effects_enabled = false;
+    let (request, _) = aggregator
+        .c1_verification_request()
+        .expect("the aggregator verifies C1");
     bus.subscribe_all(&[EventType::All], aggregator.start().recipient());
 
-    bus.publish_without_context(ShareVerificationComplete {
-        dishonest_parties: (circuit_h as u64..threshold_n as u64).collect(),
-        ..c1_verdict(&e3_id)
-    })?;
+    bus.publish(
+        ShareVerificationComplete {
+            dishonest_parties: (circuit_h as u64..threshold_n as u64).collect(),
+            ..c1_verdict(&e3_id)
+        },
+        test_ctx(request),
+    )?;
     commit_replay_past(&store, &history, |data| {
         matches!(data, InterfoldEventData::ShareVerificationComplete(_))
     })
@@ -307,6 +362,87 @@ async fn a_restored_aggregator_applies_its_replayed_c1_verdict() -> Result<()> {
         "the replayed C1 verdict was not applied"
     );
     Ok(())
+}
+
+/// Wait until the aggregator dispatches `request`, and return the dispatch event.
+async fn dispatched(
+    replayed: &ReplayedAggregator,
+    request: &ShareVerificationDispatched,
+) -> Result<Option<InterfoldEvent>> {
+    for _ in 0..200 {
+        replayed.bus.flush_event_pipeline().await?;
+        let events = replayed
+            .history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?;
+        if let Some(event) = events.into_iter().find(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::ShareVerificationDispatched(sent) if sent == request
+            )
+        }) {
+            return Ok(Some(event));
+        }
+        actix::clock::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(None)
+}
+
+/// Replay selects roster A and then roster B while the committee filter holds the keyshares, and
+/// then delivers this node's verdict on A's keyshares. When every dealer is honest, the verdicts
+/// on A and on B have the same payload. The verdict on A must not complete C1 for B: the
+/// aggregator verifies B's keyshares, and applies the verdict that answers that request.
+async fn a_c1_verdict_of_a_replaced_roster_is_discarded(verdict_after_effects: bool) -> Result<()> {
+    let (roster_a, roster_b) = ([0, 1], [1, 2]);
+    let mut replayed = replay_selection().await?;
+    replayed.publish_keyshares(&[0, 1, 2], true)?;
+    replayed.publish_roster(&roster_a)?;
+    replayed.publish_roster(&roster_b)?;
+    if verdict_after_effects {
+        replayed
+            .bus
+            .publish_without_context(EffectsEnabled::new())?;
+    }
+    replayed.publish_c1_verdict(&roster_a)?;
+    replayed.bus.flush_event_pipeline().await?;
+    assert!(matches!(
+        replayed.states.read().await?,
+        Some(PublicKeyAggregatorState::Collecting { .. })
+    ));
+
+    if !verdict_after_effects {
+        replayed
+            .bus
+            .publish_without_context(EffectsEnabled::new())?;
+    }
+    replayed.publish_committee()?;
+    let dispatch = dispatched(&replayed, &replayed.c1_request(&roster_b))
+        .await?
+        .expect("the aggregator did not verify the keyshares of the replacement roster");
+    assert!(matches!(
+        replayed.states.read().await?,
+        Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+    ));
+
+    replayed
+        .bus
+        .publish(c1_verdict(&replayed.e3_id), dispatch.get_ctx().clone())?;
+    assert!(
+        reaches_c5(&replayed.states, &replayed.bus).await?,
+        "the verdict on the replacement roster was not applied"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_replayed_c1_verdict_of_a_replaced_roster_is_discarded() -> Result<()> {
+    a_c1_verdict_of_a_replaced_roster_is_discarded(false).await
+}
+
+/// The verifier can also finish the replaced roster's request after effects resume.
+#[actix::test]
+async fn a_live_c1_verdict_of_a_replaced_roster_is_discarded() -> Result<()> {
+    a_c1_verdict_of_a_replaced_roster_is_discarded(true).await
 }
 
 // Replay also delivers this node's C5 proof while effects are fenced. The prover answers the
@@ -412,18 +548,19 @@ async fn a_replayed_c5_proof_of_other_keyshares_is_discarded() -> Result<()> {
 /// committed a later snapshot, so the store rejects writes under the revisions of both results.
 #[actix::test]
 async fn an_aggregator_created_during_replay_applies_its_replayed_c5_proof() -> Result<()> {
+    let replayed = replay_until_c1_verification(true).await?;
+    replayed.publish_c1_verdict(&first_h_parties())?;
+    let keyshares = replayed.keyshares();
     let ReplayedAggregator {
         bus,
         history,
         e3_id,
         fhe,
-        keyshares,
         states,
         store,
         _ctx,
         ..
-    } = replay_until_c1_verification(true).await?;
-    bus.publish_without_context(c1_verdict(&e3_id))?;
+    } = replayed;
     bus.publish_without_context(signed_c5_proof(&e3_id, c5_signals_for(&fhe, &keyshares)?))?;
     commit_replay_past(&store, &history, c5_proof_logged).await?;
 
@@ -451,18 +588,18 @@ async fn an_aggregator_created_during_replay_applies_its_replayed_c5_proof() -> 
 async fn an_aggregator_collecting_during_replay_applies_its_replayed_c5_proof() -> Result<()> {
     let mut replayed = replay_selection().await?;
     replayed.publish_selected_keyshares(true)?;
+    replayed.publish_c1_verdict(&first_h_parties())?;
+    let keyshares = replayed.keyshares();
     let ReplayedAggregator {
         bus,
         history,
         e3_id,
         fhe,
-        keyshares,
         states,
         store,
         ..
     } = &replayed;
-    bus.publish_without_context(c1_verdict(e3_id))?;
-    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, keyshares)?))?;
+    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, &keyshares)?))?;
     bus.flush_event_pipeline().await?;
     assert!(matches!(
         states.read().await?,
@@ -493,18 +630,18 @@ async fn an_aggregator_collecting_during_replay_applies_its_replayed_c5_proof() 
 async fn a_former_aggregator_demoted_while_collecting_finishes_c1_and_c5() -> Result<()> {
     let mut replayed = replay_selection().await?;
     replayed.publish_selected_keyshares(true)?;
+    replayed.publish_c1_verdict(&first_h_parties())?;
+    let keyshares = replayed.keyshares();
     let ReplayedAggregator {
         bus,
         history,
         e3_id,
         fhe,
-        keyshares,
         states,
         store,
         ..
     } = &replayed;
-    bus.publish_without_context(c1_verdict(e3_id))?;
-    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, keyshares)?))?;
+    bus.publish_without_context(signed_c5_proof(e3_id, c5_signals_for(fhe, &keyshares)?))?;
     bus.publish_without_context(AggregatorChanged {
         e3_id: e3_id.clone(),
         active_party_id: Some(1),
@@ -588,6 +725,66 @@ async fn a_node_demoted_before_it_dispatched_c1_does_not_start_it() -> Result<()
             InterfoldEventData::ShareVerificationDispatched(_)
         )),
         "a demoted node started C1 that it never dispatched"
+    );
+    Ok(())
+}
+
+/// Replay selects roster A and then roster B, delivers this node's verdict on A's keyshares, and
+/// demotes the node. The verdict shows that the node dispatched A's request, not B's, so B's
+/// keyshares, released after `EffectsEnabled`, must neither start C1 there nor take A's verdict.
+#[actix::test]
+async fn a_demoted_node_does_not_start_c1_for_a_replacement_roster() -> Result<()> {
+    let (roster_a, roster_b) = ([0, 1], [1, 2]);
+    let mut replayed = replay_selection().await?;
+    replayed.publish_keyshares(&[0, 1, 2], true)?;
+    replayed.publish_roster(&roster_a)?;
+    replayed.publish_roster(&roster_b)?;
+    replayed.publish_c1_verdict(&roster_a)?;
+    let ReplayedAggregator {
+        bus,
+        history,
+        e3_id,
+        states,
+        ..
+    } = &replayed;
+    bus.publish_without_context(AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    })?;
+    bus.publish_without_context(EffectsEnabled::new())?;
+    bus.flush_event_pipeline().await?;
+    assert!(
+        matches!(
+            states.read().await?,
+            Some(PublicKeyAggregatorState::Collecting { .. })
+        ),
+        "the keyshares reached the aggregator before the committee released them"
+    );
+    replayed.publish_committee()?;
+    assert!(
+        reaches_state(states, bus, |state| !matches!(
+            state,
+            PublicKeyAggregatorState::Collecting { .. }
+        ))
+        .await?,
+        "the node did not collect the keyshares of the replacement roster"
+    );
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::ShareVerificationDispatched(_)
+        )),
+        "a demoted node started C1 for a roster whose request it never dispatched"
+    );
+    assert!(
+        matches!(
+            states.read().await?,
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ),
+        "a demoted node applied the verdict of a replaced roster"
     );
     Ok(())
 }

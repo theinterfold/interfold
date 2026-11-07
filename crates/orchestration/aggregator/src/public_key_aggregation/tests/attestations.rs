@@ -41,6 +41,11 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
         submission_order.push((party_id, node, keyshare));
         c1_proofs.push(Some(c1_proof_with_pk_commitment(&e3_id, commitment)));
     }
+    let request = PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs).request(
+        &e3_id,
+        BfvPreset::InsecureThreshold64,
+        CiphernodesCommitteeSize::Minimum,
+    );
 
     let state = PublicKeyAggregatorState::Collecting {
         threshold_n: committee.n,
@@ -75,17 +80,8 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             recovery.selected_roster = Some(BTreeSet::from([0, 1]));
             Ok(recovery)
         })?;
-    let verification = ShareVerificationComplete {
-        e3_id: e3_id.clone(),
-        kind: VerificationKind::PkGenerationProofs,
-        dishonest_parties: BTreeSet::new(),
-    };
-
-    aggregator.handle_c1_verification_complete(TypedEvent::new(
-        verification.clone(),
-        test_ctx(verification),
-    ))?;
-    assert!(aggregator.early_c1_verification.is_some());
+    aggregator.handle_c1_verification_complete(c1_verdict_for(request, BTreeSet::new()))?;
+    assert_eq!(aggregator.early_c1_verifications.len(), 1);
     assert!(matches!(
         aggregator.state.get(),
         Some(PublicKeyAggregatorState::Collecting { .. })
@@ -99,7 +95,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
         test_ctx(EffectsEnabled::new()),
     )?;
 
-    assert!(aggregator.early_c1_verification.is_none());
+    assert!(aggregator.early_c1_verifications.is_empty());
     assert!(matches!(
         aggregator.state.get(),
         Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
@@ -258,18 +254,8 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
     );
 
     let dishonest: BTreeSet<u64> = (circuit_h as u64..threshold_n as u64).collect();
-    aggregator.handle_c1_verification_complete(TypedEvent::new(
-        ShareVerificationComplete {
-            e3_id: e3_id.clone(),
-            kind: VerificationKind::PkGenerationProofs,
-            dishonest_parties: dishonest,
-        },
-        test_ctx(ShareVerificationComplete {
-            e3_id: e3_id.clone(),
-            kind: VerificationKind::PkGenerationProofs,
-            dishonest_parties: BTreeSet::new(),
-        }),
-    ))?;
+    let verified = c1_verified(&aggregator, dishonest);
+    aggregator.handle_c1_verification_complete(verified)?;
 
     let event = next_event(&history).await?;
     assert!(matches!(
@@ -320,15 +306,8 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
         test_state(state),
     );
 
-    let verification = ShareVerificationComplete {
-        e3_id,
-        kind: VerificationKind::PkGenerationProofs,
-        dishonest_parties: BTreeSet::new(),
-    };
-    aggregator.handle_c1_verification_complete(TypedEvent::new(
-        verification.clone(),
-        test_ctx(verification),
-    ))?;
+    let verified = c1_verified(&aggregator, BTreeSet::new());
+    aggregator.handle_c1_verification_complete(verified)?;
 
     let Some(PublicKeyAggregatorState::GeneratingC5Proof {
         party_nodes,

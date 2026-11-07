@@ -157,17 +157,16 @@ async fn restart_during_c1_verification_keeps_the_received_folds() -> Result<()>
     aggregator
         .recover_dkg_folds(&history_reader(&folds)?, &repositories)
         .await?;
+    let verified = c1_verified(
+        &aggregator,
+        (circuit_h as u64..threshold_n as u64).collect(),
+    );
     let aggregator = aggregator.start();
     let effects_enabled = InterfoldEventData::from(EffectsEnabled::new());
     aggregator
         .send(bus.event_from(effects_enabled, None)?.into_sequenced(0))
         .await?;
-    aggregator
-        .send(c1_verified(
-            &e3_id,
-            (circuit_h as u64..threshold_n as u64).collect(),
-        ))
-        .await?;
+    aggregator.send(verified).await?;
 
     assert_eq!(persisted_fold_parties(states.read().await?), honest);
     let step = nodes_fold_step_requested(&history).await?;
