@@ -15,10 +15,18 @@ use e3_crypto::Cipher;
 use e3_engine::Engine;
 use e3_journal::Journal;
 use e3_protocol::{node::Node, E3Id};
-use std::{io::ErrorKind, path::PathBuf};
+use std::{
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 pub fn folder(config: &NodeConfig) -> PathBuf {
     config.node_data_dir().join("v2")
+}
+
+/// The journal of the node whose data folder is `node_data_dir`.
+pub fn journal_in(node_data_dir: &Path) -> PathBuf {
+    node_data_dir.join("v2").join("journal.redb")
 }
 
 /// Whether the folder holds node data in a layout that this binary does not write, and so cannot
@@ -34,7 +42,7 @@ pub fn layout_is_older(config: &NodeConfig) -> Result<bool> {
 /// The E3s the node's journal holds. The node keeps each E3, and the key share it dealt in it,
 /// until the E3 ends. Replaying the journal needs the operator's address, from the keystore.
 pub async fn held_e3s(config: &NodeConfig) -> Result<Vec<E3Id>> {
-    let path = folder(config).join("journal.redb");
+    let path = journal_in(&config.node_data_dir());
     if !path.exists() {
         return Ok(Vec::new());
     }

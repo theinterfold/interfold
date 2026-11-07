@@ -9,8 +9,10 @@ use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
 use e3_entrypoint::fence::ProcessFence;
+use std::collections::BTreeSet;
 use std::env;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 /// Delete the data and configuration of the local node set.
 pub async fn execute(
@@ -61,6 +63,19 @@ pub(crate) async fn purge(
             refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
         }
     }
+    // A folder that no profile names may hold a key share too, and may be in use.
+    for folder in unnamed_folders(&dir.join(".interfold/data"), &nodes)? {
+        let name = folder.file_name().unwrap_or_default().to_string_lossy();
+        // The fence's lock file sits in the node's data folder, beside its database.
+        fences.push(ProcessFence::acquire(&folder.join("db"), &name)?);
+        if !allow_active_e3s && node_state::journal_in(&folder).exists() {
+            refusals.push(format!(
+                "{} holds the journal of a node that no profile in the configuration names, so \
+                 its E3s cannot be checked (add the profile back to check them)",
+                folder.display()
+            ));
+        }
+    }
     if !refusals.is_empty() {
         bail!(
             "Deleted nothing: {}. Wait for those E3s to end, or rerun with --allow-active-e3s \
@@ -75,6 +90,29 @@ pub(crate) async fn purge(
         }
     }
     Ok(())
+}
+
+/// The node folders in `data` that none of `nodes` is configured to use.
+fn unnamed_folders(data: &Path, nodes: &[NodeConfig]) -> Result<Vec<PathBuf>> {
+    let canonical = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+    let named: BTreeSet<PathBuf> = nodes
+        .iter()
+        .map(|node| canonical(node.node_data_dir()))
+        .collect();
+    let entries = match std::fs::read_dir(data) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.is_dir() && !named.contains(&canonical(path.clone())) {
+            folders.push(path);
+        }
+    }
+    folders.sort();
+    Ok(folders)
 }
 
 /// The configuration of each node profile, including `_default` and the active one, loaded the
@@ -98,8 +136,9 @@ fn node_configs(config: &NodeConfig, config_file: Option<String>) -> Result<Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::node_configs;
+    use super::{node_configs, purge};
     use anyhow::Result;
+    use e3_cli::app_config::load_config;
 
     /// The purge checks every node profile, not only the one the command runs as.
     #[test]
@@ -118,6 +157,35 @@ mod tests {
             .map(|node| node.name())
             .collect();
         assert_eq!(names, ["_default", "cn1", "cn2"]);
+        Ok(())
+    }
+
+    /// A node folder that no profile names may hold an E3's key share, which the purge cannot
+    /// check without that profile's keys: the purge refuses and deletes nothing, unless told to.
+    #[tokio::test]
+    async fn a_node_folder_that_no_profile_names_stops_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config_file = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_file,
+            "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n",
+        )?;
+        let config_file = Some(config_file.to_string_lossy().into_owned());
+        let config = load_config("cn1", config_file.clone(), None)?.node;
+        let data = config.node_data_dir().parent().unwrap().to_path_buf();
+        assert_eq!(data, dir.path().join(".interfold/data"));
+        let journal = crate::node_state::journal_in(&data.join("cn2"));
+        std::fs::create_dir_all(journal.parent().unwrap())?;
+        std::fs::write(&journal, b"")?;
+
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cn2"), "{error:#}");
+        assert!(journal.exists());
+
+        purge(&config, config_file, dir.path(), true).await?;
+        assert!(!data.exists());
         Ok(())
     }
 }
