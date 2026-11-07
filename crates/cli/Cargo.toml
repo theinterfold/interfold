@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 actix = { workspace = true }
 alloy = { workspace = true }
+bincode = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 compile-time = { workspace = true }
@@ -57,6 +58,8 @@ petname = { workspace = true }
 rand08 = { package = "rand", version = "=0.8.5", features = ["std", "std_rng"] }
 phf = { workspace = true }
 rand = { workspace = true }
+sled = { workspace = true }
+libp2p = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

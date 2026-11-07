@@ -229,7 +229,8 @@ impl Cli {
         }
 
         if creates_secrets && config.autowallet() {
-            e3_entrypoint::wallet::set::autowallet(&config).await?;
+            let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
+            crate::keystore::ensure(&config.db_file(), &cipher)?;
         }
 
         match self.command {

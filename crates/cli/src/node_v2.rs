@@ -7,16 +7,13 @@
 //! The v2 node's configuration from the CLI's: one chain with its contracts and availability
 //! service, the operator key that `interfold wallet set` stored, and the node's port and peers.
 
+use crate::keystore;
 use alloy::{signers::local::PrivateKeySigner, transports::Authorization};
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
-use e3_entrypoint::helpers::datastore::get_repositories;
-use e3_evm::EthPrivateKeyRepositoryFactory;
 use e3_evm_config::{DataAvailabilityMode, RpcAuth};
-use e3_net::NetRepositoryFactory;
 use e3_node::launch::{Availability, Config, Network, Prover};
-use zeroize::Zeroizing;
 
 pub async fn config(config: &NodeConfig) -> Result<Config> {
     let chains: Vec<_> = config
@@ -107,20 +104,8 @@ fn network(config: &NodeConfig, identity: [u8; 32]) -> Network {
 }
 
 /// The operator key and the network key that `interfold wallet set` sealed in the node's store.
-/// The network key keeps the node's peer ID; its first 32 bytes are its ed25519 secret.
 async fn keys(config: &NodeConfig, cipher: &Cipher) -> Result<(PrivateKeySigner, [u8; 32])> {
-    let repositories = get_repositories(config)?;
-    let unset = "no wallet is set: run `interfold wallet set` first";
-    let sealed = repositories
-        .eth_private_key()
-        .read()
-        .await?
-        .context(unset)?;
-    let operator = PrivateKeySigner::from_slice(&Zeroizing::new(cipher.decrypt_data(&sealed)?))?;
-    let sealed = repositories.libp2p_keypair().read().await?.context(unset)?;
-    let keypair = Zeroizing::new(cipher.decrypt_data(&sealed)?);
-    let secret = keypair
-        .get(..32)
-        .context("the stored network key is not an ed25519 keypair")?;
-    Ok((operator, secret.try_into()?))
+    let keys = keystore::read(&config.db_file(), cipher)?
+        .context("no wallet is set: run `interfold wallet set` first")?;
+    Ok((keys.operator, keys.network))
 }

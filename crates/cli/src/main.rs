@@ -21,6 +21,7 @@ mod events;
 mod faucet;
 pub mod helpers;
 mod init;
+mod keystore;
 mod manifest;
 mod net;
 mod net_get_peer_id;
