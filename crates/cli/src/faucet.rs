@@ -15,12 +15,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
 use e3_crypto::Cipher;
-use e3_entrypoint::helpers::datastore::get_repositories;
-use e3_evm::{
-    error_decoder::format_evm_error,
-    helpers::{load_signer_from_repository, ProviderConfig},
-    EthPrivateKeyRepositoryFactory,
-};
+use e3_evm::{error_decoder::format_evm_error, helpers::ProviderConfig};
 use e3_evm_contracts::IERC20Metadata as IERC20;
 
 mod faucet_contract {
@@ -59,8 +54,9 @@ pub async fn execute(out: Console, config: &NodeConfig, selection: Option<&str>)
         Address::from_str(faucet_contract.address_str()).context("Invalid faucet address")?;
 
     let cipher = Cipher::from_file(config.key_file()).await?;
-    let repositories = get_repositories(config)?;
-    let signer = load_signer_from_repository(repositories.eth_private_key(), &cipher).await?;
+    let signer = crate::keystore::read(&config.db_file(), &cipher)?
+        .context("No wallet has been set.")?
+        .operator;
     let provider = ProviderConfig::for_chain(chain)?
         .create_signer_provider(&signer)
         .await?;

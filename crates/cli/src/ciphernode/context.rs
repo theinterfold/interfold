@@ -10,11 +10,10 @@ use alloy::{primitives::Address, providers::WalletProvider};
 use anyhow::{Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
-use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
     fetch_operator_committees,
-    helpers::{load_signer_from_repository, ConcreteWriteProvider, EthProvider, ProviderConfig},
-    CommitteeScan, EthPrivateKeyRepositoryFactory, OperatorCommittee,
+    helpers::{ConcreteWriteProvider, EthProvider, ProviderConfig},
+    CommitteeScan, OperatorCommittee,
 };
 use e3_evm_config::ContractAddresses;
 
@@ -41,8 +40,9 @@ impl ChainContext {
         let bonding_registry = parse_address(chain.contracts.bonding_registry.address_str())?;
 
         let cipher = Cipher::from_file(config.key_file()).await?;
-        let repositories = get_repositories(config)?;
-        let signer = load_signer_from_repository(repositories.eth_private_key(), &cipher).await?;
+        let signer = crate::keystore::read(&config.db_file(), &cipher)?
+            .context("No wallet has been set.")?
+            .operator;
         let provider = ProviderConfig::for_chain(chain)?
             .create_signer_provider(&signer)
             .await?;

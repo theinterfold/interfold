@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::config_setup as setup;
-use alloy::primitives::Address;
+use alloy::{hex::FromHex, primitives::Address};
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Input};
 use e3_ciphernode_config::NodeConfig;
@@ -118,8 +118,17 @@ pub async fn execute(
     e3_entrypoint::password::set::preflight(&config).await?;
     e3_entrypoint::password::set::execute(&config, pw).await?;
 
-    let (address, peer_id) = e3_entrypoint::wallet::set::execute(&config, private_key).await?;
-    print_info(out, &config, address, &peer_id.to_string(), &rpc_url)?;
+    let key =
+        zeroize::Zeroizing::new(alloy::primitives::FixedBytes::<32>::from_hex(&*private_key)?.0);
+    let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
+    let keys = crate::keystore::write(&config.db_file(), &cipher, &key)?;
+    print_info(
+        out,
+        &config,
+        keys.address(),
+        &keys.peer_id()?.to_string(),
+        &rpc_url,
+    )?;
     Ok(())
 }
 
