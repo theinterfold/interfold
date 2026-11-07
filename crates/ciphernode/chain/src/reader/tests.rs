@@ -59,6 +59,7 @@ enum Announcing {
     #[default]
     No,
     Yes,
+    Refuses,
     /// It never answers.
     Stuck,
 }
@@ -119,6 +120,7 @@ impl Rpc for FakeNode {
         let announcing = self.0.lock().unwrap().announcing;
         match announcing {
             Announcing::No => return Ok(None),
+            Announcing::Refuses => return Err(RpcError("too many subscriptions".into())),
             Announcing::Stuck => std::future::pending().await,
             Announcing::Yes => {}
         }
@@ -596,10 +598,31 @@ async fn the_logs_of_a_contract_the_reader_learns_of_are_announced() {
     );
 }
 
-/// A chain node that never answers a request for announcements costs the reader one wait, not its
-/// ingestion: the reader polls, and asks again a minute later.
+/// A refused request for announcements is made again a minute later, and the reader polls
+/// meanwhile. A request left unanswered for a minute is not made again, since a late answer to each
+/// would leave a subscription that nothing ends: the reader polls for the rest of the run.
 #[tokio::test(start_paused = true)]
-async fn an_unanswered_request_for_announcements_is_polled_around_and_asked_again() {
+async fn the_reader_polls_around_failed_requests_for_announcements() {
+    let node = FakeNode::announcing();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.announcing = Announcing::Refuses;
+    });
+    let mut reader = Reader::new(node.clone(), contracts(), 0, 1_000, 0, POLL);
+    assert!(reader.poll().await.unwrap().is_empty());
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), POLL);
+    node.with(|chain| chain.announcing = Announcing::Yes);
+    tokio::time::sleep(LONGEST_WAIT).await;
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(
+        start.elapsed(),
+        LONGEST_WAIT,
+        "announced, the quiet chain is read once a minute"
+    );
+
     let node = FakeNode::announcing();
     node.with(|chain| {
         chain.head = 10;
@@ -611,17 +634,9 @@ async fn an_unanswered_request_for_announcements_is_polled_around_and_asked_agai
     let wait = tokio::time::timeout(2 * LONGEST_WAIT, reader.wait());
     wait.await.expect("the wait ends");
     assert_eq!(start.elapsed(), LONGEST_WAIT + POLL);
-
     node.with(|chain| chain.announcing = Announcing::Yes);
-    let start = Instant::now();
-    reader.wait().await;
-    assert_eq!(start.elapsed(), POLL);
     tokio::time::sleep(LONGEST_WAIT).await;
     let start = Instant::now();
     reader.wait().await;
-    assert_eq!(
-        start.elapsed(),
-        LONGEST_WAIT,
-        "announced, the quiet chain is read once a minute"
-    );
+    assert_eq!(start.elapsed(), POLL);
 }

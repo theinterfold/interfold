@@ -108,10 +108,12 @@ pub enum ReadError {
 enum Announcements {
     /// Not asked for yet, or asked for other contracts than the reader reads now.
     Unasked,
-    /// The chain node cannot announce, as over HTTP: the reader polls it.
-    Unsupported,
-    /// The request failed or went unanswered, or the announcements stopped: the reader polls until
-    /// it asks again at `retry`.
+    /// The reader polls for the rest of the run: the chain node cannot announce, as over HTTP, or
+    /// left a request unanswered for a minute, and a late answer to a repeated request would leave
+    /// a subscription that nothing ends.
+    Off,
+    /// The request failed, or the announcements stopped: the reader polls until it asks again at
+    /// `retry`.
     Failed { retry: Instant },
     Active {
         addresses: Vec<Address>,
@@ -282,7 +284,7 @@ impl<R: Rpc> Reader<R> {
     }
 
     /// Asks the chain node, by `deadline`, to announce the logs of the contracts the reader reads,
-    /// unless it does already, cannot, or failed less than `LONGEST_WAIT` ago. The blocks up to the
+    /// unless it does already, is off, or failed less than `LONGEST_WAIT` ago. The blocks up to the
     /// head at that point were not announced, so the reader polls until it has read them.
     async fn subscribe(&mut self, deadline: Instant) {
         let addresses = self.contracts.addresses();
@@ -290,7 +292,7 @@ impl<R: Rpc> Reader<R> {
             Announcements::Active {
                 addresses: covered, ..
             } if *covered == addresses => return,
-            Announcements::Unsupported => return,
+            Announcements::Off => return,
             Announcements::Failed { retry } if Instant::now() < *retry => return,
             _ => {}
         }
@@ -302,7 +304,7 @@ impl<R: Rpc> Reader<R> {
             Ok::<_, RpcError>(Some((blocks, rpc.head().await?)))
         });
         self.announcements = match asked.await {
-            Ok(Ok(None)) => Announcements::Unsupported,
+            Ok(Ok(None)) => Announcements::Off,
             Ok(Ok(Some((blocks, head)))) => {
                 self.announced = self.announced.max(Some(head));
                 Announcements::Active { addresses, blocks }
@@ -312,8 +314,8 @@ impl<R: Rpc> Reader<R> {
                 failed()
             }
             Err(_) => {
-                warn!("the chain node did not answer a request for logs; polling it for now");
-                failed()
+                warn!("the chain node did not answer a request to announce logs; polling it");
+                Announcements::Off
             }
         };
     }
