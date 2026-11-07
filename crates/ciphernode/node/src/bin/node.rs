@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_crypto::Cipher;
-use e3_node::launch::{launch, Config, Network, Prover};
+use e3_node::launch::{launch, Availability, Config, Network, Prover};
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 use tracing_subscriber::EnvFilter;
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         start_block: config.start_block,
         confirmations: config.confirmations,
         poll_interval: Duration::from_millis(config.poll_interval_ms),
-        availability_url: config.availability_url,
+        availability: Availability::Http(config.availability_url),
         data_dir: config.data_dir,
         operator,
         cipher: Cipher::from_password(&config.cipher_password).await?,

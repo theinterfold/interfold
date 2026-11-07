@@ -189,13 +189,13 @@ Each rule is checkable in review.
   is left out but not accused (D27). A completed or failed E3 stays while an accusation's window is
   open.
 - **D29. `interfold start` runs this node, from the operator's configuration and keys.** The CLI
-  maps one enabled chain, its contracts and availability service, and the node's ports and peers
-  into the node's launch configuration; `e3-node` maps a JSON file into the same one. The keys stay
-  where `interfold wallet set` sealed them: the operator key, and the network key, which an older
-  release could set apart from the operator key, so every operator keeps its peer ID. The network's
-  ID, not its name, goes into the protocol names, so two custom networks that share a name stay
-  apart. What the node does not support yet stops it at start: more than one chain, RPC
-  authentication, and an availability layer other than the HTTP object service. A bootstrap node
+  maps one enabled chain, its contracts and availability layer, and the node's ports and peers into
+  the node's launch configuration; `e3-node` maps a JSON file into the same one. The keys stay where
+  `interfold wallet set` sealed them: the operator key, and the network key, which an older release
+  could set apart from the operator key, so every operator keeps its peer ID. The network's ID, not
+  its name, goes into the protocol names, so two custom networks that share a name stay apart. It
+  reads ciphertexts from Avail, or from an object service on a test deployment. What the node does
+  not support yet stops it at start: more than one chain, and RPC authentication. A bootstrap node
   runs the network alone: it answers lookups under the stored network key, so its peer ID stays the
   one peers are given, and takes no part in messages, the chain, or proofs. It does not subscribe to
   the message topic, so peers keep it out of their message mesh, and it needs no gas, which a node

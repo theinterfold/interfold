@@ -15,7 +15,7 @@ use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::EthPrivateKeyRepositoryFactory;
 use e3_evm_config::{DataAvailabilityMode, RpcAuth};
 use e3_net::NetRepositoryFactory;
-use e3_node::launch::{Config, Network, Prover};
+use e3_node::launch::{Availability, Config, Network, Prover};
 use zeroize::Zeroizing;
 
 pub async fn config(config: &NodeConfig) -> Result<Config> {
@@ -34,10 +34,10 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         bail!("the node does not authenticate to its RPC node yet: use an RPC URL without auth");
     }
     let availability = match &chain.data_availability {
-        Some(availability) if availability.mode == DataAvailabilityMode::MockHttp => {
-            availability.rpc_url.clone()
-        }
-        Some(_) => bail!("the node reads ciphertexts from an HTTP object service only"),
+        Some(availability) => match availability.mode {
+            DataAvailabilityMode::Avail => Availability::Avail(availability.rpc_url.clone()),
+            DataAvailabilityMode::MockHttp => Availability::Http(availability.rpc_url.clone()),
+        },
         None => bail!("the chain has no data availability service"),
     };
     let contracts = &chain.contracts;
@@ -69,7 +69,7 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         start_block,
         confirmations: chain.ingestion_confirmations()?,
         poll_interval: chain.rpc_poll_interval()?,
-        availability_url: availability,
+        availability,
         data_dir: config.node_data_dir().join("v2"),
         prover,
         network: network(config, identity),

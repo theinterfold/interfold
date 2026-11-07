@@ -7,14 +7,17 @@
 //! Builds a node from its configuration and runs it. The `e3-node` binary and `interfold start`
 //! both start the node here, each from its own configuration format.
 
-use crate::{heartbeat::Heartbeat, run, runtime::now, Parts, Settings};
+use crate::{
+    heartbeat::Heartbeat,
+    runtime::{now, run, Parts, Settings},
+};
 use alloy::{network::EthereumWallet, providers::Provider, providers::ProviderBuilder};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
 use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
-use e3_data_availability::{DataAvailabilityReader, HttpObjectReader};
+use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
 use e3_jobs::{Circuits, JobRunner, Proofs};
 use e3_journal::Journal;
@@ -38,7 +41,7 @@ pub struct Config {
     pub start_block: u64,
     pub confirmations: u64,
     pub poll_interval: Duration,
-    pub availability_url: String,
+    pub availability: Availability,
     pub data_dir: PathBuf,
     pub operator: PrivateKeySigner,
     /// Seals the node's secrets at rest.
@@ -47,6 +50,14 @@ pub struct Config {
     /// deployment accept.
     pub prover: Option<Prover>,
     pub network: Network,
+}
+
+/// Where the node reads ciphertexts.
+pub enum Availability {
+    /// An Avail node's HTTP RPC.
+    Avail(String),
+    /// A service that serves objects by their hash, as test deployments run.
+    Http(String),
 }
 
 pub struct Prover {
@@ -126,8 +137,10 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         .collect();
     std::fs::write(config.data_dir.join("listening"), listening.join("\n"))?;
 
-    let availability: Arc<dyn DataAvailabilityReader> =
-        Arc::new(HttpObjectReader::new(config.availability_url)?);
+    let availability: Arc<dyn DataAvailabilityReader> = match config.availability {
+        Availability::Avail(url) => Arc::new(AvailReader::new(url)?),
+        Availability::Http(url) => Arc::new(HttpObjectReader::new(url)?),
+    };
     let settings = Settings {
         contracts: contracts.clone(),
         start_block: config.start_block,
