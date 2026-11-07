@@ -415,6 +415,42 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
 }
 
 #[actix::test]
+async fn threshold_requests_still_queued_when_the_e3_ends_are_dropped() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
+    let e3_id = E3id::new("ended-during-dispatch", 1);
+    let plan = threshold_share_pending(e3_id.clone(), 0x11);
+    let failed = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3Failed {
+            e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        }
+        .into(),
+        None,
+        1u64.into(),
+        None,
+        e3_events::EventSource::Local,
+    )
+    .into_sequenced(1);
+    let mut ctx = Context::new();
+
+    actor.handle_threshold_share_pending(TypedEvent::new(plan.clone(), test_ctx(plan)), &mut ctx);
+    actor.handle(failed, &mut ctx);
+
+    // Only the request already waiting for admission goes out.
+    let _actor = ctx.run(actor);
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests = events
+        .iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+        .count();
+    assert_eq!(requests, 1);
+    Ok(())
+}
+
+#[actix::test]
 async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);

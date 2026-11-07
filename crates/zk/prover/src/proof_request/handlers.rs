@@ -28,6 +28,10 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             self.pending_share_decryption.remove(id);
             self.share_decryption_correlation
                 .retain(|_, e3_id| e3_id != id);
+            // Without its correlations, C1-C3 requests still queued for dispatch are dropped.
+            self.threshold_correlation
+                .retain(|_, (e3_id, _, _)| e3_id != id);
+            self.pending_threshold.remove(id);
             return;
         }
 

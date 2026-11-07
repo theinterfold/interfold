@@ -158,7 +158,7 @@ impl ProofRequestActor {
         ctx: &mut Context<Self>,
     ) {
         while let Some(request) = requests.pop_front() {
-            // Replayed work or a failed dispatch removed this batch's correlations.
+            // Replayed work, a failed dispatch or the E3's end removed this batch's correlations.
             if !self
                 .threshold_correlation
                 .contains_key(&request.correlation_id)
@@ -181,7 +181,7 @@ impl ProofRequestActor {
     }
 
     /// Admission closed or the event pipeline failed: drop the batch that `correlation_id`
-    /// belongs to, unless replayed work has replaced it.
+    /// belongs to, unless replayed work replaced it or the E3 ended.
     fn abandon_threshold_requests(&mut self, correlation_id: &CorrelationId, err: anyhow::Error) {
         let Some((e3_id, _, _)) = self.threshold_correlation.get(correlation_id).cloned() else {
             return;
