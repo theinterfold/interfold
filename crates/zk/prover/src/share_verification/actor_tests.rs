@@ -11,7 +11,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     hlc_factory::HlcFactory, ComputeRequestErrorKind, EffectsEnabled, Event, EventBus,
     EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload, Sequencer,
-    StoreEventRequested, StoreEventResponse, Unsequenced, ZkError,
+    StoreEventRequested, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
@@ -30,10 +30,10 @@ impl Handler<StoreEventRequested> for TestEventStore {
     type Result = ();
 
     fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
-        let StoreEventRequested { event, sender } = msg;
         let seq = self.next_seq;
         self.next_seq += 1;
-        sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+        let (sender, response) = msg.into_stored(seq);
+        sender.do_send(response);
     }
 }
 

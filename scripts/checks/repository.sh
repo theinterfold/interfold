@@ -14,7 +14,7 @@ cd "$(dirname "$0")/../.."
 
 fail=0
 
-# Retain the send ratchet while the acknowledged event pipeline remains incomplete (#2266).
+# Event admission acknowledges only the event pipeline's own hops; do_send elsewhere is not.
 baseline_file="scripts/checks/repository-baselines.env"
 DO_SEND_BASELINE="$(sed -nE 's/^DO_SEND_BASELINE=([0-9]+)$/\1/p' "$baseline_file" 2>/dev/null || true)"
 if [[ ! "$DO_SEND_BASELINE" =~ ^[0-9]+$ ]]; then

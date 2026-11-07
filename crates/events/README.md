@@ -13,6 +13,7 @@ include cryptographic types; this is not a dependency-free collection of DTOs.
 | [`interfold_event/`](src/interfold_event)                                                                                    | Protocol payloads, event enum, proof/work envelopes, and typed events. |
 | [`event_context.rs`](src/event_context.rs), [`hlc.rs`](src/hlc.rs)                                                           | Causal/durable context and hybrid logical clock.                       |
 | [`bus_handle.rs`](src/bus_handle.rs), [`eventbus.rs`](src/eventbus.rs)                                                       | Publication, subscriptions, fanout, history, and barriers.             |
+| [`event_admission.rs`](src/event_admission.rs)                                                                               | Bounded live admission, receipts, and the shutdown fence.              |
 | [`sequencer.rs`](src/sequencer.rs), [`eventstore.rs`](src/eventstore.rs), [`eventstore_router.rs`](src/eventstore_router.rs) | Persist-before-dispatch sequencing and aggregate queries.              |
 | [`snapshot_buffer/`](src/snapshot_buffer)                                                                                    | Event admission, state batches, aggregate delay, and drain.            |
 | [`traits.rs`](src/traits.rs), [`data_events.rs`](src/data_events.rs), [`store_keys.rs`](src/store_keys.rs)                   | Event/storage interfaces, data commands, and durable key names.        |
@@ -58,6 +59,9 @@ Most consumers obtain an enabled `BusHandle` from [EventSystem](../state/event-s
 admission, before domain deduplication, and batches state writes by event progress. The mechanisms
 and their ordering are described in
 [persistence and replay](../../docs/architecture/persistence-and-replay.md), not duplicated here.
+
+Publication returns an error when the admission window is saturated, the pipeline has failed, or
+shutdown has started (`AdmissionClosed`). Publishers that can wait use `naked_dispatch_async`.
 
 Use `publish_shutdown_and_wait` and `flush_event_pipeline` for acknowledged shutdown/drain, followed
 by the data store's shutdown. A successful enqueue alone does not prove durable acceptance. Explicit

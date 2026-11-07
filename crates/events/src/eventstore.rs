@@ -449,12 +449,17 @@ impl<I: SequenceIndex, L: EventLog> Actor for EventStore<I, L> {
 impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<I, L> {
     type Result = ();
     fn handle(&mut self, msg: StoreEventRequested, ctx: &mut Self::Context) -> Self::Result {
-        match self.store_event(msg.event) {
-            Ok(Some(sequenced)) => {
-                msg.sender.do_send(StoreEventResponse(sequenced));
-            }
-            Ok(None) => {} // duplicate — already warned inside store_event
+        let StoreEventRequested {
+            event,
+            sender,
+            receipt,
+        } = msg;
+        match self.store_event(event) {
+            Ok(Some(event)) => sender.do_send(StoreEventResponse { event, receipt }),
+            // A duplicate, already warned inside store_event: its first copy was dispatched.
+            Ok(None) => receipt.settle(),
             Err(error) => {
+                // The receipt drops afterwards, so its loss report keeps this reason.
                 self.report_fatal_failure(&error);
                 ctx.stop();
             }
@@ -981,6 +986,46 @@ mod tests {
             }
         })
         .await?;
+        Ok(())
+    }
+
+    /// A published event that the store cannot append reaches no subscriber, and the publisher
+    /// learns of the failure on its next publication.
+    #[actix::test]
+    async fn append_failure_is_not_dispatched_and_closes_admission() -> Result<()> {
+        use crate::{
+            hlc_factory::HlcFactory, BusHandle, EventBus, EventPublisher, GetEvents, Sequencer,
+        };
+
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        let store = EventStore::new(MockIndex::new(), MockLog::failing_append())?
+            .with_failure_signal(signal.clone())
+            .start();
+        let bus = EventBus::<InterfoldEvent>::default().start();
+        let history = EventBus::history(&bus);
+        let sequencer = Sequencer::new(&bus, store.recipient()).start();
+        let handle = BusHandle::new(bus, sequencer, HlcFactory::new())
+            .with_failure_signal(signal)
+            .enable("append-failure");
+
+        handle.publish_without_context(TestEvent::new("lost", 1))?;
+        let reason = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            health.wait_for(Option::is_some),
+        )
+        .await??
+        .clone()
+        .unwrap_or_default();
+
+        assert!(
+            reason.contains("simulated commit-log append failure"),
+            "{reason}"
+        );
+        assert!(history.send(GetEvents::new()).await?.is_empty());
+        let error = handle
+            .publish_without_context(TestEvent::new("after", 2))
+            .unwrap_err();
+        assert!(error.to_string().contains(&reason), "{error:#}");
         Ok(())
     }
 

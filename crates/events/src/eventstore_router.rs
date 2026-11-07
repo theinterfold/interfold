@@ -186,9 +186,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             }
             return;
         };
-        let event = msg.event;
-        let sender = msg.sender;
-        store_addr.do_send(StoreEventRequested::new(event, sender));
+        store_addr.do_send(msg);
     }
 
     pub fn handle_event_store_query_ts(

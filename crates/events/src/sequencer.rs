@@ -5,10 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
+    event_admission::EventReceipt,
+    eventbus::Dispatch,
     events::{FlushEventStores, SequencerBarrier, StoreEventRequested, StoreEventResponse},
     EventBus, InterfoldEvent, Sequenced, Unsequenced,
 };
-use actix::{Actor, Addr, AsyncContext, Handler, Recipient, ResponseFuture};
+use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 
@@ -51,22 +53,32 @@ impl Actor for Sequencer {
     }
 }
 
-impl Handler<InterfoldEvent<Unsequenced>> for Sequencer {
+/// An event on its way to storage and then to the EventBus.
+#[derive(Message)]
+#[rtype("()")]
+pub(crate) struct SequenceEvent {
+    pub(crate) event: InterfoldEvent<Unsequenced>,
+    pub(crate) receipt: EventReceipt,
+}
+
+impl Handler<SequenceEvent> for Sequencer {
     type Result = ();
-    fn handle(
-        &mut self,
-        msg: InterfoldEvent<Unsequenced>,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
-        self.eventstore
-            .do_send(StoreEventRequested::new(msg, ctx.address()));
+    fn handle(&mut self, msg: SequenceEvent, ctx: &mut Self::Context) -> Self::Result {
+        self.eventstore.do_send(StoreEventRequested {
+            event: msg.event,
+            sender: ctx.address().recipient(),
+            receipt: msg.receipt,
+        });
     }
 }
 
 impl Handler<StoreEventResponse> for Sequencer {
     type Result = ();
     fn handle(&mut self, msg: StoreEventResponse, _: &mut Self::Context) -> Self::Result {
-        self.bus.do_send(msg.into_event());
+        self.bus.do_send(Dispatch {
+            event: msg.event,
+            receipt: msg.receipt,
+        });
     }
 }
 

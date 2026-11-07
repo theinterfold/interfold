@@ -43,9 +43,10 @@ should normally use [CiphernodeBuilder](../../ciphernode/builder/README.md).
 
 Subscriptions wake canonical backfill; they do not themselves prove complete ingestion. Configured
 confirmation depth applies independently of whether the RPC URL is loopback. Gateway
-readiness/failure handles expose live transition and fail-closed ingestion errors. Confirmed chain
-history, not gossip or local aggregation intents, authorizes canonical keys and completion. Writer
-preflights and retry results are separate from accepted chain facts.
+readiness/failure handles expose live transition and fail-closed ingestion errors. A live gateway
+waits for event-pipeline capacity and publishes in order; incoming chain events queue in its mailbox
+meanwhile. Confirmed chain history, not gossip or local aggregation intents, authorizes canonical
+keys and completion. Writer preflights and retry results are separate from accepted chain facts.
 
 Enabled chains use only `Interfold.slashingManager()`. A full node fails startup if the read stays
 unavailable or returns zero; configured fallback applies only to disabled chains. A different

@@ -131,7 +131,7 @@ pub trait EventPublisher<E: Event> {
         source: EventSource,
     ) -> Result<()>;
     /// Dispatch the given event without applying any HLC transformation.
-    fn naked_dispatch(&self, event: E);
+    fn naked_dispatch(&self, event: E) -> Result<()>;
 }
 
 /// Trait for dispatching errors to an inner event bus.

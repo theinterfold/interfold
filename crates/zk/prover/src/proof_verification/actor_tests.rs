@@ -10,7 +10,7 @@ use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
     hlc_factory::HlcFactory, E3RequestComplete, EffectsEnabled, Event, EventBus, EventBusBarrier,
     EventBusConfig, EventPublisher, FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer,
-    StoreEventRequested, StoreEventResponse, Unsequenced,
+    StoreEventRequested, Unsequenced,
 };
 use e3_fhe_params::build_pair_for_preset;
 use e3_utils::utility_types::ArcBytes;
@@ -32,12 +32,10 @@ impl Handler<StoreEventRequested> for TestEventStore {
     type Result = ();
 
     fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
-        let StoreEventRequested { event, sender } = msg;
         let seq = self.next_seq;
         self.next_seq += 1;
-        sender
-            .try_send(StoreEventResponse(event.into_sequenced(seq)))
-            .unwrap();
+        let (sender, response) = msg.into_stored(seq);
+        sender.try_send(response).unwrap();
     }
 }
 

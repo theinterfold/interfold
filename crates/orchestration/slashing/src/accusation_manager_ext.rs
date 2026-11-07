@@ -248,7 +248,7 @@ mod tests {
     use e3_events::{
         hlc_factory::HlcFactory, AccusationVote, CommitmentConsistencyViolation, EffectsEnabled,
         EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource, GetEvents, ProofType,
-        Seed, Sequencer, StoreEventRequested, StoreEventResponse, Unsequenced,
+        Seed, Sequencer, StoreEventRequested, Unsequenced,
     };
     use e3_fhe_params::BfvPreset;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
@@ -269,10 +269,10 @@ mod tests {
         type Result = ();
 
         fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
-            let StoreEventRequested { event, sender } = msg;
             self.next_seq += 1;
+            let (sender, response) = msg.into_stored(self.next_seq);
             sender
-                .try_send(StoreEventResponse(event.into_sequenced(self.next_seq)))
+                .try_send(response)
                 .expect("the sequencer accepts the stored event");
         }
     }

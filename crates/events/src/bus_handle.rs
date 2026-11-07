@@ -5,26 +5,19 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::{Actor, Addr, Handler, Recipient};
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use derivative::Derivative;
 use e3_utils::{actix::channel::oneshot, MAILBOX_LIMIT};
-use std::{
-    future::Future,
-    marker::PhantomData,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
-};
-use tokio::sync::Notify;
-use tracing::{error, warn};
+use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc};
+use tokio::sync::watch;
+use tracing::error;
 
 use crate::{
+    event_admission::{EventAdmission, EventReceipt},
     event_context::EventContext,
     hlc::{Hlc, HlcMethods, HlcTimestamp},
     hlc_factory::HlcFactory,
-    sequencer::Sequencer,
+    sequencer::{SequenceEvent, Sequencer},
     traits::{
         ErrorDispatcher, ErrorFactory, EventConstructorWithTimestamp, EventContextAccessors,
         EventFactory, EventPublisher, EventSubscriber,
@@ -41,58 +34,6 @@ pub struct Disabled;
 /// Typestate marker indicating the BusHandle has been enabled and is ready for use.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enabled;
-
-#[derive(Debug)]
-struct EventAdmission {
-    accepting: AtomicBool,
-    in_flight: AtomicUsize,
-    drained: Notify,
-}
-
-impl EventAdmission {
-    fn new() -> Self {
-        Self {
-            accepting: AtomicBool::new(true),
-            in_flight: AtomicUsize::new(0),
-            drained: Notify::new(),
-        }
-    }
-
-    fn enter(self: &Arc<Self>) -> Result<EventAdmissionGuard> {
-        if !self.accepting.load(Ordering::Acquire) {
-            anyhow::bail!("event admission is closed because node shutdown has started");
-        }
-
-        self.in_flight.fetch_add(1, Ordering::AcqRel);
-        let guard = EventAdmissionGuard(Arc::clone(self));
-        if !self.accepting.load(Ordering::Acquire) {
-            drop(guard);
-            anyhow::bail!("event admission is closed because node shutdown has started");
-        }
-        Ok(guard)
-    }
-
-    async fn close_and_wait(&self) {
-        self.accepting.store(false, Ordering::Release);
-        loop {
-            let drained = self.drained.notified();
-            if self.in_flight.load(Ordering::Acquire) == 0 {
-                return;
-            }
-            drained.await;
-        }
-    }
-}
-
-struct EventAdmissionGuard(Arc<EventAdmission>);
-
-impl Drop for EventAdmissionGuard {
-    fn drop(&mut self) {
-        if self.0.in_flight.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.0.drained.notify_one();
-        }
-    }
-}
 
 #[derive(Derivative)]
 #[derivative(
@@ -111,7 +52,7 @@ pub struct BusHandle<S = Enabled> {
     hlc: HlcFactory,
     /// Temporary context for events the bus publishes
     ctx: Option<EventContext<Sequenced>>,
-    /// Shared admission fence closed before the shutdown event is enqueued.
+    /// Shared admission of live events: the shutdown fence and the bounded window.
     #[derivative(Debug = "ignore", PartialEq = "ignore")]
     admission: Arc<EventAdmission>,
     #[derivative(Debug = "ignore", PartialEq = "ignore")]
@@ -133,6 +74,13 @@ impl BusHandle<Disabled> {
             admission: Arc::new(EventAdmission::new()),
             _state: PhantomData,
         }
+    }
+
+    /// Report admitted events that the pipeline loses on `signal`, and refuse new events once it
+    /// holds a failure.
+    pub fn with_failure_signal(self, signal: watch::Sender<Option<String>>) -> Self {
+        self.admission.set_failure_signal(signal);
+        self
     }
 
     /// Enable the BusHandle by providing a node ID string used to create the HLC clock.
@@ -172,11 +120,6 @@ impl BusHandle<Enabled> {
     /// Return a HistoryCollector that is subscribed only to InterfoldError events.
     pub fn errors(&self) -> Addr<HistoryCollector<InterfoldEvent<Sequenced>>> {
         EventBus::<InterfoldEvent<Sequenced>>::error(&self.event_bus)
-    }
-
-    /// Access the sequencer to internally dispatch an event to
-    pub fn sequencer(&self) -> &Addr<Sequencer> {
-        &self.sequencer
     }
 
     /// Access the event_bus to internally subscribe to events
@@ -243,20 +186,32 @@ impl EventPublisher<InterfoldEvent<Unsequenced>> for BusHandle<Enabled> {
         self.publish_from_remote_impl(data, remote_ts, Some(caused_by.into()), block, source)
     }
 
-    fn naked_dispatch(&self, event: InterfoldEvent<Unsequenced>) {
-        let Ok(_admission) = self.admission.enter() else {
-            warn!("Dropping an internal event because node shutdown has closed admission");
-            return;
-        };
-        self.sequencer.do_send(event);
+    fn naked_dispatch(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
+        let _fence = self.admission.enter()?;
+        self.sequence(event)
     }
 }
 
 impl BusHandle<Enabled> {
+    /// Like `naked_dispatch`, but waits while the admission window is full. Waiting publishers
+    /// use a share of the window, which leaves room for publishers that cannot wait.
     pub async fn naked_dispatch_async(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
-        let _admission = self.admission.enter()?;
-        self.sequencer.send(event).await?;
-        Ok(())
+        loop {
+            let released = self.admission.released();
+            tokio::pin!(released);
+            released.as_mut().enable();
+            {
+                let _fence = self.admission.enter()?;
+                self.ensure_sequencer()?;
+                if let Some(receipt) = self.admission.reserve_waiting(&event)? {
+                    self.sequencer
+                        .send(SequenceEvent { event, receipt })
+                        .await?;
+                    return Ok(());
+                }
+            }
+            released.await;
+        }
     }
 
     /// Persist and broadcast `Shutdown`, waiting until every live EventBus
@@ -272,7 +227,11 @@ impl BusHandle<Enabled> {
         // all admitted work and before every rejected late arrival.
         self.admission.close_and_wait().await;
         let event = self.event_from(Shutdown, None)?;
-        self.sequencer.send(event).await?;
+        // Shutdown bypasses the window and failure checks: it must still be attempted.
+        let receipt = EventReceipt::untracked();
+        self.sequencer
+            .send(SequenceEvent { event, receipt })
+            .await?;
 
         let shutdown = response.await?;
         // Awaiting this mailbox operation also proves the EventBus has
@@ -301,32 +260,58 @@ impl BusHandle<Enabled> {
         block: Option<u64>,
         source: EventSource,
     ) -> Result<()> {
-        let _admission = self.admission.enter()?;
-        let evt = self.event_from_remote_source(data, caused_by, remote_ts, block, source)?;
-        self.sequencer.do_send(evt);
-        Ok(())
+        let _fence = self.admission.enter()?;
+        let event = self.event_from_remote_source(data, caused_by, remote_ts, block, source)?;
+        self.sequence(event)
     }
+
     fn publish_local(
         &self,
         data: impl Into<InterfoldEventData>,
         caused_by: Option<EventContext<Sequenced>>,
     ) -> Result<()> {
-        let _admission = self.admission.enter()?;
-        let evt = self.event_from(data, caused_by)?;
-        self.sequencer.do_send(evt);
+        let _fence = self.admission.enter()?;
+        let event = self.event_from(data, caused_by)?;
+        self.sequence(event)
+    }
+}
+
+impl<S> BusHandle<S> {
+    fn ensure_sequencer(&self) -> Result<()> {
+        ensure!(
+            self.sequencer.connected(),
+            "event admission is closed because the Sequencer stopped"
+        );
+        Ok(())
+    }
+
+    /// Admits `event` into the window, failing when the pipeline cannot take it. Call it inside
+    /// the shutdown fence.
+    fn reserve(&self, event: &InterfoldEvent<Unsequenced>) -> Result<EventReceipt> {
+        self.ensure_sequencer()?;
+        self.admission.reserve(event)
+    }
+
+    fn sequence(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
+        let receipt = self.reserve(&event)?;
+        self.sequencer.do_send(SequenceEvent { event, receipt });
         Ok(())
     }
 }
 
 impl<S> ErrorDispatcher<InterfoldEvent<Unsequenced>> for BusHandle<S> {
     fn err(&self, err_type: EType, error: anyhow::Error) {
-        let Ok(_admission) = self.admission.enter() else {
+        let Ok(_fence) = self.admission.enter() else {
             error!(%error, "Error event not admitted because node shutdown has started");
             return;
         };
-        match self.event_from_error(err_type, error, self.get_ctx()) {
-            Ok(evt) => self.sequencer.do_send(evt),
-            Err(e) => error!("{e}"),
+        let event = match self.event_from_error(err_type, error, self.get_ctx()) {
+            Ok(event) => event,
+            Err(e) => return error!("{e}"),
+        };
+        match self.reserve(&event) {
+            Ok(receipt) => self.sequencer.do_send(SequenceEvent { event, receipt }),
+            Err(reason) => error!(%reason, %event, "Error event not admitted"),
         }
     }
 }

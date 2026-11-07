@@ -410,7 +410,8 @@ impl EventSystem {
                             .with_failure_signal(self.failure_signal.clone()),
                     )
                     .context("event bus could not register snapshot admission")?;
-                let handle = BusHandle::new(eventbus, self.sequencer()?, HlcFactory::new());
+                let handle = BusHandle::new(eventbus, self.sequencer()?, HlcFactory::new())
+                    .with_failure_signal(self.failure_signal.clone());
                 Ok(handle)
             })
             .cloned()
@@ -724,6 +725,120 @@ mod tests {
             .clone()
             .context("failure reason")?;
         assert!(reason.contains("No EventStore is configured"), "{reason}");
+        Ok(())
+    }
+
+    /// Records each TestEvent, then holds its fanout until the gate opens.
+    struct GatedListener {
+        gate: tokio::sync::watch::Receiver<bool>,
+        logs: Vec<String>,
+    }
+
+    impl Actor for GatedListener {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent> for GatedListener {
+        type Result = actix::ResponseFuture<()>;
+
+        fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+            if let InterfoldEventData::TestEvent(TestEvent { msg, .. }) = msg.into_data() {
+                self.logs.push(msg);
+            }
+            let mut gate = self.gate.clone();
+            Box::pin(async move {
+                let _ = gate.wait_for(|open| *open).await;
+            })
+        }
+    }
+
+    impl Handler<GetLogs> for GatedListener {
+        type Result = Vec<String>;
+        fn handle(&mut self, _: GetLogs, _: &mut Self::Context) -> Self::Result {
+            self.logs.clone()
+        }
+    }
+
+    /// A blocked subscriber fills the admission window: publishers get an error and waiting
+    /// publishers wait, and both resume in order once the subscriber does.
+    #[actix::test]
+    async fn a_blocked_subscriber_bounds_admission_until_it_resumes() -> Result<()> {
+        let system = EventSystem::in_mem().with_fresh_bus();
+        let bus = system.handle()?.enable("blocked-subscriber");
+        let (gate, gate_rx) = tokio::sync::watch::channel(false);
+        let listener = GatedListener {
+            gate: gate_rx,
+            logs: Vec::new(),
+        }
+        .start();
+        bus.subscribe(EventType::TestEvent, listener.clone().recipient());
+
+        let mut published = 0;
+        let saturated = loop {
+            anyhow::ensure!(published < 100_000, "admission is not bounded");
+            match bus.publish_without_context(TestEvent::new(&published.to_string(), 1)) {
+                Ok(()) => published += 1,
+                Err(error) => break error,
+            }
+            tokio::task::yield_now().await;
+        };
+        assert!(saturated.to_string().contains("saturated"), "{saturated:#}");
+
+        let waiting = bus.event_from(TestEvent::new("waiting", 1), None)?;
+        let mut waiting = Box::pin(bus.naked_dispatch_async(waiting));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut waiting)
+                .await
+                .is_err(),
+            "a waiting publisher was admitted into a full window"
+        );
+
+        gate.send_replace(true);
+        waiting.await?;
+        bus.flush_event_pipeline().await?;
+        let mut expected: Vec<String> = (0..published).map(|i| i.to_string()).collect();
+        expected.push("waiting".to_owned());
+        assert_eq!(listener.send(GetLogs).await?, expected);
+        bus.publish_without_context(TestEvent::new("after", 1))?;
+        assert!(system.failure_receiver().borrow().is_none());
+        Ok(())
+    }
+
+    /// An admitted event that the stopped EventBus cannot deliver is reported on the failure
+    /// signal, and later publications fail.
+    #[actix::test]
+    async fn an_event_lost_by_a_stopped_event_bus_closes_admission() -> Result<()> {
+        let arbiter = actix::Arbiter::new();
+        let eventbus = EventBus::<InterfoldEvent>::start_in_arbiter(&arbiter.handle(), |_| {
+            EventBus::default()
+        });
+        let system = EventSystem::in_mem()
+            .with_event_bus(eventbus.clone())
+            .with_aggregate_config(AggregateConfig::new(HashMap::new()));
+        let bus = system.handle()?.enable("stopped-event-bus");
+        let mut failure = system.failure_receiver();
+        arbiter.stop();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while eventbus.connected() {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+
+        bus.publish_without_context(TestEvent::new("lost", 1))?;
+        let reason = tokio::time::timeout(
+            Duration::from_secs(5),
+            failure.wait_for(|reason| reason.is_some()),
+        )
+        .await??
+        .clone()
+        .context("failure reason")?;
+
+        assert!(reason.contains("TestEvent event was lost"), "{reason}");
+        let error = bus
+            .publish_without_context(TestEvent::new("after", 1))
+            .unwrap_err();
+        assert!(error.to_string().contains(&reason), "{error:#}");
         Ok(())
     }
 

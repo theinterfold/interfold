@@ -28,8 +28,8 @@ use e3_events::{
     EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, EventType,
     FailureReason, Get, GetEvents, HistoryCollector, Insert, InterfoldEvent, InterfoldEventData,
     PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove,
-    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
-    Unsequenced, VerificationKind,
+    Sequencer, SignedProofPayload, StoreEventRequested, TakeEvents, TestEvent, Unsequenced,
+    VerificationKind,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_request::{
@@ -1544,10 +1544,10 @@ impl Handler<StoreEventRequested> for TestEventStore {
     type Result = ();
 
     fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
-        let StoreEventRequested { event, sender } = msg;
         let seq = self.next_seq;
         self.next_seq += 1;
-        sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+        let (sender, response) = msg.into_stored(seq);
+        sender.do_send(response);
     }
 }
 

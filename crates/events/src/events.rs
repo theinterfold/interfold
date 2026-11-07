@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use actix::{Message, Recipient};
 use anyhow::Result;
 
-use crate::{AggregateId, CorrelationId, EventSource, InterfoldEvent, Sequenced, Unsequenced};
+use crate::{
+    event_admission::EventReceipt, AggregateId, CorrelationId, EventSource, InterfoldEvent,
+    Sequenced, Unsequenced,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventStoreFilter {
@@ -20,11 +23,14 @@ pub enum EventStoreFilter {
 #[derive(Message, Debug)]
 #[rtype("()")]
 pub struct StoreEventRequested {
-    pub event: InterfoldEvent<Unsequenced>,
-    pub sender: Recipient<StoreEventResponse>,
+    pub(crate) event: InterfoldEvent<Unsequenced>,
+    pub(crate) sender: Recipient<StoreEventResponse>,
+    /// Travels with the event to the EventBus; dropping it reports the event as lost.
+    pub(crate) receipt: EventReceipt,
 }
 
 impl StoreEventRequested {
+    /// A request for an event that was not admitted through a `BusHandle`.
     pub fn new(
         event: InterfoldEvent<Unsequenced>,
         sender: impl Into<Recipient<StoreEventResponse>>,
@@ -32,7 +38,17 @@ impl StoreEventRequested {
         Self {
             event,
             sender: sender.into(),
+            receipt: EventReceipt::untracked(),
         }
+    }
+
+    /// The response of a store that wrote the event at `seq`, for stores outside this crate.
+    pub fn into_stored(self, seq: u64) -> (Recipient<StoreEventResponse>, StoreEventResponse) {
+        let response = StoreEventResponse {
+            event: self.event.into_sequenced(seq),
+            receipt: self.receipt,
+        };
+        (self.sender, response)
     }
 }
 
@@ -107,12 +123,9 @@ impl EventStoreQueryResponse {
 /// Direct event received by the Sequencer once an event has been stored
 #[derive(Message, Debug)]
 #[rtype("()")]
-pub struct StoreEventResponse(pub InterfoldEvent<Sequenced>);
-
-impl StoreEventResponse {
-    pub fn into_event(self) -> InterfoldEvent<Sequenced> {
-        self.0
-    }
+pub struct StoreEventResponse {
+    pub(crate) event: InterfoldEvent<Sequenced>,
+    pub(crate) receipt: EventReceipt,
 }
 
 /// Flush every event store after all previously routed appends have completed.
