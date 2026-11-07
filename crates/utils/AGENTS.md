@@ -11,8 +11,6 @@ Keep shared mechanical helpers here; capability-specific protocol rules belong w
   indefinitely.
 - Reuse `backoff_delay` rather than copying capped exponential/jitter calculations into adapters.
   Caller-specific caps and attempt-reset rules remain with each caller.
-- Actix/Tokio bridging helpers must preserve acknowledgment and error behavior. A fire-and-forget
-  channel send is not equivalent to awaited completion of the underlying work.
 
 Use the [README tests](README.md#tests), including malformed-length/trailing-byte and macro consumer
 coverage for encoding changes. These helpers serve durable/wire data; consult

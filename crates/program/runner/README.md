@@ -53,7 +53,7 @@ policy, and input-root contracts.
 ## Tests
 
 Run `cargo test --locked -p e3-program-runner` after the
-[system prerequisites](../../testing/system/README.md#prerequisites-and-assurance). Inline tests
-cover mode admission and mock-envelope encoding. CLI dispatch tests live in `e3-cli`;
-generated-project and real OpenVM service/contract checks exercise different boundaries.
-[AGENTS.md](AGENTS.md) describes editing hazards.
+[workspace setup](../../README.md#setup-and-checks). Inline tests cover mode admission and
+mock-envelope encoding. CLI dispatch tests live in `e3-cli`; generated-project and real OpenVM
+service/contract checks exercise different boundaries. [AGENTS.md](AGENTS.md) describes editing
+hazards.

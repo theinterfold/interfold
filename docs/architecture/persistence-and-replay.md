@@ -1,10 +1,13 @@
 # Persistence, replay, and shutdown
 
-Owners: [event system](../../crates/state/event-system/), [events](../../crates/events/),
-[data](../../crates/state/storage/), [request router](../../crates/state/request/),
-[sync](../../crates/state/sync/), and [ciphernode builder](../../crates/ciphernode/builder/).
-[Design principles](design-principles.md) describe the direction; owner-local documentation
-describes implementation boundaries. Neither makes an unimplemented durability guarantee true.
+Owners: the [engine](../../crates/ciphernode/engine/), the [journal](../../crates/state/journal/),
+and the [blob store](../../crates/state/blobs/). [Design principles](design-principles.md) describe
+the direction; owner-local documentation describes implementation boundaries. Neither makes an
+unimplemented durability guarantee true.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 Here **durable** means flushed to disk. EventStore flushes appended events before dispatch.
 `Persistable::try_mutate` only enqueues a snapshot write; durability arrives when its batch flushes.
@@ -48,14 +51,13 @@ EventStore append/index/flush errors call `report_fatal_failure` and stop the st
 An event with no configured aggregate store sets the same failure signal without dispatch or
 misrouting. EventSystem connects the health watch, builder fails startup, and the CLI monitors it
 after startup and exits unsuccessfully. A standalone helper without the signal does not acquire that
-process guarantee. Tests in [eventstore.rs](../../crates/events/src/eventstore.rs) cover
-append/flush failure and stopping before dispatch; [CLI start](../../crates/cli/src/start.rs) owns
-the health wait. The start command also installs `e3_entrypoint::actor_panics::ActorPanics`: the
-first panic on the thread running the node's actors triggers the shutdown barrier and an
-unsuccessful exit. Panics on other threads remain with their owners; compute-pool panics become job
-errors. Dead fire-and-forget mailboxes are not universally supervised. Logging/trapping a handler
-error is not itself a restart. Broader acknowledged pipeline work is tracked in
-[#2266](https://github.com/theinterfold/interfold/issues/2266).
+process guarantee. Tests in eventstore.rs cover append/flush failure and stopping before dispatch;
+[CLI start](../../crates/cli/src/start.rs) owns the health wait. The start command also installs
+`e3_entrypoint::actor_panics::ActorPanics`: the first panic on the thread running the node's actors
+triggers the shutdown barrier and an unsuccessful exit. Panics on other threads remain with their
+owners; compute-pool panics become job errors. Dead fire-and-forget mailboxes are not universally
+supervised. Logging/trapping a handler error is not itself a restart. Broader acknowledged pipeline
+work is tracked in [#2266](https://github.com/theinterfold/interfold/issues/2266).
 
 Before enabling EventBus, seed its HLC above the greatest timestamp in **all durable logs**,
 including post-snapshot suffixes. A snapshot alone is not a clock floor. Correlation IDs similarly
@@ -183,12 +185,11 @@ disables further deferral until teardown/restart. Live routing, checkpoints, oth
 other E3s continue; the affected E3 can fail at its existing deadline. **Gap:** queues and failure
 records are memory-only; restart cannot recover their pre-checkpoint backlog.
 
-[Capacity tests](../../crates/state/request/src/routing/capacity_tests.rs) route four independently
-allocated secure-sized histories through real recipient creation, including full failed C3/C4
-requests and document envelopes. They test ordered delivery, default-limit overflow, spare-capacity
-release, and allocation-heavy empty buffers. Linux RSS checks require distinct resident storage and
-<=4.5 GiB growth at saturation. This does not establish a maximum node RSS or durable queue
-recovery.
+Capacity tests route four independently allocated secure-sized histories through real recipient
+creation, including full failed C3/C4 requests and document envelopes. They test ordered delivery,
+default-limit overflow, spare-capacity release, and allocation-heavy empty buffers. Linux RSS checks
+require distinct resident storage and <=4.5 GiB growth at saturation. This does not establish a
+maximum node RSS or durable queue recovery.
 
 ## Effect recovery and shutdown
 
@@ -251,10 +252,10 @@ logged.
 
 ## Storage representations and decoding
 
-The data crate's [in-memory store](../../crates/state/storage/src/in_mem_kv_store.rs) uses
-[`e3-hamt`](../../crates/hamt/) to share unchanged nodes between immutable map versions. Here
-"persistent" describes the data structure, not a disk flush. Its exported dump remains a
-bincode-encoded ordered map; changing the live structure does not authorize changing those bytes.
+The data crate's in-memory store uses `e3-hamt` to share unchanged nodes between immutable map
+versions. Here "persistent" describes the data structure, not a disk flush. Its exported dump
+remains a bincode-encoded ordered map; changing the live structure does not authorize changing those
+bytes.
 
 [`e3-utils`](../../crates/utils/src/bounded_bincode.rs) provides fixed-integer bincode decoding with
 a byte budget and complete-consumption check. Its retry and channel adapters are mechanisms, not
@@ -275,14 +276,13 @@ binary passes preflight and fails to open the log ("event log integrity check fa
 so that node can only roll forward. Global storage schema is **not linked** to
 `protocol-release.toml`; wire major changes are separate.
 
-[Layout locks](../../crates/testing/layout-lock/) detect encoding drift and same-encoding field
-swaps/renames for roots explicitly listed by hand.
-[Shared fixtures](../../crates/testing/system/tests/layout_lock.rs) cover events, keyshares, gossip,
-public repositories; e3-slashing/e3-zk-prover cover private roots and e3-net covers DHT documents
-and sample wire frames. **Not covered:** unlisted roots, repository store keys, hand-written log
-framing, or opaque encoded/encrypted contents (SharedSecret shares, fhe.rs keys in SensitiveBytes).
-Rewriting a fixture does not raise a version; review must connect the diff to schema or wire
-rollout. Rust type compatibility is not a migration strategy.
+Layout locks detect encoding drift and same-encoding field swaps/renames for roots explicitly listed
+by hand. Shared fixtures cover events, keyshares, gossip, public repositories;
+e3-slashing/e3-zk-prover cover private roots and e3-net covers DHT documents and sample wire frames.
+**Not covered:** unlisted roots, repository store keys, hand-written log framing, or opaque
+encoded/encrypted contents (SharedSecret shares, fhe.rs keys in SensitiveBytes). Rewriting a fixture
+does not raise a version; review must connect the diff to schema or wire rollout. Rust type
+compatibility is not a migration strategy.
 
 `BfvPreset` also persists enum discriminants. Under schema 8, variants 0 and 1 mean the degree-64
 insecure presets. Degree-512 stores used those same positions and marker, so preflight cannot detect
@@ -330,13 +330,9 @@ ceiling lives in `scripts/checks/repository-baselines.env`; retain both interim 
 the acknowledged pipeline work in #2266 is complete. These static checks do not prove runtime
 delivery or a successful shutdown. The remaining `do_send` sites include correctness paths; a
 call-count ceiling cannot establish safe delivery. Proof-skipping rejection is tested in
-[`start/mod.rs`](../../crates/ciphernode/entrypoint/src/start/mod.rs), but those unit tests exercise
-the validation function rather than the full startup path.
-[Schema tests](../../crates/ciphernode/entrypoint/tests/validate_older_schema.rs) check failure
-before recovery;
-[finalized reconciliation tests](../../crates/ciphernode/builder/src/finalized_lifecycle.rs) include
-bounded failed-batch retry.
-[Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs) include
+`start/mod.rs`, but those unit tests exercise the validation function rather than the full startup
+path. Schema tests check failure before recovery; finalized reconciliation tests include bounded
+failed-batch retry. Effect-gate tests include
 `replayed_failure_does_not_suppress_a_recovery_attempt`. Run affected focused Cargo tests and
 `pnpm test:integration` for cross-layer restart/shutdown scenarios. None closes the gaps merely by
 existing.

@@ -1,11 +1,14 @@
 # Releases, protocol cutovers, and rollback
 
 Owners: [release configuration](../../crates/ciphernode/config/protocol-release.toml),
-[upgrade tooling](../../packages/interfold-contracts/scripts/upgrade/),
-[storage preflight](../../crates/state/sync/src/preflight.rs), and
-[node state commands](../../crates/ciphernode/entrypoint/src/nodes/). Follow
-[Protocol compatibility](../../CONTRIBUTING.md#protocol-compatibility) for human rollout approval.
-This is reference policy, not authorization to perform a release.
+[upgrade tooling](../../packages/interfold-contracts/scripts/upgrade/), the
+[journal](../../crates/state/journal/), and the [node state commands](../../crates/cli/src/node.rs).
+Follow [Protocol compatibility](../../CONTRIBUTING.md#protocol-compatibility) for human rollout
+approval. This is reference policy, not authorization to perform a release.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Independent version boundaries
 
@@ -324,9 +327,7 @@ normal terminal processing drains them. [Artifact checks](circuit-artifacts.md) 
 prerequisites.
 
 [Node release tests](../../packages/interfold-contracts/test/Registry/NodeReleaseRegistry.spec.ts),
-[V19 cutover tests](../../packages/interfold-contracts/test/Deployment/V19Cutover.spec.ts),
-[schema preflight tests](../../crates/ciphernode/entrypoint/tests/validate_older_schema.rs), and
-[state guards](../../crates/ciphernode/entrypoint/src/nodes/state_guard.rs) guard their owner
-boundaries. Run `pnpm evm:test`/focused Cargo tests and the prepared fork simulation for changed
-cutover behavior. These checks do not replace a human-approved rollout/rollback decision or
-establish safety of arbitrary operator overrides.
+[V19 cutover tests](../../packages/interfold-contracts/test/Deployment/V19Cutover.spec.ts), schema
+preflight tests, and state guards guard their owner boundaries. Run `pnpm evm:test`/focused Cargo
+tests and the prepared fork simulation for changed cutover behavior. These checks do not replace a
+human-approved rollout/rollback decision or establish safety of arbitrary operator overrides.

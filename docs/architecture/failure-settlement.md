@@ -2,8 +2,12 @@
 
 Owners: `InterfoldLifecycle`, `FailurePayerLib`, `InterfoldPricing`, and `E3RefundManager` in
 [contracts](../../packages/interfold-contracts/contracts/), plus the
-[Interfold writer](../../crates/evm/runtime/src/interfold_writing/). [Slashing](slashing.md) owns
+[chain writer](../../crates/ciphernode/chain/src/writer.rs). [Slashing](slashing.md) owns
 evidence/proposals; this document owns who pays and when claims mature.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Detection is not settlement
 
@@ -141,10 +145,9 @@ Bond slashes differ: FOLD remains in registry custody as `slashedCiphernodeBond`
 [expulsion](../../packages/interfold-contracts/test/Slashing/CommitteeExpulsion.spec.ts),
 [slashing](../../packages/interfold-contracts/test/Slashing/SlashingManager.spec.ts), and
 [pull-payment tests](../../packages/interfold-contracts/test/Pricing/PullPaymentsAndAllowlist.spec.ts)
-own contract settlement. [Writer code and tests](../../crates/evm/runtime/src/interfold_writing/)
-own retry classification. Run `pnpm evm:test` and affected `cargo test -p e3-evm` tests. These
-checks do not establish that evidence will arrive within the reporting window or that an outage is
-fairly funded.
+own contract settlement. Writer code and tests own retry classification. Run `pnpm evm:test` and
+affected `cargo test -p e3-evm` tests. These checks do not establish that evidence will arrive
+within the reporting window or that an outage is fairly funded.
 
 DA losses follow the stalled stage: requester-paid `ComputeTimeout` before ciphertext duty,
 ciphernode-paid `DecryptionTimeout` after it (no completed-DKG base reward). There is no DA-specific

@@ -1,6 +1,6 @@
 # Application data availability
 
-Owners: [ciphernode DA coordinator](../../crates/evm/runtime/src/data_availability/),
+Owners: [ciphernode DA clients](../../crates/data-availability/),
 [CRISP server](https://github.com/theinterfold/CRISP/tree/main/server), and
 [DA contract adapter](../../packages/interfold-contracts/contracts/). Committee public keys use
 bounded Ethereum event chunks, not Avail; [DKG](dkg.md) owns their commitment validation. Voter and
@@ -8,6 +8,10 @@ aggregate ciphertexts use Avail with VectorX finalization on Ethereum. CRISP liv
 [repository](https://github.com/theinterfold/CRISP); this document covers its availability flow
 because that flow uses the DA coordinator, the compute provider, and the OpenVM host of this
 repository.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Exact bytes and two-step commitment
 

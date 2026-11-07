@@ -1,8 +1,8 @@
 # Ciphernode v2: decision log
 
-The v2 node is written as new crates beside the current node, and replaces it in one release. The
+The v2 node was written as new crates beside the earlier node, and replaced it in one release. The
 contracts do not change: every byte a contract verifies stays identical. This log records the rules
-for v2 code, the decisions, and the problems in the current node that each decision removes.
+for v2 code, the decisions, and the problems in the earlier node that each decision removes.
 
 ## Rules for v2 code
 
@@ -11,8 +11,7 @@ Each rule is checkable in review.
 1. **Colocate by capability.** A machine, the wire messages it owns, their slot rules, and its tests
    live in one module.
 2. **Dependencies point to what changes less.** `e3-protocol` ← `e3-engine` ← adapters ← `e3-node`.
-   The core (`e3-protocol`, `e3-engine`) links no I/O crate, no actix, and none of the current
-   runtime (`e3-events`, `e3-request`, `e3-data`, `e3-slashing`).
+   The core (`e3-protocol`, `e3-engine`) links no I/O crate and no actix.
 3. **Explicit over implicit.** Phases are enums with exhaustive matches. No string keys, no
    registration order, no call order that callers must know.
 4. **Self-contained.** No globals. No environment reads below the composition root. Time and
@@ -28,9 +27,9 @@ Each rule is checkable in review.
 
 ## Decisions
 
-- **D1. A rewrite beside the current node.** No step has to keep the current node working, so no
-  compatibility scaffolding is built. New crates sit in the existing families; the current crates
-  are deleted after the switch.
+- **D1. A rewrite beside the earlier node.** No step had to keep the earlier node working, so no
+  compatibility scaffolding was built. New crates sit in the existing families; the earlier crates
+  were deleted after the switch.
 - **D2. One embedded transactional store (redb).** One transaction per machine step holds the
   journaled input, the new state, and the outbox entries. Pure Rust, ACID, no C++ build.
 - **D3. tokio tasks and bounded channels; no actix.** No task awaits another in a cycle. The outbox
@@ -43,7 +42,7 @@ Each rule is checkable in review.
   by slot (E3, sender, kind, subject). Job results by semantic job id. Effects by a deterministic
   id.
 - **D7. Contract-verified bytes are locked by golden tests first.** Vectors are taken from the
-  current code before any port; the v2 code must reproduce them.
+  earlier code before any port; the v2 code must reproduce them.
 
 - **D8. One pure `Node` machine, one journal.** The node's whole protocol state is one deterministic
   machine; each E3 is a plain struct inside it, and admission and routing are pure code. The engine
@@ -79,7 +78,7 @@ Each rule is checkable in review.
   Every member still checks the roster members' C4 proofs, so accusations against them can reach
   quorum.
 - **D16. Accepting a roster fixes it.** C4 starts in the step that accepts the roster, as it does
-  live today; the current node's replacement by a lower proposer only happens while effects are
+  live today; the earlier node's replacement by a lower proposer only happens while effects are
   disabled during replay, which v2 does not have.
 
 - **D17. Proof bytes are blobs.** A proof in machine state is its bytes' blob reference plus its
@@ -129,7 +128,7 @@ Each rule is checkable in review.
   under way, deletes them, and refuses later ones for as long as it runs. At a start the node drops
   the outbox work of E3s it no longer holds before running any. The protocol says which blobs a node
   needs: a share message's only for its recipient. A publisher uploads a broadcast blob once per
-  receiver and a share once, where a DHT put of the current node goes to twenty peers. A share comes
+  receiver and a share once, where a DHT put of the earlier node went to twenty peers. A share comes
   only from its dealer, so members need direct connections: peers that identify on the network enter
   Kademlia's routing table, whose lookups connect to the peers they find. The network takes and
   passes on a message only from an operator a registry's logs named; it ignores another's without
@@ -186,7 +185,7 @@ Each rule is checkable in review.
   the vote validity the request snapshotted, and signs under the slashing manager the request
   snapshotted: the Interfold's at that time, which governance replaces only with no E3 assigned. The
   accusation carries the signed proof, so every member verifies the same bytes and votes only when
-  its own check fails. Votes count per window, and the first window with H votes, the current node's
+  its own check fails. Votes count per window, and the first window with H votes, the earlier node's
   quorum (the contract needs T), is submitted by the first three voters in address order, 30 seconds
   apart; the contract takes one proposal per proof. A member whose bytes do not match a valid proof
   is left out but not accused (D27). A completed or failed E3 stays while an accusation's window is
@@ -203,7 +202,7 @@ Each rule is checkable in review.
   messages, the chain, or proofs. It does not subscribe to the message topic, so peers keep it out
   of their message mesh, and it needs no gas, which a node that acknowledges a release does.
 
-## Problems in the current node, with the fix above them
+## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**
   - `crates/events/src/interfold_event/event_data.rs:58`: one enum (99 variants) is the log record,

@@ -1,8 +1,12 @@
 # Peer admission and document delivery
 
-Owner: [e3-net](../../crates/net/). This is protocol transport, not Avail application
+Owner: [e3-p2p](../../crates/ciphernode/p2p/). This is protocol transport, not Avail application
 [data availability](data-availability.md). [Persistence](persistence-and-replay.md) owns durable
 event admission and startup fences; [upgrades](upgrades.md) owns wire/release compatibility.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Network and trust boundaries
 
@@ -105,8 +109,8 @@ Enforce clock-drift allowance when complete source history is ready and again be
 unpublished future history fails startup. These are bounded reconciliation heuristics, not archival
 availability or consensus.
 
-[Network-sync tests](../../crates/net/src/network_sync/tests.rs) exercise source conflicts, coverage
-hints, and shared budgets. They do not prove that two peers retained every fact ever published.
+Network-sync tests exercise source conflicts, coverage hints, and shared budgets. They do not prove
+that two peers retained every fact ever published.
 
 ## DKG documents
 
@@ -120,8 +124,8 @@ hourly replication stays disabled; prune expiry every minute. Kademlia stream ti
 
 Recovery derives a missing publication request from a durable local key/share artifact. A crash
 after artifact commit but before the derived request therefore need not lose publication. This is a
-narrow reconstruction path, not a transactional outbox for arbitrary network effects; see
-[document recovery](../../crates/net/src/document_publishing/recovery.rs).
+narrow reconstruction path, not a transactional outbox for arbitrary network effects; see document
+recovery.
 
 Each publication starts only at SyncEnded. Ready/Roster retransmission similarly waits for local
 replay, backs off 30 seconds to five minutes, and retains the latest own message per E3/party/kind
@@ -210,10 +214,9 @@ targets.
 
 ## Existing guards
 
-[Network source tests](../../crates/net/src/) cover admission, seen windows, replica accounting,
-document workflow, and result routing. [Wire tests](../../crates/net/src/network_sync/wire.rs) lock
-sample messages/frames; [layout locks](persistence-and-replay.md#schemas-and-validation) do not
-cover every future payload automatically. Run `cargo test -p e3-net` and the affected network
-restart scenario through `pnpm test:integration`. A stable-identity restart with topic readiness is
-stronger than counting connections; unit fairness tests do not establish persistence of peer-held
-replicas.
+Network source tests cover admission, seen windows, replica accounting, document workflow, and
+result routing. Wire tests lock sample messages/frames;
+[layout locks](persistence-and-replay.md#schemas-and-validation) do not cover every future payload
+automatically. Run `cargo test -p e3-net` and the affected network restart scenario through
+`pnpm test:integration`. A stable-identity restart with topic readiness is stronger than counting
+connections; unit fairness tests do not establish persistence of peer-held replicas.

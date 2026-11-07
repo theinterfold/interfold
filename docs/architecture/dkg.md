@@ -3,13 +3,15 @@
 DKG creates a collective BFV key without revealing its secret to one operator. The hot operator
 signs protocol messages; delegated collateral ownership does not change that identity.
 
-Owners: [keyshare](../../crates/orchestration/keyshare/src/),
-[proof requests](../../crates/zk/prover/src/proof_request/),
-[share verification](../../crates/zk/prover/src/share_verification/),
-[public-key aggregation](../../crates/orchestration/aggregator/src/public_key_aggregation/), and the
+Owners: the protocol machine's [DKG](../../crates/protocol/src/dkg/), the node's
+[DKG jobs](../../crates/ciphernode/jobs/src/dkg.rs), the [prover](../../crates/zk/prover/), and the
 [registry](../../packages/interfold-contracts/contracts/registry/).
 [Proof statements](proof-statements.md) owns arithmetic and recursive trust;
 [threshold decryption](threshold-decryption.md) owns C6/C7.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Identities and dimensions
 
@@ -32,8 +34,7 @@ Recipient bundles contain one C2a and one C2b plus C3a/C3b per **threshold Shami
 share-encryption/DKG CRT limb. Shape validation normalizes a DKG preset to its threshold counterpart
 before reading row count. Current TrBFV generates one smudging set (Z=1); extending C3b to multiple
 sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not inferred vector
-sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
-distinction for both presets.
+sizes. Shape tests pin that distinction for both presets.
 
 Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
 contains one C2a, one C2b, three C3a, and three C3b proofs.
@@ -239,13 +240,11 @@ circuit identity and layout selection belong to `e3-zk-config`, not to the trans
 
 Representative guards (not a complete protocol proof):
 
-- [Keyshare tests](../../crates/orchestration/keyshare/src/tests.rs):
-  `a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch`,
+- Keyshare tests: `a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch`,
   `a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch`,
   `canonical_publication_supersedes_collector_failures`, and
   `a_restart_keeps_the_roster_that_its_c4_started_from` cover actor admission/recovery boundaries.
-- [Roster helpers](../../crates/orchestration/keyshare/src/effects/coordinate_roster.rs) test
-  outsider completeness and Ready growth. Recursive Noir tests in
+- Roster helpers test outsider completeness and Ready growth. Recursive Noir tests in
   [circuits](../../circuits/bin/recursive_aggregation/) cover non-prefix links and party ordering.
 - [DKG publication tests](../../packages/interfold-contracts/test/Registry/DkgPublicationBinding.spec.ts)
   and

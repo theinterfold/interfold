@@ -1,10 +1,15 @@
 # Requests and committee selection
 
-Owners: [Interfold contracts](../../packages/interfold-contracts/contracts/),
-[sortition](../../crates/orchestration/sortition/src/), and
-[EVM ingestion](../../crates/evm/runtime/src/). Collateral and eligibility belong to
+Owners: [Interfold contracts](../../packages/interfold-contracts/contracts/), the protocol machine's
+[selection](../../crates/protocol/src/selection.rs) and
+[failover](../../crates/protocol/src/failover.rs), and the
+[chain reader](../../crates/ciphernode/chain/src/reader.rs). Collateral and eligibility belong to
 [registration](registration-and-bonding.md), proof-backed key publication to [DKG](dkg.md), and
 actor delivery to [persistence](persistence-and-replay.md).
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Request-time contract
 
@@ -160,14 +165,13 @@ release). The first successful transaction locks canonical on-chain order. It mu
 Fewer than N submissions fails with supplier-paid `InsufficientCommitteeMembers`. Finalization
 snapshots every operator's reward recipient and retains its collateral obligation.
 
-The [sortition finalizer](../../crates/orchestration/sortition/src/committee_finalization/actor.rs)
-retains request/context/ticket before effects and re-arms from its saved absolute committee deadline
-after EffectsEnabled. Its [EVM time reader](../../crates/evm/runtime/src/chain_time.rs) opens a
-fresh read provider for each attempt so a dead WebSocket cannot permanently stop it. Timestamp
-errors retry without substituting host time. The saved rank's full stagger is reapplied after each
-successful read, including restart; there is no persisted rank-specific not-before instant.
-Formation remains a separate actor from ticket selection and downstream aggregation. `E3Requested`
-is `(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId)`; preserve the indexed configuration
+The sortition finalizer retains request/context/ticket before effects and re-arms from its saved
+absolute committee deadline after EffectsEnabled. Its EVM time reader opens a fresh read provider
+for each attempt so a dead WebSocket cannot permanently stop it. Timestamp errors retry without
+substituting host time. The saved rank's full stagger is reapplied after each successful read,
+including restart; there is no persisted rank-specific not-before instant. Formation remains a
+separate actor from ticket selection and downstream aggregation. `E3Requested` is
+`(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId)`; preserve the indexed configuration
 boundary.
 
 | Stage                             | Absolute boundary                                                                                                         |

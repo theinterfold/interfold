@@ -1,10 +1,12 @@
 # Threshold decryption
 
-Owners: [keyshare](../../crates/orchestration/keyshare/src/),
-[plaintext aggregation](../../crates/orchestration/aggregator/src/plaintext_aggregation/),
-[canonical key projection](../../crates/state/request/src/canonical_key.rs), and
-[EVM canonical authority](../../crates/evm/runtime/src/canonical_key.rs). [DKG](dkg.md) defines the
+Owners: the protocol machine's [decryption](../../crates/protocol/src/decryption/) and the node's
+[decryption jobs](../../crates/ciphernode/jobs/src/decryption.rs). [DKG](dkg.md) defines the
 accepted H-roster and zero-based committee identities.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## Authority before work
 
@@ -132,16 +134,14 @@ chain history arrives. See [network delivery](network-delivery.md) for loss and 
 
 ## Existing guards and limits
 
-- [Workflow tests](../../crates/orchestration/aggregator/src/plaintext_aggregation/workflow_tests.rs):
-  `small_starts_verification_with_up_to_four_missing_roster_members` and
+- Workflow tests: `small_starts_verification_with_up_to_four_missing_roster_members` and
   `duplicate_shares_do_not_count_or_replace_an_in_flight_batch` pin T+1 admission and stable
   batches.
-- [Hydration tests](../../crates/orchestration/aggregator/src/ext.rs), including
-  `plaintext_dependencies_use_chain_rosters_across_restart`, and
-  [keyshare tests](../../crates/orchestration/keyshare/src/tests.rs), including
-  `retained_c6_work_recovers_key_bytes_in_every_decryption_phase`, cover recovery admission.
-- [Effect-gate tests](../../crates/ciphernode/multithread/src/effect_gate.rs), including
-  `replayed_c6_compute_requires_canonical_public_inputs`, guard logged request release.
+- Hydration tests, including `plaintext_dependencies_use_chain_rosters_across_restart`, and keyshare
+  tests, including `retained_c6_work_recovers_key_bytes_in_every_decryption_phase`, cover recovery
+  admission.
+- Effect-gate tests, including `replayed_c6_compute_requires_canonical_public_inputs`, guard logged
+  request release.
 - [BfvDecryptionVerifier tests](../../packages/interfold-contracts/test/BfvDecryptionVerifier.spec.ts)
   own on-chain domain/anchor checks. Use `cargo test -p e3-aggregator`, `pnpm evm:test`, and
   `pnpm rust:test:proofs` for changed recursive statements; unit hydration is not a full crash test.

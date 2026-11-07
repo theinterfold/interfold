@@ -3,8 +3,8 @@
 ## Purpose
 
 Shared mechanical helpers for runtime/adapters: bounded decoding, byte wrappers, retry backoff,
-Actix/Tokio channels, paths, and diagnostic formatting. Capability-specific protocol decisions live
-in their owning crates; EVM receipt, nonce, and RPC retry rules live in
+paths, and diagnostic formatting. Capability-specific protocol decisions live in their owning
+crates; EVM receipt, nonce, and RPC retry rules live in
 [e3-evm-transactions](../evm/transactions/README.md).
 
 ## Map
@@ -12,7 +12,6 @@ in their owning crates; EVM receipt, nonce, and RPC retry rules live in
 | Location                                                                                                                           | Responsibility                                                                    |
 | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | [`bounded_bincode.rs`](src/bounded_bincode.rs), [`serde_bytes.rs`](src/serde_bytes.rs), [`utility_types.rs`](src/utility_types.rs) | Bounded wire decoding, byte-serde contract, and shared byte/RNG types.            |
-| [`actix/`](src/actix)                                                                                                              | Recipient/channel/one-shot adapters and synchronous handler bridging.             |
 | [`retry.rs`](src/retry.rs)                                                                                                         | Retry with capped exponential backoff and jitter.                                 |
 | [`helpers.rs`](src/helpers.rs), [`path.rs`](src/path.rs), [`formatters.rs`](src/formatters.rs)                                     | Ordered extraction, one-time ownership, enumerated paths, and bounded formatting. |
 | [`ordered_set.rs`](src/ordered_set.rs)                                                                                             | Sorted set with order-independent equality and hash, serialized as a sequence.    |
@@ -44,8 +43,7 @@ meaning of the decoded value.
   caller classification. Its waits double from the initial delay, capped at five minutes before
   adding up to 10% jitter. `backoff_delay(base, attempt, cap)` exposes the same calculation;
   attempts start at 1.
-- `actix` exposes message/channel adapters and `NotifySync`; `OnceTake` transfers a shared value at
-  most once. Awaited acknowledgments and fire-and-forget sends have different contracts.
+- `OnceTake` transfers a shared value at most once.
 - `enumerate_path`, ordering, and formatting helpers avoid duplicating mechanical conversions.
 
 ## Tests

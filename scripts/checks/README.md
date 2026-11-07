@@ -15,8 +15,7 @@ not supported).
 
 | File                                                               | Responsibility                                                                                                 |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| [`repository.sh`](repository.sh)                                   | Runs configuration, startup proof-guard, and send-count checks.                                                |
-| [`repository-baselines.env`](repository-baselines.env)             | Owns the send-count ceiling; increases need explicit call-site review.                                         |
+| [`repository.sh`](repository.sh)                                   | Runs configuration and startup proof-guard checks.                                                             |
 | [`cargo-feature-containment.py`](cargo-feature-containment.py)     | Checks proof-skip features and dev-only ZK sample/benchmark dependencies, including aliases and target tables. |
 | [`cargo-dependency-boundaries.py`](cargo-dependency-boundaries.py) | Keeps application execution and the node binary from linking each other's packages.                            |
 | [`ciphernode-docker-members.py`](ciphernode-docker-members.py)     | Compares workspace members with Docker manifest copies.                                                        |

@@ -86,10 +86,9 @@ The monorepo provides several test scripts for different components:
   [Barretenberg](https://github.com/AztecProtocol/aztec-packages/tree/master/barretenberg) (`bb`) to
   be installed and on your `PATH`.
 
-- **`pnpm test:integration`** - Runs integration tests from `tests/integration/`. These tests may
-  require prebuilt binaries and can be run with `--no-prebuild` if binaries are already available.
-  Pre-built circuit artifacts for the configured BFV preset must be present in the `circuits/`
-  artifacts directory.
+- **`pnpm test:integration`** - Runs the v2 scenario in `tests/integration/`: five nodes on a local
+  chain form a committee, publish its key, and decrypt one ciphertext. Its
+  [README](tests/integration/README.md) lists the variants.
 
 #### Running Individual Test Suites
 
@@ -100,10 +99,9 @@ The separate `pnpm sdk:test:proofs` suite prepares a proof and rejects tampered 
 Before `pnpm rust:test:proofs` or the full `pnpm test`, prepare the matching insecure-minimum inner
 and recursive circuits with
 `pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built`. Proof substitution
-tests additionally need pinned nargo on PATH. Before `pnpm rust:test:slashing`, run `pnpm evm:build`
-and provide Anvil. The named proof/slashing suites fail when prerequisites are missing; ordinary
-Rust runs leave these expensive tests ignored. A successful fast suite is not evidence that they
-ran. See [artifact requirements](docs/architecture/circuit-artifacts.md).
+tests additionally need pinned nargo on PATH. The named proof suites fail when prerequisites are
+missing; ordinary Rust runs leave these expensive tests ignored. A successful fast suite is not
+evidence that they ran. See [artifact requirements](docs/architecture/circuit-artifacts.md).
 
 ```bash
 # Run only Rust crate tests
@@ -120,9 +118,6 @@ pnpm noir:test
 
 # Run only integration tests
 pnpm test:integration
-
-# Run integration tests without prebuild step (if binaries already exist)
-pnpm test:integration --no-prebuild
 ```
 
 ### Contributors

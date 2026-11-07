@@ -1,11 +1,15 @@
 # Accusations and slashing
 
-Owners: [accusation workflow](../../crates/orchestration/slashing/src/accusation_voting/),
-[commitment consistency](../../crates/orchestration/slashing/src/commitment_consistency/),
-[slash writer](../../crates/evm/runtime/src/slashing_writing/), and `SlashingManager` in
+Owners: the protocol machine's [accusations](../../crates/protocol/src/accusation/), the node's
+[accusation jobs](../../crates/ciphernode/jobs/src/accusation.rs), the
+[chain writer](../../crates/ciphernode/chain/src/writer.rs), and `SlashingManager` in
 [contracts](../../packages/interfold-contracts/contracts/). [Settlement](failure-settlement.md) owns
 payer, reward holds, and claim allocation; [registration](registration-and-bonding.md) owns
 collateral exit gates.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## From verification to authenticated votes
 
@@ -78,9 +82,8 @@ reader/writer routing and its EIP-712 signing domain. A differing configured add
 not override a live result. After two failed-read retries, or a zero result, an enabled chain has no
 manager and a full node fails startup. Configuration is a fallback only for a disabled chain without
 a provider. An E3 without its chain's manager cannot start accusation work; startup requires at
-least one resolved manager. Configured deploy blocks still control backfill.
-[Resolution tests](../../crates/evm/runtime/src/slashing_manager_address.rs) pin address precedence,
-not availability of every historical manager after arbitrary governance changes.
+least one resolved manager. Configured deploy blocks still control backfill. Resolution tests pin
+address precedence, not availability of every historical manager after arbitrary governance changes.
 
 After startup sync, an Interfold `SlashingManagerSet` log naming a different address fails that
 chain's gateway closed. The node exits unsuccessfully; restart resolves the new manager. **Gap:** a
@@ -182,12 +185,9 @@ drain policy.
   rejection.
   [Expulsion tests](../../packages/interfold-contracts/test/Slashing/CommitteeExpulsion.spec.ts)
   cover atomic viability and callbacks. Run `pnpm evm:test`.
-- [Typed accusation admission](../../crates/orchestration/slashing/src/accusation_voting/transitions/admission.rs)
-  and [writer workflow](../../crates/evm/runtime/src/slashing_writing/workflow.rs) contain
-  owner-level tests; use `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
-- [Accusation actor tests](../../crates/orchestration/slashing/src/accusation_voting/actor_tests.rs)
-  and [extension tests](../../crates/orchestration/slashing/src/accusation_manager_ext.rs) cover
-  saved votes/timeouts and accusation deferral during replay. These do not prove every snapshot
-  crash window.
+- Typed accusation admission and writer workflow contain owner-level tests; use
+  `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
+- Accusation actor tests and extension tests cover saved votes/timeouts and accusation deferral
+  during replay. These do not prove every snapshot crash window.
 - `pnpm rust:test:slashing` exercises the proof/slashing integration harness. It does not prove the
   one-day reporting allowance or reconstruct the unsaved state listed above.

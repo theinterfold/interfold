@@ -2,10 +2,15 @@
 
 Owners: [mechanical test support](../../crates/testing/support/),
 [BFV ballot fixtures](../../crates/testing/bfv-support/),
-[integration scenarios](../../crates/testing/system/tests/), and
+[node simulation](../../crates/testing/sim/), the
+[integration scenario](../../tests/integration/v2.sh), and
 [real recursive-proof tests](../../crates/zk/prover/tests/). Root
 [package scripts](../../package.json) own setup and commands. This page describes what the test
 boundaries establish, not a replacement inventory of tests.
+
+The node-side sections below still describe the runtime that the v2 node replaced; the
+[decision log](node-v2-decisions.md) records the current node. Contract and circuit rules are
+unchanged.
 
 ## In-process nodes and simulated transport
 
@@ -49,10 +54,9 @@ unchanged. CI still obtains the same fixture-bin names through the integration p
 
 Mechanical support does not assemble runtimes. Event-system owns isolated bus/history fixtures;
 aggregation keeps its BFV setup private. The integration crate keeps `Libp2pMock` local. Its
-[`CiphernodeSystemBuilder`](../../crates/testing/system/tests/ciphernode_system/mod.rs) assembles
-several ciphernode handles in one process. `simulate_libp2p()` connects their broadcast events and
-DHT records through the mock. `restart_node` shuts down a node, rebuilds it through the supplied
-closure, and replaces its mock-network attachment.
+`CiphernodeSystemBuilder` assembles several ciphernode handles in one process. `simulate_libp2p()`
+connects their broadcast events and DHT records through the mock. `restart_node` shuts down a node,
+rebuilds it through the supplied closure, and replaces its mock-network attachment.
 
 This exercises node actors without real QUIC, discovery, peer-held DHT persistence, or separate
 operating-system processes. Shared-process scheduling and orderly restart are not arbitrary crash

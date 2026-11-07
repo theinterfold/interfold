@@ -38,8 +38,8 @@ constructing another parameter set in a caller.
 
 Import `CircuitName` and `CircuitVariant` here, including from build/prover consumers. Their serde
 order and names, artifact paths, verifier-target strings, and layout mappings are compatibility
-contracts, not labels to rename during cleanup. Proof payloads and signed `ProofType` remain in
-`e3-events`.
+contracts, not labels to rename during cleanup. Proof payloads and signed `ProofType` live in
+`e3-protocol`.
 
 ## Tests
 

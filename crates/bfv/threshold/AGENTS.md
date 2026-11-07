@@ -1,7 +1,7 @@
 # e3-trbfv
 
-Maintain threshold-BFV calculations and typed encrypted share payloads here; actors/admission live
-with the keyshare/aggregation capabilities.
+Maintain threshold-BFV calculations and typed encrypted share payloads here; admission lives in the
+protocol machine (`e3-protocol`) and execution in the node's jobs (`e3-jobs`).
 
 - Runtime party IDs are zero-based; Shamir reconstruction coordinates become one-based exactly at
   the mathematical boundary. Sorting shares must retain their corresponding party IDs.
