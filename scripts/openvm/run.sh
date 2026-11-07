@@ -16,11 +16,11 @@ case "$command" in
     ;;
   prover-build|prover-test|prover-check)
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/prover}"
-    exec cargo "${command#prover-}" --locked --release --manifest-path "$ROOT/crates/openvm-prover/Cargo.toml" "$@"
+    exec cargo "${command#prover-}" --locked --release --manifest-path "$ROOT/crates/program/openvm-prover/Cargo.toml" "$@"
     ;;
   prover)
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/prover}"
-    exec cargo run --locked --release --manifest-path "$ROOT/crates/openvm-prover/Cargo.toml" -- "$@"
+    exec cargo run --locked --release --manifest-path "$ROOT/crates/program/openvm-prover/Cargo.toml" -- "$@"
     ;;
   *) echo 'Usage: pnpm openvm cli-build|service-test|prover-build|prover-test|prover-check|prover [arguments]' >&2; exit 2 ;;
 esac

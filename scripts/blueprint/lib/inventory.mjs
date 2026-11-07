@@ -65,7 +65,7 @@ export const LAYERS = {
     'wasm',
     'program/openvm-host',
     'program/openvm-types',
-    'openvm-prover',
+    'program/openvm-prover',
   ],
   workflows: [
     'state/request',

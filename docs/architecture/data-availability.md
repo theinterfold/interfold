@@ -223,8 +223,8 @@ rounds; otherwise they fail at their existing compute/decryption deadline.
 [CRISP tests](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-contracts/tests), and
 server tests own exact deadline, hash/commitment, job/finality, and quota boundaries. Run
 `pnpm evm:test` here and the relevant tests in the CRISP repository. Unit/contract suites do not
-reproduce the deployed OpenVM guest. Follow [OpenVM](../../crates/openvm-prover/README.md) and
-[provenance](../pages/build/e3-program/verify-compute-provider.mdx): checked worker
+reproduce the deployed OpenVM guest. Follow [OpenVM](../../crates/program/openvm-prover/README.md)
+and [provenance](../pages/build/e3-program/verify-compute-provider.mdx): checked worker
 commitments/Halo2 code, both gates bound to one identity, the full local Playwright flow of CRISP,
 and one real Sepolia Avail Turing/VectorX round. Observe InputCommitted → Avail final →
 InputPublished → OpenVM proof → aggregate Avail final → CiphertextOutputReferencePublished →

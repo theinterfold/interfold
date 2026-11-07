@@ -94,13 +94,13 @@ jobs:
               - 'rust-toolchain.toml'
               # The OpenVM worker is a workspace of its own. The `openvm_worker` and `docker`
               # filters select their jobs.
-              - '!crates/openvm-prover/**'
+              - '!crates/program/openvm-prover/**'
               - '!crates/Dockerfile'
               - '!**/*.md'
               - '!**/*.mdx'
             # The OpenVM worker is a cargo workspace of its own, built against the OpenVM SDK.
             openvm_worker:
-              - 'crates/openvm-prover/**'
+              - 'crates/program/openvm-prover/**'
               - '!**/*.md'
               - '!**/*.mdx'
             # What the OpenVM guests compile: each project's program and guest, and the crates they
@@ -1351,14 +1351,14 @@ jobs:
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
         with:
-          cargo-lock-path: crates/openvm-prover/Cargo.lock
-          rust-target-path: crates/openvm-prover/target/
+          cargo-lock-path: crates/program/openvm-prover/Cargo.lock
+          rust-target-path: crates/program/openvm-prover/target/
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Test the CPU worker
-        run: cargo test --locked --manifest-path crates/openvm-prover/Cargo.toml
+        run: cargo test --locked --manifest-path crates/program/openvm-prover/Cargo.toml
 
   # Builds the template OpenVM guest, which compiles the guest-only code paths.
   openvm_guest:

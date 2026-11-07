@@ -84,7 +84,7 @@ explicit CLI overrides. An absent `--otel` leaves the YAML/environment value int
 One file supplies separate node and program settings. Only the resolved node settings reach runtime
 owners; [node path resolution](../ciphernode/config/README.md) uses the loaded file's location
 rather than assuming the working directory. Program compile/start settings stay with CLI tooling;
-resolved worker configuration belongs to the [OpenVM host](../openvm-prover/README.md).
+resolved worker configuration belongs to the [OpenVM host](../program/openvm-prover/README.md).
 
 Legacy `program.risc0` settings load so node commands sharing the file keep working, but
 compile/start refuse them. Unknown backends are rejected, not silently replaced; development mode

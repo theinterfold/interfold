@@ -15,4 +15,4 @@ CPU/CUDA proving process from the root runtime; see [README.md](README.md) for s
 
 Use the [README worker tests/prerequisites](README.md#tests). Real receipt changes require the
 prepared proof/contract flow, not just worker unit tests; see
-[encrypted computation](../../docs/architecture/encrypted-computation.md).
+[encrypted computation](../../../docs/architecture/encrypted-computation.md).
