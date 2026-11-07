@@ -232,12 +232,15 @@ Each rule is checkable in review.
   aggregator's budget is up to 40 minutes. One node's own check does not move it, so the members
   agree on the next aggregator once they count the same votes.
 
-- **D32. A completed E3 keeps its accusations open for one vote window.** When the chain completes
-  an E3, a committee member keeps its accusations open until a vote issued before the completion can
-  no longer count: the completion's block time plus the E3's vote validity and the contract's clock
-  skew. A peer can see the completion before an accusation issued just before it; the earlier node
-  ended the E3 at once and dropped it. DKG and decryption stop at the completion, and the kept E3
-  takes no ticket's place.
+- **D32. A completed E3 ends at once unless this node has an open accusation.** As in the earlier
+  node, a node drops a completed E3 without an open accusation and deletes its blobs, the sealed key
+  share among them. A peer that sees the completion before it opens an accusation issued just before
+  it, because the accusation or its proof had not reached it yet, then cannot vote. That needs the
+  peer cut off from gossip, or slow to fetch the proof, for the three confirmations a completion
+  takes, while the accuser and every peer that opened the accusation keep the E3. Keeping every
+  completed E3 for a vote window, 30 minutes by default, would keep each member's key share that
+  long. Closing the race would mean emptying an E3's blobs at completion while its accusations stay
+  open, which the blob store cannot do yet.
 
 - **D33. The network keeps the earlier node's admission limits; delivery stays best effort with
   re-sends.** Kept: 8 inbound connections per address group and 16 waiting for Identify, the oldest
