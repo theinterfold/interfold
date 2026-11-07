@@ -13,6 +13,7 @@ mod memory;
 
 pub use memory::MemoryStore;
 
+use bincode::Options;
 use e3_protocol::{Machine, UnixSecs};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -173,8 +174,14 @@ impl<M: Machine, S: Store> Engine<M, S> {
     }
 }
 
+/// What the engine stored, which `bincode::serialize` wrote. The bytes' length bounds what decoding
+/// may allocate, so damaged data fails to decode instead of exhausting memory, and bytes left over
+/// fail it too.
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Error> {
-    Ok(bincode::deserialize(bytes)?)
+    Ok(bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(bytes.len() as u64)
+        .deserialize(bytes)?)
 }
 
 #[cfg(test)]
@@ -231,6 +238,17 @@ mod tests {
             all.extend(pending);
         }
         (engine, all)
+    }
+
+    /// Damaged bytes fail to decode: a length past the end of the data, and bytes left over.
+    #[test]
+    fn damaged_bytes_fail_to_decode() {
+        let past_the_end = u64::MAX.to_le_bytes();
+        assert!(decode::<Vec<u64>>(&past_the_end).is_err());
+        let mut left_over = bincode::serialize(&7u64).unwrap();
+        assert_eq!(decode::<u64>(&left_over).unwrap(), 7);
+        left_over.push(0);
+        assert!(decode::<u64>(&left_over).is_err());
     }
 
     #[test]
