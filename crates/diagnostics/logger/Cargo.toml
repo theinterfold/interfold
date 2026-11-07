@@ -7,15 +7,9 @@ description = "E3 - Interfold Ciphernode Logger"
 repository.workspace = true
 
 [dependencies]
-e3-events = { workspace = true }
-actix = { workspace = true }
-base64 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-e3-zk-config.workspace = true
-alloy = { workspace = true }
-e3-utils = { workspace = true }

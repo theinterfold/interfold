@@ -8,7 +8,7 @@
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
-use e3_events::{DkgFoldAggCommits, Proof};
+use crate::proof::{DkgFoldAggCommits, Proof};
 use e3_zk_config::CircuitName;
 
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.

@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::error::ZkError;
+use crate::proof::Proof;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
-use e3_events::Proof;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use noirc_abi::InputMap;
 

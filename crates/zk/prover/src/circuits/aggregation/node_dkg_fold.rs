@@ -14,11 +14,11 @@ use crate::circuits::aggregation::nodes_fold_accumulator::generate_sequential_no
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk;
 use crate::error::ZkError;
+use crate::proof::Proof;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use alloy::primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::Proof;
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;

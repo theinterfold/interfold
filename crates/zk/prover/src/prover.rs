@@ -6,7 +6,7 @@
 
 use crate::backend::ZkBackend;
 use crate::error::ZkError;
-use e3_events::Proof;
+use crate::proof::Proof;
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::{CircuitName, CircuitVariant};

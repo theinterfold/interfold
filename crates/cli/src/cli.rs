@@ -6,7 +6,6 @@
 
 use crate::ciphernode::{self, ChainArgs, CiphernodeCommands};
 use crate::config::{self, ConfigCommands};
-use crate::events::{self, EventsCommands};
 use crate::faucet;
 use crate::helpers::telemetry::{setup_simple_tracing, setup_tracing};
 use crate::net::{self, NetCommands};
@@ -23,7 +22,6 @@ use clap::{command, ArgAction, Parser, Subcommand};
 use e3_cli::app_config::{load_config, ApplicationConfig};
 use e3_console::{log, Console};
 use e3_daemon_server::connect_daemon;
-use e3_entrypoint::helpers::datastore::close_all_connections;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -266,7 +264,6 @@ impl Cli {
             Commands::Ciphernode { command } => ciphernode::execute(out, command, &config).await?,
             Commands::Noir { command } => noir::execute(out, command, &config).await?,
             Commands::Net { command } => net::execute(&out, command, &config).await?,
-            Commands::Events { command } => events::execute(out, command, &config).await?,
             Commands::Node { command } => node::execute(out, command, &config).await?,
             Commands::Rev { features } => rev::execute(out, features).await?,
             Commands::Config { command } => {
@@ -279,8 +276,6 @@ impl Cli {
                 unreachable!("`execute` runs these commands before it reads the configuration")
             }
         }
-
-        close_all_connections();
 
         Ok(())
     }
@@ -429,12 +424,6 @@ pub enum Commands {
         command: NetCommands,
     },
 
-    /// Query events
-    Events {
-        #[command(subcommand)]
-        command: EventsCommands,
-    },
-
     /// Get config values
     Config {
         #[command(subcommand)]
@@ -491,11 +480,6 @@ pub enum RemoteCommand {
     },
     NoirStatus,
     WalletGet,
-    EventsQuery {
-        agg: Option<usize>,
-        since: Option<u64>,
-        limit: Option<u64>,
-    },
     Rev,
     PrintEnv {
         vite: bool,
@@ -536,9 +520,6 @@ impl TryFrom<Commands> for RemoteCommand {
                 RemoteCommand::CiphernodeStatus { chain, operator }
             }),
             Commands::PrintEnv { chain, vite } => Ok(RemoteCommand::PrintEnv { vite, chain }),
-            Commands::Events {
-                command: EventsCommands::Query { agg, since, limit },
-            } => Ok(RemoteCommand::EventsQuery { agg, since, limit }),
             Commands::Wallet {
                 command: WalletCommands::Get,
             } => Ok(RemoteCommand::WalletGet),
@@ -605,9 +586,6 @@ impl TryFrom<RemoteCommand> for Commands {
             },
             RemoteCommand::NetGetPeerId => Commands::Net {
                 command: NetCommands::GetPeerId,
-            },
-            RemoteCommand::EventsQuery { agg, since, limit } => Commands::Events {
-                command: EventsCommands::Query { agg, since, limit },
             },
             RemoteCommand::ConfigGet { param } => Commands::Config {
                 command: ConfigCommands::Get { param },

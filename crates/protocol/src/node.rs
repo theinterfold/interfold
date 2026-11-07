@@ -542,6 +542,11 @@ impl Node {
             .collect()
     }
 
+    /// Every E3 the node holds, each until it ends, with the key share of an E3 it dealt in.
+    pub fn held(&self) -> impl Iterator<Item = &E3Id> {
+        self.e3s.keys()
+    }
+
     /// The E3s whose DKG or decryption work still needs their blobs.
     pub fn working(&self) -> impl Iterator<Item = &E3Id> {
         let working = self.e3s.iter().filter(|(_, state)| state.has_work());

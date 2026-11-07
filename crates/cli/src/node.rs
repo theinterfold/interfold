@@ -4,58 +4,39 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::{keystore, node_state};
 use anyhow::{bail, Result};
 use clap::Subcommand;
 use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
-use e3_entrypoint::validate::validate_node;
+use e3_crypto::Cipher;
+use e3_entrypoint::fence::ProcessFence;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum NodeCommands {
-    /// Validate the on-disk state of a single node without starting it.
-    ///
-    /// Takes the node's exclusive process fence and checks that the schema is
-    /// loadable by this binary, the event log is intact, the snapshot cursor is
-    /// consistent, and there are no orphaned committee tickets ("loose ends").
-    /// Safe to run while the node is stopped; intended as the pre-upgrade and
-    /// post-crash health check. Exits non-zero on failure. Without `--repair`,
-    /// no files are changed.
-    Validate {
-        /// Repair a safe log tail or rebuild a stale derived sortition projection
-        #[arg(long)]
-        repair: bool,
-    },
+    /// Check a stopped node: its password and keys, the layout of its data, and the E3s it holds.
+    /// Exits non-zero on failure and changes no file.
+    Validate,
 
-    /// Delete durable protocol state but keep the operator identity.
+    /// Delete the node's data but keep its operator and network keys.
     ///
-    /// Use this when a release raises the storage schema and the binary refuses
-    /// to load the existing data directory. The wallet key and libp2p keypair
-    /// live in the same store as that state, so removing the directory by hand
-    /// destroys the identity holding the bond. This command copies both out as
-    /// ciphertext, removes the event log and the key/value store, then writes
-    /// them back and reads them again to confirm.
+    /// Use this when a release changes the layout of the node's data and the node refuses to start
+    /// on it. The keys live in the keystore, apart from the data, so they stay.
     ///
-    /// Takes the node's exclusive process fence, so it refuses while the node
-    /// is running. Stop the node first.
-    ///
-    /// Refuses when this node holds key-share state for an E3 that it has not
-    /// seen complete. The chain cannot restore a deleted key share.
+    /// Refuses while the node runs, and while it holds an E3 that has not ended: the chain cannot
+    /// restore a deleted key share.
     ResetData {
         /// Confirm the deletion.
         #[arg(long)]
         yes: bool,
 
-        /// Delete the state even when this node holds key-share state for an
-        /// E3 that it has not seen complete. The node permanently loses its
-        /// key share for that E3. Check first that each listed E3 is complete
-        /// or failed on chain, and that one day has passed after its lifecycle
-        /// deadline.
+        /// Delete the data even when the node holds an E3 that has not ended. The node loses its
+        /// key share for that E3. Check first that each listed E3 is complete or failed on chain.
         #[arg(long)]
         allow_active_e3s: bool,
 
-        /// Reset only when the stored state uses an older storage schema than
-        /// this binary. Otherwise change nothing and exit with success. A
-        /// package can run this before every start.
+        /// Reset only when the data uses an older layout than this binary writes. Otherwise change
+        /// nothing and exit with success. A package can run this before every start.
         #[arg(long)]
         if_schema_older: bool,
     },
@@ -63,30 +44,41 @@ pub enum NodeCommands {
 
 pub async fn execute(out: Console, command: NodeCommands, config: &NodeConfig) -> Result<()> {
     match command {
-        NodeCommands::Validate { repair } => {
-            // Offline-only contract: hold the same cross-host fence `start` uses so the
-            // validator cannot read state out from under a live node or race a concurrent
-            // `interfold start`. Released when this scope ends.
-            let _fence =
-                e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
-            let report = validate_node(config, repair).await?;
-            log!(out, "{}", report.render());
-            if report.has_failure() {
-                bail!("node validation failed");
-            }
-        }
+        NodeCommands::Validate => validate(out, config).await,
         NodeCommands::ResetData {
             yes,
             allow_active_e3s,
             if_schema_older,
-        } => {
-            reset_data(out, config, yes, allow_active_e3s, if_schema_older).await?;
-        }
+        } => reset_data(out, config, yes, allow_active_e3s, if_schema_older).await,
+    }
+}
+
+async fn validate(out: Console, config: &NodeConfig) -> Result<()> {
+    let _fence = ProcessFence::acquire(&config.db_file(), &config.name())?;
+    let cipher = Cipher::from_file(config.key_file()).await?;
+    match keystore::read(&config.db_file(), &cipher)? {
+        Some(keys) => log!(
+            out,
+            "keys: operator {}, peer {}",
+            keys.address(),
+            keys.peer_id()?
+        ),
+        None => log!(out, "keys: no wallet is set"),
+    }
+    if node_state::layout_is_older(config)? {
+        bail!(
+            "data: {} uses an older layout; reset it with `interfold node reset-data`",
+            node_state::folder(config).display()
+        );
+    }
+    let held = node_state::held_e3s(config).await?;
+    log!(out, "data: readable; the node holds {} E3(s)", held.len());
+    for e3 in held {
+        log!(out, "  E3 {e3}");
     }
     Ok(())
 }
 
-/// Clear durable state for one node, keeping the operator identity.
 async fn reset_data(
     out: Console,
     config: &NodeConfig,
@@ -94,48 +86,47 @@ async fn reset_data(
     allow_active_e3s: bool,
     if_schema_older: bool,
 ) -> Result<()> {
+    let folder = node_state::folder(config);
     if !yes {
         bail!(
-            "This deletes the durable state for node '{}' at {}. The operator key and libp2p \
-             identity are preserved and an encrypted backup is written first. Stop the node, \
-             then re-run with --yes.",
+            "This deletes the data of node '{}' at {}. The operator and network keys stay. Stop \
+             the node, then run this command again with --yes.",
             config.name(),
-            config.db_file().display()
+            folder.display()
         );
     }
-
-    if if_schema_older && !e3_entrypoint::nodes::reset_data::stored_schema_is_older(config)? {
+    let older = node_state::layout_is_older(config)?;
+    if if_schema_older && !older {
         log!(
             out,
-            "The stored state does not use an older storage schema. Nothing to reset."
+            "The data does not use an older layout. Nothing to reset."
         );
         return Ok(());
     }
-
-    // The fence is taken inside the entrypoint, which holds it across the whole
-    // delete-and-restore so a concurrent start cannot interleave.
-    let outcome = e3_entrypoint::nodes::reset_data::execute(config, allow_active_e3s).await?;
-
-    log!(out, "Removed {}", outcome.db_file.display());
-    for path in &outcome.log_paths {
-        log!(out, "Removed {}", path.display());
+    let _fence = ProcessFence::acquire(&config.db_file(), &config.name())?;
+    if !folder.exists() {
+        log!(out, "The node has no data. Nothing to reset.");
+        return Ok(());
     }
-    if outcome.log_paths.is_empty() {
-        log!(out, "No event-log files were present.");
+    // This binary cannot read data of an older layout, so it cannot list its E3s; the release
+    // that changed the layout is the one that reset it.
+    if !allow_active_e3s && !older {
+        let held = node_state::held_e3s(config).await?;
+        if !held.is_empty() {
+            let held: Vec<String> = held.iter().map(ToString::to_string).collect();
+            bail!(
+                "The node holds E3(s) that have not ended: {}. Wait for them to end, or rerun \
+                 with --allow-active-e3s after checking each on chain.",
+                held.join(", ")
+            );
+        }
     }
-    log!(out, "Identity backup: {}", outcome.backup_file.display());
-    if outcome.identity_restored {
-        log!(
-            out,
-            "The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name {}",
-            config.name()
-        );
-    } else {
-        log!(
-            out,
-            "No identity was present, so none was restored. Set one with: interfold wallet set --name {}",
-            config.name()
-        );
-    }
+    std::fs::remove_dir_all(&folder)?;
+    log!(out, "Removed {}", folder.display());
+    log!(
+        out,
+        "The operator and network keys stay. Verify with: interfold wallet get --name {}",
+        config.name()
+    );
     Ok(())
 }

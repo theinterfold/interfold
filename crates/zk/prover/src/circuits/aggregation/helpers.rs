@@ -9,7 +9,7 @@
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
-use e3_events::Proof;
+use crate::proof::Proof;
 use e3_zk_config::CircuitName;
 
 /// Field count for `UltraHonkProof` (non-ZK) used as the `acc_proof` parameter in every

@@ -236,7 +236,7 @@ fn proofs(config: &Config) -> anyhow::Result<Proofs> {
 /// The layout of the node's files in a data directory: the machine's encoding, and the version of
 /// the blob store's folders and the wallet's file, which changes with either. A node refuses a
 /// directory in another layout rather than misread its journal or delete its blobs.
-fn data_layout() -> String {
+pub fn data_layout() -> String {
     const STORE_VERSION: u32 = 1;
     let encoding = e3_protocol::ENCODING_VERSION;
     format!("interfold-node-v2 encoding {encoding} store {STORE_VERSION}")

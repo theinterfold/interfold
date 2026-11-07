@@ -4,6 +4,5 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-pub mod datastore;
 pub mod rand;
 pub mod termtable;

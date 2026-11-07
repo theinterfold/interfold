@@ -4,29 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-mod actor_system;
-mod actors;
 mod backend;
 mod circuits;
 mod config;
-mod dkg_attestation_bundle;
-mod domain;
 mod error;
 mod node_fold_public;
+mod proof;
 mod prover;
-mod request_execution;
 pub mod test_utils;
 mod traits;
-mod utils;
 mod witness;
-mod workflow;
-
-pub use actor_system::{setup_zk_actors, ZkActorRecovery, ZkActors};
-pub use actors::{
-    CommitmentConsistencyCheckerExtension, ProofRequestActor, ProofVerificationActor,
-    ShareVerificationActor, ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
-};
-pub use domain::commitment_links::default_links;
 
 pub use backend::{BBPath, SetupStatus, ZkBackend};
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
@@ -49,11 +36,10 @@ pub use circuits::threshold::pk_generation::PkGenerationCircuit;
 pub use circuits::threshold::share_decryption::ShareDecryptionCircuit as ThresholdShareDecryptionCircuit;
 pub use circuits::utils::inputs_json_to_input_map;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
-pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
-pub use e3_zk_config::CircuitVariant;
+pub use e3_zk_config::{CircuitName, CircuitVariant};
 pub use error::ZkError;
 pub use node_fold_public::extract_node_fold_agg_commits;
+pub use proof::{DkgFoldAggCommits, Proof};
 pub use prover::ZkProver;
-pub use request_execution::{execute_zk_request, zk_operation_name};
 pub use traits::Provable;
 pub use witness::{input_map, CompiledCircuit, WitnessGenerator};

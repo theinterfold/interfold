@@ -4,10 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::node_state;
 use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_entrypoint::nodes::purge::PurgeTargets;
+use e3_entrypoint::fence::ProcessFence;
 use std::env;
 use std::path::Path;
 
@@ -38,8 +39,8 @@ pub(crate) fn require_confirmation(yes: bool, folders: &str) -> Result<()> {
     Ok(())
 }
 
-/// Deletes the `.interfold` data and configuration folders in `dir`, with the checks of
-/// `e3_entrypoint::nodes::purge`.
+/// Deletes the `.interfold` data and configuration folders in `dir` once no node runs and none
+/// holds an E3 that has not ended.
 pub(crate) async fn purge(
     config: &NodeConfig,
     config_file: Option<String>,
@@ -47,7 +48,33 @@ pub(crate) async fn purge(
     allow_active_e3s: bool,
 ) -> Result<()> {
     let nodes = node_configs(config, config_file)?;
-    e3_entrypoint::nodes::purge::execute(&PurgeTargets::in_dir(dir), &nodes, allow_active_e3s).await
+    let mut fences = Vec::new();
+    let mut refusals = Vec::new();
+    for node in &nodes {
+        fences.push(ProcessFence::acquire(&node.db_file(), &node.name())?);
+        if allow_active_e3s {
+            continue;
+        }
+        let held = node_state::held_e3s(node).await?;
+        if !held.is_empty() {
+            let held: Vec<String> = held.iter().map(ToString::to_string).collect();
+            refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
+        }
+    }
+    if !refusals.is_empty() {
+        bail!(
+            "Deleted nothing: {}. Wait for those E3s to end, or rerun with --allow-active-e3s \
+             after checking each on chain.",
+            refusals.join("; ")
+        );
+    }
+    for folder in [".interfold/data", ".interfold/config"] {
+        let folder = dir.join(folder);
+        if folder.exists() {
+            std::fs::remove_dir_all(&folder)?;
+        }
+    }
+    Ok(())
 }
 
 /// The configuration of each node profile, including `_default` and the active one, loaded the

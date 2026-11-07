@@ -78,7 +78,7 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         max_log_range: chain.rpc_log_range_blocks()?,
         poll_interval: chain.rpc_poll_interval()?,
         availability,
-        data_dir: config.node_data_dir().join("v2"),
+        data_dir: crate::node_state::folder(config),
         prover,
         network: network(config, identity),
         operator,

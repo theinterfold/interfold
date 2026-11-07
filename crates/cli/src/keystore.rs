@@ -124,42 +124,8 @@ fn sealed(tree: &sled::Tree, key: &[u8]) -> Result<Option<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Cli;
-    use clap::Parser;
 
-    const OLD_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const NEW_KEY: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
-
-    /// Every node set up before v2 sealed its keys through the old store; they read back here
-    /// unchanged. The old store runs in an actor system of its own, which holds the database's
-    /// lock until it stops.
-    #[test]
-    fn keys_the_old_store_sealed_read_back_unchanged() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let config_file = dir.path().join("config.yaml");
-        std::fs::write(
-            &config_file,
-            format!(
-                "node:\n  network: local\n  config_dir: {}\n  data_dir: {}\n",
-                dir.path().join("config").display(),
-                dir.path().join("data").display()
-            ),
-        )?;
-        let config_arg = config_file.to_string_lossy().into_owned();
-        let cli = Cli::parse_from(["interfold", "wallet", "get", "-c", &config_arg]);
-        let config = cli.load_config()?.node;
-        let (address, peer_id) = actix::System::new().block_on(async {
-            e3_entrypoint::password::set::autopassword(&config).await?;
-            let key = Zeroizing::new(OLD_KEY.to_string());
-            e3_entrypoint::wallet::set::execute(&config, key).await
-        })?;
-        e3_entrypoint::helpers::datastore::close_all_connections();
-
-        let cipher = actix::System::new().block_on(Cipher::from_file(config.key_file()))?;
-        let keys = read(&config.db_file(), &cipher)?.expect("the keys the old store sealed");
-        assert_eq!((keys.address(), keys.peer_id()?), (address, peer_id));
-        Ok(())
-    }
 
     /// Keys sealed here read back, with the peer ID the operator key gives; a second `ensure`
     /// keeps them.

@@ -1,38 +1,26 @@
 [workspace]
 members = [
-  "crates/orchestration/aggregator",
   "crates/bfv/client",
   "crates/testing/bfv-support",
-  "crates/ciphernode/builder",
   "crates/ciphernode/config",
   "crates/cli",
   "crates/committee",
   "crates/committee/hash",
   "crates/program/compute-provider",
   "crates/console",
-  "crates/diagnostics/dashboard",
   "crates/crypto",
-  "crates/state/storage",
   "crates/data-availability",
   "crates/ciphernode/entrypoint",
-  "crates/state/event-system",
-  "crates/events",
   "crates/evm/runtime",
   "crates/evm/config",
   "crates/evm/contracts",
   "crates/evm/client",
   "crates/evm/transactions",
-  "crates/bfv/runtime",
   "crates/bfv/params",
   "crates/fs",
-  "crates/hamt",
   "crates/evm/indexer",
   "crates/init",
-  "crates/orchestration/keyshare",
-  "crates/testing/layout-lock",
   "crates/diagnostics/logger",
-  "crates/ciphernode/multithread",
-  "crates/net",
   "crates/program/openvm-host",
   "crates/program/openvm-types",
   "crates/parity-matrix",
@@ -40,13 +28,9 @@ members = [
   "crates/polynomial/fhe-adapter",
   "crates/program/runner",
   "crates/program/server",
-  "crates/state/request",
   "crates/safe",
   "crates/sdk",
   "crates/ciphernode/daemon-server",
-  "crates/orchestration/slashing",
-  "crates/orchestration/sortition",
-  "crates/state/sync",
   "crates/protocol",
   "crates/ciphernode/chain",
   "crates/ciphernode/node",
@@ -56,7 +40,6 @@ members = [
   "crates/state/blobs",
   "crates/state/journal",
   "crates/testing/sim",
-  "crates/task-pool",
   "crates/testing/support",
   "crates/testing/system",
   "crates/bfv/threshold",
@@ -97,58 +80,41 @@ description = "E3 — Encrypted Execution Environments"
 repository = "https://github.com/theinterfold/interfold"
 
 [workspace.dependencies]
-e3-aggregator = { version = "0.20.0-dev.3", path = "./crates/orchestration/aggregator" }
 e3-bfv-client = { version = "0.20.0-dev.3", path = "./crates/bfv/client" }
 e3-bfv-test-support = { path = "./crates/testing/bfv-support" }
 e3-committee = { version = "0.20.0-dev.3", path = "./crates/committee" }
 e3-console = { version = "0.20.0-dev.3", path = "./crates/console" }
-e3-dashboard = { version = "0.20.0-dev.3", path = "./crates/diagnostics/dashboard" }
-e3-ciphernode-builder = { version = "0.20.0-dev.3", path = "./crates/ciphernode/builder" }
 e3-ciphernode-config = { version = "0.20.0-dev.3", path = "./crates/ciphernode/config" }
 e3-crypto = { version = "0.20.0-dev.3", path = "./crates/crypto" }
-e3-data = { version = "0.20.0-dev.3", path = "./crates/state/storage" }
 e3-data-availability = { version = "0.20.0-dev.3", path = "./crates/data-availability" }
-e3-hamt = { version = "0.20.0-dev.3", path = "./crates/hamt" }
-e3-request = { version = "0.20.0-dev.3", path = "./crates/state/request" }
 e3-sdk = { version = "0.20.0-dev.3", path = "./crates/sdk" }
 e3-cli = { version = "0.20.0-dev.3", path = "./crates/cli" }
 e3-committee-hash = { version = "0.20.0-dev.3", path = "./crates/committee/hash" }
 e3-entrypoint = { version = "0.20.0-dev.3", path = "./crates/ciphernode/entrypoint" }
 e3-init = { version = "0.20.0-dev.3", path = "./crates/init" }
-e3-event-system = { version = "0.20.0-dev.3", path = "./crates/state/event-system" }
-e3-events = { version = "0.20.0-dev.3", path = "./crates/events" }
 e3-evm = { version = "0.20.0-dev.3", path = "./crates/evm/runtime" }
 e3-evm-config = { version = "0.20.0-dev.3", path = "./crates/evm/config" }
 e3-evm-contracts = { version = "0.20.0-dev.3", path = "./crates/evm/contracts" }
 e3-evm-client = { version = "0.20.0-dev.3", path = "./crates/evm/client" }
 e3-evm-transactions = { version = "0.20.0-dev.3", path = "./crates/evm/transactions" }
-e3-fhe = { version = "0.20.0-dev.3", path = "./crates/bfv/runtime" }
 e3-fhe-params = { version = "0.20.0-dev.3", path = "./crates/bfv/params" }
 e3-fs = { version = "0.20.0-dev.3", path = "./crates/fs" }
 e3-indexer = { version = "0.20.0-dev.3", path = "./crates/evm/indexer" }
-e3-multithread = { version = "0.20.0-dev.3", path = "./crates/ciphernode/multithread" }
-e3-keyshare = { version = "0.20.0-dev.3", path = "./crates/orchestration/keyshare" }
 e3-logger = { version = "0.20.0-dev.3", path = "./crates/diagnostics/logger" }
-e3-net = { version = "0.20.0-dev.3", path = "./crates/net" }
 e3-compute-provider = { version = "0.20.0-dev.3", path = "./crates/program/compute-provider" }
 e3-openvm-host = { version = "0.20.0-dev.3", path = "./crates/program/openvm-host" }
 e3-openvm-types = { version = "0.20.0-dev.3", path = "./crates/program/openvm-types" }
-e3-sortition = { version = "0.20.0-dev.3", path = "./crates/orchestration/sortition" }
 e3-daemon-server = { version = "0.20.0-dev.3", path = "./crates/ciphernode/daemon-server" }
 e3-program-runner = { version = "0.20.0-dev.3", path = "./crates/program/runner" }
 e3-program-server = { version = "0.20.0-dev.3", path = "./crates/program/server" }
 e3-polynomial = { version = "0.20.0-dev.3", path = "./crates/polynomial" }
 e3-polynomial-fhe = { version = "0.20.0-dev.3", path = "./crates/polynomial/fhe-adapter" }
-e3-sync = { version = "0.20.0-dev.3", path = "./crates/state/sync" }
-e3-layout-lock = { version = "0.20.0-dev.3", path = "./crates/testing/layout-lock" }
-e3-task-pool = { version = "0.20.0-dev.3", path = "./crates/task-pool" }
 e3-test-support = { path = "./crates/testing/support" }
 e3-tests = { version = "0.20.0-dev.3", path = "./crates/testing/system" }
 e3-trbfv = { version = "0.20.0-dev.3", path = "./crates/bfv/threshold" }
 e3-utils = { version = "0.20.0-dev.3", path = "./crates/utils" }
 e3-utils-derive = { version = "0.20.0-dev.3", path = "./crates/utils-derive" }
 e3-safe = { version = "0.20.0-dev.3", path = "./crates/safe" }
-e3-slashing = { version = "0.20.0-dev.3", path = "./crates/orchestration/slashing" }
 e3-zk-prover = { version = "0.20.0-dev.3", path = "./crates/zk/prover" }
 e3-zk-config = { version = "0.20.0-dev.3", path = "./crates/zk/config" }
 e3-zk-build = { path = "./crates/zk/build" }

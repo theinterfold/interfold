@@ -27,11 +27,11 @@ use common::{
     setup_compiled_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::Proof;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_zk_config::DkgInputType;
 use e3_zk_config::{CircuitName, CircuitVariant};
+use e3_zk_prover::Proof;
 use e3_zk_prover::{
     DecryptedSharesAggregationCircuit, DkgShareDecryptionCircuit, PkAggregationCircuit, PkCircuit,
     PkGenerationCircuit, ShareComputationCircuit, ShareEncryptionCircuit,

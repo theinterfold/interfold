@@ -7,7 +7,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_events::ThresholdShare;
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use e3_trbfv::{
     calculate_decryption_key::{
@@ -26,6 +25,15 @@ use fhe::{
     mbfv::{AggregateIter, CommonRandomPoly, PublicKeyShare},
 };
 use fhe_traits::Serialize;
+
+/// One party's dealing: its public key share, and its secret and error shares encrypted for every
+/// recipient.
+#[derive(Clone)]
+pub struct ThresholdShare {
+    pub pk_share: ArcBytes,
+    pub sk_sss: BfvEncryptedShares,
+    pub esi_sss: Vec<BfvEncryptedShares>,
+}
 
 // The following functions are designed to aid testing our usecases
 
@@ -129,7 +137,6 @@ pub fn generate_shares_hash_map(
         shares_hash_map.insert(
             party_id,
             ThresholdShare {
-                party_id,
                 esi_sss: encrypted_esi_sss,
                 sk_sss: encrypted_sk_sss,
                 pk_share,

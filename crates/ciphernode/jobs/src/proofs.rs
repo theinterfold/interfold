@@ -9,7 +9,7 @@
 
 use crate::{trbfv, Blobs, JobError, Jobs};
 use alloy_primitives::{keccak256, B256};
-use e3_events::Proof;
+use e3_zk_prover::Proof;
 use e3_protocol::{
     accusation::{disputed_proof, Fault, Verdict},
     node::CryptoParams,

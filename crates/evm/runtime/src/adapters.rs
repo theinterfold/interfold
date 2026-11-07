@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Compatibility view of concrete EVM provider adapters stored by capability.
-
-#[path = "chain_reader/progress.rs"]
-pub mod ingestion_progress;
 #[path = "log_fetching/adapter.rs"]
 pub(crate) mod log_fetcher;

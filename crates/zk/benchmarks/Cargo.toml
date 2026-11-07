@@ -13,7 +13,6 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 e3-committee.workspace = true
-e3-events.workspace = true
 e3-fhe-params.workspace = true
 e3-zk-build.workspace = true
 e3-zk-config.workspace = true

@@ -23,11 +23,6 @@
 //! provider, not of the block range that was requested, so a window that grew back would find the
 //! same cap again on the next call and pay one more failed request for each chunk.
 
-use e3_evm_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
-
-/// Widest `eth_getLogs` range the node asks for unless the chain configuration sets one.
-pub(crate) const MAX_LOG_WINDOW: u64 = DEFAULT_RPC_LOG_RANGE_BLOCKS;
-
 /// Narrowest range the window can reach. One block always satisfies a range cap, so the node keeps a
 /// usable window against any provider.
 pub(crate) const MIN_LOG_WINDOW: u64 = 1;
@@ -111,6 +106,10 @@ pub(crate) struct LogWindow {
     width: u64,
 }
 
+/// The widest range a test window starts at: the chain setting's default.
+#[cfg(test)]
+pub(crate) const MAX_LOG_WINDOW: u64 = e3_evm_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
+
 impl LogWindow {
     /// Start at the default widest range, for tests. Production code starts at the chain's
     /// configured range through [`LogWindow::with_max`], so a reader cannot forget the setting.
@@ -157,16 +156,6 @@ impl LogWindow {
     /// Report whether the window is narrow enough that the operator should be told.
     pub(crate) fn is_narrow(&self) -> bool {
         self.width <= NARROW_LOG_WINDOW_WARN
-    }
-
-    /// Estimated number of chunks for `from_block..=to_block` at the current width.
-    ///
-    /// The estimate is a lower bound: a later shrink increases the real count.
-    pub(crate) fn estimated_chunks(&self, from_block: u64, to_block: u64) -> u64 {
-        if to_block < from_block {
-            return 0;
-        }
-        (to_block - from_block + 1).div_ceil(self.width)
     }
 }
 
@@ -248,14 +237,6 @@ mod tests {
         assert!(!LogWindow::new().is_narrow());
         assert!(LogWindow::with_max(NARROW_LOG_WINDOW_WARN).is_narrow());
         assert!(LogWindow::with_max(10).is_narrow());
-    }
-
-    #[test]
-    fn the_chunk_estimate_follows_the_current_width() {
-        assert_eq!(LogWindow::new().estimated_chunks(0, 24_999), 3);
-        assert_eq!(LogWindow::with_max(10).estimated_chunks(0, 99), 10);
-        // An empty range needs no call.
-        assert_eq!(LogWindow::new().estimated_chunks(200, 100), 0);
     }
 
     #[test]

@@ -21,7 +21,6 @@ const SOURCE_DIRS: &[&str] = &[
     "crates/zk/witness/src",
     "crates/committee/src",
     "crates/bfv/params/src",
-    "crates/bfv/runtime/src",
     "crates/polynomial/src",
     "crates/polynomial/fhe-adapter/src",
     "crates/parity-matrix/src",

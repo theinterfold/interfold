@@ -23,7 +23,6 @@ use alloy::{
     sol_types::SolEvent,
 };
 use anyhow::Context as _;
-use e3_events::E3Stage;
 use e3_evm_config::{ChainConfig, ContractAddresses};
 use scan_cache::{SavedScan, ScanKey};
 use serde::Serialize;
@@ -130,6 +129,38 @@ pub enum CommitteeMembership {
     Member,
     /// Expelled from the finalized committee.
     Expelled,
+}
+
+/// The contract's `E3Stage`, in declaration order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum E3Stage {
+    None,
+    Requested,
+    CommitteeFinalized,
+    KeyPublished,
+    CiphertextReady,
+    Complete,
+    Failed,
+}
+
+impl TryFrom<u8> for E3Stage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> anyhow::Result<Self> {
+        use E3Stage::*;
+        [
+            None,
+            Requested,
+            CommitteeFinalized,
+            KeyPublished,
+            CiphertextReady,
+            Complete,
+            Failed,
+        ]
+        .get(usize::from(value))
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("unknown E3 stage {value}"))
+    }
 }
 
 /// A committee that holds the operator's collateral until `releaseCommittee(e3Id)` runs.
@@ -475,10 +506,6 @@ mod tests {
 
         async fn fetch_block_number(&self) -> anyhow::Result<u64> {
             Ok(self.state.lock().unwrap().head)
-        }
-
-        async fn fetch_block_timestamp(&self, _block_number: u64) -> anyhow::Result<u64> {
-            Ok(0)
         }
 
         async fn fetch_block_hash(&self, block_number: u64) -> anyhow::Result<Option<B256>> {
