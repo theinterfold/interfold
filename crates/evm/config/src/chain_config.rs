@@ -64,6 +64,7 @@ pub struct ChainConfig {
     pub ingestion_confirmations: Option<u64>,
     /// Milliseconds between the node's polls of the RPC node: for a transaction's receipt, for a
     /// new block when `rpc_url` is HTTP, and for the confirmations of a log a WebSocket announced.
+    /// The chain reader still reads at least once a minute.
     ///
     /// The default is 7 seconds, which suits a public chain. A single-process development chain
     /// such as Anvil mines on demand, so the local templates set `250`. A loopback URL does not
