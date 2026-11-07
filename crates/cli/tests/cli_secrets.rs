@@ -13,12 +13,17 @@ use tempfile::TempDir;
 const PASSWORD: &str = "  cli stdin password  ";
 const WALLET_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
+/// A project whose node has its own control port: the CLI hands some commands to whatever node
+/// listens on the configured port, and a host may run a node on the default one.
 fn project() -> Result<TempDir> {
     let dir = tempfile::tempdir()?;
+    let ctrl_port = std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port();
     std::fs::write(
         dir.path().join("interfold.config.yaml"),
         format!(
-            "config_dir: {}\ndata_dir: {}\nnodes:\n  stdin-node:\n    network: local\n    autopassword: false\n    autowallet: false\n",
+            "config_dir: {}\ndata_dir: {}\nnodes:\n  stdin-node:\n    network: local\n    autopassword: false\n    autowallet: false\n    ctrl_port: {ctrl_port}\n",
             dir.path().join("config").display(),
             dir.path().join("data").display(),
         ),
