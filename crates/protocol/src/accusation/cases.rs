@@ -27,6 +27,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The first voters, in address order, submit the slash, this many seconds apart.
 const SUBMITTERS: usize = 3;
 const SUBMIT_TURN: UnixSecs = 30;
+/// How far past the chain's time a vote's window may start: `SlashingEvidenceLib.CLOCK_SKEW`.
+const CLOCK_SKEW: UnixSecs = 30;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accusations {
@@ -43,8 +45,9 @@ pub struct Accusations {
     cases: BTreeMap<Ballot, Case>,
     /// Votes that arrived before their accusation, which waits for its proof's blob.
     early: BTreeMap<Ballot, BTreeMap<Address, SignedVote>>,
-    /// This node's verdict on each proof it checked, by its evidence hash.
-    verdicts: BTreeMap<B256, bool>,
+    /// This node's check of each proof, by its type and bytes. A vote's evidence hash counts
+    /// only when it is the hash of the proof this node checked.
+    verdicts: BTreeMap<(ProofType, ZkProof), Checked>,
     /// The (accused, proof type) pairs this node accused.
     accused: BTreeSet<(Address, ProofType)>,
     expelled: BTreeSet<Address>,
@@ -63,6 +66,12 @@ struct Case {
     /// When this node submits the slash: once H members voted, if it is among the first voters.
     submit_at: Option<UnixSecs>,
     submitted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Checked {
+    data_hash: B256,
+    fails: bool,
 }
 
 impl Case {
@@ -114,7 +123,12 @@ impl Accusations {
         proof: SignedProof,
         data_hash: B256,
     ) -> Vec<Effect> {
-        self.verdicts.insert(data_hash, true);
+        let checked = Checked {
+            data_hash,
+            fails: true,
+        };
+        self.verdicts
+            .insert((proof_type, proof.proof.clone()), checked);
         if self.validity == 0
             || accused == self.me
             || !self.is_member(accused)
@@ -125,7 +139,7 @@ impl Accusations {
         let ballot = Ballot {
             accusation_id: accusation_id(self.e3, accused, proof_type),
             issued_at: now,
-            deadline: now + self.validity,
+            deadline: now.saturating_add(self.validity),
         };
         self.cases
             .insert(ballot, Case::new(accused, proof_type, proof, data_hash));
@@ -173,6 +187,7 @@ impl Accusations {
         vote.e3 == self.e3
             && vote.voter == voter
             && self.is_member(voter)
+            && vote.issued_at <= now.saturating_add(CLOCK_SKEW)
             && vote.issued_at <= vote.deadline
             && vote.deadline - vote.issued_at <= self.validity
             && now <= vote.deadline
@@ -209,7 +224,10 @@ impl Accusations {
                 });
                 case.votes.extend(votes);
                 case.votes.insert(sender, vote);
-                let check = (accused != self.me && !self.verdicts.contains_key(&case.data_hash))
+                let checked = self
+                    .verdicts
+                    .contains_key(&(case.proof_type, case.proof.proof.clone()));
+                let check = (accused != self.me && !checked)
                     .then(|| self.verify(case.proof_type, case.proof.proof.clone()));
                 self.cases.insert(ballot, case);
                 let mut effects: Vec<Effect> = check.into_iter().collect();
@@ -241,17 +259,19 @@ impl Accusations {
     /// This node verified an accused proof: it votes in every window that accuses those bytes.
     pub(crate) fn verified(&mut self, now: UnixSecs, result: AccusationWorkResult) -> Vec<Effect> {
         let AccusationWorkResult::Verified {
+            proof_type,
             proof,
             fails,
             data_hash,
         } = result;
-        self.verdicts.insert(data_hash, fails);
         let ballots: Vec<Ballot> = self
             .cases
             .iter()
-            .filter(|(_, case)| case.proof.proof == proof && case.data_hash == data_hash)
+            .filter(|(_, case)| case.proof_type == proof_type && case.proof.proof == proof)
             .map(|(ballot, _)| *ballot)
             .collect();
+        self.verdicts
+            .insert((proof_type, proof), Checked { data_hash, fails });
         let mut effects = Vec::new();
         for ballot in ballots {
             effects.extend(self.vote(ballot));
@@ -260,13 +280,17 @@ impl Accusations {
         effects
     }
 
-    /// This node's vote in `ballot`, once its verdict on the accused proof is in and fails, the
-    /// accused is not this node, and the window is open.
+    /// This node's vote in `ballot`, once its own check found the accused proof failing, under
+    /// the evidence hash the accuser signed, and the accused is not this node.
     fn vote(&mut self, ballot: Ballot) -> Option<Effect> {
         let (me, e3, manager) = (self.me, self.e3, self.manager);
-        let fails = |hash: &B256| self.verdicts.get(hash).copied() == Some(true);
         let case = self.cases.get(&ballot)?;
-        if case.voting || case.accused == me || !fails(&case.data_hash) {
+        let checked = self
+            .verdicts
+            .get(&(case.proof_type, case.proof.proof.clone()));
+        let fails =
+            checked.is_some_and(|checked| checked.fails && checked.data_hash == case.data_hash);
+        if case.voting || case.accused == me || !fails {
             return None;
         }
         let vote = Vote {
@@ -379,7 +403,7 @@ impl Accusations {
             .cases
             .keys()
             .chain(self.early.keys())
-            .map(|ballot| ballot.deadline + 1);
+            .map(|ballot| ballot.deadline.saturating_add(1));
         submissions.chain(windows).min()
     }
 

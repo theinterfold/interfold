@@ -10,7 +10,7 @@
 use crate::{
     accusation::{Accusations, Fault, Slashing, Verdict},
     decryption::{Decryption, DecryptionWorkResult, Handover, PublishedKey},
-    dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult},
+    dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult, KeyAnchor},
     node::{
         Body, CommitteeRequest, CommitteeSeed, CryptoParams, DataRef, Effect, Kind, PeerMessage,
         Purpose, Stage, Submission, Transaction, WorkResult,
@@ -243,6 +243,7 @@ impl E3 {
         roster: Vec<Address>,
         commitment: B256,
         compute_deadline: UnixSecs,
+        anchors: BTreeMap<Address, KeyAnchor>,
     ) {
         self.reach(Stage::KeyPublished, compute_deadline);
         let Some(dkg) = &mut self.dkg else {
@@ -260,6 +261,7 @@ impl E3 {
             interfold: self.interfold,
             committee,
             commitment,
+            anchors,
         };
         let members = dkg.members().to_vec();
         self.decryption = Some(Decryption::new(

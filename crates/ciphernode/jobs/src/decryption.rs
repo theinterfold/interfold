@@ -21,6 +21,7 @@ use e3_protocol::{
     decryption::{
         DecryptionWork, DecryptionWorkResult, OwnShares, PlaintextPublication, SharesMessage,
     },
+    dkg::KeyAnchor,
     node::CryptoParams,
     proof::{ProofType, ZkProof},
     BlobRef,
@@ -68,11 +69,13 @@ impl<B: Blobs> Jobs<'_, B> {
                 member,
                 ciphertext,
                 domain,
+                anchor,
                 message,
                 ..
             } => DecryptionWorkResult::SharesChecked {
                 member: *member,
-                verdict: self.check_decryption_shares(params, ciphertext, *domain, message)?,
+                verdict: self
+                    .check_decryption_shares(params, ciphertext, *domain, *anchor, message)?,
             },
             DecryptionWork::AggregatePlaintext {
                 committee,
@@ -191,12 +194,14 @@ impl<B: Blobs> Jobs<'_, B> {
             .collect()
     }
 
-    /// Shares count when each C6 proves its share of its ciphertext under the decryption domain.
+    /// Shares count when each C6 proves its share of its ciphertext under the decryption domain,
+    /// with the key commitments the chain recorded for the member.
     fn check_decryption_shares(
         &self,
         params: &CryptoParams,
         ciphertext: &BlobRef,
         domain: B256,
+        anchor: Option<KeyAnchor>,
         message: &SharesMessage,
     ) -> Result<Verdict, JobError> {
         if message.shares.len() != message.c6.len() {
@@ -215,9 +220,12 @@ impl<B: Blobs> Jobs<'_, B> {
         if message.shares.len() != ciphertexts.len() {
             return Ok(Verdict::Invalid);
         }
+        let Some(anchor) = anchor else {
+            return Ok(Verdict::Invalid);
+        };
         for ((share, c6), ciphertext) in message.shares.iter().zip(&message.c6).zip(&ciphertexts) {
             let share = self.blobs.get(share)?;
-            if !self.c6_binds(params, &c6.proof, ciphertext, &share, domain)? {
+            if !self.c6_binds(params, &c6.proof, ciphertext, &share, domain, anchor)? {
                 return Ok(Verdict::Invalid);
             }
         }
@@ -228,7 +236,9 @@ impl<B: Blobs> Jobs<'_, B> {
         self.verdict(prover, params, c6)
     }
 
-    /// Whether a valid C6 would be about this share of this ciphertext, under this domain.
+    /// Whether a valid C6 would be about this share of this ciphertext, under this domain, made
+    /// with the key whose commitments the chain recorded for the member. A copied proof names
+    /// another member's commitments.
     fn c6_binds(
         &self,
         params: &CryptoParams,
@@ -236,6 +246,7 @@ impl<B: Blobs> Jobs<'_, B> {
         ciphertext: &[u8],
         share: &[u8],
         domain: B256,
+        anchor: KeyAnchor,
     ) -> Result<bool, JobError> {
         let threshold = trbfv::threshold_params(params)?;
         let field = |name| proofs::field(c6, CircuitName::ThresholdShareDecryption, name);
@@ -260,7 +271,10 @@ impl<B: Blobs> Jobs<'_, B> {
                     MAX_MSG_NON_ZERO_COEFFS,
                 ))
             });
-        Ok(in_domain
+        let keyed = field("expected_sk_commitment") == Some(anchor.sk_agg_commit)
+            && field("expected_e_sm_commitment") == Some(anchor.esm_agg_commit);
+        Ok(keyed
+            && in_domain
             && ciphertext.is_some()
             && field("ct_commitment") == ciphertext
             && share.is_some()

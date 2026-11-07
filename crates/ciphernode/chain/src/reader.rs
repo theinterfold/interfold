@@ -260,6 +260,7 @@ impl<R: Rpc> Reader<R> {
                 committee,
                 roster,
                 commitment,
+                anchors,
             } => {
                 let fact = ChainFact::KeyPublished {
                     e3,
@@ -267,6 +268,7 @@ impl<R: Rpc> Reader<R> {
                     roster,
                     commitment,
                     compute_deadline: self.rpc.deadlines(e3.number, block).await?.compute,
+                    anchors,
                 };
                 (at, time, fact)
             }

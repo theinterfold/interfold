@@ -165,6 +165,21 @@ mod cases {
         }
     }
 
+    /// Operator `owner`'s own C0 proof, signed by `owner`.
+    fn signed_key(owner: u64) -> SignedProof {
+        let proof = proof(owner as u8);
+        let hash = proof.payload_signing_hash(e3(1), ProofType::C0PkBfv);
+        SignedProof {
+            signature: signature(owner, hash),
+            proof,
+        }
+    }
+
+    fn signed_vote(voter: u64, vote: Vote) -> SignedVote {
+        let signature = signature(voter, vote.signing_hash(MANAGER));
+        SignedVote { vote, signature }
+    }
+
     fn vote(voter: u64, issued_at: u64) -> SignedVote {
         let vote = Vote {
             e3: e3(1),
@@ -203,6 +218,7 @@ mod cases {
         Input::Job(JobDone {
             e3: e3(1),
             result: WorkResult::Accusation(AccusationWorkResult::Verified {
+                proof_type: ProofType::C0PkBfv,
                 proof: proof(1),
                 fails,
                 data_hash: data_hash(1),
@@ -349,5 +365,58 @@ mod cases {
         assert!(node.e3(&e3(1)).is_some());
         node.step(NOW + VALIDITY + 1, Input::Tick);
         assert!(node.e3(&e3(1)).is_none());
+    }
+
+    /// An accuser that pairs an honest member's valid proof with the evidence hash of a proof this
+    /// node found failing gets no vote: the node checks the accused proof itself.
+    #[test]
+    fn a_failure_found_in_one_proof_gives_no_vote_against_another() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        let vote = Vote {
+            e3: e3(1),
+            accusation_id: accusation_id(e3(1), address(3), ProofType::C0PkBfv),
+            voter: address(2),
+            data_hash: data_hash(1),
+            issued_at: NOW,
+            deadline: NOW + VALIDITY,
+        };
+        let effects = node.step(
+            NOW,
+            from(
+                2,
+                AccusationMessage::Accuse {
+                    accused: address(3),
+                    proof_type: ProofType::C0PkBfv,
+                    proof: signed_key(3),
+                    vote: signed_vote(2, vote),
+                },
+            ),
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Run(job) if matches!(job.work, Work::Accusation(_))
+        )));
+        assert!(!effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Sign(_))));
+    }
+
+    /// A vote whose window starts later than the chain's time plus the contract's clock skew is
+    /// not taken, so it cannot hold a window open to the end of time.
+    #[test]
+    fn a_vote_from_the_far_future_is_not_taken() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        let before = node.next_deadline();
+        let vote = Vote {
+            e3: e3(1),
+            accusation_id: accusation_id(e3(1), address(1), ProofType::C0PkBfv),
+            voter: address(3),
+            data_hash: data_hash(1),
+            issued_at: u64::MAX - VALIDITY,
+            deadline: u64::MAX,
+        };
+        node.step(NOW, from(3, AccusationMessage::Vote(signed_vote(3, vote))));
+        assert_eq!(node.next_deadline(), before);
     }
 }

@@ -64,6 +64,14 @@ pub struct NodeFoldMessage {
     pub attestation: Bytes,
 }
 
+/// A roster member's aggregate commitments as the DKG proof that the chain verified carries them,
+/// and the registry stores them: the key commitments that member's C6 proofs must name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyAnchor {
+    pub sk_agg_commit: B256,
+    pub esm_agg_commit: B256,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeFold {
     pub proof: ZkProof,

@@ -18,7 +18,7 @@ use crate::{
         PlaintextPublication,
     },
     dkg::{
-        AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult,
+        AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult, KeyAnchor,
         KeyPublication,
     },
     proof::{ProofType, ZkProof},
@@ -161,6 +161,8 @@ pub enum ChainFact {
         commitment: B256,
         /// The deadline for the ciphertext.
         compute_deadline: UnixSecs,
+        /// Each roster member's key commitments, from the proof's public inputs.
+        anchors: BTreeMap<Address, KeyAnchor>,
     },
     /// `CiphertextOutputReferencePublished`: where the ciphertext's bytes are, and the decryption
     /// deadline.
@@ -667,9 +669,10 @@ impl Node {
                 roster,
                 commitment,
                 compute_deadline,
+                anchors,
             } => {
                 if let Some(state) = self.e3s.get_mut(&e3) {
-                    state.key_published(committee, roster, commitment, compute_deadline);
+                    state.key_published(committee, roster, commitment, compute_deadline, anchors);
                 }
                 self.release_held(now, e3)
             }
@@ -1477,7 +1480,30 @@ mod tests {
         step(sign(ME, signing(&effects)));
         let effects = step(key_failed(e3(1), 1, B256::repeat_byte(0xd1)));
         step(sign(ME, signing(&effects)));
-        step(key_published(12, e3(1), members([1, 2]), members([1, 2])));
+        step(Input::Job(JobDone {
+            e3: e3(1),
+            result: WorkResult::Accusation(AccusationWorkResult::Verified {
+                proof_type: ProofType::C0PkBfv,
+                proof: proof(2),
+                fails: false,
+                data_hash: B256::repeat_byte(0xd2),
+            }),
+        }));
+        let anchor = |fill: u8| KeyAnchor {
+            sk_agg_commit: B256::repeat_byte(fill),
+            esm_agg_commit: B256::repeat_byte(!fill),
+        };
+        step(chain(
+            12,
+            ChainFact::KeyPublished {
+                e3: e3(1),
+                committee: members([1, 2]),
+                roster: members([1, 2]),
+                commitment: KEY_COMMITMENT,
+                compute_deadline: COMPUTE_DEADLINE,
+                anchors: [(address(1), anchor(0xa1)), (address(2), anchor(0xa2))].into(),
+            },
+        ));
         step(failure(20, e3(1), FailureReason::DkgInvalidShares));
         step(Input::Tick);
         journal.extend(bincode::serialize(&node).unwrap());
@@ -1509,9 +1535,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                7,
+                8,
                 alloy_primitives::b256!(
-                    "418a65afb69087842eec857a0cec6cf4b85298f3509eb00929863604c868f725"
+                    "447aad4a857905fe9d13846bf14352a63cfc130462c9620205d3e6eff6bf0e61"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

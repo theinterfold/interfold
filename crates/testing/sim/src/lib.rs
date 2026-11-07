@@ -17,6 +17,7 @@ pub use real_jobs::RealJobs;
 use alloy_primitives::{Address, B256, U256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
+    dkg::KeyAnchor,
     node::{
         ChainEvent, ChainFact, CryptoParams, DataRef, Effect, Eligibility, FailureReason, Fetched,
         Input, JobDone, LogPosition, Node, PeerMessage, Stage, Submission, Transaction,
@@ -391,17 +392,22 @@ impl<J: Jobs> Sim<J> {
             Transaction::PublishCommittee(publication) => {
                 let committee = request.committee.clone().unwrap_or_default();
                 (!std::mem::replace(&mut request.key_published, true)).then(|| {
+                    let slots = publication.attestations.iter().filter_map(|attestation| {
+                        let member = committee.get(attestation.party_id as usize)?;
+                        let anchor = KeyAnchor {
+                            sk_agg_commit: attestation.sk_agg_commit,
+                            esm_agg_commit: attestation.esm_agg_commit,
+                        };
+                        Some((*member, anchor))
+                    });
+                    let anchors: BTreeMap<Address, KeyAnchor> = slots.collect();
                     ChainFact::KeyPublished {
                         e3,
-                        roster: publication
-                            .attestations
-                            .iter()
-                            .filter_map(|attestation| committee.get(attestation.party_id as usize))
-                            .copied()
-                            .collect(),
+                        roster: anchors.keys().copied().collect(),
                         committee,
                         commitment: publication.commitment,
                         compute_deadline: COMPUTE_DEADLINE,
+                        anchors,
                     }
                 })
             }

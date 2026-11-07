@@ -392,6 +392,7 @@ pub fn key_published(block: u64, e3: E3Id, committee: Vec<Address>, roster: Vec<
             roster,
             commitment: KEY_COMMITMENT,
             compute_deadline: COMPUTE_DEADLINE,
+            anchors: Default::default(),
         },
     )
 }

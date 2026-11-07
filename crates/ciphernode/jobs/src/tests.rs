@@ -278,6 +278,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
                 committee: members.clone(),
                 ciphertext,
                 domain,
+                anchor: None,
                 message: Box::new(message.clone()),
             },
         );

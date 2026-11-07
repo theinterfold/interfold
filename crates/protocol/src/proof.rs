@@ -34,7 +34,7 @@ impl ProofType {
 
 /// A prover's output: its proof bytes, kept in the blob store, and its public inputs. Signing and
 /// signature checks need only the bytes' hash.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ZkProof {
     pub data: BlobRef,
     pub public_inputs: Vec<B256>,

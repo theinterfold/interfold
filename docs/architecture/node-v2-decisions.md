@@ -174,22 +174,26 @@ Each rule is checkable in review.
   C3 per slot. A check verifies the proof and compares the bytes it received with the proof's public
   commitments: a key with its C0, a keyshare with its C1, the shares a member decrypted with the
   dealer's C2 rows for its slot, a member's C4 rows with the roster dealers' C2 rows, and a
-  decryption share with its C6 (ciphertext, share, and domain). A valid proof of other bytes counts
-  for nothing. A bad key or bad shares keep their sender out of the roster, and a bad decryption
-  share out of the T+1 shares the plaintext uses; after the roster is fixed, a bad keyshare or C4
-  fails the DKG. The committee key's commitment is the DKG aggregation proof's last public input,
-  which `BfvPkVerifier` checks, not a hash of the key bytes. A node without a prover makes
-  placeholders, which only the mock verifiers of a test deployment accept.
+  decryption share with its C6 (ciphertext, share, domain, and the member's key commitments that the
+  DKG proof the chain verified carries, which the registry stores as its anchors). A valid proof of
+  other bytes, or another member's proof, counts for nothing. A bad key or bad shares keep their
+  sender out of the roster, and a bad decryption share out of the T+1 shares the plaintext uses;
+  after the roster is fixed, a bad keyshare or C4 fails the DKG. The committee key's commitment is
+  the DKG aggregation proof's last public input, which `BfvPkVerifier` checks, not a hash of the key
+  bytes. A node without a prover makes placeholders, which only the mock verifiers of a test
+  deployment accept.
 - **D28. An accusation carries the failing proof, and H votes slash.** A check that finds a signed
   proof failing names it. The node accuses the signer once per proof type, in a window as long as
   the vote validity the request snapshotted, and signs under the slashing manager the request
   snapshotted: the Interfold's at that time, which governance replaces only with no E3 assigned. The
   accusation carries the signed proof, so every member verifies the same bytes and votes only when
-  its own check fails. Votes count per window, and the first window with H votes, the earlier node's
-  quorum (the contract needs T), is submitted by the first three voters in address order, 30 seconds
-  apart; the contract takes one proposal per proof. A member whose bytes do not match a valid proof
-  is left out but not accused (D27). A completed or failed E3 stays while an accusation's window is
-  open.
+  its own check of that proof failed, under the evidence hash of those bytes: a failure found in one
+  proof never votes against another. A vote counts only if its window starts no later than 30
+  seconds past the chain's time, the contract's clock skew. Votes count per window, and the first
+  window with H votes, the earlier node's quorum (the contract needs T), is submitted by the first
+  three voters in address order, 30 seconds apart; the contract takes one proposal per proof. A
+  member whose bytes do not match a valid proof is left out but not accused (D27). A completed or
+  failed E3 stays while an accusation's window is open.
 - **D29. `interfold start` runs this node, from the operator's configuration and keys.** The CLI
   maps one enabled chain, its contracts and availability layer, and the node's ports and peers into
   the node's launch configuration; `e3-node` maps a JSON file into the same one. The keys stay where

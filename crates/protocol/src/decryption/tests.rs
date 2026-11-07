@@ -34,6 +34,14 @@ fn members(operators: &[u64]) -> Vec<Address> {
     members
 }
 
+/// The key commitments the chain recorded for `member`.
+fn anchor_of(member: Address) -> KeyAnchor {
+    KeyAnchor {
+        sk_agg_commit: B256::left_padding_from(member.as_slice()),
+        esm_agg_commit: B256::right_padding_from(member.as_slice()),
+    }
+}
+
 fn decryption(me: u64, roster: &[u64], key: bool) -> Decryption {
     let committee = members(&ordered());
     let handover = Handover {
@@ -45,6 +53,10 @@ fn decryption(me: u64, roster: &[u64], key: bool) -> Decryption {
         interfold: INTERFOLD,
         committee: committee.clone(),
         commitment: KEY_COMMITMENT,
+        anchors: committee
+            .iter()
+            .map(|member| (*member, anchor_of(*member)))
+            .collect(),
     };
     Decryption::new(
         e3(1),
@@ -216,6 +228,27 @@ fn shares_that_arrive_before_the_ciphertext_s_bytes_are_checked_once_they_are_he
     assert!(checked(&effects).is_empty());
     let effects = deliver(&mut decryption, NOW, ciphertext_fetched(e3(1)));
     assert_eq!(checked(&effects), members(&[b, c]));
+}
+
+/// Each member's shares are checked against the key commitments the chain recorded for that
+/// member, so a C6 proof copied from another member does not count.
+#[test]
+fn each_member_s_shares_are_checked_against_its_own_key_commitments() {
+    let [a, b, ..] = ordered();
+    let mut decryption = with_its_share(a, &[a, b]);
+    let effects = deliver(&mut decryption, NOW, decryption_shares(e3(1), b, b));
+    let anchors: Vec<(Address, Option<KeyAnchor>)> = works(&effects)
+        .into_iter()
+        .filter_map(|work| match work {
+            DecryptionWork::CheckShares { member, anchor, .. } => Some((*member, *anchor)),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<(Address, Option<KeyAnchor>)> = members(&[a, b])
+        .into_iter()
+        .map(|member| (member, Some(anchor_of(member))))
+        .collect();
+    assert_eq!(anchors, expected);
 }
 
 #[test]

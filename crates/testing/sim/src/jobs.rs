@@ -183,8 +183,9 @@ impl MockJobs {
                 verdict: verdict(keyshare.c1.proof.public_inputs == [keyshare.pk_share.hash]),
             },
             Work::Decryption(work) => return self.decrypt(work),
-            Work::Accusation(AccusationWork::Verify { proof, .. }) => {
+            Work::Accusation(AccusationWork::Verify { proof_type, proof }) => {
                 return WorkResult::Accusation(AccusationWorkResult::Verified {
+                    proof_type: *proof_type,
                     proof: proof.clone(),
                     fails: proof.public_inputs == [FAILS],
                     data_hash: data_hash(proof),

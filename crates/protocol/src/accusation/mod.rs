@@ -89,6 +89,7 @@ pub enum AccusationWork {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccusationWorkResult {
     Verified {
+        proof_type: ProofType,
         proof: ZkProof,
         fails: bool,
         data_hash: B256,

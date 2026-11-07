@@ -27,6 +27,7 @@ impl<B: Blobs> Jobs<'_, B> {
             None => false,
         };
         Ok(AccusationWorkResult::Verified {
+            proof_type: *proof_type,
             proof: proof.clone(),
             fails,
             data_hash: self.data_hash(proof)?,

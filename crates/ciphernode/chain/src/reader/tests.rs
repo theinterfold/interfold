@@ -10,7 +10,7 @@ use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolValue;
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager};
 use e3_protocol::{
-    dkg::AttestationContext,
+    dkg::{AttestationContext, KeyAnchor},
     node::{CommitteeSeed, CryptoParams, DataRef},
     E3Id,
 };
@@ -26,6 +26,8 @@ const DECRYPTION_DEADLINE: UnixSecs = 2_000;
 const RANDOMNESS_DEADLINE: UnixSecs = 60;
 const TICKET_PRICE: U256 = U256::from_limbs([5, 0, 0, 0]);
 const KEY_COMMITMENT: B256 = B256::repeat_byte(0x99);
+const SK_AGG_COMMIT: B256 = B256::repeat_byte(0x66);
+const ESM_AGG_COMMIT: B256 = B256::repeat_byte(0x77);
 const SEED: CommitteeSeed = CommitteeSeed {
     seed: U256::from_limbs([42, 0, 0, 0]),
     deadline: 500,
@@ -149,7 +151,10 @@ fn reads(block: u64) -> Vec<RawLog> {
     let finalized = IInterfold::CommitteeFinalized {
         e3Id: U256::from(7),
     };
+    // A roster of one: its slot at 2, its key commitments at 5 + H and 5 + 2H, the key last.
     let mut inputs = vec![B256::ZERO; 9];
+    inputs[6] = SK_AGG_COMMIT;
+    inputs[7] = ESM_AGG_COMMIT;
     *inputs.last_mut().unwrap() = KEY_COMMITMENT;
     let key = ICiphernodeRegistry::CommitteeProofPublished {
         e3Id: U256::from(7),
@@ -235,6 +240,14 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
             roster: vec![Address::repeat_byte(1)],
             commitment: KEY_COMMITMENT,
             compute_deadline: COMPUTE_DEADLINE,
+            anchors: [(
+                Address::repeat_byte(1),
+                KeyAnchor {
+                    sk_agg_commit: SK_AGG_COMMIT,
+                    esm_agg_commit: ESM_AGG_COMMIT,
+                },
+            )]
+            .into(),
         },
         ChainFact::CiphertextReady {
             e3: e3(),

@@ -19,6 +19,7 @@ pub use domain::{committee_hash, decryption_domain};
 
 use crate::{
     accusation::Verdict,
+    dkg::KeyAnchor,
     failover::Failover,
     node::{
         Body, CryptoParams, DataRef, Effect, Fetch, Job, PeerMessage, Purpose, Signing, Submission,
@@ -63,12 +64,14 @@ pub enum DecryptionWork {
         ciphertext: BlobRef,
         domain: B256,
     },
-    /// Check a roster member's shares against their C6 proofs, the ciphertext, and `domain`.
+    /// Check a roster member's shares against their C6 proofs, the ciphertext, `domain`, and the
+    /// member's key commitments that the chain recorded.
     CheckShares {
         member: Address,
         committee: Vec<Address>,
         ciphertext: BlobRef,
         domain: B256,
+        anchor: Option<KeyAnchor>,
         message: Box<SharesMessage>,
     },
     /// Combine exactly T+1 roster members' shares into the plaintext, with its C7 and final
@@ -131,6 +134,7 @@ pub(crate) struct PublishedKey {
     /// The registry's committee, in its order.
     pub(crate) committee: Vec<Address>,
     pub(crate) commitment: B256,
+    pub(crate) anchors: BTreeMap<Address, KeyAnchor>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -484,6 +488,7 @@ impl Decryption {
                     committee: self.members.clone(),
                     ciphertext: blob,
                     domain,
+                    anchor: self.published.anchors.get(&member).copied(),
                     message: Box::new(message),
                 }))
             })

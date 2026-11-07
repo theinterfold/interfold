@@ -11,7 +11,7 @@ use e3_evm_contracts::{
     IBondingRegistry, ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager,
 };
 use e3_protocol::{
-    dkg::AttestationContext,
+    dkg::{AttestationContext, KeyAnchor},
     node::{ChainEvent, ChainFact, CryptoParams, DataRef, FailureReason, LogPosition, Stage},
     E3Id, UnixSecs,
 };
@@ -102,6 +102,7 @@ pub(crate) enum PendingRead {
         committee: Vec<Address>,
         roster: Vec<Address>,
         commitment: B256,
+        anchors: BTreeMap<Address, KeyAnchor>,
     },
     /// `CiphertextOutputReferencePublished`: its decryption deadline from `getDeadlines`.
     Ciphertext {
@@ -270,7 +271,7 @@ impl Decoder<'_> {
             R::CommitteeProofPublished::SIGNATURE_HASH => {
                 let event: R::CommitteeProofPublished =
                     decode_event(log, "CommitteeProofPublished")?;
-                let roster = roster(&event.nodes, &event.proof, event.pkCommitment)?;
+                let (roster, anchors) = roster(&event.nodes, &event.proof, event.pkCommitment)?;
                 return Ok(Some(Decoded::Read(PendingRead::Key {
                     at: log.at,
                     time: log.time,
@@ -278,6 +279,7 @@ impl Decoder<'_> {
                     committee: event.nodes,
                     roster,
                     commitment: event.pkCommitment,
+                    anchors,
                 })));
             }
             R::CommitteeRandomnessRequested::SIGNATURE_HASH => {
@@ -413,12 +415,14 @@ fn decode_event<E: SolEvent>(log: &RawLog, event: &'static str) -> Result<E, Dec
 /// The roster from the key proof's public inputs, laid out as the deployed key verifier reads
 /// them: `abi.encode(bytes proof, bytes32[] inputs)` with `6 + 3H` inputs for a roster of H (the
 /// verifier picks its circuit by that count), the roster's committee slots at `[2, 2 + H)` in
-/// ascending order, and the key commitment last.
+/// ascending order, and the key commitment last. Each member's key commitments sit at
+/// `5 + H + k` and `5 + 2H + k`, where `DkgFoldAttestationVerifier` reads the anchors the
+/// registry stores.
 fn roster(
     committee: &[Address],
     proof: &[u8],
     commitment: B256,
-) -> Result<Vec<Address>, DecodeError> {
+) -> Result<(Vec<Address>, BTreeMap<Address, KeyAnchor>), DecodeError> {
     let (_, inputs) = <(Bytes, Vec<B256>)>::abi_decode_params(proof).map_err(|source| {
         DecodeError::Malformed {
             event: "CommitteeProofPublished",
@@ -438,7 +442,15 @@ fn roster(
     if !ordered {
         return Err(DecodeError::Roster);
     }
-    Ok(slots.into_iter().map(|slot| committee[slot]).collect())
+    let roster: Vec<Address> = slots.into_iter().map(|slot| committee[slot]).collect();
+    let anchors = roster.iter().enumerate().map(|(k, member)| {
+        let anchor = KeyAnchor {
+            sk_agg_commit: inputs[5 + h + k],
+            esm_agg_commit: inputs[5 + 2 * h + k],
+        };
+        (*member, anchor)
+    });
+    Ok((roster.clone(), anchors.collect()))
 }
 
 /// `BondingRegistry` names its parameters as left-aligned ASCII in a `bytes32`.
