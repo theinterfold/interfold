@@ -244,9 +244,9 @@ impl<R: Rpc> Reader<R> {
 
     /// Waits after a successful poll until the chain may hold a log the reader has not read. It
     /// returns at once while confirmed blocks are unread. Otherwise it waits for the chain node to
-    /// announce a log after them, or for `LONGEST_WAIT` with the request for announcements; while
-    /// an announced block lacks its confirmations, or when the node announces nothing, it waits
-    /// for the poll interval.
+    /// announce a log after them; while an announced block lacks its confirmations, or when the
+    /// node announces nothing, it waits for the poll interval. With the request for announcements,
+    /// it waits `LONGEST_WAIT` at most.
     pub async fn wait(&mut self) {
         let unread = self
             .head
@@ -258,12 +258,13 @@ impl<R: Rpc> Reader<R> {
         let deadline = Instant::now() + LONGEST_WAIT;
         self.subscribe(deadline).await;
         let next = self.next;
+        let poll = (Instant::now() + self.poll).min(deadline);
         let Announcements::Active { blocks, .. } = &mut self.announcements else {
-            tokio::time::sleep(self.poll).await;
+            tokio::time::sleep_until(poll).await;
             return;
         };
         if self.announced.is_some_and(|block| block >= next) {
-            tokio::time::sleep(self.poll).await;
+            tokio::time::sleep_until(poll).await;
             return;
         }
         loop {

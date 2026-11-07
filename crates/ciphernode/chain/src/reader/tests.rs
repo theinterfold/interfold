@@ -633,7 +633,7 @@ async fn the_reader_polls_around_failed_requests_for_announcements() {
     let start = Instant::now();
     let wait = tokio::time::timeout(2 * LONGEST_WAIT, reader.wait());
     wait.await.expect("the wait ends");
-    assert_eq!(start.elapsed(), LONGEST_WAIT + POLL);
+    assert_eq!(start.elapsed(), LONGEST_WAIT);
     node.with(|chain| chain.announcing = Announcing::Yes);
     tokio::time::sleep(LONGEST_WAIT).await;
     let start = Instant::now();
