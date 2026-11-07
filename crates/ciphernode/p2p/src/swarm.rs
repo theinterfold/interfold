@@ -709,11 +709,43 @@ impl<S: BlobStore> Driver<S> {
             let _ = self.swarm.disconnect_peer_id(peer);
             return;
         }
+        let listeners: Vec<Multiaddr> = self.swarm.listeners().cloned().collect();
         let kademlia = &mut self.swarm.behaviour_mut().kademlia;
-        for address in info.listen_addrs.into_iter().take(8) {
+        for address in routable(&listeners, info.listen_addrs).take(8) {
             kademlia.add_address(&peer, address);
         }
     }
+}
+
+/// The addresses a peer gave that the node shares through Kademlia. A loopback address reaches
+/// the peer only from its own host, so a node that other hosts reach drops it: Kademlia would hand
+/// it to remote peers, which then dial themselves. Nodes that listen only on loopback share one
+/// host and keep it.
+fn routable(listeners: &[Multiaddr], given: Vec<Multiaddr>) -> impl Iterator<Item = Multiaddr> {
+    let reached_from_others = listeners
+        .iter()
+        .any(|address| !is_loopback(address) && !is_unspecified(address));
+    given
+        .into_iter()
+        .filter(move |address| !reached_from_others || !is_loopback(address))
+}
+
+fn is_loopback(address: &Multiaddr) -> bool {
+    address.iter().any(|protocol| match protocol {
+        Protocol::Ip4(ip) => ip.is_loopback(),
+        Protocol::Ip6(ip) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+        }
+        _ => false,
+    })
+}
+
+fn is_unspecified(address: &Multiaddr) -> bool {
+    address.iter().any(|protocol| match protocol {
+        Protocol::Ip4(ip) => ip.is_unspecified(),
+        Protocol::Ip6(ip) => ip.is_unspecified(),
+        _ => false,
+    })
 }
 
 #[cfg(test)]

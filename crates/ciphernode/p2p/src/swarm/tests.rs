@@ -305,6 +305,19 @@ async fn a_message_from_an_operator_the_node_does_not_know_is_not_taken() {
     assert_eq!(received(&mut second).await, message);
 }
 
+#[test]
+fn a_node_that_other_hosts_reach_shares_no_loopback_address() {
+    let address = |text: &str| -> Multiaddr { text.parse().unwrap() };
+    let loopback = address("/ip4/127.0.0.1/udp/9000/quic-v1");
+    let mapped = address("/ip6/::ffff:127.0.0.1/udp/9000/quic-v1");
+    let lan = address("/ip4/192.168.1.5/udp/9000/quic-v1");
+    let given = vec![loopback.clone(), mapped, lan.clone()];
+    let one_host: Vec<_> = routable(&[loopback], given.clone()).collect();
+    assert_eq!(one_host, given);
+    let reached: Vec<_> = routable(std::slice::from_ref(&lan), given).collect();
+    assert_eq!(reached, vec![lan]);
+}
+
 /// After a restart the node has not heard the message, so it knows no peer to ask.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_the_node_never_heard_cannot_be_fetched() {
