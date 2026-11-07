@@ -26,6 +26,8 @@ use std::{
 pub enum BlobError {
     #[error("blob {0:?} is not in the store")]
     Missing(BlobRef),
+    #[error("blob {0:?} no longer held its bytes, so the store removed it")]
+    Corrupt(BlobRef),
     #[error("the blobs of E3 {0} were deleted")]
     Deleted(E3Id),
     #[error("blob store: {0}")]
@@ -245,7 +247,7 @@ impl FileBlobs {
     fn write(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
         let blob = BlobRef::of(bytes);
         let path = self.path(e3, &blob.hash);
-        if path.exists() {
+        if self.has(e3, &blob) {
             return Ok(blob);
         }
         let dir = self.e3_dir(e3);
@@ -269,16 +271,24 @@ impl BlobStore for FileBlobs {
         self.closing.write(e3, || self.write(e3, bytes))
     }
 
+    /// A file that no longer holds the blob's bytes, as after a disk fault, is removed: the store
+    /// then lacks the blob, and a fetch can bring it again.
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        match fs::read(self.path(e3, &blob.hash)) {
-            Ok(bytes) => Ok(bytes),
+        let path = self.path(e3, &blob.hash);
+        match fs::read(&path) {
+            Ok(bytes) if BlobRef::of(&bytes) == *blob => Ok(bytes),
+            Ok(_) => {
+                fs::remove_file(&path)?;
+                Err(BlobError::Corrupt(*blob))
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Err(BlobError::Missing(*blob)),
             Err(error) => Err(error.into()),
         }
     }
 
+    /// Whether a file of the blob's length is here; `get` checks its bytes.
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
-        self.path(e3, &blob.hash).exists()
+        fs::metadata(self.path(e3, &blob.hash)).is_ok_and(|file| file.len() == blob.len)
     }
 
     fn close(&self, e3: E3Id) -> Result<(), BlobError> {
@@ -338,6 +348,32 @@ mod tests {
         assert!(
             matches!(reopened.get(e3(1), &other), Err(BlobError::Missing(missing)) if missing == other)
         );
+    }
+
+    /// A disk fault can change a stored file; the store gives no wrong bytes, and a put after the
+    /// fault restores the blob.
+    #[test]
+    fn a_blob_whose_file_changed_reads_as_corrupt_then_missing_until_put_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        let blob = blobs.put(e3(1), b"share").unwrap();
+        fs::write(blobs.path(e3(1), &blob.hash), b"shark").unwrap();
+        assert!(blobs.has(e3(1), &blob));
+        assert!(
+            matches!(blobs.get(e3(1), &blob), Err(BlobError::Corrupt(corrupt)) if corrupt == blob)
+        );
+        assert!(!blobs.has(e3(1), &blob));
+        assert!(matches!(
+            blobs.get(e3(1), &blob),
+            Err(BlobError::Missing(_))
+        ));
+
+        assert_eq!(blobs.put(e3(1), b"share").unwrap(), blob);
+        assert_eq!(blobs.get(e3(1), &blob).unwrap(), b"share");
+        fs::write(blobs.path(e3(1), &blob.hash), b"sha").unwrap();
+        assert!(!blobs.has(e3(1), &blob));
+        blobs.put(e3(1), b"share").unwrap();
+        assert_eq!(blobs.get(e3(1), &blob).unwrap(), b"share");
     }
 
     /// Peers send the same blob at once: placeholder proofs of one kind have the same bytes.
