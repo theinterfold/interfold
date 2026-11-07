@@ -133,11 +133,11 @@ impl ProcessFence {
 }
 
 /// Opens `lock_path` and takes its exclusive lock. The open follows no link, since the fence may
-/// rewrite the file and through a link that would be another file, and what it opens must be a
-/// plain file.
+/// rewrite the file and through a link that would be another file, and does not wait, since a FIFO
+/// would hold a read-only open until a writer comes; what it opens must be a plain file.
 fn lock(options: &mut OpenOptions, lock_path: &Path, node_name: &str) -> Result<File> {
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(options, libc::O_NOFOLLOW);
+    std::os::unix::fs::OpenOptionsExt::custom_flags(options, libc::O_NOFOLLOW | libc::O_NONBLOCK);
     let file = options.open(lock_path).with_context(|| {
         format!("failed to open fence lock file at {lock_path:?}; it must be a plain file")
     })?;
@@ -186,6 +186,21 @@ mod tests {
         assert!(ProcessFence::hold_existing(&lock).is_err());
         drop(held);
         assert_eq!(std::fs::read(&lock).unwrap(), b"someone's bytes");
+    }
+
+    /// A FIFO in the lock file's place is refused at once, not waited on.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_the_lock_s_place_is_refused_at_once() {
+        let dir = tempdir().unwrap();
+        let lock = dir.path().join(LOCK_FILE_NAME);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&lock)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let error = ProcessFence::hold_existing(&lock).unwrap_err();
+        assert!(error.to_string().contains("plain file"), "{error:#}");
     }
 
     /// A lock file that links elsewhere is refused before the fence writes to it.
