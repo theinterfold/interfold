@@ -5,12 +5,21 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{Contracts, Deadlines, RawLog, Rpc, RpcError, Sortition};
-use alloy::{eips::BlockId, providers::Provider, rpc::types::Filter};
-use alloy_primitives::{Address, U256};
+use alloy::{
+    eips::BlockId,
+    providers::Provider,
+    pubsub::{PubSubFrontend, SubscriptionStream},
+    rpc::types::{Filter, Log},
+};
+use alloy_primitives::{Address, B256, U256};
 use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold};
 use e3_protocol::{node::LogPosition, UnixSecs};
-use futures::future::try_join_all;
-use std::collections::{BTreeMap, BTreeSet};
+use futures::{future::try_join_all, ready, stream::BoxStream, Stream, StreamExt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A chain node over JSON-RPC.
 #[derive(Clone)]
@@ -34,6 +43,26 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .get_block_number()
             .await
             .map_err(RpcError::new)
+    }
+
+    async fn announce(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Option<BoxStream<'static, u64>>, RpcError> {
+        let Some(frontend) = self.provider.client().pubsub_frontend().cloned() else {
+            return Ok(None);
+        };
+        let filter = Filter::new().address(addresses.to_vec());
+        let subscription = self
+            .provider
+            .subscribe_logs(&filter)
+            .await
+            .map_err(RpcError::new)?;
+        Ok(Some(Box::pin(LogBlocks {
+            id: *subscription.local_id(),
+            logs: subscription.into_stream(),
+            frontend,
+        })))
     }
 
     async fn logs(
@@ -155,6 +184,38 @@ impl<P: Provider> ChainNode<P> {
             .map_err(RpcError::new)?
             .ok_or_else(|| RpcError(format!("the node has no block {block}").into()))?;
         Ok(header.header.timestamp)
+    }
+}
+
+/// The blocks of the logs a subscription announces; dropping it ends the subscription.
+struct LogBlocks {
+    logs: SubscriptionStream<Log>,
+    frontend: PubSubFrontend,
+    id: B256,
+}
+
+impl Stream for LogBlocks {
+    type Item = u64;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<u64>> {
+        loop {
+            match ready!(self.logs.poll_next_unpin(cx)) {
+                Some(Log {
+                    block_number: Some(block),
+                    ..
+                }) => return Poll::Ready(Some(block)),
+                // A log of a pending block, which has no number yet.
+                Some(_) => {}
+                None => return Poll::Ready(None),
+            }
+        }
+    }
+}
+
+impl Drop for LogBlocks {
+    fn drop(&mut self) {
+        // A node that is gone has no subscription left to end.
+        let _ = self.frontend.unsubscribe(self.id);
     }
 }
 

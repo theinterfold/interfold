@@ -12,13 +12,30 @@ use e3_protocol::{
     node::{ChainEvent, ChainFact, CommitteeRequest, CommitteeSeed},
     UnixSecs,
 };
+use futures::{stream::BoxStream, StreamExt};
 use std::collections::BTreeSet;
 use std::future::Future;
+use std::time::Duration;
+use tokio::time::Instant;
+use tracing::warn;
+
+/// A reader waiting for announcements still reads this often, so the health check sees it read
+/// and a log the chain node did not announce, as across a reconnection, is read late rather than
+/// never.
+const LONGEST_WAIT: Duration = Duration::from_secs(60);
 
 /// What the reader needs from a chain node.
 pub trait Rpc {
     /// The newest block's number.
     fn head(&self) -> impl Future<Output = Result<u64, RpcError>> + Send;
+
+    /// The blocks of the new logs of the contracts at `addresses`, as the chain node announces
+    /// them from now on; none when it cannot announce, as over HTTP. The stream ends when the node
+    /// stops announcing, and dropping it stops the announcements.
+    fn announce(
+        &self,
+        addresses: &[Address],
+    ) -> impl Future<Output = Result<Option<BoxStream<'static, u64>>, RpcError>> + Send;
 
     /// The logs of the contracts at `addresses` in blocks `from..=to`, with their blocks'
     /// timestamps.
@@ -87,6 +104,18 @@ pub enum ReadError {
     Decode(#[from] DecodeError),
 }
 
+/// The chain node's announcements of the contracts' new logs.
+enum Announcements {
+    /// Not asked for yet, or asked for other contracts than the reader reads now.
+    Unasked,
+    /// The chain node cannot announce, or it stopped: the reader polls it.
+    Unavailable,
+    Active {
+        addresses: Vec<Address>,
+        blocks: BoxStream<'static, u64>,
+    },
+}
+
 /// Reads one chain's confirmed logs as facts, in order.
 pub struct Reader<R> {
     rpc: R,
@@ -102,6 +131,13 @@ pub struct Reader<R> {
     next: u64,
     /// The chain node's head at the last poll.
     head: u64,
+    /// The wait between polls of a chain node that announces nothing, and while an announced block
+    /// lacks its confirmations.
+    poll: Duration,
+    announcements: Announcements,
+    /// The newest block that may hold a log the chain node did not announce or the reader did not
+    /// read.
+    announced: Option<u64>,
 }
 
 impl<R: Rpc> Reader<R> {
@@ -113,6 +149,7 @@ impl<R: Rpc> Reader<R> {
         confirmations: u64,
         max_range: u64,
         from: u64,
+        poll: Duration,
     ) -> Self {
         let max_range = max_range.max(1);
         Self {
@@ -123,6 +160,9 @@ impl<R: Rpc> Reader<R> {
             range: max_range,
             next: from,
             head: 0,
+            poll,
+            announcements: Announcements::Unasked,
+            announced: None,
         }
     }
 
@@ -190,18 +230,86 @@ impl<R: Rpc> Reader<R> {
         for decoded in decoded {
             match decoded {
                 Decoded::Fact(event) => events.push(event),
-                Decoded::Read(read) => events.extend(self.read(read, confirmed).await?),
+                Decoded::Read(read) => events.extend(Self::read(&self.rpc, read, confirmed).await?),
             }
         }
         self.next = to + 1;
         Ok(events)
     }
 
+    /// Waits after a successful poll until the chain may hold a log the reader has not read. It
+    /// returns at once while confirmed blocks are unread. Otherwise it waits for the chain node to
+    /// announce a log after them, or for `LONGEST_WAIT`; while an announced block lacks its
+    /// confirmations, or when the node announces nothing, it waits for the poll interval.
+    pub async fn wait(&mut self) {
+        let unread = self
+            .head
+            .checked_sub(self.confirmations)
+            .is_some_and(|confirmed| confirmed >= self.next);
+        if unread {
+            return;
+        }
+        self.subscribe().await;
+        let next = self.next;
+        let Announcements::Active { blocks, .. } = &mut self.announcements else {
+            tokio::time::sleep(self.poll).await;
+            return;
+        };
+        if self.announced.is_some_and(|block| block >= next) {
+            tokio::time::sleep(self.poll).await;
+            return;
+        }
+        let deadline = Instant::now() + LONGEST_WAIT;
+        loop {
+            match tokio::time::timeout_at(deadline, blocks.next()).await {
+                Ok(Some(block)) if block >= next => {
+                    self.announced = Some(block);
+                    return;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    warn!("the chain node stopped announcing logs; polling it instead");
+                    self.announcements = Announcements::Unavailable;
+                    return;
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// Asks the chain node to announce the logs of the contracts the reader reads, unless it does
+    /// already or cannot. The blocks up to the head at that point were not announced, so the
+    /// reader polls until it has read them.
+    async fn subscribe(&mut self) {
+        let addresses = self.contracts.addresses();
+        match &self.announcements {
+            Announcements::Active {
+                addresses: covered, ..
+            } if *covered == addresses => return,
+            Announcements::Unavailable => return,
+            _ => {}
+        }
+        self.announcements = match self.rpc.announce(&addresses).await {
+            Ok(None) => Announcements::Unavailable,
+            Ok(Some(blocks)) => match self.rpc.head().await {
+                Ok(head) => {
+                    self.announced = self.announced.max(Some(head));
+                    Announcements::Active { addresses, blocks }
+                }
+                Err(_) => Announcements::Unasked,
+            },
+            Err(failure) => {
+                warn!(%failure, "the chain node refused to announce logs; polling it instead");
+                Announcements::Unavailable
+            }
+        };
+    }
+
     /// The fact a read completes, from the state at the confirmed head `block`, which a node that
     /// prunes old state still has. Every value read here is written once, at or before its log's
     /// block, except the committee deadline: the registry moves it when it accepts the
     /// randomness, and a request read after that carries the seed too.
-    async fn read(&self, read: PendingRead, block: u64) -> Result<Option<ChainEvent>, RpcError> {
+    async fn read(rpc: &R, read: PendingRead, block: u64) -> Result<Option<ChainEvent>, RpcError> {
         let (at, time, fact) = match read {
             PendingRead::Request {
                 at,
@@ -212,12 +320,12 @@ impl<R: Rpc> Reader<R> {
                 attestation,
                 owner_cap,
             } => {
-                let sortition = self.rpc.sortition(e3.number, block).await?;
+                let sortition = rpc.sortition(e3.number, block).await?;
                 let request = CommitteeRequest {
                     time,
                     ticket_price: sortition.ticket_price,
                     owner_cap,
-                    dkg_window: self.rpc.dkg_window(e3.number, block).await?,
+                    dkg_window: rpc.dkg_window(e3.number, block).await?,
                 };
                 let fact = ChainFact::E3Requested {
                     e3,
@@ -237,13 +345,13 @@ impl<R: Rpc> Reader<R> {
                 members,
             } => {
                 let dkg = DkgTiming {
-                    deadline: self.rpc.deadlines(e3.number, block).await?.dkg,
-                    window: self.rpc.dkg_window(e3.number, block).await?,
+                    deadline: rpc.deadlines(e3.number, block).await?.dkg,
+                    window: rpc.dkg_window(e3.number, block).await?,
                 };
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })
             }
             PendingRead::Seed { at, time, e3 } => {
-                let sortition = self.rpc.sortition(e3.number, block).await?;
+                let sortition = rpc.sortition(e3.number, block).await?;
                 let Some(seed) = sortition.seed else {
                     return Ok(None);
                 };
@@ -267,7 +375,7 @@ impl<R: Rpc> Reader<R> {
                     committee,
                     roster,
                     commitment,
-                    compute_deadline: self.rpc.deadlines(e3.number, block).await?.compute,
+                    compute_deadline: rpc.deadlines(e3.number, block).await?.compute,
                     anchors,
                 };
                 (at, time, fact)
@@ -281,7 +389,7 @@ impl<R: Rpc> Reader<R> {
                 let fact = ChainFact::CiphertextReady {
                     e3,
                     ciphertext,
-                    deadline: self.rpc.deadlines(e3.number, block).await?.decryption,
+                    deadline: rpc.deadlines(e3.number, block).await?.decryption,
                 };
                 (at, time, fact)
             }

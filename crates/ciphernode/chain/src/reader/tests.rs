@@ -15,8 +15,10 @@ use e3_protocol::{
     E3Id,
 };
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 const CONFIRMATIONS: u64 = 3;
+const POLL: Duration = Duration::from_millis(250);
 const TIMING: DkgTiming = DkgTiming {
     deadline: 900,
     window: 300,
@@ -44,14 +46,41 @@ struct Chain {
     reads_fail: bool,
     /// The block each read was made at.
     read_at: Vec<u64>,
+    heads_asked: usize,
+    /// The node's announcements, with the contracts each covers; none when it cannot announce.
+    announcements: Option<Vec<(Vec<Address>, mpsc::UnboundedSender<u64>)>>,
 }
 
 #[derive(Clone, Default)]
 struct FakeNode(Arc<Mutex<Chain>>);
 
 impl FakeNode {
+    /// A node that announces logs, as over a WebSocket.
+    fn announcing() -> Self {
+        let node = Self::default();
+        node.with(|chain| chain.announcements = Some(Vec::new()));
+        node
+    }
+
     fn with(&self, change: impl FnOnce(&mut Chain)) {
         change(&mut self.0.lock().unwrap());
+    }
+
+    /// Mines `log`: the head moves to its block, and the announcements of its contract name it.
+    fn mine(&self, log: RawLog) {
+        self.with(|chain| {
+            chain.head = chain.head.max(log.at.block);
+            for (addresses, announce) in chain.announcements.iter().flatten() {
+                if addresses.contains(&log.address) {
+                    let _ = announce.send(log.at.block);
+                }
+            }
+            chain.logs.push(log);
+        });
+    }
+
+    fn heads_asked(&self) -> usize {
+        self.0.lock().unwrap().heads_asked
     }
 
     fn read<T>(&self, block: u64, value: impl FnOnce(&Chain) -> T) -> Result<T, RpcError> {
@@ -66,7 +95,26 @@ impl FakeNode {
 
 impl Rpc for FakeNode {
     async fn head(&self) -> Result<u64, RpcError> {
-        Ok(self.0.lock().unwrap().head)
+        let mut chain = self.0.lock().unwrap();
+        chain.heads_asked += 1;
+        Ok(chain.head)
+    }
+
+    async fn announce(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Option<BoxStream<'static, u64>>, RpcError> {
+        let mut chain = self.0.lock().unwrap();
+        let Some(announcements) = &mut chain.announcements else {
+            return Ok(None);
+        };
+        let (announce, announced) = mpsc::unbounded_channel();
+        announcements.push((addresses.to_vec(), announce));
+        let blocks = futures::stream::unfold(announced, |mut announced| async move {
+            let block = announced.recv().await?;
+            Some((block, announced))
+        });
+        Ok(Some(blocks.boxed()))
     }
 
     async fn logs(
@@ -179,7 +227,7 @@ fn reads(block: u64) -> Vec<RawLog> {
 }
 
 fn reader(node: &FakeNode, max_range: u64) -> Reader<FakeNode> {
-    Reader::new(node.clone(), contracts(), CONFIRMATIONS, max_range, 0)
+    Reader::new(node.clone(), contracts(), CONFIRMATIONS, max_range, 0, POLL)
 }
 
 /// A poll that finds a contract it did not know reads its blocks again; a reader that never
@@ -429,4 +477,90 @@ async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
         seed: SEED,
     };
     assert_eq!(facts, vec![seed, request]);
+}
+
+/// Over a WebSocket the chain node announces the contracts' logs, so the reader asks it nothing
+/// while the chain is quiet, reads a quiet chain once a minute, and reads an announced log at once.
+#[tokio::test(start_paused = true)]
+async fn the_reader_waits_for_announced_logs_and_reads_a_quiet_chain_each_minute() {
+    let node = FakeNode::announcing();
+    node.with(|chain| chain.head = 10);
+    let mut reader = Reader::new(node.clone(), contracts(), 0, 1_000, 0, POLL);
+    assert!(reader.poll().await.unwrap().is_empty());
+
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), LONGEST_WAIT);
+    assert_eq!(node.heads_asked(), 2, "the poll's and the subscription's");
+
+    node.mine(stage_changed(11));
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), Duration::ZERO);
+    assert_eq!(blocks(&reader.poll().await.unwrap()), [11]);
+}
+
+/// Logs mined before the announcements started were not announced, and an announced block needs
+/// its confirmations: the reader polls at the poll interval until it has read them.
+#[tokio::test(start_paused = true)]
+async fn blocks_not_announced_or_not_confirmed_are_polled_for() {
+    let node = FakeNode::announcing();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.logs = vec![stage_changed(9)];
+    });
+    let mut reader = reader(&node, 1_000);
+    assert!(reader.poll().await.unwrap().is_empty());
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), POLL);
+    node.with(|chain| chain.head = 13);
+    assert_eq!(blocks(&reader.poll().await.unwrap()), [9]);
+
+    node.mine(stage_changed(14));
+    reader.wait().await;
+    assert!(reader.poll().await.unwrap().is_empty());
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), POLL);
+    node.with(|chain| chain.head = 17);
+    assert_eq!(blocks(&reader.poll().await.unwrap()), [14]);
+}
+
+/// A randomness provider the reader learns of fulfills requests in its own logs, which drive
+/// ticket times, so the node announces its logs too.
+#[tokio::test(start_paused = true)]
+async fn the_logs_of_a_contract_the_reader_learns_of_are_announced() {
+    let provider = Address::repeat_byte(0x77);
+    let requested = ICiphernodeRegistry::CommitteeRandomnessRequested {
+        e3Id: U256::from(7),
+        requestId: U256::from(1),
+        provider,
+        randomnessDeadline: U256::from(60),
+    };
+    let fulfilled = IRandomnessProvider::RandomnessFulfilled {
+        requestId: U256::from(1),
+        e3Id: U256::from(7),
+        randomWord: U256::from(3),
+        fulfilledAt: U256::from(50),
+    };
+    let node = FakeNode::announcing();
+    node.with(|chain| chain.head = 10);
+    let mut reader = Reader::new(node.clone(), contracts(), 0, 1_000, 0, POLL);
+    assert!(reader.poll().await.unwrap().is_empty());
+    let mine = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        node.mine(log(contracts().registry, &requested, 11, 2, 0));
+    };
+    tokio::join!(reader.wait(), mine);
+    let facts = reader.poll().await.unwrap();
+    assert_eq!(facts[0].fact, ChainFact::RandomnessProvider { provider });
+
+    let mine = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        node.mine(log(provider, &fulfilled, 12, 3, 0));
+    };
+    let start = Instant::now();
+    tokio::join!(reader.wait(), mine);
+    assert_eq!(start.elapsed(), Duration::from_secs(1));
 }

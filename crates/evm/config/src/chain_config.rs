@@ -60,7 +60,8 @@ pub struct ChainConfig {
     /// Set this to zero only for a single-process development chain such as Anvil.
     #[serde(default)]
     pub ingestion_confirmations: Option<u64>,
-    /// Milliseconds between the polls of an HTTP provider for a receipt or a new block.
+    /// Milliseconds between the node's polls of the RPC node: for a transaction's receipt, for a
+    /// new block when `rpc_url` is HTTP, and for the confirmations of a log a WebSocket announced.
     ///
     /// The default is 7 seconds, which suits a public chain. A single-process development chain
     /// such as Anvil mines on demand, so the local templates set `250`. A loopback URL does not

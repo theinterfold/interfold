@@ -19,7 +19,7 @@ use alloy::{
     transports::{
         http::reqwest::{
             header::{HeaderMap, HeaderValue, AUTHORIZATION},
-            Client,
+            Client, Url,
         },
         ws::WsConnect,
         Authorization,
@@ -57,6 +57,8 @@ pub struct Config {
     pub confirmations: u64,
     /// The most blocks one log request covers; the reader halves it while requests fail.
     pub max_log_range: u64,
+    /// The wait between polls of the RPC node: for new blocks over HTTP, for a block's
+    /// confirmations, and for a transaction's receipt.
     pub poll_interval: Duration,
     pub availability: Availability,
     pub data_dir: PathBuf,
@@ -97,8 +99,9 @@ pub struct Network {
 
 /// Runs the node until it fails.
 pub async fn launch(config: Config) -> anyhow::Result<()> {
-    let rpc = || rpc_client(&config.rpc_url, config.rpc_auth.as_ref());
-    let chain = ProviderBuilder::new().connect_client(rpc().await?);
+    let (auth, poll) = (config.rpc_auth.as_ref(), config.poll_interval);
+    let chain =
+        ProviderBuilder::new().connect_client(rpc_client(&config.rpc_url, auth, poll).await?);
     let chain_id = match config.chain_id {
         Some(chain_id) => chain_id,
         None => chain.get_chain_id().await?,
@@ -131,9 +134,11 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     let heartbeat = Heartbeat::start(&config.data_dir.join("ingestion"), chain_id, now())?;
     let proofs = proofs(&config)?;
     let operator = config.operator;
+    // Over a WebSocket, alloy's receipt waits would keep a new-block subscription open for good;
+    // over HTTP they poll only while a transaction is unmined.
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
-        .connect_client(rpc().await?);
+        .connect_client(rpc_client(&http_url(&config.rpc_url)?, auth, poll).await?);
     let unmined = config.data_dir.join("unmined.json");
     let wallet = Wallet::new(wallet, chain_id, config.confirmations, unmined)?;
     wallet.acknowledge_release(&contracts, release).await?;
@@ -181,14 +186,21 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     Err(run(settings, parts).await.into())
 }
 
-/// A connection to the RPC node at `url` that presents `auth`.
-async fn rpc_client(url: &str, auth: Option<&Authorization>) -> anyhow::Result<RpcClient> {
+/// A connection to the RPC node at `url` that presents `auth` and polls every `poll`.
+async fn rpc_client(
+    url: &str,
+    auth: Option<&Authorization>,
+    poll: Duration,
+) -> anyhow::Result<RpcClient> {
     if url.starts_with("ws://") || url.starts_with("wss://") {
         let mut connect = WsConnect::new(url);
         if let Some(auth) = auth {
             connect = connect.with_auth(auth.clone());
         }
-        return Ok(ClientBuilder::default().ws(connect).await?);
+        return Ok(ClientBuilder::default()
+            .ws(connect)
+            .await?
+            .with_poll_interval(poll));
     }
     let mut headers = HeaderMap::new();
     if let Some(auth) = auth {
@@ -197,7 +209,23 @@ async fn rpc_client(url: &str, auth: Option<&Authorization>) -> anyhow::Result<R
         headers.insert(AUTHORIZATION, value);
     }
     let client = Client::builder().default_headers(headers).build()?;
-    Ok(ClientBuilder::default().http_with_client(client, url.parse()?))
+    Ok(ClientBuilder::default()
+        .http_with_client(client, url.parse()?)
+        .with_poll_interval(poll))
+}
+
+/// The HTTP URL of the RPC node at `url`, which serves HTTP where it serves a WebSocket.
+fn http_url(url: &str) -> anyhow::Result<String> {
+    let mut url: Url = url.parse()?;
+    let scheme = match url.scheme() {
+        "ws" => "http",
+        "wss" => "https",
+        _ => return Ok(url.into()),
+    };
+    if url.set_scheme(scheme).is_err() {
+        anyhow::bail!("the RPC URL {url} has no HTTP form");
+    }
+    Ok(url.into())
 }
 
 /// Runs a node that only helps the others find each other: it answers their lookups and takes no
@@ -316,7 +344,8 @@ mod tests {
             socket.write_all(response.as_bytes()).await.unwrap();
             String::from_utf8_lossy(&request).to_lowercase()
         });
-        let client = rpc_client(&url, Some(&Authorization::bearer("secret")))
+        let poll = Duration::from_millis(250);
+        let client = rpc_client(&url, Some(&Authorization::bearer("secret")), poll)
             .await
             .unwrap();
         let chain_id = ProviderBuilder::new()
@@ -326,5 +355,23 @@ mod tests {
             .unwrap();
         assert_eq!(chain_id, 31337);
         assert!(node.await.unwrap().contains("authorization: bearer secret"));
+    }
+
+    /// The wallet sends over HTTP to the RPC node the reader reads over a WebSocket, still over
+    /// TLS and on the same path, which often carries the provider's key.
+    #[test]
+    fn a_websocket_url_s_http_form_keeps_tls_and_the_path() {
+        assert_eq!(
+            http_url("ws://127.0.0.1:8545").unwrap(),
+            "http://127.0.0.1:8545/"
+        );
+        assert_eq!(
+            http_url("wss://eth.example/v2/key?x=1").unwrap(),
+            "https://eth.example/v2/key?x=1"
+        );
+        assert_eq!(
+            http_url("https://eth.example/v2/key").unwrap(),
+            "https://eth.example/v2/key"
+        );
     }
 }

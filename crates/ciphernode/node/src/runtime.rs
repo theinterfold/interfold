@@ -158,6 +158,7 @@ where
         settings.confirmations,
         settings.max_log_range,
         from,
+        settings.poll_interval,
     );
     tokio::spawn(read_chain(
         reader,
@@ -307,13 +308,13 @@ async fn read_chain<R: Rpc>(
             heartbeat.beat(now(), reader.head(), reader.read_to());
         }
         match read {
-            Ok(facts) if facts.is_empty() => tokio::time::sleep(poll).await,
             Ok(facts) => {
                 for fact in facts {
                     if events.send(Event::Input(Input::Chain(fact))).await.is_err() {
                         return;
                     }
                 }
+                reader.wait().await;
             }
             Err(ReadError::Rpc(failure)) => {
                 warn!(%failure, "reading the chain failed; trying again");

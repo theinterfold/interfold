@@ -211,6 +211,16 @@ Each rule is checkable in review.
   under the stored network key, so its peer ID stays the one peers are given, and takes no part in
   messages, the chain, or proofs. It does not subscribe to the message topic, so peers keep it out
   of their message mesh, and it needs no gas, which a node that acknowledges a release does.
+- **D30. The reader waits for the RPC node to announce logs, and the wallet sends over HTTP.** Over
+  a WebSocket the reader asks the RPC node to announce the logs of the contracts it reads, as the
+  earlier node did, and reads with `eth_getLogs` when a log is announced after the blocks it read.
+  It polls at the poll interval while an announced block lacks its confirmations, and reads at least
+  once a minute: the health check needs a read every two minutes, and a log the RPC node did not
+  announce, as across a reconnection, is read late rather than never. A new contract the reader
+  learns of gets announcements too; the blocks up to the head at each request were not announced, so
+  the reader polls until it has read them. Over HTTP it polls at the poll interval. The wallet sends
+  over HTTP to the same URL, as the earlier node did, because over a WebSocket alloy's receipt waits
+  keep a new-block subscription open for the life of the node.
 
 ## Problems in the earlier node, with the fix above them
 
