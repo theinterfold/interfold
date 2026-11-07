@@ -716,16 +716,12 @@ impl Node {
                 None => Vec::new(),
             },
             ChainFact::StageChanged { e3, stage } => {
-                let kept = match (stage, self.e3s.get_mut(&e3)) {
-                    (Stage::Complete, Some(state)) => state.completed(event.time),
-                    (stage, Some(state)) => {
-                        state.advance(stage);
-                        true
-                    }
-                    (_, None) => true,
-                };
-                if !kept {
-                    self.end(e3);
+                match (stage, self.e3s.get_mut(&e3)) {
+                    // Open accusations keep a completed E3 until their windows close.
+                    (Stage::Complete, Some(state)) if state.accuses() => state.advance(stage),
+                    (Stage::Complete, _) => self.end(e3),
+                    (stage, Some(state)) => state.advance(stage),
+                    (_, None) => {}
                 }
                 Vec::new()
             }
@@ -1572,9 +1568,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                12,
+                13,
                 alloy_primitives::b256!(
-                    "f0724be5ef15fb9bf19aa48e8df9931025927f5192c14523a9d125262db0df58"
+                    "6aa7d1eab0497a45b2f2a347d229b590962eb59997382978e9af90d6c31a18fa"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
@@ -1717,7 +1713,7 @@ mod tests {
         assert!(submissions(&effects).iter().any(ticket));
     }
 
-    /// A completed E3 that the node keeps for late accusations no longer takes a ticket's place.
+    /// A completed E3 that the node keeps for its open accusations no longer takes a ticket's place.
     #[test]
     fn a_completed_e3_kept_for_accusations_frees_its_ticket() {
         let mut node = node();
@@ -1729,6 +1725,9 @@ mod tests {
         node.step(4, requested(4, e3(2)));
         node.step(5, seed_ready(5, e3(1), 42, 100));
         node.step(6, finalized(6, e3(1), members([1, 2])));
+        // An accusation this node opens keeps the E3 after its completion.
+        node.step(6, key_from(e3(1), 1));
+        node.step(6, key_failed(e3(1), 1, B256::repeat_byte(0xd1)));
         let completed = ChainFact::StageChanged {
             e3: e3(1),
             stage: Stage::Complete,

@@ -152,16 +152,6 @@ impl E3 {
         self.deadlines.insert(stage, deadline);
     }
 
-    /// The chain completed the E3 at `at`. Its accusations stay open while one issued before the
-    /// completion can still come; whether the node keeps the E3 for them.
-    pub(crate) fn completed(&mut self, at: UnixSecs) -> bool {
-        self.advance(Stage::Complete);
-        if let Some(accusations) = &mut self.accusations {
-            accusations.keep_for_completion(at);
-        }
-        self.accuses()
-    }
-
     pub(crate) fn failed(&mut self, at: UnixSecs, accusable_until: UnixSecs) {
         self.advance(Stage::Failed);
         self.failure.get_or_insert(Failure {

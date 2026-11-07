@@ -367,27 +367,6 @@ mod cases {
         assert!(node.e3(&e3(1)).is_none());
     }
 
-    /// A peer can see the completion before an accusation issued just before it: a completed E3
-    /// keeps its accusations open until a vote in such a window could no longer count, takes the
-    /// accusation, and then ends.
-    #[test]
-    fn a_completed_e3_takes_an_accusation_issued_before_the_completion() {
-        let mut node = member(ME);
-        let completed = ChainFact::StageChanged {
-            e3: e3(1),
-            stage: Stage::Complete,
-        };
-        node.step(NOW, chain(NOW, completed));
-        assert!(node.e3(&e3(1)).is_some());
-        let effects = node.step(NOW + 10, accusation(2, NOW - 10, 1));
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::Run(job) if matches!(job.work, Work::Accusation(_))
-        )));
-        node.step(NOW + VALIDITY + 60, Input::Tick);
-        assert!(node.e3(&e3(1)).is_none());
-    }
-
     /// An accuser that pairs an honest member's valid proof with the evidence hash of a proof this
     /// node found failing gets no vote: the node checks the accused proof itself.
     #[test]
