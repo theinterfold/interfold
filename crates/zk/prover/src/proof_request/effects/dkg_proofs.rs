@@ -41,6 +41,7 @@ impl ProofRequestActor {
     pub(in crate::actors::proof_request) fn handle_threshold_share_pending(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
+        ctx: &mut Context<Self>,
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
@@ -115,27 +116,19 @@ impl ProofRequestActor {
 
         self.pending_threshold.insert(e3_id.clone(), pending);
 
-        // C1/C2/C3: dispatch threshold proof requests in canonical seq order.
-        // Sequencing/kind assignment lives in the pure domain planner; the actor
-        // only allocates correlation ids, publishes, and rolls back on failure.
-        for item in dispatch {
-            if recovered.contains_key(&item.seq) {
-                continue;
-            }
-            let corr = CorrelationId::new();
-            self.threshold_correlation
-                .insert(corr, (e3_id.clone(), item.kind, item.seq));
-            if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(item.request, corr, e3_id.clone()),
-                ec.clone(),
-            ) {
-                error!("Failed to publish threshold proof request: {err}");
+        // C1/C2/C3 in canonical seq order. Sequencing/kind assignment lives in the pure domain
+        // planner; the actor allocates correlation ids and dispatches.
+        let requests = dispatch
+            .into_iter()
+            .filter(|item| !recovered.contains_key(&item.seq))
+            .map(|item| {
+                let corr = CorrelationId::new();
                 self.threshold_correlation
-                    .retain(|_, (eid, _, _)| *eid != e3_id);
-                self.pending_threshold.remove(&e3_id);
-                return;
-            }
-        }
+                    .insert(corr, (e3_id.clone(), item.kind, item.seq));
+                ComputeRequest::zk(item.request, corr, e3_id.clone())
+            })
+            .collect();
+        self.dispatch_threshold_requests(requests, ec, ctx);
 
         if recovered_count > 0 {
             info!(
@@ -153,6 +146,50 @@ impl ProofRequestActor {
                 self.completed_threshold.insert(e3_id);
             }
         }
+    }
+
+    /// Dispatches `requests` in order, one at a time, each once admission has room. The
+    /// `ThresholdSharePending` that planned them holds admission capacity at least until its
+    /// handler returns, so a large plan published from the handler saturates admission.
+    fn dispatch_threshold_requests(
+        &mut self,
+        mut requests: VecDeque<ComputeRequest>,
+        ec: EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) {
+        while let Some(request) = requests.pop_front() {
+            // Replayed work, a failed dispatch or the E3's end removed this batch's correlations.
+            if !self
+                .threshold_correlation
+                .contains_key(&request.correlation_id)
+            {
+                continue;
+            }
+            let correlation_id = request.correlation_id;
+            let bus = self.bus.clone();
+            let event = bus.event_from(request, Some(ec.clone()));
+            ctx.spawn(
+                async move { bus.naked_dispatch_async(event?).await }
+                    .into_actor(self)
+                    .map(move |result, actor, ctx| match result {
+                        Ok(()) => actor.dispatch_threshold_requests(requests, ec, ctx),
+                        Err(err) => actor.abandon_threshold_requests(&correlation_id, err),
+                    }),
+            );
+            return;
+        }
+    }
+
+    /// Admission closed or the event pipeline failed: drop the batch that `correlation_id`
+    /// belongs to, unless replayed work replaced it or the E3 ended.
+    fn abandon_threshold_requests(&mut self, correlation_id: &CorrelationId, err: anyhow::Error) {
+        let Some((e3_id, _, _)) = self.threshold_correlation.get(correlation_id).cloned() else {
+            return;
+        };
+        error!("Failed to publish threshold proof request: {err}");
+        self.threshold_correlation
+            .retain(|_, (eid, _, _)| *eid != e3_id);
+        self.pending_threshold.remove(&e3_id);
     }
 
     pub(in crate::actors::proof_request) fn handle_compute_response(

@@ -13,12 +13,13 @@ use e3_event_system::test_support::EventFixture;
 use e3_events::{
     ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest, E3Failed, E3Stage,
     EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason, GetEvents,
-    HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest, ThresholdShare,
-    ThresholdSharePending, Unsequenced, ZkError,
+    HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
+    ShareEncryptionProofRequest, TakeEvents, ThresholdShare, ThresholdSharePending, Unsequenced,
+    ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
-use e3_utils::utility_types::ArcBytes;
+use e3_utils::{utility_types::ArcBytes, MAILBOX_LIMIT_LARGE};
 use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
 
@@ -263,7 +264,10 @@ async fn restart_reuses_complete_persisted_threshold_proofs() -> Result<()> {
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
     let event = threshold_share_pending(e3_id.clone(), 0x11);
 
-    actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(event.clone(), test_ctx(event)),
+        &mut Context::new(),
+    );
 
     actix::clock::sleep(std::time::Duration::from_millis(20)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
@@ -283,9 +287,14 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 2));
     let event = threshold_share_pending(e3_id.clone(), 0x11);
+    let mut ctx = Context::new();
 
-    actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+    actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)), &mut ctx);
+    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 2);
+    assert_eq!(actor.threshold_correlation.len(), 1);
 
+    // Dispatch runs on the actor.
+    let _actor = ctx.run(actor);
     actix::clock::sleep(std::time::Duration::from_millis(20)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
     let requests = events
@@ -293,14 +302,61 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
         .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
         .count();
     assert_eq!(requests, 1);
-    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 2);
-    assert_eq!(actor.threshold_correlation.len(), 1);
+    Ok(())
+}
+
+/// `ThresholdSharePending` holds admission capacity at least until the actor's handler returns, so
+/// a C1-C3 plan larger than the admission window must still be dispatched in full.
+#[actix::test]
+async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let _actor = ProofRequestActor::setup(&bus, PrivateKeySigner::random(), false);
+    let encryption = |recipient_party_id, dkg_input_type| ShareEncryptionProofRequest {
+        share_row_raw: SensitiveBytes::from_encrypted(&[]),
+        ciphertext_raw: ArcBytes::from_bytes(&[]),
+        recipient_pk_raw: ArcBytes::from_bytes(&[]),
+        u_rns_raw: SensitiveBytes::from_encrypted(&[]),
+        e0_rns_raw: SensitiveBytes::from_encrypted(&[]),
+        e1_rns_raw: SensitiveBytes::from_encrypted(&[]),
+        dkg_input_type,
+        params_preset: BfvPreset::InsecureThreshold64,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+        recipient_party_id,
+        row_index: 0,
+        esi_index: 0,
+    };
+    // The admission window holds at most MAILBOX_LIMIT_LARGE events.
+    let recipients = 1..=MAILBOX_LIMIT_LARGE / 2;
+    let mut plan = threshold_share_pending(E3id::new("larger-than-the-window", 1), 0x11);
+    plan.sk_share_encryption_requests = recipients
+        .clone()
+        .map(|party| encryption(party, DkgInputType::SecretKey))
+        .collect();
+    plan.e_sm_share_encryption_requests = recipients
+        .map(|party| encryption(party, DkgInputType::SmudgingNoise))
+        .collect();
+    let expected = 3 + MAILBOX_LIMIT_LARGE;
+
+    bus.publish_without_context(plan)?;
+
+    let taken = history
+        .send(TakeEvents::<InterfoldEvent>::with_per_evt_timeout(
+            1 + expected,
+            std::time::Duration::from_secs(5),
+        ))
+        .await?;
+    let requests = taken
+        .events
+        .iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+        .count();
+    assert_eq!(requests, expected);
     Ok(())
 }
 
 #[actix::test]
 async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
-    let EventFixture { bus, .. } = EventFixture::new()?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
     let e3_id = E3id::new("duplicate-threshold", 1);
     let ec = test_ctx(E3Failed {
@@ -308,11 +364,12 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
         failed_at_stage: E3Stage::CommitteeFinalized,
         reason: FailureReason::DKGInvalidShares,
     });
+    let mut ctx = Context::new();
 
-    actor.handle_threshold_share_pending(TypedEvent::new(
-        threshold_share_pending(e3_id.clone(), 0x11),
-        ec.clone(),
-    ));
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(threshold_share_pending(e3_id.clone(), 0x11), ec.clone()),
+        &mut ctx,
+    );
     let first_correlations = actor
         .threshold_correlation
         .keys()
@@ -320,10 +377,10 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(first_correlations.len(), 3);
 
-    actor.handle_threshold_share_pending(TypedEvent::new(
-        threshold_share_pending(e3_id.clone(), 0x22),
-        ec.clone(),
-    ));
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(threshold_share_pending(e3_id.clone(), 0x22), ec.clone()),
+        &mut ctx,
+    );
 
     assert_eq!(actor.threshold_correlation.len(), 3);
     assert!(first_correlations
@@ -344,6 +401,52 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
         &ec,
     );
     assert_eq!(actor.pending_threshold[&e3_id].total_received(), 0);
+
+    // The replaced plan stops after the request already waiting for admission.
+    let _actor = ctx.run(actor);
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests = events
+        .iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+        .count();
+    assert_eq!(requests, 1 + 3);
+    Ok(())
+}
+
+#[actix::test]
+async fn threshold_requests_still_queued_when_the_e3_ends_are_dropped() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
+    let e3_id = E3id::new("ended-during-dispatch", 1);
+    let plan = threshold_share_pending(e3_id.clone(), 0x11);
+    let failed = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3Failed {
+            e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        }
+        .into(),
+        None,
+        1u64.into(),
+        None,
+        e3_events::EventSource::Local,
+    )
+    .into_sequenced(1);
+    let mut ctx = Context::new();
+
+    actor.handle_threshold_share_pending(TypedEvent::new(plan.clone(), test_ctx(plan)), &mut ctx);
+    actor.handle(failed, &mut ctx);
+
+    // Only the request already waiting for admission goes out.
+    let _actor = ctx.run(actor);
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests = events
+        .iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+        .count();
+    assert_eq!(requests, 1);
     Ok(())
 }
 
@@ -374,7 +477,10 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
 
     actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
     assert!(actor.decryption_correlation.is_empty());
-    actor.handle_threshold_share_pending(TypedEvent::new(layout.clone(), test_ctx(layout)));
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(layout.clone(), test_ctx(layout)),
+        &mut Context::new(),
+    );
 
     // With no share encryptions C0-C3 take seqs 0-3, so C4a and C4b take 4 and 5.
     let mut seqs: Vec<_> = actor

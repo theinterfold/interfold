@@ -28,6 +28,10 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             self.pending_share_decryption.remove(id);
             self.share_decryption_correlation
                 .retain(|_, e3_id| e3_id != id);
+            // Without its correlations, C1-C3 requests still queued for dispatch are dropped.
+            self.threshold_correlation
+                .retain(|_, (e3_id, _, _)| e3_id != id);
+            self.pending_threshold.remove(id);
             return;
         }
 
@@ -89,9 +93,9 @@ impl Handler<TypedEvent<ThresholdSharePending>> for ProofRequestActor {
     fn handle(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_threshold_share_pending(msg);
+        self.handle_threshold_share_pending(msg, ctx);
     }
 }
 
