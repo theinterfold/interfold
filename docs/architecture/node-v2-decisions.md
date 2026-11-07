@@ -225,6 +225,52 @@ Each rule is checkable in review.
   earlier node did, because over a WebSocket alloy's receipt waits keep a new-block subscription
   open for the life of the node.
 
+- **D31. H votes against a member move aggregation off it before the chain does.** A member that H
+  members found sending a failing proof aggregates no phase of the E3: the roster, key and plaintext
+  failovers pass over it, and a phase it leads hands over at once. The earlier node did this only
+  while the proof's slash policy was off, and otherwise waited for the slash to land; an
+  aggregator's budget is up to 40 minutes. One node's own check does not move it, so the members
+  agree on the next aggregator once they count the same votes.
+
+- **D32. A completed E3 keeps its accusations open for one vote window.** When the chain completes
+  an E3, a committee member keeps its accusations open until a vote issued before the completion can
+  no longer count: the completion's block time plus the E3's vote validity and the contract's clock
+  skew. A peer can see the completion before an accusation issued just before it; the earlier node
+  ended the E3 at once and dropped it. DKG and decryption stop at the completion, and the kept E3
+  takes no ticket's place.
+
+- **D33. The network keeps the earlier node's admission limits; delivery stays best effort with
+  re-sends.** Kept: 8 inbound connections per address group and 16 waiting for Identify, the oldest
+  of the busiest group closed for a newer one; 8 addresses and 2 KiB per peer, from its latest
+  Identify; a peer connected without the topic for 30 seconds is disconnected and its redials back
+  off up to half an hour, except configured peers, which can be bootstrap nodes; a signed copy
+  counts from 10 minutes before the receiver's clock to 2 minutes after it. Left out: a fair queue
+  per sender between the network and the node, where a full channel of 1,024 messages drops the
+  newest and its sender's re-send (D19) brings it again; and per-peer limits on blob fetches, which
+  start with the publisher, then the forwarding peer, within the global limits of 4,096 fetches and
+  1 GiB. Both wait for measurements under real load.
+
+- **D34. Writer retries do not jitter.** Every call retries with waits that double from 30 seconds
+  to ten minutes. The earlier node capped settlement retries at 30 minutes with up to 10% jitter.
+  Members already take turns 30 seconds apart and the fleet is small, so retries in step cost
+  little, and the shorter cap lands a call sooner after an outage.
+
+- **D35. A losing key's chunks still go out.** An aggregator whose committee publication reverts
+  because another landed first still sends its key's chunks. Readers keep only a complete copy whose
+  commitment matches the chain's, which the SDK checks, so a losing copy costs gas only, in a rare
+  race between aggregators with different rosters.
+
+- **D36. A dealer signs the C3 proofs of the shares it sends, not its placeholders.** For a member
+  without a valid key, a dealer folds a placeholder C3 proof into its own fold and sends no share.
+  No member checks a placeholder on its own, so a signature would give no evidence to accuse with,
+  and a wrong placeholder makes the dealer's own fold proof fail: its contribution stays missing, as
+  if the dealer were silent.
+
+- **D37. The reader keeps the facts the machine acts on.** The machine acts on `E3Failed`,
+  `E3StageChanged` and `CommitteeMemberExpelled`. `CommitteeFormationFailed`,
+  `CommitteeActivationChanged`, `CommitteeViabilityUpdated`, and an expulsion's reason and count
+  stay on the chain, where a forensic tool reads them.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**
