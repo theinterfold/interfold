@@ -108,8 +108,11 @@ pub enum ReadError {
 enum Announcements {
     /// Not asked for yet, or asked for other contracts than the reader reads now.
     Unasked,
-    /// The chain node cannot announce, or it stopped: the reader polls it.
-    Unavailable,
+    /// The chain node cannot announce, as over HTTP: the reader polls it.
+    Unsupported,
+    /// The request failed or went unanswered, or the announcements stopped: the reader polls until
+    /// it asks again at `retry`.
+    Failed { retry: Instant },
     Active {
         addresses: Vec<Address>,
         blocks: BoxStream<'static, u64>,
@@ -239,8 +242,9 @@ impl<R: Rpc> Reader<R> {
 
     /// Waits after a successful poll until the chain may hold a log the reader has not read. It
     /// returns at once while confirmed blocks are unread. Otherwise it waits for the chain node to
-    /// announce a log after them, or for `LONGEST_WAIT`; while an announced block lacks its
-    /// confirmations, or when the node announces nothing, it waits for the poll interval.
+    /// announce a log after them, or for `LONGEST_WAIT` with the request for announcements; while
+    /// an announced block lacks its confirmations, or when the node announces nothing, it waits
+    /// for the poll interval.
     pub async fn wait(&mut self) {
         let unread = self
             .head
@@ -249,7 +253,8 @@ impl<R: Rpc> Reader<R> {
         if unread {
             return;
         }
-        self.subscribe().await;
+        let deadline = Instant::now() + LONGEST_WAIT;
+        self.subscribe(deadline).await;
         let next = self.next;
         let Announcements::Active { blocks, .. } = &mut self.announcements else {
             tokio::time::sleep(self.poll).await;
@@ -259,7 +264,6 @@ impl<R: Rpc> Reader<R> {
             tokio::time::sleep(self.poll).await;
             return;
         }
-        let deadline = Instant::now() + LONGEST_WAIT;
         loop {
             match tokio::time::timeout_at(deadline, blocks.next()).await {
                 Ok(Some(block)) if block >= next => {
@@ -268,8 +272,8 @@ impl<R: Rpc> Reader<R> {
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    warn!("the chain node stopped announcing logs; polling it instead");
-                    self.announcements = Announcements::Unavailable;
+                    warn!("the chain node stopped announcing logs; polling it for now");
+                    self.announcements = failed();
                     return;
                 }
                 Err(_) => return,
@@ -277,30 +281,39 @@ impl<R: Rpc> Reader<R> {
         }
     }
 
-    /// Asks the chain node to announce the logs of the contracts the reader reads, unless it does
-    /// already or cannot. The blocks up to the head at that point were not announced, so the
-    /// reader polls until it has read them.
-    async fn subscribe(&mut self) {
+    /// Asks the chain node, by `deadline`, to announce the logs of the contracts the reader reads,
+    /// unless it does already, cannot, or failed less than `LONGEST_WAIT` ago. The blocks up to the
+    /// head at that point were not announced, so the reader polls until it has read them.
+    async fn subscribe(&mut self, deadline: Instant) {
         let addresses = self.contracts.addresses();
         match &self.announcements {
             Announcements::Active {
                 addresses: covered, ..
             } if *covered == addresses => return,
-            Announcements::Unavailable => return,
+            Announcements::Unsupported => return,
+            Announcements::Failed { retry } if Instant::now() < *retry => return,
             _ => {}
         }
-        self.announcements = match self.rpc.announce(&addresses).await {
-            Ok(None) => Announcements::Unavailable,
-            Ok(Some(blocks)) => match self.rpc.head().await {
-                Ok(head) => {
-                    self.announced = self.announced.max(Some(head));
-                    Announcements::Active { addresses, blocks }
-                }
-                Err(_) => Announcements::Unasked,
-            },
-            Err(failure) => {
-                warn!(%failure, "the chain node refused to announce logs; polling it instead");
-                Announcements::Unavailable
+        let rpc = &self.rpc;
+        let asked = tokio::time::timeout_at(deadline, async {
+            let Some(blocks) = rpc.announce(&addresses).await? else {
+                return Ok(None);
+            };
+            Ok::<_, RpcError>(Some((blocks, rpc.head().await?)))
+        });
+        self.announcements = match asked.await {
+            Ok(Ok(None)) => Announcements::Unsupported,
+            Ok(Ok(Some((blocks, head)))) => {
+                self.announced = self.announced.max(Some(head));
+                Announcements::Active { addresses, blocks }
+            }
+            Ok(Err(failure)) => {
+                warn!(%failure, "the chain node refused to announce logs; polling it for now");
+                failed()
+            }
+            Err(_) => {
+                warn!("the chain node did not answer a request for logs; polling it for now");
+                failed()
             }
         };
     }
@@ -395,6 +408,13 @@ impl<R: Rpc> Reader<R> {
             }
         };
         Ok(Some(ChainEvent { at, time, fact }))
+    }
+}
+
+/// Announcements that failed now, asked for again after `LONGEST_WAIT`.
+fn failed() -> Announcements {
+    Announcements::Failed {
+        retry: Instant::now() + LONGEST_WAIT,
     }
 }
 

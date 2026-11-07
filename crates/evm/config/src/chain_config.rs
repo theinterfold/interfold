@@ -48,7 +48,9 @@ pub struct DataAvailabilityConfig {
 pub struct ChainConfig {
     pub enabled: Option<bool>,
     pub name: String,
-    pub rpc_url: String, // We may need multiple per chain for redundancy at a later point
+    /// The node reads the chain here and sends transactions to its HTTP form (`ws` becomes `http`,
+    /// `wss` `https`), so the RPC node must serve both on this URL, as the earlier node required.
+    pub rpc_url: String,
     #[serde(default)]
     pub rpc_auth: RpcAuth,
     pub contracts: ContractAddresses,

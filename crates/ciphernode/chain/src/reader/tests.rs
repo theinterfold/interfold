@@ -47,8 +47,20 @@ struct Chain {
     /// The block each read was made at.
     read_at: Vec<u64>,
     heads_asked: usize,
-    /// The node's announcements, with the contracts each covers; none when it cannot announce.
-    announcements: Option<Vec<(Vec<Address>, mpsc::UnboundedSender<u64>)>>,
+    announcing: Announcing,
+    /// The node's announcements, with the contracts each covers.
+    subscriptions: Vec<(Vec<Address>, mpsc::UnboundedSender<u64>)>,
+}
+
+/// How a node answers a request for announcements.
+#[derive(Clone, Copy, Default)]
+enum Announcing {
+    /// It cannot announce, as over HTTP.
+    #[default]
+    No,
+    Yes,
+    /// It never answers.
+    Stuck,
 }
 
 #[derive(Clone, Default)]
@@ -58,7 +70,7 @@ impl FakeNode {
     /// A node that announces logs, as over a WebSocket.
     fn announcing() -> Self {
         let node = Self::default();
-        node.with(|chain| chain.announcements = Some(Vec::new()));
+        node.with(|chain| chain.announcing = Announcing::Yes);
         node
     }
 
@@ -70,7 +82,7 @@ impl FakeNode {
     fn mine(&self, log: RawLog) {
         self.with(|chain| {
             chain.head = chain.head.max(log.at.block);
-            for (addresses, announce) in chain.announcements.iter().flatten() {
+            for (addresses, announce) in &chain.subscriptions {
                 if addresses.contains(&log.address) {
                     let _ = announce.send(log.at.block);
                 }
@@ -104,12 +116,14 @@ impl Rpc for FakeNode {
         &self,
         addresses: &[Address],
     ) -> Result<Option<BoxStream<'static, u64>>, RpcError> {
-        let mut chain = self.0.lock().unwrap();
-        let Some(announcements) = &mut chain.announcements else {
-            return Ok(None);
-        };
+        let announcing = self.0.lock().unwrap().announcing;
+        match announcing {
+            Announcing::No => return Ok(None),
+            Announcing::Stuck => std::future::pending().await,
+            Announcing::Yes => {}
+        }
         let (announce, announced) = mpsc::unbounded_channel();
-        announcements.push((addresses.to_vec(), announce));
+        self.with(|chain| chain.subscriptions.push((addresses.to_vec(), announce)));
         let blocks = futures::stream::unfold(announced, |mut announced| async move {
             let block = announced.recv().await?;
             Some((block, announced))
@@ -561,6 +575,53 @@ async fn the_logs_of_a_contract_the_reader_learns_of_are_announced() {
         node.mine(log(provider, &fulfilled, 12, 3, 0));
     };
     let start = Instant::now();
-    tokio::join!(reader.wait(), mine);
-    assert_eq!(start.elapsed(), Duration::from_secs(1));
+    let woke = async {
+        reader.wait().await;
+        start.elapsed()
+    };
+    let (woke, ()) = tokio::join!(woke, mine);
+    assert_eq!(woke, Duration::from_secs(1));
+    node.with(|chain| chain.seed = Some(SEED));
+    let facts = reader.poll().await.unwrap();
+    let seed = ChainFact::SeedReady {
+        e3: e3(),
+        seed: SEED,
+    };
+    assert_eq!(
+        facts
+            .into_iter()
+            .map(|event| event.fact)
+            .collect::<Vec<_>>(),
+        [seed]
+    );
+}
+
+/// A chain node that never answers a request for announcements costs the reader one wait, not its
+/// ingestion: the reader polls, and asks again a minute later.
+#[tokio::test(start_paused = true)]
+async fn an_unanswered_request_for_announcements_is_polled_around_and_asked_again() {
+    let node = FakeNode::announcing();
+    node.with(|chain| {
+        chain.head = 10;
+        chain.announcing = Announcing::Stuck;
+    });
+    let mut reader = Reader::new(node.clone(), contracts(), 0, 1_000, 0, POLL);
+    assert!(reader.poll().await.unwrap().is_empty());
+    let start = Instant::now();
+    let wait = tokio::time::timeout(2 * LONGEST_WAIT, reader.wait());
+    wait.await.expect("the wait ends");
+    assert_eq!(start.elapsed(), LONGEST_WAIT + POLL);
+
+    node.with(|chain| chain.announcing = Announcing::Yes);
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(start.elapsed(), POLL);
+    tokio::time::sleep(LONGEST_WAIT).await;
+    let start = Instant::now();
+    reader.wait().await;
+    assert_eq!(
+        start.elapsed(),
+        LONGEST_WAIT,
+        "announced, the quiet chain is read once a minute"
+    );
 }

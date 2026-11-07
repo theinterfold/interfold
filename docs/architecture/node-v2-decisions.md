@@ -218,9 +218,11 @@ Each rule is checkable in review.
   once a minute: the health check needs a read every two minutes, and a log the RPC node did not
   announce, as across a reconnection, is read late rather than never. A new contract the reader
   learns of gets announcements too; the blocks up to the head at each request were not announced, so
-  the reader polls until it has read them. Over HTTP it polls at the poll interval. The wallet sends
-  over HTTP to the same URL, as the earlier node did, because over a WebSocket alloy's receipt waits
-  keep a new-block subscription open for the life of the node.
+  the reader polls until it has read them. A request that fails or goes unanswered within the
+  minute, or announcements that stop, make the reader poll for a minute and then ask again. Over
+  HTTP it polls at the poll interval. The wallet sends over HTTP to the same URL, as the earlier
+  node did, because over a WebSocket alloy's receipt waits keep a new-block subscription open for
+  the life of the node.
 
 ## Problems in the earlier node, with the fix above them
 
