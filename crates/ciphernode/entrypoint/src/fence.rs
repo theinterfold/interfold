@@ -98,33 +98,9 @@ impl ProcessFence {
                 format!("failed to create data directory for fence at {parent:?}")
             })?;
         }
-        // Taking the fence rewrites the lock file, which through a link would be another file: the
-        // open follows no link, and what it opened must be a plain file.
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
-        let mut file = options.open(lock_path).with_context(|| {
-            format!("failed to open fence lock file at {lock_path:?}; it must be a plain file")
-        })?;
-        if !file.metadata()?.is_file() {
-            bail!("the fence lock at {lock_path:?} is not a plain file; remove it, then try again");
-        }
-
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => {
-                return Err(FenceHeld {
-                    node_name: node_name.to_string(),
-                    lock_path: lock_path.to_path_buf(),
-                }
-                .into());
-            }
-            Err(std::fs::TryLockError::Error(err)) => {
-                return Err(err)
-                    .with_context(|| format!("failed to acquire fence lock at {lock_path:?}"));
-            }
-        }
+        let mut file = lock(&mut options, lock_path, node_name)?;
 
         // Best-effort diagnostics: record who holds the lock. Failure to write
         // does not affect correctness (the OS lock is already held).
@@ -142,6 +118,43 @@ impl ProcessFence {
             path: lock_path.to_path_buf(),
         })
     }
+
+    /// Hold the fence of an existing lock file without writing to it: a purge fences the nodes it
+    /// finds on disk this way, whatever their files' permissions.
+    pub fn hold_existing(lock_path: &Path) -> Result<Self> {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        let file = lock(&mut options, lock_path, &lock_path.display().to_string())?;
+        Ok(Self {
+            _file: file,
+            path: lock_path.to_path_buf(),
+        })
+    }
+}
+
+/// Opens `lock_path` and takes its exclusive lock. The open follows no link, since the fence may
+/// rewrite the file and through a link that would be another file, and what it opens must be a
+/// plain file.
+fn lock(options: &mut OpenOptions, lock_path: &Path, node_name: &str) -> Result<File> {
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(options, libc::O_NOFOLLOW);
+    let file = options.open(lock_path).with_context(|| {
+        format!("failed to open fence lock file at {lock_path:?}; it must be a plain file")
+    })?;
+    if !file.metadata()?.is_file() {
+        bail!("the fence lock at {lock_path:?} is not a plain file; remove it, then try again");
+    }
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(FenceHeld {
+            node_name: node_name.to_string(),
+            lock_path: lock_path.to_path_buf(),
+        }
+        .into()),
+        Err(std::fs::TryLockError::Error(err)) => {
+            Err(err).with_context(|| format!("failed to acquire fence lock at {lock_path:?}"))
+        }
+    }
 }
 
 /// Compute the lock-file path for a given database path. The lock lives in the
@@ -158,6 +171,22 @@ pub(crate) fn lock_path_for(db_path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// A read-only lock file can be held without writing to it, and a held one blocks a second
+    /// holder.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_lock_is_held_without_being_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let lock = dir.path().join(LOCK_FILE_NAME);
+        std::fs::write(&lock, b"someone's bytes").unwrap();
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let held = ProcessFence::hold_existing(&lock).unwrap();
+        assert!(ProcessFence::hold_existing(&lock).is_err());
+        drop(held);
+        assert_eq!(std::fs::read(&lock).unwrap(), b"someone's bytes");
+    }
 
     /// A lock file that links elsewhere is refused before the fence writes to it.
     #[cfg(unix)]

@@ -72,7 +72,7 @@ pub fn guard(
     let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
     for lock in &contents.locks {
         if !held.contains(&canonical(lock)) {
-            fences.push(ProcessFence::acquire_at(lock, &lock.display().to_string())?);
+            fences.push(ProcessFence::hold_existing(lock)?);
         }
     }
     let checked: BTreeSet<PathBuf> = checked.iter().map(|folder| canonical(folder)).collect();

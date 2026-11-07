@@ -4,12 +4,11 @@
 
 Use the root `pnpm check:*` commands. `repository.sh` checks Cargo feature/sample containment,
 application/node dependency boundaries, ciphernode Docker workspace membership, production Compose
-shutdown grace, startup proof-guard presence, and the `.do_send(` line-count ceiling. It is static
-configuration validation, not runtime/proof assurance. The grace check accepts the maintained
-two-space service / four-space integer-second `stop_grace_period` layout and requires exactly one
-budget above 60 seconds per service. It rejects duplicate, missing, quoted, or non-integer-second
-fields; it is not a general YAML/Compose validator (aliases and other valid duration notations are
-not supported).
+shutdown grace, and startup proof-guard presence. It is static configuration validation, not
+runtime/proof assurance. The grace check accepts the maintained two-space service / four-space
+integer-second `stop_grace_period` layout and requires exactly one budget above 60 seconds per
+service. It rejects duplicate, missing, quoted, or non-integer-second fields; it is not a general
+YAML/Compose validator (aliases and other valid duration notations are not supported).
 
 ## Map
 
