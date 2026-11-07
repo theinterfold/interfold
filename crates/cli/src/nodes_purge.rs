@@ -118,8 +118,8 @@ struct Contents {
 }
 
 /// Every folder counts as a node folder when its journal exists, also inside another node's
-/// folder. The walk follows links, since a node's state may live elsewhere behind one, and visits
-/// each folder once, since a link may point back up. It only reads: the deletion follows no link.
+/// folder. The walk follows links to folders, since a node's state may live elsewhere behind one,
+/// and visits each folder once, since a link may point back up. The deletion follows no link.
 fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -133,16 +133,19 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
         contents.nodes.push(dir.to_path_buf());
     }
     for entry in entries {
-        let path = entry?.path();
-        let metadata = match std::fs::metadata(&path) {
-            Ok(metadata) => metadata,
-            // A link to nothing holds no node.
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if metadata.is_file() && path.file_name() == Some(LOCK_FILE_NAME.as_ref()) {
+        let entry = entry?;
+        let (path, kind) = (entry.path(), entry.file_type()?);
+        if entry.file_name() == LOCK_FILE_NAME {
+            // Taking the fence writes to its file, which through a link would be another file.
+            if !kind.is_file() {
+                bail!(
+                    "Deleted nothing: {} is not a plain file, so the purge cannot fence the node \
+                     that uses it. Remove it, then run the purge again.",
+                    path.display()
+                );
+            }
             contents.locks.push(path);
-        } else if metadata.is_dir() {
+        } else if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
             scan(&path, visited, contents)?;
         }
     }
@@ -173,7 +176,7 @@ mod tests {
     use super::{node_configs, purge};
     use anyhow::Result;
     use e3_cli::app_config::load_config;
-    use e3_entrypoint::fence::ProcessFence;
+    use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 
     /// The purge checks every node profile, not only the one the command runs as.
     #[test]
@@ -275,11 +278,23 @@ mod tests {
         std::fs::write(&journal, b"")?;
         std::os::unix::fs::symlink(moved.path(), data.join("cn5"))?;
         std::os::unix::fs::symlink(&data, data.join("loop"))?;
-        let error = purge(&config, config_file, dir.path(), false)
+        let error = purge(&config, config_file.clone(), dir.path(), false)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("cn5"), "{error:#}");
         assert!(journal.exists());
+        std::fs::remove_file(data.join("cn5"))?;
+
+        // A lock file that links elsewhere is refused before the fence writes through it.
+        let outside = moved.path().join("key backup");
+        std::fs::write(&outside, b"key bytes")?;
+        std::fs::create_dir_all(data.join("cn6"))?;
+        std::os::unix::fs::symlink(&outside, data.join("cn6").join(LOCK_FILE_NAME))?;
+        let error = purge(&config, config_file, dir.path(), true)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not a plain file"), "{error:#}");
+        assert_eq!(std::fs::read(&outside)?, b"key bytes");
         Ok(())
     }
 }
