@@ -29,6 +29,9 @@ const SUBMITTERS: usize = 3;
 const SUBMIT_TURN: UnixSecs = 30;
 /// How far past the chain's time a vote's window may start: `SlashingEvidenceLib.CLOCK_SKEW`.
 const CLOCK_SKEW: UnixSecs = 30;
+/// The votes of one member that may wait for their accusations. A vote waits only until its
+/// accusation arrives, and its voter sends it again while the window is open.
+pub(super) const EARLY_VOTES_PER_MEMBER: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accusations {
@@ -55,6 +58,8 @@ pub struct Accusations {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Case {
+    /// The member that opened the window.
+    accuser: Address,
     accused: Address,
     proof_type: ProofType,
     proof: SignedProof,
@@ -75,8 +80,15 @@ struct Checked {
 }
 
 impl Case {
-    fn new(accused: Address, proof_type: ProofType, proof: SignedProof, data_hash: B256) -> Self {
+    fn new(
+        accuser: Address,
+        accused: Address,
+        proof_type: ProofType,
+        proof: SignedProof,
+        data_hash: B256,
+    ) -> Self {
         Self {
+            accuser,
             accused,
             proof_type,
             proof,
@@ -141,14 +153,14 @@ impl Accusations {
             issued_at: now,
             deadline: now.saturating_add(self.validity),
         };
-        self.cases
-            .insert(ballot, Case::new(accused, proof_type, proof, data_hash));
+        let case = Case::new(self.me, accused, proof_type, proof, data_hash);
+        self.cases.insert(ballot, case);
         self.vote(ballot).into_iter().collect()
     }
 
     /// Whether to take `message` from `sender`: both it and the accused are live members, the
-    /// accused signed the proof, the vote is the sender's and counts, and the sender accuses each
-    /// proof once in each window.
+    /// accused signed the proof, the vote is the sender's and counts, and the sender has no other
+    /// window open for the same accusation, so a member cannot open windows without end.
     pub(crate) fn admits(
         &self,
         now: UnixSecs,
@@ -168,7 +180,11 @@ impl Accusations {
                     && vote.vote.accusation_id == accusation_id(self.e3, *accused, *proof_type)
                     && proof.is_signed_by(*accused, self.e3, *proof_type)
                     && self.counts(now, sender, vote)
-                    && !self.cases.contains_key(&ballot)
+                    && !self.cases.iter().any(|(open, case)| {
+                        *open == ballot
+                            || (open.accusation_id == ballot.accusation_id
+                                && case.accuser == sender)
+                    })
             }
             AccusationMessage::Vote(vote) => {
                 let accused = self
@@ -217,7 +233,7 @@ impl Accusations {
                 vote,
             } => {
                 let ballot = Ballot::of(&vote.vote);
-                let mut case = Case::new(accused, proof_type, proof, vote.vote.data_hash);
+                let mut case = Case::new(sender, accused, proof_type, proof, vote.vote.data_hash);
                 let early = self.early.remove(&ballot).into_iter().flatten();
                 let votes = early.filter(|(voter, early)| {
                     *voter != accused && early.vote.data_hash == case.data_hash
@@ -245,9 +261,12 @@ impl Accusations {
                         self.reached(now, ballot)
                     }
                     None => {
-                        let early = self.early.entry(ballot).or_default();
-                        if early.len() < self.members.len() {
-                            early.insert(sender, vote);
+                        let waiting = self
+                            .early
+                            .values()
+                            .filter(|votes| votes.contains_key(&sender));
+                        if waiting.count() < EARLY_VOTES_PER_MEMBER {
+                            self.early.entry(ballot).or_default().insert(sender, vote);
                         }
                         Vec::new()
                     }
@@ -407,7 +426,8 @@ impl Accusations {
         submissions.chain(windows).min()
     }
 
-    /// The chain expelled `member`: its accusations end, and its votes no longer count.
+    /// The chain expelled `member`: its accusations end, and its votes no longer count. A window
+    /// that falls short of H votes again waits for another vote before this node submits it.
     pub(crate) fn expel(&mut self, member: Address) {
         self.expelled.insert(member);
         self.cases.retain(|_, case| case.accused != member);
@@ -418,6 +438,12 @@ impl Accusations {
             .chain(self.early.values_mut())
         {
             votes.remove(&member);
+        }
+        self.early.retain(|_, votes| !votes.is_empty());
+        for case in self.cases.values_mut() {
+            if !case.submitted && case.votes.len() < self.quorum {
+                case.submit_at = None;
+            }
         }
     }
 

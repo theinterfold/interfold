@@ -419,4 +419,68 @@ mod cases {
         node.step(NOW, from(3, AccusationMessage::Vote(signed_vote(3, vote))));
         assert_eq!(node.next_deadline(), before);
     }
+
+    /// A member has one window open for an accusation at a time, so it cannot make the others
+    /// keep windows without end; once its window closes it can open another.
+    #[test]
+    fn a_member_opens_one_window_at_a_time_for_an_accusation() {
+        let mut node = member(ME);
+        let opens = |effects: Vec<Effect>| {
+            effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    Effect::Run(job) if matches!(job.work, Work::Accusation(_))
+                )
+            })
+        };
+        assert!(opens(node.step(NOW, accusation(2, NOW, 1))));
+        assert!(!opens(node.step(NOW + 1, accusation(2, NOW + 1, 1))));
+        let after = NOW + VALIDITY + 1;
+        node.step(after, Input::Tick);
+        assert!(opens(node.step(after, accusation(2, after, 1))));
+    }
+
+    /// A member's votes that come before their accusations wait in a bounded number; one past it
+    /// does not count when its accusation arrives.
+    #[test]
+    fn a_member_s_votes_that_come_before_their_accusations_wait_in_a_bounded_number() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        for earlier in 1..=super::super::cases::EARLY_VOTES_PER_MEMBER as u64 {
+            node.step(
+                NOW,
+                from(3, AccusationMessage::Vote(vote(3, NOW - earlier))),
+            );
+        }
+        node.step(NOW, from(3, AccusationMessage::Vote(vote(3, NOW))));
+        node.step(NOW, accusation(2, NOW, 1));
+        let effects = node.step(NOW, verified(true));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        let later = node.step(NOW + 60, Input::Tick);
+        let slashes: Vec<_> = slashes(&effects)
+            .into_iter()
+            .chain(slashes(&later))
+            .collect();
+        assert_eq!(slashes, [(address(1), 2)]);
+    }
+
+    /// An expulsion that leaves a window short of H votes stops this node's turn to submit it, so
+    /// it never sends a slash the contract rejects; a new vote brings the window back to H.
+    #[test]
+    fn a_window_that_loses_a_vote_to_an_expulsion_waits_for_another_vote() {
+        // Operator 33 sorts before this node, so it submits first and this node waits its turn.
+        assert!(address(33) < address(ME) && address(ME) < address(2));
+        let mut node = member_of(ME, &[1, 2, 33]);
+        node.step(NOW, accusation(33, NOW, 1));
+        let effects = node.step(NOW, verified(true));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        assert!(slashes(&effects).is_empty());
+        let expelled = ChainFact::MemberExpelled {
+            e3: e3(1),
+            member: address(33),
+        };
+        node.step(NOW + 10, chain(20, expelled));
+        assert!(slashes(&node.step(NOW + 30, Input::Tick)).is_empty());
+        let effects = node.step(NOW + 40, from(2, AccusationMessage::Vote(vote(2, NOW))));
+        assert_eq!(slashes(&effects), [(address(1), 2)]);
+    }
 }
