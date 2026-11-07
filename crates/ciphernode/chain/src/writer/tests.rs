@@ -295,11 +295,11 @@ async fn a_committee_publishes_its_proof_then_its_key_in_chunks() {
     assert_eq!(joined, key);
 }
 
-#[tokio::test]
-async fn a_slash_goes_to_the_e3_s_manager_with_the_accused_proof_s_bytes_as_evidence() {
-    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
-    let manager = address!("0x00000000000000000000000000000000000000bb");
-    let accused = address!("0x00000000000000000000000000000000000000cc");
+const MANAGER: Address = address!("0x00000000000000000000000000000000000000bb");
+const ACCUSED: Address = address!("0x00000000000000000000000000000000000000cc");
+
+/// A slash of `ACCUSED` with its proof and the one vote it carries.
+fn slash(blobs: &MemoryBlobs) -> (Submission, ZkProof, SignedVote) {
     let proof = ZkProof {
         data: blobs.of(E3).put(b"bad proof").unwrap(),
         public_inputs: vec![B256::repeat_byte(2)],
@@ -316,20 +316,41 @@ async fn a_slash_goes_to_the_e3_s_manager_with_the_accused_proof_s_bytes_as_evid
         signature: Bytes::from(vec![5; 65]),
     };
     let slash = submission(Transaction::ProposeSlash {
-        manager,
-        accused,
+        manager: MANAGER,
+        accused: ACCUSED,
         proof_type: ProofType::C2aSkShareComputation,
         proof: proof.clone(),
         votes: vec![vote.clone()],
     });
+    (slash, proof, vote)
+}
+
+#[tokio::test]
+async fn a_slash_goes_to_the_e3_s_manager_with_the_accused_proof_s_bytes_as_evidence() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    let (slash, proof, vote) = slash(&blobs);
     writer(&account, &blobs).submit(&slash).await.unwrap();
     let [(call, _)] = account.sent().try_into().unwrap();
-    assert_eq!(call.to, manager);
+    assert_eq!(call.to, MANAGER);
     let sent = ISlashingManager::proposeSlashCall::abi_decode(&call.data).unwrap();
-    assert_eq!((sent.e3Id, sent.operator), (U256::from(7), accused));
+    assert_eq!((sent.e3Id, sent.operator), (U256::from(7), ACCUSED));
     let disputed = disputed_proof(b"bad proof", &proof.public_inputs);
     let evidence = slash_evidence(ProofType::C2aSkShareComputation, &[vote], &disputed).unwrap();
     assert_eq!(sent.proof, evidence);
+}
+
+/// The voters' window can start past the newest block's time, beyond the clock skew, when the
+/// operator's chain node lags their clocks: the slash waits for the chain instead of going.
+#[tokio::test(start_paused = true)]
+async fn a_slash_whose_window_starts_after_the_newest_block_waits_for_the_chain() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        let early = reverts(ISlashingManager::AccusationIssuedInFuture {});
+        script.estimates.push_back(early);
+    });
+    let (slash, ..) = slash(&blobs);
+    writer(&account, &blobs).submit(&slash).await.unwrap();
+    assert_eq!(account.labels(), ["proposeSlash"]);
 }
 
 /// The bytes that the mainnet node's encoder (`encode_dkg_attestation_bundle` in `e3-zk-prover`)

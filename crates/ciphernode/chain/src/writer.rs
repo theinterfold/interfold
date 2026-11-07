@@ -290,7 +290,9 @@ fn calls(
             vec![interfold("processE3Failure", data.abi_encode(), not_yet)]
         }
         // Each of the first voters can send it in turn; the contract takes one proposal for the
-        // proof, and a later one reverts, which means nothing to send.
+        // proof, and a later one reverts, which means nothing to send. A window that starts
+        // further past the newest block's time than the clock skew waits for the chain to catch
+        // up.
         Transaction::ProposeSlash {
             manager,
             accused,
@@ -304,7 +306,8 @@ fn calls(
                 operator: *accused,
                 proof: slash_evidence(*proof_type, votes, &disputed)?,
             };
-            vec![call(*manager, "proposeSlash", data.abi_encode(), &[])]
+            let not_yet = &[ISlashingManager::AccusationIssuedInFuture::SELECTOR];
+            vec![call(*manager, "proposeSlash", data.abi_encode(), not_yet)]
         }
     })
 }
