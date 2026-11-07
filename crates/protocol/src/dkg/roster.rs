@@ -111,6 +111,11 @@ impl Dkg {
         effects
     }
 
+    /// `member` proposes no roster for the others any more; whether this is news.
+    pub(super) fn convict_roster_aggregator(&mut self, member: Address) -> bool {
+        self.rosters.failover.convict(member)
+    }
+
     pub(super) fn pass_roster_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         if self.rosters.accepted.is_some() {
             return Vec::new();

@@ -185,6 +185,11 @@ impl Dkg {
         }
     }
 
+    /// `member` aggregates the committee key no more; whether this is news.
+    pub(super) fn convict_key_aggregator(&mut self, member: Address) -> bool {
+        self.aggregation.failover.convict(member)
+    }
+
     pub(super) fn pass_aggregation_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         if self.aggregation.work == Work::Idle {
             self.aggregation

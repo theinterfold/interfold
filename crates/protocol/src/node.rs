@@ -1572,9 +1572,9 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                11,
+                12,
                 alloy_primitives::b256!(
-                    "0409d6cfc64fed4d26f6878c9ca4e57aa4a91c19b62575b8e7f7c634517eb63f"
+                    "f0724be5ef15fb9bf19aa48e8df9931025927f5192c14523a9d125262db0df58"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

@@ -54,6 +54,8 @@ pub struct Accusations {
     /// The (accused, proof type) pairs this node accused.
     accused: BTreeSet<(Address, ProofType)>,
     expelled: BTreeSet<Address>,
+    /// Members that H members found sending a failing proof, in some window.
+    convicted: BTreeSet<Address>,
     /// Once the chain completed the E3: until when an accusation issued before the completion
     /// can still come.
     keep_until: Option<UnixSecs>,
@@ -125,6 +127,7 @@ impl Accusations {
             verdicts: BTreeMap::new(),
             accused: BTreeSet::new(),
             expelled: BTreeSet::new(),
+            convicted: BTreeSet::new(),
             keep_until: None,
         }
     }
@@ -380,7 +383,11 @@ impl Accusations {
         let Some(case) = self.cases.get_mut(&ballot) else {
             return Vec::new();
         };
-        if case.submit_at.is_some() || case.votes.len() < quorum {
+        if case.votes.len() < quorum {
+            return Vec::new();
+        }
+        self.convicted.insert(case.accused);
+        if case.submit_at.is_some() {
             return Vec::new();
         }
         let Some(place) = case.votes.keys().position(|voter| *voter == me) else {
@@ -471,6 +478,11 @@ impl Accusations {
             AccusationMessage::Accuse { vote, .. } | AccusationMessage::Vote(vote) => vote,
         };
         self.cases.contains_key(&Ballot::of(&vote.vote))
+    }
+
+    /// The members that H members found sending a failing proof.
+    pub(crate) fn convicted(&self) -> &BTreeSet<Address> {
+        &self.convicted
     }
 
     /// Whether any accusation is open, or can still come after the E3's completion.

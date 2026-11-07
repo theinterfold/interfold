@@ -603,6 +603,19 @@ impl Dkg {
         effects
     }
 
+    /// H members found `member` sending a failing proof: it aggregates no phase, and the next
+    /// member takes over a phase it leads at once.
+    pub(crate) fn convict(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
+        let roster = self.convict_roster_aggregator(member);
+        let key = self.convict_key_aggregator(member);
+        if !self.running() || !(roster || key) {
+            return Vec::new();
+        }
+        let mut effects = self.pass_roster_deadlines(now);
+        effects.extend(self.pass_aggregation_deadlines(now));
+        effects
+    }
+
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         if !self.running() {
             return Vec::new();

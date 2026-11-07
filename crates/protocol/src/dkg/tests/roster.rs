@@ -97,6 +97,89 @@ fn an_expelled_aggregator_hands_over_at_once() {
     assert_eq!(accepted(&node), Some(members(&[second, third])));
 }
 
+/// An aggregator that H members found sending a failing proof hands over at once, as an expelled
+/// one does, without waiting for its slash to land.
+#[test]
+fn a_convicted_aggregator_hands_over_at_once() {
+    use crate::{
+        accusation::{accusation_id, AccusationMessage, AccusationWorkResult, SignedVote, Vote},
+        node::{JobDone, WorkResult},
+        proof::{ProofType, SignedProof},
+    };
+    use alloy_primitives::B256;
+
+    let [first, second, third] = ordered();
+    let manager = Address::repeat_byte(0x5a);
+    let mut node = Node::new(address(third));
+    node.step(0, chain(2, ChainFact::SlashingManager { manager }));
+    node.step(0, chain(3, ChainFact::VoteValidity { secs: 600 }));
+    node.step(0, requested(10, e3(1)));
+    node.step(NOW, finalized(11, e3(1), committee()));
+    let effects = node.step(NOW, key_made(e3(1), own_key(0xee)));
+    node.step(NOW, sign(third, signing(&effects)));
+    for n in others(third) {
+        add_valid_key(&mut node, n);
+    }
+    let effects = node.step(NOW, shares_made(e3(1), own_shares(&others(third))));
+    node.step(NOW, sign(third, signing(&effects)));
+    for n in others(third) {
+        node.step(NOW, shares_from(e3(1), n, third));
+        node.step(NOW, shares_checked(e3(1), n, true));
+    }
+    node.step(NOW, ready(second, &[first, second, third], third));
+    node.step(NOW, roster(second, &[second, third], third));
+    assert_eq!(accepted(&node), None);
+
+    // `second` accuses `first` of a failing proof, and this node finds the proof failing too.
+    let proof = proof(0x51);
+    let signed = SignedProof {
+        signature: signature(first, proof.payload_signing_hash(e3(1), ProofType::C0PkBfv)),
+        proof: proof.clone(),
+    };
+    let data_hash = B256::repeat_byte(0xd1);
+    let vote = Vote {
+        e3: e3(1),
+        accusation_id: accusation_id(e3(1), address(first), ProofType::C0PkBfv),
+        voter: address(second),
+        data_hash,
+        issued_at: NOW,
+        deadline: NOW + 600,
+    };
+    let vote = SignedVote {
+        signature: signature(second, vote.signing_hash(manager)),
+        vote,
+    };
+    let accuse = AccusationMessage::Accuse {
+        accused: address(first),
+        proof_type: ProofType::C0PkBfv,
+        proof: signed,
+        vote,
+    };
+    node.step(
+        NOW,
+        Input::Peer(PeerMessage {
+            e3: e3(1),
+            sender: address(second),
+            body: Body::Accusation(accuse),
+        }),
+    );
+    let verified = WorkResult::Accusation(AccusationWorkResult::Verified {
+        proof_type: ProofType::C0PkBfv,
+        proof,
+        fails: true,
+        data_hash,
+    });
+    let effects = node.step(
+        NOW,
+        Input::Job(JobDone {
+            e3: e3(1),
+            result: verified,
+        }),
+    );
+    node.step(NOW, sign(third, signing(&effects)));
+    assert_eq!(accepted(&node), Some(members(&[second, third])));
+}
+
 #[test]
 fn a_roster_with_an_expelled_member_is_never_accepted() {
     let [first, second, third] = ordered();

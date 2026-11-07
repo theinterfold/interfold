@@ -48,6 +48,7 @@ fn decryption(me: u64, roster: &[u64], key: bool) -> Decryption {
         roster: members(roster),
         key: key.then_some(KEY),
         expelled: BTreeSet::new(),
+        convicted: BTreeSet::new(),
     };
     let published = PublishedKey {
         interfold: INTERFOLD,

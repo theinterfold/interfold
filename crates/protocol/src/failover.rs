@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// The aggregator of one phase is the first member in committee order that the chain has not
-/// expelled and that has not let its budget run out in this phase. Its budget starts once the
-/// phase's inputs are ready at this node, and starts again whenever another member becomes the
-/// aggregator. When no member is left to take over, the last one stays.
+/// expelled, that H members have not found sending a failing proof, and that has not let its
+/// budget run out in this phase. Its budget starts once the phase's inputs are ready at this node,
+/// and starts again whenever another member becomes the aggregator. When no member is left to
+/// take over, the last one stays.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Failover {
     budget: u64,
     unresponsive: BTreeSet<Address>,
+    convicted: BTreeSet<Address>,
     round: Option<Round>,
 }
 
@@ -34,8 +36,15 @@ impl Failover {
         Self {
             budget,
             unresponsive: BTreeSet::new(),
+            convicted: BTreeSet::new(),
             round: None,
         }
+    }
+
+    /// H members found `member` sending a failing proof: it aggregates no more, and a round it
+    /// leads hands over at the next `pass_deadlines`. Whether this is news.
+    pub(crate) fn convict(&mut self, member: Address) -> bool {
+        self.convicted.insert(member)
     }
 
     pub(crate) fn aggregator(
@@ -99,7 +108,11 @@ impl Failover {
     ) -> impl Iterator<Item = Address> + 'a {
         members
             .iter()
-            .filter(|member| !expelled.contains(*member) && !self.unresponsive.contains(*member))
+            .filter(|member| {
+                !expelled.contains(*member)
+                    && !self.unresponsive.contains(*member)
+                    && !self.convicted.contains(*member)
+            })
             .copied()
     }
 }
@@ -140,6 +153,18 @@ mod tests {
             failover.aggregator(&members(), &expelled),
             Some(members()[1])
         );
+        assert_eq!(failover.next_deadline(), Some(1_000));
+    }
+
+    #[test]
+    fn a_convicted_aggregator_hands_over_with_a_fresh_budget() {
+        let mut failover = Failover::new(600);
+        let none = BTreeSet::new();
+        failover.inputs_ready(100, &members(), &none);
+        assert!(failover.convict(members()[0]));
+        assert!(!failover.convict(members()[0]));
+        failover.pass_deadlines(400, &members(), &none);
+        assert_eq!(failover.aggregator(&members(), &none), Some(members()[1]));
         assert_eq!(failover.next_deadline(), Some(1_000));
     }
 

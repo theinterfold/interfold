@@ -125,6 +125,8 @@ pub(crate) struct Handover {
     /// A roster member's sealed decryption key; none outside the roster.
     pub(crate) key: Option<BlobRef>,
     pub(crate) expelled: BTreeSet<Address>,
+    /// Members that H members found sending a failing proof, who aggregate no phase.
+    pub(crate) convicted: BTreeSet<Address>,
 }
 
 /// The key the chain published, as the registry recorded it.
@@ -194,6 +196,10 @@ impl Decryption {
         handover: Handover,
         published: PublishedKey,
     ) -> Self {
+        let mut failover = Failover::new(PLAINTEXT_BUDGET);
+        for member in handover.convicted {
+            failover.convict(member);
+        }
         Self {
             e3,
             me,
@@ -206,7 +212,7 @@ impl Decryption {
             ciphertext: None,
             own: Own::Waiting,
             shares: BTreeMap::new(),
-            failover: Failover::new(PLAINTEXT_BUDGET),
+            failover,
             aggregation: Aggregation::Idle,
             failure: None,
         }
@@ -356,6 +362,14 @@ impl Decryption {
 
     pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
         if !self.expelled.insert(member) {
+            return Vec::new();
+        }
+        self.pass_deadlines(now)
+    }
+
+    /// H members found `member` sending a failing proof: it aggregates the plaintext no more.
+    pub(crate) fn convict(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
+        if !self.failover.convict(member) {
             return Vec::new();
         }
         self.pass_deadlines(now)

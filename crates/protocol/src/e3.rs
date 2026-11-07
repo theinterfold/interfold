@@ -266,6 +266,11 @@ impl E3 {
             roster,
             key,
             expelled: dkg.expelled().clone(),
+            convicted: self
+                .accusations
+                .as_ref()
+                .map(|accusations| accusations.convicted().clone())
+                .unwrap_or_default(),
         };
         let published = PublishedKey {
             interfold: self.interfold,
@@ -392,7 +397,7 @@ impl E3 {
         if self.fetching.get(&slot) == Some(&message.id()) {
             self.fetching.remove(&slot);
         }
-        let effects = match message.body {
+        let mut effects = match message.body {
             Body::Dkg(body) => match self.dkg_mut() {
                 Some(dkg) => dkg.receive(now, message.sender, body),
                 None => Vec::new(),
@@ -406,6 +411,7 @@ impl E3 {
                 None => Vec::new(),
             },
         };
+        effects.extend(self.hand_over_from_convicted(now));
         self.sent(now, effects)
     }
 
@@ -428,6 +434,7 @@ impl E3 {
         if let Some((member, fault)) = fault {
             effects.extend(self.accuse(now, member, fault));
         }
+        effects.extend(self.hand_over_from_convicted(now));
         self.sent(now, effects)
     }
 
@@ -455,7 +462,7 @@ impl E3 {
         purpose: Purpose,
         signatures: Vec<Bytes>,
     ) -> Vec<Effect> {
-        let effects = match purpose {
+        let mut effects = match purpose {
             Purpose::Dkg(purpose) => match self.dkg_mut() {
                 Some(dkg) => dkg.signed(now, purpose, signatures),
                 None => Vec::new(),
@@ -469,7 +476,27 @@ impl E3 {
                 None => Vec::new(),
             },
         };
+        effects.extend(self.hand_over_from_convicted(now));
         self.sent(now, effects)
+    }
+
+    /// A member that H members found sending a failing proof aggregates no phase of the E3, so it
+    /// cannot hold a phase for its budget; the chain's expulsion follows the slash later.
+    fn hand_over_from_convicted(&mut self, now: UnixSecs) -> Vec<Effect> {
+        let convicted: Vec<Address> = match &self.accusations {
+            Some(accusations) => accusations.convicted().iter().copied().collect(),
+            None => return Vec::new(),
+        };
+        let mut effects = Vec::new();
+        for member in convicted {
+            if let Some(dkg) = self.dkg_mut() {
+                effects.extend(dkg.convict(now, member));
+            }
+            if let Some(decryption) = self.decryption_mut() {
+                effects.extend(decryption.convict(now, member));
+            }
+        }
+        effects
     }
 
     pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
