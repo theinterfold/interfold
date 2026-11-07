@@ -24,10 +24,10 @@
 //! it releases the lock.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tracing::info;
 
 /// The lock-file name placed in the node's data directory.
@@ -98,6 +98,17 @@ impl ProcessFence {
                 format!("failed to create data directory for fence at {parent:?}")
             })?;
         }
+        // Taking the fence rewrites the lock file, which through a link would be another file.
+        match std::fs::symlink_metadata(lock_path) {
+            Ok(metadata) if !metadata.file_type().is_file() => bail!(
+                "the fence lock at {lock_path:?} is not a plain file; remove it, then try again"
+            ),
+            Err(error) if error.kind() != ErrorKind::NotFound => {
+                return Err(error)
+                    .with_context(|| format!("failed to read the fence lock at {lock_path:?}"));
+            }
+            _ => {}
+        }
 
         let mut file = OpenOptions::new()
             .read(true)
@@ -154,6 +165,21 @@ pub(crate) fn lock_path_for(db_path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// A lock file that links elsewhere is refused before the fence writes to it.
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_file_that_is_a_link_is_refused_and_its_target_kept() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("key backup");
+        std::fs::write(&target, b"key bytes").unwrap();
+        let lock = dir.path().join("node").join(LOCK_FILE_NAME);
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &lock).unwrap();
+        let error = ProcessFence::acquire_at(&lock, "node").unwrap_err();
+        assert!(error.to_string().contains("not a plain file"), "{error:#}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"key bytes");
+    }
 
     #[test]
     fn lock_path_is_sibling_of_db_dir() {

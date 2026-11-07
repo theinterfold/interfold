@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::node_state;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
@@ -136,17 +136,19 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
         let entry = entry?;
         let (path, kind) = (entry.path(), entry.file_type()?);
         if entry.file_name() == LOCK_FILE_NAME {
-            // Taking the fence writes to its file, which through a link would be another file.
-            if !kind.is_file() {
-                bail!(
-                    "Deleted nothing: {} is not a plain file, so the purge cannot fence the node \
-                     that uses it. Remove it, then run the purge again.",
-                    path.display()
-                );
-            }
             contents.locks.push(path);
-        } else if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
+        } else if kind.is_dir() {
             scan(&path, visited, contents)?;
+        } else if kind.is_symlink() {
+            match std::fs::metadata(&path) {
+                Ok(target) if target.is_dir() => scan(&path, visited, contents)?,
+                Ok(_) => {}
+                // A link to nothing holds no node.
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("reading {}", path.display()))
+                }
+            }
         }
     }
     Ok(())
@@ -285,16 +287,37 @@ mod tests {
         assert!(journal.exists());
         std::fs::remove_file(data.join("cn5"))?;
 
-        // A lock file that links elsewhere is refused before the fence writes through it.
+        // A lock file that links elsewhere, a configured node's included, is refused before the
+        // fence writes through it.
         let outside = moved.path().join("key backup");
         std::fs::write(&outside, b"key bytes")?;
-        std::fs::create_dir_all(data.join("cn6"))?;
-        std::os::unix::fs::symlink(&outside, data.join("cn6").join(LOCK_FILE_NAME))?;
-        let error = purge(&config, config_file, dir.path(), true)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("not a plain file"), "{error:#}");
-        assert_eq!(std::fs::read(&outside)?, b"key bytes");
+        for node in ["cn6", "cn1"] {
+            let lock = data.join(node).join(LOCK_FILE_NAME);
+            std::fs::create_dir_all(lock.parent().unwrap())?;
+            // An earlier purge took the configured node's fence, which left its plain lock file.
+            let _ = std::fs::remove_file(&lock);
+            std::os::unix::fs::symlink(&outside, &lock)?;
+            let error = purge(&config, config_file.clone(), dir.path(), true)
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("not a plain file"),
+                "{error:#}"
+            );
+            assert_eq!(std::fs::read(&outside)?, b"key bytes");
+            std::fs::remove_file(&lock)?;
+        }
+
+        // A link the purge cannot follow stops it: what is behind may be a node.
+        use std::os::unix::fs::PermissionsExt;
+        let sealed = moved.path().join("sealed");
+        std::fs::create_dir_all(sealed.join("node"))?;
+        std::os::unix::fs::symlink(sealed.join("node"), data.join("cn7"))?;
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))?;
+        let result = purge(&config, config_file, dir.path(), true).await;
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755))?;
+        assert!(result.is_err());
+        assert!(data.join("cn7").exists());
         Ok(())
     }
 }
