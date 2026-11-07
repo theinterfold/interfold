@@ -89,9 +89,9 @@ impl Handler<TypedEvent<ThresholdSharePending>> for ProofRequestActor {
     fn handle(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_threshold_share_pending(msg);
+        self.handle_threshold_share_pending(msg, ctx);
     }
 }
 
