@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 /// The lock-file name placed in the node's data directory.
-pub(crate) const LOCK_FILE_NAME: &str = "interfold.lock";
+pub const LOCK_FILE_NAME: &str = "interfold.lock";
 
 /// The error when another live process holds the fence.
 #[derive(Debug)]

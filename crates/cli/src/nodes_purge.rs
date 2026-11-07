@@ -8,7 +8,7 @@ use crate::node_state;
 use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_entrypoint::fence::ProcessFence;
+use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use std::collections::BTreeSet;
 use std::env;
 use std::io::ErrorKind;
@@ -63,12 +63,25 @@ pub(crate) async fn purge(
             refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
         }
     }
-    // A folder that no profile names may hold a key share too, and may be in use.
-    for folder in unnamed_folders(&dir.join(".interfold/data"), &nodes)? {
-        let name = folder.file_name().unwrap_or_default().to_string_lossy();
-        // The fence's lock file sits in the node's data folder, beside its database.
-        fences.push(ProcessFence::acquire(&folder.join("db"), &name)?);
-        if !allow_active_e3s && node_state::journal_in(&folder).exists() {
+    // Everything under the data folder goes, so every node there is fenced and every journal there
+    // checked, at any depth: a profile's `data_dir` can nest a node, and a profile removed from the
+    // configuration leaves its folder behind.
+    let mut contents = Contents::default();
+    scan(&dir.join(".interfold/data"), &mut contents)?;
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
+    for lock in &contents.locks {
+        if !held.contains(&canonical(lock)) {
+            fences.push(ProcessFence::acquire_at(lock, &lock.display().to_string())?);
+        }
+    }
+    let named: BTreeSet<PathBuf> = nodes
+        .iter()
+        .map(|node| canonical(&node.node_data_dir()))
+        .collect();
+    for folder in &contents.nodes {
+        if !allow_active_e3s && !named.contains(&canonical(folder)) {
             refusals.push(format!(
                 "{} holds the journal of a node that no profile in the configuration names, so \
                  its E3s cannot be checked (add the profile back to check them)",
@@ -92,27 +105,32 @@ pub(crate) async fn purge(
     Ok(())
 }
 
-/// The node folders in `data` that none of `nodes` is configured to use.
-fn unnamed_folders(data: &Path, nodes: &[NodeConfig]) -> Result<Vec<PathBuf>> {
-    let canonical = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
-    let named: BTreeSet<PathBuf> = nodes
-        .iter()
-        .map(|node| canonical(node.node_data_dir()))
-        .collect();
-    let entries = match std::fs::read_dir(data) {
+/// What a folder holds at any depth: the node folders, each with its journal at
+/// `v2/journal.redb`, and the lock files of the nodes that use them.
+#[derive(Default)]
+struct Contents {
+    nodes: Vec<PathBuf>,
+    locks: Vec<PathBuf>,
+}
+
+fn scan(dir: &Path, contents: &mut Contents) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    let mut folders = Vec::new();
     for entry in entries {
-        let path = entry?.path();
-        if path.is_dir() && !named.contains(&canonical(path.clone())) {
-            folders.push(path);
+        let entry = entry?;
+        let (path, kind) = (entry.path(), entry.file_type()?);
+        if kind.is_file() && entry.file_name() == LOCK_FILE_NAME {
+            contents.locks.push(path);
+        } else if kind.is_dir() && entry.file_name() == "v2" && path.join("journal.redb").exists() {
+            contents.nodes.push(dir.to_path_buf());
+        } else if kind.is_dir() {
+            scan(&path, contents)?;
         }
     }
-    folders.sort();
-    Ok(folders)
+    Ok(())
 }
 
 /// The configuration of each node profile, including `_default` and the active one, loaded the
@@ -139,6 +157,7 @@ mod tests {
     use super::{node_configs, purge};
     use anyhow::Result;
     use e3_cli::app_config::load_config;
+    use e3_entrypoint::fence::ProcessFence;
 
     /// The purge checks every node profile, not only the one the command runs as.
     #[test]
@@ -161,7 +180,8 @@ mod tests {
     }
 
     /// A node folder that no profile names may hold an E3's key share, which the purge cannot
-    /// check without that profile's keys: the purge refuses and deletes nothing, unless told to.
+    /// check without that profile's keys, at any depth below the data folder: the purge refuses
+    /// and deletes nothing, unless told to. A node that runs below it stops the purge either way.
     #[tokio::test]
     async fn a_node_folder_that_no_profile_names_stops_the_purge() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -174,7 +194,7 @@ mod tests {
         let config = load_config("cn1", config_file.clone(), None)?.node;
         let data = config.node_data_dir().parent().unwrap().to_path_buf();
         assert_eq!(data, dir.path().join(".interfold/data"));
-        let journal = crate::node_state::journal_in(&data.join("cn2"));
+        let journal = crate::node_state::journal_in(&data.join("group/cn2"));
         std::fs::create_dir_all(journal.parent().unwrap())?;
         std::fs::write(&journal, b"")?;
 
@@ -184,6 +204,13 @@ mod tests {
         assert!(error.to_string().contains("cn2"), "{error:#}");
         assert!(journal.exists());
 
+        let running = ProcessFence::acquire(&data.join("group/cn3/db"), "cn3")?;
+        purge(&config, config_file.clone(), dir.path(), true)
+            .await
+            .unwrap_err();
+        assert!(journal.exists());
+
+        drop(running);
         purge(&config, config_file, dir.path(), true).await?;
         assert!(!data.exists());
         Ok(())
