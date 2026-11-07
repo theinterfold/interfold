@@ -5,20 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod channel;
-pub mod oneshot_runner;
 
-use actix::{Actor, Handler, Message, ResponseActFuture, WrapFuture};
-use anyhow::{anyhow, Result};
-
-// Helper to allow for bail behaviour in actor model async handlers
-pub fn bail<T: Actor>(a: &T) -> ResponseActFuture<T, ()> {
-    Box::pin(async {}.into_actor(a))
-}
-
-pub fn bail_result<T: Actor>(a: &T, msg: impl Into<String>) -> ResponseActFuture<T, Result<()>> {
-    let m: String = msg.into();
-    Box::pin(async { Err(anyhow!(m)) }.into_actor(a))
-}
+use actix::{Actor, Handler, Message};
 
 /// Extension trait for synchronous message handling
 pub trait NotifySync<M>

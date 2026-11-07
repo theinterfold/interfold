@@ -15,6 +15,7 @@ requiring a full ciphernode.
 | [`eventbus_factory.rs`](src/eventbus_factory.rs)               | Default process-local bus and disabled-handle factories.                            |
 | [`global_eventstore_cache.rs`](src/global_eventstore_cache.rs) | Sequence/timestamp reader abstraction and optional reader cache.                    |
 | [`global_store_cache.rs`](src/global_store_cache.rs)           | Opt-in process-local data-store access for commands.                                |
+| [`log_path.rs`](src/log_path.rs)                               | Per-aggregate commit-log file names, shared with node validation and data reset.    |
 
 An enabled handle publishes through the sequencer to the aggregate store, then the bus admits the
 event to snapshot tracking and fans out to subscribers. Snapshot writes go through the buffer to the

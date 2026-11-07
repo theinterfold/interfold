@@ -579,11 +579,6 @@
           "name": "Mpsc<M>",
           "role": "actix actor that forwards each message into a tokio mpsc channel",
           "ref": "crates/utils/src/actix/channel.rs@46@pub struct Mpsc<M>"
-        },
-        {
-          "name": "OneShotRunner<F, M>",
-          "role": "actor that runs its closure once on the first message and logs any error",
-          "ref": "crates/utils/src/actix/oneshot_runner.rs@13@pub struct OneShotRunner<F, M>"
         }
       ],
       "consumes": [],
@@ -604,7 +599,7 @@
       "read_first": [
         {
           "why": "crate entry: module list and re-exports, including the BytesSerde derive",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
         },
         {
           "why": "ArcBytes, the shared byte buffer",
@@ -627,8 +622,8 @@
         },
         {
           "pattern": "actix-actor",
-          "note": "OneShotRunner implements actix::Actor and handles one message",
-          "ref": "crates/utils/src/actix/oneshot_runner.rs@38@impl<F, M> Actor for OneShotRunner<F, M>"
+          "note": "Oneshot implements actix::Actor and forwards its first message",
+          "ref": "crates/utils/src/actix/channel.rs@16@impl<M> Actor for Oneshot<M>"
         },
         {
           "pattern": "actix-recipient",
@@ -647,7 +642,7 @@
         }
       ],
       "depends_on": ["e3-utils-derive"],
-      "tests": "Unit tests in src/ (14 test attributes, for example test_one_shot_runner in src/actix/oneshot_runner.rs). Run: cargo test -p e3-utils.",
+      "tests": "Unit tests in src/ (19 test attributes, for example rejects_trailing_bytes in src/bounded_bincode.rs). Run: cargo test -p e3-utils.",
       "unverified": []
     },
     {
@@ -678,7 +673,7 @@
         },
         {
           "why": "where e3-utils re-exports the derive for other crates",
-          "ref": "crates/utils/src/lib.rs@24@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
         }
       ],
       "rust_patterns": [
