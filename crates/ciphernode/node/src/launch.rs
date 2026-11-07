@@ -99,6 +99,9 @@ pub struct Network {
 
 /// Runs the node until it fails.
 pub async fn launch(config: Config) -> anyhow::Result<()> {
+    // Before the node asks the chain or the network anything, so a second node on the directory
+    // stops at once.
+    let _held = lock_data_dir(&config.data_dir)?;
     let (auth, poll) = (config.rpc_auth.as_ref(), config.poll_interval);
     let chain =
         ProviderBuilder::new().connect_client(rpc_client(&config.rpc_url, auth, poll).await?);
@@ -281,6 +284,24 @@ pub fn data_layout() -> String {
 /// The files of the node in a data directory; others, such as its configuration, may share it.
 const NODE_FILES: [&str; 3] = ["journal.redb", "blobs", "unmined.json"];
 
+/// Holds `dir` for this process until the returned file closes: one node runs on a data directory,
+/// whichever command starts it.
+fn lock_data_dir(dir: &Path) -> anyhow::Result<std::fs::File> {
+    std::fs::create_dir_all(dir)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("node.lock"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            anyhow::bail!("another node runs on {}", dir.display())
+        }
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
+
 fn open_data_dir(dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let (marker, layout) = (dir.join("LAYOUT"), data_layout());
@@ -367,6 +388,16 @@ mod tests {
 
     /// The wallet sends over HTTP to the RPC node the reader reads over a WebSocket, still over
     /// TLS and on the same path, which often carries the provider's key.
+    #[test]
+    fn a_node_cannot_run_on_a_data_directory_another_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = lock_data_dir(dir.path()).unwrap();
+        let refused = lock_data_dir(dir.path()).unwrap_err();
+        assert!(refused.to_string().contains("another node runs on"));
+        drop(held);
+        lock_data_dir(dir.path()).unwrap();
+    }
+
     #[test]
     fn a_websocket_url_s_http_form_keeps_tls_and_the_path() {
         assert_eq!(
