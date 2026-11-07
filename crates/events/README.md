@@ -6,6 +6,15 @@ Ciphernode event vocabulary and transport pipeline: protocol payloads, event con
 publication/subscription, durable sequencing, aggregate queries, and snapshot admission. Payloads
 include cryptographic types; this is not a dependency-free collection of DTOs.
 
+## Why one package
+
+Payloads and pipeline stay in one package because a split would help no consumer. Almost every
+dependent crate also publishes or subscribes, so it would need both packages. The crypto and chain
+dependencies belong to the payloads, so a payload package would be no lighter. The `Sequencer`,
+`EventStore`, and `BusHandle` work on `InterfoldEvent`, and the sync-start payloads carry Actix
+recipients, so the two halves change together. Split only when a consumer needs the payloads without
+the pipeline. A split must keep the persisted enum order and the event encoding unchanged.
+
 ## Map
 
 | Location                                                                                                                     | Responsibility                                                         |
