@@ -72,16 +72,27 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         availability_url: availability,
         data_dir: config.node_data_dir().join("v2"),
         prover,
-        // The network ID, not its name, keeps custom networks apart.
-        network: Network {
-            id: config.network().id().to_string(),
-            identity,
-            listen: vec![format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.quic_port())],
-            peers: config.peers(),
-        },
+        network: network(config, identity),
         operator,
         cipher,
     })
+}
+
+/// A bootstrap node's configuration: the network part of a node's.
+pub async fn bootstrap(config: &NodeConfig) -> Result<Network> {
+    let cipher = Cipher::from_file(config.key_file()).await?;
+    let (_, identity) = keys(config, &cipher).await?;
+    Ok(network(config, identity))
+}
+
+fn network(config: &NodeConfig, identity: [u8; 32]) -> Network {
+    Network {
+        // The network ID, not its name, keeps custom networks apart.
+        id: config.network().id().to_string(),
+        identity,
+        listen: vec![format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.quic_port())],
+        peers: config.peers(),
+    }
 }
 
 /// The operator key and the network key that `interfold wallet set` sealed in the node's store.

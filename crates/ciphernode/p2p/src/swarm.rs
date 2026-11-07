@@ -6,7 +6,7 @@
 
 use crate::{inbound_ip_limits::InboundIpLimits, Network, NetworkError};
 use alloy_primitives::{Address, B256};
-use e3_blobs::BlobStore;
+use e3_blobs::{BlobStore, MemoryBlobs};
 use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef, E3Id};
 use futures::StreamExt;
 use libp2p::{
@@ -110,7 +110,9 @@ pub(crate) struct Behaviour {
 }
 
 impl Behaviour {
-    fn new(key: &Keypair, protocols: &Protocols) -> Result<Self, String> {
+    /// A node that takes no part in the network's `messages` does not subscribe to their topic, so
+    /// peers keep it out of their message mesh.
+    fn new(key: &Keypair, protocols: &Protocols, messages: bool) -> Result<Self, String> {
         let peer = key.public().to_peer_id();
         let gossipsub_config = gossipsub::ConfigBuilder::default()
             // The library's tick-based defaults (history, gossip windows) assume one second.
@@ -126,9 +128,11 @@ impl Behaviour {
             gossipsub_config,
         )
         .map_err(str::to_owned)?;
-        gossipsub
-            .subscribe(&protocols.topic)
-            .map_err(|error| error.to_string())?;
+        if messages {
+            gossipsub
+                .subscribe(&protocols.topic)
+                .map_err(|error| error.to_string())?;
+        }
         let mut kademlia_config = kad::Config::new(protocols.kademlia.clone());
         // Routing entries come only from peers that identify on this network and version.
         kademlia_config.set_kbucket_inserts(kad::BucketInserts::Manual);
@@ -184,6 +188,22 @@ impl P2p {
         me: Address,
         blobs: impl BlobStore,
     ) -> Result<(Self, mpsc::Receiver<PeerMessage>), P2pError> {
+        Self::join(config, true, me, blobs).await
+    }
+
+    /// Joins the network only to help peers find each other: the node answers their lookups and
+    /// takes no part in their messages.
+    pub async fn bootstrap(config: P2pConfig) -> Result<Self, P2pError> {
+        let (p2p, _) = Self::join(config, false, Address::ZERO, MemoryBlobs::default()).await?;
+        Ok(p2p)
+    }
+
+    async fn join(
+        config: P2pConfig,
+        messages: bool,
+        me: Address,
+        blobs: impl BlobStore,
+    ) -> Result<(Self, mpsc::Receiver<PeerMessage>), P2pError> {
         let key = Keypair::ed25519_from_bytes(config.identity)
             .map_err(|error| P2pError::Identity(error.to_string()))?;
         let peer = key.public().to_peer_id();
@@ -193,7 +213,7 @@ impl P2p {
             .with_quic()
             .with_dns()
             .map_err(|error| P2pError::Transport(error.to_string()))?
-            .with_behaviour(|key| Behaviour::new(key, &protocols).map_err(Into::into))
+            .with_behaviour(|key| Behaviour::new(key, &protocols, messages).map_err(Into::into))
             .map_err(|error| P2pError::Transport(error.to_string()))?
             .with_swarm_config(|config| {
                 config.with_idle_connection_timeout(Duration::from_secs(60))

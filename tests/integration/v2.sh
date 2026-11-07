@@ -12,7 +12,8 @@
 #
 # With V2_CLI=true the operators run their nodes as operators do: `interfold wallet set` stores
 # each key, and `interfold nodes up` runs `interfold start` for every node of one configuration
-# file. The restart is then `interfold nodes restart`, which stops the node with SIGTERM.
+# file, beside a bootstrap node. The restart is then `interfold nodes restart`, which stops the node
+# with SIGTERM.
 #
 # Run from the repository root. It starts anvil on 8545 and the availability server on 4000, and
 # stops only the processes it started.
@@ -157,8 +158,8 @@ start_node() {
   STARTED+=($!)
   NODE_PIDS[$index]=$!
 }
-# The operators' configuration for the CLI, with node `cnN` for operator N - 1. `nodes up` gives
-# every node the others as peers.
+# The operators' configuration for the CLI, with node `cnN` for operator N - 1, and a bootstrap
+# node with a wallet of its own. `nodes up` gives every node the others as peers.
 write_cli_config() {
   local skip=true
   [[ -n "$NOIR_DIR" ]] && skip=false
@@ -194,11 +195,19 @@ EOF
     skip_proof_aggregation: $skip
 EOF
   done
+  cat <<EOF
+  boot:
+    quic_port: 9405
+    ctrl_port: 50615
+    autopassword: true
+    autowallet: true
+    bootstrap: true
+EOF
 }
 nodes_running() {
   if [[ "$CLI" == "true" ]]; then
-    for index in "${!ADDRESSES[@]}"; do
-      pgrep -f "start --name cn$((index + 1)) --config $CONFIG" >/dev/null
+    for name in boot $(seq -f 'cn%g' 1 "${#ADDRESSES[@]}"); do
+      pgrep -f "start --name $name (--bootstrap )?--config $CONFIG" >/dev/null
     done
   else
     for pid in "${NODE_PIDS[@]}"; do

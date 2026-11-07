@@ -40,8 +40,17 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
 
     launch_socket_server(config.ctrl_port());
 
+    config.add_peers(peers)?;
     if bootstrap {
-        bail!("the node has no bootstrap mode yet: start it without --bootstrap");
+        let network = node_v2::bootstrap(&config).await?;
+        info!("LAUNCHING BOOTSTRAP NODE: ({})", config.name());
+        return tokio::select! {
+            result = e3_node::launch::bootstrap(network) => result.context("the node stopped"),
+            _ = &mut shutdown => {
+                info!("stopped");
+                Ok(())
+            }
+        };
     }
     if config.skip_proof_aggregation() && !cfg!(feature = "test-only-skip-proof-aggregation") {
         bail!(
@@ -49,7 +58,6 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
              `test-only-skip-proof-aggregation` Cargo feature"
         );
     }
-    config.add_peers(peers)?;
     let node = node_v2::config(&config).await?;
     info!(
         "LAUNCHING CIPHERNODE: ({}/{})",

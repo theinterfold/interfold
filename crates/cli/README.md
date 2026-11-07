@@ -61,10 +61,9 @@ interfold uninstall --help
 ```
 
 Global `--config <path>` and `--name <node>` select configuration and a named node.
-`start --bootstrap` runs discovery/history without committee/proof/transaction work; persisted
-full/bootstrap directories cannot be interchanged. Use `interfold init <path>` outside an existing
-project, then the [project runner workflow](../program/runner/README.md) for `compile` and
-`program start`.
+`start --bootstrap` only helps peers find each other: it answers their lookups and takes no part in
+their messages, the chain, or proofs. Use `interfold init <path>` outside an existing project, then
+the [project runner workflow](../program/runner/README.md) for `compile` and `program start`.
 
 Some read commands route to the local daemon while a node runs; mutating/offline operations are
 deliberately restricted. Reset/purge commands can destroy identity and keyshares: read their

@@ -148,6 +148,21 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     Err(run(settings, parts).await.into())
 }
 
+/// Runs a node that only helps the others find each other: it answers their lookups and takes no
+/// part in their messages, the chain, or proofs.
+pub async fn bootstrap(network: Network) -> anyhow::Result<()> {
+    let release = e3_ciphernode_config::current_node_release();
+    let _p2p = P2p::bootstrap(P2pConfig {
+        identity: network.identity,
+        network: network.id,
+        protocol_version: release.protocol_version,
+        listen: parse(&network.listen)?,
+        peers: parse(&network.peers)?,
+    })
+    .await?;
+    std::future::pending().await
+}
+
 fn proofs(config: &Config) -> anyhow::Result<Proofs> {
     let Some(prover) = &config.prover else {
         return Ok(Proofs::Placeholder);

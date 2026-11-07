@@ -46,14 +46,7 @@ async fn started<S: BlobStore>(
 ) -> Node {
     let dir = tempfile::tempdir().unwrap();
     let blobs = FileBlobs::open(dir.path()).unwrap();
-    let config = P2pConfig {
-        identity: [n as u8; 32],
-        network: "test".into(),
-        protocol_version: 1,
-        listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        peers,
-    };
-    let (p2p, inbound) = P2p::start(config, address(n), serve(blobs.clone()))
+    let (p2p, inbound) = P2p::start(config(n, peers), address(n), serve(blobs.clone()))
         .await
         .unwrap();
     Node {
@@ -62,6 +55,16 @@ async fn started<S: BlobStore>(
         blobs: blobs.of(e3(1)),
         store: blobs,
         _dir: dir,
+    }
+}
+
+fn config(n: u64, peers: Vec<Multiaddr>) -> P2pConfig {
+    P2pConfig {
+        identity: [n as u8; 32],
+        network: "test".into(),
+        protocol_version: 1,
+        listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+        peers,
     }
 }
 
@@ -273,6 +276,18 @@ async fn a_recipient_finds_a_dealer_it_was_not_told_about() {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     assert!(message.blobs().iter().all(|blob| third.blobs.has(blob)));
+}
+
+/// Nodes that know only a bootstrap node find each other through it. It does not carry their
+/// messages, so one that arrives shows the two connected.
+#[tokio::test(flavor = "multi_thread")]
+async fn nodes_that_know_only_a_bootstrap_node_find_each_other() {
+    let bootstrap = P2p::bootstrap(config(9, Vec::new())).await.unwrap();
+    let first = node(1, bootstrap.listening().to_vec()).await;
+    let mut second = node(2, bootstrap.listening().to_vec()).await;
+    let message = key(&first, 1);
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
 }
 
 /// After a restart the node has not heard the message, so it knows no peer to ask.

@@ -192,7 +192,11 @@ Each rule is checkable in review.
   release could set apart from the operator key, so every operator keeps its peer ID. The network's
   ID, not its name, goes into the protocol names, so two custom networks that share a name stay
   apart. What the node does not support yet stops it at start: more than one chain, RPC
-  authentication, an availability layer other than the HTTP object service, and bootstrap mode.
+  authentication, and an availability layer other than the HTTP object service. A bootstrap node
+  runs the network alone: it answers lookups under the stored network key, so its peer ID stays the
+  one peers are given, and takes no part in messages, the chain, or proofs. It does not subscribe to
+  the message topic, so peers keep it out of their message mesh, and it needs no gas, which a node
+  that acknowledges a release does.
 
 ## Problems in the current node, with the fix above them
 
