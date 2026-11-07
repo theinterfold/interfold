@@ -12,8 +12,10 @@ use super::{
     CiphernodeBuilder,
 };
 use alloy::primitives::Address;
-use anyhow::{ensure, Context as _, Result};
-use e3_events::{BusHandle, DkgFoldAttestationContext, E3Stage, E3id, EvmEventConfig};
+use anyhow::{bail, ensure, Context as _, Result};
+use e3_events::{
+    BusHandle, DkgFoldAttestationContext, E3Stage, E3id, EvmEventConfig, EvmEventConfigChain,
+};
 use e3_evm::{
     fetch_randomness_providers, ingestion_heartbeat_files, BondingRegistrySolReader,
     CapacityRefresher, CiphernodeRegistrySol, CiphernodeRegistrySolReader, ConcreteReadProvider,
@@ -140,7 +142,7 @@ impl CiphernodeBuilder {
             ingestion_confirmations,
             "Chain logs are applied after this many confirmations"
         );
-        evm_config.insert(chain_id, chain.try_into()?);
+        evm_config.insert(chain_id, event_config(chain)?);
 
         let provider_factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
 
@@ -381,6 +383,31 @@ fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
         "VRF sortition supports Ethereum mainnet, Sepolia, and local development chains only; received chain_id {chain_id}"
     );
     Ok(())
+}
+
+/// Where a chain's log reading starts, and its confirmations. A non-local chain must name each
+/// contract's deploy block: reading from genesis there is a misconfiguration.
+fn event_config(chain: &ChainConfig) -> Result<EvmEventConfigChain> {
+    let rpc = chain.rpc_url()?;
+    let mut lowest_block: Option<u64> = None;
+    for contract in chain.contracts.contracts() {
+        let deploy_block = contract.deploy_block();
+        if deploy_block.unwrap_or(0) == 0 && !rpc.is_local() {
+            let rpc_url = rpc.url().to_string();
+            let contract_address = contract.address_str();
+            error!(
+                "Querying from block 0 on a non-local node ({}) without a specific deploy_block is not allowed.",
+                rpc_url
+            );
+            bail!(
+                "Misconfiguration: Attempted to query historical events from genesis on a non-local node. \
+                Please specify a `deploy_block` for contract address {contract_address} on rpc {rpc_url}"
+            );
+        }
+        lowest_block = [lowest_block, deploy_block].into_iter().flatten().min();
+    }
+    Ok(EvmEventConfigChain::new(lowest_block.unwrap_or(0))
+        .with_confirmations(chain.ingestion_confirmations()?))
 }
 
 #[cfg(test)]

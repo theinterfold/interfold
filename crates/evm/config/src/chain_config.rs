@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use crate::{ContractAddresses, RpcAuth, RPC};
 use anyhow::*;
-use e3_events::EvmEventConfigChain;
 use serde::{Deserialize, Serialize};
-use tracing::error;
 
 /// Confirmations that a log needs when the chain does not set `ingestion_confirmations`.
 ///
@@ -119,42 +117,6 @@ impl ChainConfig {
     }
 }
 
-impl TryFrom<&ChainConfig> for EvmEventConfigChain {
-    type Error = anyhow::Error;
-    fn try_from(value: &ChainConfig) -> std::result::Result<Self, Self::Error> {
-        let rpc = value.rpc_url()?;
-        let contracts = value.contracts.contracts();
-        let mut lowest_block: Option<u64> = None;
-        for contract in contracts {
-            let deploy_block = contract.deploy_block();
-            if deploy_block.unwrap_or(0) == 0 && !rpc.is_local() {
-                let rpc_url = rpc.url().to_string();
-                let contract_address = contract.address_str();
-                error!(
-                   "Querying from block 0 on a non-local node ({}) without a specific deploy_block is not allowed.",
-                   rpc_url
-                );
-                bail!(
-                    "Misconfiguration: Attempted to query historical events from genesis on a non-local node. \
-                    Please specify a `deploy_block` for contract address {contract_address} on rpc {rpc_url}"
-                );
-            }
-            lowest_block = [lowest_block, deploy_block].into_iter().flatten().min();
-        }
-        let start_block = lowest_block.unwrap_or(0);
-        Ok(EvmEventConfigChain::new(start_block)
-            .with_confirmations(value.ingestion_confirmations()?))
-    }
-}
-
-impl TryFrom<ChainConfig> for EvmEventConfigChain {
-    type Error = anyhow::Error;
-    fn try_from(value: ChainConfig) -> std::result::Result<Self, Self::Error> {
-        let r = &value;
-        r.try_into()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,22 +153,21 @@ mod tests {
 
     #[test]
     fn non_local_chain_uses_a_safe_default() {
-        let config = EvmEventConfigChain::try_from(&chain("wss://example.com")).unwrap();
-        assert_eq!(config.confirmations(), 3);
+        let chain = chain("wss://example.com");
+        assert_eq!(chain.ingestion_confirmations().unwrap(), 3);
     }
 
     #[test]
     fn local_proxy_does_not_disable_confirmations() {
-        let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545")).unwrap();
-        assert_eq!(config.confirmations(), 3);
+        let chain = chain("ws://127.0.0.1:8545");
+        assert_eq!(chain.ingestion_confirmations().unwrap(), 3);
     }
 
     #[test]
     fn development_chain_can_explicitly_read_the_head() {
         let mut chain = chain("ws://127.0.0.1:8545");
         chain.ingestion_confirmations = Some(0);
-        let config = EvmEventConfigChain::try_from(&chain).unwrap();
-        assert_eq!(config.confirmations(), 0);
+        assert_eq!(chain.ingestion_confirmations().unwrap(), 0);
     }
 
     #[test]

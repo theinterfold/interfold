@@ -9,7 +9,5 @@ repository.workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 anyhow.workspace = true
-e3-events.workspace = true
 serde.workspace = true
-tracing.workspace = true
 url.workspace = true
