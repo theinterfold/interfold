@@ -113,19 +113,22 @@ struct Contents {
     locks: Vec<PathBuf>,
 }
 
+/// Every folder counts as a node folder when its journal exists, also through a link and also
+/// inside another node's folder. The walk itself follows no link, so it stays inside `dir`.
 fn scan(dir: &Path, contents: &mut Contents) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
+    if node_state::journal_in(dir).exists() {
+        contents.nodes.push(dir.to_path_buf());
+    }
     for entry in entries {
         let entry = entry?;
         let (path, kind) = (entry.path(), entry.file_type()?);
         if kind.is_file() && entry.file_name() == LOCK_FILE_NAME {
             contents.locks.push(path);
-        } else if kind.is_dir() && entry.file_name() == "v2" && path.join("journal.redb").exists() {
-            contents.nodes.push(dir.to_path_buf());
         } else if kind.is_dir() {
             scan(&path, contents)?;
         }
@@ -213,6 +216,43 @@ mod tests {
         drop(running);
         purge(&config, config_file, dir.path(), true).await?;
         assert!(!data.exists());
+        Ok(())
+    }
+
+    /// A node folder inside another node's folder, or a node folder whose state is a link to
+    /// storage elsewhere, counts too.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn node_folders_inside_another_or_behind_a_link_stop_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config_file = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_file,
+            "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n",
+        )?;
+        let config_file = Some(config_file.to_string_lossy().into_owned());
+        let config = load_config("cn1", config_file.clone(), None)?.node;
+        let data = config.node_data_dir().parent().unwrap().to_path_buf();
+
+        for node in ["cn2", "cn2/v2/cn4"] {
+            let journal = crate::node_state::journal_in(&data.join(node));
+            std::fs::create_dir_all(journal.parent().unwrap())?;
+            std::fs::write(&journal, b"")?;
+        }
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cn4"), "{error:#}");
+        std::fs::remove_dir_all(data.join("cn2"))?;
+
+        let elsewhere = tempfile::tempdir()?;
+        std::fs::write(elsewhere.path().join("journal.redb"), b"")?;
+        std::fs::create_dir_all(data.join("cn3"))?;
+        std::os::unix::fs::symlink(elsewhere.path(), data.join("cn3/v2"))?;
+        let error = purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cn3"), "{error:#}");
         Ok(())
     }
 }
