@@ -25,8 +25,8 @@
     "refs": [
       "crates/ciphernode/chain/src/writer.rs@216@let data = Registry::submitTicketCall {",
       "crates/ciphernode/chain/src/writer.rs@269@let data = IInterfold::publishPlaintextOutputCall {",
-      "crates/ciphernode/chain/src/writer.rs@302@let data = ISlashingManager::proposeSlashCall {",
-      "crates/ciphernode/node/src/launch.rs@141@rpc_client(&http_url(&config.rpc_url)?, auth, poll)"
+      "crates/ciphernode/chain/src/writer.rs@304@let data = ISlashingManager::proposeSlashCall {",
+      "crates/ciphernode/node/src/launch.rs@144@rpc_client(&http_url(&config.rpc_url)?, auth, poll)"
     ],
     "line_text": [
       "let data = Registry::submitTicketCall {",
@@ -41,7 +41,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/chain/src/rpc.rs@58@.subscribe_logs(&filter)",
-      "crates/ciphernode/chain/src/reader.rs@186@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
+      "crates/ciphernode/chain/src/reader.rs@201@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
       "crates/ciphernode/chain/src/decode.rs@194@I::E3Requested::SIGNATURE_HASH => {"
     ],
     "line_text": [
@@ -55,8 +55,8 @@
     "id": "B5",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@299@async fn read_chain<R: Rpc>(",
-      "crates/ciphernode/node/src/runtime.rs@313@events.send(Event::Input(Input::Chain(fact)))"
+      "crates/ciphernode/node/src/runtime.rs@297@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@311@events.send(Event::Input(Input::Chain(fact)))"
     ],
     "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
     "note": "The chain reader's task sends each fact to the event loop as an input."
@@ -64,7 +64,7 @@
   {
     "id": "B6",
     "supported": true,
-    "refs": ["crates/ciphernode/node/src/runtime.rs@331@async fn forward_peers("],
+    "refs": ["crates/ciphernode/node/src/runtime.rs@329@async fn forward_peers("],
     "line_text": ["async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::Sender<Event>) {"],
     "note": "Admitted peer messages reach the event loop as inputs."
   },
@@ -72,8 +72,8 @@
     "id": "B7",
     "supported": true,
     "refs": [
-      "crates/ciphernode/engine/src/lib.rs@125@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
-      "crates/protocol/src/node.rs@956@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+      "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
+      "crates/protocol/src/node.rs@987@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
       "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
@@ -85,7 +85,7 @@
     "id": "B8",
     "supported": true,
     "refs": [
-      "crates/ciphernode/engine/src/lib.rs@149@self.store.commit(Step {",
+      "crates/ciphernode/engine/src/lib.rs@150@self.store.commit(Step {",
       "crates/state/journal/src/lib.rs@103@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
     ],
     "line_text": ["self.store.commit(Step {", "fn commit(&mut self, step: Step) -> Result<(), StoreError> {"],
@@ -95,8 +95,8 @@
     "id": "B9",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@130@Engine::open(parts.journal, genesis, settings.snapshot_every)",
-      "crates/ciphernode/node/src/runtime.rs@212@queue.extend(effects.dispatch(pending));"
+      "crates/ciphernode/node/src/runtime.rs@128@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@210@queue.extend(effects.dispatch(pending));"
     ],
     "line_text": [
       "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",
@@ -108,8 +108,8 @@
     "id": "B10",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@381@Effect::Submit(submission)",
-      "crates/ciphernode/node/src/runtime.rs@416@match writer.submit(&submission).await {"
+      "crates/ciphernode/node/src/runtime.rs@380@Effect::Submit(submission)",
+      "crates/ciphernode/node/src/runtime.rs@420@match writer.submit(&submission).await {"
     ],
     "line_text": [
       "Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),",
@@ -121,8 +121,8 @@
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@376@Effect::Gossip(message) => {",
-      "crates/ciphernode/node/src/runtime.rs@485@network.publish(envelope)"
+      "crates/ciphernode/node/src/runtime.rs@375@Effect::Gossip(message) => {",
+      "crates/ciphernode/node/src/runtime.rs@490@network.publish(envelope)"
     ],
     "line_text": ["Effect::Gossip(message) => {", "if let Err(failure) = network.publish(envelope).await {"],
     "note": "A gossip effect is signed and published to the peers."
@@ -131,7 +131,7 @@
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@380@Effect::Run(job) => (job.e3, self.run(key, job)),",
+      "crates/ciphernode/node/src/runtime.rs@379@Effect::Run(job) => (job.e3, self.run(key, job)),",
       "crates/ciphernode/jobs/src/lib.rs@100@pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"
     ],
     "line_text": ["Effect::Run(job) => (job.e3, self.run(key, job)),", "pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"],
@@ -141,8 +141,8 @@
     "id": "B13",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@382@Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),",
-      "crates/ciphernode/node/src/runtime.rs@548@availability.retrieve(reference)"
+      "crates/ciphernode/node/src/runtime.rs@381@Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),",
+      "crates/ciphernode/node/src/runtime.rs@553@availability.retrieve(reference)"
     ],
     "line_text": ["Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),", "match availability.retrieve(reference).await {"],
     "note": "A fetch effect reads a ciphertext from the availability layer."
@@ -151,8 +151,8 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/swarm.rs@594@.send_request(&peer, (e3, blob.hash));",
-      "crates/ciphernode/p2p/src/swarm.rs@617@.send_response(channel, bytes);"
+      "crates/ciphernode/p2p/src/swarm.rs@677@.send_request(&peer, (e3, blob.hash));",
+      "crates/ciphernode/p2p/src/swarm.rs@700@.send_response(channel, bytes);"
     ],
     "line_text": [".send_request(&peer, (e3, blob.hash));", ".send_response(channel, bytes);"],
     "note": "A node fetches a message's blobs from its publisher with a request-response protocol and serves its own."

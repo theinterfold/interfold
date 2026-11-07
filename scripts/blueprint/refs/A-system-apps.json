@@ -201,10 +201,10 @@
     "id": "A23",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/swarm.rs@105@gossipsub: gossipsub::Behaviour,",
-      "crates/ciphernode/p2p/src/swarm.rs@107@kademlia: kad::Behaviour<MemoryStore>,",
-      "crates/ciphernode/p2p/src/swarm.rs@109@blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
-      "crates/ciphernode/p2p/src/swarm.rs@214@.with_quic()"
+      "crates/ciphernode/p2p/src/swarm.rs@122@gossipsub: gossipsub::Behaviour,",
+      "crates/ciphernode/p2p/src/swarm.rs@124@kademlia: kad::Behaviour<MemoryStore>,",
+      "crates/ciphernode/p2p/src/swarm.rs@126@blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
+      "crates/ciphernode/p2p/src/swarm.rs@232@.with_quic()"
     ],
     "line_text": [
       "gossipsub: gossipsub::Behaviour,",

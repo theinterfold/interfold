@@ -19,14 +19,14 @@
         {
           "name": "each E3's stage, committee, DKG and decryption work, inside Node",
           "where": "memory",
-          "ref": "crates/protocol/src/node.rs@498@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@517@pub struct Node {"
         }
       ],
       "key_types": [
         {
           "name": "Node",
           "what": "the whole node's protocol state for one operator",
-          "ref": "crates/protocol/src/node.rs@498@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@517@pub struct Node {"
         },
         {
           "name": "Machine",
@@ -68,11 +68,11 @@
       "read_first": [
         {
           "why": "crate entry: the capability modules and the encoding version of what a node persists: journal inputs, effects and snapshots",
-          "ref": "crates/protocol/src/lib.rs@33@pub const ENCODING_VERSION: u32 = 9;"
+          "ref": "crates/protocol/src/lib.rs@33@pub const ENCODING_VERSION: u32"
         },
         {
           "why": "the machine: one step per input, returning the effects",
-          "ref": "crates/protocol/src/node.rs@956@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+          "ref": "crates/protocol/src/node.rs@987@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
         },
         { "why": "every kind of input", "ref": "crates/protocol/src/node.rs@416@pub enum Input {" }
       ],
@@ -96,30 +96,30 @@
         {
           "name": "effects not yet acknowledged, kept in the store's outbox until done",
           "where": "disk",
-          "ref": "crates/ciphernode/engine/src/lib.rs@51@pub trait Store {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@52@pub trait Store {"
         }
       ],
       "key_types": [
         {
           "name": "Engine",
           "what": "the machine with its store; apply returns the next engine and the new effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@78@pub struct Engine<M: Machine, S: Store> {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@79@pub struct Engine<M: Machine, S: Store> {"
         },
         {
           "name": "Store",
           "what": "one atomic commit per step: journal entry, outbox changes, snapshot",
-          "ref": "crates/ciphernode/engine/src/lib.rs@51@pub trait Store {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@52@pub trait Store {"
         },
-        { "name": "Step", "what": "what one commit writes", "ref": "crates/ciphernode/engine/src/lib.rs@33@pub struct Step {" },
+        { "name": "Step", "what": "what one commit writes", "ref": "crates/ciphernode/engine/src/lib.rs@34@pub struct Step {" },
         {
           "name": "Pending",
           "what": "an effect that waits for its acknowledgment",
-          "ref": "crates/ciphernode/engine/src/lib.rs@27@pub struct Pending<E> {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@28@pub struct Pending<E> {"
         },
         {
           "name": "EffectKey",
           "what": "the identity of an effect in the outbox",
-          "ref": "crates/ciphernode/engine/src/lib.rs@21@pub struct EffectKey {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@22@pub struct EffectKey {"
         },
         {
           "name": "MemoryStore",
@@ -130,15 +130,15 @@
       "read_first": [
         {
           "why": "open: replay the journal from the latest snapshot and return the pending effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@89@pub fn open(store: S, genesis: M, snapshot_every: u64)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@90@pub fn open(store: S, genesis: M, snapshot_every: u64)"
         },
         {
           "why": "apply: one input, one commit, the new effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@125@pub fn apply(mut self, now: UnixSecs, input: M::Input)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)"
         },
         {
           "why": "acknowledge: an effect is done and leaves the outbox",
-          "ref": "crates/ciphernode/engine/src/lib.rs@163@pub fn acknowledge(&mut self, key: EffectKey)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@164@pub fn acknowledge(&mut self, key: EffectKey)"
         }
       ],
       "rust_patterns": [],
@@ -205,24 +205,24 @@
       "consumes": [],
       "emits": [],
       "state": [
-        { "name": "one folder of blob files per E3", "where": "disk", "ref": "crates/state/blobs/src/lib.rs@203@pub struct FileBlobs {" }
+        { "name": "one folder of blob files per E3", "where": "disk", "ref": "crates/state/blobs/src/lib.rs@205@pub struct FileBlobs {" }
       ],
       "key_types": [
         {
           "name": "BlobStore",
           "what": "stores, reads, closes and sweeps blobs by E3",
-          "ref": "crates/state/blobs/src/lib.rs@36@pub trait BlobStore: Clone + Send + Sync + 'static {"
+          "ref": "crates/state/blobs/src/lib.rs@38@pub trait BlobStore: Clone + Send + Sync + 'static {"
         },
         {
           "name": "E3Blobs",
           "what": "a store scoped to one E3, which the jobs use",
-          "ref": "crates/state/blobs/src/lib.rs@62@pub struct E3Blobs<S> {"
+          "ref": "crates/state/blobs/src/lib.rs@64@pub struct E3Blobs<S> {"
         },
-        { "name": "FileBlobs", "what": "the store on disk", "ref": "crates/state/blobs/src/lib.rs@203@pub struct FileBlobs {" },
+        { "name": "FileBlobs", "what": "the store on disk", "ref": "crates/state/blobs/src/lib.rs@205@pub struct FileBlobs {" },
         {
           "name": "MemoryBlobs",
           "what": "the store in memory, for tests",
-          "ref": "crates/state/blobs/src/lib.rs@149@pub struct MemoryBlobs {"
+          "ref": "crates/state/blobs/src/lib.rs@151@pub struct MemoryBlobs {"
         },
         {
           "name": "BlobError",
@@ -233,11 +233,11 @@
       "read_first": [
         {
           "why": "put: store bytes under their hash for one E3",
-          "ref": "crates/state/blobs/src/lib.rs@37@fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;"
+          "ref": "crates/state/blobs/src/lib.rs@39@fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;"
         },
         {
           "why": "open the store's folder",
-          "ref": "crates/state/blobs/src/lib.rs@213@pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BlobError> {"
+          "ref": "crates/state/blobs/src/lib.rs@215@pub fn open(dir: impl Into<PathBuf>) -> Result<Self, BlobError> {"
         }
       ],
       "rust_patterns": [],
@@ -267,12 +267,12 @@
         {
           "name": "Reader",
           "what": "turns confirmed logs into chain facts, in order",
-          "ref": "crates/ciphernode/chain/src/reader.rs@125@pub struct Reader<R> {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@140@pub struct Reader<R> {"
         },
         {
           "name": "Rpc",
           "what": "what the reader needs from a chain node",
-          "ref": "crates/ciphernode/chain/src/reader.rs@28@pub trait Rpc {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@43@pub trait Rpc {"
         },
         {
           "name": "ChainNode",
@@ -308,11 +308,11 @@
       "read_first": [
         {
           "why": "poll: the facts of the next confirmed blocks",
-          "ref": "crates/ciphernode/chain/src/reader.rs@186@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@201@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {"
         },
         {
           "why": "wait: until the RPC node announces a log, or a poll is due",
-          "ref": "crates/ciphernode/chain/src/reader.rs@250@pub async fn wait(&mut self) {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@265@pub async fn wait(&mut self) {"
         },
         {
           "why": "announce: the log subscription that wakes the reader",
@@ -348,25 +348,25 @@
         {
           "name": "Network",
           "what": "what the node needs from the network: publish, fetch and admit operators",
-          "ref": "crates/ciphernode/p2p/src/lib.rs@21@pub trait Network: Send + Sync + 'static {"
+          "ref": "crates/ciphernode/p2p/src/lib.rs@22@pub trait Network: Send + Sync + 'static {"
         },
-        { "name": "P2p", "what": "the libp2p implementation over QUIC", "ref": "crates/ciphernode/p2p/src/swarm.rs@170@pub struct P2p {" },
+        { "name": "P2p", "what": "the libp2p implementation over QUIC", "ref": "crates/ciphernode/p2p/src/swarm.rs@188@pub struct P2p {" },
         {
           "name": "P2pConfig",
           "what": "identity, network ID, listen addresses and peers",
-          "ref": "crates/ciphernode/p2p/src/swarm.rs@53@pub struct P2pConfig {"
+          "ref": "crates/ciphernode/p2p/src/swarm.rs@68@pub struct P2pConfig {"
         },
         {
           "name": "InboundIpLimits",
           "what": "caps the inbound connections of each address group",
-          "ref": "crates/ciphernode/p2p/src/inbound_ip_limits.rs@91@pub struct InboundIpLimits {"
+          "ref": "crates/ciphernode/p2p/src/inbound_ip_limits.rs@97@pub struct InboundIpLimits {"
         }
       ],
       "read_first": [
-        { "why": "start the network for a node", "ref": "crates/ciphernode/p2p/src/swarm.rs@187@pub async fn start(" },
+        { "why": "start the network for a node", "ref": "crates/ciphernode/p2p/src/swarm.rs@205@pub async fn start(" },
         {
           "why": "a bootstrap node: lookups only, no messages",
-          "ref": "crates/ciphernode/p2p/src/swarm.rs@197@pub async fn bootstrap(config: P2pConfig) -> Result<Self, P2pError> {"
+          "ref": "crates/ciphernode/p2p/src/swarm.rs@215@pub async fn bootstrap(config: P2pConfig) -> Result<Self, P2pError> {"
         }
       ],
       "rust_patterns": [],
@@ -456,17 +456,17 @@
         {
           "name": "journal.redb: the journal, snapshot and outbox",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@133@Journal::open(config.data_dir.join(\"journal.redb\"))"
+          "ref": "crates/ciphernode/node/src/launch.rs@136@Journal::open(config.data_dir.join(\"journal.redb\"))"
         },
         {
           "name": "blobs folder",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@146@FileBlobs::open(config.data_dir.join(\"blobs\"))"
+          "ref": "crates/ciphernode/node/src/launch.rs@149@FileBlobs::open(config.data_dir.join(\"blobs\"))"
         },
         {
           "name": "unmined.json: sends the chain has not mined",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@142@config.data_dir.join(\"unmined.json\")"
+          "ref": "crates/ciphernode/node/src/launch.rs@145@config.data_dir.join(\"unmined.json\")"
         },
         {
           "name": "ingestion heartbeat for the health check",
@@ -476,7 +476,7 @@
         {
           "name": "listening addresses",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@160@config.data_dir.join(\"listening\")"
+          "ref": "crates/ciphernode/node/src/launch.rs@163@config.data_dir.join(\"listening\")"
         }
       ],
       "key_types": [
@@ -488,14 +488,14 @@
         {
           "name": "Settings",
           "what": "the operator's settings the runtime uses",
-          "ref": "crates/ciphernode/node/src/runtime.rs@58@pub struct Settings {"
+          "ref": "crates/ciphernode/node/src/runtime.rs@56@pub struct Settings {"
         },
         {
           "name": "Parts",
           "what": "the adapters the runtime drives",
-          "ref": "crates/ciphernode/node/src/runtime.rs@69@pub struct Parts<R, A, N, B> {"
+          "ref": "crates/ciphernode/node/src/runtime.rs@67@pub struct Parts<R, A, N, B> {"
         },
-        { "name": "NodeError", "what": "why a node stops", "ref": "crates/ciphernode/node/src/runtime.rs@86@pub enum NodeError {" }
+        { "name": "NodeError", "what": "why a node stops", "ref": "crates/ciphernode/node/src/runtime.rs@84@pub enum NodeError {" }
       ],
       "read_first": [
         {
@@ -504,13 +504,13 @@
         },
         {
           "why": "run: the event loop",
-          "ref": "crates/ciphernode/node/src/runtime.rs@106@pub async fn run<R, A, N, B>(settings: Settings, parts: Parts<R, A, N, B>) -> NodeError"
+          "ref": "crates/ciphernode/node/src/runtime.rs@104@pub async fn run<R, A, N, B>(settings: Settings, parts: Parts<R, A, N, B>) -> NodeError"
         },
         {
           "why": "one step: apply an input and dispatch its effects",
-          "ref": "crates/ciphernode/node/src/runtime.rs@202@let (next, pending) = engine.apply(now(), input)?;"
+          "ref": "crates/ciphernode/node/src/runtime.rs@200@let (next, pending) = engine.apply(now(), input)?;"
         },
-        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@299@async fn read_chain<R: Rpc>(" },
+        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@297@async fn read_chain<R: Rpc>(" },
         {
           "why": "how many proofs run at once",
           "ref": "crates/ciphernode/node/src/memory.rs@22@pub(crate) fn proof_jobs(requested: usize) -> usize {"
