@@ -105,6 +105,14 @@ impl Rpc for FakeNode {
     async fn dkg_window(&self, _: U256, block: u64) -> Result<UnixSecs, RpcError> {
         self.read(block, |_| TIMING.window)
     }
+
+    async fn eligible(
+        &self,
+        operators: &[Address],
+        _: UnixSecs,
+    ) -> Result<BTreeSet<Address>, RpcError> {
+        Ok(operators.iter().copied().collect())
+    }
 }
 
 fn e3() -> E3Id {

@@ -17,7 +17,8 @@ use e3_journal::Journal;
 use e3_p2p::Network;
 use e3_protocol::{
     node::{
-        Effect, Fetch, Fetched, Input, Job, JobDone, Node, PeerMessage, Signed, Signing, Submission,
+        Effect, Eligibility, EligibilityRead, Fetch, Fetched, Input, Job, JobDone, Node,
+        PeerMessage, Signed, Signing, Submission,
     },
     wire::Envelope,
     E3Id, UnixSecs,
@@ -104,7 +105,7 @@ enum Event {
 /// Runs the node until its inputs stop or its journal or chain logs fail.
 pub async fn run<R, A, N, B>(settings: Settings, parts: Parts<R, A, N, B>) -> NodeError
 where
-    R: Rpc + Send + Sync + 'static,
+    R: Rpc + Clone + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
     B: BlobStore,
@@ -120,7 +121,7 @@ async fn start<R, A, N, B>(
     parts: Parts<R, A, N, B>,
 ) -> Result<Infallible, NodeError>
 where
-    R: Rpc + Send + Sync + 'static,
+    R: Rpc + Clone + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
     B: BlobStore,
@@ -152,7 +153,7 @@ where
         .slashing
         .extend(machine.slashing_managers(chain_id));
     let reader = Reader::new(
-        parts.rpc,
+        parts.rpc.clone(),
         contracts,
         settings.confirmations,
         settings.max_log_range,
@@ -166,6 +167,7 @@ where
     ));
     tokio::spawn(forward_peers(parts.inbound, events.clone()));
     let mut effects = Effects {
+        rpc: Arc::new(parts.rpc),
         operator: parts.operator,
         blobs: parts.blobs.clone(),
         jobs: Arc::new(parts.jobs),
@@ -340,7 +342,8 @@ async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::S
 /// Carries out the machine's effects. Each effect stays in the outbox until it is done: a job, a
 /// signature or a fetch once its result is journaled, a gossip once it is published, a
 /// submission once the writer finished it, and any effect of an E3 the machine dropped.
-struct Effects<A, N, B> {
+struct Effects<R, A, N, B> {
+    rpc: Arc<R>,
     operator: PrivateKeySigner,
     blobs: B,
     jobs: Arc<JobRunner<B>>,
@@ -352,8 +355,9 @@ struct Effects<A, N, B> {
     tasks: BTreeMap<E3Id, Vec<(EffectKey, AbortHandle)>>,
 }
 
-impl<A, N, B> Effects<A, N, B>
+impl<R, A, N, B> Effects<R, A, N, B>
 where
+    R: Rpc + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
     B: BlobStore,
@@ -376,6 +380,7 @@ where
                 Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),
                 Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),
                 Effect::FetchBlobs(message) => (message.e3, self.fetch_blobs(key, message)),
+                Effect::ReadEligibility(read) => (read.e3, self.read_eligibility(key, read)),
             };
             let tasks = self.tasks.entry(e3).or_default();
             tasks.push((key, task.abort_handle()));
@@ -496,6 +501,32 @@ where
                     let _ = events.send(Event::Done(key)).await;
                 }
             }
+        })
+    }
+
+    /// Reads which operators may hold a seat until the machine stops waiting for the answer; a
+    /// failed or late read answers that the node does not know.
+    fn read_eligibility(&self, key: EffectKey, read: EligibilityRead) -> JoinHandle<()> {
+        let (rpc, events) = (self.rpc.clone(), self.events.clone());
+        tokio::spawn(async move {
+            let limit = Duration::from_secs(read.by.saturating_sub(now()));
+            let answer = tokio::time::timeout(limit, rpc.eligible(&read.operators, read.at)).await;
+            let eligible = match answer {
+                Ok(Ok(eligible)) => Some(eligible),
+                Ok(Err(failure)) => {
+                    warn!(e3 = %read.e3, %failure, "reading who may hold a seat failed");
+                    None
+                }
+                Err(_) => {
+                    warn!(e3 = %read.e3, "reading who may hold a seat took too long");
+                    None
+                }
+            };
+            let answer = Input::Eligibility(Eligibility {
+                e3: read.e3,
+                eligible,
+            });
+            let _ = events.send(Event::Result(key, answer)).await;
         })
     }
 

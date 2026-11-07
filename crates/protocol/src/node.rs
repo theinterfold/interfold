@@ -392,6 +392,24 @@ pub struct Fetched {
     pub blob: BlobRef,
 }
 
+/// Which of `operators` the bonding registry finds eligible at `at`. Under a required identity
+/// policy an operator is eligible only while its owner holds a credential. The answer returns as
+/// [`Input::Eligibility`]; one after `by` comes too late to rank with.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EligibilityRead {
+    pub e3: E3Id,
+    pub operators: Vec<Address>,
+    pub at: UnixSecs,
+    pub by: UnixSecs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Eligibility {
+    pub e3: E3Id,
+    /// None when the read failed.
+    pub eligible: Option<BTreeSet<Address>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Input {
     Chain(ChainEvent),
@@ -405,6 +423,7 @@ pub enum Input {
     /// Wakes the machine at its next deadline. Every input first applies the deadlines that have
     /// passed, so a late wake-up changes nothing.
     Tick,
+    Eligibility(Eligibility),
 }
 
 impl From<Tick> for Input {
@@ -457,6 +476,7 @@ pub enum Effect {
     /// Bring the blobs a peer's message names into the store, from the peers that sent it; the
     /// message comes back as `Input::Peer` once they are there.
     FetchBlobs(PeerMessage),
+    ReadEligibility(EligibilityRead),
 }
 
 impl Effect {
@@ -467,6 +487,7 @@ impl Effect {
             Effect::Gossip(message) | Effect::FetchBlobs(message) => message.e3,
             Effect::Submit(submission) => submission.e3,
             Effect::Fetch(fetch) => fetch.e3,
+            Effect::ReadEligibility(read) => read.e3,
         }
     }
 }
@@ -714,18 +735,58 @@ impl Node {
         }
     }
 
-    /// Rank the request's candidates from the registry at T−1 and submit this node's ticket if it
-    /// is one of them, before the committee deadline. Under a required identity policy the node
-    /// cannot tell which owners hold a credential, so it ranks every eligible operator, and the
-    /// contract rejects the others. A node takes at most as many E3s at once as it has tickets.
+    /// The registry accepted the request's randomness. Under a required identity policy an
+    /// owner-capped request first asks the bonding registry which operators' owners hold a
+    /// credential, while there is time for the read and for a ticket after it.
     fn select(&mut self, now: UnixSecs, e3: E3Id, seed: CommitteeSeed) -> Vec<Effect> {
+        let Some(state) = self.e3s.get_mut(&e3) else {
+            return Vec::new();
+        };
+        state.seeded(seed.deadline);
+        let request = state.request;
+        let at = request.time.saturating_sub(1);
+        let registry = self.registries.entry(e3.chain_id).or_default();
+        let by = (now + ELIGIBILITY_READ).min(seed.deadline.saturating_sub(TICKET_RESERVE));
+        if request.owner_cap
+            && registry.identity_required_at(at)
+            && now < by
+            && state.ticket().is_none()
+        {
+            if !state.await_eligibility(seed, by) {
+                return Vec::new();
+            }
+            let operators = registry
+                .eligible_at(at, request.ticket_price)
+                .into_iter()
+                .map(|operator| operator.operator)
+                .collect();
+            let read = EligibilityRead {
+                e3,
+                operators,
+                at,
+                by,
+            };
+            return vec![Effect::ReadEligibility(read)];
+        }
+        self.rank(now, e3, seed, None)
+    }
+
+    /// Rank the request's candidates from the registry at T−1 and submit this node's ticket if it
+    /// is one of them, before the committee deadline. Under a required identity policy only the
+    /// operators in `credentialed` keep the owner shortlist; without that answer the node ranks
+    /// every eligible operator, and the contract rejects the others. A node takes at most as many
+    /// E3s at once as it has tickets.
+    fn rank(
+        &mut self,
+        now: UnixSecs,
+        e3: E3Id,
+        seed: CommitteeSeed,
+        credentialed: Option<&BTreeSet<Address>>,
+    ) -> Vec<Effect> {
         let CommitteeSeed {
             seed,
             deadline: committee_deadline,
         } = seed;
-        if let Some(state) = self.e3s.get_mut(&e3) {
-            state.seeded(committee_deadline);
-        }
         let active_jobs = self
             .e3s
             .values()
@@ -740,8 +801,12 @@ impl Node {
         let request = state.request;
         let at = request.time.saturating_sub(1);
         let registry = self.registries.entry(e3.chain_id).or_default();
-        let eligible = registry.eligible_at(at, request.ticket_price);
-        let owner_cap = request.owner_cap && !registry.identity_required_at(at);
+        let mut eligible = registry.eligible_at(at, request.ticket_price);
+        if let Some(credentialed) = credentialed {
+            eligible.retain(|operator| credentialed.contains(&operator.operator));
+        }
+        let owner_cap =
+            request.owner_cap && (credentialed.is_some() || !registry.identity_required_at(at));
         let committee = state.params.committee_size.values();
         let owners = candidate_owners(committee.n, committee.threshold);
         let ranked = candidates(e3, seed, &eligible, owner_cap, owners);
@@ -834,11 +899,19 @@ impl Node {
     }
 
     fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
-        let effects = self
+        let mut effects: Vec<Effect> = self
             .e3s
             .values_mut()
             .flat_map(|state| state.pass_deadlines(now))
             .collect();
+        let unanswered: Vec<(E3Id, CommitteeSeed)> = self
+            .e3s
+            .iter_mut()
+            .filter_map(|(e3, state)| state.unanswered(now).map(|seed| (*e3, seed)))
+            .collect();
+        for (e3, seed) in unanswered {
+            effects.extend(self.rank(now, e3, seed, None));
+        }
         let due: Vec<E3Id> = self
             .e3s
             .iter()
@@ -851,6 +924,11 @@ impl Node {
         effects
     }
 }
+
+/// How long an eligibility read may take, and the time it leaves before the ticket deadline for
+/// the ticket's transaction: about a block, plus clock skew.
+const ELIGIBILITY_READ: UnixSecs = 20;
+const TICKET_RESERVE: UnixSecs = 20;
 
 /// This node's place among the operators eligible for `request`, in address order: the order in
 /// which they mark it failed while no committee exists.
@@ -880,6 +958,11 @@ impl Machine for Node {
                 None => Vec::new(),
             },
             Input::Tick => Vec::new(),
+            Input::Eligibility(answer) => match self.e3s.get_mut(&answer.e3).and_then(E3::answered)
+            {
+                Some(seed) => self.rank(now, answer.e3, seed, answer.eligible.as_ref()),
+                None => Vec::new(),
+            },
         });
         effects
     }
@@ -1214,21 +1297,55 @@ mod tests {
         assert!(submissions(&node.step(10_000, Input::Tick)).is_empty());
     }
 
-    #[test]
-    fn a_required_identity_policy_ranks_every_eligible_operator() {
+    /// A request under a required identity policy whose seed leaves this node off the owner
+    /// shortlist of all nine operators, and the effects of the seed.
+    fn credential_request() -> (Node, Vec<Effect>) {
         let operators: Vec<u64> = (1..=8).chain([ME]).collect();
         let seed = (0..1_000)
             .find(|seed| rank(&operators, *seed, true).is_none())
             .expect("a seed that leaves this node off the owner shortlist");
-        let submits = |required: bool| {
-            let mut node = node();
-            registered(&mut node, &operators, 10);
-            node.step(1, chain(1, ChainFact::IdentityPolicy { required }));
-            node.step(3, requested_at(3, e3(1), 3));
-            submissions(&node.step(5, seed_ready(5, e3(1), seed, 100))).len()
+        let mut node = node();
+        registered(&mut node, &operators, 10);
+        node.step(1, chain(1, ChainFact::IdentityPolicy { required: true }));
+        node.step(3, requested_at(3, e3(1), 3));
+        let effects = node.step(5, seed_ready(5, e3(1), seed, 100));
+        (node, effects)
+    }
+
+    fn credentialed(operators: &[u64]) -> Input {
+        Input::Eligibility(Eligibility {
+            e3: e3(1),
+            eligible: Some(operators.iter().copied().map(address).collect()),
+        })
+    }
+
+    #[test]
+    fn under_a_required_identity_policy_the_shortlist_ranks_credentialed_operators_only() {
+        let (mut node, effects) = credential_request();
+        let reads: Vec<&EligibilityRead> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::ReadEligibility(read) => Some(read),
+                _ => None,
+            })
+            .collect();
+        let [read] = reads.as_slice() else {
+            panic!("one eligibility read: {effects:?}");
         };
-        assert_eq!(submits(false), 0);
-        assert_eq!(submits(true), 1);
+        assert_eq!((read.at, read.by, read.operators.len()), (2, 25, 9));
+        assert!(submissions(&effects).is_empty());
+        assert_eq!(submissions(&node.step(6, credentialed(&[1, ME]))).len(), 1);
+
+        let (mut node, _) = credential_request();
+        assert!(submissions(&node.step(6, credentialed(&[1, 2]))).is_empty());
+    }
+
+    #[test]
+    fn without_an_answer_in_time_the_node_ranks_every_eligible_operator() {
+        let (mut node, _) = credential_request();
+        assert!(submissions(&node.step(24, Input::Tick)).is_empty());
+        assert_eq!(submissions(&node.step(25, Input::Tick)).len(), 1);
+        assert!(submissions(&node.step(26, credentialed(&[]))).is_empty());
     }
 
     #[test]
@@ -1375,12 +1492,21 @@ mod tests {
             }),
         };
         journal.extend(bincode::serialize(&fold).unwrap());
+        // The identity-policy read and its answer, which this sample's request does not need.
+        let read = Effect::ReadEligibility(EligibilityRead {
+            e3: e3(1),
+            operators: vec![address(1)],
+            at: 2,
+            by: 25,
+        });
+        journal.extend(bincode::serialize(&read).unwrap());
+        journal.extend(bincode::serialize(&credentialed(&[1])).unwrap());
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                6,
+                7,
                 alloy_primitives::b256!(
-                    "906c63fdca563eb9204c1f8d1590bb17a7faaf0aad2b5e563c55e32618622efa"
+                    "418a65afb69087842eec857a0cec6cf4b85298f3509eb00929863604c868f725"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

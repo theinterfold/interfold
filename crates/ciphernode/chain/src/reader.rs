@@ -49,6 +49,13 @@ pub trait Rpc {
         e3: U256,
         block: u64,
     ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
+
+    /// Which of `operators` the bonding registry finds eligible at `at`.
+    fn eligible(
+        &self,
+        operators: &[Address],
+        at: UnixSecs,
+    ) -> impl Future<Output = Result<BTreeSet<Address>, RpcError>> + Send;
 }
 
 /// The registry's sortition state of one E3.

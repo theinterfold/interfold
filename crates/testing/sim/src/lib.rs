@@ -18,8 +18,8 @@ use alloy_primitives::{Address, B256, U256};
 use e3_engine::{EffectKey, Engine, MemoryStore, Pending};
 use e3_protocol::{
     node::{
-        ChainEvent, ChainFact, CryptoParams, DataRef, Effect, FailureReason, Fetched, Input,
-        JobDone, LogPosition, Node, PeerMessage, Stage, Submission, Transaction,
+        ChainEvent, ChainFact, CryptoParams, DataRef, Effect, Eligibility, FailureReason, Fetched,
+        Input, JobDone, LogPosition, Node, PeerMessage, Stage, Submission, Transaction,
     },
     selection::ticket_score,
     testing::{address, sign, COMPUTE_DEADLINE, TIMING},
@@ -340,6 +340,15 @@ impl<J: Jobs> Sim<J> {
                 Effect::FetchBlobs(message) => {
                     let at = self.now + self.delay();
                     self.schedule(at, node, Input::Peer(message), Some(key));
+                }
+                Effect::ReadEligibility(read) => {
+                    let eligible = Some(read.operators.into_iter().collect());
+                    let answer = Input::Eligibility(Eligibility {
+                        e3: read.e3,
+                        eligible,
+                    });
+                    let at = self.now + self.delay();
+                    self.schedule(at, node, answer, Some(key));
                 }
                 Effect::Fetch(fetch) => {
                     let blob = self.available[&fetch.data.hash];

@@ -11,6 +11,7 @@ e3-blobs = { workspace = true }
 e3-committee = { workspace = true }
 e3-data-availability = { workspace = true }
 e3-evm-contracts = { workspace = true }
+futures = { workspace = true }
 e3-evm-transactions = { workspace = true }
 e3-protocol = { workspace = true }
 alloy = { workspace = true }

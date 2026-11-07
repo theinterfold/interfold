@@ -3643,6 +3643,7 @@ dependencies = [
  "e3-evm-contracts",
  "e3-evm-transactions",
  "e3-protocol",
+ "futures",
  "serde",
  "serde_json",
  "tempfile",

@@ -104,9 +104,12 @@ Each rule is checkable in review.
 - **D20. Selection reads the node's own registry history.** Activity, ticket balances, bond owners,
   and the identity policy are chain facts with their block times; selection reads them at T−1 for a
   request at T ([committee selection](committee-selection.md)). The node's load limit counts the
-  live E3s it holds a ticket for, so no separate counter can drift. Under a required identity policy
-  v2 ranks every eligible operator, which is today's fallback when the eligibility read fails;
-  porting that read, which keeps the owner shortlist, is still open.
+  live E3s it holds a ticket for, so no separate counter can drift. Credentials are the exception:
+  under a required identity policy an owner-capped request first asks the bonding registry which
+  candidates are eligible at T−1 (`eligibilityAt`), since that rule, with its pause cutoffs and
+  credential windows, lives in the contract. The node ranks only those, so the owner shortlist
+  holds. The read gets 20 seconds and must end 20 seconds before the ticket deadline; without an
+  answer by then the node ranks every eligible operator, and the contract rejects the others.
 
 - **D21. No history sync.** A node that restarts or joins late gets each peer message whose work
   still runs from the peer's re-sends (D19), and every chain fact from the reader, which resumes at

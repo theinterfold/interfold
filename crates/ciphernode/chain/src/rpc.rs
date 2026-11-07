@@ -7,11 +7,13 @@
 use crate::{Contracts, Deadlines, RawLog, Rpc, RpcError, Sortition};
 use alloy::{eips::BlockId, providers::Provider, rpc::types::Filter};
 use alloy_primitives::{Address, U256};
-use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
+use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold};
 use e3_protocol::{node::LogPosition, UnixSecs};
-use std::collections::BTreeMap;
+use futures::future::try_join_all;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A chain node over JSON-RPC.
+#[derive(Clone)]
 pub struct ChainNode<P> {
     provider: P,
     contracts: Contracts,
@@ -124,6 +126,23 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             .await
             .map_err(RpcError::new)?;
         Ok(secs(windows.dkgWindow))
+    }
+
+    async fn eligible(
+        &self,
+        operators: &[Address],
+        at: UnixSecs,
+    ) -> Result<BTreeSet<Address>, RpcError> {
+        let bonding = IBondingRegistry::new(self.contracts.bonding, &self.provider);
+        let reads = operators.iter().map(|operator| {
+            let read = bonding.eligibilityAt(*operator, U256::from(at));
+            async move { read.call().await.map(|answer| (*operator, answer.active)) }
+        });
+        let answers = try_join_all(reads).await.map_err(RpcError::new)?;
+        Ok(answers
+            .into_iter()
+            .filter_map(|(operator, active)| active.then_some(operator))
+            .collect())
     }
 }
 

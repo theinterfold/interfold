@@ -12,8 +12,8 @@ use crate::{
     decryption::{Decryption, DecryptionWorkResult, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult},
     node::{
-        Body, CommitteeRequest, CryptoParams, DataRef, Effect, Kind, PeerMessage, Purpose, Stage,
-        Submission, Transaction, WorkResult,
+        Body, CommitteeRequest, CommitteeSeed, CryptoParams, DataRef, Effect, Kind, PeerMessage,
+        Purpose, Stage, Submission, Transaction, WorkResult,
     },
     resend::Resend,
     BlobRef, E3Id, UnixSecs,
@@ -40,6 +40,9 @@ pub struct E3 {
     /// What the request snapshotted for slashing; unknown before the node saw the facts.
     slashing: Option<Slashing>,
     pub request: CommitteeRequest,
+    /// The seed to rank with once the bonding registry says which operators may hold a seat,
+    /// and the time to rank without knowing.
+    selecting: Option<Selecting>,
     ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
@@ -55,6 +58,12 @@ pub struct E3 {
     /// kind from that sender waits until this one is taken, so a member makes the node download
     /// at most one message of each kind.
     fetching: BTreeMap<(Address, Kind), B256>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Selecting {
+    seed: CommitteeSeed,
+    by: UnixSecs,
 }
 
 /// The chain failed the E3.
@@ -112,6 +121,7 @@ impl E3 {
             accusations: None,
             slashing,
             request,
+            selecting: None,
             ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
@@ -282,6 +292,27 @@ impl E3 {
             None => Vec::new(),
         };
         self.sent(now, effects)
+    }
+
+    /// Whether the node starts to wait for which operators may hold a seat: it ranks with `seed`
+    /// once it knows, or at `by` without knowing. A wait under way goes on as it was.
+    pub(crate) fn await_eligibility(&mut self, seed: CommitteeSeed, by: UnixSecs) -> bool {
+        let waits = self.selecting.is_none();
+        if waits {
+            self.selecting = Some(Selecting { seed, by });
+        }
+        waits
+    }
+
+    /// The seed to rank with now that the answer came, unless the node ranked without it.
+    pub(crate) fn answered(&mut self) -> Option<CommitteeSeed> {
+        self.selecting.take().map(|selecting| selecting.seed)
+    }
+
+    /// The seed to rank with once the answer is late.
+    pub(crate) fn unanswered(&mut self, now: UnixSecs) -> Option<CommitteeSeed> {
+        let late = self.selecting.take_if(|selecting| selecting.by <= now);
+        late.map(|selecting| selecting.seed)
     }
 
     pub(crate) fn ticket(&self) -> Option<u64> {
@@ -492,6 +523,7 @@ impl E3 {
                 .chain(decryption)
                 .chain(self.finalizer_due())
                 .chain(self.failure_due())
+                .chain(self.selecting.map(|selecting| selecting.by))
                 .min()
         });
         let resend = self.resend.next_deadline(|body| match body {
