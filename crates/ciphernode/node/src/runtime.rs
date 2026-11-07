@@ -35,16 +35,12 @@ use tokio::{
 };
 use tracing::{debug, error, warn};
 
-/// How long a failed job or chain read waits before it runs again, and the first wait of a failed
+/// How long a failed chain read waits before it runs again, and the first wait of a failed job,
 /// fetch or submission; each later attempt of those waits twice as long, up to ten minutes, or a
 /// minute for a ciphertext fetch: the decryption window that needs it is short.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
 const LONGEST_RETRY: Duration = Duration::from_secs(600);
 const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(60);
-
-/// Attempts of a failed job: five minutes outlast a full disk being cleared, and a job that fails
-/// for its inputs fails every time.
-const JOB_ATTEMPTS: u32 = 10;
 
 /// The bonding registry's owner capacity windows start at multiples of this from Unix time zero.
 const CAPACITY_WINDOW: UnixSecs = 30 * 24 * 60 * 60;
@@ -130,10 +126,10 @@ where
 {
     let genesis = Node::new(parts.operator.address());
     let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
-    // A stop can come between ending an E3 and finishing its effects; their work is over.
+    // A stop can come between ending an E3's work and finishing its effects; that work is over.
     let (pending, over): (Vec<_>, Vec<_>) = pending
         .into_iter()
-        .partition(|pending| engine.machine().e3(&pending.effect.e3()).is_some());
+        .partition(|pending| engine.machine().needs(&pending.effect));
     for pending in over {
         engine.acknowledge(pending.key)?;
     }
@@ -354,8 +350,8 @@ struct Effects<R, A, N, B> {
     network: Arc<N>,
     availability: Arc<dyn DataAvailabilityReader>,
     events: mpsc::Sender<Event>,
-    /// The jobs, submissions and fetches that run, by E3.
-    tasks: BTreeMap<E3Id, Vec<(EffectKey, AbortHandle)>>,
+    /// The jobs, submissions and fetches that run, by E3, and whether each serves live work.
+    tasks: BTreeMap<E3Id, Vec<(EffectKey, AbortHandle, bool)>>,
 }
 
 impl<R, A, N, B> Effects<R, A, N, B>
@@ -370,6 +366,7 @@ where
         let mut now = Vec::new();
         for Pending { key, effect } in pending {
             debug!(effect = %brief(&effect), "dispatching");
+            let live = effect.serves_live_work();
             let (e3, task) = match effect {
                 Effect::Sign(signing) => {
                     now.push(Event::Result(key, self.sign(signing)));
@@ -386,24 +383,29 @@ where
                 Effect::ReadEligibility(read) => (read.e3, self.read_eligibility(key, read)),
             };
             let tasks = self.tasks.entry(e3).or_default();
-            tasks.push((key, task.abort_handle()));
+            tasks.push((key, task.abort_handle(), live));
         }
         now
     }
 
-    /// Stops the tasks of the E3s `machine` no longer holds; their effects are done.
+    /// Stops the tasks that `machine` no longer needs, as `Node::needs` judges them: those of the
+    /// E3s it dropped, and those of live work in E3s the chain failed or completed. Their effects
+    /// are done.
     fn stop_ended(&mut self, machine: &Node) -> Vec<EffectKey> {
         let mut ended = Vec::new();
         self.tasks.retain(|e3, tasks| {
-            tasks.retain(|(_, task)| !task.is_finished());
-            if machine.e3(e3).is_some() {
-                return !tasks.is_empty();
-            }
-            for (key, task) in tasks.drain(..) {
-                task.abort();
-                ended.push(key);
-            }
-            false
+            tasks.retain(|(key, task, live)| {
+                if task.is_finished() {
+                    return false;
+                }
+                let needed = machine.needs_of(e3, *live);
+                if !needed {
+                    task.abort();
+                    ended.push(*key);
+                }
+                needed
+            });
+            !tasks.is_empty()
         });
         ended
     }
@@ -428,10 +430,13 @@ where
         })
     }
 
+    /// A job that fails, as for a full disk, runs again until it succeeds or the node no longer
+    /// needs it.
     fn run(&self, key: EffectKey, job: Job) -> JoinHandle<()> {
         let (jobs, events) = (self.jobs.clone(), self.events.clone());
         tokio::spawn(async move {
-            for _ in 0..JOB_ATTEMPTS {
+            let mut wait = RETRY_AFTER;
+            loop {
                 let (runner, work) = (jobs.clone(), job.clone());
                 match tokio::task::spawn_blocking(move || runner.run(&work)).await {
                     Ok(Ok(result)) => {
@@ -442,11 +447,9 @@ where
                     Ok(Err(failure)) => error!(e3 = %job.e3, %failure, "job failed"),
                     Err(panic) => error!(e3 = %job.e3, %panic, "job panicked"),
                 }
-                tokio::time::sleep(RETRY_AFTER).await;
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(LONGEST_RETRY);
             }
-            // The job stays in the outbox, so the next start runs it again; meanwhile the
-            // machine's deadlines end the work that waits for it.
-            error!(e3 = %job.e3, "job given up until the node restarts");
         })
     }
 

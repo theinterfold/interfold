@@ -607,7 +607,7 @@ impl E3 {
 
     /// The chain has neither failed nor completed the E3; after either, only accusation work
     /// remains.
-    fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         !matches!(self.stage, Stage::Failed | Stage::Complete)
     }
 

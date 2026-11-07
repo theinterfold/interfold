@@ -492,6 +492,25 @@ impl Effect {
             Effect::ReadEligibility(read) => read.e3,
         }
     }
+
+    /// Whether the effect serves work that ends when the chain fails or completes its E3: the
+    /// committee's selection, the DKG and decryption. Accusations and failure settlement go on.
+    pub fn serves_live_work(&self) -> bool {
+        match self {
+            Effect::Run(job) => !matches!(job.work, Work::Accusation(_)),
+            Effect::Sign(signing) => !matches!(signing.purpose, Purpose::Accusation(_)),
+            Effect::Gossip(message) | Effect::FetchBlobs(message) => {
+                !matches!(message.body, Body::Accusation(_))
+            }
+            Effect::Submit(submission) => !matches!(
+                submission.transaction,
+                Transaction::MarkFailed
+                    | Transaction::SettleFailure
+                    | Transaction::ProposeSlash { .. }
+            ),
+            Effect::Fetch(_) | Effect::ReadEligibility(_) => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -557,6 +576,18 @@ impl Node {
 
     pub fn e3(&self, e3: &E3Id) -> Option<&E3> {
         self.e3s.get(e3)
+    }
+
+    /// Whether the node still needs `effect`: it holds the effect's E3, and the chain has neither
+    /// failed nor completed it, or the effect serves its accusations or settlement.
+    pub fn needs(&self, effect: &Effect) -> bool {
+        self.needs_of(&effect.e3(), effect.serves_live_work())
+    }
+
+    /// `needs` for an effect of `e3` that serves live work, or does not.
+    pub fn needs_of(&self, e3: &E3Id, live: bool) -> bool {
+        let state = self.e3s.get(e3);
+        state.is_some_and(|state| state.running() || !live)
     }
 
     /// The position of the last fact this node applied from chain `chain_id`.
@@ -1714,6 +1745,44 @@ mod tests {
         assert!(node.step(100, key_made(e3(1), own_key(0xee))).is_empty());
         assert!(node.step(100, sign(ME, signing(&effects))).is_empty());
         assert!(node.step(100, key_from(e3(2), 1)).is_empty());
+    }
+
+    /// After the chain fails an E3, a restart or a running task still serves its accusations and
+    /// settlement, but no longer its DKG.
+    #[test]
+    fn a_failed_e3_needs_its_accusation_and_settlement_effects_only() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        let effects = node.step(0, finalized(11, e3(1), members([1])));
+        let Some(Effect::Run(make_key)) = effects.into_iter().find(|e| matches!(e, Effect::Run(_)))
+        else {
+            panic!("a member makes its key");
+        };
+        let verify = Effect::Run(Job {
+            work: Work::Accusation(crate::accusation::AccusationWork::Verify {
+                proof_type: ProofType::C0PkBfv,
+                proof: proof(0xc0),
+            }),
+            ..make_key.clone()
+        });
+        let submit = |transaction| {
+            Effect::Submit(Submission {
+                e3: e3(1),
+                transaction,
+            })
+        };
+        let (make_key, settle) = (Effect::Run(make_key), submit(Transaction::SettleFailure));
+        assert!(node.needs(&make_key) && node.needs(&settle));
+
+        node.step(100, failure(20, e3(1), FailureReason::DkgInvalidShares));
+        assert!(!node.needs(&make_key));
+        assert!(!node.needs(&submit(Transaction::FinalizeCommittee)));
+        assert!(node.needs(&settle) && node.needs(&verify));
+        let elsewhere = Effect::Submit(Submission {
+            e3: e3(2),
+            transaction: Transaction::SettleFailure,
+        });
+        assert!(!node.needs(&elsewhere));
     }
 
     #[test]
