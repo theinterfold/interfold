@@ -31,7 +31,9 @@ The OpenVM worker is an excluded Cargo workspace with its own pinned SDK. A gene
 guest never links the HTTP or worker dependencies. The template reaches these crates by
 checkout-relative path, and `interfold init` pins them to the release's git revision through the
 [initializer](../init/README.md)'s folder list, which must name every checkout-relative dependency
-of the template.
+of the template. The worker is the exception: no template manifest depends on it, so
+`interfold init` does not pin it. A project runs the separately built binary that
+`program.openvm.prover_bin` or `prover_bin_cuda` names.
 
 The guest's executable commitment (`appExeCommit`) is not independent of where it was built. OpenVM
 v2.0.2 does not remap source paths, so the executable embeds the absolute paths of the checkout and
