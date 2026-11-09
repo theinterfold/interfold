@@ -81,6 +81,12 @@ by H (`AGGREGATION_BIT_CARRY = 8`, H < 256). It avoids assumptions that all modu
 power of two. C5's sum quotient uses `SUM_BIT_CARRY = 8` with H <= 128; its aggregate key still
 needs an explicit bound.
 
+When every other operand of an identity is exactly bounded, the integer identity already fixes its
+quotient; the quotient's bound only has to rule out wraparound. C1's `r` and `e_sm` CRT quotients
+and C6's `r` use the window `[-2^BIT, 2^BIT)`, one assert per coefficient. Their generated bound
+arrays then only document the honest range, and `bin/config` checks that each `BIT` covers its
+array. Bound-1 witnesses (C1 `sk`, C3 `u`) use `c^3 = c`.
+
 ## Commitments, packing, and Fiat-Shamir
 
 Packing uses shared carriers `acc = acc * radix + (v + base)`. A digit overflowing its slot can

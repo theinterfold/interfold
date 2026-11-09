@@ -1067,7 +1067,7 @@
         },
         {
           "why": "the negacyclic evaluation kernel used by the BFV identity checks",
-          "ref": "circuits/lib/src/math/polynomial.nr@254@pub fn negacyclic_kernel<"
+          "ref": "circuits/lib/src/math/polynomial.nr@299@pub fn negacyclic_kernel<"
         }
       ],
       "rust_patterns": [],
