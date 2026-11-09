@@ -4,11 +4,103 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Negacyclic folding with descending coefficients.
+//! Negacyclic folding and exact negacyclic products, with descending coefficients.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use e3_polynomial::{Polynomial, PolynomialError};
-use num_bigint::BigInt;
-use num_traits::Zero;
+use fhe_math::rq::traits::TryConvertFrom;
+use fhe_math::rq::{Context, Poly, PowerBasis};
+use fhe_math::zq::primes::generate_prime;
+use num_bigint::{BigInt, BigUint};
+use num_traits::{Signed, ToPrimitive, Zero};
+
+/// Bits of each auxiliary NTT prime. Two of them give an exact window of about `2^123`.
+const AUX_PRIME_BITS: usize = 62;
+
+/// Computes `a * b mod (x^N + 1)` exactly over the integers, in O(N log N).
+///
+/// Both inputs hold `N` descending coefficients, as [`fold_negacyclic`] reads them, and the result
+/// equals `fold_negacyclic(&a.mul(b), n)`. The product is taken in `Z_P[x]/(x^N + 1)` for `P` the
+/// product of two NTT-friendly primes, then lifted to the centred window `(-P/2, P/2)`. That lift
+/// is the integer product because every result coefficient is a sum of `N` terms `a_i * b_j`, so
+/// `|c| <= N * max|a| * max|b|`, which is checked to be below `P/2` before the NTT path is taken.
+/// Inputs that do not fit `i64`, have a degree the NTT context cannot take, or could exceed the
+/// window use the quadratic product and fold instead, so the result is exact either way.
+///
+/// # Panics
+///
+/// Panics when either input does not have exactly `N` coefficients.
+pub(crate) fn negacyclic_mul_exact(a: &Polynomial, b: &Polynomial, n: usize) -> Polynomial {
+    match ntt_negacyclic_mul(a, b, n) {
+        Some(product) => product,
+        // `product_for_fold` pads a short product, such as the single zero coefficient
+        // `Polynomial::mul` returns for a zero operand, to the `2N - 1` the fold expects.
+        None => fold_negacyclic(&product_for_fold(a, b, n), n),
+    }
+}
+
+fn ntt_negacyclic_mul(a: &Polynomial, b: &Polynomial, n: usize) -> Option<Polynomial> {
+    let (ac, bc) = (a.coefficients(), b.coefficients());
+    if ac.len() != n || bc.len() != n || !n.is_power_of_two() || n < 8 {
+        return None;
+    }
+    let ctx = aux_context(n)?;
+    let modulus: BigUint = ctx.moduli().iter().map(|&p| BigUint::from(p)).product();
+    let half = &modulus >> 1u32;
+
+    let max_abs = |c: &[BigInt]| c.iter().map(|v| v.abs()).max().unwrap_or_default();
+    let worst = max_abs(ac) * max_abs(bc) * BigInt::from(n);
+    if worst >= BigInt::from(half.clone()) {
+        return None;
+    }
+
+    // fhe-math stores ascending coefficients; ours are descending.
+    let ascending = |c: &[BigInt]| {
+        c.iter()
+            .rev()
+            .map(|v| v.to_i64())
+            .collect::<Option<Vec<i64>>>()
+    };
+    let (a_asc, b_asc) = (ascending(ac)?, ascending(bc)?);
+    let pa = Poly::<PowerBasis>::try_convert_from(a_asc.as_slice(), &ctx, false).ok()?;
+    let pb = Poly::<PowerBasis>::try_convert_from(b_asc.as_slice(), &ctx, false).ok()?;
+    let product = (&pa.into_ntt() * &pb.into_ntt()).into_power_basis();
+
+    let lifted: Vec<BigUint> = (&product).into();
+    let modulus = BigInt::from(modulus);
+    let half = BigInt::from(half);
+    let mut out: Vec<BigInt> = lifted
+        .into_iter()
+        .map(|c| {
+            let c = BigInt::from(c);
+            if c > half {
+                c - &modulus
+            } else {
+                c
+            }
+        })
+        .collect();
+    out.reverse();
+    Some(Polynomial::new(out))
+}
+
+/// The two-prime NTT context for degree `n`, built once per degree.
+fn aux_context(n: usize) -> Option<Arc<Context>> {
+    static CONTEXTS: OnceLock<Mutex<HashMap<usize, Arc<Context>>>> = OnceLock::new();
+    let contexts = CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut contexts = contexts.lock().ok()?;
+    if let Some(ctx) = contexts.get(&n) {
+        return Some(ctx.clone());
+    }
+    let step = 2 * n as u64;
+    let p1 = generate_prime(AUX_PRIME_BITS, step, 1u64 << AUX_PRIME_BITS)?;
+    let p2 = generate_prime(AUX_PRIME_BITS, step, p1)?;
+    let ctx = Context::new_arc(&[p1, p2], n).ok()?;
+    contexts.insert(n, ctx.clone());
+    Some(ctx)
+}
 
 /// Keep the circuit's descending product shape when an operand is zero.
 /// Polynomial::mul retains its canonical single-coefficient zero result.
@@ -132,6 +224,59 @@ mod tests {
             ]
         );
         assert_eq!(folded, reduce_reference(&poly, n));
+    }
+
+    /// The NTT product equals the quadratic product folded, at every size the circuits use.
+    #[test]
+    fn exact_product_matches_quadratic_fold() {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        for n in [8usize, 16, 512, 8192] {
+            let key: Vec<BigInt> = (0..n)
+                .map(|_| BigInt::from(rng.random_range(-(1i64 << 57)..(1i64 << 57))))
+                .collect();
+            let ternary: Vec<BigInt> = (0..n)
+                .map(|_| BigInt::from(rng.random_range(-1i64..=1)))
+                .collect();
+            let (a, b) = (Polynomial::new(key), Polynomial::new(ternary));
+
+            assert!(
+                ntt_negacyclic_mul(&a, &b, n).is_some(),
+                "N = {n} must take the NTT path"
+            );
+            assert_eq!(
+                negacyclic_mul_exact(&a, &b, n),
+                fold_negacyclic(&a.mul(&b), n),
+                "NTT product disagrees with the quadratic fold at N = {n}"
+            );
+        }
+    }
+
+    /// Products that could leave the exact window fall back to the quadratic path.
+    #[test]
+    fn exact_product_falls_back_outside_the_window() {
+        let n = 8;
+        let big = Polynomial::new(vec![BigInt::from(i64::MAX); n]);
+        assert!(ntt_negacyclic_mul(&big, &big, n).is_none());
+        assert_eq!(
+            negacyclic_mul_exact(&big, &big, n),
+            fold_negacyclic(&big.mul(&big), n)
+        );
+
+        let short = Polynomial::new(vec![BigInt::from(3); n - 1]);
+        let full = Polynomial::new(vec![BigInt::from(5); n]);
+        assert!(ntt_negacyclic_mul(&short, &full, n).is_none());
+    }
+
+    /// A zero operand on the fallback path folds to zero. `Polynomial::mul` returns a single zero
+    /// coefficient for it, which the fold alone would reject.
+    #[test]
+    fn exact_product_of_a_zero_operand_on_the_fallback_path_is_zero() {
+        let n = 4;
+        let zero = Polynomial::new(vec![BigInt::zero(); n]);
+        let key = Polynomial::new((1..=n as i64).map(BigInt::from).collect());
+        assert!(ntt_negacyclic_mul(&key, &zero, n).is_none());
+        assert_eq!(negacyclic_mul_exact(&key, &zero, n), zero);
     }
 
     /// Independent long division by the monic polynomial X^N + 1.
