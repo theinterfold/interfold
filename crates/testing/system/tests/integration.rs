@@ -1134,16 +1134,40 @@ where
     }
 }
 
+/// A node's history. A restarted node's collector starts at a replay that skips snapshotted
+/// events, so `restarted` (node index, events logged before the restart) prepends what that node
+/// logged earlier. An event emitted again after the restart has the same delivery ID; keep one
+/// copy, as the bus does within one run.
+async fn node_history(
+    nodes: &CiphernodeSystem,
+    node_index: usize,
+    restarted: Option<(usize, &[InterfoldEvent])>,
+) -> Result<Vec<InterfoldEvent>> {
+    let fresh = nodes.get_history(node_index).await?;
+    Ok(match restarted {
+        Some((restarted_index, logged)) if restarted_index == node_index => {
+            let delivered: HashSet<_> = logged.iter().map(Event::delivery_id).collect();
+            let after_restart = fresh
+                .iter()
+                .filter(|event| !delivered.contains(&event.delivery_id()))
+                .cloned();
+            logged.iter().cloned().chain(after_restart).collect()
+        }
+        _ => fresh.to_vec(),
+    })
+}
+
 /// Committee members that held the aggregator role for `e3_id`: each one recorded an
 /// `AggregatorChanged` naming itself active.
 async fn aggregator_role_nodes(
     nodes: &CiphernodeSystem,
     node_indices: &[usize],
     e3_id: &E3id,
+    restarted: Option<(usize, &[InterfoldEvent])>,
 ) -> Result<Vec<usize>> {
     let mut held = Vec::new();
     for &node_index in node_indices {
-        let history = nodes.get_history(node_index).await?;
+        let history = node_history(nodes, node_index, restarted).await?;
         if history.iter().any(|event| {
             matches!(
                 event.get_data(),
@@ -1157,7 +1181,9 @@ async fn aggregator_role_nodes(
     Ok(held)
 }
 
-/// Wall seconds between first `start_when` and last `end_when` event in `history` (HLC physical time).
+/// Wall seconds between the earliest `start_when` and the latest `end_when` event in `history`
+/// (HLC physical time). Selecting by timestamp keeps the result independent of event order when
+/// `history` joins several nodes' histories.
 fn history_wall_seconds_between<F1, F2>(
     history: &[InterfoldEvent],
     start_when: F1,
@@ -1167,10 +1193,16 @@ where
     F1: Fn(&InterfoldEventData) -> bool,
     F2: Fn(&InterfoldEventData) -> bool,
 {
-    let start = history.iter().find(|e| start_when(e.get_data()))?;
-    let end = history.iter().rfind(|e| end_when(e.get_data()))?;
-    let start_us = HlcTimestamp::wall_time(start.ts());
-    let end_us = HlcTimestamp::wall_time(end.ts());
+    let start_us = history
+        .iter()
+        .filter(|e| start_when(e.get_data()))
+        .map(|e| HlcTimestamp::wall_time(e.ts()))
+        .min()?;
+    let end_us = history
+        .iter()
+        .filter(|e| end_when(e.get_data()))
+        .map(|e| HlcTimestamp::wall_time(e.ts()))
+        .max()?;
     (end_us >= start_us).then(|| (end_us - start_us) as f64 / 1_000_000.0)
 }
 
@@ -2170,6 +2202,9 @@ async fn test_trbfv_actor() -> Result<()> {
     } else {
         None
     };
+    let restarted = aggregator_history_before_restart
+        .as_deref()
+        .map(|logged| (active_aggregator_index, logged));
 
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
@@ -2212,7 +2247,7 @@ async fn test_trbfv_actor() -> Result<()> {
     // promoted party takes over the work that is still open and the demoted one finishes what it
     // started, so the flow's events are spread over the parties that held the role.
     let pubkey_aggregator_nodes =
-        aggregator_role_nodes(&nodes, &aggregator_candidates, &e3_id).await?;
+        aggregator_role_nodes(&nodes, &aggregator_candidates, &e3_id, restarted).await?;
     let pubkey_failover = pubkey_aggregator_nodes
         .iter()
         .any(|&node_index| node_index != active_aggregator_index);
@@ -2273,7 +2308,8 @@ async fn test_trbfv_actor() -> Result<()> {
         "PublicKeyAggregated must list H={committee_h} honest nodes"
     );
 
-    let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
+    let active_aggregator_history =
+        node_history(&nodes, active_aggregator_index, restarted).await?;
     // The verifier requests each commitment-consistency check under a fresh correlation ID, so the
     // check of the resumed C1 dispatch does not repeat one that the node logged before the restart.
     let consistency_checks_before_restart = aggregator_history_before_restart
@@ -2290,20 +2326,6 @@ async fn test_trbfv_actor() -> Result<()> {
             })
         })
         .unwrap_or_default();
-    // A restarted aggregator's collector starts at a replay that skips snapshotted events. Join it
-    // with the events the node logged before the restart. An event emitted again after the restart
-    // has the same delivery ID; keep one copy, as the bus does within one run.
-    let active_aggregator_history: Vec<InterfoldEvent> = match aggregator_history_before_restart {
-        Some(logged) => {
-            let delivered: HashSet<_> = logged.iter().map(Event::delivery_id).collect();
-            let after_restart = active_aggregator_history
-                .iter()
-                .filter(|event| !delivered.contains(&event.delivery_id()))
-                .cloned();
-            logged.into_iter().chain(after_restart).collect()
-        }
-        None => active_aggregator_history.to_vec(),
-    };
     if offline_node_index.is_some() {
         assert!(
             !active_aggregator_history.iter().any(|event| {
@@ -2319,13 +2341,21 @@ async fn test_trbfv_actor() -> Result<()> {
     let mut role_events: Vec<InterfoldEvent> = Vec::new();
     if pubkey_failover {
         for &node_index in &pubkey_aggregator_nodes {
-            role_events.extend(nodes.get_history(node_index).await?.iter().cloned());
+            role_events.extend(node_history(&nodes, node_index, restarted).await?);
         }
     }
     let roster_source: &[InterfoldEvent] = if pubkey_failover {
         &role_events
     } else {
         &active_aggregator_history
+    };
+    // Repeated work is tolerated after a failover, a second publication is not: a demoted and a
+    // promoted aggregator both publishing the key is the failure a failover must not produce.
+    // Peers forward the event, so only a holder's own publication counts. Event IDs cannot tell
+    // two publications apart, since identical content hashes to the same ID.
+    let publishes_key = |event: &InterfoldEvent| {
+        event.source() == EventSource::Local
+            && publickey_aggregator_marker(event.get_data(), &e3_id) == Some("PublicKeyAggregated")
     };
     let accepted_rosters: Vec<Vec<u64>> = roster_source
         .iter()
@@ -2459,15 +2489,6 @@ async fn test_trbfv_actor() -> Result<()> {
                 "public-key flow after failover: {event} seen {seen} times on the role holders, expected at least {expected}"
             );
         }
-        // Repeated work is tolerated, a second publication is not: a demoted and a promoted
-        // aggregator both publishing the key is the failure a failover must not produce. Peers
-        // forward the event, so only a holder's own publication counts. Event IDs cannot tell
-        // two publications apart, since identical content hashes to the same ID.
-        let publishes_key = |event: &InterfoldEvent| {
-            event.source() == EventSource::Local
-                && publickey_aggregator_marker(event.get_data(), &e3_id)
-                    == Some("PublicKeyAggregated")
-        };
         let published = role_events
             .iter()
             .filter(|event| publishes_key(event))
@@ -2477,7 +2498,7 @@ async fn test_trbfv_actor() -> Result<()> {
             "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
         );
         for &node_index in &pubkey_aggregator_nodes {
-            let holder_history = nodes.get_history(node_index).await?;
+            let holder_history = node_history(&nodes, node_index, restarted).await?;
             let holder_events = project_history(&holder_history, |data| {
                 publickey_aggregator_marker(data, &e3_id)
             });
@@ -2485,9 +2506,13 @@ async fn test_trbfv_actor() -> Result<()> {
                 .iter()
                 .filter(|&&event| event == "KeyshareCreated")
                 .count();
+            // A holder demoted during roster collection can hold fewer than H keyshares; only the
+            // holder that published the key must have collected them.
+            let published_key = holder_history.iter().any(publishes_key);
+            let min_keyshares = if published_key { committee_h } else { 0 };
             assert!(
-                (committee_h..=threshold_n).contains(&keyshare_count),
-                "Role holder {node_index} received {keyshare_count} keyshares; expected at least H={committee_h} and at most N={threshold_n}"
+                (min_keyshares..=threshold_n).contains(&keyshare_count),
+                "Role holder {node_index} received {keyshare_count} keyshares; expected at most N={threshold_n}, and at least H={committee_h} if it published the key"
             );
             assert_eq!(
                 holder_events.first().copied(),
@@ -2495,7 +2520,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 "Role holder {node_index}: first event must be CommitteeFinalized"
             );
             // A demoted holder can still finish work after a peer forwards it the key.
-            if holder_history.iter().any(publishes_key) {
+            if published_key {
                 // Gossip can deliver keyshares and folds after publication.
                 let flow_end = holder_events.iter().copied().rfind(|event| {
                     *event != "KeyshareCreated" && *event != "DKGRecursiveAggregationComplete"
@@ -2509,8 +2534,17 @@ async fn test_trbfv_actor() -> Result<()> {
         }
     }
 
+    // Peers forward the published key, so time the phase to the local publication only.
+    let p2_events: Vec<InterfoldEvent> = roster_source
+        .iter()
+        .filter(|event| {
+            !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
+                || event.source() == EventSource::Local
+        })
+        .cloned()
+        .collect();
     if let Some(secs) = history_wall_seconds_between(
-        roster_source,
+        &p2_events,
         |d| {
             matches!(
                 d,
@@ -2771,6 +2805,21 @@ async fn test_trbfv_actor() -> Result<()> {
         unique_ds_parties.len()
     );
     println!("[bench-progress] PlaintextAggregated observed on node {plaintext_aggregator_index}");
+    if pubkey_failover {
+        // A demoted holder can publish the key late. Count again now that the key phase is over.
+        let mut published = 0;
+        for &node_index in &pubkey_aggregator_nodes {
+            published += node_history(&nodes, node_index, restarted)
+                .await?
+                .iter()
+                .filter(|event| publishes_key(event))
+                .count();
+        }
+        assert_eq!(
+            published, 1,
+            "after the plaintext flow: PublicKeyAggregated published {published} times across the public-key role holders"
+        );
+    }
 
     // After a public-key failover, the parties that held the aggregator role can start or finish
     // key-phase work (node folds, DKG aggregation, share-proof checks) after the ciphertext is
@@ -2832,7 +2881,9 @@ async fn test_trbfv_actor() -> Result<()> {
         .take_while(|e| {
             !matches!(
                 e.get_data(),
-                InterfoldEventData::ShareVerificationDispatched(_)
+                InterfoldEventData::ShareVerificationDispatched(data)
+                    if data.e3_id == e3_id
+                        && data.kind == VerificationKind::ThresholdDecryptionProofs
             )
         })
         .filter_map(|e| match e.get_data() {
