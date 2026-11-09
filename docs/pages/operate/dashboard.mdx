@@ -338,7 +338,9 @@ Each metric name starts with `interfold_`. A metric with the `chain_id` label ha
 for each enabled chain, and only while the node has a value for that chain:
 
 - The `interfold_operator_*` and `interfold_registry_*` series of a chain are absent when the last
-  operator read of that chain failed. `interfold_operator_status_up` is then 0.
+  operator read of that chain failed. `interfold_operator_status_up` is then 0. The exception is
+  `interfold_operator_rewards_credited`, which comes from the EventStore and is absent only when
+  `interfold_eventstore_read_up` is 0.
 - The `interfold_chain_*` series of a chain are absent until its chain reader makes its first
   successful read. Compare their count with `interfold_chain_readers_expected`.
 
@@ -371,8 +373,9 @@ for each enabled chain, and only while the node has a value for that chain:
 | `interfold_e3s`                                       | `status`                                | E3s that the node saw, by status: `active`, `degraded`, `failed`, or `complete`.                                                       |
 | `interfold_e3_in_progress`                            | `phase`                                 | Active and degraded E3s by current phase, for example `dkg_shares`. The phases are the phases of the **E3 traces** view.               |
 | `interfold_compute_jobs_capacity`                     |                                         | ZK and TrBFV jobs that the compute pool runs at once. Absent on a bootstrap node.                                                      |
-| `interfold_compute_jobs_admitted`                     |                                         | Jobs that the compute pool admitted, queued in it or running.                                                                          |
+| `interfold_compute_jobs_admitted`                     |                                         | Jobs that the compute pool admitted, queued in it or running. A job whose request was cancelled can finish without being counted.      |
 | `interfold_compute_jobs_waiting`                      |                                         | Jobs that wait for admission to the compute pool.                                                                                      |
+| `interfold_compute_jobs_retrying`                     |                                         | Jobs that wait out a retry delay after a failure. A job that keeps failing shows here.                                                 |
 
 The ticket balance and the bond are large integers. The metrics give them as floating-point numbers,
 so the last digits can differ from the exact on-chain value.
@@ -389,6 +392,15 @@ groups:
       - alert: InterfoldChainNotProgressing
         expr: time() - interfold_chain_progressed_timestamp_seconds > 900
         for: 5m
+      - alert: InterfoldChainReaderMissing
+        expr: >
+          interfold_chain_readers_expected > on(instance, job)
+          (count by (instance, job) (interfold_chain_polled_timestamp_seconds)
+          or on(instance, job) 0 * interfold_chain_readers_expected)
+        for: 15m
+      - alert: InterfoldEventStoreUnreadable
+        expr: interfold_eventstore_read_up == 0
+        for: 10m
       - alert: InterfoldOperatorNotActive
         expr: interfold_operator_active == 0
         for: 10m
@@ -404,12 +416,20 @@ groups:
       - alert: InterfoldComputeQueueGrowing
         expr: interfold_compute_jobs_waiting > 0
         for: 30m
+      - alert: InterfoldComputeJobsFailing
+        expr: interfold_compute_jobs_retrying > 0
+        for: 15m
 ```
 
 An absent series does not fire an alert. While the operator read of a chain fails,
 `InterfoldOperatorNotActive` and `InterfoldOperatorNotEligible` stay silent for that chain, and
 `InterfoldOperatorStatusReadFailing` fires instead. Add an `absent(interfold_node_info)` rule, or
-alert on the `up` metric of the scrape job, to find a node that stopped.
+alert on the `up` metric of the scrape job, to find a node that stopped. `InterfoldChainReaderMissing`
+finds a chain reader that never made a successful read, which has no `interfold_chain_*` series
+for the stall rules to check.
+
+The stall rules compare the node's timestamps with the clock of the Prometheus server. Keep both
+clocks synchronized, for example with NTP, or a skewed clock fires them.
 
 ## Hosted dashboard
 
