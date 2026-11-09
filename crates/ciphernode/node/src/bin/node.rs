@@ -60,7 +60,10 @@ async fn main() -> anyhow::Result<()> {
         .context("usage: e3-node <config.json>")?;
     let config: JsonConfig = serde_json::from_slice(&std::fs::read(&path)?)?;
     let operator: PrivateKeySigner = config.operator.parse()?;
-    launch(Config {
+    let stop = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    let config = Config {
         rpc_url: config.rpc_url,
         rpc_auth: None,
         chain_id: Some(config.chain_id),
@@ -92,6 +95,6 @@ async fn main() -> anyhow::Result<()> {
             listen: config.network.listen,
             peers: config.network.peers,
         },
-    })
-    .await
+    };
+    launch(config, stop).await
 }

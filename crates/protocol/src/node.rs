@@ -343,6 +343,25 @@ pub enum Work {
     Accusation(AccusationWork),
 }
 
+impl Work {
+    /// The kind of work, for logs.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Work::Dkg(DkgWork::MakeEncryptionKey) => "dkg: make the encryption key",
+            Work::Dkg(DkgWork::CheckEncryptionKey { .. }) => "dkg: check an encryption key",
+            Work::Dkg(DkgWork::MakeShares { .. }) => "dkg: deal shares",
+            Work::Dkg(DkgWork::CheckShares { .. }) => "dkg: check a dealer's shares",
+            Work::Dkg(DkgWork::MakeDecryptionKey { .. }) => "dkg: make the decryption key",
+            Work::Dkg(DkgWork::CheckDecryptionKey { .. }) => "dkg: check a decryption key",
+            Work::Dkg(DkgWork::FoldProofs { .. }) => "dkg: fold this node's proofs",
+            Work::Dkg(DkgWork::CheckKeyshare { .. }) => "dkg: check a keyshare",
+            Work::Dkg(DkgWork::AggregateKey { .. }) => "dkg: aggregate the committee key",
+            Work::Decryption(_) => "decryption",
+            Work::Accusation(_) => "accusation: verify a proof",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobDone {
     pub e3: E3Id,
@@ -493,24 +512,46 @@ impl Effect {
         }
     }
 
-    /// Whether the effect serves work that ends when the chain fails or completes its E3: the
-    /// committee's selection, the DKG and decryption. Accusations and failure settlement go on.
-    pub fn serves_live_work(&self) -> bool {
+    /// What the effect's life depends on.
+    pub fn scope(&self) -> Scope {
         match self {
-            Effect::Run(job) => !matches!(job.work, Work::Accusation(_)),
-            Effect::Sign(signing) => !matches!(signing.purpose, Purpose::Accusation(_)),
-            Effect::Gossip(message) | Effect::FetchBlobs(message) => {
-                !matches!(message.body, Body::Accusation(_))
-            }
-            Effect::Submit(submission) => !matches!(
-                submission.transaction,
+            Effect::Run(job) => match job.work {
+                Work::Dkg(_) => Scope::Dkg,
+                Work::Decryption(_) => Scope::Live,
+                Work::Accusation(_) => Scope::Held,
+            },
+            Effect::Sign(signing) => match signing.purpose {
+                Purpose::Dkg(_) => Scope::Dkg,
+                Purpose::Decryption(_) => Scope::Live,
+                Purpose::Accusation(_) => Scope::Held,
+            },
+            Effect::Gossip(message) | Effect::FetchBlobs(message) => match message.body {
+                Body::Dkg(_) => Scope::Dkg,
+                Body::Decryption(_) => Scope::Live,
+                Body::Accusation(_) => Scope::Held,
+            },
+            // A key's publication stays live after the chain logs it: the commitment lands first,
+            // and the key's chunks follow it.
+            Effect::Submit(submission) => match submission.transaction {
                 Transaction::MarkFailed
-                    | Transaction::SettleFailure
-                    | Transaction::ProposeSlash { .. }
-            ),
-            Effect::Fetch(_) | Effect::ReadEligibility(_) => true,
+                | Transaction::SettleFailure
+                | Transaction::ProposeSlash { .. } => Scope::Held,
+                _ => Scope::Live,
+            },
+            Effect::Fetch(_) | Effect::ReadEligibility(_) => Scope::Live,
         }
     }
+}
+
+/// How long an effect is owed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// While the DKG runs: until the chain publishes the key, or the DKG fails here.
+    Dkg,
+    /// Until the chain fails or completes the E3.
+    Live,
+    /// While the node holds the E3: accusations and failure settlement go on after it fails.
+    Held,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,16 +619,13 @@ impl Node {
         self.e3s.get(e3)
     }
 
-    /// Whether the node still needs `effect`: it holds the effect's E3, and the chain has neither
-    /// failed nor completed it, or the effect serves its accusations or settlement.
-    pub fn needs(&self, effect: &Effect) -> bool {
-        self.needs_of(&effect.e3(), effect.serves_live_work())
-    }
-
-    /// `needs` for an effect of `e3` that serves live work, or does not.
-    pub fn needs_of(&self, e3: &E3Id, live: bool) -> bool {
-        let state = self.e3s.get(e3);
-        state.is_some_and(|state| state.running() || !live)
+    /// Whether the node still owes an effect of `e3` with this `scope`.
+    pub fn owes(&self, e3: &E3Id, scope: Scope) -> bool {
+        self.e3s.get(e3).is_some_and(|state| match scope {
+            Scope::Held => true,
+            Scope::Live => state.running(),
+            Scope::Dkg => state.running() && state.dkg_running(),
+        })
     }
 
     /// The position of the last fact this node applied from chain `chain_id`.
@@ -1773,6 +1811,36 @@ mod tests {
         assert!(node.step(100, key_from(e3(2), 1)).is_empty());
     }
 
+    fn owes(node: &Node, effect: &Effect) -> bool {
+        node.owes(&effect.e3(), effect.scope())
+    }
+
+    /// The commitment lands first and the key's chunks follow, so the publication outlives the
+    /// chain's log of it; the DKG jobs do not.
+    #[test]
+    fn a_key_s_publication_is_owed_after_the_chain_logs_it_and_dkg_jobs_are_not() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        let effects = node.step(0, finalized(11, e3(1), members([1])));
+        let make_key = effects
+            .into_iter()
+            .find(|effect| matches!(effect, Effect::Run(_)))
+            .expect("a member makes its key");
+        let publish = Effect::Submit(Submission {
+            e3: e3(1),
+            transaction: Transaction::PublishCommittee(crate::dkg::KeyPublication {
+                commitment: B256::ZERO,
+                public_key: BlobRef::of(b"key"),
+                proof: proof(1),
+                attestations: Vec::new(),
+            }),
+        });
+        assert!(owes(&node, &make_key) && owes(&node, &publish));
+        node.step(100, key_published(12, e3(1), members([1]), members([1])));
+        assert!(!owes(&node, &make_key), "the key is out");
+        assert!(owes(&node, &publish), "its chunks are not");
+    }
+
     /// After the chain fails an E3, a restart or a running task still serves its accusations and
     /// settlement, but no longer its DKG.
     #[test]
@@ -1798,17 +1866,17 @@ mod tests {
             })
         };
         let (make_key, settle) = (Effect::Run(make_key), submit(Transaction::SettleFailure));
-        assert!(node.needs(&make_key) && node.needs(&settle));
+        assert!(owes(&node, &make_key) && owes(&node, &settle));
 
         node.step(100, failure(20, e3(1), FailureReason::DkgInvalidShares));
-        assert!(!node.needs(&make_key));
-        assert!(!node.needs(&submit(Transaction::FinalizeCommittee)));
-        assert!(node.needs(&settle) && node.needs(&verify));
+        assert!(!owes(&node, &make_key));
+        assert!(!owes(&node, &submit(Transaction::FinalizeCommittee)));
+        assert!(owes(&node, &settle) && owes(&node, &verify));
         let elsewhere = Effect::Submit(Submission {
             e3: e3(2),
             transaction: Transaction::SettleFailure,
         });
-        assert!(!node.needs(&elsewhere));
+        assert!(!owes(&node, &elsewhere));
     }
 
     #[test]

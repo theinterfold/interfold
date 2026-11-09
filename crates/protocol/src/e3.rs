@@ -662,6 +662,11 @@ impl E3 {
         !matches!(self.stage, Stage::Failed | Stage::Complete)
     }
 
+    /// Whether this node's DKG still wants its work.
+    pub(crate) fn dkg_running(&self) -> bool {
+        self.dkg.as_ref().is_some_and(Dkg::running)
+    }
+
     fn dkg_mut(&mut self) -> Option<&mut Dkg> {
         let running = self.running();
         self.dkg.as_mut().filter(|_| running)

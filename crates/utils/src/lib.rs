@@ -9,6 +9,7 @@ pub mod bounded_bincode;
 pub mod error;
 pub mod formatters;
 pub mod helpers;
+pub mod limited;
 pub mod ordered_set;
 pub mod path;
 pub mod retry;

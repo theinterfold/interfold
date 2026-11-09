@@ -4,43 +4,34 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::heartbeat::Heartbeat;
-use alloy_primitives::{keccak256, Address};
-use alloy_signer::SignerSync;
+use crate::{
+    effects::{EffectParts, Effects},
+    heartbeat::Heartbeat,
+};
+use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::BlobStore;
 use e3_chain::{Account, Contracts, ReadError, Reader, Rpc, Writer};
-use e3_data_availability::{DataAvailabilityReader, DataReference};
-use e3_engine::{EffectKey, Engine, Pending};
+use e3_data_availability::DataAvailabilityReader;
+use e3_engine::{EffectKey, Engine};
 use e3_jobs::JobRunner;
 use e3_journal::Journal;
 use e3_p2p::Network;
 use e3_protocol::{
-    node::{
-        Effect, Eligibility, EligibilityRead, Fetch, Fetched, Input, Job, JobDone, Node,
-        PeerMessage, Signed, Signing, Submission,
-    },
-    wire::Envelope,
+    node::{Input, Node, PeerMessage},
     E3Id, UnixSecs,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    convert::Infallible,
+    collections::{BTreeSet, VecDeque},
+    future::Future,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{
-    sync::mpsc,
-    task::{AbortHandle, JoinHandle},
-};
-use tracing::{debug, error, warn};
+use tokio::{sync::mpsc, task::JoinSet};
+use tracing::{debug, warn};
 
-/// How long a failed chain read waits before it runs again, and the first wait of a failed job,
-/// fetch or submission; each later attempt of those waits twice as long, up to ten minutes, or a
-/// minute for a ciphertext fetch: the decryption window that needs it is short.
+/// How long a failed chain read waits before it runs again.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
-const LONGEST_RETRY: Duration = Duration::from_secs(600);
-const LONGEST_FETCH_RETRY: Duration = Duration::from_secs(60);
 
 /// The bonding registry's owner capacity windows start at multiples of this from Unix time zero.
 const CAPACITY_WINDOW: UnixSecs = 30 * 24 * 60 * 60;
@@ -61,6 +52,8 @@ pub struct Settings {
     pub max_log_range: u64,
     pub poll_interval: Duration,
     pub snapshot_every: u64,
+    /// Jobs that hold a thread at once; the others wait without one.
+    pub job_slots: usize,
 }
 
 /// What the node talks to.
@@ -88,9 +81,13 @@ pub enum NodeError {
     Chain(#[from] e3_chain::DecodeError),
     #[error("the inputs of the node stopped")]
     Stopped,
+    #[error("{0} stopped unexpectedly")]
+    TaskEnded(&'static str),
+    #[error("{0} panicked: {1}")]
+    TaskPanicked(&'static str, String),
 }
 
-enum Event {
+pub(crate) enum Event {
     /// A chain fact or a peer message.
     Input(Input),
     /// The result of one of the node's effects: applied, then the effect is done.
@@ -100,24 +97,13 @@ enum Event {
     Fatal(NodeError),
 }
 
-/// Runs the node until its inputs stop or its journal or chain logs fail.
-pub async fn run<R, A, N, B>(settings: Settings, parts: Parts<R, A, N, B>) -> NodeError
-where
-    R: Rpc + Clone + Send + Sync + 'static,
-    A: Account + Send + Sync + 'static,
-    N: Network,
-    B: BlobStore,
-{
-    match start(settings, parts).await {
-        Ok(never) => match never {},
-        Err(error) => error,
-    }
-}
-
-async fn start<R, A, N, B>(
+/// Runs the node until `stop` completes, or until its inputs, its journal, its chain logs or one
+/// of its essential tasks fail.
+pub async fn run<R, A, N, B>(
     settings: Settings,
     parts: Parts<R, A, N, B>,
-) -> Result<Infallible, NodeError>
+    stop: impl Future<Output = ()>,
+) -> Result<(), NodeError>
 where
     R: Rpc + Clone + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
@@ -127,9 +113,11 @@ where
     let genesis = Node::new(parts.operator.address());
     let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
     // A stop can come between ending an E3's work and finishing its effects; that work is over.
-    let (pending, over): (Vec<_>, Vec<_>) = pending
-        .into_iter()
-        .partition(|pending| engine.machine().needs(&pending.effect));
+    let (pending, over): (Vec<_>, Vec<_>) = pending.into_iter().partition(|pending| {
+        engine
+            .machine()
+            .owes(&pending.effect.e3(), pending.effect.scope())
+    });
     for pending in over {
         engine.acknowledge(pending.key)?;
     }
@@ -158,33 +146,55 @@ where
         from,
         settings.poll_interval,
     );
-    tokio::spawn(read_chain(
-        reader,
-        parts.heartbeat,
-        events.clone(),
-        settings.poll_interval,
+    let mut essential = JoinSet::new();
+    let (heartbeat, poll, sender) = (parts.heartbeat, settings.poll_interval, events.clone());
+    essential.spawn(async move {
+        read_chain(reader, heartbeat, sender, poll).await;
+        "the chain reader"
+    });
+    let sender = events.clone();
+    let inbound = parts.inbound;
+    essential.spawn(async move {
+        forward_peers(inbound, sender).await;
+        "the network"
+    });
+    let writer = Arc::new(Writer::new(
+        parts.account,
+        parts.blobs.clone(),
+        settings.contracts,
     ));
-    tokio::spawn(forward_peers(parts.inbound, events.clone()));
-    let mut effects = Effects {
+    let (refresher, operator) = (writer.clone(), parts.operator.address());
+    essential.spawn(async move {
+        refresh_each_window(refresher, operator).await;
+        "the operator refresh"
+    });
+    let mut effects = Effects::new(EffectParts {
         rpc: Arc::new(parts.rpc),
         operator: parts.operator,
-        blobs: parts.blobs.clone(),
+        blobs: parts.blobs,
         jobs: Arc::new(parts.jobs),
-        writer: Arc::new(Writer::new(parts.account, parts.blobs, settings.contracts)),
+        writer,
         network: Arc::new(parts.network),
         availability: parts.availability,
         events,
-        tasks: BTreeMap::new(),
-    };
-    tokio::spawn(refresh_each_window(
-        effects.writer.clone(),
-        effects.operator.address(),
-    ));
+        job_slots: settings.job_slots,
+    });
     let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
+    tokio::pin!(stop);
     loop {
         let event = match queue.pop_front() {
             Some(event) => event,
-            None => next_event(&mut receiver, engine.next_deadline()).await?,
+            None => tokio::select! {
+                event = next_event(&mut receiver, engine.next_deadline()) => event?,
+                ended = essential.join_next() => return Err(ended_task(ended)),
+                () = &mut stop => {
+                    // Producers first, so nothing new starts while the work stops. What did not
+                    // finish stays in the outbox for the next start.
+                    essential.abort_all();
+                    effects.stop_all();
+                    return Ok(());
+                }
+            },
         };
         let (input, answers) = match event {
             Event::Input(input) => (input, None),
@@ -220,6 +230,16 @@ where
                 warn!(%e3, %error, "deleting the proving files of ended work failed");
             }
         }
+    }
+}
+
+/// An essential task ended while the node runs: the process should end, so its supervisor can
+/// restart it, rather than run on without the task.
+fn ended_task(ended: Option<Result<&'static str, tokio::task::JoinError>>) -> NodeError {
+    match ended {
+        Some(Ok(task)) => NodeError::TaskEnded(task),
+        Some(Err(error)) => NodeError::TaskPanicked("an essential task", error.to_string()),
+        None => NodeError::Stopped,
     }
 }
 
@@ -278,7 +298,7 @@ async fn sleep(wait: Option<Duration>) {
 }
 
 /// The start of a value's debug form, for logs.
-fn brief(value: &impl std::fmt::Debug) -> String {
+pub(crate) fn brief(value: &impl std::fmt::Debug) -> String {
     let mut text = format!("{value:?}");
     if let Some((cut, _)) = text.char_indices().nth(200) {
         text.truncate(cut);
@@ -338,241 +358,5 @@ async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::S
     }
 }
 
-/// Carries out the machine's effects. Each effect stays in the outbox until it is done: a job, a
-/// signature or a fetch once its result is journaled, a gossip once it is published, a
-/// submission once the writer finished it, and any effect of an E3 the machine dropped.
-struct Effects<R, A, N, B> {
-    rpc: Arc<R>,
-    operator: PrivateKeySigner,
-    blobs: B,
-    jobs: Arc<JobRunner<B>>,
-    writer: Arc<Writer<A, B>>,
-    network: Arc<N>,
-    availability: Arc<dyn DataAvailabilityReader>,
-    events: mpsc::Sender<Event>,
-    /// The jobs, submissions and fetches that run, by E3, and whether each serves live work.
-    tasks: BTreeMap<E3Id, Vec<(EffectKey, AbortHandle, bool)>>,
-}
-
-impl<R, A, N, B> Effects<R, A, N, B>
-where
-    R: Rpc + Send + Sync + 'static,
-    A: Account + Send + Sync + 'static,
-    N: Network,
-    B: BlobStore,
-{
-    /// Starts each effect; returns the events of the effects that finish at once.
-    fn dispatch(&mut self, pending: Vec<Pending<Effect>>) -> Vec<Event> {
-        let mut now = Vec::new();
-        for Pending { key, effect } in pending {
-            debug!(effect = %brief(&effect), "dispatching");
-            let live = effect.serves_live_work();
-            let (e3, task) = match effect {
-                Effect::Sign(signing) => {
-                    now.push(Event::Result(key, self.sign(signing)));
-                    continue;
-                }
-                Effect::Gossip(message) => {
-                    self.gossip(key, message);
-                    continue;
-                }
-                Effect::Run(job) => (job.e3, self.run(key, job)),
-                Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),
-                Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),
-                Effect::FetchBlobs(message) => (message.e3, self.fetch_blobs(key, message)),
-                Effect::ReadEligibility(read) => (read.e3, self.read_eligibility(key, read)),
-            };
-            let tasks = self.tasks.entry(e3).or_default();
-            tasks.push((key, task.abort_handle(), live));
-        }
-        now
-    }
-
-    /// Stops the tasks that `machine` no longer needs, as `Node::needs` judges them: those of the
-    /// E3s it dropped, and those of live work in E3s the chain failed or completed. Their effects
-    /// are done.
-    fn stop_ended(&mut self, machine: &Node) -> Vec<EffectKey> {
-        let mut ended = Vec::new();
-        self.tasks.retain(|e3, tasks| {
-            tasks.retain(|(key, task, live)| {
-                if task.is_finished() {
-                    return false;
-                }
-                let needed = machine.needs_of(e3, *live);
-                if !needed {
-                    task.abort();
-                    ended.push(*key);
-                }
-                needed
-            });
-            !tasks.is_empty()
-        });
-        ended
-    }
-
-    /// A submission whose calls cannot be built, for a blob the store cannot read now, is built
-    /// again later.
-    fn submit(&self, key: EffectKey, submission: Submission) -> JoinHandle<()> {
-        let (writer, events) = (self.writer.clone(), self.events.clone());
-        tokio::spawn(async move {
-            let mut wait = RETRY_AFTER;
-            loop {
-                match writer.submit(&submission).await {
-                    Ok(()) => {
-                        let _ = events.send(Event::Done(key)).await;
-                        return;
-                    }
-                    Err(failure) => error!(e3 = %submission.e3, %failure, "the submission failed"),
-                }
-                tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(LONGEST_RETRY);
-            }
-        })
-    }
-
-    /// A job that fails, as for a full disk, runs again until it succeeds or the node no longer
-    /// needs it.
-    fn run(&self, key: EffectKey, job: Job) -> JoinHandle<()> {
-        let (jobs, events) = (self.jobs.clone(), self.events.clone());
-        tokio::spawn(async move {
-            let mut wait = RETRY_AFTER;
-            loop {
-                let (runner, work) = (jobs.clone(), job.clone());
-                match tokio::task::spawn_blocking(move || runner.run(&work, &Default::default()))
-                    .await
-                {
-                    Ok(Ok(result)) => {
-                        let done = Input::Job(JobDone { e3: job.e3, result });
-                        let _ = events.send(Event::Result(key, done)).await;
-                        return;
-                    }
-                    Ok(Err(failure)) => error!(e3 = %job.e3, %failure, "job failed"),
-                    Err(panic) => error!(e3 = %job.e3, %panic, "job panicked"),
-                }
-                tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(LONGEST_RETRY);
-            }
-        })
-    }
-
-    fn sign(&self, signing: Signing) -> Input {
-        let signatures = signing
-            .hashes
-            .iter()
-            .map(|hash| {
-                let signature = self
-                    .operator
-                    .sign_hash_sync(hash)
-                    .expect("a local key signs any hash");
-                signature.as_bytes().to_vec().into()
-            })
-            .collect();
-        Input::Signed(Signed {
-            e3: signing.e3,
-            purpose: signing.purpose,
-            signatures,
-        })
-    }
-
-    fn gossip(&self, key: EffectKey, message: PeerMessage) {
-        let sent_at = now();
-        let signature = self
-            .operator
-            .sign_hash_sync(&Envelope::signing_hash(&message, sent_at))
-            .expect("a local key signs any hash");
-        let envelope = Envelope {
-            message,
-            sent_at,
-            signature: signature.as_bytes().to_vec().into(),
-        };
-        let (network, events) = (self.network.clone(), self.events.clone());
-        tokio::spawn(async move {
-            let e3 = envelope.message.e3;
-            // A message the network lost goes again under the re-send rule.
-            if let Err(failure) = network.publish(envelope).await {
-                warn!(%e3, %failure, "gossip failed");
-            }
-            let _ = events.send(Event::Done(key)).await;
-        });
-    }
-
-    fn fetch_blobs(&self, key: EffectKey, message: PeerMessage) -> JoinHandle<()> {
-        let (network, events) = (self.network.clone(), self.events.clone());
-        tokio::spawn(async move {
-            match network.fetch(message.clone()).await {
-                Ok(()) => {
-                    let _ = events.send(Event::Result(key, Input::Peer(message))).await;
-                }
-                // The sender's re-send announces the message again.
-                Err(failure) => {
-                    debug!(e3 = %message.e3, %failure, "fetching a peer's blobs failed");
-                    let _ = events.send(Event::Done(key)).await;
-                }
-            }
-        })
-    }
-
-    /// Reads which operators may hold a seat until the machine stops waiting for the answer; a
-    /// failed or late read answers that the node does not know.
-    fn read_eligibility(&self, key: EffectKey, read: EligibilityRead) -> JoinHandle<()> {
-        let (rpc, events) = (self.rpc.clone(), self.events.clone());
-        tokio::spawn(async move {
-            let limit = Duration::from_secs(read.by.saturating_sub(now()));
-            let answer = tokio::time::timeout(limit, rpc.eligible(&read.operators, read.at)).await;
-            let eligible = match answer {
-                Ok(Ok(eligible)) => Some(eligible),
-                Ok(Err(failure)) => {
-                    warn!(e3 = %read.e3, %failure, "reading who may hold a seat failed");
-                    None
-                }
-                Err(_) => {
-                    warn!(e3 = %read.e3, "reading who may hold a seat took too long");
-                    None
-                }
-            };
-            let answer = Input::Eligibility(Eligibility {
-                e3: read.e3,
-                eligible,
-            });
-            let _ = events.send(Event::Result(key, answer)).await;
-        })
-    }
-
-    fn fetch(&self, key: EffectKey, fetch: Fetch) -> JoinHandle<()> {
-        let (availability, blobs, events) = (
-            self.availability.clone(),
-            self.blobs.clone(),
-            self.events.clone(),
-        );
-        tokio::spawn(async move {
-            let reference = DataReference {
-                content_hash: fetch.data.hash.0,
-                block_number: fetch.data.block,
-                leaf_index: fetch.data.leaf,
-            };
-            let mut wait = RETRY_AFTER;
-            loop {
-                match availability.retrieve(reference).await {
-                    Ok(bytes) if keccak256(&bytes) == fetch.data.hash => {
-                        match blobs.put(fetch.e3, &bytes) {
-                            Ok(blob) => {
-                                let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
-                                let _ = events.send(Event::Result(key, fetched)).await;
-                                return;
-                            }
-                            Err(failure) => {
-                                error!(e3 = %fetch.e3, %failure, "storing a ciphertext failed")
-                            }
-                        }
-                    }
-                    Ok(_) => warn!(e3 = %fetch.e3, "the availability layer sent other bytes"),
-                    Err(failure) => {
-                        warn!(e3 = %fetch.e3, %failure, "fetching the ciphertext failed")
-                    }
-                }
-                tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(LONGEST_FETCH_RETRY);
-            }
-        })
-    }
-}
+#[cfg(test)]
+mod tests;

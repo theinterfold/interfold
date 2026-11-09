@@ -38,7 +38,7 @@ use e3_jobs::{Circuits, JobLimits, JobRunner, Proofs};
 use e3_journal::Journal;
 use e3_p2p::{P2p, P2pConfig};
 use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 pub struct Config {
     /// An `http(s)://` or `ws(s)://` URL of the chain's RPC node.
@@ -101,7 +101,7 @@ pub struct Network {
 }
 
 /// Runs the node until it fails.
-pub async fn launch(config: Config) -> anyhow::Result<()> {
+pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {
     let (auth, poll) = (config.rpc_auth.as_ref(), config.poll_interval);
     let chain =
         ProviderBuilder::new().connect_client(rpc_client(&config.rpc_url, auth, poll).await?);
@@ -178,6 +178,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         max_log_range: config.max_log_range,
         poll_interval: config.poll_interval,
         snapshot_every: 100,
+        job_slots: threads,
     };
     let scope = keccak256([release.id.as_slice(), operator.address().as_slice()].concat());
     let parts = Parts {
@@ -192,7 +193,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         availability,
         heartbeat,
     };
-    Err(run(settings, parts).await.into())
+    Ok(run(settings, parts, stop).await?)
 }
 
 /// The longest an HTTP request to the RPC node may take.

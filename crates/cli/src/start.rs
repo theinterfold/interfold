@@ -52,13 +52,13 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
         config.name(),
         node.operator.address()
     );
-    tokio::select! {
-        result = e3_node::launch::launch(node) => result.context("the node stopped"),
-        _ = &mut shutdown => {
-            info!("stopped");
-            Ok(())
-        }
-    }
+    let stop = async move {
+        let _ = (&mut shutdown).await;
+        info!("stopping");
+    };
+    e3_node::launch::launch(node, stop)
+        .await
+        .context("the node stopped")
 }
 
 fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {

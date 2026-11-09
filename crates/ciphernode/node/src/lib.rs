@@ -8,6 +8,7 @@
 //! runner, the operator key and the availability layer, whose effects it hands back to them.
 
 pub mod dir;
+mod effects;
 mod heartbeat;
 pub mod launch;
 mod memory;
