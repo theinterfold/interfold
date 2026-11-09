@@ -1105,21 +1105,23 @@ where
 ///
 /// A progress-deadline failover moves aggregation to the next committee party, and the demoted party
 /// finishes the work it already started, so an aggregator publication can land on any committee
-/// member. Callers pass the members that can hold the aggregator role.
+/// member. Callers pass the members that can hold the aggregator role. A restarted member's history
+/// includes what it logged before the restart, as in [`node_history`].
 async fn wait_for_history_match_any<F>(
     nodes: &CiphernodeSystem,
     node_indices: &[usize],
+    restarted: Option<(usize, &[InterfoldEvent])>,
     description: &str,
     total_timeout: Duration,
     matches: F,
-) -> Result<(usize, CiphernodeHistory)>
+) -> Result<(usize, Vec<InterfoldEvent>)>
 where
     F: Fn(&InterfoldEventData) -> bool,
 {
     let start = Instant::now();
     loop {
         for &node_index in node_indices {
-            let history = nodes.get_history(node_index).await?;
+            let history = node_history(nodes, node_index, restarted).await?;
             if history.iter().any(|event| matches(event.get_data())) {
                 return Ok((node_index, history));
             }
@@ -2668,6 +2670,7 @@ async fn test_trbfv_actor() -> Result<()> {
         bus.publish_without_context(ciphertext_published_event.clone())?;
     }
 
+    let mut party_history_before_restart = None;
     if let Some(requested_party_id) = (!restart_during_dkg)
         .then(|| std::env::var("BENCHMARK_RESTART_PARTY_ID").ok())
         .flatten()
@@ -2716,9 +2719,22 @@ async fn test_trbfv_actor() -> Result<()> {
             );
         }
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        let collector = nodes[node_index]
+            .history()
+            .context("restart target has no history collector")?;
         restart_persisted_node(&mut nodes, node_index).await?;
         println!("Restarted committee party {restart_party_id} at node index {node_index}");
+        if restart_during_decryption {
+            // The restarted party can become the plaintext aggregator, and its new collector starts
+            // after the snapshotted ciphertext event. Keep what it logged before the restart.
+            party_history_before_restart =
+                Some((node_index, collector.send(GetEvents::new()).await?));
+        }
     }
+    // Restart modes exclude each other, so at most one node was restarted.
+    let restarted = restarted.or(party_history_before_restart
+        .as_ref()
+        .map(|(node_index, logged)| (*node_index, logged.as_slice())));
 
     if !restart_during_decryption {
         bus.publish_without_context(ciphertext_published_event.clone())?;
@@ -2736,6 +2752,7 @@ async fn test_trbfv_actor() -> Result<()> {
     let (plaintext_aggregator_index, active_aggregator_history) = wait_for_history_match_any(
         &nodes,
         &aggregator_candidates,
+        restarted,
         "PlaintextAggregated",
         plaintext_flow_timeout,
         |data| matches!(data, InterfoldEventData::PlaintextAggregated(event) if event.e3_id == e3_id),
@@ -2794,12 +2811,16 @@ async fn test_trbfv_actor() -> Result<()> {
         unique_ds_parties.len()
     );
     println!("[bench-progress] PlaintextAggregated observed on node {plaintext_aggregator_index}");
-    if pubkey_failover {
+    {
         // The runtime lets a demoted holder finish and submit the key it computed, and the chain
         // keeps the first valid submission. So every holder's submission must be the key the
         // committee went on to use: whichever one the chain accepts, users encrypt to that key.
+        // Read the role holders again: a successor can take the role after the key-phase snapshot.
+        nodes.flush_all_history(10000).await?;
         let mut submitted = Vec::new();
-        for &node_index in &pubkey_aggregator_nodes {
+        for node_index in
+            aggregator_role_nodes(&nodes, &aggregator_candidates, &e3_id, restarted).await?
+        {
             for event in node_history(&nodes, node_index, restarted).await? {
                 if event.source() != EventSource::Local {
                     continue;
@@ -2813,7 +2834,7 @@ async fn test_trbfv_actor() -> Result<()> {
         }
         assert!(
             !submitted.is_empty(),
-            "after a public-key failover, no role holder submitted the key"
+            "no aggregator role holder submitted the key"
         );
         for (node_index, pubkey) in &submitted {
             assert!(
@@ -3031,7 +3052,10 @@ async fn test_trbfv_actor() -> Result<()> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Expected PlaintextAggregated in active aggregator events, got: {:?}",
-                active_aggregator_history.event_types()
+                active_aggregator_history
+                    .iter()
+                    .map(|event| event.event_type())
+                    .collect::<Vec<_>>()
             )
         })?;
 

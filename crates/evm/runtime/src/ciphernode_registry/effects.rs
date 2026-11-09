@@ -662,4 +662,84 @@ mod tests {
         }
         Ok(())
     }
+
+    /// A writer that loses the publication race sends after the other's publication landed. With
+    /// the same commitment on chain, the failure settles; with another commitment, it stays an
+    /// error that stops retries.
+    #[tokio::test]
+    async fn a_lost_committee_publication_settles_only_on_the_same_commitment() -> anyhow::Result<()>
+    {
+        use super::{publish_committee_to_registry, TxOutcome};
+        use crate::helpers::EthProvider;
+        use alloy::{
+            node_bindings::Anvil,
+            providers::{Provider, ProviderBuilder},
+            rpc::types::Filter,
+            signers::local::PrivateKeySigner,
+            sol,
+            sol_types::SolEvent,
+        };
+        use e3_events::{E3id, Proof};
+        use e3_utils::ArcBytes;
+        use e3_zk_config::CircuitName;
+
+        sol!(
+            #[sol(rpc)]
+            EmitLogs,
+            "tests/fixtures/emit_logs.json"
+        );
+
+        // Nonce reservations are process-wide by chain and account, so use a chain of its own.
+        let anvil = Anvil::new().chain_id(31_402).try_spawn()?;
+        let mut providers = Vec::new();
+        for key in &anvil.keys()[..2] {
+            providers.push(
+                EthProvider::new(
+                    ProviderBuilder::new()
+                        .wallet(PrivateKeySigner::from_slice(&key.to_bytes())?)
+                        .connect(&anvil.endpoint())
+                        .await?,
+                )
+                .await?,
+            );
+        }
+        let registry = *EmitLogs::deploy(providers[0].provider()).await?.address();
+        let e3_id = E3id::new("21", providers[0].chain_id());
+        let proof = Proof::new(
+            CircuitName::PkAggregation,
+            ArcBytes::from_bytes(&[1, 2, 3]),
+            ArcBytes::from_bytes(&[0; 64]),
+        );
+        let publish = |provider: &EthProvider<_>, commitment: [u8; 32]| {
+            publish_committee_to_registry(
+                provider.clone(),
+                registry,
+                e3_id.clone(),
+                commitment,
+                Some(&proof),
+                Some(&[1u8][..]),
+            )
+        };
+
+        let winner = publish(&providers[0], [7; 32]).await?;
+        assert!(matches!(winner, TxOutcome::Mined(_)));
+        let loser = publish(&providers[1], [7; 32]).await?;
+        assert!(matches!(loser, TxOutcome::AlreadySettled));
+        let conflicting = publish(&providers[1], [8; 32])
+            .await
+            .expect_err("a different commitment on chain must stay an error");
+        assert!(super::committee_publication_error_is_terminal(&conflicting));
+
+        let accepted = providers[0]
+            .provider()
+            .get_logs(
+                &Filter::new()
+                    .address(registry)
+                    .from_block(0)
+                    .event_signature(ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE_HASH),
+            )
+            .await?;
+        assert_eq!(accepted.len(), 1);
+        Ok(())
+    }
 }
