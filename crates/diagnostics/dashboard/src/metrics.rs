@@ -185,6 +185,12 @@ pub(crate) fn render(input: &MetricsInput<'_>) -> String {
             "ZK and TrBFV jobs that wait for admission to the compute pool",
             load.waiting as i64,
         );
+        gauge(
+            &mut registry,
+            "compute_jobs_retrying",
+            "ZK and TrBFV jobs that wait out a retry delay after a failure",
+            load.retrying as i64,
+        );
     }
 
     let mut body = String::new();
@@ -631,6 +637,7 @@ mod tests {
         );
         assert_eq!(value(&body, "interfold_chain_readers_expected"), "1");
         assert_eq!(value(&body, "interfold_compute_jobs_waiting"), "5");
+        assert_eq!(value(&body, "interfold_compute_jobs_retrying"), "1");
         // Without an EventStore read, the E3 metrics are absent rather than zero.
         assert_eq!(value(&body, "interfold_eventstore_read_up"), "0");
         assert!(!body.contains("interfold_e3_active"), "{body}");
