@@ -30,7 +30,8 @@ type AllPartysDecodedShares = Vec<Poly<PowerBasis>>;
 pub struct CalculateThresholdDecryptionRequest {
     /// TrBFV configuration
     pub trbfv_config: TrBFVConfig,
-    /// Each party's ID (0 based) unordered and their Shamir shares for decrypting the ciphertext batch.
+    /// Zero-based party IDs and shares, in any order.
+    /// Only the T+1 lowest IDs are used, matching C7; extras are ignored.
     pub d_share_polys: Vec<(PartyId, SinglePartysDecryptionShares)>,
     /// A vector of Ciphertexts to decrypt
     pub ciphertexts: Vec<ArcBytes>,

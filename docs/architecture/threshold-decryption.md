@@ -63,10 +63,12 @@ resume. A fresh chain-scoped `PlaintextVerificationResumed` gives recovered resu
 sequence; never write under the earlier result sequence or chain-independent `EffectsEnabled`
 context.
 
-The active aggregator reconstructs from exactly T+1 verified shares. C7 witness construction refuses
-any other share/party count. Sort runtime IDs and convert **once** to one-based Shamir coordinates
-`party_id + 1`; zero, duplicate, unordered, and out-of-range coordinates fail. The wrapper subtracts
-one to locate registry slots. C7 proves every plaintext coefficient, including claimed zeros.
+The active aggregator reconstructs from exactly T+1 verified shares. A retry batch may contain more;
+native reconstruction, C7, and the C6 fold must select the same T+1 lowest runtime party IDs. C7
+witness construction refuses any other share/party count. Sort runtime IDs and convert **once** to
+one-based Shamir coordinates `party_id + 1`; zero, duplicate, unordered, and out-of-range
+coordinates fail. The wrapper subtracts one to locate registry slots. C7 proves every plaintext
+coefficient, including claimed zeros.
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds
