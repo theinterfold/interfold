@@ -121,12 +121,13 @@ pub fn calculate_decryption_share(
     )?);
 
     info!("Calculating d_share_poly...");
-    // Import the saved aggregate at the storage boundary; consume it once for this output.
-    // Runtime recovery reuses the same successful response, not noise for a new ciphertext.
+    // Import the saved aggregate for this output; consume its in-memory owner.
+    // Recovery may recompute this share for the persisted ciphertext; the result is identical.
+    // Never pair this noise with another ciphertext.
     let noise = AggregatedSmudgingShare::from_transport(Zeroizing::new(es_poly_sum));
     let d_share_poly = vec![decryptor
         .decryption_share(&req.ciphertext, &sk_poly_sum, noise)
-        .context("Could not decrypt ciphertext 0")?
+        .context("Could not compute decryption share")?
         .into_parts()];
     info!("Returning successful result...");
 
