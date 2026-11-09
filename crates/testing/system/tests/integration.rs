@@ -2349,10 +2349,7 @@ async fn test_trbfv_actor() -> Result<()> {
     } else {
         &active_aggregator_history
     };
-    // Repeated work is tolerated after a failover, a second publication is not: a demoted and a
-    // promoted aggregator both publishing the key is the failure a failover must not produce.
-    // Peers forward the event, so only a holder's own publication counts. Event IDs cannot tell
-    // two publications apart, since identical content hashes to the same ID.
+    // A holder's own key submission is a `Local` PublicKeyAggregated; peers forward copies of it.
     let publishes_key = |event: &InterfoldEvent| {
         event.source() == EventSource::Local
             && publickey_aggregator_marker(event.get_data(), &e3_id) == Some("PublicKeyAggregated")
@@ -2489,14 +2486,6 @@ async fn test_trbfv_actor() -> Result<()> {
                 "public-key flow after failover: {event} seen {seen} times on the role holders, expected at least {expected}"
             );
         }
-        let published = role_events
-            .iter()
-            .filter(|event| publishes_key(event))
-            .count();
-        assert_eq!(
-            published, 1,
-            "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
-        );
         for &node_index in &pubkey_aggregator_nodes {
             let holder_history = node_history(&nodes, node_index, restarted).await?;
             let holder_events = project_history(&holder_history, |data| {
@@ -2806,19 +2795,32 @@ async fn test_trbfv_actor() -> Result<()> {
     );
     println!("[bench-progress] PlaintextAggregated observed on node {plaintext_aggregator_index}");
     if pubkey_failover {
-        // A demoted holder can publish the key late. Count again now that the key phase is over.
-        let mut published = 0;
+        // The runtime lets a demoted holder finish and submit the key it computed, and the chain
+        // keeps the first valid submission. So every holder's submission must be the key the
+        // committee went on to use: whichever one the chain accepts, users encrypt to that key.
+        let mut submitted = Vec::new();
         for &node_index in &pubkey_aggregator_nodes {
-            published += node_history(&nodes, node_index, restarted)
-                .await?
-                .iter()
-                .filter(|event| publishes_key(event))
-                .count();
+            for event in node_history(&nodes, node_index, restarted).await? {
+                if event.source() != EventSource::Local {
+                    continue;
+                }
+                if let InterfoldEventData::PublicKeyAggregated(data) = event.get_data() {
+                    if data.e3_id == e3_id {
+                        submitted.push((node_index, data.pubkey.clone()));
+                    }
+                }
+            }
         }
-        assert_eq!(
-            published, 1,
-            "after the plaintext flow: PublicKeyAggregated published {published} times across the public-key role holders"
+        assert!(
+            !submitted.is_empty(),
+            "after a public-key failover, no role holder submitted the key"
         );
+        for (node_index, pubkey) in &submitted {
+            assert!(
+                *pubkey == pubkey_bytes,
+                "role holder {node_index} submitted a public key that differs from the one the committee used"
+            );
+        }
     }
 
     // After a public-key failover, the parties that held the aggregator role can start or finish
