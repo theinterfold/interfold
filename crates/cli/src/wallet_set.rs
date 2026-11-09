@@ -47,6 +47,7 @@ pub async fn execute(
     let key = Zeroizing::new(FixedBytes::<32>::from_hex(&*input)?.0);
     let cipher = Cipher::from_file(config.key_file()).await?;
     keystore::write(&config.db_file(), &cipher, &key)?;
+    crate::node_state::inventory(config).create()?;
     log!(
         out,
         "Wallet key has been successfully stored and encrypted."

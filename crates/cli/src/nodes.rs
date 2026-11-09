@@ -7,6 +7,7 @@
 use anyhow::*;
 use clap::Subcommand;
 use e3_ciphernode_config::NodeConfig;
+use e3_console::Console;
 
 use crate::{
     nodes_daemon, nodes_down, nodes_ps, nodes_purge, nodes_restart, nodes_start, nodes_status,
@@ -90,6 +91,7 @@ pub enum NodeCommands {
 }
 
 pub async fn execute(
+    out: Console,
     command: NodeCommands,
     config: &NodeConfig,
     verbose: u8,
@@ -112,7 +114,7 @@ pub async fn execute(
         NodeCommands::Purge {
             yes,
             allow_active_e3s,
-        } => nodes_purge::execute(config, config_string, yes, allow_active_e3s).await?,
+        } => nodes_purge::execute(out, config, config_string, yes, allow_active_e3s).await?,
     };
 
     Ok(())

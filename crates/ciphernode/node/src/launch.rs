@@ -8,6 +8,7 @@
 //! both start the node here, each from its own configuration format.
 
 use crate::{
+    dir::{Identity, NodeDir},
     heartbeat::Heartbeat,
     memory,
     runtime::{now, run, Parts, Settings},
@@ -31,17 +32,13 @@ use e3_blobs::FileBlobs;
 use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader};
+use e3_entrypoint::fence::ProcessFence;
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
 use e3_jobs::{Circuits, JobLimits, JobRunner, Proofs};
 use e3_journal::Journal;
 use e3_p2p::{P2p, P2pConfig};
 use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
 
 pub struct Config {
     /// An `http(s)://` or `ws(s)://` URL of the chain's RPC node.
@@ -62,6 +59,8 @@ pub struct Config {
     pub poll_interval: Duration,
     pub availability: Availability,
     pub data_dir: PathBuf,
+    /// Held while the node runs, so no other node or maintenance command can use its directory.
+    pub fence: ProcessFence,
     pub operator: PrivateKeySigner,
     /// Seals the node's secrets at rest.
     pub cipher: Cipher,
@@ -103,9 +102,6 @@ pub struct Network {
 
 /// Runs the node until it fails.
 pub async fn launch(config: Config) -> anyhow::Result<()> {
-    // Before the node asks the chain or the network anything, so a second node on the directory
-    // stops at once.
-    let _held = lock_data_dir(&config.data_dir)?;
     let (auth, poll) = (config.rpc_auth.as_ref(), config.poll_interval);
     let chain =
         ProviderBuilder::new().connect_client(rpc_client(&config.rpc_url, auth, poll).await?);
@@ -136,7 +132,12 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         protocol_version: built.protocol_version,
         node_generation: built.node_generation,
     };
-    open_data_dir(&config.data_dir)?;
+    let identity = Identity {
+        chain_id,
+        interfold: config.interfold,
+        operator: config.operator.address(),
+    };
+    NodeDir::new(&config.data_dir).open(&identity)?;
     let journal = Journal::open(config.data_dir.join("journal.redb"))?;
     let heartbeat = Heartbeat::start(&config.data_dir.join("ingestion"), chain_id, now())?;
     let (proofs, threads) = proofs(&config)?;
@@ -284,60 +285,6 @@ fn proofs(config: &Config) -> anyhow::Result<(Proofs, usize)> {
     Ok((Proofs::Circuits(Box::new(circuits)), capacity.threads))
 }
 
-/// The layout of the node's files in a data directory: the machine's encoding, and the version of
-/// the blob store's folders and the wallet's file, which changes with either. A node refuses a
-/// directory in another layout rather than misread its journal or delete its blobs.
-pub fn data_layout() -> String {
-    const STORE_VERSION: u32 = 1;
-    let encoding = e3_protocol::ENCODING_VERSION;
-    format!("interfold-node-v2 encoding {encoding} store {STORE_VERSION}")
-}
-
-/// The files of the node in a data directory; others, such as its configuration, may share it.
-const NODE_FILES: [&str; 3] = ["journal.redb", "blobs", "unmined.json"];
-
-/// Holds `dir` for this process until the returned file closes: one node runs on a data directory,
-/// whichever command starts it.
-fn lock_data_dir(dir: &Path) -> anyhow::Result<std::fs::File> {
-    std::fs::create_dir_all(dir)?;
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join("node.lock"))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(std::fs::TryLockError::WouldBlock) => {
-            anyhow::bail!("another node runs on {}", dir.display())
-        }
-        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
-    }
-}
-
-fn open_data_dir(dir: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let (marker, layout) = (dir.join("LAYOUT"), data_layout());
-    match std::fs::read_to_string(&marker) {
-        Ok(found) => anyhow::ensure!(
-            found.trim() == layout,
-            "{} holds node data in layout '{}', not '{layout}': use an empty directory",
-            dir.display(),
-            found.trim()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let unmarked = NODE_FILES.iter().any(|file| dir.join(file).exists());
-            anyhow::ensure!(
-                !unmarked,
-                "{} holds node data of an unknown layout: use an empty directory",
-                dir.display()
-            );
-            std::fs::write(&marker, layout)?;
-        }
-        Err(error) => return Err(error.into()),
-    }
-    Ok(())
-}
-
 fn parse<T: std::str::FromStr>(values: &[String]) -> anyhow::Result<Vec<T>>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
@@ -400,16 +347,6 @@ mod tests {
 
     /// The wallet sends over HTTP to the RPC node the reader reads over a WebSocket, still over
     /// TLS and on the same path, which often carries the provider's key.
-    #[test]
-    fn a_node_cannot_run_on_a_data_directory_another_holds() {
-        let dir = tempfile::tempdir().unwrap();
-        let held = lock_data_dir(dir.path()).unwrap();
-        let refused = lock_data_dir(dir.path()).unwrap_err();
-        assert!(refused.to_string().contains("another node runs on"));
-        drop(held);
-        lock_data_dir(dir.path()).unwrap();
-    }
-
     #[test]
     fn a_websocket_url_s_http_form_keeps_tls_and_the_path() {
         assert_eq!(

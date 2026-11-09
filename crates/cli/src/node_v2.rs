@@ -12,10 +12,11 @@ use alloy::{signers::local::PrivateKeySigner, transports::Authorization};
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
+use e3_entrypoint::fence::ProcessFence;
 use e3_evm_config::{DataAvailabilityMode, RpcAuth};
 use e3_node::launch::{Availability, Config, Network, Prover};
 
-pub async fn config(config: &NodeConfig) -> Result<Config> {
+pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> {
     let chains: Vec<_> = config
         .chains()
         .iter()
@@ -79,7 +80,8 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         max_log_range: chain.rpc_log_range_blocks()?,
         poll_interval: chain.rpc_poll_interval()?,
         availability,
-        data_dir: crate::node_state::folder(config),
+        data_dir: crate::node_state::dir(config).path().to_path_buf(),
+        fence,
         prover,
         reserved_threads: config.multithread_reserve_threads(),
         network: network(config, identity),

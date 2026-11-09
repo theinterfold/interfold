@@ -4,17 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The node's state on disk: its folder in the node's data directory, the layout the folder was
-//! written in, and the E3s its journal still holds. The operator's keys are not in the folder:
-//! they stay in the keystore, so deleting the folder keeps the node's identity.
+//! What maintenance commands need to know about a node's state on disk, and the plan they work
+//! out from it before they change anything. The operator's keys are not in the node's folder: they
+//! stay in the keystore, so deleting the folder keeps the node's identity.
 
-use crate::keystore;
-use anyhow::{Context, Result};
+use alloy::primitives::Address;
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
-use e3_crypto::Cipher;
+use e3_console::{log, Console};
 use e3_engine::Engine;
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use e3_journal::Journal;
+use e3_node::dir::{Inventory, NodeDir, State};
 use e3_protocol::{node::Node, E3Id};
 use std::{
     collections::BTreeSet,
@@ -22,44 +23,109 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn folder(config: &NodeConfig) -> PathBuf {
-    config.node_data_dir().join("v2")
+pub fn dir(config: &NodeConfig) -> NodeDir {
+    NodeDir::new(config.node_data_dir().join("v2"))
 }
 
-/// The journal of the node whose data folder is `node_data_dir`.
-pub fn journal_in(node_data_dir: &Path) -> PathBuf {
-    node_data_dir.join("v2").join("journal.redb")
+pub fn inventory(config: &NodeConfig) -> Inventory {
+    Inventory::beside(&config.key_file())
 }
 
-/// Whether the folder holds node data in a layout that this binary does not write, and so cannot
-/// read: the node refuses to start on it.
-pub fn layout_is_older(config: &NodeConfig) -> Result<bool> {
-    match std::fs::read_to_string(folder(config).join("LAYOUT")) {
-        Ok(found) => Ok(found.trim() != e3_node::launch::data_layout()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
+/// An E3 a node's journal holds, and what the node would give up for it.
+pub struct Held {
+    pub e3: E3Id,
+    pub owes: Vec<&'static str>,
+}
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "E3 {} ({})", self.e3, self.owes.join(", "))
     }
 }
 
-/// The E3s the node's journal holds. The node keeps each E3, and the key share it dealt in it,
-/// until the E3 ends. Replaying the journal needs the operator's address, from the keystore.
-pub async fn held_e3s(config: &NodeConfig) -> Result<Vec<E3Id>> {
-    let path = journal_in(&config.node_data_dir());
-    if !path.exists() {
+/// The E3s a current folder's journal holds. The node keeps each E3, and the key share it dealt in
+/// it, until the E3 ends.
+pub fn held_e3s(dir: &NodeDir, operator: Address) -> Result<Vec<Held>> {
+    if !dir.journal().exists() {
         return Ok(Vec::new());
     }
-    let cipher = Cipher::from_file(config.key_file()).await?;
-    let operator = keystore::read(&config.db_file(), &cipher)?
-        .context("the node has a journal but no wallet: its E3s cannot be read")?
-        .address();
-    let journal = Journal::open(&path)?;
+    let journal = Journal::open(dir.journal())?;
     let (engine, _) = Engine::open(journal, Node::new(operator), u64::MAX)?;
-    Ok(engine.machine().held().copied().collect())
+    let machine = engine.machine();
+    Ok(machine
+        .held()
+        .map(|e3| Held {
+            e3: *e3,
+            owes: machine.e3(e3).map(|state| state.owes()).unwrap_or_default(),
+        })
+        .collect())
 }
 
-/// Fences every node whose lock is under `root` and returns the node folders under `root`, at any
-/// depth, that `checked` does not name: whatever deletes `root` deletes their E3s unchecked. A
-/// fence in `fences` already covers its lock.
+/// What a maintenance command found. `blockers` stop it unless the operator overrides them;
+/// `refusals` stop it whatever the operator says.
+#[derive(Default)]
+pub struct Plan {
+    pub refusals: Vec<String>,
+    pub blockers: Vec<String>,
+}
+
+impl Plan {
+    /// Adds what `dir` holds, under the name `label`.
+    pub fn check(&mut self, label: &str, dir: &NodeDir) {
+        match dir.state(None) {
+            State::Absent => {}
+            State::Current(manifest) => match held_e3s(dir, manifest.identity.operator) {
+                Ok(held) if held.is_empty() => {}
+                Ok(held) => {
+                    let held: Vec<String> = held.iter().map(ToString::to_string).collect();
+                    self.blockers
+                        .push(format!("{label} still holds {}", held.join("; ")));
+                }
+                Err(error) => self
+                    .blockers
+                    .push(format!("{label}'s E3s cannot be read: {error:#}")),
+            },
+            State::Older(_) if !dir.journal().exists() => {}
+            State::Older(_) => self.blockers.push(format!(
+                "{label} uses an older layout that this binary cannot read, so it cannot check \
+                 for E3s that have not ended"
+            )),
+            State::Newer(_) => self.blockers.push(format!(
+                "{label} was written by a later release, which this binary cannot read"
+            )),
+            State::Foreign(_) => self.blockers.push(format!(
+                "{label} belongs to another chain, deployment or operator"
+            )),
+            State::Unreadable(why) => self.blockers.push(format!(
+                "{} cannot be read ({why}), so its E3s cannot be checked",
+                dir.path().display()
+            )),
+        }
+    }
+
+    /// Goes ahead or stops. An override goes ahead, and says what it skipped.
+    pub fn settle(self, out: &Console, allow_active_e3s: bool) -> Result<()> {
+        if !self.refusals.is_empty() {
+            bail!("Deleted nothing: {}.", self.refusals.join("; "));
+        }
+        if self.blockers.is_empty() {
+            return Ok(());
+        }
+        let blockers = self.blockers.join("; ");
+        if !allow_active_e3s {
+            bail!(
+                "Deleted nothing: {blockers}. Wait for those E3s to end, or rerun with \
+                 --allow-active-e3s after checking each on chain."
+            );
+        }
+        log!(out, "--allow-active-e3s goes ahead despite: {blockers}");
+        Ok(())
+    }
+}
+
+/// Holds the lock of every node whose lock is under `root` and returns the node folders under
+/// `root`, at any depth, that `checked` does not name: whatever deletes `root` deletes their E3s
+/// unchecked. A fence in `fences` already covers its lock. Nothing is created.
 pub fn guard(
     root: &Path,
     checked: &[PathBuf],
@@ -103,7 +169,7 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
     if !visited.insert(std::fs::canonicalize(dir)?) {
         return Ok(());
     }
-    if journal_in(dir).exists() {
+    if dir.join("v2").join("journal.redb").exists() {
         contents.nodes.push(dir.to_path_buf());
     }
     for entry in entries {

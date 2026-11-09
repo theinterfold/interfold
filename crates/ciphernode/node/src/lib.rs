@@ -7,6 +7,7 @@
 //! The v2 node's composition root: one engine, fed by the chain reader, the network, the job
 //! runner, the operator key and the availability layer, whose effects it hands back to them.
 
+pub mod dir;
 mod heartbeat;
 pub mod launch;
 mod memory;

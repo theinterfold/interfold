@@ -4,19 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::node_state;
+use crate::node_state::{self, Plan};
 use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
-use e3_entrypoint::fence::ProcessFence;
+use e3_console::Console;
+use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
+use e3_node::dir::{NodeDir, Recorded};
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// What a purge deletes, relative to the folder it runs in.
+/// What a purge deletes, relative to the folder it runs in. Node state goes before the keys.
 const DELETED: [&str; 2] = [".interfold/data", ".interfold/config"];
 
 /// Delete the data and configuration of the local node set.
 pub async fn execute(
+    out: Console,
     config: &NodeConfig,
     config_file: Option<String>,
     yes: bool,
@@ -27,7 +30,7 @@ pub async fn execute(
         yes,
         &format!(".interfold/data and .interfold/config in {}", dir.display()),
     )?;
-    purge(config, config_file, &dir, allow_active_e3s).await
+    purge(&out, config, config_file, &dir, allow_active_e3s).await
 }
 
 /// Refuses unless `--yes` confirms the deletion of `folders`.
@@ -43,54 +46,132 @@ pub(crate) fn require_confirmation(yes: bool, folders: &str) -> Result<()> {
 }
 
 /// Deletes the `.interfold` data and configuration folders in `dir` once no node runs and none
-/// holds an E3 that has not ended.
+/// holds an E3 that has not ended. It works out what it would delete and what stands in the way
+/// before it writes anything, then checks again under every node's lock.
 pub(crate) async fn purge(
+    out: &Console,
     config: &NodeConfig,
     config_file: Option<String>,
     dir: &Path,
     allow_active_e3s: bool,
 ) -> Result<()> {
     let nodes = node_configs(config, config_file)?;
-    let mut fences = Vec::new();
-    let mut refusals = Vec::new();
+    let mut existing = Vec::new();
+    survey(&nodes, dir, &mut existing)?.settle(out, allow_active_e3s)?;
+    let mut fences = existing;
     for node in &nodes {
-        fences.push(ProcessFence::acquire(&node.db_file(), &node.name())?);
-        if allow_active_e3s {
-            continue;
+        let lock = node_lock(node);
+        if !fences.iter().any(|fence| fence.path() == lock) {
+            fences.push(ProcessFence::acquire(&node.db_file(), &node.name())?);
         }
-        let held = node_state::held_e3s(node).await?;
-        if !held.is_empty() {
-            let held: Vec<String> = held.iter().map(ToString::to_string).collect();
-            refusals.push(format!("{} holds E3(s) {}", node.name(), held.join(", ")));
+    }
+    // A node may have started between the survey and the locks.
+    survey(&nodes, dir, &mut fences)?.settle(out, allow_active_e3s)?;
+    for root in DELETED {
+        let root = dir.join(root);
+        if root.exists() {
+            delete_keeping_locks(&root)?;
         }
+    }
+    // The locks go last, so a node that starts now finds no half-deleted state.
+    for root in DELETED {
+        let root = dir.join(root);
+        if root.exists() {
+            std::fs::remove_dir_all(&root)?;
+        }
+    }
+    drop(fences);
+    Ok(())
+}
+
+fn node_lock(node: &NodeConfig) -> PathBuf {
+    node.db_file().parent().map_or_else(
+        || PathBuf::from(LOCK_FILE_NAME),
+        |dir| dir.join(LOCK_FILE_NAME),
+    )
+}
+
+/// Everything that stands in the way of deleting `dir`'s `.interfold` folders. It only reads, and
+/// holds the lock of each node it finds, so a running node stops it first.
+fn survey(nodes: &[NodeConfig], dir: &Path, fences: &mut Vec<ProcessFence>) -> Result<Plan> {
+    let mut plan = Plan::default();
+    if is_link(&dir.join(".interfold")) {
+        plan.refusals.push(format!(
+            "{} is a link: what it points to may be another project's state; run the command \
+             where the state really is",
+            dir.join(".interfold").display()
+        ));
     }
     // Everything under both folders goes: a profile's `data_dir` can put a node anywhere in them,
     // and a profile removed from the configuration leaves its folder behind.
     let named: Vec<PathBuf> = nodes.iter().map(NodeConfig::node_data_dir).collect();
     let mut unchecked = Vec::new();
     for root in DELETED {
-        unchecked.extend(node_state::guard(&dir.join(root), &named, &mut fences)?);
+        unchecked.extend(node_state::guard(&dir.join(root), &named, fences)?);
     }
-    if !allow_active_e3s {
-        refusals.extend(unchecked.iter().map(|folder| {
-            format!(
-                "{} holds the journal of a node that no profile in the configuration names, so \
-                 its E3s cannot be checked (add the profile back to check them)",
-                folder.display()
-            )
-        }));
+    for node in nodes {
+        plan.check(&node.name(), &node_state::dir(node));
+        check_recorded(&mut plan, node);
     }
-    if !refusals.is_empty() {
-        bail!(
-            "Deleted nothing: {}. Wait for those E3s to end, or rerun with --allow-active-e3s \
-             after checking each on chain.",
-            refusals.join("; ")
-        );
+    plan.blockers.extend(unchecked.iter().map(|folder| {
+        format!(
+            "{} holds the journal of a node that no profile in the configuration names, so its \
+             E3s cannot be checked (add the profile back to check them)",
+            folder.display()
+        )
+    }));
+    Ok(plan)
+}
+
+/// Adds the folders `node`'s key has run in. One that is gone may be a data volume that is not
+/// mounted, and without a list nothing says where the key ran.
+fn check_recorded(plan: &mut Plan, node: &NodeConfig) {
+    let current = node_state::dir(node);
+    match node_state::inventory(node).read() {
+        Recorded::Folders(folders) => {
+            for folder in folders {
+                if folder == current.path() && folder.exists() {
+                    continue;
+                }
+                let name = node.name();
+                match folder.exists() {
+                    true => plan.check(
+                        &format!("{name}'s folder at {}", folder.display()),
+                        &NodeDir::new(folder),
+                    ),
+                    false => plan.blockers.push(format!(
+                        "{name} ran in {}, which is not there now (is its volume mounted?), so \
+                         its E3s cannot be checked",
+                        folder.display()
+                    )),
+                }
+            }
+        }
+        Recorded::Unknown if node.db_file().exists() || node.key_file().exists() => {
+            plan.blockers.push(format!(
+                "{} has keys but no record of where it ran, so its E3s elsewhere cannot be checked",
+                node.name()
+            ));
+        }
+        Recorded::Unknown => {}
     }
-    for folder in DELETED {
-        let folder = dir.join(folder);
-        if folder.exists() {
-            std::fs::remove_dir_all(&folder)?;
+}
+
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink())
+}
+
+/// Deletes everything under `root` except the node locks, following no link.
+fn delete_keeping_locks(root: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let (path, kind) = (entry.path(), entry.file_type()?);
+        if entry.file_name() == LOCK_FILE_NAME {
+            continue;
+        }
+        match kind.is_dir() {
+            true => delete_keeping_locks(&path)?,
+            false => std::fs::remove_file(&path)?,
         }
     }
     Ok(())
@@ -117,10 +198,23 @@ fn node_configs(config: &NodeConfig, config_file: Option<String>) -> Result<Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::{node_configs, purge};
+    use super::{node_configs, purge as run_purge};
     use anyhow::Result;
+    use e3_ciphernode_config::NodeConfig;
     use e3_cli::app_config::load_config;
+    use e3_console::Console;
     use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
+    use std::path::Path;
+
+    async fn purge(
+        config: &NodeConfig,
+        config_file: Option<String>,
+        dir: &Path,
+        allow_active_e3s: bool,
+    ) -> Result<()> {
+        let (out, _messages) = Console::channel();
+        run_purge(&out, config, config_file, dir, allow_active_e3s).await
+    }
 
     /// The purge checks every node profile, not only the one the command runs as.
     #[test]
@@ -157,7 +251,7 @@ mod tests {
         let config = load_config("cn1", config_file.clone(), None)?.node;
         let data = config.node_data_dir().parent().unwrap().to_path_buf();
         assert_eq!(data, dir.path().join(".interfold/data"));
-        let journal = crate::node_state::journal_in(&data.join("group/cn2"));
+        let journal = data.join("group/cn2/v2/journal.redb");
         std::fs::create_dir_all(journal.parent().unwrap())?;
         std::fs::write(&journal, b"")?;
 
@@ -168,7 +262,7 @@ mod tests {
         assert!(journal.exists());
 
         // The configuration folder goes too, so a node whose `data_dir` is in it counts.
-        let in_config = crate::node_state::journal_in(&dir.path().join(".interfold/config/cn8"));
+        let in_config = dir.path().join(".interfold/config/cn8/v2/journal.redb");
         std::fs::create_dir_all(in_config.parent().unwrap())?;
         std::fs::write(&in_config, b"")?;
         let error = purge(&config, config_file.clone(), dir.path(), false)
@@ -190,6 +284,103 @@ mod tests {
         Ok(())
     }
 
+    fn one_node(dir: &Path) -> Result<(NodeConfig, Option<String>)> {
+        let config_file = dir.join("config.yaml");
+        std::fs::write(
+            &config_file,
+            "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n",
+        )?;
+        let config_file = Some(config_file.to_string_lossy().into_owned());
+        let config = load_config("cn1", config_file.clone(), None)?.node;
+        Ok((config, config_file))
+    }
+
+    /// A data volume that is not mounted looks like an empty node, and the purge would delete the
+    /// keys. The list beside the key says the node ran there.
+    #[tokio::test]
+    async fn a_folder_the_key_ran_in_that_is_gone_stops_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        std::fs::create_dir_all(config.key_file().parent().unwrap())?;
+        std::fs::write(config.key_file(), b"key")?;
+        crate::node_state::inventory(&config).record(&dir.path().join("volume/cn1/v2"))?;
+
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not there now"), "{error:#}");
+        assert!(config.key_file().exists());
+
+        purge(&config, config_file, dir.path(), true).await?;
+        assert!(!config.key_file().exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn keys_with_no_record_of_where_they_ran_stop_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        std::fs::create_dir_all(config.key_file().parent().unwrap())?;
+        std::fs::write(config.key_file(), b"key")?;
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no record"), "{error:#}");
+
+        crate::node_state::inventory(&config).create()?;
+        purge(&config, config_file, dir.path(), false).await?;
+        assert!(!config.key_file().exists());
+        Ok(())
+    }
+
+    /// A purge that is refused writes nothing: not even a lock file for a node that never ran.
+    #[tokio::test]
+    async fn a_refused_purge_leaves_nothing_behind() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        crate::node_state::inventory(&config).record(&dir.path().join("volume/cn1/v2"))?;
+        purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(!config
+            .db_file()
+            .parent()
+            .unwrap()
+            .join(LOCK_FILE_NAME)
+            .exists());
+        Ok(())
+    }
+
+    /// A node that starts while the purge deletes must find the same lock file held.
+    #[test]
+    fn deleting_keeps_the_locks_until_the_end() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let node = dir.path().join("cn1/v2");
+        std::fs::create_dir_all(&node)?;
+        std::fs::write(node.join("journal.redb"), b"")?;
+        let lock = dir.path().join("cn1").join(LOCK_FILE_NAME);
+        std::fs::write(&lock, b"")?;
+        super::delete_keeping_locks(dir.path())?;
+        assert!(lock.exists());
+        assert!(!node.join("journal.redb").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_linked_root_stops_the_purge_even_with_the_override() -> Result<()> {
+        let (dir, other) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let (config, config_file) = one_node(dir.path())?;
+        std::os::unix::fs::symlink(other.path(), dir.path().join(".interfold"))?;
+        std::fs::create_dir_all(other.path().join("data"))?;
+        let error = purge(&config, config_file, dir.path(), true)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("is a link"), "{error:#}");
+        assert!(other.path().join("data").exists());
+        Ok(())
+    }
+
     /// A node folder inside another node's folder, or one whose state or whole folder is a link
     /// to storage elsewhere, counts too.
     #[cfg(unix)]
@@ -206,7 +397,7 @@ mod tests {
         let data = config.node_data_dir().parent().unwrap().to_path_buf();
 
         for node in ["cn2", "cn2/v2/cn4"] {
-            let journal = crate::node_state::journal_in(&data.join(node));
+            let journal = data.join(node).join("v2/journal.redb");
             std::fs::create_dir_all(journal.parent().unwrap())?;
             std::fs::write(&journal, b"")?;
         }
@@ -228,7 +419,7 @@ mod tests {
 
         // The whole node folder behind a link, with a link back up beside it.
         let moved = tempfile::tempdir()?;
-        let journal = crate::node_state::journal_in(moved.path());
+        let journal = moved.path().join("v2/journal.redb");
         std::fs::create_dir_all(journal.parent().unwrap())?;
         std::fs::write(&journal, b"")?;
         std::os::unix::fs::symlink(moved.path(), data.join("cn5"))?;

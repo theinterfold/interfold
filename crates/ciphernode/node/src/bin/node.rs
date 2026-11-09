@@ -10,6 +10,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_crypto::Cipher;
+use e3_entrypoint::fence::ProcessFence;
 use e3_node::launch::{launch, Availability, Config, Network, Prover};
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
@@ -71,6 +72,10 @@ async fn main() -> anyhow::Result<()> {
         max_log_range: 2_000,
         poll_interval: Duration::from_millis(config.poll_interval_ms),
         availability: Availability::Http(config.availability_url),
+        fence: ProcessFence::acquire_at(
+            &config.data_dir.join(e3_entrypoint::fence::LOCK_FILE_NAME),
+            "e3-node",
+        )?,
         data_dir: config.data_dir,
         operator,
         cipher: Cipher::from_password(&config.cipher_password).await?,

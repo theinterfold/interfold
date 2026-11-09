@@ -3970,6 +3970,7 @@ dependencies = [
  "e3-crypto",
  "e3-data-availability",
  "e3-engine",
+ "e3-entrypoint",
  "e3-evm-contracts",
  "e3-jobs",
  "e3-journal",

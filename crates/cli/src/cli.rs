@@ -229,6 +229,7 @@ impl Cli {
         if creates_secrets && config.autowallet() {
             let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
             crate::keystore::ensure(&config.db_file(), &cipher)?;
+            crate::node_state::inventory(&config).create()?;
         }
 
         match self.command {
@@ -247,10 +248,18 @@ impl Cli {
                 yes,
                 allow_active_e3s,
             } => {
-                purge_all::execute(&config, self.config.clone(), yes, allow_active_e3s).await?;
+                purge_all::execute(
+                    out.clone(),
+                    &config,
+                    self.config.clone(),
+                    yes,
+                    allow_active_e3s,
+                )
+                .await?;
             }
             Commands::Nodes { command } => {
                 nodes::execute(
+                    out.clone(),
                     command,
                     &config,
                     self.verbose,

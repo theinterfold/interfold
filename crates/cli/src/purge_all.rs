@@ -7,10 +7,12 @@
 use crate::nodes_purge::{purge, require_confirmation};
 use anyhow::Result;
 use e3_ciphernode_config::NodeConfig;
+use e3_console::Console;
 use std::env;
 
 /// Delete the local node set's data and configuration, then the program cache.
 pub async fn execute(
+    out: Console,
     config: &NodeConfig,
     config_file: Option<String>,
     yes: bool,
@@ -24,7 +26,7 @@ pub async fn execute(
             dir.display()
         ),
     )?;
-    purge(config, config_file, &dir, allow_active_e3s).await?;
+    purge(&out, config, config_file, &dir, allow_active_e3s).await?;
     // A missing cache folder is nothing to delete. The node state is already gone at this point.
     if dir.join(".interfold/caches").exists() {
         crate::program_support::cache_purge().await?;

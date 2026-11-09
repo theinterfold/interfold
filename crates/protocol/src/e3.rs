@@ -195,6 +195,30 @@ impl E3 {
         Some(failure.accusable_until.max(failure.at))
     }
 
+    /// What this node would give up for this E3 if its state were deleted, in words for an
+    /// operator about to do that.
+    pub fn owes(&self) -> Vec<&'static str> {
+        let mut owed = Vec::new();
+        if self.dkg.is_some() || self.decryption.is_some() {
+            owed.push("its key share");
+        }
+        if self.accuses() {
+            owed.push("an open accusation window");
+        }
+        if let Some(failure) = &self.failure {
+            let settles = self
+                .slot
+                .is_some_and(|slot| turn(failure.at, slot).is_some());
+            if settles && !failure.settled {
+                owed.push("settling the failed E3 on chain");
+            }
+            if self.has_work() && !failure.released {
+                owed.push("the work a late accusation may need, until governance releases it");
+            }
+        }
+        owed
+    }
+
     /// Whether the E3 still has DKG, decryption or accusation work, which the blobs of the E3
     /// serve.
     pub fn has_work(&self) -> bool {

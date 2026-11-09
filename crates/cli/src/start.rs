@@ -28,7 +28,7 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
     // Acquired *before* binding the control port or spawning background work so a second
     // instance fails fast instead of racing on the shared data directory.
     // Held for the lifetime of this function (the running process); released on exit.
-    let _fence = e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
+    let fence = e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
 
     launch_socket_server(config.ctrl_port());
 
@@ -45,7 +45,8 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
         };
     }
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
-    let node = node_v2::config(&config).await?;
+    crate::node_state::inventory(&config).record(crate::node_state::dir(&config).path())?;
+    let node = node_v2::config(&config, fence).await?;
     info!(
         "LAUNCHING CIPHERNODE: ({}/{})",
         config.name(),
