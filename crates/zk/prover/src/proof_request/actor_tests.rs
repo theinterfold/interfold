@@ -202,10 +202,10 @@ async fn own_c0_reaches_the_node_fold_before_encryption_key_created() -> Result<
 
 fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
     let sensitive = || SensitiveBytes::from_encrypted(&[]);
-    let share_request = || ShareComputationProofRequest {
+    let share_request = |dkg_input_type| ShareComputationProofRequest {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
-        dkg_input_type: DkgInputType::SecretKey,
+        dkg_input_type,
         params_preset: BfvPreset::InsecureThreshold64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
@@ -226,8 +226,8 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
-        sk_share_computation_request: share_request(),
-        e_sm_share_computation_request: share_request(),
+        sk_share_computation_request: share_request(DkgInputType::SecretKey),
+        e_sm_share_computation_request: share_request(DkgInputType::SmudgingNoise),
         sk_share_encryption_requests: vec![],
         e_sm_share_encryption_requests: vec![],
         recipient_party_ids: vec![0],
@@ -254,6 +254,43 @@ fn recovered_threshold_proofs(e3_id: E3id, count: usize) -> HashMap<E3id, BTreeM
         })
         .collect();
     HashMap::from([(e3_id, proofs)])
+}
+
+fn decryption_share_proofs_pending(e3_id: E3id) -> DecryptionShareProofsPending {
+    let request = |dkg_input_type| DkgShareDecryptionProofRequest {
+        sk_bfv: SensitiveBytes::from_encrypted(&[]),
+        honest_ciphertexts_raw: vec![],
+        num_honest_parties: 0,
+        num_moduli: 0,
+        own_plaintext_idx: None,
+        own_share_raw: None,
+        dkg_input_type,
+        params_preset: BfvPreset::InsecureThreshold64,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+    };
+    DecryptionShareProofsPending {
+        e3_id,
+        party_id: 0,
+        node: "0x00".into(),
+        sk_request: request(DkgInputType::SecretKey),
+        esm_requests: vec![request(DkgInputType::SmudgingNoise)],
+    }
+}
+
+fn e3_failed(e3_id: E3id) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3Failed {
+            e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        }
+        .into(),
+        None,
+        1u64.into(),
+        None,
+        e3_events::EventSource::Local,
+    )
+    .into_sequenced(1)
 }
 
 #[actix::test]
@@ -306,7 +343,7 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
 }
 
 /// `ThresholdSharePending` holds admission capacity at least until the actor's handler returns, so
-/// a C1-C3 plan larger than the admission window must still be dispatched in full.
+/// a C1-C3 plan larger than the admission window must still be dispatched in full, in plan order.
 #[actix::test]
 async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
@@ -335,22 +372,34 @@ async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() ->
     plan.e_sm_share_encryption_requests = recipients
         .map(|party| encryption(party, DkgInputType::SmudgingNoise))
         .collect();
-    let expected = 3 + MAILBOX_LIMIT_LARGE;
+    let planned: Vec<_> = plan_threshold_dispatch(
+        plan.proof_request.clone(),
+        plan.sk_share_computation_request.clone(),
+        plan.e_sm_share_computation_request.clone(),
+        plan.sk_share_encryption_requests.clone(),
+        plan.e_sm_share_encryption_requests.clone(),
+    )
+    .into_iter()
+    .map(|item| ComputeRequestKind::Zk(item.request))
+    .collect();
 
     bus.publish_without_context(plan)?;
 
     let taken = history
         .send(TakeEvents::<InterfoldEvent>::with_per_evt_timeout(
-            1 + expected,
+            1 + planned.len(),
             std::time::Duration::from_secs(5),
         ))
         .await?;
-    let requests = taken
+    let requests: Vec<_> = taken
         .events
         .iter()
-        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
-        .count();
-    assert_eq!(requests, expected);
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(data) => Some(data.request.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests, planned);
     Ok(())
 }
 
@@ -386,6 +435,11 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
     assert!(first_correlations
         .iter()
         .all(|correlation| !actor.threshold_correlation.contains_key(correlation)));
+    let second_correlations = actor
+        .threshold_correlation
+        .keys()
+        .copied()
+        .collect::<HashSet<_>>();
     assert_eq!(
         &actor.pending_threshold[&e3_id].full_share.pk_share,
         &ArcBytes::from_bytes(&[0x22])
@@ -406,11 +460,16 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
     let _actor = ctx.run(actor);
     actix::clock::sleep(std::time::Duration::from_millis(20)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-    let requests = events
+    let (old, new): (Vec<_>, Vec<_>) = events
         .iter()
-        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
-        .count();
-    assert_eq!(requests, 1 + 3);
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(data) => Some(data.correlation_id),
+            _ => None,
+        })
+        .partition(|correlation| first_correlations.contains(correlation));
+    assert_eq!(old.len(), 1);
+    assert_eq!(new.len(), 3);
+    assert_eq!(new.into_iter().collect::<HashSet<_>>(), second_correlations);
     Ok(())
 }
 
@@ -420,23 +479,10 @@ async fn threshold_requests_still_queued_when_the_e3_ends_are_dropped() -> Resul
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
     let e3_id = E3id::new("ended-during-dispatch", 1);
     let plan = threshold_share_pending(e3_id.clone(), 0x11);
-    let failed = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        E3Failed {
-            e3_id,
-            failed_at_stage: E3Stage::CommitteeFinalized,
-            reason: FailureReason::DKGInvalidShares,
-        }
-        .into(),
-        None,
-        1u64.into(),
-        None,
-        e3_events::EventSource::Local,
-    )
-    .into_sequenced(1);
     let mut ctx = Context::new();
 
     actor.handle_threshold_share_pending(TypedEvent::new(plan.clone(), test_ctx(plan)), &mut ctx);
-    actor.handle(failed, &mut ctx);
+    actor.handle(e3_failed(e3_id), &mut ctx);
 
     // Only the request already waiting for admission goes out.
     let _actor = ctx.run(actor);
@@ -455,24 +501,7 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
     let EventFixture { bus, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("held-c4", 1);
-    let request = |dkg_input_type| DkgShareDecryptionProofRequest {
-        sk_bfv: SensitiveBytes::from_encrypted(&[]),
-        honest_ciphertexts_raw: vec![],
-        num_honest_parties: 0,
-        num_moduli: 0,
-        own_plaintext_idx: None,
-        own_share_raw: None,
-        dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
-        committee_size: CiphernodesCommitteeSize::Minimum,
-    };
-    let c4 = DecryptionShareProofsPending {
-        e3_id: e3_id.clone(),
-        party_id: 0,
-        node: "0x00".into(),
-        sk_request: request(DkgInputType::SecretKey),
-        esm_requests: vec![request(DkgInputType::SmudgingNoise)],
-    };
+    let c4 = decryption_share_proofs_pending(e3_id.clone());
     let layout = threshold_share_pending(e3_id, 0x11);
 
     actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
@@ -490,6 +519,54 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
         .collect();
     seqs.sort_unstable();
     assert_eq!(seqs, vec![4, 5]);
+    Ok(())
+}
+
+#[actix::test]
+async fn c1_to_c4_requests_after_the_e3_ended_are_ignored() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("late-dkg-work", 1);
+    let plan = threshold_share_pending(e3_id.clone(), 0x11);
+    let c4 = decryption_share_proofs_pending(e3_id.clone());
+    let mut ctx = Context::new();
+
+    actor.handle(e3_failed(e3_id), &mut ctx);
+    actor.handle_threshold_share_pending(TypedEvent::new(plan.clone(), test_ctx(plan)), &mut ctx);
+    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
+
+    assert!(actor.node_agg_meta.is_empty());
+    assert!(actor.pending_threshold.is_empty());
+    assert!(actor.held_decryption_pending.is_empty());
+    let _actor = ctx.run(actor);
+    assert_no_events(&history).await
+}
+
+#[actix::test]
+async fn the_e3_end_forgets_its_dkg_proof_state() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let e3_id = E3id::new("ended-dkg", 1);
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
+        .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
+    let c4 = decryption_share_proofs_pending(e3_id.clone());
+    actor
+        .held_decryption_pending
+        .insert(e3_id.clone(), TypedEvent::new(c4.clone(), test_ctx(c4)));
+    actor.node_agg_meta.insert(
+        e3_id.clone(),
+        NodeAggregationMeta {
+            party_id: 0,
+            total_expected: 4,
+        },
+    );
+    actor.completed_threshold.insert(e3_id.clone());
+
+    actor.handle(e3_failed(e3_id), &mut Context::new());
+
+    assert!(actor.recovered_inner_proofs.is_empty());
+    assert!(actor.held_decryption_pending.is_empty());
+    assert!(actor.node_agg_meta.is_empty());
+    assert!(actor.completed_threshold.is_empty());
     Ok(())
 }
 

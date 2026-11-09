@@ -10,6 +10,10 @@ impl ProofRequestActor {
         &mut self,
         msg: TypedEvent<DecryptionShareProofsPending>,
     ) {
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&msg.e3_id) {
+            return;
+        }
         // C4 seqs follow C0-C3, whose count `ThresholdSharePending` sets; it releases this hold.
         // Without proof aggregation the seqs are unused, so the request does not wait.
         let c4_base_seq = match self.node_agg_meta.get(&msg.e3_id) {

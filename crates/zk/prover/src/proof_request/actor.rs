@@ -68,8 +68,8 @@ pub struct ProofRequestActor {
     bus: BusHandle,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     held_share_decryption: HashMap<E3id, TypedEvent<ShareDecryptionProofPending>>,
-    /// E3s whose terminal event arrived, newest last, at most [`MAX_FINISHED_E3S`]. A C6 request
-    /// that arrives later is ignored.
+    /// E3s whose terminal event arrived, newest last, at most [`MAX_FINISHED_E3S`]. A C1-C4 or C6
+    /// request that arrives later is ignored.
     finished_e3s: FinishedE3s,
     signer: PrivateKeySigner,
     proof_aggregation_enabled: bool,
@@ -100,7 +100,7 @@ pub struct ProofRequestActor {
     /// proof-request actor reuses the C1-C3 subset instead of proving it again.
     recovered_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
     /// Prevent a duplicate `ThresholdSharePending` delivery from republishing
-    /// the same signed share bundle in one process lifetime.
+    /// the same signed share bundle before the E3 ends.
     completed_threshold: HashSet<E3id>,
 }
 

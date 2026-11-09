@@ -32,6 +32,10 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             self.threshold_correlation
                 .retain(|_, (e3_id, _, _)| e3_id != id);
             self.pending_threshold.remove(id);
+            self.completed_threshold.remove(id);
+            self.recovered_inner_proofs.remove(id);
+            self.node_agg_meta.remove(id);
+            self.held_decryption_pending.remove(id);
             return;
         }
 
