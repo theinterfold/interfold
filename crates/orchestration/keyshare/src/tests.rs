@@ -5872,7 +5872,7 @@ async fn a_dkg_timing_read_returning_after_the_end_starts_no_dkg() -> Result<()>
     let actor = keyshare.start();
 
     // The selection reads the DKG timing, and the read returns after the E3 ends.
-    actor.do_send(TypedEvent::new(selection(&e3_id), test_ec(1)));
+    actor.try_send(TypedEvent::new(selection(&e3_id), test_ec(1)))?;
     actor
         .send(keyshare_event(
             E3RequestComplete {
