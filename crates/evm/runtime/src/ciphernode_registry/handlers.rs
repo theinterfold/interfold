@@ -633,6 +633,115 @@ mod tests {
         );
         Ok(())
     }
+
+    /// The interleaving that a failover allows: the demoted aggregator and its successor each hold
+    /// a submission of the key they computed before either sees the key on chain. The registry
+    /// accepts one committee publication. The other writer finds the same commitment on chain and
+    /// finishes without an error, and the chain keeps that one commitment.
+    #[actix::test]
+    async fn competing_key_submissions_settle_on_one_chain_publication() -> anyhow::Result<()> {
+        use crate::contracts::ICiphernodeRegistry;
+        use alloy::{
+            node_bindings::Anvil,
+            primitives::{B256, U256},
+            providers::Provider,
+            rpc::types::Filter,
+            sol,
+            sol_types::SolEvent,
+        };
+        use e3_events::{GetEvents, Proof};
+        use e3_zk_config::CircuitName;
+        use std::time::{Duration, Instant};
+
+        sol!(
+            #[sol(rpc)]
+            EmitLogs,
+            "tests/fixtures/emit_logs.json"
+        );
+
+        let EventFixture { bus, errors, .. } = EventFixture::new()?;
+        // Nonce reservations are process-wide by chain and account. Anvil's default chain and
+        // accounts are shared with this crate's other chain tests, so use a chain of its own.
+        let anvil = Anvil::new().chain_id(31_401).try_spawn()?;
+        let mut providers = Vec::new();
+        for key in &anvil.keys()[..2] {
+            providers.push(
+                EthProvider::new(
+                    ProviderBuilder::new()
+                        .wallet(PrivateKeySigner::from_slice(&key.to_bytes())?)
+                        .connect(&anvil.endpoint())
+                        .await?,
+                )
+                .await?,
+            );
+        }
+        let registry = *EmitLogs::deploy(providers[0].provider()).await?.address();
+        let e3_id = E3id::new("21", providers[0].chain_id());
+        let pk_commitment = [7u8; 32];
+        let key = PublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&[5; 100]),
+            dkg_aggregator_proof: Some(Proof::new(
+                CircuitName::PkAggregation,
+                ArcBytes::from_bytes(&[1, 2, 3]),
+                ArcBytes::from_bytes(&[0; 64]),
+            )),
+            dkg_attestation_bundle: Some(ArcBytes::from_bytes(&[1])),
+            ..publication_intent(&e3_id)
+        };
+
+        // Both writers record their key before effects start, so neither has seen the other's.
+        let mut writers = Vec::new();
+        for provider in providers.iter().cloned() {
+            let writer = CiphernodeRegistrySolWriter::new_with_recovery(
+                &bus,
+                provider,
+                registry,
+                HashMap::from([(e3_id.clone(), registry)]),
+                HashMap::new(),
+            )?
+            .start();
+            writer.send(local_event(key.clone(), 1)).await?;
+            writers.push(writer);
+        }
+        for writer in &writers {
+            writer.send(local_event(EffectsEnabled::new(), 2)).await?;
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        for writer in &writers {
+            while writer.send(RetainedPublications).await? != 0 {
+                assert!(
+                    Instant::now() < deadline,
+                    "a writer kept its key submission"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        bus.flush_event_pipeline().await?;
+        let reported = errors.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(reported.is_empty(), "a writer reported {reported:?}");
+
+        let accepted = providers[0]
+            .provider()
+            .get_logs(
+                &Filter::new()
+                    .address(registry)
+                    .from_block(0)
+                    .event_signature(ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE_HASH),
+            )
+            .await?;
+        assert_eq!(
+            accepted.len(),
+            1,
+            "the registry accepted more than one committee publication"
+        );
+        let on_chain = EmitLogs::new(registry, providers[0].provider())
+            .committeePublicKey(U256::from(21))
+            .call()
+            .await?;
+        assert_eq!(on_chain, B256::from(pk_commitment));
+        Ok(())
+    }
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated>
