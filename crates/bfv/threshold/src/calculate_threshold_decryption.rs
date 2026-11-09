@@ -30,7 +30,8 @@ type AllPartysDecodedShares = Vec<Poly<PowerBasis>>;
 pub struct CalculateThresholdDecryptionRequest {
     /// TrBFV configuration
     pub trbfv_config: TrBFVConfig,
-    /// Each party's ID (0 based) unordered and their Shamir shares for decrypting the ciphertext batch.
+    /// Zero-based party IDs and shares, in any order.
+    /// Only the T+1 lowest IDs are used, matching C7; extras are ignored.
     pub d_share_polys: Vec<(PartyId, SinglePartysDecryptionShares)>,
     /// A vector of Ciphertexts to decrypt
     pub ciphertexts: Vec<ArcBytes>,
@@ -66,9 +67,10 @@ impl TryFrom<CalculateThresholdDecryptionRequest> for InnerRequest {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // NOTE: Ensure the polys are ordered by party_id
+        // Match C7's sorted T+1 subset, keeping each party paired with its shares.
         let mut ordered_polys = value.d_share_polys;
         ordered_polys.sort_by_key(|&(key, _)| key);
+        ordered_polys.truncate((trbfv_config.threshold() as usize).saturating_add(1));
 
         let capacity = ordered_polys.len();
         let mut d_share_polys = Vec::with_capacity(capacity);

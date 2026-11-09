@@ -29,6 +29,17 @@ use fhe_traits::Serialize;
 
 #[tokio::test]
 async fn test_trbfv_isolation() -> Result<()> {
+    run_trbfv_isolation(&[(1, 1), (4, 4), (2, 2)]).await
+}
+
+#[tokio::test]
+async fn test_trbfv_reconstructs_from_surplus_unsorted_shares() -> Result<()> {
+    // Party 4 carries party 3's share: only the lowest-ID subset [1, 2, 3] is valid,
+    // not the input prefix [4, 2, 1].
+    run_trbfv_isolation(&[(4, 3), (2, 2), (1, 1), (3, 3)]).await
+}
+
+async fn run_trbfv_isolation(share_sources: &[(usize, usize)]) -> Result<()> {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let subscriber = fmt()
@@ -78,10 +89,9 @@ async fn test_trbfv_isolation() -> Result<()> {
         .map(|ct| ArcBytes::from_bytes(&(*ct).clone().to_bytes()))
         .collect::<Vec<ArcBytes>>();
 
-    let mut decryption_shares = HashMap::new();
-    // for party_id in 0..=threshold_m as usize {
-    for party_id in [1, 4, 2] {
-        let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
+    let mut d_share_polys = Vec::with_capacity(share_sources.len());
+    for &(party_id, key_party_id) in share_sources {
+        let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&key_party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
         let TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
             d_share_poly,
@@ -97,14 +107,10 @@ async fn test_trbfv_isolation() -> Result<()> {
             bail!("wrong decryption-share response variant")
         };
 
-        // store the decryption shares in a hash map indexed by party_id
-        decryption_shares.insert(party_id as u64, d_share_poly);
+        d_share_polys.push((party_id as u64, d_share_poly));
     }
 
-    // Get a vector of the shares
-    let d_share_polys: Vec<(u64, Vec<ArcBytes>)> = decryption_shares.into_iter().collect();
-
-    // Data preparation sorts the decryption shares by party_id.
+    // Reconstruction sorts party/share pairs and selects the lowest T+1 IDs, matching C7.
     let TrBFVResponse::CalculateThresholdDecryption(CalculateThresholdDecryptionResponse {
         plaintext,
     }) = TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
