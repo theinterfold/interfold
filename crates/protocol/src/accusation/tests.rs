@@ -666,6 +666,62 @@ mod cases {
         assert_eq!(node.classify(NOW, &past_the_limit), Classified::Drop);
     }
 
+    /// This node is not asked to check a proof that accuses it, so that case is no check under
+    /// way for a window that accuses another member with the same proof.
+    #[test]
+    fn a_proof_that_accuses_this_node_is_still_checked_for_another_member() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        let mut accuse = |accused: u64| {
+            let vote = Vote {
+                e3: e3(1),
+                accusation_id: accusation_id(e3(1), address(accused), ProofType::C0PkBfv),
+                voter: address(2),
+                data_hash: data_hash(1),
+                issued_at: NOW,
+                deadline: NOW + VALIDITY,
+            };
+            node.step(
+                NOW,
+                from(
+                    2,
+                    AccusationMessage::Accuse {
+                        accused: address(accused),
+                        proof_type: ProofType::C0PkBfv,
+                        proof: key_proof(accused),
+                        vote: signed_vote(2, vote),
+                    },
+                ),
+            )
+        };
+        let checks = |effects: Vec<Effect>| {
+            effects.iter().any(|effect| {
+                matches!(effect, Effect::Run(job) if matches!(job.work, Work::Accusation(_)))
+            })
+        };
+        assert!(!checks(accuse(ME)));
+        assert!(checks(accuse(3)));
+    }
+
+    /// An accusation on its way here can still be real evidence.
+    #[test]
+    fn an_accusation_being_fetched_keeps_a_completed_e3() {
+        let mut node = member(ME);
+        node.step(NOW, key_checked(e3(1), 1, true));
+        let announced = peer_message(accusation(2, NOW, 1));
+        node.step(NOW, Input::Announced(announced));
+        let complete = chain(
+            20,
+            ChainFact::StageChanged {
+                e3: e3(1),
+                stage: Stage::Complete,
+            },
+        );
+        node.step(NOW + 1, complete);
+        assert!(node.e3(&e3(1)).is_some());
+        node.step(NOW + 1 + VALIDITY, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
+    }
+
     /// A check still running can end in an accusation, so a completion waits for it: as long as
     /// a vote window at most.
     #[test]

@@ -48,8 +48,8 @@ pub struct E3 {
     seed: Option<CommitteeSeed>,
     /// Checks of members' proofs that have not answered; one that fails can end in an accusation.
     checks: u32,
-    /// When a completed E3 stops waiting for those checks.
-    checks_until: Option<UnixSecs>,
+    /// When a completed E3 stops waiting for evidence still on its way.
+    evidence_until: Option<UnixSecs>,
     ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
@@ -161,7 +161,7 @@ impl E3 {
             selecting: None,
             seed: None,
             checks: 0,
-            checks_until: None,
+            evidence_until: None,
             ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
@@ -225,8 +225,8 @@ impl E3 {
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
         let accusations = self.accusations.as_ref().and_then(Accusations::closes_at);
         if self.stage == Stage::Complete {
-            let checks = self.checks_until.filter(|_| self.checks > 0);
-            return Some(accusations.max(checks).unwrap_or_default());
+            let evidence = self.evidence_until.filter(|_| self.evidence_pending());
+            return Some(accusations.max(evidence).unwrap_or_default());
         }
         let failure = self.failure?;
         if (self.slot.is_some() && !failure.settled) || (self.has_work() && !failure.released) {
@@ -395,15 +395,24 @@ impl E3 {
         self.checks += 1;
     }
 
-    /// The chain completed the E3. Whether it stays for accusation work: open windows, or checks
-    /// still running, which wait for one vote window at most.
+    /// Whether something that can end in an accusation is still on its way: a check of a member's
+    /// proof, or the fetch of an accusation's proof.
+    fn evidence_pending(&self) -> bool {
+        self.checks > 0
+            || self
+                .fetching
+                .iter()
+                .any(|((_, kind), fetching)| fetching.running && *kind == Kind::Accusation)
+    }
+
+    /// The chain completed the E3. Whether it stays for accusation work: open windows, or
+    /// evidence still on its way, which it waits for one vote window at most.
     pub(crate) fn stays_after_completion(&mut self, now: UnixSecs) -> bool {
         let validity = self.accusations.as_ref().map_or(0, Accusations::validity);
-        if self.checks > 0 && validity > 0 {
-            self.checks_until = Some(now.saturating_add(validity));
-            return true;
+        if validity > 0 {
+            self.evidence_until = Some(now.saturating_add(validity));
         }
-        self.accuses()
+        self.accuses() || (validity > 0 && self.evidence_pending())
     }
 
     pub(crate) fn submit_ticket(

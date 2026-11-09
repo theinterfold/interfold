@@ -1183,6 +1183,19 @@ impl Node {
         }
     }
 
+    /// A check of a member's proof that goes out is one its E3 waits for.
+    fn count_checks(&mut self, effects: &[Effect]) {
+        for effect in effects {
+            if let Effect::Run(job) = effect {
+                if job.work.checks_a_member() {
+                    if let Some(state) = self.e3s.get_mut(&job.e3) {
+                        state.check_started();
+                    }
+                }
+            }
+        }
+    }
+
     fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         self.held.pass_deadlines(now);
         let mut effects: Vec<Effect> = self
@@ -1240,8 +1253,11 @@ impl Machine for Node {
     type Effect = Effect;
 
     fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {
-        let mut effects = self.pass_deadlines(now);
-        effects.extend(match input {
+        // Counted now: the input may complete the E3, which must see these checks.
+        let deadlines = self.pass_deadlines(now);
+        self.count_checks(&deadlines);
+        let mut effects = deadlines;
+        let applied = match input {
             Input::Chain(event) => self.apply_chain(now, event),
             Input::Announced(message) => self.apply_announced(now, message),
             Input::Peer(message) => self.apply_peer(now, message),
@@ -1263,16 +1279,9 @@ impl Machine for Node {
                 Some(seed) => self.rank(now, answer.e3, seed, answer.eligible.as_ref()),
                 None => Vec::new(),
             },
-        });
-        for effect in &effects {
-            if let Effect::Run(job) = effect {
-                if job.work.checks_a_member() {
-                    if let Some(state) = self.e3s.get_mut(&job.e3) {
-                        state.check_started();
-                    }
-                }
-            }
-        }
+        };
+        self.count_checks(&applied);
+        effects.extend(applied);
         effects
     }
 

@@ -243,7 +243,9 @@ impl Accusations {
             return None;
         }
         let asked = self.cases.values().any(|case| {
-            case.proof_type == proof_type && case.candidates.contains_key(&proof.proof)
+            case.accused != self.me
+                && case.proof_type == proof_type
+                && case.candidates.contains_key(&proof.proof)
         });
         let unchecked = proof.proof.clone();
         self.cases
