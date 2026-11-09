@@ -150,11 +150,11 @@
     "refs": [
       "circuits/bin/config/src/main.nr@21@use lib::configs::secure::dkg::{",
       "circuits/bin/config/src/main.nr@33@use lib::configs::secure::threshold::{",
-      "circuits/bin/config/src/main.nr@88@fn main() {",
-      "circuits/bin/config/src/main.nr@126@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@159@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@567@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@87@fn main() {",
+      "circuits/bin/config/src/main.nr@125@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@158@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@554@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@557@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure::dkg::{",

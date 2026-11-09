@@ -1007,15 +1007,15 @@
       "read_first": [
         {
           "why": "entry point: main takes no inputs and runs the verification functions in order",
-          "ref": "circuits/bin/config/src/main.nr@88@fn main() {"
+          "ref": "circuits/bin/config/src/main.nr@87@fn main() {"
         },
         {
           "why": "the CRT product check against the secure DKG preset",
-          "ref": "circuits/bin/config/src/main.nr@126@assert(product == DKG_Q_MOD_T"
+          "ref": "circuits/bin/config/src/main.nr@125@assert(product == DKG_Q_MOD_T"
         },
         {
           "why": "the cross-preset check that the DKG and threshold configs agree on N",
-          "ref": "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N"
+          "ref": "circuits/bin/config/src/main.nr@554@assert(DKG_N == THRESHOLD_N"
         }
       ],
       "rust_patterns": [],
