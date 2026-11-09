@@ -133,11 +133,13 @@ pub fn ingestion_heartbeat_files_with_clock(
     // The last write error of each chain.
     let errors: Mutex<HashMap<u64, String>> = Mutex::new(HashMap::new());
     Ok(Arc::new(move |progress: IngestionProgress| {
+        let chain = status.record(progress, clock());
+        // Write outside the lock: each chain has its own reader and file, so a slow disk write of
+        // one chain does not hold up the others.
+        let result = write_heartbeat(&dir, &chain);
         let mut errors = errors
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let chain = status.record(progress, clock());
-        let result = write_heartbeat(&dir, &chain);
         // Log a write failure once, and the recovery once, not on every poll.
         match result {
             Ok(()) => {
