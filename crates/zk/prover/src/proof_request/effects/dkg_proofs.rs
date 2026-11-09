@@ -12,6 +12,10 @@ impl ProofRequestActor {
         msg: TypedEvent<EncryptionKeyPending>,
     ) {
         let (msg, ec) = msg.into_components();
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&msg.e3_id) {
+            return;
+        }
         let correlation_id = CorrelationId::new();
         self.pending.insert(
             correlation_id,

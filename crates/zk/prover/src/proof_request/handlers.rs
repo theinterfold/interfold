@@ -23,7 +23,10 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             _ => None,
         };
         if let Some(id) = finished {
+            // Forget the E3's proof work. A proof that completes later finds no correlation and
+            // is not published.
             self.finished_e3s.insert(id.clone());
+            self.pending.retain(|_, pending| pending.e3_id != *id);
             self.held_share_decryption.remove(id);
             self.pending_share_decryption.remove(id);
             self.share_decryption_correlation
@@ -36,6 +39,14 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             self.recovered_inner_proofs.remove(id);
             self.node_agg_meta.remove(id);
             self.held_decryption_pending.remove(id);
+            self.decryption_correlation
+                .retain(|_, (e3_id, _, _)| e3_id != id);
+            self.pending_decryption.remove(id);
+            self.pk_aggregation_correlation
+                .retain(|_, e3_id| e3_id != id);
+            self.pending_pk_aggregation.remove(id);
+            self.aggregation_correlation.retain(|_, e3_id| e3_id != id);
+            self.pending_aggregation.remove(id);
             return;
         }
 

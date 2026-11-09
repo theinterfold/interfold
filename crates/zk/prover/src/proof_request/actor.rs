@@ -68,8 +68,8 @@ pub struct ProofRequestActor {
     bus: BusHandle,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     held_share_decryption: HashMap<E3id, TypedEvent<ShareDecryptionProofPending>>,
-    /// E3s whose terminal event arrived, newest last, at most [`MAX_FINISHED_E3S`]. A C1-C4 or C6
-    /// request that arrives later is ignored.
+    /// E3s whose terminal event arrived, newest last, at most [`MAX_FINISHED_E3S`]. A proof request
+    /// that arrives later is ignored.
     finished_e3s: FinishedE3s,
     signer: PrivateKeySigner,
     proof_aggregation_enabled: bool,

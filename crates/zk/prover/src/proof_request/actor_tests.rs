@@ -11,15 +11,16 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_event_system::test_support::EventFixture;
 use e3_events::{
-    ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest, E3Failed, E3Stage,
-    EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason, GetEvents,
-    HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
+    ComputeRequestErrorKind, ComputeRequestKind, DecryptedSharesAggregationProofRequest,
+    DkgShareDecryptionProofRequest, E3Failed, E3Stage, EncryptionKey, Event,
+    EventConstructorWithTimestamp, FailureReason, GetEvents, HistoryCollector,
+    PkAggregationProofRequest, PkGenerationProofRequest, ShareComputationProofRequest,
     ShareEncryptionProofRequest, TakeEvents, ThresholdShare, ThresholdSharePending, Unsequenced,
     ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
-use e3_utils::{utility_types::ArcBytes, MAILBOX_LIMIT_LARGE};
+use e3_utils::{utility_types::ArcBytes, OrderedSet, MAILBOX_LIMIT_LARGE};
 use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
 
@@ -277,6 +278,47 @@ fn decryption_share_proofs_pending(e3_id: E3id) -> DecryptionShareProofsPending 
     }
 }
 
+/// Requests the C0, C4, C5 and C7 proofs of `e3_id`.
+fn request_proofs(actor: &mut ProofRequestActor, e3_id: &E3id) {
+    let c0 = EncryptionKeyPending {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
+        params_preset: BfvPreset::InsecureThreshold64,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+    };
+    let c4 = decryption_share_proofs_pending(e3_id.clone());
+    let c5 = PkAggregationProofPending {
+        e3_id: e3_id.clone(),
+        proof_request: PkAggregationProofRequest {
+            keyshare_bytes: vec![],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&[1]),
+            params_preset: BfvPreset::InsecureThreshold64,
+            committee_n: 1,
+            committee_h: 1,
+            committee_threshold: 0,
+        },
+        public_key: ArcBytes::from_bytes(&[1]),
+        nodes: OrderedSet::new(),
+    };
+    let c7 = AggregationProofPending {
+        e3_id: e3_id.clone(),
+        proof_request: DecryptedSharesAggregationProofRequest {
+            d_share_polys: vec![],
+            plaintext: vec![],
+            params_preset: BfvPreset::InsecureThreshold64,
+            threshold_m: 0,
+            threshold_n: 1,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        },
+        plaintext: vec![],
+        shares: vec![],
+    };
+    actor.handle_encryption_key_pending(TypedEvent::new(c0.clone(), test_ctx(c0)));
+    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
+    actor.handle_pk_aggregation_proof_pending(TypedEvent::new(c5.clone(), test_ctx(c5)));
+    actor.handle_aggregation_proof_pending(TypedEvent::new(c7.clone(), test_ctx(c7)));
+}
+
 fn e3_failed(e3_id: E3id) -> InterfoldEvent {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         E3Failed {
@@ -523,29 +565,31 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
 }
 
 #[actix::test]
-async fn c1_to_c4_requests_after_the_e3_ended_are_ignored() -> Result<()> {
+async fn proof_requests_after_the_e3_ended_are_ignored() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
-    let e3_id = E3id::new("late-dkg-work", 1);
+    let e3_id = E3id::new("late-proof-work", 1);
     let plan = threshold_share_pending(e3_id.clone(), 0x11);
-    let c4 = decryption_share_proofs_pending(e3_id.clone());
     let mut ctx = Context::new();
 
-    actor.handle(e3_failed(e3_id), &mut ctx);
+    actor.handle(e3_failed(e3_id.clone()), &mut ctx);
     actor.handle_threshold_share_pending(TypedEvent::new(plan.clone(), test_ctx(plan)), &mut ctx);
-    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
+    request_proofs(&mut actor, &e3_id);
 
     assert!(actor.node_agg_meta.is_empty());
     assert!(actor.pending_threshold.is_empty());
     assert!(actor.held_decryption_pending.is_empty());
+    assert!(actor.pending.is_empty());
+    assert!(actor.pending_pk_aggregation.is_empty());
+    assert!(actor.pending_aggregation.is_empty());
     let _actor = ctx.run(actor);
     assert_no_events(&history).await
 }
 
 #[actix::test]
-async fn the_e3_end_forgets_its_dkg_proof_state() -> Result<()> {
+async fn the_e3_end_forgets_its_proof_work() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
-    let e3_id = E3id::new("ended-dkg", 1);
+    let e3_id = E3id::new("ended-proof-work", 1);
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
     let c4 = decryption_share_proofs_pending(e3_id.clone());
@@ -560,6 +604,8 @@ async fn the_e3_end_forgets_its_dkg_proof_state() -> Result<()> {
         },
     );
     actor.completed_threshold.insert(e3_id.clone());
+    // With the seq layout known, the C4 request is dispatched rather than held.
+    request_proofs(&mut actor, &e3_id);
 
     actor.handle(e3_failed(e3_id), &mut Context::new());
 
@@ -567,6 +613,13 @@ async fn the_e3_end_forgets_its_dkg_proof_state() -> Result<()> {
     assert!(actor.held_decryption_pending.is_empty());
     assert!(actor.node_agg_meta.is_empty());
     assert!(actor.completed_threshold.is_empty());
+    assert!(actor.pending.is_empty());
+    assert!(actor.decryption_correlation.is_empty());
+    assert!(actor.pending_decryption.is_empty());
+    assert!(actor.pk_aggregation_correlation.is_empty());
+    assert!(actor.pending_pk_aggregation.is_empty());
+    assert!(actor.aggregation_correlation.is_empty());
+    assert!(actor.pending_aggregation.is_empty());
     Ok(())
 }
 
