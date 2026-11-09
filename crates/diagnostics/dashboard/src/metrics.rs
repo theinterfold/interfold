@@ -712,13 +712,14 @@ mod tests {
         assert!(!body.contains("interfold_operator_active{"), "{body}");
     }
 
-    /// With two enabled chains and a failed read on one, only the chain that was read has
-    /// `operator_*` series: the failed chain has none, so a value alert on it stays silent during
-    /// the outage, and `operator_status_up` reports the failure instead.
+    /// With two enabled chains and a failed read on one, the chain that was read keeps its series
+    /// and `operator_status_up` is 0. That the failed chain has no series is the dashboard state's
+    /// doing, which the listener test covers.
     #[test]
-    fn a_chain_whose_operator_read_fails_has_no_operator_series() {
+    fn a_failed_read_on_one_chain_keeps_the_other_and_reports_the_status_down() {
         let runtime = runtime();
         let mut input = input(&runtime);
+        input.expected_chains = 2;
         input.operator.error = Some("sepolia: RPC query timed out".to_owned());
 
         let body = render(&input);
@@ -728,7 +729,6 @@ mod tests {
             value(&body, "interfold_operator_active{chain_id=\"1\"}"),
             "1"
         );
-        assert!(!body.contains("chain_id=\"11155111\""), "{body}");
     }
 
     #[test]

@@ -441,6 +441,8 @@ mod tests {
             Err(TaskPoolError::Cancelled(group)) if group == "terminal-e3"
         ));
         assert!(!queued_ran.load(Ordering::SeqCst));
+        // The cancelled task no longer counts as waiting for admission.
+        assert_eq!(pool.load().waiting, 0);
 
         assert!(matches!(
             pool.spawn_in_group(
