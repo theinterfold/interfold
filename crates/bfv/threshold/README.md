@@ -22,6 +22,11 @@ Workers generate contributions from caller RNG/cipher inputs, recipients assembl
 decryption keys, and the final calculation reconstructs from party-indexed ciphertext shares. These
 functions return data/errors; actor delivery, roster admission, and retries are outside them.
 
+SS share calculation accepts exactly one ciphertext and one aggregate smudging share. The upstream
+noise owner is consumed by that calculation; persisted copies must not mask another ciphertext.
+Independent outputs need separately committed/dealt noise and matching proofs. Keep the
+vector-shaped payloads for encoding compatibility, not as authorization to reuse noise for a batch.
+
 ## Calculation surface
 
 Each public module exposes a typed request/response and its calculation function:

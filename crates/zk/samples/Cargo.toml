@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+zeroize.workspace = true
 e3-zk-witness.workspace = true
 e3-zk-config.workspace = true
 e3-committee.workspace = true

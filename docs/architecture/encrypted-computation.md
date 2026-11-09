@@ -72,9 +72,9 @@ start the frozen decryption window, and emit durable DA reference then Ciphertex
 
 SAFE commitment covers **exactly two** ciphertext components c0/c1. `bfv_ciphertext_to_greco`
 rejects others; seed compression expands c1 before conversion. Padding a third component otherwise
-preserves commitment/root but fails ShareManager decryption, wrongly imposing ciphernode
-DecryptionTimeout. Receipt-verifier addresses must have code; a void call to an EOA returning empty
-bytes is not success.
+preserves commitment/root but fails SS decryption, wrongly imposing ciphernode DecryptionTimeout.
+Receipt-verifier addresses must have code; a void call to an EOA returning empty bytes is not
+success.
 
 Each project's guest and separate `runner/` crate link its own program. The runner calls
 `e3_program_runner::run(fhe_processor, policy())`; keeping it separate prevents server dependencies

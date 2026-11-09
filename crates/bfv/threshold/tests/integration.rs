@@ -64,7 +64,8 @@ async fn test_trbfv_isolation() -> Result<()> {
         &generated.bfv_params,
     )?;
     // Create the inputs
-    let num_votes_per_voter = 3;
+    // One SS output: independent outputs require independently committed/dealt noise.
+    let num_votes_per_voter = 1;
     let num_voters = 30;
     let (inputs, numbers) =
         e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_votes_per_voter);
@@ -126,7 +127,7 @@ async fn test_trbfv_isolation() -> Result<()> {
     // Show summation result
     let plaintext_modulus = params_raw.clone().plaintext();
 
-    let mut expected_result = [0u64; 3];
+    let mut expected_result = [0u64; 1];
     for vals in &numbers {
         for j in 0..num_votes_per_voter {
             expected_result[j] = (expected_result[j] + vals[j]) % plaintext_modulus;

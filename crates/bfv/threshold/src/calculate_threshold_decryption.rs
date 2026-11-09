@@ -4,15 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::sync::Arc;
-
 /// This module defines event payloads that will dcrypt a ciphertext with a threshold quorum of decryption shares
 use crate::{helpers::try_poly_pb_from_bytes, PartyId, TrBFVConfig};
 use anyhow::*;
 use e3_bfv_client::{decode_plaintext_to_vec_u64, encode_vec_u64_to_bytes};
 use e3_utils::utility_types::ArcBytes;
 use fhe::bfv::Plaintext;
-use fhe::{bfv::Ciphertext, trbfv::ShareManager};
+use fhe::{
+    bfv::Ciphertext,
+    trbfv::{SsSmudgingDecryptionConfig, SsSmudgingDecryptionShare, SsSmudgingDecryptor},
+};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use tracing::info;
@@ -133,6 +134,11 @@ pub fn calculate_threshold_decryption(
     let threshold = req.trbfv_config.threshold() as usize;
     let num_ciphernodes = req.trbfv_config.num_parties() as usize;
     let d_share_polys = req.d_share_polys;
+    let decryptor = SsSmudgingDecryptor::new(SsSmudgingDecryptionConfig::new(
+        num_ciphernodes,
+        threshold,
+        params,
+    )?);
 
     // NOTE: party_ids must be 1 based not 0 based
     let reconstructing_parties: Vec<usize> =
@@ -148,16 +154,16 @@ pub fn calculate_threshold_decryption(
                 index
             );
 
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             let Some(threshold_shares) = d_share_polys.get(index) else {
                 bail!("Poly not found for index {}", index)
             };
-            share_manager
-                .decrypt_from_shares(
-                    threshold_shares.clone(),
-                    reconstructing_parties.clone(),
-                    Arc::new(ciphertext),
-                )
+            let shares: Vec<_> = threshold_shares
+                .iter()
+                .cloned()
+                .map(SsSmudgingDecryptionShare::from_parts)
+                .collect();
+            decryptor
+                .decrypt_from_shares(&shares, &reconstructing_parties, &ciphertext)
                 .context("Could not decrypt ciphertext")
         })
         .collect::<Result<Vec<_>>>()?;

@@ -19,9 +19,12 @@ use e3_zk_witness::{threshold::share_decryption::ShareDecryptionCircuitData, Wit
 use fhe::{
     bfv::{BfvParameters, Encoding, Plaintext, PublicKey},
     mbfv::{AggregateIter, PublicKeyShare},
-    trbfv::ShareManager,
+    trbfv::{
+        AggregatedSmudgingShare, ShareManager, SsSmudgingDecryptionConfig, SsSmudgingDecryptor,
+    },
 };
 use fhe_traits::{FheEncoder, FheEncrypter};
+use zeroize::Zeroizing;
 
 /// Sample all N public-key contributions and recipient zero's selected T+1 decryption contributions.
 pub fn generate(
@@ -81,9 +84,7 @@ pub fn generate(
             .generate_secret_shares_from_poly(sk_poly, &mut rng)
             .map_err(|e| WitnessError::Sample(format!("Failed to generate SK shares: {:?}", e)))?;
 
-        let esi_coeffs = noise.generate_smudging_error(&mut rng).map_err(|e| {
-            WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e))
-        })?;
+        let esi_coeffs = crate::smudging::sample_coefficients(&noise, &mut rng);
         let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
             WitnessError::Sample(format!("Failed to convert error to poly: {:?}", e))
         })?;
@@ -110,15 +111,19 @@ pub fn generate(
 
     let s = CrtPolynomial::from_fhe_polynomial(&sk_poly_sum);
     let e = CrtPolynomial::from_fhe_polynomial(&es_poly_sum);
-    let d_share_rns = share_manager
+    let decryptor = SsSmudgingDecryptor::new(SsSmudgingDecryptionConfig::new(
+        num_parties,
+        threshold,
+        threshold_params.clone(),
+    )?);
+    let d_share_rns = decryptor
         .decryption_share(
-            Arc::new(ciphertext.clone()),
-            sk_poly_sum.into_ntt(),
-            es_poly_sum,
+            &ciphertext,
+            &Zeroizing::new(sk_poly_sum.into_ntt()),
+            AggregatedSmudgingShare::from_transport(Zeroizing::new(es_poly_sum)),
         )
-        .map_err(|e| {
-            WitnessError::Sample(format!("Failed to compute decryption share: {:?}", e))
-        })?;
+        .map_err(|e| WitnessError::Sample(format!("Failed to compute decryption share: {:?}", e)))?
+        .into_parts();
 
     Ok(ShareDecryptionCircuitData {
         ciphertext,

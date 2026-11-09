@@ -4794,6 +4794,7 @@ dependencies = [
  "toml",
  "tracing",
  "walkdir",
+ "zeroize",
 ]
 
 [[package]]
@@ -4813,6 +4814,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.5",
+ "zeroize",
 ]
 
 [[package]]
@@ -5144,8 +5146,8 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.6.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
 dependencies = [
  "bincode",
  "doc-comment",
@@ -5170,8 +5172,8 @@ dependencies = [
 
 [[package]]
 name = "fhe-math"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.6.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -5194,16 +5196,16 @@ dependencies = [
 
 [[package]]
 name = "fhe-traits"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.6.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
 dependencies = [
  "rand 0.9.5",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.6.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
