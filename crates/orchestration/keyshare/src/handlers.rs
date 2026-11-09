@@ -420,7 +420,9 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         event: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        // No decryption work is redelivered after the end, also while the cleanup below retries.
+        // No work resumes and no decryption work is redelivered after the end, also while the
+        // cleanup below retries.
+        self.ended = true;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {

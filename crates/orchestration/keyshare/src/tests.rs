@@ -5507,6 +5507,82 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
 }
 
 #[actix::test]
+async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
+    let e3_id = E3id::new("97", 1);
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let c4 = DecryptionShareProofsPending {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: Address::ZERO.to_string(),
+        sk_request: DkgShareDecryptionProofRequest {
+            sk_bfv: SensitiveBytes::from_encrypted(&[2]),
+            honest_ciphertexts_raw: Vec::new(),
+            num_honest_parties: 2,
+            num_moduli: 1,
+            own_plaintext_idx: None,
+            own_share_raw: None,
+            dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
+            params_preset: BfvPreset::InsecureDkg64,
+            committee_size: state.try_get()?.committee_size()?,
+        },
+        esm_requests: Vec::new(),
+    };
+    // The E3 ends before effects resume at boot, and every write fails, so the terminal cleanup
+    // retries later.
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state.try_get()?).await,
+        share_enc_preset: BfvPreset::InsecureDkg64,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery: unwritable(ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection(&e3_id), test_ec(0))),
+            decryption_share_proofs_pending: Some(TypedEvent::new(c4, test_ec(1))),
+            ..Default::default()
+        })
+        .await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            2,
+            EventSource::Local,
+        ))
+        .await?;
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+    let events = history.send(GetEvents::new()).await?;
+    assert!(
+        !events.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::DecryptionShareProofsPending(_)
+        )),
+        "the ended E3 republished its C4 request: {events:?}"
+    );
+    Ok(())
+}
+
+#[actix::test]
 async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_advances() -> Result<()>
 {
     let generating = GeneratingDecryptionProof {

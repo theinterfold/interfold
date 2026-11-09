@@ -221,6 +221,8 @@ pub struct ThresholdKeyshare {
     active_aggregator_party_id: Option<u64>,
     is_aggregator: bool,
     effects_enabled: bool,
+    /// Whether the E3 ended. The actor stays alive until its terminal cleanup succeeds.
+    ended: bool,
     // Derived from canonical events and the lifecycle projection at hydration.
     canonical_key_published: bool,
     roster_inputs_ready: bool,
@@ -287,6 +289,7 @@ impl ThresholdKeyshare {
             active_aggregator_party_id: recovered.active_aggregator_party_id,
             is_aggregator: recovered.is_aggregator,
             effects_enabled: params.effects_enabled,
+            ended: false,
             canonical_key_published: false,
             roster_inputs_ready: false,
             roster_proposal_pending: false,
