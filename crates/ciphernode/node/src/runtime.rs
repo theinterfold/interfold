@@ -49,6 +49,9 @@ const REFRESH_AGAIN: UnixSecs = 60 * 60;
 const REFUSED_LOG: Duration = Duration::from_secs(60);
 /// How often the status page's picture of the node is brought up to date.
 const BOARD_UPDATE: Duration = Duration::from_secs(5);
+/// How long a stop waits for cancelled jobs: `bb` ends within a poll, and Rust work that cannot stop
+/// midway is not worth holding a shutdown for.
+const JOB_STOP_LIMIT: Duration = Duration::from_secs(5);
 
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
@@ -115,6 +118,8 @@ pub(crate) enum Event {
     Result(EffectKey, Input),
     /// An effect that finished without a result.
     Done(EffectKey),
+    /// The reader has read every confirmed block for the first time since the start.
+    CaughtUp,
 }
 
 /// Runs the node until `stop` completes, or until its inputs, its journal, its chain logs or one
@@ -132,16 +137,9 @@ where
 {
     let genesis_operator = parts.operator.address();
     let genesis = Node::new(genesis_operator);
-    let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
-    // A stop can come between ending an E3's work and finishing its effects; that work is over.
-    let (pending, over): (Vec<_>, Vec<_>) = pending.into_iter().partition(|pending| {
-        engine
-            .machine()
-            .owes(&pending.effect.e3(), pending.effect.scope())
-    });
-    for pending in over {
-        engine.acknowledge(pending.key)?;
-    }
+    let (mut engine, recovered) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
+    // What was under way at the last stop waits for the chain: an E3 may have moved on meanwhile.
+    let mut recovered = Some(recovered);
     sweep(&parts.blobs, engine.machine());
     let mut admitted = engine.machine().operators();
     parts.network.admit(admitted.clone());
@@ -206,7 +204,7 @@ where
         job_slots: settings.job_slots,
         proof_slots: settings.proof_slots,
     });
-    let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
+    let mut queue: VecDeque<Event> = VecDeque::new();
     let inbox = parts.inbox;
     let refused = Limited::new(REFUSED_LOG);
     let hold_full = Limited::new(REFUSED_LOG);
@@ -257,6 +255,18 @@ where
                     engine.acknowledge(key)?;
                     continue;
                 }
+                Event::CaughtUp => {
+                    let recovered = recovered.take().unwrap_or_default();
+                    let machine = engine.machine();
+                    let (owed, over): (Vec<_>, Vec<_>) = recovered
+                        .into_iter()
+                        .partition(|work| machine.owes(&work.effect.e3(), work.effect.scope()));
+                    for work in over {
+                        engine.acknowledge(work.key)?;
+                    }
+                    queue.extend(effects.dispatch(owed));
+                    continue;
+                }
             };
             debug!(input = %brief(&input), "applying");
             let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
@@ -292,6 +302,7 @@ where
     // the outbox for the next start. The peers hear last, on every way out.
     essential.abort_all();
     effects.stop_all();
+    effects.stopped(JOB_STOP_LIMIT).await;
     effects.network.close().await;
     outcome
 }
@@ -398,6 +409,7 @@ async fn read_chain<R: Rpc>(
     startup_timeout: Duration,
 ) -> NodeError {
     let mut last_read = Some(Instant::now());
+    let mut told = false;
     loop {
         let read = reader.poll().await;
         if read.is_ok() {
@@ -409,6 +421,12 @@ async fn read_chain<R: Rpc>(
             Ok(facts) => {
                 for fact in facts {
                     if events.send(Event::Input(Input::Chain(fact))).await.is_err() {
+                        return NodeError::Stopped;
+                    }
+                }
+                if !told && reader.caught_up() {
+                    told = true;
+                    if events.send(Event::CaughtUp).await.is_err() {
                         return NodeError::Stopped;
                     }
                 }

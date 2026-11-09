@@ -7,7 +7,10 @@
 //! A start against a chain node that answers over real HTTP.
 
 use super::*;
-use crate::launch::{Availability, Network, Prover};
+use crate::{
+    dir::Inventory,
+    launch::{Availability, Network, Prover},
+};
 use alloy_primitives::{Bytes, B256};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
@@ -189,6 +192,7 @@ async fn config(url: String, dir: &Path) -> Config {
         startup_timeout: Duration::from_secs(30),
         availability: Availability::Http("http://127.0.0.1:1".to_string()),
         data_dir: dir.join("node"),
+        inventory: Inventory::beside(&dir.join("key")),
         fence: ProcessFence::acquire_at(&dir.join("lock"), "test").unwrap(),
         operator: PrivateKeySigner::random(),
         cipher: Cipher::from_password("node").await.unwrap(),
@@ -249,6 +253,8 @@ async fn a_chain_node_that_is_not_ready_yet_is_waited_for() {
     verify(config(url, dir.path()).await).await.unwrap();
     assert_eq!(chain.fail_first.load(Ordering::SeqCst), 0);
     assert!(chain.reads_of("eth_chainId") > 0);
+    let list = Inventory::beside(&dir.path().join("key"));
+    assert_eq!(list.read().folders, [dir.path().join("node")]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -269,6 +275,9 @@ async fn a_chain_node_that_never_answers_ends_the_start_at_its_deadline() {
         ),
         "{refusal}"
     );
+    // A folder that never held anything must not read later as a volume that is not mounted.
+    let list = Inventory::beside(&dir.path().join("key"));
+    assert!(list.read().folders.is_empty());
 }
 
 #[tokio::test]

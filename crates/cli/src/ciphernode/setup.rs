@@ -121,7 +121,7 @@ pub async fn execute(
     let key =
         zeroize::Zeroizing::new(alloy::primitives::FixedBytes::<32>::from_hex(&*private_key)?.0);
     let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
-    let keys = crate::keystore::write(&config.db_file(), &cipher, &key)?;
+    let keys = crate::node_state::seal_wallet(&config, &cipher, &key)?;
     print_info(
         out,
         &config,

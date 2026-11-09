@@ -333,11 +333,12 @@ Each rule is checkable in review.
 
 - **D50. An accusation window must have a reason to stay open.** A member opens one window per
   accusation, in the whole life of an E3: a member that follows the protocol accuses once, and
-  windows that follow each other would keep a completed E3 and its key share without end. A window
-  on a proof this node found holding ends at that check, and the same proof opens no other. Votes
-  that wait for an accusation keep nothing. The first copy of a ballot can carry another proof, so a
-  proof that holds also must not keep real evidence out: the real accusation, sent again, opens the
-  window once the other one ends.
+  windows that follow each other would keep a completed E3 and its key share without end. A ballot
+  names its evidence hash, so votes for two hashes count apart. Every proof brought for a ballot is
+  a candidate until this node checks it, so a copy of a ballot with another proof cannot keep the
+  real evidence out. A window with no candidate and no evidence left ends, and votes that wait for
+  an accusation keep nothing. A completed E3 waits for checks still running, one vote window at
+  most.
 
 - **D51. Who carried a message does not matter; who signed it does.** A bootstrap peer offers no
   blobs, so it is never asked for them. Its gossip is still taken: refusing the first copy of a
@@ -352,6 +353,10 @@ Each rule is checkable in review.
   says: its logs, its receipts, and the reverts that end a transaction's retries. A malicious RPC
   can already make the node miss or take part in anything. Checking each answer against a second,
   independent RPC is the design for a node that should not trust its RPC, and is not built.
+
+- **D54. Recovered work waits for the chain.** What was under way at the last stop is looked at only
+  after the reader first catches up: an E3 may have moved on while the node was away. A job holds
+  its place until its process has ended, so a stop can wait for `bb` to go.
 
 ## Problems in the earlier node, with the fix above them
 

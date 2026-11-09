@@ -44,8 +44,12 @@ pub struct E3 {
     /// The seed to rank with once the bonding registry says which operators may hold a seat,
     /// and the time to rank without knowing.
     selecting: Option<Selecting>,
-    /// The seed this node last ranked with, for when its standing changes before the deadline.
-    ranked_with: Option<CommitteeSeed>,
+    /// The request's seed, for when this node's standing changes before the deadline.
+    seed: Option<CommitteeSeed>,
+    /// Checks of members' proofs that have not answered; one that fails can end in an accusation.
+    checks: u32,
+    /// When a completed E3 stops waiting for those checks.
+    checks_until: Option<UnixSecs>,
     ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
@@ -155,7 +159,9 @@ impl E3 {
             slashing,
             request,
             selecting: None,
-            ranked_with: None,
+            seed: None,
+            checks: 0,
+            checks_until: None,
             ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
@@ -171,9 +177,10 @@ impl E3 {
     /// holders finalize the committee after it, and `finalizeCommittee` fails one short of its
     /// threshold. If no ticket holder acts, the contract fails a committee that met its threshold
     /// only after the DKG window too, so the watch waits that long.
-    pub(crate) fn seeded(&mut self, committee_deadline: UnixSecs) {
-        let deadline = committee_deadline + self.request.dkg_window;
+    pub(crate) fn seeded(&mut self, seed: CommitteeSeed) {
+        let deadline = seed.deadline + self.request.dkg_window;
         self.deadlines.insert(Stage::Requested, deadline);
+        self.seed = Some(seed);
     }
 
     /// The chain moved the E3 to `stage`, unless it already moved it past.
@@ -218,7 +225,8 @@ impl E3 {
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
         let accusations = self.accusations.as_ref().and_then(Accusations::closes_at);
         if self.stage == Stage::Complete {
-            return Some(accusations.unwrap_or_default());
+            let checks = self.checks_until.filter(|_| self.checks > 0);
+            return Some(accusations.max(checks).unwrap_or_default());
         }
         let failure = self.failure?;
         if (self.slot.is_some() && !failure.settled) || (self.has_work() && !failure.released) {
@@ -379,12 +387,23 @@ impl E3 {
         self.ticket.map(|ticket| ticket.number)
     }
 
-    pub(crate) fn remember_seed(&mut self, seed: CommitteeSeed) {
-        self.ranked_with = Some(seed);
+    pub(crate) fn seed(&self) -> Option<CommitteeSeed> {
+        self.seed
     }
 
-    pub(crate) fn ranked_with(&self) -> Option<CommitteeSeed> {
-        self.ranked_with
+    pub(crate) fn check_started(&mut self) {
+        self.checks += 1;
+    }
+
+    /// The chain completed the E3. Whether it stays for accusation work: open windows, or checks
+    /// still running, which wait for one vote window at most.
+    pub(crate) fn stays_after_completion(&mut self, now: UnixSecs) -> bool {
+        let validity = self.accusations.as_ref().map_or(0, Accusations::validity);
+        if self.checks > 0 && validity > 0 {
+            self.checks_until = Some(now.saturating_add(validity));
+            return true;
+        }
+        self.accuses()
     }
 
     pub(crate) fn submit_ticket(
@@ -505,6 +524,9 @@ impl E3 {
     }
 
     pub(crate) fn job_done(&mut self, now: UnixSecs, result: WorkResult) -> Vec<Effect> {
+        if result.answers_a_check() {
+            self.checks = self.checks.saturating_sub(1);
+        }
         let fault = fault_of(&result);
         let mut effects = match result {
             WorkResult::Dkg(result) => match self.dkg_mut() {

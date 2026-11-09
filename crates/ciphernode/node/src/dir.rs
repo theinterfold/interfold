@@ -196,7 +196,7 @@ pub enum DirError {
 }
 
 /// The node folders a key has run in, kept beside the key.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Inventory {
     path: PathBuf,
 }
@@ -247,8 +247,9 @@ impl Inventory {
         })
     }
 
-    /// Records `folder`, durably, before anything is written there, so a crash during its first
-    /// start leaves no state the list does not name. A list that was lost stays incomplete.
+    /// Records `folder`, durably, once it holds a manifest and before it holds anything else: a
+    /// crash leaves no E3 the list does not name, and a folder on the list that is empty now is
+    /// one that was lost. A list that was lost stays incomplete.
     pub fn record(&self, folder: &Path) -> Result<(), DirError> {
         let mut recorded = self.read();
         if recorded.folders.iter().any(|known| known == folder) {

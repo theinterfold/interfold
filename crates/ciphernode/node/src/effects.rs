@@ -77,6 +77,28 @@ const LONGEST_REPORT: Duration = Duration::from_secs(30 * 60);
 /// At most one job-failure line goes out per this long.
 const FAILURE_LOG: Duration = Duration::from_secs(30);
 
+/// Places for one kind of job. A job holds its place until its blocking work has ended, so what
+/// a cancelled job still runs counts, and a stop can wait for it.
+struct Slots {
+    places: Arc<Semaphore>,
+    total: u32,
+}
+
+impl Slots {
+    fn new(total: usize) -> Self {
+        let total = total.max(1);
+        Self {
+            places: Arc::new(Semaphore::new(total)),
+            total: total as u32,
+        }
+    }
+
+    /// Completes once no job holds a place.
+    async fn idle(&self) {
+        let _ = self.places.acquire_many(self.total).await;
+    }
+}
+
 /// An effect under way.
 struct Task {
     key: EffectKey,
@@ -106,9 +128,9 @@ pub(crate) struct Effects<R, A, N, B> {
     pub(crate) events: mpsc::Sender<Event>,
     notes: NoteFeed,
     /// Places for jobs that check or compute: one waiting beyond them holds no blocking thread.
-    job_slots: Arc<Semaphore>,
+    job_slots: Slots,
     /// Places for jobs that make proofs, apart, so a check never waits behind an hour-long proof.
-    proof_slots: Arc<Semaphore>,
+    proof_slots: Slots,
     job_failures: Arc<Limited>,
     tasks: BTreeMap<E3Id, Vec<Task>>,
 }
@@ -146,8 +168,8 @@ where
             availability: parts.availability,
             events: parts.events,
             notes: parts.notes,
-            job_slots: Arc::new(Semaphore::new(parts.job_slots.max(1))),
-            proof_slots: Arc::new(Semaphore::new(parts.proof_slots.max(1))),
+            job_slots: Slots::new(parts.job_slots),
+            proof_slots: Slots::new(parts.proof_slots),
             job_failures: Arc::new(Limited::new(FAILURE_LOG)),
             tasks: BTreeMap::new(),
         }
@@ -218,6 +240,18 @@ where
         }
     }
 
+    /// Waits for the jobs [`Self::stop_all`] cancelled: a `bb` child ends at its next poll, and
+    /// must not outlive the node. Work that cannot stop midway is left behind after `limit`.
+    pub(crate) async fn stopped(&self, limit: Duration) {
+        let idle = async {
+            self.job_slots.idle().await;
+            self.proof_slots.idle().await;
+        };
+        if tokio::time::timeout(limit, idle).await.is_err() {
+            warn!("a job was still running when the node stopped");
+        }
+    }
+
     /// A submission whose calls cannot be built, for a blob the store cannot read now, is built
     /// again later.
     fn submit(&self, key: EffectKey, submission: Submission) -> JoinHandle<()> {
@@ -241,8 +275,8 @@ where
     /// owes it. Its attempts after the first use less memory.
     fn run(&self, key: EffectKey, job: Job, cancel: Cancel) -> JoinHandle<()> {
         let slots = match job.work.proves() {
-            true => self.proof_slots.clone(),
-            false => self.job_slots.clone(),
+            true => self.proof_slots.places.clone(),
+            false => self.job_slots.places.clone(),
         };
         let (jobs, events) = (self.jobs.clone(), self.events.clone());
         let failures = self.job_failures.clone();
@@ -257,7 +291,10 @@ where
                     cancel: cancel.clone(),
                 };
                 let (runner, work) = (jobs.clone(), job.clone());
-                let blocking = tokio::task::spawn_blocking(move || runner.run(&work, &attempt));
+                let blocking = tokio::task::spawn_blocking(move || {
+                    let _slot = slot;
+                    runner.run(&work, &attempt)
+                });
                 let failure = match reporting(&job, blocking).await {
                     Ok(Ok(result)) => {
                         let done = Input::Job(JobDone { e3: job.e3, result });
@@ -268,7 +305,6 @@ where
                     Ok(Err(failure)) => format!("{failure:#}"),
                     Err(panic) => format!("it panicked: {panic}"),
                 };
-                drop(slot);
                 if let Some(held_back) = failures.pass() {
                     error!(e3 = %job.e3, attempt = number, held_back, %failure, "a job failed");
                 }
@@ -418,6 +454,22 @@ async fn reporting<T>(job: &Job, mut work: JoinHandle<T>) -> Result<T, tokio::ta
                 wait = (wait * 2).min(LONGEST_REPORT);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    /// A stop waits for a job that still holds its place, and only for that.
+    #[tokio::test]
+    async fn slots_are_idle_once_every_job_has_let_go() {
+        let slots = Slots::new(2);
+        let held = slots.places.clone().acquire_owned().await.unwrap();
+        let waited = tokio::time::timeout(Duration::from_millis(20), slots.idle()).await;
+        assert!(waited.is_err());
+        drop(held);
+        slots.idle().await;
     }
 }
 

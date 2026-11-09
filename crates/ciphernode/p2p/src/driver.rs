@@ -488,6 +488,10 @@ impl<S: BlobStore> Driver<S> {
     }
 
     fn try_publish(&mut self, mut pending: PendingPublish) {
+        // A caller that stopped waiting no longer owes this message.
+        if pending.done.is_closed() {
+            return;
+        }
         let topic = self.protocols.topic.clone();
         let result = self
             .swarm
@@ -514,10 +518,7 @@ impl<S: BlobStore> Driver<S> {
 
     fn retry_publishes(&mut self) {
         for pending in std::mem::take(&mut self.publishes) {
-            // A caller that stopped waiting no longer owes this message.
-            if !pending.done.is_closed() {
-                self.try_publish(pending);
-            }
+            self.try_publish(pending);
         }
     }
 

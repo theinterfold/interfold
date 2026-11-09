@@ -70,12 +70,36 @@ pub enum Error {
 }
 
 /// The machine a store's contents rebuild, without the store: what a read-only look at a stopped
-/// node's journal needs.
+/// node's journal needs. It reads everything a start reads, so what passes here starts.
 pub fn restore<M: Machine + DeserializeOwned>(stored: Stored, genesis: M) -> Result<M, Error>
 where
     M::Input: DeserializeOwned,
+    M::Effect: DeserializeOwned,
 {
-    Ok(replay(stored.snapshot, stored.journal, genesis)?.0)
+    Ok(recover(stored, genesis)?.0)
+}
+
+/// The machine, its last step, the steps since its snapshot, and the effects still pending.
+type Recovered<M> = (M, u64, u64, Vec<Pending<<M as Machine>::Effect>>);
+
+fn recover<M: Machine + DeserializeOwned>(stored: Stored, genesis: M) -> Result<Recovered<M>, Error>
+where
+    M::Input: DeserializeOwned,
+    M::Effect: DeserializeOwned,
+{
+    let (machine, last_seq, steps_since_snapshot) =
+        replay(stored.snapshot, stored.journal, genesis)?;
+    let pending = stored
+        .outbox
+        .into_iter()
+        .map(|(key, bytes)| {
+            Ok(Pending {
+                key,
+                effect: decode(&bytes)?,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok((machine, last_seq, steps_since_snapshot, pending))
 }
 
 /// The machine, its last step, and the steps since its snapshot.
@@ -123,19 +147,7 @@ impl<M: Machine, S: Store> Engine<M, S> {
     /// Restore the machine from `store`, or start from `genesis` when the store is empty. Returns
     /// the effects that are still pending.
     pub fn open(store: S, genesis: M, snapshot_every: u64) -> Result<Running<M, S>, Error> {
-        let stored = store.read()?;
-        let (machine, last_seq, steps_since_snapshot) =
-            replay(stored.snapshot, stored.journal, genesis)?;
-        let pending = stored
-            .outbox
-            .into_iter()
-            .map(|(key, bytes)| {
-                Ok(Pending {
-                    key,
-                    effect: decode(&bytes)?,
-                })
-            })
-            .collect::<Result<_, Error>>()?;
+        let (machine, last_seq, steps_since_snapshot, pending) = recover(store.read()?, genesis)?;
         let engine = Self {
             machine,
             store,
@@ -295,6 +307,16 @@ mod tests {
         assert_eq!(decode::<u64>(&left_over).unwrap(), 7);
         left_over.push(0);
         assert!(decode::<u64>(&left_over).is_err());
+    }
+
+    /// What a read-only look passes, a start must be able to read: the outbox too.
+    #[test]
+    fn restoring_reads_the_outbox_as_a_start_does() {
+        let stored = Stored {
+            outbox: vec![(EffectKey { seq: 1, index: 0 }, vec![0xff])],
+            ..Stored::default()
+        };
+        assert!(restore(stored, Tally::default()).is_err());
     }
 
     #[test]

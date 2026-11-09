@@ -146,8 +146,8 @@
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@242@start::execute(config, peers, bootstrap)",
-      "crates/cli/src/start.rs@59@e3_node::launch::launch(node, stop)"
+      "crates/cli/src/cli.rs@240@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/start.rs@58@e3_node::launch::launch(node, stop)"
     ],
     "line_text": ["start::execute(config, peers, bootstrap).await?", "e3_node::launch::launch(node, stop)"],
     "note": "The Start subcommand calls start::execute, which maps the configuration and runs e3_node::launch::launch."

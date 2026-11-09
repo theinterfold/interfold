@@ -366,6 +366,22 @@ mod tests {
         Ok(())
     }
 
+    /// A removed profile's key with no list beside it: nothing says where it ran.
+    #[tokio::test]
+    async fn the_key_of_a_removed_profile_with_no_list_stops_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        let key = dir.path().join(".interfold/config/removed/key");
+        std::fs::create_dir_all(key.parent().unwrap())?;
+        std::fs::write(&key, b"key")?;
+        let error = purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no full record"), "{error:#}");
+        assert!(key.exists());
+        Ok(())
+    }
+
     /// A list that lost its history must not let the purge delete the key.
     #[tokio::test]
     async fn keys_whose_list_is_not_whole_stop_the_purge() -> Result<()> {

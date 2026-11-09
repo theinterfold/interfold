@@ -8,10 +8,12 @@
 //! out from it before they change anything. The operator's keys are not in the node's folder: they
 //! stay in the keystore, so deleting the folder keeps the node's identity.
 
+use crate::keystore::{self, Keys};
 use alloy::primitives::Address;
 use anyhow::{bail, Context, Result};
-use e3_ciphernode_config::NodeConfig;
+use e3_ciphernode_config::{paths_engine::DEFAULT_KEY_NAME, NodeConfig};
 use e3_console::{log, Console};
+use e3_crypto::Cipher;
 use e3_engine::{restore, Store, Stored};
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use e3_journal::Journal;
@@ -29,6 +31,25 @@ pub fn dir(config: &NodeConfig) -> NodeDir {
 
 pub fn inventory(config: &NodeConfig) -> Inventory {
     Inventory::beside(&config.key_file())
+}
+
+/// Seals `private_key` as the wallet of `config`'s node. A profile's first keys have run nowhere,
+/// so their list starts complete; keys that replace others keep the list, which still says where
+/// the old keys' E3s may be.
+pub fn seal_wallet(config: &NodeConfig, cipher: &Cipher, private_key: &[u8; 32]) -> Result<Keys> {
+    let (keys, first) = keystore::write(&config.db_file(), cipher, private_key)?;
+    if first {
+        inventory(config).create()?;
+    }
+    Ok(keys)
+}
+
+/// Makes `config`'s node a random wallet unless it has one.
+pub fn ensure_wallet(config: &NodeConfig, cipher: &Cipher) -> Result<()> {
+    if keystore::ensure(&config.db_file(), cipher)? {
+        inventory(config).create()?;
+    }
+    Ok(())
 }
 
 /// An E3 a node's journal holds, and what the node would give up for it.
@@ -148,8 +169,9 @@ impl Plan {
 pub struct Guarded {
     /// Node folders it did not name: deleting the folder deletes their E3s unchecked.
     pub unchecked: Vec<PathBuf>,
-    /// The lists of where keys under it ran, which may name state outside it.
-    pub inventories: Vec<Inventory>,
+    /// The lists of where keys under it ran, which may name state outside it; a key with no list
+    /// counts as one that says nothing.
+    pub inventories: BTreeSet<Inventory>,
 }
 
 /// Holds the lock of every node whose lock is under `root`, and says what `root` holds at any
@@ -181,7 +203,7 @@ pub fn guard(root: &Path, checked: &[PathBuf], fences: &mut Vec<ProcessFence>) -
 struct Contents {
     nodes: Vec<PathBuf>,
     locks: Vec<PathBuf>,
-    inventories: Vec<Inventory>,
+    inventories: BTreeSet<Inventory>,
 }
 
 /// Every folder counts as a node folder when its journal exists, also inside another node's
@@ -216,6 +238,8 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
                     return Err(error).with_context(|| format!("reading {}", path.display()))
                 }
             }
+        } else if entry.file_name() == DEFAULT_KEY_NAME {
+            contents.inventories.insert(Inventory::beside(&path));
         } else {
             contents.inventories.extend(Inventory::at(&path));
         }

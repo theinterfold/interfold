@@ -12,9 +12,15 @@ use e3_blobs::MemoryBlobs;
 use e3_chain::{Call, Deadlines, Estimate, LogsError, RawLog, RpcError, Sortition};
 use e3_crypto::Cipher;
 use e3_data_availability::DataReference;
+use e3_engine::{Step, Store};
 use e3_jobs::{JobLimits, Proofs};
 use e3_p2p::{InboxWriter, NetworkError};
-use e3_protocol::{node::PeerMessage, wire::Envelope};
+use e3_protocol::{
+    node::{Effect, Note, Noted, PeerMessage},
+    proof::ProofType,
+    wire::Envelope,
+    E3Id,
+};
 use futures::stream::BoxStream;
 use std::{
     collections::BTreeMap,
@@ -168,6 +174,55 @@ async fn parts(
         notes_dir: dir.join("notes"),
     };
     (settings, parts, peers)
+}
+
+/// One step that left one effect, for an E3 the machine does not hold, in the outbox.
+fn left_in_the_outbox() -> Step {
+    let effect = Effect::Note(Note {
+        e3: E3Id {
+            chain_id: 1,
+            number: U256::from(1),
+        },
+        event: Noted::ProofFailed {
+            member: Address::ZERO,
+            proof_type: ProofType::C0PkBfv,
+        },
+    });
+    Step {
+        seq: 1,
+        entry: bincode::serialize(&(0u64, Input::Tick)).unwrap(),
+        effects: vec![(
+            EffectKey { seq: 1, index: 0 },
+            bincode::serialize(&effect).unwrap(),
+        )],
+        snapshot: None,
+        answers: None,
+    }
+}
+
+/// What the last stop left waits for the chain: until the reader has caught up, nothing says
+/// whether it is still owed.
+#[tokio::test]
+async fn recovered_work_waits_for_the_first_catch_up() {
+    let behind = Chain {
+        head: 5,
+        logs_fail: true,
+        ..Chain::default()
+    };
+    for (chain, left) in [(behind, 1), (Chain::default(), 0)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, mut parts, _peers) = parts(dir.path(), chain).await;
+        parts.journal.commit(left_in_the_outbox()).unwrap();
+        run(
+            settings,
+            parts,
+            tokio::time::sleep(Duration::from_millis(300)),
+        )
+        .await
+        .unwrap();
+        let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
+        assert_eq!(stored.outbox.len(), left);
+    }
 }
 
 /// A node that lost its reader must end, so its supervisor can restart it.

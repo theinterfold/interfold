@@ -45,7 +45,6 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             .context("the node stopped");
     }
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
-    crate::node_state::inventory(&config).record(crate::node_state::dir(&config).path())?;
     let node = node_v2::config(&config, fence).await?;
     info!(
         "LAUNCHING CIPHERNODE: ({}/{})",

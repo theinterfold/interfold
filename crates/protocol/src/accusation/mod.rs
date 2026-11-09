@@ -96,10 +96,12 @@ pub enum AccusationWorkResult {
     },
 }
 
-/// One accusation and the window that every vote for it signs.
+/// One accusation, the window every vote for it signs, and the evidence those votes sign: the
+/// contract takes one evidence hash for all the votes of a slash, so votes for two count apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Ballot {
     pub accusation_id: B256,
+    pub data_hash: B256,
     pub issued_at: UnixSecs,
     pub deadline: UnixSecs,
 }
@@ -108,6 +110,7 @@ impl Ballot {
     pub(crate) fn of(vote: &Vote) -> Self {
         Self {
             accusation_id: vote.accusation_id,
+            data_hash: vote.data_hash,
             issued_at: vote.issued_at,
             deadline: vote.deadline,
         }

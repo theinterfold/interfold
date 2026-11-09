@@ -549,16 +549,39 @@ mod cases {
         node.e3(&e3(1)).unwrap().accuses()
     }
 
-    fn checked(proof: crate::proof::ZkProof, fails: bool) -> Input {
+    fn checked(proof: crate::proof::ZkProof, fails: bool, hash: B256) -> Input {
         Input::Job(JobDone {
             e3: e3(1),
             result: WorkResult::Accusation(AccusationWorkResult::Verified {
                 proof_type: ProofType::C0PkBfv,
                 proof,
                 fails,
-                data_hash: data_hash(1),
+                data_hash: hash,
             }),
         })
+    }
+
+    /// Operator 3's copy of operator 2's ballot, carrying another proof of the accused's.
+    fn copied_ballot(other: &crate::proof::ZkProof) -> Input {
+        let hash = other.payload_signing_hash(e3(1), ProofType::C0PkBfv);
+        from(
+            3,
+            AccusationMessage::Accuse {
+                accused: address(1),
+                proof_type: ProofType::C0PkBfv,
+                proof: SignedProof {
+                    signature: signature(1, hash),
+                    proof: other.clone(),
+                },
+                vote: vote(3, NOW),
+            },
+        )
+    }
+
+    fn signs(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Sign(_)))
     }
 
     /// Nothing can come of a window on a proof that holds, and windows keep a completed E3 and its
@@ -574,35 +597,51 @@ mod cases {
         assert_eq!(node.classify(NOW + 1, &again), Classified::Drop);
     }
 
-    /// The first copy of a ballot can carry another proof of the accused's, one that holds. It
-    /// has the window only until it is checked: the real accusation, sent again, then opens it.
+    /// The first copy of a ballot can carry another proof of the accused's, one that holds or one
+    /// that fails with other bytes. It is one candidate: the real evidence, brought later, stays
+    /// to be checked, and the node votes on it.
     #[test]
-    fn a_proof_that_holds_does_not_take_the_place_of_the_real_evidence() {
+    fn a_copied_ballot_does_not_take_the_place_of_the_real_evidence() {
+        let cases = [(false, data_hash(1)), (true, data_hash(2))];
+        for (fails, hash) in cases {
+            let mut node = member_of(ME, &[1, 2, 3]);
+            let other = proof(9);
+            node.step(NOW, copied_ballot(&other));
+            node.step(NOW, accusation(2, NOW, 1));
+            assert!(!signs(&node.step(NOW, checked(other, fails, hash))));
+            assert!(accuses(&node));
+            assert!(signs(&node.step(NOW, verified(true))));
+        }
+    }
+
+    /// With nothing left to check, a copied ballot is over, and the real one can open it.
+    #[test]
+    fn a_ballot_with_nothing_left_to_check_ends_and_the_real_one_can_open_it() {
         let mut node = member_of(ME, &[1, 2, 3]);
         let other = proof(9);
-        let hash = other.payload_signing_hash(e3(1), ProofType::C0PkBfv);
-        let copied = from(
-            3,
-            AccusationMessage::Accuse {
-                accused: address(1),
-                proof_type: ProofType::C0PkBfv,
-                proof: SignedProof {
-                    signature: signature(1, hash),
-                    proof: other.clone(),
-                },
-                vote: vote(3, NOW),
-            },
-        );
-        node.step(NOW, copied);
-        node.step(NOW, checked(other, false));
+        node.step(NOW, copied_ballot(&other));
+        node.step(NOW, checked(other, true, data_hash(2)));
         assert!(!accuses(&node));
 
-        let effects = node.step(NOW + 30, accusation(2, NOW, 1));
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::Run(job) if matches!(job.work, Work::Accusation(_))
-        )));
+        node.step(NOW + 30, accusation(2, NOW, 1));
         assert!(accuses(&node));
+        assert!(signs(&node.step(NOW + 30, verified(true))));
+    }
+
+    /// One check answers every window that waits for it.
+    #[test]
+    fn a_proof_brought_twice_is_checked_once() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        let checks = |effects: &[Effect]| {
+            effects
+                .iter()
+                .filter(|effect| {
+                    matches!(effect, Effect::Run(job) if matches!(job.work, Work::Accusation(_)))
+                })
+                .count()
+        };
+        assert_eq!(checks(&node.step(NOW, accusation(2, NOW, 1))), 1);
+        assert_eq!(checks(&node.step(NOW + 1, accusation(3, NOW + 1, 1))), 0);
     }
 
     /// A vote for an accusation that never comes must not keep the E3.
@@ -615,7 +654,7 @@ mod cases {
 
     /// What this node would only throw away is refused before it costs a journal entry.
     #[test]
-    fn a_vote_past_the_early_limit_or_for_other_evidence_is_not_taken() {
+    fn a_vote_past_the_early_limit_is_not_taken() {
         let mut node = member_of(ME, &[1, 2, 3]);
         for earlier in 1..=super::super::cases::EARLY_VOTES_PER_MEMBER as u64 {
             node.step(
@@ -625,13 +664,32 @@ mod cases {
         }
         let past_the_limit = peer_message(from(3, AccusationMessage::Vote(vote(3, NOW))));
         assert_eq!(node.classify(NOW, &past_the_limit), Classified::Drop);
+    }
 
-        let mut node = member_of(ME, &[1, 2, 3]);
-        node.step(NOW, accusation(2, NOW, 1));
-        let mut other = vote(3, NOW).vote;
-        other.data_hash = data_hash(2);
-        let other = peer_message(from(3, AccusationMessage::Vote(signed_vote(3, other))));
-        assert_eq!(node.classify(NOW, &other), Classified::Drop);
+    /// A check still running can end in an accusation, so a completion waits for it: as long as
+    /// a vote window at most.
+    #[test]
+    fn a_check_still_running_keeps_a_completed_e3_for_one_window() {
+        let complete = |at: u64| {
+            chain(
+                at,
+                ChainFact::StageChanged {
+                    e3: e3(1),
+                    stage: Stage::Complete,
+                },
+            )
+        };
+        let mut node = member(ME);
+        node.step(NOW + 1, complete(20));
+        assert!(node.e3(&e3(1)).is_some());
+        let effects = node.step(NOW + 2, key_failed(e3(1), 1, data_hash(1)));
+        assert!(signs(&effects));
+        assert!(accuses(&node));
+
+        let mut node = member(ME);
+        node.step(NOW + 1, complete(20));
+        node.step(NOW + 1 + VALIDITY, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
     }
 
     /// A member's votes that come before their accusations wait in a bounded number; one past it

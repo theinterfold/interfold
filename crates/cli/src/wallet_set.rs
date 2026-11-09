@@ -4,7 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::keystore;
 use alloy::{hex::FromHex, primitives::FixedBytes, signers::local::PrivateKeySigner};
 use anyhow::{anyhow, Result};
 use dialoguer::{theme::ColorfulTheme, Password};
@@ -46,13 +45,7 @@ pub async fn execute(
     let input = ask_for_private_key(private_key)?;
     let key = Zeroizing::new(FixedBytes::<32>::from_hex(&*input)?.0);
     let cipher = Cipher::from_file(config.key_file()).await?;
-    // A first key has run nowhere. A key that replaces another keeps the old one's list, which
-    // still says where its E3s may be.
-    let first = !config.db_file().exists();
-    keystore::write(&config.db_file(), &cipher, &key)?;
-    if first {
-        crate::node_state::inventory(config).create()?;
-    }
+    crate::node_state::seal_wallet(config, &cipher, &key)?;
     log!(
         out,
         "Wallet key has been successfully stored and encrypted."

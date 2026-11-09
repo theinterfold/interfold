@@ -76,6 +76,7 @@ pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> 
         startup_timeout: Duration::from_secs(config.startup_timeout_secs()),
         availability,
         data_dir: crate::node_state::dir(config).path().to_path_buf(),
+        inventory: crate::node_state::inventory(config),
         fence,
         proving: proving(config),
         reserved_threads: config.multithread_reserve_threads(),

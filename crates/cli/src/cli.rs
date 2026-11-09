@@ -232,9 +232,7 @@ impl Cli {
 
         if creates_secrets && config.autowallet() {
             let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
-            if crate::keystore::ensure(&config.db_file(), &cipher)? {
-                crate::node_state::inventory(&config).create()?;
-            }
+            crate::node_state::ensure_wallet(&config, &cipher)?;
         }
 
         match self.command {

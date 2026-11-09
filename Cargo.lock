@@ -3968,6 +3968,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "async-trait",
+ "bincode",
  "e3-blobs",
  "e3-chain",
  "e3-ciphernode-config",

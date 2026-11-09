@@ -12,6 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_crypto::Cipher;
 use e3_entrypoint::fence::ProcessFence;
+use e3_node::dir::Inventory;
 use e3_node::launch::{deployment, launch, Availability, Config, Network, Prover, Proving};
 use e3_zk_prover::BBPath;
 use serde::Deserialize;
@@ -82,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
             &config.data_dir.join(e3_entrypoint::fence::LOCK_FILE_NAME),
             "e3-node",
         )?,
+        inventory: Inventory::beside(&config.data_dir.join("key")),
         data_dir: config.data_dir,
         operator,
         cipher: Cipher::from_password(&config.cipher_password).await?,

@@ -59,13 +59,14 @@ pub fn read(db_file: &Path, cipher: &Cipher) -> Result<Option<Keys>> {
 }
 
 /// Seals `private_key` as the operator key, and the network key made from the same bytes, in
-/// place of any keys there.
-pub fn write(db_file: &Path, cipher: &Cipher, private_key: &[u8; 32]) -> Result<Keys> {
+/// place of any keys there. Says too whether the store held none before.
+pub fn write(db_file: &Path, cipher: &Cipher, private_key: &[u8; 32]) -> Result<(Keys, bool)> {
     let (batch, keys) = sealed_pair(cipher, private_key)?;
     let tree = open(db_file)?;
+    let first = !tree.contains_key(OPERATOR)? && !tree.contains_key(NETWORK)?;
     tree.apply_batch(batch)?;
     tree.flush()?;
-    Ok(keys)
+    Ok((keys, first))
 }
 
 /// Seals a new random pair unless the store holds one. True when this call made the pair.
@@ -135,7 +136,9 @@ mod tests {
         let db_file = dir.path().join("db");
         let cipher = Cipher::from_password("test password").await?;
         let key: [u8; 32] = alloy::hex::decode(NEW_KEY)?.try_into().unwrap();
-        let written = write(&db_file, &cipher, &key)?;
+        let (written, first) = write(&db_file, &cipher, &key)?;
+        assert!(first);
+        assert!(!write(&db_file, &cipher, &key)?.1);
         let peer_id = Keypair::ed25519_from_bytes(key)?.public().to_peer_id();
         assert!(!ensure(&db_file, &cipher)?);
         let keys = read(&db_file, &cipher)?.expect("the keys sealed here");

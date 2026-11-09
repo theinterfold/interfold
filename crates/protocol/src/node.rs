@@ -414,6 +414,22 @@ pub enum WorkResult {
     Accusation(AccusationWorkResult),
 }
 
+impl WorkResult {
+    /// Whether this answers a job for which [`Work::checks_a_member`] holds.
+    pub(crate) fn answers_a_check(&self) -> bool {
+        matches!(
+            self,
+            Self::Dkg(
+                DkgWorkResult::EncryptionKeyChecked { .. }
+                    | DkgWorkResult::SharesChecked { .. }
+                    | DkgWorkResult::DecryptionKeyChecked { .. }
+                    | DkgWorkResult::KeyshareChecked { .. }
+            ) | Self::Decryption(DecryptionWorkResult::SharesChecked { .. })
+                | Self::Accusation(_)
+        )
+    }
+}
+
 /// Hashes for the operator key to sign. The signatures return in the same order as
 /// [`Input::Signed`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -922,9 +938,11 @@ impl Node {
             },
             ChainFact::StageChanged { e3, stage } => {
                 match (stage, self.e3s.get_mut(&e3)) {
-                    // Open accusations keep a completed E3 until their windows close.
-                    (Stage::Complete, Some(state)) if state.accuses() => state.advance(stage),
-                    (Stage::Complete, _) => self.end(e3),
+                    (Stage::Complete, Some(state)) => match state.stays_after_completion(now) {
+                        true => state.advance(stage),
+                        false => self.end(e3),
+                    },
+                    (Stage::Complete, None) => {}
                     (stage, Some(state)) => state.advance(stage),
                     (_, None) => {}
                 }
@@ -986,7 +1004,7 @@ impl Node {
         let Some(state) = self.e3s.get_mut(&e3) else {
             return Vec::new();
         };
-        state.seeded(seed.deadline);
+        state.seeded(seed);
         let request = state.request;
         let by = (now + ELIGIBILITY_READ).min(seed.deadline.saturating_sub(TICKET_RESERVE));
         if request.owner_cap && now < by && state.ticket().is_none() {
@@ -1020,7 +1038,7 @@ impl Node {
             .e3s
             .iter()
             .filter(|(_, state)| state.ticket().is_none())
-            .filter_map(|(e3, state)| Some((*e3, state.ranked_with()?)))
+            .filter_map(|(e3, state)| Some((*e3, state.seed()?)))
             .collect();
         open.into_iter()
             .flat_map(|(e3, seed)| self.rank(now, e3, seed, None))
@@ -1047,14 +1065,9 @@ impl Node {
             .values()
             .filter(|state| state.ticket().is_some() && state.running())
             .count() as u64;
-        let Some(state) = self.e3s.get_mut(&e3) else {
+        let Some(state) = self.e3s.get(&e3) else {
             return Vec::new();
         };
-        state.remember_seed(CommitteeSeed {
-            seed,
-            deadline: committee_deadline,
-        });
-        let state = &*state;
         if state.ticket().is_some() || now >= committee_deadline || state.stage != Stage::Requested
         {
             return Vec::new();
@@ -1251,6 +1264,15 @@ impl Machine for Node {
                 None => Vec::new(),
             },
         });
+        for effect in &effects {
+            if let Effect::Run(job) = effect {
+                if job.work.checks_a_member() {
+                    if let Some(state) = self.e3s.get_mut(&job.e3) {
+                        state.check_started();
+                    }
+                }
+            }
+        }
         effects
     }
 
@@ -1700,6 +1722,28 @@ mod tests {
         assert_eq!(node.classify(1, &message), Classified::Drop);
     }
 
+    /// A node that comes back while the eligibility read is out takes its turn: that read cannot
+    /// name it, and no other event would bring it back.
+    #[test]
+    fn a_node_that_comes_back_during_the_eligibility_read_gets_its_ticket() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        let standing = |active| ChainFact::OperatorActive {
+            operator: address(ME),
+            active,
+        };
+        node.step(2, chain(2, standing(false)));
+        node.step(3, capped_requested_at(3, e3(1), 1));
+        let effects = node.step(5, seed_ready(5, e3(1), 42, 100));
+        assert!(submissions(&effects).is_empty());
+        let effects = node.step(6, chain(6, standing(true)));
+        assert!(matches!(
+            submissions(&effects)[..],
+            [Transaction::SubmitTicket { .. }]
+        ));
+        assert!(submissions(&node.step(7, confirmed(&[1, 2]))).is_empty());
+    }
+
     /// An operator that is back before the deadline can still take its seat.
     #[test]
     fn a_node_that_comes_back_before_the_deadline_gets_its_ticket() {
@@ -2120,7 +2164,7 @@ mod tests {
             (
                 14,
                 alloy_primitives::b256!(
-                    "99ee9b7dd0e475d2af191cd9d0783913d91f0e905623f3d5664cf87c41959ffb"
+                    "79cc71f5b0f2e88675ee6c3515eeec4af41f28c2c3811006bf3f5df1a4714024"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
