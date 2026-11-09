@@ -29,7 +29,7 @@
         {
           "name": "Pk",
           "what": "holds pk0 and pk1, one polynomial per CRT modulus each; execute() returns the commitment",
-          "ref": "circuits/lib/src/core/dkg/pk.nr@16@pub struct Pk<"
+          "ref": "circuits/lib/src/core/dkg/pk.nr@22@pub struct Pk<"
         },
         {
           "name": "Polynomial",
@@ -44,7 +44,7 @@
         },
         {
           "why": "Pk::execute, the whole circuit body",
-          "ref": "circuits/lib/src/core/dkg/pk.nr@37@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/dkg/pk.nr@44@pub fn execute(self, qis: [Field; L]) -> Field"
         },
         {
           "why": "the commitment: hashes pk0 then pk1 under the DS_PK domain separator",
@@ -346,7 +346,7 @@
         {
           "name": "ShareEncryption",
           "what": "the C3 statement: keys, ciphertext, noise and reduction quotients as witnesses",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@110@pub struct ShareEncryption<"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@111@pub struct ShareEncryption<"
         },
         {
           "name": "Configs",
@@ -361,15 +361,15 @@
         },
         {
           "why": "execute: key and message commitment checks, range bounds, then the encryption identity",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@409@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@432@pub fn execute(self) -> Field"
         },
         {
           "why": "the binding of the encrypted message to the C2 share commitment",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@207@compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@209@compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)"
         },
         {
           "why": "the BFV encryption identity, checked at a Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@507@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@524@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
         }
       ],
       "rust_patterns": [],

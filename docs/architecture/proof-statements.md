@@ -11,7 +11,7 @@ or audit remediation is not completeness evidence.
 
 | Proof   | Statement                                                                                                                                                                                 |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C0      | BFV share-encryption public key is correctly generated.                                                                                                                                   |
+| C0      | BFV share-encryption public key is committed, and every coefficient is centred modulo its `q_i`.                                                                                          |
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
 | C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets.                                                                                                                                 |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
@@ -91,9 +91,11 @@ openings unless every digit fits its slot. A `u64` cast is not enough when `base
 **Injectivity is not canonicality.** `pack_checked` pins `digit < radix`; it transfers an upstream
 creating circuit's canonical bound because the opening must equal the committed value. It does not
 create a canonical bound where no upstream statement proves one. C1's originating `pk0` and C5's
-unanchored `pk0_agg` need explicit centered bounds. C5's per-party keys and C4's received C2 shares
-can inherit them through checked openings. C4 normalizes its derived aggregate in circuit; it does
-not need a second opened-witness bound. Run the binding check **before** commitment comparison.
+unanchored `pk0_agg` need explicit centered bounds. C0 bounds its key, so C3 opens it checked and
+inherits the bound; a malformed key fails its owner's C0, not every dealer's C3. C5's per-party keys
+and C4's received C2 shares likewise inherit through checked openings. C4 normalizes its derived
+aggregate in circuit; it does not need a second opened-witness bound. Run the binding check
+**before** commitment comparison.
 
 The review class is **every prover-chosen witness entering the sponge**, not only commitments opened
 from another circuit. C2a/C2b, C4, C5, and three C6 openings were the IF-011 class. IF-013
