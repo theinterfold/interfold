@@ -633,7 +633,7 @@ fn handle_share_computation_proof(
         .map(|arr| arr.mapv(BigInt::from))
         .collect();
 
-    // 5. Build circuit data; the compiled Noir config contains the parity matrix.
+    // 5. Build circuit data.
     let circuit_data = ShareComputationCircuitData {
         dkg_input_type: req.dkg_input_type,
         secret,

@@ -100,7 +100,7 @@ export const LAYERS = {
     'evm/contracts',
     'evm/config',
   ],
-  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
+  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
   validation: ['testing/support', 'testing/bfv-support', 'testing/system', 'testing/layout-lock', 'zk/samples'],
 }
 

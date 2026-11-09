@@ -187,7 +187,7 @@ are under `circuits/bin/`.
 | P3       | `threshold/user_data_encryption*`        | None                         | A user ciphertext is a valid BFV encryption under the threshold key                    |
 | C6       | `threshold/share_decryption`             | `ThresholdShareDecryption`   | The decryption share uses the member's committed key share and smudging noise          |
 | C7       | `threshold/decrypted_shares_aggregation` | `DecryptedSharesAggregation` | T + 1 shares combine and decode to the claimed plaintext                               |
-| Config   | `config`                                 | None                         | The preset constants (CRT moduli, bounds, parity matrices) are consistent              |
+| Config   | `config`                                 | None                         | The preset constants (CRT moduli and bounds) are consistent                            |
 
 The "a" and "b" suffixes are the secret-key track and the smudging-noise track. C3 and C4 use one
 circuit for both tracks.

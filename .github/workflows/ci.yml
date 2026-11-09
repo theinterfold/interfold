@@ -113,7 +113,6 @@ jobs:
               - 'crates/program/compute-provider/**'
               - 'crates/bfv/params/**'
               - 'crates/program/openvm-types/**'
-              - 'crates/parity-matrix/**'
               - 'crates/polynomial/**'
               - 'crates/safe/**'
               - 'crates/zk/config/**'
