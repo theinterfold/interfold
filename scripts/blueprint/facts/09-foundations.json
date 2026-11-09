@@ -759,7 +759,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/testing/system/tests/integration.rs@3059@struct StoredEvents("
+          "ref": "crates/testing/system/tests/integration.rs@241@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -795,16 +795,16 @@
       ],
       "read_first": [
         {
-          "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/testing/system/tests/integration.rs@1328@async fn test_trbfv_actor()"
+          "why": "a full multi-node scenario: trbfv_scenario_standby_node",
+          "ref": "crates/testing/system/tests/integration.rs@40@async fn trbfv_scenario_standby_node()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/testing/system/tests/integration.rs@1614@.simulate_libp2p()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@346@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/testing/system/tests/integration.rs@365@async fn setup_test_zk_backend("
+          "ref": "crates/testing/system/tests/trbfv/zk_fixture.rs@148@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
@@ -815,17 +815,17 @@
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/testing/system/tests/integration.rs@1326@#[actix::test]"
+          "ref": "crates/testing/system/tests/integration.rs@38@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/testing/system/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@340@let nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/testing/system/tests/integration.rs@3061@impl actix::Actor for StoredEvents {"
+          "ref": "crates/testing/system/tests/integration.rs@243@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",

@@ -589,6 +589,70 @@ async fn shares_continue_without_waiting_for_a_dealer_that_had_no_key() -> Resul
     Ok(())
 }
 
+/// Party 2 published its C0 key and went offline, so it deals no share. At the soft cutoff the
+/// collector hands over the H - 1 external shares that it holds instead of waiting for party 2.
+/// The hard deadline has not passed, so the DKG does not fail.
+#[actix::test]
+async fn a_dealer_that_goes_offline_after_its_key_does_not_stop_the_dkg() -> Result<()> {
+    let e3_id = E3id::new("offline-dealer", 1);
+    let (actor, repo, recovery_repo, history) = build_actor(
+        &e3_id,
+        generating_threshold_share_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let mut collector = None;
+    let actor = ThresholdKeyshare::create(|ctx| {
+        let mut actor = actor;
+        collector = Some(
+            actor
+                .ensure_collector(
+                    ctx.address(),
+                    &test_ec(1),
+                    crate::domain::timeout_policy::now_unix_secs(),
+                )
+                .expect("share collector"),
+        );
+        actor
+    });
+    let collector = collector.expect("share collector");
+
+    collector
+        .send(TypedEvent::new(peer_share(&e3_id, 1), test_ec(2)))
+        .await?;
+    // Party 2's share is still expected before the cutoff.
+    assert!(recovery_repo
+        .read()
+        .await?
+        .expect("recovery state")
+        .collected_threshold_share_ids
+        .is_none());
+
+    collector.send(ThresholdShareCollectionCutoff).await?;
+
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([1]))
+    );
+    assert!(!matches!(
+        repo.read().await?.expect("keyshare state").state,
+        KeyshareState::Failed { .. }
+    ));
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .all(|event| !matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    actor.send(Die).await?;
+    Ok(())
+}
+
 #[actix::test]
 async fn a_rebuilt_share_collector_does_not_wait_for_a_dealer_that_had_no_key() -> Result<()> {
     let e3_id = E3id::new("keyless-dealer-restart", 1);
@@ -5513,19 +5577,12 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
     Ok(())
 }
 
-#[actix::test]
-async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
-    let e3_id = E3id::new("97", 1);
-    let (bus, history) = test_bus();
-    let (mut state, _) = test_state(
-        &e3_id,
-        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
-    );
-    state.try_mutate_without_context(|mut state| {
-        state.honest_parties = Some(BTreeSet::from([0, 1]));
-        Ok(state)
-    })?;
-    let c4 = DecryptionShareProofsPending {
+/// The C4 proof request of party 0 that the keyshare saves before it reports `ReadyForDecryption`.
+fn pending_c4(
+    e3_id: &E3id,
+    committee_size: e3_committee::CiphernodesCommitteeSize,
+) -> DecryptionShareProofsPending {
+    DecryptionShareProofsPending {
         e3_id: e3_id.clone(),
         party_id: 0,
         node: Address::ZERO.to_string(),
@@ -5538,10 +5595,79 @@ async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
             own_share_raw: None,
             dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
             params_preset: BfvPreset::InsecureDkg64,
-            committee_size: state.try_get()?.committee_size()?,
+            committee_size,
         },
         esm_requests: Vec::new(),
+    }
+}
+
+/// A party restarted while its C4 proofs are open asks the prover for them again, once. The
+/// prover's pending work does not survive the restart, and the other parties wait for this party's
+/// `DecryptionKeyShared`.
+#[actix::test]
+async fn a_restart_during_c4_proof_generation_republishes_the_persisted_request() -> Result<()> {
+    let e3_id = E3id::new("c4-restart", 1);
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let c4 = pending_c4(&e3_id, state.try_get()?.committee_size()?);
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+        recovery.decryption_share_proofs_pending = Some(TypedEvent::new(c4.clone(), test_ec(1)));
+        Ok(recovery)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg64,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+        .await?;
+
+    next_event(&history).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let [event] = events.as_slice() else {
+        panic!("expected the C4 request only, got {events:?}");
     };
+    assert!(matches!(
+        event.get_data(),
+        InterfoldEventData::DecryptionShareProofsPending(request) if *request == c4
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
+    let e3_id = E3id::new("97", 1);
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let c4 = pending_c4(&e3_id, state.try_get()?.committee_size()?);
     // The E3 ends before effects resume at boot, and every write fails, so the terminal cleanup
     // retries later.
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {

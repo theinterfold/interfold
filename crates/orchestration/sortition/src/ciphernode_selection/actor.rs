@@ -1088,4 +1088,152 @@ mod recovery_tests {
         );
         Ok(())
     }
+
+    /// A selector that restarts into `DkgRoster` with a persisted round whose party 0 holds the
+    /// role until `deadline_unix_secs`. Party 1 is expelled. `now` is 1,000,000. The selector
+    /// announces `AggregatorChanged` events to the returned history.
+    async fn restarted_selector(
+        address: &str,
+        deadline_unix_secs: u64,
+    ) -> Result<(
+        E3id,
+        Addr<HistoryCollector<InterfoldEvent>>,
+        Repository<AggregatorFailoverState>,
+    )> {
+        let e3_id = E3id::new("failover-restart", 1);
+        let selector_state = CiphernodeSelectorState {
+            committees: HashMap::from([(
+                e3_id.clone(),
+                Committee::new(vec!["0xa".into(), "0xb".into(), "0xc".into()]),
+            )]),
+            expelled: HashMap::from([(e3_id.clone(), vec![1])]),
+            ..Default::default()
+        };
+        let (state, _) = test_persistable(selector_state);
+        let (failover, failover_repository) = test_persistable(AggregatorFailoverState {
+            rounds: HashMap::from([(
+                e3_id.clone(),
+                crate::domain::failover::AggregatorFailoverRound {
+                    phase: AggregatorPhase::DkgRoster,
+                    active_party_id: Some(0),
+                    deadline_unix_secs,
+                    exhausted: false,
+                },
+            )]),
+            ..Default::default()
+        });
+        let bus = test_bus();
+        let history = HistoryCollector::<InterfoldEvent>::new().start();
+        bus.subscribe(EventType::AggregatorChanged, history.clone().recipient());
+        let selector = CiphernodeSelector::new_with_clock(
+            &bus,
+            state,
+            failover,
+            address,
+            HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]),
+            Arc::new(FixedClock(1_000_000)),
+        )
+        .start();
+        selector.send(EffectsEnabled::new()).await?;
+        Ok((e3_id, history, failover_repository))
+    }
+
+    async fn announced_changes(
+        history: &Addr<HistoryCollector<InterfoldEvent>>,
+        count: usize,
+    ) -> Result<Vec<AggregatorChanged>> {
+        actix::clock::timeout(Duration::from_secs(3), async {
+            loop {
+                let changes = history
+                    .send(GetEvents::<InterfoldEvent>::new())
+                    .await?
+                    .into_iter()
+                    .filter_map(|event| match event.into_data() {
+                        InterfoldEventData::AggregatorChanged(change) => Some(change),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if changes.len() >= count {
+                    break Ok(changes);
+                }
+                actix::clock::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?
+    }
+
+    /// A node that restarts after the active aggregator's persisted deadline passed does not
+    /// grant a fresh budget: it skips the aggregator and the expelled party at once, announces the
+    /// next eligible party, and tells the demoted node that it lost the role.
+    #[actix::test]
+    async fn a_deadline_that_passed_during_a_restart_promotes_the_next_eligible_party() -> Result<()>
+    {
+        for (address, is_next_party) in [("0xa", false), ("0xc", true)] {
+            let (e3_id, history, failover_repository) =
+                restarted_selector(address, 1_000_000 - 1).await?;
+
+            let changes = announced_changes(&history, 2).await?;
+            // The restart first restores the role of the aggregator that the deadline expired on.
+            assert_eq!(
+                changes,
+                vec![
+                    AggregatorChanged {
+                        e3_id: e3_id.clone(),
+                        active_party_id: Some(0),
+                        is_aggregator: address == "0xa",
+                    },
+                    AggregatorChanged {
+                        e3_id: e3_id.clone(),
+                        active_party_id: Some(2),
+                        is_aggregator: is_next_party,
+                    },
+                ],
+                "{address}"
+            );
+            let failover = failover_repository
+                .read()
+                .await?
+                .expect("persisted failover state");
+            assert_eq!(
+                failover.unresponsive.get(&e3_id),
+                Some(&vec![0]),
+                "{address}"
+            );
+            let round = &failover.rounds[&e3_id];
+            assert_eq!(round.active_party_id, Some(2), "{address}");
+            assert_eq!(
+                round.deadline_unix_secs,
+                1_000_000 + AGGREGATOR_PROGRESS_TIMEOUT.as_secs(),
+                "the promoted party gets a full budget"
+            );
+        }
+        Ok(())
+    }
+
+    /// A restart before the persisted deadline keeps that deadline and the current aggregator.
+    #[actix::test]
+    async fn a_restart_before_the_deadline_keeps_the_active_aggregator_and_its_deadline(
+    ) -> Result<()> {
+        let deadline = 1_000_000 + 30;
+        let (e3_id, history, failover_repository) = restarted_selector("0xc", deadline).await?;
+
+        let changes = announced_changes(&history, 1).await?;
+        assert_eq!(
+            changes,
+            vec![AggregatorChanged {
+                e3_id: e3_id.clone(),
+                active_party_id: Some(0),
+                is_aggregator: false,
+            }]
+        );
+        let failover = failover_repository
+            .read()
+            .await?
+            .expect("persisted failover state");
+        assert!(!failover.unresponsive.contains_key(&e3_id));
+        let round = &failover.rounds[&e3_id];
+        assert_eq!(round.active_party_id, Some(0));
+        assert_eq!(round.deadline_unix_secs, deadline);
+        Ok(())
+    }
 }

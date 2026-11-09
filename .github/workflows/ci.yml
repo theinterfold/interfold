@@ -483,7 +483,7 @@ jobs:
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
-    # Each full-proof `test_trbfv_actor` run takes about nine minutes, so the runs are parallel
+    # Each full-proof `trbfv_scenario_*` run takes about nine minutes, so the runs are parallel
     # legs. The `integration` leg runs the other integration targets in skip-aggregation mode;
     # the CLI e2e jobs already drive a full E3 in that mode.
     strategy:
@@ -544,30 +544,25 @@ jobs:
         env:
           CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test --test integration -- --nocapture --skip test_trbfv_actor'
+        run: 'cargo test --test integration -- --nocapture --skip trbfv_scenario_'
 
       - name: Run offline DKG integration test with full proofs
         if: matrix.leg == 'offline-party'
         timeout-minutes: 20
         env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+        run: 'cargo test -p e3-tests --test integration trbfv_scenario_party_offline_after_c0 -- --exact --nocapture'
 
       - name: Run full-proof DKG integration with standby node
         if: matrix.leg == 'standby-node'
         timeout-minutes: 20
         env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+        run: 'cargo test -p e3-tests --test integration trbfv_scenario_standby_node -- --exact --nocapture'
 
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]

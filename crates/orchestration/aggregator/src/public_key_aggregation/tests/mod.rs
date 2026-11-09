@@ -1102,6 +1102,7 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod publication;
 mod recovery;
 mod replay;
 
