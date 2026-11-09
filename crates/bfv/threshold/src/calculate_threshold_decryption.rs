@@ -66,9 +66,10 @@ impl TryFrom<CalculateThresholdDecryptionRequest> for InnerRequest {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // NOTE: Ensure the polys are ordered by party_id
+        // Match C7's sorted T+1 subset, keeping each party paired with its shares.
         let mut ordered_polys = value.d_share_polys;
         ordered_polys.sort_by_key(|&(key, _)| key);
+        ordered_polys.truncate((trbfv_config.threshold() as usize).saturating_add(1));
 
         let capacity = ordered_polys.len();
         let mut d_share_polys = Vec::with_capacity(capacity);

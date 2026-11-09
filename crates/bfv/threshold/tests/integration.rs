@@ -29,6 +29,15 @@ use fhe_traits::Serialize;
 
 #[tokio::test]
 async fn test_trbfv_isolation() -> Result<()> {
+    run_trbfv_isolation(&[1, 4, 2]).await
+}
+
+#[tokio::test]
+async fn test_trbfv_reconstructs_from_surplus_unsorted_shares() -> Result<()> {
+    run_trbfv_isolation(&[4, 2, 1, 3]).await
+}
+
+async fn run_trbfv_isolation(reconstructing_parties: &[usize]) -> Result<()> {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let subscriber = fmt()
@@ -78,9 +87,8 @@ async fn test_trbfv_isolation() -> Result<()> {
         .map(|ct| ArcBytes::from_bytes(&(*ct).clone().to_bytes()))
         .collect::<Vec<ArcBytes>>();
 
-    let mut decryption_shares = HashMap::new();
-    // for party_id in 0..=threshold_m as usize {
-    for party_id in [1, 4, 2] {
+    let mut d_share_polys = Vec::with_capacity(reconstructing_parties.len());
+    for &party_id in reconstructing_parties {
         let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
         let TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
@@ -97,12 +105,8 @@ async fn test_trbfv_isolation() -> Result<()> {
             bail!("wrong decryption-share response variant")
         };
 
-        // store the decryption shares in a hash map indexed by party_id
-        decryption_shares.insert(party_id as u64, d_share_poly);
+        d_share_polys.push((party_id as u64, d_share_poly));
     }
-
-    // Get a vector of the shares
-    let d_share_polys: Vec<(u64, Vec<ArcBytes>)> = decryption_shares.into_iter().collect();
 
     // Data preparation sorts the decryption shares by party_id.
     let TrBFVResponse::CalculateThresholdDecryption(CalculateThresholdDecryptionResponse {
