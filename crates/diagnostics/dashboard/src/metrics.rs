@@ -106,10 +106,15 @@ fn chain_label(chain_id: u64) -> Labels {
     vec![("chain_id", chain_id.to_string())]
 }
 
-/// A token amount or count that the chain returned as a decimal string. Large amounts lose
-/// precision, which is acceptable for monitoring.
-fn amount(value: &str) -> f64 {
-    value.parse().unwrap_or(f64::NAN)
+/// A token amount that the chain returned as a decimal string. Large amounts lose precision,
+/// which is acceptable for monitoring. `None` leaves the series out instead of reporting `NaN`.
+fn amount(value: &str) -> Option<f64> {
+    value.parse().ok()
+}
+
+/// A count that the chain returned as a decimal string. `None` leaves the series out.
+fn count(value: &str) -> Option<i64> {
+    value.parse().ok()
 }
 
 pub(crate) fn render(input: &MetricsInput<'_>) -> String {
@@ -238,7 +243,7 @@ fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot, e
         "operator_exit_pending",
         "1 if the operator has an exit in the queue",
     );
-    let tickets = family::<FloatGauge>(
+    let tickets = family::<Gauge>(
         registry,
         "operator_tickets_available",
         "Sortition tickets available to the operator",
@@ -253,12 +258,12 @@ fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot, e
         "operator_bond",
         "Ciphernode bond of the operator, in token base units",
     );
-    let registered_nodes = family::<FloatGauge>(
+    let registered_nodes = family::<Gauge>(
         registry,
         "registry_registered_nodes",
         "Operators registered on the chain",
     );
-    let active_nodes = family::<FloatGauge>(
+    let active_nodes = family::<Gauge>(
         registry,
         "registry_active_nodes",
         "Active operators on the chain",
@@ -278,20 +283,23 @@ fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot, e
         exit_pending
             .get_or_create(&labels)
             .set(i64::from(chain.exit_in_progress));
-        tickets
-            .get_or_create(&labels)
-            .set(amount(&chain.available_tickets));
-        ticket_balance
-            .get_or_create(&labels)
-            .set(amount(&chain.ticket_balance));
-        bond.get_or_create(&labels)
-            .set(amount(&chain.ciphernode_bond));
-        registered_nodes
-            .get_or_create(&labels)
-            .set(amount(&chain.registered_nodes));
-        active_nodes
-            .get_or_create(&labels)
-            .set(amount(&chain.active_nodes));
+        for (metric, value) in [
+            (&tickets, &chain.available_tickets),
+            (&registered_nodes, &chain.registered_nodes),
+            (&active_nodes, &chain.active_nodes),
+        ] {
+            if let Some(value) = count(value) {
+                metric.get_or_create(&labels).set(value);
+            }
+        }
+        for (metric, value) in [
+            (&ticket_balance, &chain.ticket_balance),
+            (&bond, &chain.ciphernode_bond),
+        ] {
+            if let Some(value) = amount(value) {
+                metric.get_or_create(&labels).set(value);
+            }
+        }
     }
 }
 
@@ -305,12 +313,12 @@ fn render_ingestion(registry: &mut Registry, ingestion: &[ChainIngestion], expec
     if ingestion.is_empty() {
         return;
     }
-    let head = family::<FloatGauge>(
+    let head = family::<Gauge>(
         registry,
         "chain_head_block",
         "Chain head at the latest successful read of the chain reader",
     );
-    let cursor = family::<FloatGauge>(
+    let cursor = family::<Gauge>(
         registry,
         "chain_cursor_block",
         "Last block whose logs the chain reader delivered",
@@ -327,8 +335,8 @@ fn render_ingestion(registry: &mut Registry, ingestion: &[ChainIngestion], expec
     );
     for chain in ingestion {
         let labels = chain_label(chain.chain_id);
-        head.get_or_create(&labels).set(chain.head as f64);
-        cursor.get_or_create(&labels).set(chain.cursor as f64);
+        head.get_or_create(&labels).set(chain.head as i64);
+        cursor.get_or_create(&labels).set(chain.cursor as i64);
         polled.get_or_create(&labels).set(chain.polled_at as i64);
         progressed
             .get_or_create(&labels)
@@ -512,7 +520,7 @@ mod tests {
         assert_eq!(value(&body, "interfold_chain_readers_expected"), "1");
         assert_eq!(
             value(&body, "interfold_chain_head_block{chain_id=\"1\"}"),
-            "120.0"
+            "120"
         );
         assert_eq!(value(&body, "interfold_compute_jobs_capacity"), "3");
         assert_eq!(value(&body, "interfold_eventstore_read_up"), "1");
@@ -619,7 +627,7 @@ mod tests {
                 &body,
                 "interfold_operator_tickets_available{chain_id=\"1\"}"
             ),
-            "8.0"
+            "8"
         );
         assert_eq!(
             value(&body, "interfold_operator_bond{chain_id=\"1\"}"),
@@ -627,7 +635,7 @@ mod tests {
         );
         assert_eq!(
             value(&body, "interfold_chain_cursor_block{chain_id=\"1\"}"),
-            "25000088.0"
+            "25000088"
         );
         assert_eq!(
             value(
@@ -665,6 +673,26 @@ mod tests {
         for phase in E3Phase::ALL {
             assert_eq!(serde_json::to_value(phase).unwrap(), phase.id());
         }
+    }
+
+    /// A value that does not parse leaves its series out, so a comparison does not meet `NaN`.
+    #[test]
+    fn an_unparsable_value_has_no_series() {
+        let runtime = runtime();
+        let mut input = input(&runtime);
+        input.operator.chains[0].ciphernode_bond = "not a number".to_owned();
+
+        let body = render(&input);
+
+        assert!(!body.contains("interfold_operator_bond{"), "{body}");
+        assert!(!body.contains("NaN"), "{body}");
+        assert_eq!(
+            value(
+                &body,
+                "interfold_operator_tickets_available{chain_id=\"1\"}"
+            ),
+            "8"
+        );
     }
 
     /// A node without an enabled chain reads nothing, so its operator status is up, not failed.
