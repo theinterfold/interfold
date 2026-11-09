@@ -4,9 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Same IO as [`c3_fold`](../c3_fold/src/main.nr) but **only** verifies the inner `ShareEncryption`
-//! proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps the real `c3_fold` circuit,
-//! which always runs `verify_honk_proof_non_zk` on the accumulator (see `c3_fold`).
+//! Same IO as [`c3_fold`](../c3_fold/src/main.nr) but **only** verifies the inner `ShareEncryption` proof. It
+//! proves the chain's first leaf on its own: its proof carries that leaf's row and is the
+//! accumulator the first `c3_fold` step verifies (with `is_first_step`, under this circuit's key).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -35,7 +35,7 @@ fn main(
 
     verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);
 
-    // Signature parity with `c3_fold`: kernel mints the genesis accumulator, so acc_* is unused.
+    // Signature parity with `c3_fold`: the kernel starts the chain, so acc_* is unused.
     let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);

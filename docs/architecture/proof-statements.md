@@ -151,11 +151,13 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C3, C6, and nodes folds keep `(leaf, fold, genesis)` VK hashes constant across
-predecessors. The first step verifies genesis; continuation verifies the fold; the final consumer
-binds the declared fold hash to the verified VK. C3ab covers both complete C3 chains. Node-fold
-covers child folds and their nested keys. DKG aggregation requires one node-tree hash across every
-selected row.
+Sequential C3, C6, and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across
+predecessors. The kernel proves the chain's first leaf at that leaf's slot; every fold step carries
+its predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain
+of `n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
+continuation verifies the fold; the final consumer binds the declared fold hash to the verified VK.
+C3ab covers both complete C3 chains. Node-fold covers child folds and their nested keys. DKG
+aggregation requires one node-tree hash across every selected row.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
