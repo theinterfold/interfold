@@ -4,11 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_events::{Event, GetEvents, InterfoldEvent};
 mod libp2p_mock;
 use libp2p_mock::Libp2pMock;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use std::{future::Future, ops::Deref, pin::Pin};
 
 // This type allows us to store various dynamic async callbacks
@@ -90,6 +92,7 @@ impl<'a> CiphernodeSystemBuilder<'a> {
         Ok(CiphernodeSystem {
             nodes,
             network_mock,
+            before_restart: HashMap::new(),
         })
     }
 }
@@ -108,9 +111,59 @@ async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) -> Libp2pMock {
 pub struct CiphernodeSystem {
     nodes: Vec<CiphernodeHandle>,
     network_mock: Option<Libp2pMock>,
+    /// What each restarted node logged before it stopped. A restarted node's history collector
+    /// starts empty, so [`CiphernodeSystem::get_history`] joins the two.
+    before_restart: HashMap<usize, Vec<InterfoldEvent>>,
 }
 
 impl CiphernodeSystem {
+    /// Stops node `index` and replaces it with the node `rebuild` assembles from the stopped
+    /// node's persisted state. The network holds gossip addressed to the node meanwhile and hands
+    /// it to the replacement. Returns everything the stopped node logged.
+    pub async fn restart_node<F>(&mut self, index: usize, rebuild: F) -> Result<CiphernodeHistory>
+    where
+        F: Future<Output = Result<CiphernodeHandle>>,
+    {
+        if index >= self.nodes.len() {
+            bail!("ciphernode index is out of range");
+        }
+        let old = self.nodes.remove(index);
+        let old_peer_id = old.peer_id;
+        let old_history = old.history();
+        if let Some(mock) = &self.network_mock {
+            mock.disconnect_node_for_restart(old_peer_id).await;
+        }
+        old.shutdown(Duration::from_secs(30))
+            .await
+            .context("ciphernode shutdown before restart failed")?;
+        // Read after the shutdown barrier, which is the last thing the stopped node logs.
+        let logged = match old_history {
+            Some(history) => history.send(GetEvents::new()).await?,
+            None => vec![],
+        };
+        let replacement = rebuild
+            .await
+            .context("ciphernode rebuild after restart failed")?;
+        if let Some(mock) = &self.network_mock {
+            mock.add_replacement_node(
+                old_peer_id,
+                replacement.peer_id,
+                replacement.channel_bridge()?,
+            )
+            .await;
+        }
+        self.nodes.insert(index, replacement);
+        let earlier = self.before_restart.entry(index).or_default();
+        let known: HashSet<_> = earlier.iter().map(Event::delivery_id).collect();
+        let new: Vec<_> = logged
+            .iter()
+            .filter(|event| !known.contains(&event.delivery_id()))
+            .cloned()
+            .collect();
+        earlier.extend(new);
+        Ok(CiphernodeHistory(earlier.clone()))
+    }
+
     pub async fn disconnect_node(&self, index: usize) -> Result<()> {
         let node = self
             .nodes
@@ -129,11 +182,18 @@ impl CiphernodeSystem {
             return Ok(CiphernodeHistory(vec![]));
         };
 
-        let history = if let Some(history) = node.history() {
+        let mut history = if let Some(history) = node.history() {
             history.send(GetEvents::new()).await?
         } else {
             vec![]
         };
+        // An event delivered again after a restart has the same delivery ID; keep one copy, as
+        // the bus does within one run.
+        if let Some(earlier) = self.before_restart.get(&index) {
+            let known: HashSet<_> = earlier.iter().map(Event::delivery_id).collect();
+            history.retain(|event| !known.contains(&event.delivery_id()));
+            history.splice(0..0, earlier.iter().cloned());
+        }
 
         Ok(CiphernodeHistory(history))
     }

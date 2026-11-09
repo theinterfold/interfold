@@ -4565,6 +4565,7 @@ dependencies = [
  "e3-test-support",
  "e3-trbfv",
  "e3-utils",
+ "e3-zk-build",
  "e3-zk-config",
  "e3-zk-prover",
  "fhe",

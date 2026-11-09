@@ -266,7 +266,8 @@ including for `noir setup --circuits-archive`. The release validator uses the sa
 local archive, repeat `--circuits-configuration <PRESET/COMMITTEE>` to select a subset explicitly.
 For example, `--circuits-configuration insecure-64/minimum` selects the development configuration.
 Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
-`install_circuits_archive_for_configurations`. The required set never depends on archive contents.
+`install_circuits_archive_for_configurations`, or install a local circuits tree with
+`install_circuits_dir`. The required set never depends on archive contents.
 Each required or included pair must contain every artifact in
 `crates/zk/prover/required-artifacts.json`. The release validator and installer share this
 inventory. The manifest must cover each artifact.

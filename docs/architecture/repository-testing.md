@@ -51,13 +51,29 @@ Mechanical support does not assemble runtimes. Event-system owns isolated bus/hi
 aggregation keeps its BFV setup private. The integration crate keeps `Libp2pMock` local. Its
 [`CiphernodeSystemBuilder`](../../crates/testing/system/tests/ciphernode_system/mod.rs) assembles
 several ciphernode handles in one process. `simulate_libp2p()` connects their broadcast events and
-DHT records through the mock. `restart_node` shuts down a node, rebuilds it through the supplied
-closure, and replaces its mock-network attachment.
+DHT records through the mock.
+
+`restart_node` removes a node, disconnects it from the mock (which holds gossip addressed to it
+meanwhile), shuts it down behind a barrier, and awaits the supplied closure to build a replacement.
+It attaches the replacement under the stopped node's peer ID, so the held gossip reaches it. The
+system keeps what the stopped node logged and joins it, deduplicated by delivery ID, with the
+replacement's history, so `get_history` still reads one history per node index. The full-proof
+scenario runner supplies the closure through its
+[`NodeFactory`](../../crates/testing/system/tests/trbfv/nodes.rs). A scenario that restarts a node
+gives every node a persisted event log and key-value store under a temporary directory, named by the
+node's address. A restart rebuilds the node on those stores with its own signer and RNG stream,
+moves the chain-event pipe from the stopped node to the new one, and lets the node resume its
+pending proof request through startup replay.
 
 This exercises node actors without real QUIC, discovery, peer-held DHT persistence, or separate
-operating-system processes. Shared-process scheduling and orderly restart are not arbitrary crash
-recovery. [Network delivery](network-delivery.md) and [persistence](persistence-and-replay.md)
-retain the production gaps those scenarios do not close.
+operating-system processes. The restart is orderly and in-process: the node stops through its
+shutdown barrier on stores that closed cleanly, not at an arbitrary point with torn writes. It is
+not arbitrary crash recovery. The only executable restart coverage for an in-flight C4 or C6 proof
+is the full-proof scenarios `trbfv_scenario_restart_during_c4` and
+`trbfv_scenario_restart_during_c6` (two of the four named full-proof scenarios). They restart one
+roster member other than the aggregator at those two points, and nothing else here restarts a node
+at another protocol point. [Network delivery](network-delivery.md) and
+[persistence](persistence-and-replay.md) retain the production gaps those scenarios do not close.
 
 ## Proofs and compatibility
 

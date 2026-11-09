@@ -759,7 +759,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/testing/system/tests/integration.rs@241@struct StoredEvents("
+          "ref": "crates/testing/system/tests/integration.rs@258@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -775,12 +775,12 @@
         {
           "name": "CiphernodeSystemBuilder",
           "what": "integration-local builder for groups of nodes and their optional network mock",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@31@pub struct CiphernodeSystemBuilder<'a> {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@33@pub struct CiphernodeSystemBuilder<'a> {"
         },
         {
           "name": "CiphernodeSystem",
           "what": "built nodes and network mock, with restart support",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@108@pub struct CiphernodeSystem {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@111@pub struct CiphernodeSystem {"
         },
         {
           "name": "Libp2pMock",
@@ -796,41 +796,41 @@
       "read_first": [
         {
           "why": "a full multi-node scenario: trbfv_scenario_standby_node",
-          "ref": "crates/testing/system/tests/integration.rs@40@async fn trbfv_scenario_standby_node()"
+          "ref": "crates/testing/system/tests/integration.rs@41@async fn trbfv_scenario_standby_node()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@414@.simulate_libp2p()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@353@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/testing/system/tests/trbfv/zk_fixture.rs@331@async fn setup_test_zk_backend("
+          "ref": "crates/testing/system/tests/trbfv/zk_fixture.rs@69@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
-          "ref": "crates/testing/system/tests/layout_lock.rs@249@fn persisted_layouts_match_the_locked_fixture()"
+          "ref": "crates/testing/system/tests/layout_lock.rs@254@fn persisted_layouts_match_the_locked_fixture()"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/testing/system/tests/integration.rs@38@#[actix::test]"
+          "ref": "crates/testing/system/tests/integration.rs@39@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@408@let nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@347@let nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/testing/system/tests/integration.rs@243@impl actix::Actor for StoredEvents {"
+          "ref": "crates/testing/system/tests/integration.rs@260@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",
           "note": "the layout test is a plain #[test] that calls the fixture check",
-          "ref": "crates/testing/system/tests/layout_lock.rs@248@#[test]"
+          "ref": "crates/testing/system/tests/layout_lock.rs@253@#[test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],

@@ -6,25 +6,28 @@
 
 //! Node construction and synthetic registry/sortition setup for the trBFV scenarios.
 
-use crate::ciphernode_system::CiphernodeSystem;
+use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem};
 use crate::common::AddToCommittee;
-use actix::{Actor, Addr};
+use actix::{Actor, Addr, Recipient};
 use alloy::primitives::{Address, FixedBytes, I256, U256};
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::{CiphernodeBuilder, CiphernodeHandle};
 use e3_crypto::Cipher;
 use e3_events::{
     prelude::*, AggregateConfig, BusHandle, CommitteeFinalized, ConfigurationUpdated, E3id,
-    EventType, Seed, TicketBalanceUpdated,
+    EventType, InterfoldEvent, Seed, Sequenced, TicketBalanceUpdated, Unsubscribe,
 };
 use e3_multithread::{MultithreadReport, TaskPool};
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
 use e3_test_support::derive_shared_rng;
+use e3_utils::SharedRng;
 use e3_zk_prover::ZkBackend;
 use rand::Rng;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Fold attestation verifier the scenarios sign against (no live registry supplies one).
 pub const DKG_FOLD_ATTESTATION_VERIFIER: &str = "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0";
@@ -36,6 +39,16 @@ pub const CHAIN_ID: u64 = 1;
 /// tickets, as in production.
 pub const TICKET_PRICE: u64 = 10_000_000;
 const TICKET_BALANCE: u64 = 1_000_000_000;
+
+/// What rebuilds a node as the same node: its RNG stream, signer, on-disk stores, and the pipe
+/// that carries chain events into it.
+pub struct RestartableNode {
+    rng: SharedRng,
+    signer: PrivateKeySigner,
+    log_path: PathBuf,
+    kv_path: PathBuf,
+    trigger_pipe: Recipient<InterfoldEvent<Sequenced>>,
+}
 
 /// Everything the nodes of one run share. [`NodeFactory::build`] is the only place a node is
 /// assembled.
@@ -52,6 +65,11 @@ pub struct NodeFactory {
     /// Stands in for the chain: its events reach every node's own durable event pipeline.
     pub trigger: BusHandle,
     pub next_salt: AtomicU64,
+    /// Where nodes keep their stores. A run that restarts a node sets it, and every node then
+    /// persists; otherwise nodes run in memory.
+    pub persistence_root: Option<PathBuf>,
+    /// Persisted nodes by address.
+    pub restartable: Mutex<HashMap<String, RestartableNode>>,
 }
 
 impl NodeFactory {
@@ -66,17 +84,73 @@ impl NodeFactory {
             PrivateKeySigner::from_bytes(&rng.lock().unwrap().random::<[u8; 32]>().into())?;
         println!("Building {role} {}", signer.address());
 
+        let paths = self
+            .persistence_root
+            .as_ref()
+            .map(|root| {
+                let node_dir = root.join(signer.address().to_string());
+                std::fs::create_dir_all(&node_dir)?;
+                Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
+            })
+            .transpose()?;
+        self.assemble(rng, signer, paths).await
+    }
+
+    /// Stops the node at `index` and rebuilds it from its persisted stores and identity, as a
+    /// process restart would. Returns what the stopped node logged.
+    pub async fn restart(
+        &self,
+        nodes: &mut CiphernodeSystem,
+        index: usize,
+    ) -> Result<CiphernodeHistory> {
+        let address = nodes
+            .get(index)
+            .context("ciphernode index is out of range")?
+            .address();
+        let (rng, signer, paths, trigger_pipe) = {
+            let restartable = self.restartable.lock().unwrap();
+            let node = restartable
+                .get(&address)
+                .context("only a persisted node can restart")?;
+            (
+                node.rng.clone(),
+                node.signer.clone(),
+                (node.log_path.clone(), node.kv_path.clone()),
+                node.trigger_pipe.clone(),
+            )
+        };
+        // The stopped node must not receive chain events; the rebuilt one takes its own pipe.
+        self.trigger
+            .event_bus()
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
+            .await?;
+        nodes
+            .restart_node(index, self.assemble(rng, signer, Some(paths)))
+            .await
+    }
+
+    /// Assembles a node on the given stores, `None` for in memory, and connects it to the trigger
+    /// bus. A persisted node is recorded so it can restart.
+    async fn assemble(
+        &self,
+        rng: SharedRng,
+        signer: PrivateKeySigner,
+        paths: Option<(PathBuf, PathBuf)>,
+    ) -> Result<CiphernodeHandle> {
         let mut builder =
-            CiphernodeBuilder::full(rng, self.cipher.clone(), self.zk_backend.clone())
+            CiphernodeBuilder::full(rng.clone(), self.cipher.clone(), self.zk_backend.clone())
                 .with_history_collector()
                 .with_shared_taskpool(&self.task_pool)
                 .with_multithread_concurrent_jobs(self.concurrent_jobs)
                 .with_shared_multithread_report(&self.multithread_report)
-                .with_signer(signer)
+                .with_signer(signer.clone())
                 .with_eventstore_aggregate_config_for_testing(self.aggregate_config.clone())
                 .with_dkg_timing_reader_for_testing(self.dkg_timing_reader.clone())
                 .with_chains(std::slice::from_ref(&self.chain_config()))
                 .with_logging();
+        if let Some((log_path, kv_path)) = &paths {
+            builder = builder.with_persistence(log_path, kv_path);
+        }
         if !self.proof_aggregation_enabled {
             builder = builder.with_proof_aggregation_disabled_for_testing();
         }
@@ -86,7 +160,19 @@ impl NodeFactory {
         let pipe = e3_events::BusHandlePipe::new(node.bus().clone(), |_| true)
             .start()
             .recipient();
-        self.trigger.subscribe(EventType::All, pipe);
+        self.trigger.subscribe(EventType::All, pipe.clone());
+        if let Some((log_path, kv_path)) = paths {
+            self.restartable.lock().unwrap().insert(
+                node.address(),
+                RestartableNode {
+                    rng,
+                    signer,
+                    log_path,
+                    kv_path,
+                    trigger_pipe: pipe,
+                },
+            );
+        }
         Ok(node)
     }
 

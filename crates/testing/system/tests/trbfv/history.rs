@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Reading node histories: waiting for an outcome and scanning for faults.
+//! Reading node histories and the published key: waiting for an outcome and scanning for faults.
 
 use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem};
 use anyhow::{bail, Result};
-use e3_events::{prelude::*, E3id, InterfoldEvent, InterfoldEventData};
+use e3_events::{prelude::*, E3id, InterfoldEvent, InterfoldEventData, PublicKeyAggregated};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
@@ -192,4 +192,18 @@ pub async fn aggregator_role_histories(
         }
     }
     Ok(held)
+}
+
+/// The party ids of the honest committee the published key lists, in the key's order.
+pub fn key_roster(key: &PublicKeyAggregated) -> Vec<u64> {
+    key.honest_committee_addresses
+        .iter()
+        .map(|address| {
+            key.committee_addresses
+                .iter()
+                .position(|member| member == address)
+                .expect("the published key lists an honest node outside the committee")
+                as u64
+        })
+        .collect()
 }

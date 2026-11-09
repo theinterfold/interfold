@@ -39,7 +39,9 @@ operator-managed binary. Application composition translates resolved paths and t
 setting into this backend-owned choice. `check_status().await` reports setup state;
 `ensure_installed().await` prepares required tools/artifacts and may download/install them.
 Version/checksum requirements come from [versions.json](versions.json). `with_bb_timeout` bounds
-each proving process.
+each proving process. `install_circuits_dir(dir, configurations)` installs a local circuits tree
+(a dist directory or a staged `circuits/bin`) under the archive admission rules, copying it; local
+builds and tests call it instead of writing `version.json` themselves.
 
 `ZkProver::new(&backend)` executes proof generation and verification. Select the matching artifact
 directory with `resolve_artifacts_dir(preset, committee)` and use the explicit variant methods where

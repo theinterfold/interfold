@@ -6,14 +6,16 @@
 
 //! The benchmark entry: one full-proof run of the scenario runner, reported as the JSON files the
 //! circuit benchmark tool (`crates/zk/benchmarks`) reads. Nothing here decides whether the run was
-//! correct; [`run`] already asserted that before returning.
+//! correct; [`run_and_check`] already asserted that before returning.
 //!
 //! Environment (set by that tool): `BENCHMARK_MODE` (`insecure`, the default, or `secure`),
 //! `BENCHMARK_MULTITHREAD_JOBS` (Rayon jobs at once, default 1), `BENCHMARK_SUMMARY_OUTPUT` and
 //! `BENCHMARK_FOLDED_OUTPUT` (files to write, each optional).
 
 use super::nodes::DKG_FOLD_ATTESTATION_VERIFIER;
-use super::runner::{run, Run, Scenario};
+use super::run_and_check;
+use super::runner::Observations;
+use super::scenario::{Preset, Scenario};
 use alloy::primitives::hex;
 use anyhow::Result;
 use e3_events::{hlc::HlcTimestamp, prelude::*, EventSource, InterfoldEvent, InterfoldEventData};
@@ -22,13 +24,13 @@ use std::time::Duration;
 
 pub async fn run_from_env() -> Result<()> {
     let mode = std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
-    let preset = super::runner::Preset::from_mode(&mode)?;
+    let preset = Preset::from_mode(&mode)?;
     let jobs = std::env::var("BENCHMARK_MULTITHREAD_JOBS")
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|&n| n >= 1)
         .unwrap_or(1);
-    let run = run(&Scenario::benchmark(preset, jobs)).await?;
+    let run = run_and_check(&Scenario::benchmark(preset, jobs)).await?;
 
     let report = Report::new(&run);
     println!("{}", report.serialize());
@@ -47,7 +49,7 @@ pub async fn run_from_env() -> Result<()> {
 struct Report(Vec<(&'static str, Duration)>);
 
 impl Report {
-    fn new(run: &Run) -> Self {
+    fn new(run: &Observations) -> Self {
         let t = &run.timings;
         let mut phases = vec![
             ("Starting trbfv actor test", Duration::ZERO),
@@ -57,10 +59,14 @@ impl Report {
         ];
 
         // Peers forward the published key, so time the phase to the local publication only.
-        let p2_events = run.pubkey_role_events.iter().filter(|event| {
-            !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
-                || event.source() == EventSource::Local
-        });
+        let p2_events = run
+            .role_holders
+            .iter()
+            .flat_map(|(_, history)| history.iter())
+            .filter(|event| {
+                !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
+                    || event.source() == EventSource::Local
+            });
         if let Some(secs) = wall_seconds_between(
             p2_events,
             |d| matches!(d, InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == run.e3_id),
@@ -148,9 +154,9 @@ fn json_string(s: &str) -> String {
 
 /// The two aggregator proofs the contract benchmarks verify, as a JSON object body.
 /// `indent` is prepended to every line, so the same text nests under a key.
-fn folded_artifacts_json(run: &Run, indent: &str) -> String {
+fn folded_artifacts_json(run: &Observations, indent: &str) -> String {
     let dkg = &run.dkg_aggregator_proof;
-    let dec = &run.decryption_aggregator_proofs[0];
+    let dec = &run.plaintext.decryption_aggregator_proofs[0];
     format!(
         concat!(
             "{indent}{{\n",
@@ -172,7 +178,7 @@ fn folded_artifacts_json(run: &Run, indent: &str) -> String {
     )
 }
 
-fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
+fn summary_json(run: &Observations, mode: &str, report: &Report) -> String {
     let mt = &run.multithread;
     let config = &run.config;
     let operation_timings_json = mt
@@ -232,7 +238,7 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
             "  }},\n"
         ),
         json_string(mode),
-        json_string(config.preset.subdir()),
+        json_string(&config.preset.bfv_preset().artifacts_dir()),
         config.preset.bfv_preset(),
         config.lambda,
         config.proof_aggregation_enabled,

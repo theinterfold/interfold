@@ -5,28 +5,28 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Drives one full E3 (committee selection, DKG, public key, encryption, threshold decryption)
-//! across real ciphernodes joined by a simulated network, and checks its outcome.
+//! across real ciphernodes joined by a simulated network, and returns what it [`Observations`].
 //!
-//! [`run`] asserts what a correct run must produce: the key and plaintext, the accepted DKG
-//! roster, and the absence of faults. It does not assert how the nodes' actors order their events,
-//! and the DKG window it gives the nodes is far beyond the flow timeouts, so no progress deadline
-//! fires during a run. The timings and proofs the benchmark reports are returned in [`Run`].
+//! [`run`] builds the nodes, executes the phases, injects the scenario's [`Fault`], and waits for
+//! the shares its [`Expect`] names. It does not judge the outcome: [`super::assertions::check`]
+//! does, over the observations. It does not assert how the nodes' actors order their events, and
+//! the DKG window it gives the nodes is far beyond the flow timeouts, so no progress deadline
+//! fires during a run. The timings and proofs the benchmark reports are in the observations too.
 
 use super::history::{
-    aggregator_role_histories, collect_honest_run_faults, wait_for_event, wait_for_event_on_any,
-    wait_until,
+    aggregator_role_histories, key_roster, wait_for_event, wait_for_event_on_any, wait_until,
 };
 use super::nodes::{
     committee_node_indices, determine_committee, setup_score_sortition_environment, NodeFactory,
     CHAIN_ID, DKG_FOLD_ATTESTATION_VERIFIER, TICKET_PRICE,
 };
+use super::scenario::{Expect, Fault, OwedShare, Preset, Scenario, VOTES_PER_VOTER};
 use super::zk_fixture::{active_committee, setup_test_zk_backend};
 use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder};
 use actix::{Actor, Addr};
 use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolEvent;
-use anyhow::{bail, Context, Result};
-use e3_bfv_client::decode_bytes_to_vec_u64;
+use anyhow::{Context, Result};
 use e3_crypto::Cipher;
 use e3_event_system::EventSystem;
 use e3_events::{
@@ -35,7 +35,7 @@ use e3_events::{
     InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, PublicKeyAggregated, Seed,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
+use e3_fhe_params::{encode_bfv_params, BfvParamSet};
 use e3_multithread::{FlattenedReport, Multithread, MultithreadReport, ToReport};
 use e3_sortition::calculate_buffer_size;
 use e3_test_support::{create_seed_from_u64, with_tracing};
@@ -46,6 +46,7 @@ use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -54,127 +55,7 @@ use tokio::time::sleep;
 const NODE_RNG_BASE: u64 = 42;
 /// Logical CPUs kept outside the shared Rayon pool.
 const RESERVED_THREADS: usize = 2;
-/// Votes each synthetic voter casts, so the number of tallies the decryption must return. SS has
-/// one committed noise set, so the run exercises one output rather than reuse it across tallies.
-const VOTES_PER_VOTER: usize = 1;
 const VOTERS: usize = 30;
-
-/// Proof system and parameter family a run uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Preset {
-    Insecure,
-    Secure,
-}
-
-impl Preset {
-    /// The preset for a benchmark mode, which is `insecure` or `secure`.
-    pub fn from_mode(mode: &str) -> Result<Self> {
-        match mode {
-            "insecure" => Ok(Preset::Insecure),
-            "secure" => Ok(Preset::Secure),
-            other => bail!("unsupported BENCHMARK_MODE {other:?}: expected `insecure` or `secure`"),
-        }
-    }
-
-    pub fn bfv_preset(self) -> BfvPreset {
-        match self {
-            Preset::Insecure => DEFAULT_BFV_PRESET,
-            Preset::Secure => BfvPreset::SecureThreshold8192,
-        }
-    }
-
-    /// Noir artifact directory under `circuits/bin/`.
-    pub fn subdir(self) -> &'static str {
-        match self {
-            Preset::Insecure => "insecure-64",
-            Preset::Secure => "secure-8192",
-        }
-    }
-
-    /// Collection timeouts (encryption keys, threshold shares, decryption key shares) that the
-    /// secure proofs need; insecure runs take the nodes' defaults or the caller's environment.
-    fn collection_timeouts_secs(self, small_committee: bool) -> Option<(u64, u64, u64)> {
-        match (self, small_committee) {
-            (Preset::Insecure, _) => None,
-            (Preset::Secure, true) => Some((7_200, 46_000, 46_000)),
-            (Preset::Secure, false) => Some((1_800, 7_200, 7_200)),
-        }
-    }
-
-    /// How long a run waits for the public key and for the plaintext. These bound the harness
-    /// only; protocol deadlines come from the synthetic DKG window.
-    fn flow_timeouts(self, small_committee: bool) -> (Duration, Duration) {
-        let (pubkey, plaintext) = match (self, small_committee) {
-            (Preset::Insecure, _) => (5_000, 1_000),
-            (Preset::Secure, true) => (45_000, 6_000),
-            (Preset::Secure, false) => (15_000, 3_000),
-        };
-        (Duration::from_secs(pubkey), Duration::from_secs(plaintext))
-    }
-}
-
-/// A fault the run injects at a known protocol point.
-#[derive(Debug, Clone, Copy)]
-pub enum Fault {
-    None,
-    /// The committee party disconnects once it has published its encryption key (C0) and the
-    /// others have seen it. It can no longer share its DKG material, so the aggregator must
-    /// select a roster without it.
-    OfflineAfterC0 {
-        party_id: usize,
-    },
-}
-
-impl Fault {
-    fn offline_party(self) -> Option<usize> {
-        match self {
-            Fault::None => None,
-            Fault::OfflineAfterC0 { party_id } => Some(party_id),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Scenario {
-    pub preset: Preset,
-    pub fault: Fault,
-    /// Frozen DKG window given to every node. `None` derives a window far beyond the flow
-    /// timeouts, so no protocol deadline can fire during the run.
-    pub dkg_window: Option<Duration>,
-    /// Jobs the shared Rayon pool runs at once.
-    pub concurrent_jobs: usize,
-}
-
-impl Scenario {
-    /// The committee has a standby party (N > H); the run completes with every party online
-    /// and the standby party still deals its C4 share.
-    pub fn standby_node() -> Self {
-        Self {
-            preset: Preset::Insecure,
-            fault: Fault::None,
-            dkg_window: Some(Duration::from_secs(1200)),
-            concurrent_jobs: 1,
-        }
-    }
-
-    /// Party `party_id` goes offline after C0 and the run completes without it.
-    pub fn offline_after_c0(party_id: usize) -> Self {
-        Self {
-            fault: Fault::OfflineAfterC0 { party_id },
-            ..Self::standby_node()
-        }
-    }
-
-    /// Every party online, with the DKG window left open.
-    pub fn benchmark(preset: Preset, concurrent_jobs: usize) -> Self {
-        Self {
-            preset,
-            fault: Fault::None,
-            dkg_window: None,
-            concurrent_jobs,
-        }
-    }
-}
 
 /// The committee, proof system and node pool a run used, for the benchmark report.
 #[derive(Debug, Clone)]
@@ -187,6 +68,14 @@ pub struct RunConfig {
     pub committee_h: usize,
     pub committee_t: usize,
     pub nodes_spawned: usize,
+}
+
+impl RunConfig {
+    /// Whether the scenario's standby party owes a C4 share: the aggregated proofs need every
+    /// dealt share.
+    pub fn standby_share_owed(&self, expect: &Expect) -> bool {
+        expect.standby_deals && self.proof_aggregation_enabled
+    }
 }
 
 /// Wall-clock durations of the phases of one run.
@@ -205,17 +94,44 @@ pub struct Timings {
     pub whole: Duration,
 }
 
-/// What a finished run hands to the benchmark.
-pub struct Run {
+/// One node's history at the end of the run.
+pub struct NodeHistory {
+    pub index: usize,
+    pub address: String,
+    pub history: CiphernodeHistory,
+}
+
+/// The standby party (outside the DKG roster, N > H) and whether it dealt its C4 share.
+pub struct Standby {
+    pub party_id: usize,
+    pub share_dealt: bool,
+}
+
+/// What a finished run observed: the outcome the assertions evaluate, and the timings and proofs
+/// the benchmark reports.
+pub struct Observations {
     pub config: RunConfig,
     pub timings: Timings,
     pub e3_id: E3id,
+    pub params: Arc<BfvParameters>,
+    pub key: PublicKeyAggregated,
+    /// The party ids of the honest committee the published key lists, in the key's order.
+    pub roster: Vec<u64>,
     pub dkg_aggregator_proof: Proof,
-    pub decryption_aggregator_proofs: Vec<Proof>,
-    /// Histories of the parties that held the public-key aggregator role, joined.
-    pub pubkey_role_events: Vec<InterfoldEvent>,
+    pub plaintext: PlaintextAggregated,
+    /// Every voter's votes, which the plaintext must decrypt to the sum of.
+    pub votes: Vec<Vec<u64>>,
     /// History of the party that published the plaintext.
     pub plaintext_aggregator_events: Vec<InterfoldEvent>,
+    /// Histories of the parties that held the public-key aggregator role.
+    pub role_holders: Vec<(usize, CiphernodeHistory)>,
+    pub nodes: Vec<NodeHistory>,
+    /// The node a fault took offline, if any.
+    pub offline_node: Option<usize>,
+    /// Set when the scenario expects the standby party to deal, and the run aggregates proofs.
+    pub standby: Option<Standby>,
+    /// The party a fault restarted, once it has.
+    pub restarted: Option<Restarted>,
     pub multithread: FlattenedReport,
 }
 
@@ -294,6 +210,16 @@ impl Request {
     }
 }
 
+/// The party a fault restarted, and the node it runs on.
+#[derive(Debug, Clone)]
+pub struct Restarted {
+    pub party_id: usize,
+    pub node_index: usize,
+    /// Whether it published the share `Expect::restarted_share` names. Not waited for, so false,
+    /// when the scenario expects none.
+    pub share_published: bool,
+}
+
 /// Everything the phases of one run share.
 struct Env {
     scenario: Scenario,
@@ -308,6 +234,10 @@ struct Env {
     seed: Seed,
     e3_id: E3id,
     nodes: CiphernodeSystem,
+    /// Assembles every node, and rebuilds one from its persisted stores when a fault restarts it.
+    factory: NodeFactory,
+    /// The party a fault restarted, once it has.
+    restarted: Option<Restarted>,
     /// Stands in for the chain: whatever it publishes reaches every node's own durable event
     /// pipeline.
     bus: BusHandle,
@@ -316,6 +246,7 @@ struct Env {
     // Held until the run ends.
     _timeout_env: TimeoutEnvGuard,
     _zk_temp: tempfile::TempDir,
+    _persistence: Option<tempfile::TempDir>,
     _system: EventSystem,
 }
 
@@ -382,7 +313,7 @@ impl Env {
             config.proof_aggregation_enabled
         );
 
-        let (zk_backend, zk_temp) = setup_test_zk_backend(preset.subdir()).await?;
+        let (zk_backend, zk_temp) = setup_test_zk_backend(bfv_preset, committee_size).await?;
         let pool_threads = Multithread::get_max_threads_minus(RESERVED_THREADS);
         let multithread_report =
             MultithreadReport::new(pool_threads, scenario.concurrent_jobs).start();
@@ -392,6 +323,12 @@ impl Env {
             .with_fresh_bus()
             .with_aggregate_config(aggregate_config.clone());
         let bus = system.handle()?.enable("test");
+        // Nodes persist only when the scenario restarts one.
+        let persistence = scenario
+            .fault
+            .restarts_a_node()
+            .then(tempfile::tempdir)
+            .transpose()?;
         let factory = NodeFactory {
             rng_base: NODE_RNG_BASE,
             cipher: Arc::new(Cipher::from_password("I am the music man.").await?),
@@ -404,6 +341,8 @@ impl Env {
             proof_aggregation_enabled: config.proof_aggregation_enabled,
             trigger: bus.clone(),
             next_salt: Default::default(),
+            persistence_root: persistence.as_ref().map(|dir| dir.path().to_path_buf()),
+            restartable: Default::default(),
         };
         let nodes = CiphernodeSystemBuilder::new()
             .add_group(1, || factory.build("collector"))
@@ -427,6 +366,8 @@ impl Env {
             seed: Seed(create_seed_from_u64(123)),
             e3_id: E3id::new("0", CHAIN_ID),
             nodes,
+            factory,
+            restarted: None,
             bus,
             multithread_report,
             timings: Timings {
@@ -435,6 +376,7 @@ impl Env {
             },
             _timeout_env: timeout_env,
             _zk_temp: zk_temp,
+            _persistence: persistence,
             _system: system,
         })
     }
@@ -455,34 +397,49 @@ fn dkg_timing_reader(window_secs: u64) -> e3_keyshare::DkgTimingReader {
     })
 }
 
-pub async fn run(scenario: &Scenario) -> Result<Run> {
+/// Runs one scenario and returns what it observed. It asserts nothing about the outcome:
+/// [`super::assertions::check`] does.
+pub async fn run(scenario: &Scenario) -> Result<Observations> {
     let whole_test = Instant::now();
     let _tracing = with_tracing("info");
     let mut env = Env::build(scenario).await?;
 
     register_operators(&mut env).await?;
     let request = request_and_finalize_committee(&mut env).await?;
-    inject_fault(&env, &request).await?;
+    inject_fault(&mut env, &request).await?;
 
     let key = await_public_key(&mut env, &request).await?;
-    let dkg_aggregator_proof = check_public_key(&env, &key)?;
+    let dkg_aggregator_proof = dkg_aggregator_proof(&key)?;
     record_chain_observation(&env, &request, &key, &dkg_aggregator_proof).await?;
 
     let decrypted = encrypt_and_decrypt(&mut env, &request, &key).await?;
-    let pubkey_role_events = audit_histories(&env, &request, &key).await?;
+
+    let role_holders = role_holders(&env, &request).await?;
+    let roster = key_roster(&key);
+    let standby = await_standby_share(&env, &request, &roster).await;
+    let restarted = await_restarted_share(&env).await;
+    let nodes = node_histories(&env).await?;
 
     let multithread = env.multithread_report.send(ToReport).await?;
     println!("{multithread}");
     env.timings.whole = whole_test.elapsed();
 
-    Ok(Run {
+    Ok(Observations {
         config: env.config,
         timings: env.timings,
         e3_id: env.e3_id,
+        params: env.params,
+        key,
+        roster,
         dkg_aggregator_proof,
-        decryption_aggregator_proofs: decrypted.proofs,
-        pubkey_role_events,
+        plaintext: decrypted.plaintext,
+        votes: decrypted.votes,
         plaintext_aggregator_events: decrypted.history.to_vec(),
+        role_holders,
+        nodes,
+        offline_node: request.offline_node(),
+        standby,
+        restarted,
         multithread,
     })
 }
@@ -599,7 +556,34 @@ async fn finalize_committee(env: &mut Env) -> Result<Vec<usize>> {
 
 // ---- Fault ---------------------------------------------------------------------------------
 
-async fn inject_fault(env: &Env, request: &Request) -> Result<()> {
+/// The party that aggregates until a failover: the first in the committee's order.
+const AGGREGATOR_PARTY: usize = 0;
+
+/// Faults that fire before the public key is aggregated. Faults of the decrypt phase fire from
+/// [`inject_decryption_fault`].
+async fn inject_fault(env: &mut Env, request: &Request) -> Result<()> {
+    match env.scenario.fault {
+        Fault::OfflineAfterC0 { .. } => disconnect_after_c0(env, request).await,
+        Fault::RestartDuringC4 { party_id } => restart_during_c4(env, request, party_id).await,
+        Fault::None | Fault::RestartDuringC6 { .. } => Ok(()),
+    }
+}
+
+/// Faults that fire once the ciphertext is published and the parties are decrypting it.
+async fn inject_decryption_fault(
+    env: &mut Env,
+    request: &Request,
+    key: &PublicKeyAggregated,
+) -> Result<()> {
+    match env.scenario.fault {
+        Fault::RestartDuringC6 { party_id } => {
+            restart_during_c6(env, request, party_id, &key_roster(key)).await
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn disconnect_after_c0(env: &Env, request: &Request) -> Result<()> {
     let Some(party_id) = request.offline_party else {
         return Ok(());
     };
@@ -644,6 +628,140 @@ async fn inject_fault(env: &Env, request: &Request) -> Result<()> {
     Ok(())
 }
 
+/// Restarts a roster member while its C4 proof is pending. The proof request is on its event log
+/// but no C4 share is, so the restarted node has to resume the request from its stores.
+async fn restart_during_c4(env: &mut Env, request: &Request, preferred: usize) -> Result<()> {
+    let timeout = env
+        .pubkey_timeout
+        .min(Duration::from_secs(env.dkg_window_secs));
+    let aggregator = *request
+        .committee
+        .get(AGGREGATOR_PARTY)
+        .context("committee has no aggregator")?;
+    let roster = wait_for_event(
+        &env.nodes,
+        aggregator,
+        "the aggregator's DKG roster",
+        timeout,
+        |data| match data {
+            InterfoldEventData::CommitmentRosterSelected(selected)
+                if selected.e3_id == env.e3_id =>
+            {
+                Some(selected.party_ids.clone())
+            }
+            _ => None,
+        },
+    )
+    .await?;
+    let party_id = restart_target(preferred, &roster)?;
+    let node_index = party_node(request, party_id)?;
+    wait_until(
+        &env.nodes,
+        node_index,
+        "the restart party's pending C4 proof",
+        timeout,
+        |data| {
+            matches!(
+                data,
+                InterfoldEventData::DecryptionShareProofsPending(pending)
+                    if pending.e3_id == env.e3_id && pending.party_id == party_id as u64
+            )
+        },
+    )
+    .await?;
+    let logged = restart_party(env, party_id, node_index, "C4").await?;
+    anyhow::ensure!(
+        !logged.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::DecryptionKeyShared(share)
+                if share.e3_id == env.e3_id && share.party_id == party_id as u64
+        )),
+        "restart missed the C4 window: party {party_id} shared its C4 proofs before it stopped"
+    );
+    Ok(())
+}
+
+/// Restarts a roster member while its C6 proof is pending, after the ciphertext is published and
+/// before it publishes its decryption share.
+async fn restart_during_c6(
+    env: &mut Env,
+    request: &Request,
+    preferred: usize,
+    roster: &[u64],
+) -> Result<()> {
+    let party_id = restart_target(preferred, roster)?;
+    let node_index = party_node(request, party_id)?;
+    wait_until(
+        &env.nodes,
+        node_index,
+        "the restart party's pending C6 proof",
+        env.plaintext_timeout,
+        |data| {
+            matches!(
+                data,
+                InterfoldEventData::ShareDecryptionProofPending(pending)
+                    if pending.e3_id == env.e3_id && pending.party_id == party_id as u64
+            )
+        },
+    )
+    .await?;
+    let logged = restart_party(env, party_id, node_index, "C6").await?;
+    anyhow::ensure!(
+        !logged.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::DecryptionshareCreated(share)
+                if share.e3_id == env.e3_id && share.party_id == party_id as u64
+        )),
+        "restart missed the C6 window: party {party_id} published its decryption share before it stopped"
+    );
+    Ok(())
+}
+
+/// `preferred` when the roster holds it and it is not the aggregator; otherwise the first roster
+/// member that is not.
+fn restart_target(preferred: usize, roster: &[u64]) -> Result<usize> {
+    let eligible = |party: usize| party != AGGREGATOR_PARTY && roster.contains(&(party as u64));
+    if eligible(preferred) {
+        return Ok(preferred);
+    }
+    roster
+        .iter()
+        .map(|&party| party as usize)
+        .find(|&party| eligible(party))
+        .context("DKG roster has no non-aggregator party to restart")
+}
+
+fn party_node(request: &Request, party_id: usize) -> Result<usize> {
+    request
+        .committee
+        .get(party_id)
+        .copied()
+        .context("restart party is outside the finalized committee")
+}
+
+/// Stops the party's node and rebuilds it from its persisted stores, and records the party for
+/// the audits. Returns what the node logged before it stopped.
+async fn restart_party(
+    env: &mut Env,
+    party_id: usize,
+    node_index: usize,
+    stage: &str,
+) -> Result<CiphernodeHistory> {
+    println!("Stopping committee party {party_id} at node index {node_index} during {stage}");
+    let logged = env.factory.restart(&mut env.nodes, node_index).await?;
+    println!(
+        "Restarted committee party {party_id} at node index {node_index} during {stage}, \
+         {} events logged before it stopped",
+        logged.len()
+    );
+    env.restarted = Some(Restarted {
+        party_id,
+        node_index,
+        share_published: false,
+    });
+    Ok(logged)
+}
+
 // ---- Public key ----------------------------------------------------------------------------
 
 async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublicKeyAggregated> {
@@ -667,25 +785,12 @@ async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublicKeyA
     Ok(key)
 }
 
-/// Returns the final DKG proof the event carries.
-fn check_public_key(env: &Env, key: &PublicKeyAggregated) -> Result<Proof> {
-    let h = env.config.committee_h;
-    assert_eq!(
-        key.nodes.len(),
-        h,
-        "PublicKeyAggregated must list H={h} honest nodes"
-    );
-    let proof = key
-        .dkg_aggregator_proof
+/// The final DKG proof the event carries. The registry observation the run records needs it, so a
+/// key without one stops the run; the assertions check the rest of the key.
+fn dkg_aggregator_proof(key: &PublicKeyAggregated) -> Result<Proof> {
+    key.dkg_aggregator_proof
         .clone()
-        .context("PublicKeyAggregated must always carry a final DKG proof payload")?;
-    assert!(
-        key.dkg_attestation_bundle
-            .as_ref()
-            .is_some_and(|bundle| !bundle.is_empty()),
-        "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
-    );
-    Ok(proof)
+        .context("PublicKeyAggregated must always carry a final DKG proof payload")
 }
 
 /// The synthetic registry records the same confirmed observation as chain ingestion.
@@ -738,10 +843,11 @@ async fn record_chain_observation(
 
 // ---- Encryption and decryption -------------------------------------------------------------
 
-/// The party that published the plaintext, and the decryption proofs it carried.
+/// The party that published the plaintext, what it carried, and the votes it must decrypt to.
 struct Decrypted {
     history: CiphernodeHistory,
-    proofs: Vec<Proof>,
+    plaintext: PlaintextAggregated,
+    votes: Vec<Vec<u64>>,
 }
 
 async fn encrypt_and_decrypt(
@@ -751,16 +857,11 @@ async fn encrypt_and_decrypt(
 ) -> Result<Decrypted> {
     let pubkey = PublicKey::from_bytes(&key.pubkey, &env.params)?;
     let (outputs, votes) = encrypt_votes(env, &pubkey);
-    let (history, plaintext) = decrypt(env, request, outputs).await?;
-    assert_eq!(
-        plaintext.decryption_aggregator_proofs.len(),
-        VOTES_PER_VOTER,
-        "PlaintextAggregated must carry one decryption proof per tally"
-    );
-    check_tally(&env.params, &plaintext.decrypted_output, &votes);
+    let (history, plaintext) = decrypt(env, request, key, outputs).await?;
     Ok(Decrypted {
         history,
-        proofs: plaintext.decryption_aggregator_proofs,
+        plaintext,
+        votes,
     })
 }
 
@@ -784,6 +885,7 @@ fn encrypt_votes(env: &mut Env, pubkey: &PublicKey) -> (Vec<Arc<Ciphertext>>, Ve
 async fn decrypt(
     env: &mut Env,
     request: &Request,
+    key: &PublicKeyAggregated,
     outputs: Vec<Arc<Ciphertext>>,
 ) -> Result<(CiphernodeHistory, PlaintextAggregated)> {
     let publishing = Instant::now();
@@ -797,6 +899,7 @@ async fn decrypt(
         e3_id: env.e3_id.clone(),
         ciphertext_commitment: [0u8; 32],
     })?;
+    inject_decryption_fault(env, request, key).await?;
 
     // PlaintextAggregated is a local publication intent, so only the party that aggregates holds
     // it. A party demoted in the key phase is skipped for this one, so any connected committee
@@ -821,165 +924,101 @@ async fn decrypt(
     Ok((history, plaintext))
 }
 
-/// The decrypted tallies must equal the sum of every voter's votes.
-fn check_tally(params: &BfvParameters, decrypted: &[ArcBytes], votes: &[Vec<u64>]) {
-    let results: Vec<u64> = decrypted
-        .iter()
-        .map(|a| decode_bytes_to_vec_u64(&a.extract_bytes()).expect("error decoding bytes"))
-        .map(|r| *r.first().unwrap())
-        .collect();
-    let plaintext_modulus = params.plaintext();
-    let mut expected_result = [0u64; VOTES_PER_VOTER];
-    for vals in votes {
-        for (expected, vote) in expected_result.iter_mut().zip(vals) {
-            *expected = (*expected + vote) % plaintext_modulus;
-        }
-    }
-    assert_eq!(
-        results.as_slice(),
-        expected_result.as_slice(),
-        "Threshold decryption must return every expected tally"
-    );
-    for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
-        println!("Tally {i} result = {res} / {exp}");
-    }
-}
+// ---- Observations of the finished run ------------------------------------------------------
 
-// ---- Audits over the finished run's histories ----------------------------------------------
-
-/// Checks the finished run's histories, and returns the joined histories of the parties that held
-/// the public-key aggregator role.
-async fn audit_histories(
-    env: &Env,
-    request: &Request,
-    key: &PublicKeyAggregated,
-) -> Result<Vec<InterfoldEvent>> {
-    // A successor can take the aggregator role late, so the holders are read now, not when the
-    // key appeared.
+/// The histories of the parties that held the public-key aggregator role. A successor can take the
+/// role late, so the holders are read now, not when the key appeared.
+async fn role_holders(env: &Env, request: &Request) -> Result<Vec<(usize, CiphernodeHistory)>> {
     env.flush_nodes().await?;
-    let holders = aggregator_role_histories(&env.nodes, &request.connected(), &env.e3_id).await?;
-
-    let roster = key_roster(key);
-    if let Some(party) = request.offline_party {
-        assert!(
-            !roster.contains(&(party as u64)),
-            "disconnected party was selected for the DKG roster"
-        );
-    }
-    await_standby_share(env, request, &roster).await?;
-
-    check_key_submissions(&holders, &env.e3_id, key, &roster);
-    check_no_faults(env, request).await?;
-    Ok(holders
-        .into_iter()
-        .flat_map(|(_, history)| history.iter().cloned().collect::<Vec<_>>())
-        .collect())
+    aggregator_role_histories(&env.nodes, &request.connected(), &env.e3_id).await
 }
 
-/// The party ids of the honest committee the published key lists, in the key's order.
-fn key_roster(key: &PublicKeyAggregated) -> Vec<u64> {
-    key.honest_committee_addresses
-        .iter()
-        .map(|address| {
-            key.committee_addresses
-                .iter()
-                .position(|member| member == address)
-                .expect("the published key lists an honest node outside the committee")
-                as u64
-        })
-        .collect()
+/// Waits for a share the scenario expects and records whether it arrived, so the assertions
+/// decide what a missing share means. The wait's own error says what was observed instead.
+async fn share_arrived(wait: impl Future<Output = Result<()>>, share: &str) -> bool {
+    match wait.await {
+        Ok(()) => true,
+        Err(error) => {
+            println!("{share} did not arrive: {error}");
+            false
+        }
+    }
 }
 
-/// The aggregator can publish before a standby party's share lands; the standby party still has
-/// to deal it, since it replaces a roster member that drops out.
-async fn await_standby_share(env: &Env, request: &Request, roster: &[u64]) -> Result<()> {
-    if !env.config.proof_aggregation_enabled || request.offline_party.is_some() {
-        return Ok(());
+/// The aggregator can publish before a standby party's share lands, so the run waits for it when
+/// the scenario expects the standby party to deal.
+async fn await_standby_share(env: &Env, request: &Request, roster: &[u64]) -> Option<Standby> {
+    if !env.config.standby_share_owed(&env.scenario.expect) {
+        return None;
     }
-    let standby_party_id = (0..env.config.committee_n)
-        .find(|party_id| !roster.contains(&(*party_id as u64)))
-        .context("DKG roster has no standby party")?;
-    wait_until(
-        &env.nodes,
-        request.committee[standby_party_id],
+    let party_id =
+        (0..env.config.committee_n).find(|party_id| !roster.contains(&(*party_id as u64)))?;
+    let share_dealt = share_arrived(
+        wait_until(
+            &env.nodes,
+            request.committee[party_id],
+            "standby party C4 share",
+            env.pubkey_timeout.min(Duration::from_secs(300)),
+            |data| {
+                matches!(
+                    data,
+                    InterfoldEventData::DecryptionKeyShared(share)
+                        if share.e3_id == env.e3_id && share.party_id == party_id as u64
+                )
+            },
+        ),
         "standby party C4 share",
-        env.pubkey_timeout.min(Duration::from_secs(300)),
-        |data| {
-            matches!(
-                data,
-                InterfoldEventData::DecryptionKeyShared(share)
-                    if share.e3_id == env.e3_id && share.party_id == standby_party_id as u64
-            )
-        },
     )
-    .await
+    .await;
+    Some(Standby {
+        party_id,
+        share_dealt,
+    })
 }
 
-/// The runtime lets a demoted holder finish and submit the key it computed, and the chain keeps
-/// the first valid submission. Every submission must therefore be the key the committee goes on
-/// to use, built from the roster that key lists. A holder's own submission is `Local`; peers
-/// forward copies. A better-ranked proposal can replace an accepted roster until C4 fixes it, so
-/// each holder is checked against the last roster it selected before it submitted.
-fn check_key_submissions(
-    holders: &[(usize, CiphernodeHistory)],
-    e3_id: &E3id,
-    key: &PublicKeyAggregated,
-    roster: &[u64],
-) {
-    let mut submissions = 0;
-    for (node_index, history) in holders {
-        let mut selected: Option<&Vec<u64>> = None;
-        for event in history.iter() {
-            match (event.source(), event.get_data()) {
-                (_, InterfoldEventData::CommitmentRosterSelected(data)) if data.e3_id == *e3_id => {
-                    selected = Some(&data.party_ids);
-                }
-                (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data))
-                    if data.e3_id == *e3_id =>
-                {
-                    submissions += 1;
-                    assert!(
-                        data.pubkey == key.pubkey,
-                        "role holder {node_index} submitted a public key that differs from the one the committee used"
-                    );
-                    assert_eq!(
-                        selected.map(Vec::as_slice),
-                        Some(roster),
-                        "role holder {node_index} submitted a key without having selected the roster it lists"
-                    );
-                }
-                _ => {}
-            }
+/// The restarted party, with whether it published the share the scenario expects of it. It had
+/// not published it when it stopped, so the share is the restarted node's own.
+async fn await_restarted_share(env: &Env) -> Option<Restarted> {
+    let restarted = env.restarted.as_ref()?;
+    let Some(owed) = env.scenario.expect.restarted_share else {
+        return Some(restarted.clone());
+    };
+    let party = restarted.party_id as u64;
+    let published = |data: &InterfoldEventData| match (owed, data) {
+        (OwedShare::C4DecryptionKey, InterfoldEventData::DecryptionKeyShared(share)) => {
+            share.e3_id == env.e3_id && share.party_id == party
         }
-    }
-    assert!(submissions > 0, "no role holder submitted the public key");
+        (OwedShare::C6Decryption, InterfoldEventData::DecryptionshareCreated(share)) => {
+            share.e3_id == env.e3_id && share.party_id == party
+        }
+        _ => false,
+    };
+    let share_published = share_arrived(
+        wait_until(
+            &env.nodes,
+            restarted.node_index,
+            "the restarted party's share",
+            env.pubkey_timeout.min(Duration::from_secs(600)),
+            published,
+        ),
+        "the restarted party's share",
+    )
+    .await;
+    Some(Restarted {
+        share_published,
+        ..restarted.clone()
+    })
 }
 
-/// No node may have accused, expelled, or failed anyone, or logged an actor error. The
-/// disconnected node cannot collect its own DKG shares, so it can fail locally without failing the
-/// E3.
-async fn check_no_faults(env: &Env, request: &Request) -> Result<()> {
-    let offline_node = request.offline_node();
-    let mut faults = Vec::new();
+/// Every node's history, for the fault scan.
+async fn node_histories(env: &Env) -> Result<Vec<NodeHistory>> {
+    let mut nodes = Vec::new();
     for (index, node) in env.nodes.iter().enumerate() {
-        if Some(index) == offline_node {
-            continue;
-        }
-        let context = if index == 0 {
-            "observer node 0".to_string()
-        } else {
-            format!("participant node {index} ({})", node.address())
-        };
-        faults.extend(collect_honest_run_faults(
-            &env.nodes.get_history(index).await?,
-            &env.e3_id,
-            &context,
-        ));
+        nodes.push(NodeHistory {
+            index,
+            address: node.address(),
+            history: env.nodes.get_history(index).await?,
+        });
     }
-    assert!(
-        faults.is_empty(),
-        "honest-run safeguard failures:\n{}",
-        faults.join("\n")
-    );
-    Ok(())
+    Ok(nodes)
 }

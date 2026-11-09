@@ -20,14 +20,15 @@ use e3_utils::utility_types::ArcBytes;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use trbfv::runner::{run, Scenario};
+use trbfv::{run_and_check, scenario::Scenario};
 
 // ============================================================================
 // Full-proof trBFV scenarios
 //
 // Each scenario runs a whole E3 on real ciphernodes with real proofs and asserts its outcome:
-// the key, the plaintext, the DKG roster, and the absence of faults. It does not assert how the
-// nodes order their events, and its DKG window is far beyond the flow timeouts, so no scenario
+// the key, the plaintext, the DKG roster, and the absence of faults. `run_and_check` runs the
+// scenario, then checks the observations against what the scenario expects. It does not assert how
+// the nodes order their events, and its DKG window is far beyond the flow timeouts, so no scenario
 // here waits for a progress deadline.
 //
 // Proof-system and timeout settings come from the environment (`CIPHERNODE_SKIP_PROOF_AGGREGATION`,
@@ -38,7 +39,7 @@ use trbfv::runner::{run, Scenario};
 #[actix::test]
 #[serial_test::serial]
 async fn trbfv_scenario_standby_node() -> Result<()> {
-    run(&Scenario::standby_node()).await?;
+    run_and_check(&Scenario::standby_node()).await?;
     Ok(())
 }
 
@@ -46,7 +47,23 @@ async fn trbfv_scenario_standby_node() -> Result<()> {
 #[actix::test]
 #[serial_test::serial]
 async fn trbfv_scenario_party_offline_after_c0() -> Result<()> {
-    run(&Scenario::offline_after_c0(1)).await?;
+    run_and_check(&Scenario::offline_after_c0(1)).await?;
+    Ok(())
+}
+
+/// Party 1 restarts from its persisted stores while its C4 proof is pending, and shares it.
+#[actix::test]
+#[serial_test::serial]
+async fn trbfv_scenario_restart_during_c4() -> Result<()> {
+    run_and_check(&Scenario::restart_during_c4(1)).await?;
+    Ok(())
+}
+
+/// Party 1 restarts from its persisted stores while its C6 proof is pending, and decrypts.
+#[actix::test]
+#[serial_test::serial]
+async fn trbfv_scenario_restart_during_c6() -> Result<()> {
+    run_and_check(&Scenario::restart_during_c6(1)).await?;
     Ok(())
 }
 
