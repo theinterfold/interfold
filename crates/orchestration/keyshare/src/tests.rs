@@ -5583,6 +5583,133 @@ async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
 }
 
 #[actix::test]
+async fn a_late_chain_log_starts_no_work_while_the_cleanup_retries() -> Result<()> {
+    let e3_id = E3id::new("98", 1);
+    let (keys, publication) = canonical_key_fixture(&e3_id).await?;
+    let domain = keys.get(&e3_id).unwrap().domain(Address::ZERO);
+    let (bus, history) = test_bus();
+    let ready = ready_for_c4_test();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::Decrypting(Decrypting {
+            pk_share: ready.pk_share,
+            sk_poly_sum: ready.sk_poly_sum,
+            es_poly_sum: ready.es_poly_sum,
+            ciphertext_output: vec![ArcBytes::from_bytes(&[5])],
+            signed_pk_generation_proof: None,
+            signed_sk_share_computation_proof: None,
+            signed_e_sm_share_computation_proof: None,
+            signed_sk_share_encryption_proofs: Vec::new(),
+            signed_e_sm_share_encryption_proofs: Vec::new(),
+        }),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.aggregated_pk = Some(publication.pubkey.clone());
+        state.decryption_domain = Some(domain);
+        Ok(state)
+    })?;
+    // Every write fails, so the terminal cleanup retries later.
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state.try_get()?).await,
+        share_enc_preset: BfvPreset::InsecureDkg64,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: unwritable(ThresholdKeyshareRecoveryState::default()).await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .with_canonical_keys(keys)
+    .start();
+
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            1,
+            EventSource::Local,
+        ))
+        .await?;
+    // The chain logs a failed E3's settlement after the E3 ends.
+    actor
+        .send(keyshare_event(
+            e3_events::EvmLogObserved {
+                contract: "Interfold".into(),
+                chain_id: e3_id.chain_id(),
+                e3_id: Some(e3_id.clone()),
+                event_name: "E3FailureProcessed".into(),
+                signature: Some("E3FailureProcessed(uint256,uint256,uint256)".into()),
+                known: true,
+                topics: Vec::new(),
+                data: ArcBytes::from_bytes(&[]),
+            },
+            2,
+            EventSource::Evm,
+        ))
+        .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+    let events = history.send(GetEvents::new()).await?;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_))),
+        "the ended E3 requested its decryption share again: {events:?}"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_late_collector_timeout_does_not_fail_an_ended_e3() -> Result<()> {
+    let e3_id = E3id::new("99", 1);
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    // The recovery writes fail, so the terminal cleanup retries later. The state is writable, so a
+    // late failure could still be recorded.
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus: bus.clone(),
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg64,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: unwritable(ThresholdKeyshareRecoveryState::default()).await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            1,
+            EventSource::Local,
+        ))
+        .await?;
+    // A collector runs until its deadline, also after the E3 ends.
+    actor
+        .send(DecryptionKeySharedCollectionFailed {
+            e3_id,
+            reason: "missing decryption key shares".to_string(),
+            missing_parties: vec![1],
+        })
+        .await?;
+
+    assert_no_collector_failure(&bus, &history, 1).await
+}
+
+#[actix::test]
 async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_advances() -> Result<()>
 {
     let generating = GeneratingDecryptionProof {

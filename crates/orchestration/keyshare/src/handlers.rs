@@ -18,7 +18,7 @@ impl ThresholdKeyshare {
 
     fn collector_failure_is_current(&self, e3_id: &E3id, phase: DkgTimeoutPhase) -> Result<bool> {
         let state = self.state.try_get()?;
-        if state.e3_id != *e3_id || self.canonical_key_published {
+        if self.ended || state.e3_id != *e3_id || self.canonical_key_published {
             return Ok(false);
         }
 
@@ -420,8 +420,8 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         event: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        // No work resumes and no decryption work is redelivered after the end, also while the
-        // cleanup below retries.
+        // No event or collector deadline starts work and no decryption work is redelivered after
+        // the end, also while the cleanup below retries.
         self.ended = true;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;

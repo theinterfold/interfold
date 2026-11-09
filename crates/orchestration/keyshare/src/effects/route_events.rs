@@ -7,6 +7,11 @@ use super::*;
 impl Handler<InterfoldEvent> for ThresholdKeyshare {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        // An ended E3 handles no event, also while its terminal cleanup retries. The cleanup
+        // retries itself, so a repeated terminal event is ignored too.
+        if self.ended {
+            return;
+        }
         let (msg, ec) = msg.into_components();
         match msg {
             InterfoldEventData::CiphernodeSelected(data) => {
@@ -154,7 +159,6 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     self.handle_committee_member_excluded(data, ec)
                 });
             }
-            InterfoldEventData::EffectsEnabled(_) if self.ended => {}
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own
                 // in-flight work that a crash may have interrupted (idempotent downstream).
