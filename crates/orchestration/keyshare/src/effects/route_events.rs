@@ -7,6 +7,11 @@ use super::*;
 impl Handler<InterfoldEvent> for ThresholdKeyshare {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        // An ended E3 handles no event, also while its terminal cleanup retries. The cleanup
+        // retries itself, so a repeated terminal event is ignored too.
+        if self.ended {
+            return;
+        }
         let (msg, ec) = msg.into_components();
         match msg {
             InterfoldEventData::CiphernodeSelected(data) => {

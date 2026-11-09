@@ -12,6 +12,10 @@ impl ProofRequestActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&e3_id) {
+            return;
+        }
 
         if self.pending_pk_aggregation.contains_key(&e3_id) {
             warn!(
@@ -98,6 +102,10 @@ impl ProofRequestActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&e3_id) {
+            return;
+        }
 
         if self
             .pending_aggregation
