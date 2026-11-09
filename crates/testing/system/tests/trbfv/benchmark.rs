@@ -14,6 +14,7 @@
 
 use super::nodes::DKG_FOLD_ATTESTATION_VERIFIER;
 use super::runner::{run, Run, Scenario};
+use alloy::primitives::hex;
 use anyhow::Result;
 use e3_events::{hlc::HlcTimestamp, prelude::*, EventSource, InterfoldEvent, InterfoldEventData};
 use std::fs;
@@ -46,7 +47,7 @@ pub async fn run_from_env() -> Result<()> {
 }
 
 /// Labelled wall-clock phases, in the order the report lists them.
-struct Report(Vec<(String, Duration)>);
+struct Report(Vec<(&'static str, Duration)>);
 
 impl Report {
     fn new(run: &Run) -> Self {
@@ -59,16 +60,12 @@ impl Report {
         ];
 
         // Peers forward the published key, so time the phase to the local publication only.
-        let p2_events: Vec<&InterfoldEvent> = run
-            .pubkey_role_events
-            .iter()
-            .filter(|event| {
-                !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
-                    || event.source() == EventSource::Local
-            })
-            .collect();
+        let p2_events = run.pubkey_role_events.iter().filter(|event| {
+            !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
+                || event.source() == EventSource::Local
+        });
         if let Some(secs) = wall_seconds_between(
-            &p2_events,
+            p2_events,
             |d| matches!(d, InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == run.e3_id),
             |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == run.e3_id),
         ) {
@@ -95,11 +92,9 @@ impl Report {
                 )
             })
             .unwrap_or(0);
-        let p4_events: Vec<&InterfoldEvent> = run.plaintext_aggregator_events[plaintext_start..]
-            .iter()
-            .collect();
+        let p4_events = run.plaintext_aggregator_events[plaintext_start..].iter();
         if let Some(secs) = wall_seconds_between(
-            &p4_events,
+            p4_events,
             |d| matches!(d, InterfoldEventData::AggregationProofPending(data) if data.e3_id == run.e3_id),
             |d| matches!(d, InterfoldEventData::PlaintextAggregated(data) if data.e3_id == run.e3_id),
         ) {
@@ -116,12 +111,7 @@ impl Report {
             ("Entire Test", t.whole),
         ]);
 
-        Self(
-            phases
-                .into_iter()
-                .map(|(label, duration)| (label.to_owned(), duration))
-                .collect(),
-        )
+        Self(phases)
     }
 
     fn serialize(&self) -> String {
@@ -137,34 +127,22 @@ impl Report {
 /// Wall seconds between the earliest `start_when` and the latest `end_when` event (HLC physical
 /// time). Selecting by timestamp keeps the result independent of event order when the events join
 /// several nodes' histories.
-fn wall_seconds_between<F1, F2>(
-    history: &[&InterfoldEvent],
-    start_when: F1,
-    end_when: F2,
-) -> Option<f64>
-where
-    F1: Fn(&InterfoldEventData) -> bool,
-    F2: Fn(&InterfoldEventData) -> bool,
-{
-    let start_us = history
-        .iter()
+fn wall_seconds_between<'a>(
+    events: impl Iterator<Item = &'a InterfoldEvent> + Clone,
+    start_when: impl Fn(&InterfoldEventData) -> bool,
+    end_when: impl Fn(&InterfoldEventData) -> bool,
+) -> Option<f64> {
+    let wall_time = |event: &InterfoldEvent| HlcTimestamp::wall_time(event.ts());
+    let start_us = events
+        .clone()
         .filter(|e| start_when(e.get_data()))
-        .map(|e| HlcTimestamp::wall_time(e.ts()))
+        .map(wall_time)
         .min()?;
-    let end_us = history
-        .iter()
+    let end_us = events
         .filter(|e| end_when(e.get_data()))
-        .map(|e| HlcTimestamp::wall_time(e.ts()))
+        .map(wall_time)
         .max()?;
     (end_us >= start_us).then(|| (end_us - start_us) as f64 / 1_000_000.0)
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    let mut out = String::from("0x");
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
 }
 
 fn json_escape(s: &str) -> String {
@@ -189,10 +167,10 @@ fn folded_artifacts_json(run: &Run, indent: &str) -> String {
             "{indent}  }}\n",
             "{indent}}}\n"
         ),
-        to_hex(&dkg.data),
-        to_hex(&dkg.public_signals),
-        to_hex(&dec.data),
-        to_hex(&dec.public_signals),
+        hex::encode_prefixed(&*dkg.data),
+        hex::encode_prefixed(&*dkg.public_signals),
+        hex::encode_prefixed(&*dec.data),
+        hex::encode_prefixed(&*dec.public_signals),
         indent = indent,
     )
 }
@@ -233,12 +211,11 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
         folded_artifacts_json(run, "  ").trim_start().trim_end()
     );
 
-    let dkg_fold_verifier_json = config
-        .proof_aggregation_enabled
-        .then(|| {
-            format!("  \"dkg_fold_attestation_verifier\": \"{DKG_FOLD_ATTESTATION_VERIFIER}\",\n")
-        })
-        .unwrap_or_default();
+    let dkg_fold_verifier_json = if config.proof_aggregation_enabled {
+        format!("  \"dkg_fold_attestation_verifier\": \"{DKG_FOLD_ATTESTATION_VERIFIER}\",\n")
+    } else {
+        String::new()
+    };
 
     let benchmark_config_json = format!(
         concat!(

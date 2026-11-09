@@ -350,6 +350,19 @@ async fn published(
         .collect())
 }
 
+/// The share verifications dispatched among `events`.
+fn share_verifications(
+    events: &[InterfoldEventData],
+) -> Vec<&e3_events::ShareVerificationDispatched> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            InterfoldEventData::ShareVerificationDispatched(data) => Some(data),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Deliver `party`'s decryption share the way gossip does, after sortition confirmed that the
 /// sender is in the committee.
 fn deliver_share(aggregator: &mut ThresholdPlaintextAggregator, party: u64) {
@@ -544,12 +557,10 @@ async fn a_promoted_standby_verifies_its_buffered_shares_once() -> Result<()> {
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
     let dispatched = |events: &[InterfoldEventData]| {
-        events
-            .iter()
-            .filter(|event| {
-                matches!(event, InterfoldEventData::ShareVerificationDispatched(data)
-                    if data.e3_id == e3_id
-                        && data.kind == VerificationKind::ThresholdDecryptionProofs)
+        share_verifications(events)
+            .into_iter()
+            .filter(|data| {
+                data.e3_id == e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs
             })
             .count()
     };

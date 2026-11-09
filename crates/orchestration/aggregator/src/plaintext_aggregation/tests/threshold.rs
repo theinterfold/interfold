@@ -284,29 +284,19 @@ async fn c6_verification_needs_t_plus_one_distinct_shares_and_decryption_needs_i
     // Threshold 1: two distinct roster shares form the batch.
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(collecting_state(), true).await?;
-    let dispatches = |events: &[InterfoldEventData]| {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                InterfoldEventData::ShareVerificationDispatched(data) => Some(data.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    };
-
     // Repeated gossip of one party's share does not count twice.
     deliver_share(&mut aggregator, 0);
     deliver_share(&mut aggregator, 0);
-    assert!(dispatches(&published(&aggregator, &history).await?).is_empty());
+    assert!(share_verifications(&published(&aggregator, &history).await?).is_empty());
 
     // A node outside the honest roster cannot complete the batch.
     deliver_share(&mut aggregator, 2);
-    assert!(dispatches(&published(&aggregator, &history).await?).is_empty());
+    assert!(share_verifications(&published(&aggregator, &history).await?).is_empty());
 
     deliver_share(&mut aggregator, 1);
     deliver_share(&mut aggregator, 1);
     let events = published(&aggregator, &history).await?;
-    let [request] = &dispatches(&events)[..] else {
+    let [request] = &share_verifications(&events)[..] else {
         panic!("the second distinct share must dispatch C6 verification exactly once");
     };
     assert_eq!(request.e3_id, e3_id);

@@ -14,25 +14,26 @@
 //! are returned in [`Run`].
 
 use super::history::{
-    aggregator_role_nodes, collect_honest_run_faults, wait_for_history_match,
-    wait_for_history_match_any,
+    aggregator_role_histories, collect_honest_run_faults, wait_for_event, wait_for_event_on_any,
+    wait_until,
 };
 use super::nodes::{
-    determine_committee, find_node_index_by_address, setup_score_sortition_environment,
-    NodeFactory, DKG_FOLD_ATTESTATION_VERIFIER,
+    committee_node_indices, determine_committee, setup_score_sortition_environment, NodeFactory,
+    CHAIN_ID, DKG_FOLD_ATTESTATION_VERIFIER, TICKET_PRICE,
 };
 use super::zk_fixture::{active_committee, setup_test_zk_backend};
-use crate::ciphernode_system::CiphernodeSystemBuilder;
-use actix::Actor;
+use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder};
+use actix::{Actor, Addr};
 use alloy::primitives::{Address, U256};
+use alloy::sol_types::SolEvent;
 use anyhow::{Context, Result};
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_crypto::Cipher;
 use e3_event_system::EventSystem;
 use e3_events::{
-    prelude::*, AggregateConfig, AggregateId, CiphertextOutputPublished, CommitteeFinalized,
+    prelude::*, AggregateConfig, AggregateId, BusHandle, CiphertextOutputPublished,
     CommitteeRequested, DkgFoldAttestationContextEstablished, E3Requested, E3id, EventSource,
-    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, Seed,
+    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, PublicKeyAggregated, Seed,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
@@ -41,18 +42,17 @@ use e3_sortition::calculate_buffer_size;
 use e3_test_support::{create_seed_from_u64, with_tracing};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::utility_types::ArcBytes;
-use fhe::bfv::PublicKey;
+use fhe::bfv::{BfvParameters, Ciphertext, PublicKey};
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 
 /// Seed of the per-node RNGs; every node draws a different stream from it.
 const NODE_RNG_BASE: u64 = 42;
-const CHAIN_ID: u64 = 1;
 /// Logical CPUs kept outside the shared Rayon pool.
 const RESERVED_THREADS: usize = 2;
 /// Votes each synthetic voter casts, so the number of tallies the decryption must return. SS has
@@ -124,6 +124,15 @@ pub enum Fault {
     OfflineAfterC0 {
         party_id: usize,
     },
+}
+
+impl Fault {
+    fn offline_party(self) -> Option<usize> {
+        match self {
+            Fault::None => None,
+            Fault::OfflineAfterC0 { party_id } => Some(party_id),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -259,362 +268,534 @@ impl Drop for TimeoutEnvGuard {
     }
 }
 
-pub async fn run(scenario: &Scenario) -> Result<Run> {
-    let whole_test = Instant::now();
-    let _guard = with_tracing("info");
-    let mut timings = Timings::default();
+/// What a run has once its committee is final.
+struct Request {
+    requested_at: Instant,
+    request_block: u64,
+    /// Node index of each committee party, in party order.
+    committee: Vec<usize>,
+    /// The party the fault takes offline, if any.
+    offline_party: Option<usize>,
+}
 
-    // Nodes get this frozen deadline: the scenario has no enabled EVM provider, and production
-    // nodes read it from the contract.
-    let setup = Instant::now();
-    let preset = scenario.preset;
-    let bfv_preset = preset.bfv_preset();
-    let committee_size = active_committee();
-    let small_committee = committee_size == e3_committee::CiphernodesCommitteeSize::Small;
-    let _timeout_env = TimeoutEnvGuard::set(preset.collection_timeouts_secs(small_committee));
-    let (pubkey_flow_timeout, plaintext_flow_timeout) = preset.flow_timeouts(small_committee);
-    let dkg_window_secs = scenario
-        .dkg_window
-        .map(|window| window.as_secs())
-        .unwrap_or_else(|| pubkey_flow_timeout.as_secs().saturating_mul(10))
-        .max(1);
-    let dkg_start = Arc::new(std::sync::OnceLock::<u64>::new());
-    let dkg_timing_reader: e3_keyshare::DkgTimingReader = Arc::new(move |_| {
-        let deadline = *dkg_start.get_or_init(|| {
+impl Request {
+    fn offline_node(&self) -> Option<usize> {
+        self.offline_party
+            .and_then(|party| self.committee.get(party).copied())
+    }
+
+    /// Node indices of the committee parties still online.
+    fn connected(&self) -> Vec<usize> {
+        self.committee
+            .iter()
+            .enumerate()
+            .filter(|(party, _)| Some(*party) != self.offline_party)
+            .map(|(_, &node)| node)
+            .collect()
+    }
+}
+
+/// Everything the phases of one run share.
+struct Env {
+    scenario: Scenario,
+    config: RunConfig,
+    /// How long the run waits for the public key and for the plaintext.
+    pubkey_timeout: Duration,
+    plaintext_timeout: Duration,
+    dkg_window_secs: u64,
+    params: Arc<BfvParameters>,
+    encoded_params: ArcBytes,
+    error_size: ArcBytes,
+    seed: Seed,
+    e3_id: E3id,
+    nodes: CiphernodeSystem,
+    /// Stands in for the chain: whatever it publishes reaches every node's own durable event
+    /// pipeline.
+    bus: BusHandle,
+    multithread_report: Addr<MultithreadReport>,
+    timings: Timings,
+    // Held until the run ends.
+    _timeout_env: TimeoutEnvGuard,
+    _zk_temp: tempfile::TempDir,
+    _system: EventSystem,
+}
+
+impl Env {
+    /// Node 0 observes only: it is never registered for sortition.
+    fn collector_address(&self) -> String {
+        self.nodes[0].address()
+    }
+
+    fn registered_addresses(&self) -> Vec<String> {
+        self.nodes
+            .iter()
+            .skip(1)
+            .map(|node| node.address())
+            .collect()
+    }
+
+    /// Settles in-flight deliveries so every node's history is complete.
+    async fn flush_nodes(&self) -> Result<()> {
+        for node in self.nodes.iter() {
+            node.bus().flush_event_pipeline().await?;
+        }
+        Ok(())
+    }
+
+    async fn build(scenario: &Scenario) -> Result<Self> {
+        let setup = Instant::now();
+        let preset = scenario.preset;
+        let bfv_preset = preset.bfv_preset();
+        // The committee comes from the build stamp: the circuits in `circuits/bin/` were compiled
+        // for one committee, and `pnpm build:circuits --committee <name>` switches it.
+        let committee_size = active_committee();
+        let small_committee = committee_size == e3_committee::CiphernodesCommitteeSize::Small;
+        let timeout_env = TimeoutEnvGuard::set(preset.collection_timeouts_secs(small_committee));
+        let (pubkey_timeout, plaintext_timeout) = preset.flow_timeouts(small_committee);
+        // Nodes get this frozen deadline: the scenario has no enabled EVM provider, and
+        // production nodes read it from the contract.
+        let dkg_window_secs = scenario
+            .dkg_window
+            .map(|window| window.as_secs())
+            .unwrap_or_else(|| pubkey_timeout.as_secs().saturating_mul(10))
+            .max(1);
+        let committee = committee_size.values();
+        let participants = committee.n + calculate_buffer_size(committee.threshold, committee.n);
+        let params = BfvParamSet::from(bfv_preset).build_arc();
+        let error_size = calculate_error_size(
+            params.clone(),
+            committee.n,
+            committee.threshold,
+            bfv_preset.lambda()?,
+        )?;
+        let config = RunConfig {
+            preset,
+            lambda: bfv_preset.metadata().lambda,
+            proof_aggregation_enabled: proof_aggregation_enabled(),
+            concurrent_jobs: scenario.concurrent_jobs,
+            committee_n: committee.n,
+            committee_h: committee.h,
+            committee_t: committee.threshold,
+            nodes_spawned: participants + 1,
+        };
+        println!(
+            "trbfv scenario: {scenario:?}, proof_aggregation={}, committee={committee_size}",
+            config.proof_aggregation_enabled
+        );
+
+        let (zk_backend, zk_temp) = setup_test_zk_backend(preset.subdir()).await?;
+        let pool_threads = Multithread::get_max_threads_minus(RESERVED_THREADS);
+        let multithread_report =
+            MultithreadReport::new(pool_threads, scenario.concurrent_jobs).start();
+        let aggregate_config =
+            AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+        let system = EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(aggregate_config.clone());
+        let bus = system.handle()?.enable("test");
+        let factory = NodeFactory {
+            rng_base: NODE_RNG_BASE,
+            cipher: Arc::new(Cipher::from_password("I am the music man.").await?),
+            zk_backend,
+            task_pool: Multithread::create_taskpool(pool_threads, scenario.concurrent_jobs),
+            concurrent_jobs: scenario.concurrent_jobs,
+            multithread_report: multithread_report.clone(),
+            aggregate_config,
+            dkg_timing_reader: dkg_timing_reader(dkg_window_secs),
+            proof_aggregation_enabled: config.proof_aggregation_enabled,
+            trigger: bus.clone(),
+            next_salt: Default::default(),
+        };
+        let nodes = CiphernodeSystemBuilder::new()
+            .add_group(1, || factory.build("collector"))
+            .add_group(
+                u32::try_from(participants).expect("participant count fits in u32"),
+                || factory.build("participant"),
+            )
+            .simulate_libp2p()
+            .build()
+            .await?;
+
+        Ok(Self {
+            scenario: scenario.clone(),
+            config,
+            pubkey_timeout,
+            plaintext_timeout,
+            dkg_window_secs,
+            encoded_params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
+            params,
+            error_size: ArcBytes::from_bytes(&BigUint::to_bytes_be(&error_size)),
+            seed: Seed(create_seed_from_u64(123)),
+            e3_id: E3id::new("0", CHAIN_ID),
+            nodes,
+            bus,
+            multithread_report,
+            timings: Timings {
+                setup: setup.elapsed(),
+                ..Default::default()
+            },
+            _timeout_env: timeout_env,
+            _zk_temp: zk_temp,
+            _system: system,
+        })
+    }
+}
+
+/// The frozen DKG window every node reads: it opens when the first node asks.
+fn dkg_timing_reader(window_secs: u64) -> e3_keyshare::DkgTimingReader {
+    let start = Arc::new(OnceLock::<u64>::new());
+    Arc::new(move |_| {
+        let deadline = *start.get_or_init(|| {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs()
-                .saturating_add(dkg_window_secs)
+                .saturating_add(window_secs)
         });
-        Box::pin(async move { Ok((deadline, dkg_window_secs)) })
-    });
+        Box::pin(async move { Ok((deadline, window_secs)) })
+    })
+}
 
-    // The committee comes from the build stamp: the circuits in `circuits/bin/` were compiled
-    // for one committee, and `pnpm build:circuits --committee <name>` switches it.
-    let committee_params = committee_size.values();
-    let threshold_m = committee_params.threshold;
-    let threshold_n = committee_params.n;
-    let committee_h = committee_params.h;
-    let participant_count = threshold_n + calculate_buffer_size(threshold_m, threshold_n);
-    let params_raw = BfvParamSet::from(bfv_preset).build_arc();
-    let params = ArcBytes::from_bytes(&encode_bfv_params(&params_raw));
-    let lambda = bfv_preset.lambda()?;
-    let seed = Seed(create_seed_from_u64(123));
-    let error_size = ArcBytes::from_bytes(&BigUint::to_bytes_be(&calculate_error_size(
-        params_raw.clone(),
-        threshold_n,
-        threshold_m,
-        lambda,
-    )?));
+pub async fn run(scenario: &Scenario) -> Result<Run> {
+    let whole_test = Instant::now();
+    let _tracing = with_tracing("info");
+    let mut env = Env::build(scenario).await?;
 
-    let proof_aggregation_enabled = proof_aggregation_enabled();
-    let (zk_backend, _zk_temp) = setup_test_zk_backend(preset.subdir()).await?;
-    let pool_threads = Multithread::get_max_threads_minus(RESERVED_THREADS);
-    let multithread_report = MultithreadReport::new(pool_threads, scenario.concurrent_jobs).start();
+    register_operators(&mut env).await?;
+    let request = request_and_finalize_committee(&mut env).await?;
+    inject_fault(&env, &request).await?;
 
-    // The trigger bus stands in for the chain: whatever it publishes reaches every node's own
-    // durable event pipeline.
-    let aggregate_config =
-        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
-    let system = EventSystem::new()
-        .with_fresh_bus()
-        .with_aggregate_config(aggregate_config.clone());
-    let bus = system.handle()?.enable("test");
+    let key = await_public_key(&mut env, &request).await?;
+    let dkg_aggregator_proof = check_public_key(&env, &key)?;
+    record_chain_observation(&env, &request, &key, &dkg_aggregator_proof).await?;
 
-    let factory = NodeFactory {
-        rng_base: NODE_RNG_BASE,
-        cipher: Arc::new(Cipher::from_password("I am the music man.").await?),
-        zk_backend,
-        task_pool: Multithread::create_taskpool(pool_threads, scenario.concurrent_jobs),
-        concurrent_jobs: scenario.concurrent_jobs,
-        multithread_report: multithread_report.clone(),
-        aggregate_config,
-        dkg_timing_reader,
-        proof_aggregation_enabled,
-        trigger: bus.clone(),
-        next_salt: Default::default(),
-    };
+    let decrypted = encrypt_and_decrypt(&mut env, &request, &key).await?;
+    let pubkey_role_events = audit_histories(&env, &request, &key).await?;
 
-    // Node 0 observes only: it is never registered for sortition. Every other node runs the
-    // same binary, and the pool holds N plus the sortition buffer.
-    let nodes = CiphernodeSystemBuilder::new()
-        .add_group(1, || factory.build("collector"))
-        .add_group(
-            u32::try_from(participant_count).expect("participant count fits in u32"),
-            || factory.build("participant"),
-        )
-        .simulate_libp2p()
-        .build()
-        .await?;
-    timings.setup = setup.elapsed();
+    let multithread = env.multithread_report.send(ToReport).await?;
+    println!("{multithread}");
+    env.timings.whole = whole_test.elapsed();
 
-    let committee_setup = Instant::now();
-    let collector_addr = nodes.first().unwrap().address();
-    let eth_addrs: Vec<String> = nodes.iter().skip(1).map(|n| n.address()).collect();
+    Ok(Run {
+        config: env.config,
+        timings: env.timings,
+        e3_id: env.e3_id,
+        dkg_aggregator_proof,
+        decryption_aggregator_proofs: decrypted.proofs,
+        pubkey_role_events,
+        plaintext_aggregator_events: decrypted.history.to_vec(),
+        multithread,
+    })
+}
+
+// ---- Setup and request ---------------------------------------------------------------------
+
+async fn register_operators(env: &mut Env) -> Result<()> {
+    let started = Instant::now();
+    let registered = env.registered_addresses();
     anyhow::ensure!(
-        eth_addrs.len() >= threshold_n,
-        "need at least {threshold_n} registered nodes for committee N, got {}",
-        eth_addrs.len()
+        registered.len() >= env.config.committee_n,
+        "need at least {} registered nodes for committee N, got {}",
+        env.config.committee_n,
+        registered.len()
     );
     println!(
-        "{} registered nodes, committee N={threshold_n}, collector (observer): {collector_addr}",
-        eth_addrs.len(),
+        "{} registered nodes, committee N={}, collector (observer): {}",
+        registered.len(),
+        env.config.committee_n,
+        env.collector_address()
     );
-    setup_score_sortition_environment(&bus, &eth_addrs, CHAIN_ID).await?;
-    timings.committee_setup = committee_setup.elapsed();
+    setup_score_sortition_environment(&env.bus, &registered).await?;
+    env.timings.committee_setup = started.elapsed();
+    Ok(())
+}
 
-    let e3_requested_timer = Instant::now();
-    let e3_id = E3id::new("0", 1);
+async fn request_and_finalize_committee(env: &mut Env) -> Result<Request> {
+    let requested_at = Instant::now();
+    let request_block = publish_e3_request(env).await?;
+    let committee = finalize_committee(env).await?;
+    Ok(Request {
+        requested_at,
+        request_block,
+        committee,
+        offline_party: env.scenario.fault.offline_party(),
+    })
+}
+
+/// Publishes the E3 request as the chain would, and returns its block.
+async fn publish_e3_request(env: &Env) -> Result<u64> {
     let request_block = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 1;
-    println!(
-        "trbfv scenario: {scenario:?}, proof_aggregation={proof_aggregation_enabled}, committee={committee_size}"
-    );
-    bus.publish_without_context(CommitteeRequested {
-        e3_id: e3_id.clone(),
-        seed,
+    let (threshold_m, threshold_n) = (env.config.committee_t, env.config.committee_n);
+    env.bus.publish_without_context(CommitteeRequested {
+        e3_id: env.e3_id.clone(),
+        seed: env.seed,
         threshold: [threshold_m, threshold_n],
         request_block,
         committee_deadline: request_block + 30,
-        ticket_price: U256::from(10_000_000u64),
+        ticket_price: U256::from(TICKET_PRICE),
         chain_id: CHAIN_ID,
     })?;
-    bus.publish_from_remote(
+    env.bus.publish_from_remote(
         E3Requested {
-            e3_id: e3_id.clone(),
+            e3_id: env.e3_id.clone(),
             threshold_m,
             threshold_n,
-            seed,
+            seed: env.seed,
             request_block,
-            error_size,
-            params_preset: bfv_preset,
-            params,
+            error_size: env.error_size.clone(),
+            params_preset: env.config.preset.bfv_preset(),
+            params: env.encoded_params.clone(),
         },
         0,
         Some(request_block),
         EventSource::Evm,
     )?;
-    if proof_aggregation_enabled {
+    if env.config.proof_aggregation_enabled {
         // No live registry event exists here. Seed the request-time signing context so the
         // public-key aggregator can validate every synthetic NodeFold attestation.
-        bus.publish_without_context(DkgFoldAttestationContextEstablished {
-            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
-            e3_id: e3_id.clone(),
-            context: e3_events::DkgFoldAttestationContext {
-                registry: Address::ZERO,
-                verifying_contract: DKG_FOLD_ATTESTATION_VERIFIER.parse()?,
-            },
-        })?;
+        env.bus
+            .publish_without_context(DkgFoldAttestationContextEstablished {
+                schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+                e3_id: env.e3_id.clone(),
+                context: e3_events::DkgFoldAttestationContext {
+                    registry: Address::ZERO,
+                    verifying_contract: DKG_FOLD_ATTESTATION_VERIFIER.parse()?,
+                },
+            })?;
     }
     sleep(Duration::from_millis(500)).await;
+    Ok(request_block)
+}
 
-    let (committee, committee_scores, buffer_nodes) = determine_committee(
-        &e3_id,
-        seed,
-        threshold_m,
-        threshold_n,
-        &eth_addrs,
-        &collector_addr,
+/// Publishes the committee the sortition picks once every node has seen the request, and returns
+/// the node index of each party.
+async fn finalize_committee(env: &mut Env) -> Result<Vec<usize>> {
+    let finalized = determine_committee(
+        &env.e3_id,
+        env.seed,
+        env.config.committee_t,
+        env.config.committee_n,
+        &env.registered_addresses(),
+        &env.collector_address(),
     )?;
-    let mut finalized = CommitteeFinalized {
-        e3_id: e3_id.clone(),
-        committee,
-        scores: committee_scores,
-        chain_id: CHAIN_ID,
-    };
-    finalized.sort_by_address();
-    println!(
-        "Committee selected: {} nodes, {} buffer nodes",
-        finalized.committee.len(),
-        buffer_nodes.len()
-    );
-    let committee = finalized.committee.clone();
+    let committee = committee_node_indices(&env.nodes, &finalized.committee)?;
 
-    wait_for_history_match(&nodes, 0, "E3Requested", pubkey_flow_timeout, |d| {
-        matches!(d, InterfoldEventData::E3Requested(_))
+    wait_until(&env.nodes, 0, "E3Requested", env.pubkey_timeout, |data| {
+        matches!(data, InterfoldEventData::E3Requested(_))
     })
     .await?;
-    let committee_finalized_timer = Instant::now();
-    bus.publish_without_context(finalized)?;
-    wait_for_history_match(
-        &nodes,
+    let finalizing = Instant::now();
+    env.bus.publish_without_context(finalized)?;
+    wait_until(
+        &env.nodes,
         0,
         "CommitteeFinalized",
-        pubkey_flow_timeout,
-        |d| matches!(d, InterfoldEventData::CommitteeFinalized(f) if f.e3_id == e3_id),
+        env.pubkey_timeout,
+        |data| matches!(data, InterfoldEventData::CommitteeFinalized(f) if f.e3_id == env.e3_id),
     )
     .await?;
-    timings.committee_finalization = committee_finalized_timer.elapsed();
+    env.timings.committee_finalization = finalizing.elapsed();
+    Ok(committee)
+}
 
-    ///////////////////////////////////////////////////////////////////////////////////
-    // Fault injection
-    ///////////////////////////////////////////////////////////////////////////////////
+// ---- Fault ---------------------------------------------------------------------------------
 
-    let mut offline_node_index = None;
-    if let Fault::OfflineAfterC0 { party_id } = scenario.fault {
-        let address = committee
-            .get(party_id)
-            .context("offline party is outside the finalized committee")?;
-        let node_index = find_node_index_by_address(&nodes, address)?;
-        let c0_observation_timeout = pubkey_flow_timeout.min(Duration::from_secs(dkg_window_secs));
-        let published_c0 = |data: &InterfoldEventData| {
-            matches!(
-                data,
-                InterfoldEventData::EncryptionKeyCreated(key)
-                    if key.e3_id == e3_id && key.key.party_id == party_id as u64
-            )
-        };
-        wait_for_history_match(
-            &nodes,
-            node_index,
-            "the offline party's C0",
-            c0_observation_timeout,
-            published_c0,
+async fn inject_fault(env: &Env, request: &Request) -> Result<()> {
+    let Some(party_id) = request.offline_party else {
+        return Ok(());
+    };
+    let node_index = request
+        .offline_node()
+        .context("offline party is outside the finalized committee")?;
+    let timeout = env
+        .pubkey_timeout
+        .min(Duration::from_secs(env.dkg_window_secs));
+    let published_c0 = |data: &InterfoldEventData| {
+        matches!(
+            data,
+            InterfoldEventData::EncryptionKeyCreated(key)
+                if key.e3_id == env.e3_id && key.key.party_id == party_id as u64
         )
-        .await?;
-        // A peer must hold the key too, or the party would leave before anyone could use it.
-        let witness_party_id = (0..committee.len())
-            .find(|&id| id != party_id)
-            .context("committee has no other party to observe C0")?;
-        let witness_index = find_node_index_by_address(&nodes, &committee[witness_party_id])?;
-        wait_for_history_match(
-            &nodes,
-            witness_index,
-            "the offline party's C0 on a peer",
-            c0_observation_timeout,
-            published_c0,
-        )
-        .await?;
-        nodes.disconnect_node(node_index).await?;
-        offline_node_index = Some(node_index);
-        println!("Disconnected committee party {party_id} at node index {node_index} after C0");
-    }
+    };
+    wait_until(
+        &env.nodes,
+        node_index,
+        "the offline party's C0",
+        timeout,
+        published_c0,
+    )
+    .await?;
+    // A peer must hold the key too, or the party would leave before anyone could use it.
+    let witness_index = request
+        .committee
+        .iter()
+        .enumerate()
+        .find_map(|(party, &node)| (party != party_id).then_some(node))
+        .context("committee has no other party to observe C0")?;
+    wait_until(
+        &env.nodes,
+        witness_index,
+        "the offline party's C0 on a peer",
+        timeout,
+        published_c0,
+    )
+    .await?;
+    env.nodes.disconnect_node(node_index).await?;
+    println!("Disconnected committee party {party_id} at node index {node_index} after C0");
+    Ok(())
+}
 
-    ///////////////////////////////////////////////////////////////////////////////////
-    // Public key
-    ///////////////////////////////////////////////////////////////////////////////////
+// ---- Public key ----------------------------------------------------------------------------
 
-    let mut connected_committee = Vec::new();
-    for address in &committee {
-        let node_index = find_node_index_by_address(&nodes, address)?;
-        if Some(node_index) != offline_node_index {
-            connected_committee.push(node_index);
-        }
-    }
-
-    let shares_to_pubkey_timer = Instant::now();
-    let observer_history = wait_for_history_match(
-        &nodes,
+async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublicKeyAggregated> {
+    let waiting = Instant::now();
+    let key = wait_for_event(
+        &env.nodes,
         0,
         "PublicKeyAggregated",
-        pubkey_flow_timeout,
-        |d| matches!(d, InterfoldEventData::PublicKeyAggregated(k) if k.e3_id == e3_id),
+        env.pubkey_timeout,
+        |data| match data {
+            InterfoldEventData::PublicKeyAggregated(key) if key.e3_id == env.e3_id => {
+                Some(key.clone())
+            }
+            _ => None,
+        },
     )
     .await
     .map_err(|e| anyhow::anyhow!("FAILURE in the public-key flow: {e}"))?;
-    timings.shares_to_pubkey = shares_to_pubkey_timer.elapsed();
-    timings.request_to_pubkey = e3_requested_timer.elapsed();
-    let pubkey_event = observer_history
-        .iter()
-        .rev()
-        .find_map(|event| match event.get_data() {
-            InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id => {
-                Some(data.clone())
-            }
-            _ => None,
-        })
-        .context("observer history has no PublicKeyAggregated")?;
-    let pubkey_bytes = pubkey_event.pubkey.clone();
+    env.timings.shares_to_pubkey = waiting.elapsed();
+    env.timings.request_to_pubkey = request.requested_at.elapsed();
+    Ok(key)
+}
+
+/// Returns the final DKG proof the event carries.
+fn check_public_key(env: &Env, key: &PublicKeyAggregated) -> Result<Proof> {
+    let h = env.config.committee_h;
     assert_eq!(
-        pubkey_event.nodes.len(),
-        committee_h,
-        "PublicKeyAggregated must list H={committee_h} honest nodes"
+        key.nodes.len(),
+        h,
+        "PublicKeyAggregated must list H={h} honest nodes"
     );
-    let dkg_aggregator_proof = pubkey_event
+    let proof = key
         .dkg_aggregator_proof
         .clone()
         .context("PublicKeyAggregated must always carry a final DKG proof payload")?;
     assert!(
-        pubkey_event
-            .dkg_attestation_bundle
+        key.dkg_attestation_bundle
             .as_ref()
             .is_some_and(|bundle| !bundle.is_empty()),
         "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
     );
+    Ok(proof)
+}
 
-    // The synthetic registry records the same confirmed observation as chain ingestion.
-    {
-        use alloy::sol_types::SolEvent;
-        let proof = e3_evm::encode_zk_proof(&dkg_aggregator_proof)?;
-        let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
-            e3Id: U256::ZERO,
-            nodes: pubkey_event.committee_addresses.clone(),
-            pkCommitment: pubkey_event.pk_commitment.into(),
-            proof,
-        }
-        .encode_log_data();
-        bus.publish_from_remote(
-            e3_events::EvmLogObserved {
-                contract: "CiphernodeRegistry".into(),
-                chain_id: CHAIN_ID,
-                e3_id: Some(e3_id.clone()),
-                event_name: "CommitteeProofPublished".into(),
-                known: true,
-                signature: Some(
-                    e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into(),
-                ),
-                topics: observation
-                    .topics()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                data: ArcBytes::from_bytes(&observation.data),
-            },
-            0,
-            Some(request_block + 1),
-            EventSource::Evm,
-        )?;
-        bus.publish_without_context(e3_events::CommitteePublished {
-            e3_id: e3_id.clone(),
-            nodes: pubkey_event
+/// The synthetic registry records the same confirmed observation as chain ingestion.
+async fn record_chain_observation(
+    env: &Env,
+    request: &Request,
+    key: &PublicKeyAggregated,
+    dkg_proof: &Proof,
+) -> Result<()> {
+    let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
+        e3Id: U256::ZERO,
+        nodes: key.committee_addresses.clone(),
+        pkCommitment: key.pk_commitment.into(),
+        proof: e3_evm::encode_zk_proof(dkg_proof)?,
+    }
+    .encode_log_data();
+    env.bus.publish_from_remote(
+        e3_events::EvmLogObserved {
+            contract: "CiphernodeRegistry".into(),
+            chain_id: CHAIN_ID,
+            e3_id: Some(env.e3_id.clone()),
+            event_name: "CommitteeProofPublished".into(),
+            known: true,
+            signature: Some(e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into()),
+            topics: observation
+                .topics()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            data: ArcBytes::from_bytes(&observation.data),
+        },
+        0,
+        Some(request.request_block + 1),
+        EventSource::Evm,
+    )?;
+    env.bus
+        .publish_without_context(e3_events::CommitteePublished {
+            e3_id: env.e3_id.clone(),
+            nodes: key
                 .committee_addresses
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            public_key: pubkey_bytes.clone(),
+            public_key: key.pubkey.clone(),
             proof: ArcBytes::from_bytes(&[]),
         })?;
-        bus.flush_event_pipeline().await?;
-        for node in nodes.iter() {
-            node.bus().flush_event_pipeline().await?;
-        }
-    }
+    env.bus.flush_event_pipeline().await?;
+    env.flush_nodes().await
+}
 
-    ///////////////////////////////////////////////////////////////////////////////////
-    // Encryption and decryption
-    ///////////////////////////////////////////////////////////////////////////////////
+// ---- Encryption and decryption -------------------------------------------------------------
 
-    let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;
-    let app_gen_timer = Instant::now();
+/// The party that published the plaintext, and the decryption proofs it carried.
+struct Decrypted {
+    history: CiphernodeHistory,
+    proofs: Vec<Proof>,
+}
+
+async fn encrypt_and_decrypt(
+    env: &mut Env,
+    request: &Request,
+    key: &PublicKeyAggregated,
+) -> Result<Decrypted> {
+    let pubkey = PublicKey::from_bytes(&key.pubkey, &env.params)?;
+    let (outputs, votes) = encrypt_votes(env, &pubkey);
+    let (history, plaintext) = decrypt(env, request, outputs).await?;
+    assert_eq!(
+        plaintext.decryption_aggregator_proofs.len(),
+        VOTES_PER_VOTER,
+        "PlaintextAggregated must carry one decryption proof per tally"
+    );
+    check_tally(&env.params, &plaintext.decrypted_output, &votes);
+    Ok(Decrypted {
+        history,
+        proofs: plaintext.decryption_aggregator_proofs,
+    })
+}
+
+/// Encrypts every voter's votes and runs the application over them. Returns the output
+/// ciphertexts and the plain votes.
+fn encrypt_votes(env: &mut Env, pubkey: &PublicKey) -> (Vec<Arc<Ciphertext>>, Vec<Vec<u64>>) {
+    let generating = Instant::now();
     println!("Generating inputs this takes some time...");
-    let (inputs, numbers) =
-        e3_bfv_test_support::generate_ciphertexts(&pubkey, VOTERS, VOTES_PER_VOTER);
-    timings.ciphertext_generation = app_gen_timer.elapsed();
+    let (inputs, votes) =
+        e3_bfv_test_support::generate_ciphertexts(pubkey, VOTERS, VOTES_PER_VOTER);
+    env.timings.ciphertext_generation = generating.elapsed();
 
-    let running_app_timer = Instant::now();
+    let running = Instant::now();
     println!("Running application to generate outputs...");
-    let outputs = e3_bfv_test_support::run_application(&inputs, &pubkey, VOTES_PER_VOTER);
-    timings.fhe_application = running_app_timer.elapsed();
+    let outputs = e3_bfv_test_support::run_application(&inputs, pubkey, VOTES_PER_VOTER);
+    env.timings.fhe_application = running.elapsed();
+    (outputs, votes)
+}
 
-    let publishing_ct_timer = Instant::now();
+/// Publishes the output ciphertexts and waits for the plaintext.
+async fn decrypt(
+    env: &mut Env,
+    request: &Request,
+    outputs: Vec<Arc<Ciphertext>>,
+) -> Result<(CiphernodeHistory, PlaintextAggregated)> {
+    let publishing = Instant::now();
     let ciphertexts = outputs
         .into_iter()
         .map(|ct| ArcBytes::from_bytes(&(*ct).clone().to_bytes()))
         .collect::<Vec<ArcBytes>>();
     println!("Publishing CiphertextOutputPublished...");
-    bus.publish_without_context(CiphertextOutputPublished {
+    env.bus.publish_without_context(CiphertextOutputPublished {
         ciphertext_output: ciphertexts,
-        e3_id: e3_id.clone(),
+        e3_id: env.e3_id.clone(),
         ciphertext_commitment: [0u8; 32],
     })?;
 
@@ -622,47 +803,35 @@ pub async fn run(scenario: &Scenario) -> Result<Run> {
     // it. A party demoted in the key phase is skipped for this one, so any connected committee
     // member can be that party.
     println!("Waiting for PlaintextAggregated");
-    let (plaintext_aggregator_index, plaintext_aggregator_history) = wait_for_history_match_any(
-        &nodes,
-        &connected_committee,
+    let (node_index, history, plaintext) = wait_for_event_on_any(
+        &env.nodes,
+        &request.connected(),
         "PlaintextAggregated",
-        plaintext_flow_timeout,
-        |data| matches!(data, InterfoldEventData::PlaintextAggregated(event) if event.e3_id == e3_id),
+        env.plaintext_timeout,
+        |data| match data {
+            InterfoldEventData::PlaintextAggregated(event) if event.e3_id == env.e3_id => {
+                Some(event.clone())
+            }
+            _ => None,
+        },
     )
     .await
     .map_err(|e| anyhow::anyhow!("FAILURE in the plaintext flow: {e}"))?;
-    timings.ciphertext_to_plaintext = publishing_ct_timer.elapsed();
-    println!("PlaintextAggregated observed on node {plaintext_aggregator_index}");
+    env.timings.ciphertext_to_plaintext = publishing.elapsed();
+    println!("PlaintextAggregated observed on node {node_index}");
+    Ok((history, plaintext))
+}
 
-    let (plaintext, decryption_aggregator_proofs) = plaintext_aggregator_history
+/// The decrypted tallies must equal the sum of every voter's votes.
+fn check_tally(params: &BfvParameters, decrypted: &[ArcBytes], votes: &[Vec<u64>]) {
+    let results: Vec<u64> = decrypted
         .iter()
-        .rev()
-        .find_map(|e| match e.get_data() {
-            InterfoldEventData::PlaintextAggregated(PlaintextAggregated {
-                decrypted_output,
-                decryption_aggregator_proofs,
-                ..
-            }) => Some((
-                decrypted_output.clone(),
-                decryption_aggregator_proofs.clone(),
-            )),
-            _ => None,
-        })
-        .context("plaintext aggregator history has no PlaintextAggregated")?;
-    assert_eq!(
-        decryption_aggregator_proofs.len(),
-        VOTES_PER_VOTER,
-        "PlaintextAggregated must carry one decryption proof per tally"
-    );
-
-    let results: Vec<u64> = plaintext
-        .into_iter()
         .map(|a| decode_bytes_to_vec_u64(&a.extract_bytes()).expect("error decoding bytes"))
         .map(|r| *r.first().unwrap())
         .collect();
-    let plaintext_modulus = params_raw.plaintext();
+    let plaintext_modulus = params.plaintext();
     let mut expected_result = [0u64; VOTES_PER_VOTER];
-    for vals in &numbers {
+    for vals in votes {
         for (expected, vote) in expected_result.iter_mut().zip(vals) {
             *expected = (*expected + vote) % plaintext_modulus;
         }
@@ -675,97 +844,116 @@ pub async fn run(scenario: &Scenario) -> Result<Run> {
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
         println!("Tally {i} result = {res} / {exp}");
     }
+}
 
-    ///////////////////////////////////////////////////////////////////////////////////
-    // Audits over the finished run's histories
-    ///////////////////////////////////////////////////////////////////////////////////
+// ---- Audits over the finished run's histories ----------------------------------------------
 
-    // Settle in-flight deliveries so every node's history is complete. A successor can take the
-    // aggregator role late, so the holders are read now, not when the key appeared.
-    for node in nodes.iter() {
-        node.bus().flush_event_pipeline().await?;
+/// Checks the finished run's histories, and returns the joined histories of the parties that held
+/// the public-key aggregator role.
+async fn audit_histories(
+    env: &Env,
+    request: &Request,
+    key: &PublicKeyAggregated,
+) -> Result<Vec<InterfoldEvent>> {
+    // A successor can take the aggregator role late, so the holders are read now, not when the
+    // key appeared.
+    env.flush_nodes().await?;
+    let holders = aggregator_role_histories(&env.nodes, &request.connected(), &env.e3_id).await?;
+    let role_events: Vec<InterfoldEvent> = holders
+        .iter()
+        .flat_map(|(_, history)| history.iter().cloned())
+        .collect();
+
+    let roster = accepted_roster(&role_events, &env.e3_id);
+    check_roster_built_key(&roster, key);
+    if let Some(party) = request.offline_party {
+        assert!(
+            !roster.contains(&(party as u64)),
+            "disconnected party was selected for the DKG roster"
+        );
     }
+    await_standby_share(env, request, &roster).await?;
 
-    // Whichever parties held the aggregator role must agree on the DKG roster, and that roster
-    // is the one the published key was built from.
-    let pubkey_aggregators = aggregator_role_nodes(&nodes, &connected_committee, &e3_id).await?;
-    let mut pubkey_role_events: Vec<InterfoldEvent> = Vec::new();
-    for &node_index in &pubkey_aggregators {
-        pubkey_role_events.extend(nodes.get_history(node_index).await?.iter().cloned());
-    }
-    let accepted_rosters: Vec<&Vec<u64>> = pubkey_role_events
+    let holder_nodes: Vec<usize> = holders.iter().map(|(node, _)| *node).collect();
+    check_key_submissions(env, &holder_nodes, key).await?;
+    check_no_faults(env, request).await?;
+    Ok(role_events)
+}
+
+/// The DKG roster every aggregator-role holder accepted; they must agree.
+fn accepted_roster(events: &[InterfoldEvent], e3_id: &E3id) -> Vec<u64> {
+    let rosters: Vec<&Vec<u64>> = events
         .iter()
         .filter_map(|event| match event.get_data() {
-            InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
+            InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == *e3_id => {
                 Some(&data.party_ids)
             }
             _ => None,
         })
         .collect();
     assert!(
-        !accepted_rosters.is_empty(),
+        !rosters.is_empty(),
         "aggregator did not accept a DKG roster"
     );
     assert!(
-        accepted_rosters
-            .iter()
-            .all(|roster| *roster == accepted_rosters[0]),
+        rosters.iter().all(|roster| *roster == rosters[0]),
         "aggregator accepted conflicting DKG rosters"
     );
-    let roster = accepted_rosters[0].clone();
+    rosters[0].clone()
+}
+
+/// The accepted roster is the one the published key was built from.
+fn check_roster_built_key(roster: &[u64], key: &PublicKeyAggregated) {
     let selected_addresses: Vec<Address> = roster
         .iter()
-        .map(|&party_id| pubkey_event.committee_addresses[party_id as usize])
+        .map(|&party_id| key.committee_addresses[party_id as usize])
         .collect();
-    assert_eq!(selected_addresses, pubkey_event.honest_committee_addresses);
+    assert_eq!(selected_addresses, key.honest_committee_addresses);
+}
 
-    if let Some(node_index) = offline_node_index {
-        let offline_party_id = committee
-            .iter()
-            .position(|address| address == &nodes[node_index].address())
-            .context("disconnected node is outside the committee")?;
-        assert!(
-            !roster.contains(&(offline_party_id as u64)),
-            "disconnected party was selected for the DKG roster"
-        );
+/// The aggregator can publish before a standby party's share lands; the standby party still has
+/// to deal it, since it replaces a roster member that drops out.
+async fn await_standby_share(env: &Env, request: &Request, roster: &[u64]) -> Result<()> {
+    if !env.config.proof_aggregation_enabled || request.offline_party.is_some() {
+        return Ok(());
     }
+    let standby_party_id = (0..env.config.committee_n)
+        .find(|party_id| !roster.contains(&(*party_id as u64)))
+        .context("DKG roster has no standby party")?;
+    wait_until(
+        &env.nodes,
+        request.committee[standby_party_id],
+        "standby party C4 share",
+        env.pubkey_timeout.min(Duration::from_secs(300)),
+        |data| {
+            matches!(
+                data,
+                InterfoldEventData::DecryptionKeyShared(share)
+                    if share.e3_id == env.e3_id && share.party_id == standby_party_id as u64
+            )
+        },
+    )
+    .await
+}
 
-    // The aggregator can publish before a standby party's share lands; the standby party still
-    // has to deal it, since it replaces a roster member that drops out.
-    if proof_aggregation_enabled && offline_node_index.is_none() {
-        let standby_party_id = (0..threshold_n)
-            .find(|party_id| !roster.contains(&(*party_id as u64)))
-            .context("DKG roster has no standby party")?;
-        let standby_node_index = find_node_index_by_address(&nodes, &committee[standby_party_id])?;
-        wait_for_history_match(
-            &nodes,
-            standby_node_index,
-            "standby party C4 share",
-            pubkey_flow_timeout.min(Duration::from_secs(300)),
-            |data| {
-                matches!(
-                    data,
-                    InterfoldEventData::DecryptionKeyShared(share)
-                        if share.e3_id == e3_id && share.party_id == standby_party_id as u64
-                )
-            },
-        )
-        .await?;
-    }
-
-    // The runtime lets a demoted holder finish and submit the key it computed, and the chain
-    // keeps the first valid submission. Every submission must therefore be the key the
-    // committee goes on to use. A holder's own submission is `Local`; peers forward copies.
+/// The runtime lets a demoted holder finish and submit the key it computed, and the chain keeps
+/// the first valid submission. Every submission must therefore be the key the committee goes on
+/// to use. A holder's own submission is `Local`; peers forward copies.
+async fn check_key_submissions(
+    env: &Env,
+    holders: &[usize],
+    key: &PublicKeyAggregated,
+) -> Result<()> {
     let mut submissions = 0;
-    for &node_index in &pubkey_aggregators {
-        for event in nodes.get_history(node_index).await?.iter() {
+    for &node_index in holders {
+        for event in env.nodes.get_history(node_index).await?.iter() {
             if let (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data)) =
                 (event.source(), event.get_data())
             {
-                if data.e3_id == e3_id {
+                if data.e3_id == env.e3_id {
                     submissions += 1;
                     assert!(
-                        data.pubkey == pubkey_bytes,
+                        data.pubkey == key.pubkey,
                         "role holder {node_index} submitted a public key that differs from the one the committee used"
                     );
                 }
@@ -773,53 +961,34 @@ pub async fn run(scenario: &Scenario) -> Result<Run> {
         }
     }
     assert!(submissions > 0, "no role holder submitted the public key");
+    Ok(())
+}
 
-    // No node may have accused, expelled, or failed anyone, or logged an actor error. The
-    // disconnected node cannot collect its own DKG shares, so it can fail locally without
-    // failing the E3.
+/// No node may have accused, expelled, or failed anyone, or logged an actor error. The
+/// disconnected node cannot collect its own DKG shares, so it can fail locally without failing the
+/// E3.
+async fn check_no_faults(env: &Env, request: &Request) -> Result<()> {
+    let offline_node = request.offline_node();
     let mut faults = Vec::new();
-    for index in 1..=participant_count {
-        if Some(index) == offline_node_index {
+    for (index, node) in env.nodes.iter().enumerate() {
+        if Some(index) == offline_node {
             continue;
         }
+        let context = if index == 0 {
+            "observer node 0".to_string()
+        } else {
+            format!("participant node {index} ({})", node.address())
+        };
         faults.extend(collect_honest_run_faults(
-            &nodes.get_history(index).await?,
-            &e3_id,
-            &format!("participant node {index} ({})", nodes[index].address()),
+            &env.nodes.get_history(index).await?,
+            &env.e3_id,
+            &context,
         ));
     }
-    faults.extend(collect_honest_run_faults(
-        &nodes.get_history(0).await?,
-        &e3_id,
-        "observer node 0",
-    ));
     assert!(
         faults.is_empty(),
         "honest-run safeguard failures:\n{}",
         faults.join("\n")
     );
-
-    let multithread = multithread_report.send(ToReport).await?;
-    println!("{multithread}");
-    timings.whole = whole_test.elapsed();
-
-    Ok(Run {
-        config: RunConfig {
-            preset,
-            lambda: bfv_preset.metadata().lambda,
-            proof_aggregation_enabled,
-            concurrent_jobs: scenario.concurrent_jobs,
-            committee_n: threshold_n,
-            committee_h,
-            committee_t: threshold_m,
-            nodes_spawned: participant_count + 1,
-        },
-        timings,
-        e3_id,
-        dkg_aggregator_proof,
-        decryption_aggregator_proofs,
-        pubkey_role_events,
-        plaintext_aggregator_events: plaintext_aggregator_history.to_vec(),
-        multithread,
-    })
+    Ok(())
 }

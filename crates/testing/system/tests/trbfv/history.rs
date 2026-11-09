@@ -95,59 +95,47 @@ pub fn collect_honest_run_faults(
     faults
 }
 
-/// Polls a node's history until an event matches, returning that history.
-pub async fn wait_for_history_match<F>(
-    nodes: &CiphernodeSystem,
-    node_index: usize,
-    description: &str,
-    total_timeout: Duration,
-    matches: F,
-) -> Result<CiphernodeHistory>
-where
-    F: Fn(&InterfoldEventData) -> bool,
-{
-    let start = Instant::now();
-    loop {
-        let history = nodes.get_history(node_index).await?;
-        if history.iter().any(|event| matches(event.get_data())) {
-            return Ok(history);
-        }
-        if start.elapsed() >= total_timeout {
-            bail!(
-                "Timed out after {:?} while waiting for {description} on node {node_index}; observed events: {:?}",
-                start.elapsed(),
-                history.event_types()
-            );
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
+/// What `select` extracts from the latest event it accepts.
+pub fn last_event<T>(
+    history: &[InterfoldEvent],
+    select: impl Fn(&InterfoldEventData) -> Option<T>,
+) -> Option<T> {
+    history
+        .iter()
+        .rev()
+        .find_map(|event| select(event.get_data()))
 }
 
-/// [`wait_for_history_match`] over several nodes: the first node whose history contains a match.
+/// Polls the nodes in turn until one's history holds an event `select` accepts. Returns that
+/// node, its history, and what `select` extracted from its latest accepted event.
 ///
 /// A failover moves aggregation to another committee party, so an aggregator publication can land
 /// on any member that can hold the role. Callers pass those members.
-pub async fn wait_for_history_match_any<F>(
+pub async fn wait_for_event_on_any<T>(
     nodes: &CiphernodeSystem,
     node_indices: &[usize],
     description: &str,
     total_timeout: Duration,
-    matches: F,
-) -> Result<(usize, CiphernodeHistory)>
-where
-    F: Fn(&InterfoldEventData) -> bool,
-{
+    select: impl Fn(&InterfoldEventData) -> Option<T>,
+) -> Result<(usize, CiphernodeHistory, T)> {
     let start = Instant::now();
     loop {
         for &node_index in node_indices {
             let history = nodes.get_history(node_index).await?;
-            if history.iter().any(|event| matches(event.get_data())) {
-                return Ok((node_index, history));
+            if let Some(value) = last_event(&history, &select) {
+                return Ok((node_index, history, value));
             }
         }
         if start.elapsed() >= total_timeout {
+            let mut observed = Vec::new();
+            for &node_index in node_indices {
+                observed.push((
+                    node_index,
+                    nodes.get_history(node_index).await?.event_types(),
+                ));
+            }
             bail!(
-                "Timed out after {:?} while waiting for {description} on any of nodes {node_indices:?}",
+                "Timed out after {:?} while waiting for {description} on nodes {node_indices:?}; observed events: {observed:?}",
                 start.elapsed()
             );
         }
@@ -155,24 +143,52 @@ where
     }
 }
 
-/// Committee members that held the aggregator role for `e3_id`: each one recorded an
-/// `AggregatorChanged` naming itself active.
-pub async fn aggregator_role_nodes(
+/// [`wait_for_event_on_any`] on one node, returning only the extracted value.
+pub async fn wait_for_event<T>(
+    nodes: &CiphernodeSystem,
+    node_index: usize,
+    description: &str,
+    total_timeout: Duration,
+    select: impl Fn(&InterfoldEventData) -> Option<T>,
+) -> Result<T> {
+    let (_, _, value) =
+        wait_for_event_on_any(nodes, &[node_index], description, total_timeout, select).await?;
+    Ok(value)
+}
+
+/// [`wait_for_event`] for an event that carries nothing to extract.
+pub async fn wait_until(
+    nodes: &CiphernodeSystem,
+    node_index: usize,
+    description: &str,
+    total_timeout: Duration,
+    matches: impl Fn(&InterfoldEventData) -> bool,
+) -> Result<()> {
+    wait_for_event(nodes, node_index, description, total_timeout, |data| {
+        matches(data).then_some(())
+    })
+    .await
+}
+
+/// Histories of the committee members that held the aggregator role for `e3_id`: each one
+/// recorded an `AggregatorChanged` naming itself active.
+pub async fn aggregator_role_histories(
     nodes: &CiphernodeSystem,
     node_indices: &[usize],
     e3_id: &E3id,
-) -> Result<Vec<usize>> {
+) -> Result<Vec<(usize, CiphernodeHistory)>> {
     let mut held = Vec::new();
     for &node_index in node_indices {
         let history = nodes.get_history(node_index).await?;
-        if history.iter().any(|event| {
+        let held_role = history.iter().any(|event| {
             matches!(
                 event.get_data(),
                 InterfoldEventData::AggregatorChanged(data)
                     if data.e3_id == *e3_id && data.is_aggregator
             )
-        }) {
-            held.push(node_index);
+        });
+        if held_role {
+            held.push((node_index, history));
         }
     }
     Ok(held)

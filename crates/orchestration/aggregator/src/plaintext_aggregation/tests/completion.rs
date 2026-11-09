@@ -186,6 +186,21 @@ fn final_proofs(count: usize) -> Vec<Proof> {
         .collect()
 }
 
+/// The prover's answer to the final aggregation.
+fn final_response(proofs: &[Proof]) -> ZkResponse {
+    ZkResponse::DecryptionAggregation(DecryptionAggregationResponse {
+        proofs: proofs.to_vec(),
+    })
+}
+
+/// Correlation of the final aggregation that is in flight.
+fn final_correlation(aggregator: &ThresholdPlaintextAggregator) -> CorrelationId {
+    aggregator
+        .pending
+        .decryption_aggregation_correlation
+        .expect("the final aggregation is in flight")
+}
+
 /// The plaintext is published only after the C7 result and the final DecryptionAggregation both
 /// arrived, once, with one final proof per tally. Late key-phase proofs, or answers to another
 /// request, are not that result.
@@ -202,10 +217,7 @@ async fn recursive_aggregation_publishes_the_plaintext_once_after_the_final_proo
     };
     assert_eq!(request.jobs.len(), c7.len());
     assert!(plaintext_publications(&events).is_empty());
-    let correlation = aggregator
-        .pending
-        .decryption_aggregation_correlation
-        .expect("the final aggregation is in flight");
+    let correlation = final_correlation(&aggregator);
 
     let proofs = final_proofs(c7.len());
     for response in [
@@ -215,22 +227,14 @@ async fn recursive_aggregation_publishes_the_plaintext_once_after_the_final_proo
         ZkResponse::DkgAggregation(DkgAggregationResponse {
             proof: dummy_proof(CircuitName::PkAggregation),
         }),
-        ZkResponse::DecryptionAggregation(DecryptionAggregationResponse {
-            proofs: proofs.clone(),
-        }),
+        final_response(&proofs),
     ] {
         deliver_zk_response(&mut aggregator, CorrelationId::new(), response)?;
     }
     assert!(plaintext_publications(&published(&aggregator, &history).await?).is_empty());
 
     for _ in 0..2 {
-        deliver_zk_response(
-            &mut aggregator,
-            correlation,
-            ZkResponse::DecryptionAggregation(DecryptionAggregationResponse {
-                proofs: proofs.clone(),
-            }),
-        )?;
+        deliver_zk_response(&mut aggregator, correlation, final_response(&proofs))?;
     }
     let events = published(&aggregator, &history).await?;
     let [published_plaintext] = &plaintext_publications(&events)[..] else {
@@ -249,17 +253,12 @@ async fn recursive_aggregation_publishes_the_plaintext_once_after_the_final_proo
 async fn a_final_aggregation_with_the_wrong_proof_count_fails_the_round() -> Result<()> {
     let (mut aggregator, history, e3_id, c7) = aggregator_awaiting_c7(true).await?;
     deliver_c7_result(&mut aggregator, &c7)?;
-    let correlation = aggregator
-        .pending
-        .decryption_aggregation_correlation
-        .expect("the final aggregation is in flight");
+    let correlation = final_correlation(&aggregator);
 
     deliver_zk_response(
         &mut aggregator,
         correlation,
-        ZkResponse::DecryptionAggregation(DecryptionAggregationResponse {
-            proofs: final_proofs(c7.len() - 1),
-        }),
+        final_response(&final_proofs(c7.len() - 1)),
     )?;
 
     let events = published(&aggregator, &history).await?;

@@ -43,17 +43,46 @@ fn dealers(
         .collect()
 }
 
+fn keyshares(dealers: &[&Dealer]) -> Vec<ArcBytes> {
+    dealers
+        .iter()
+        .map(|dealer| dealer.keyshare.clone())
+        .collect()
+}
+
 /// The aggregation that the dealers' keyshares yield, as the registry receives it.
 fn aggregate_key(fhe: &Fhe, dealers: &[&Dealer]) -> Result<ArcBytes> {
-    let keyshares = OrderedSet::from(
-        dealers
-            .iter()
-            .map(|dealer| dealer.keyshare.clone())
-            .collect::<Vec<_>>(),
-    );
+    let keyshares = OrderedSet::from(keyshares(dealers));
     Ok(ArcBytes::from_bytes(&fhe.get_aggregate_public_key(
         GetAggregatePublicKey { keyshares },
     )?))
+}
+
+fn ordered_nodes(party_ids: &[u64]) -> OrderedSet<String> {
+    OrderedSet::from(
+        party_ids
+            .iter()
+            .map(|&party_id| node_address(party_id).to_string())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The state of an aggregator that has seen no keyshare.
+fn committee_state() -> PublicKeyAggregatorState {
+    let committee = COMMITTEE.values();
+    PublicKeyAggregatorState::init(
+        committee.n,
+        committee.threshold,
+        Seed([0; 32]),
+        (0..committee.n as u64)
+            .map(|party_id| (party_id, node_address(party_id).to_string()))
+            .collect(),
+    )
+}
+
+/// `event` as the bus delivers it to the aggregator.
+fn delivered<E: Clone + Into<InterfoldEventData>>(event: E) -> TypedEvent<E> {
+    TypedEvent::new(event.clone(), test_ctx(event))
 }
 
 /// One node's public-key aggregator over its own event bus.
@@ -72,15 +101,6 @@ impl KeyNode {
         e3_id: &E3id,
         is_aggregator: bool,
     ) -> Self {
-        let committee = COMMITTEE.values();
-        let state = PublicKeyAggregatorState::init(
-            committee.n,
-            committee.threshold,
-            Seed([0; 32]),
-            (0..committee.n as u64)
-                .map(|party_id| (party_id, node_address(party_id).to_string()))
-                .collect(),
-        );
         let actor = PublicKeyAggregator::new(
             PublicKeyAggregatorParams {
                 fhe: fhe.clone(),
@@ -94,7 +114,7 @@ impl KeyNode {
                 initial_stage: E3Stage::None,
                 effects_enabled: true,
             },
-            test_state(state),
+            test_state(committee_state()),
         )
         .start();
         Self {
@@ -106,15 +126,14 @@ impl KeyNode {
     }
 
     async fn keyshare(&self, dealer: &Dealer) -> Result<()> {
-        let event = KeyshareCreated {
-            pubkey: dealer.keyshare.clone(),
-            e3_id: self.e3_id.clone(),
-            node: node_address(dealer.party_id).to_string(),
-            party_id: dealer.party_id,
-            signed_pk_generation_proof: Some(dealer.c1_proof.clone()),
-        };
         self.actor
-            .send(TypedEvent::new(event.clone(), test_ctx(event)))
+            .send(delivered(KeyshareCreated {
+                pubkey: dealer.keyshare.clone(),
+                e3_id: self.e3_id.clone(),
+                node: node_address(dealer.party_id).to_string(),
+                party_id: dealer.party_id,
+                signed_pk_generation_proof: Some(dealer.c1_proof.clone()),
+            }))
             .await?;
         Ok(())
     }
@@ -132,43 +151,23 @@ impl KeyNode {
 
     /// The sortition layer's verdict on who aggregates.
     async fn role(&self, is_aggregator: bool) -> Result<()> {
-        let change = AggregatorChanged {
-            e3_id: self.e3_id.clone(),
-            active_party_id: Some(1),
-            is_aggregator,
-        };
         self.actor
-            .send(TypedEvent::new(change.clone(), test_ctx(change)))
+            .send(delivered(AggregatorChanged {
+                e3_id: self.e3_id.clone(),
+                active_party_id: Some(1),
+                is_aggregator,
+            }))
             .await?;
         Ok(())
     }
 
-    /// The first event of the history that `pick` selects, once it arrives.
-    async fn wait_for<T>(
-        &self,
-        pick: impl Fn(&InterfoldEventData) -> Option<T>,
-    ) -> Result<Option<T>> {
-        for _ in 0..100 {
-            let events = self
-                .history
-                .send(GetEvents::<InterfoldEvent>::new())
-                .await?;
-            if let Some(found) = events.iter().find_map(|event| pick(event.get_data())) {
-                return Ok(Some(found));
-            }
-            actix::clock::sleep(Duration::from_millis(20)).await;
-        }
-        Ok(None)
-    }
-
     async fn c1_request(&self) -> Result<ShareVerificationDispatched> {
-        Ok(self
-            .wait_for(|data| match data {
-                InterfoldEventData::ShareVerificationDispatched(request) => Some(request.clone()),
-                _ => None,
-            })
-            .await?
-            .expect("the node did not dispatch C1 verification"))
+        Ok(wait_for_event(&self.history, |data| match data {
+            InterfoldEventData::ShareVerificationDispatched(request) => Some(request.clone()),
+            _ => None,
+        })
+        .await?
+        .expect("the node did not dispatch C1 verification"))
     }
 
     /// The verifier finds every dealer honest.
@@ -180,44 +179,36 @@ impl KeyNode {
     }
 
     async fn c5_request(&self) -> Result<PkAggregationProofPending> {
-        Ok(self
-            .wait_for(|data| match data {
-                InterfoldEventData::PkAggregationProofPending(pending) => Some(pending.clone()),
-                _ => None,
-            })
-            .await?
-            .expect("the node did not request the C5 proof"))
+        Ok(wait_for_event(&self.history, |data| match data {
+            InterfoldEventData::PkAggregationProofPending(pending) => Some(pending.clone()),
+            _ => None,
+        })
+        .await?
+        .expect("the node did not request the C5 proof"))
     }
 
     /// The prover proves the aggregation of `dealers`.
     async fn c5_proved(&self, fhe: &Fhe, dealers: &[&Dealer]) -> Result<()> {
-        let keyshares: Vec<_> = dealers
-            .iter()
-            .map(|dealer| dealer.keyshare.clone())
-            .collect();
-        let proof = signed_c5_proof(&self.e3_id, c5_signals_for(fhe, &keyshares)?);
-        self.actor
-            .send(TypedEvent::new(proof.clone(), test_ctx(proof)))
-            .await?;
+        let proof = signed_c5_proof(&self.e3_id, c5_signals_for(fhe, &keyshares(dealers))?);
+        self.actor.send(delivered(proof)).await?;
         Ok(())
     }
 
     /// Proof aggregation is off: the party's fold carries no proof.
     async fn fold(&self, party_id: u64) -> Result<()> {
-        let fold = DKGRecursiveAggregationComplete {
-            e3_id: self.e3_id.clone(),
-            party_id,
-            aggregated_proof: None,
-            fold_attestation: None,
-        };
         self.actor
-            .send(TypedEvent::new(fold.clone(), test_ctx(fold)))
+            .send(delivered(DKGRecursiveAggregationComplete {
+                e3_id: self.e3_id.clone(),
+                party_id,
+                aggregated_proof: None,
+                fold_attestation: None,
+            }))
             .await?;
         Ok(())
     }
 
     async fn published(&self) -> Result<Option<PublicKeyAggregated>> {
-        self.wait_for(|data| match data {
+        wait_for_event(&self.history, |data| match data {
             InterfoldEventData::PublicKeyAggregated(key) => Some(key.clone()),
             _ => None,
         })
@@ -282,18 +273,9 @@ async fn the_key_is_published_for_the_accepted_roster_once_its_proofs_are_comple
 
     // C5 proves exactly the roster's aggregation.
     let c5 = node.c5_request().await?;
-    assert_eq!(
-        c5.proof_request.keyshare_bytes,
-        vec![first.keyshare.clone(), second.keyshare.clone()]
-    );
+    assert_eq!(c5.proof_request.keyshare_bytes, keyshares(&roster));
     assert_eq!(c5.proof_request.committee_h, COMMITTEE.values().h);
-    assert_eq!(
-        c5.nodes,
-        OrderedSet::from(vec![
-            node_address(0).to_string(),
-            node_address(2).to_string()
-        ])
-    );
+    assert_eq!(c5.nodes, ordered_nodes(&[0, 2]));
     assert!(!node.has_published().await?, "the key preceded its proof");
 
     // Folds of the roster complete the key. Others do not count toward it.
@@ -318,13 +300,7 @@ async fn the_key_is_published_for_the_accepted_roster_once_its_proofs_are_comple
         aggregate_key(&fhe, &[first, left_out, second])?,
         "a keyshare outside the roster entered the key"
     );
-    assert_eq!(
-        key.nodes,
-        OrderedSet::from(vec![
-            node_address(0).to_string(),
-            node_address(2).to_string()
-        ])
-    );
+    assert_eq!(key.nodes, ordered_nodes(&[0, 2]));
     assert_eq!(
         key.honest_committee_addresses,
         vec![node_address(0), node_address(2)]
@@ -402,15 +378,7 @@ async fn the_promoted_and_the_demoted_aggregator_publish_the_same_key() -> Resul
 #[actix::test]
 async fn an_invalid_roster_is_rejected() -> Result<()> {
     let committee = COMMITTEE.values();
-    let state = PublicKeyAggregatorState::init(
-        committee.n,
-        committee.threshold,
-        Seed([0; 32]),
-        (0..committee.n as u64)
-            .map(|party_id| (party_id, node_address(party_id).to_string()))
-            .collect(),
-    );
-    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(state).await?;
+    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(committee_state()).await?;
 
     for party_ids in [
         vec![0, committee.n as u64],
@@ -437,15 +405,7 @@ async fn an_invalid_roster_is_rejected() -> Result<()> {
 #[actix::test]
 async fn a_replacement_roster_after_c1_started_is_ignored() -> Result<()> {
     let committee = COMMITTEE.values();
-    let state = PublicKeyAggregatorState::init(
-        committee.n,
-        committee.threshold,
-        Seed([0; 32]),
-        (0..committee.n as u64)
-            .map(|party_id| (party_id, node_address(party_id).to_string()))
-            .collect(),
-    );
-    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(state).await?;
+    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(committee_state()).await?;
     let ec = test_ctx(EffectsEnabled::new());
     for party_id in 0..committee.n as u64 {
         aggregator.add_keyshare(

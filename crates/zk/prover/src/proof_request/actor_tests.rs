@@ -583,7 +583,8 @@ async fn a_c4_request_after_a_restart_publishes_one_decryption_key_share() -> Re
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
     let e3_id = E3id::new("85", 1);
     let c4 = decryption_share_proofs_pending(e3_id.clone());
-    let request = || TypedEvent::new(c4.clone(), test_ctx(c4.clone()));
+    let ec = test_ctx(c4.clone());
+    let request = || TypedEvent::new(c4.clone(), ec.clone());
 
     actor.handle_decryption_share_proofs_pending(request());
     actor.handle_decryption_share_proofs_pending(request());
@@ -597,7 +598,7 @@ async fn a_c4_request_after_a_restart_publishes_one_decryption_key_share() -> Re
     );
     let correlations: Vec<_> = actor.decryption_correlation.keys().copied().collect();
     for correlation in correlations {
-        actor.handle_decryption_proof_response(&correlation, proof.clone(), &test_ctx(c4.clone()));
+        actor.handle_decryption_proof_response(&correlation, proof.clone(), &ec);
     }
     actix::clock::sleep(std::time::Duration::from_millis(20)).await;
 
@@ -617,10 +618,7 @@ async fn a_c4_request_after_a_restart_publishes_one_decryption_key_share() -> Re
     assert_eq!(share.party_id, c4.party_id);
     assert_eq!(share.signed_e_sm_decryption_proofs.len(), 1);
     assert!(actor.pending_decryption.is_empty());
-    assert!(errors
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .is_empty());
+    assert_no_events(&errors).await?;
     Ok(())
 }
 

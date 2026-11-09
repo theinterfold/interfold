@@ -15,8 +15,8 @@ use anyhow::{bail, Result};
 use e3_ciphernode_builder::{CiphernodeBuilder, CiphernodeHandle};
 use e3_crypto::Cipher;
 use e3_events::{
-    prelude::*, AggregateConfig, BusHandle, ConfigurationUpdated, E3id, EventType, Seed,
-    TicketBalanceUpdated,
+    prelude::*, AggregateConfig, BusHandle, CommitteeFinalized, ConfigurationUpdated, E3id,
+    EventType, Seed, TicketBalanceUpdated,
 };
 use e3_multithread::{MultithreadReport, TaskPool};
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
@@ -30,6 +30,12 @@ use std::sync::Arc;
 pub const DKG_FOLD_ATTESTATION_VERIFIER: &str = "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0";
 /// Slashing manager used as the EIP-712 `verifyingContract` of accusation votes.
 const SLASHING_MANAGER: &str = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707";
+/// Chain every scenario event is observed on.
+pub const CHAIN_ID: u64 = 1;
+/// Every operator's ticket price and balance, so each holds `TICKET_BALANCE / TICKET_PRICE`
+/// tickets, as in production.
+pub const TICKET_PRICE: u64 = 10_000_000;
+const TICKET_BALANCE: u64 = 1_000_000_000;
 
 /// Everything the nodes of one run share. [`NodeFactory::build`] is the only place a node is
 /// assembled.
@@ -87,15 +93,16 @@ impl NodeFactory {
     /// fold attestation verifier addresses that nodes sign against.
     fn chain_config(&self) -> e3_evm_config::ChainConfig {
         let address_only = |address: &str| e3_evm_config::Contract::AddressOnly(address.into());
+        let zero = Address::ZERO.to_string();
         e3_evm_config::ChainConfig {
             enabled: Some(false),
             name: "scenario".into(),
             rpc_url: "http://localhost:8545".into(),
             rpc_auth: Default::default(),
             contracts: e3_evm_config::ContractAddresses {
-                interfold: address_only("0x0000000000000000000000000000000000000000"),
-                ciphernode_registry: address_only("0x0000000000000000000000000000000000000000"),
-                bonding_registry: address_only("0x0000000000000000000000000000000000000000"),
+                interfold: address_only(&zero),
+                ciphernode_registry: address_only(&zero),
+                bonding_registry: address_only(&zero),
                 e3_program: None,
                 fee_token: None,
                 slashing_manager: Some(address_only(SLASHING_MANAGER)),
@@ -105,7 +112,7 @@ impl NodeFactory {
                 faucet: None,
             },
             finalization_ms: None,
-            chain_id: Some(1),
+            chain_id: Some(CHAIN_ID),
             ingestion_confirmations: Some(0),
             rpc_poll_interval_ms: Some(250),
             rpc_log_range_blocks: None,
@@ -114,34 +121,33 @@ impl NodeFactory {
     }
 }
 
-/// Registers every address as an active operator with the same ticket balance, as the registry
+/// Registers every address as an active operator holding [`TICKET_BALANCE`], as the registry
 /// events would.
 pub async fn setup_score_sortition_environment(
     bus: &BusHandle,
     eth_addrs: &[String],
-    chain_id: u64,
 ) -> Result<()> {
     bus.publish_without_context(e3_events::ConfigurationUpdatedAt {
         configuration: ConfigurationUpdated {
             parameter: "ticketPrice".to_string(),
             old_value: U256::ZERO,
-            new_value: U256::from(10_000_000u64),
-            chain_id,
+            new_value: U256::from(TICKET_PRICE),
+            chain_id: CHAIN_ID,
         },
         position: e3_events::ChainPosition::new(1, 0),
     })?;
 
-    let mut adder = AddToCommittee::new(bus, chain_id);
+    let mut adder = AddToCommittee::new(bus, CHAIN_ID);
     for addr in eth_addrs {
         adder.add(addr).await?;
 
         bus.publish_without_context(e3_events::TicketBalanceUpdatedAt {
             balance: TicketBalanceUpdated {
                 operator: addr.clone(),
-                delta: I256::try_from(1_000_000_000u64).unwrap(),
-                new_balance: U256::from(1_000_000_000u64),
+                delta: I256::try_from(TICKET_BALANCE).unwrap(),
+                new_balance: U256::from(TICKET_BALANCE),
                 reason: FixedBytes::ZERO,
-                chain_id,
+                chain_id: CHAIN_ID,
             },
             position: e3_events::ChainPosition::new(1, 1),
         })?;
@@ -150,7 +156,7 @@ pub async fn setup_score_sortition_environment(
             activation: e3_events::OperatorActivationChanged {
                 operator: addr.clone(),
                 active: true,
-                chain_id,
+                chain_id: CHAIN_ID,
             },
             position: e3_events::ChainPosition::new(1, 2),
         })?;
@@ -159,10 +165,9 @@ pub async fn setup_score_sortition_environment(
     Ok(())
 }
 
-/// Runs the sortition the nodes run, so the committee matches what they will compute.
-///
-/// Returns the committee addresses, their scores, and the buffer addresses. Fails if the
-/// collector was selected: it is never registered for sortition.
+/// Runs the sortition the nodes run, so the committee matches what they will compute, and returns
+/// it sorted by address as the registry publishes it. Fails if the collector was selected: it is
+/// never registered for sortition.
 pub fn determine_committee(
     e3_id: &E3id,
     seed: Seed,
@@ -170,23 +175,16 @@ pub fn determine_committee(
     threshold_n: usize,
     registered_addrs: &[String],
     collector_addr: &str,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
-    let buffer = calculate_buffer_size(threshold_m, threshold_n);
-    let total_selection_size = threshold_n + buffer;
-
-    // Same balance/ticket_price ratio as production: 1_000_000_000 / 10_000_000 tickets each.
-    const TICKET_PRICE: u64 = 10_000_000;
-    const BALANCE: u64 = 1_000_000_000;
-    let num_tickets = BALANCE / TICKET_PRICE;
-
+) -> Result<CommitteeFinalized> {
+    let total_selection_size = threshold_n + calculate_buffer_size(threshold_m, threshold_n);
+    let tickets: Vec<Ticket> = (0..TICKET_BALANCE / TICKET_PRICE)
+        .map(|ticket_id| Ticket { ticket_id })
+        .collect();
     let registered_nodes: Vec<RegisteredNode> = registered_addrs
         .iter()
-        .map(|addr| {
-            let address: Address = addr.parse().unwrap();
-            let tickets: Vec<Ticket> = (0..num_tickets)
-                .map(|ticket_id| Ticket { ticket_id })
-                .collect();
-            RegisteredNode { address, tickets }
+        .map(|addr| RegisteredNode {
+            address: addr.parse().unwrap(),
+            tickets: tickets.clone(),
         })
         .collect();
 
@@ -195,23 +193,16 @@ pub fn determine_committee(
         seed,
         &registered_nodes,
     )?;
-
-    let committee: Vec<String> = winners
+    let (committee, scores): (Vec<String>, Vec<String>) = winners
         .iter()
         .take(threshold_n)
-        .map(|w| w.address.to_string())
-        .collect();
-    let committee_scores: Vec<String> = winners
-        .iter()
-        .take(threshold_n)
-        .map(|w| U256::from_be_slice(&w.score.to_bytes_be()).to_string())
-        .collect();
-    let buffer_nodes: Vec<String> = winners
-        .iter()
-        .skip(threshold_n)
-        .map(|w| w.address.to_string())
-        .collect();
-
+        .map(|w| {
+            (
+                w.address.to_string(),
+                U256::from_be_slice(&w.score.to_bytes_be()).to_string(),
+            )
+        })
+        .unzip();
     if committee
         .iter()
         .any(|addr| addr.eq_ignore_ascii_case(collector_addr))
@@ -219,12 +210,33 @@ pub fn determine_committee(
         bail!("the collector was selected for the committee but is not registered for sortition");
     }
 
-    Ok((committee, committee_scores, buffer_nodes))
+    let mut finalized = CommitteeFinalized {
+        e3_id: e3_id.clone(),
+        committee,
+        scores,
+        chain_id: CHAIN_ID,
+    };
+    finalized.sort_by_address();
+    println!(
+        "Committee selected: {} nodes, {} buffer nodes",
+        finalized.committee.len(),
+        winners.len().saturating_sub(threshold_n)
+    );
+    Ok(finalized)
 }
 
-pub fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result<usize> {
-    nodes
+/// The node index of each committee member, in party order.
+pub fn committee_node_indices(
+    nodes: &CiphernodeSystem,
+    committee: &[String],
+) -> Result<Vec<usize>> {
+    committee
         .iter()
-        .position(|node| node.address().eq_ignore_ascii_case(address))
-        .ok_or_else(|| anyhow::anyhow!("could not find node index for address {address}"))
+        .map(|address| {
+            nodes
+                .iter()
+                .position(|node| node.address().eq_ignore_ascii_case(address))
+                .ok_or_else(|| anyhow::anyhow!("could not find node index for address {address}"))
+        })
+        .collect()
 }

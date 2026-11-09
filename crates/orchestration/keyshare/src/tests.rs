@@ -9,7 +9,7 @@ use crate::actors::decryption_key_shared_collector::{
     DecryptionKeySharedCollectionFailed, DecryptionKeySharedCollectionTimeout,
 };
 use crate::actors::threshold_share_collector::{
-    ThresholdShareCollectionCutoff, ThresholdShareCollectionTimeout,
+    ThresholdShareCollectionCutoff, ThresholdShareCollectionTimeout, ThresholdShareCollector,
 };
 use crate::{ext::ThresholdKeyshareExtension, ThresholdKeyshareRepositoryFactory};
 use actix::{Actor, Addr, Handler};
@@ -603,21 +603,8 @@ async fn a_dealer_that_goes_offline_after_its_key_does_not_stop_the_dkg() -> Res
         &[],
     )
     .await?;
-    let mut collector = None;
-    let actor = ThresholdKeyshare::create(|ctx| {
-        let mut actor = actor;
-        collector = Some(
-            actor
-                .ensure_collector(
-                    ctx.address(),
-                    &test_ec(1),
-                    crate::domain::timeout_policy::now_unix_secs(),
-                )
-                .expect("share collector"),
-        );
-        actor
-    });
-    let collector = collector.expect("share collector");
+    let bus = actor.bus.clone();
+    let (actor, collector) = start_with_share_collector(actor, &test_ec(1));
 
     collector
         .send(TypedEvent::new(peer_share(&e3_id, 1), test_ec(2)))
@@ -644,11 +631,7 @@ async fn a_dealer_that_goes_offline_after_its_key_does_not_stop_the_dkg() -> Res
         repo.read().await?.expect("keyshare state").state,
         KeyshareState::Failed { .. }
     ));
-    assert!(history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .iter()
-        .all(|event| !matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    assert_no_collector_failure(&bus, &history, 1).await?;
     actor.send(Die).await?;
     Ok(())
 }
@@ -1180,6 +1163,27 @@ async fn build_actor(
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     Ok((actor, repo, recovery_repo, history))
+}
+
+/// Start `actor` with the share collector that `EffectsEnabled` builds, and return both.
+fn start_with_share_collector(
+    mut actor: ThresholdKeyshare,
+    ec: &EventContext<Sequenced>,
+) -> (Addr<ThresholdKeyshare>, Addr<ThresholdShareCollector>) {
+    let mut collector = None;
+    let parent = ThresholdKeyshare::create(|ctx| {
+        collector = Some(
+            actor
+                .ensure_collector(
+                    ctx.address(),
+                    ec,
+                    crate::domain::timeout_policy::now_unix_secs(),
+                )
+                .expect("share collector"),
+        );
+        actor
+    });
+    (parent, collector.expect("share collector"))
 }
 
 fn insecure_threshold_params() -> ArcBytes {
@@ -4384,20 +4388,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
     actor.pending.share_decryption_data = Some((sk_request, vec![esm_request]));
     let cipher = actor.cipher.clone();
     let signer = actor.signer.clone();
-    let mut collector = None;
-    let parent = ThresholdKeyshare::create(|ctx| {
-        collector = Some(
-            actor
-                .ensure_collector(
-                    ctx.address(),
-                    &test_ec(4),
-                    crate::domain::timeout_policy::now_unix_secs(),
-                )
-                .expect("share collector"),
-        );
-        actor
-    });
-    let collector = collector.expect("share collector");
+    let (parent, collector) = start_with_share_collector(actor, &test_ec(4));
     // The new collector receives both retained shares, so the collection completes at once.
     share_dispatch_of(&history, &[1, 2]).await?;
 
@@ -4525,22 +4516,9 @@ async fn unfinished_threshold_collection_fails_at_the_canonical_deadline() -> Re
         generating_threshold_share_state(&e3_id),
         KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
     ] {
-        let (mut actor, repo, _, history) = build_actor(&e3_id, phase, 7_200, 7_200, &[]).await?;
+        let (actor, repo, _, history) = build_actor(&e3_id, phase, 7_200, 7_200, &[]).await?;
         let bus = actor.bus.clone();
-        let mut collector = None;
-        let parent = ThresholdKeyshare::create(|ctx| {
-            collector = Some(
-                actor
-                    .ensure_collector(
-                        ctx.address(),
-                        &test_ec(1),
-                        crate::domain::timeout_policy::now_unix_secs(),
-                    )
-                    .expect("share collector"),
-            );
-            actor
-        });
-        let collector = collector.expect("share collector");
+        let (parent, collector) = start_with_share_collector(actor, &test_ec(1));
         collector.send(ThresholdShareCollectionCutoff).await?;
         parent
             .send(keyshare_event(
@@ -5607,36 +5585,24 @@ fn pending_c4(
 #[actix::test]
 async fn a_restart_during_c4_proof_generation_republishes_the_persisted_request() -> Result<()> {
     let e3_id = E3id::new("c4-restart", 1);
-    let (bus, history) = test_bus();
-    let (mut state, _) = test_state(
+    let (mut actor, _, _, history) = build_actor(
         &e3_id,
         KeyshareState::ReadyForDecryption(ready_for_c4_test()),
-    );
-    state.try_mutate_without_context(|mut state| {
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
         state.honest_parties = Some(BTreeSet::from([0, 1]));
         Ok(state)
     })?;
-    let c4 = pending_c4(&e3_id, state.try_get()?.committee_size()?);
-    let mut recovery = test_recovery();
-    recovery.try_mutate_without_context(|mut recovery| {
-        recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+    let c4 = pending_c4(&e3_id, actor.state.try_get()?.committee_size()?);
+    actor.recovery.try_mutate_without_context(|mut recovery| {
         recovery.decryption_share_proofs_pending = Some(TypedEvent::new(c4.clone(), test_ec(1)));
         Ok(recovery)
     })?;
-    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
-        bfv_key: test_bfv_key(),
-        bus,
-        cipher: Arc::new(Cipher::from_password("test-password").await?),
-        state,
-        share_enc_preset: BfvPreset::InsecureDkg64,
-        interfold_address: Address::ZERO,
-        signer: alloy::signers::local::PrivateKeySigner::random(),
-        effects_enabled: false,
-        recovery,
-        recovery_payloads: test_recovery_payloads(),
-        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
-    })
-    .start();
+    let actor = actor.start();
 
     actor
         .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
