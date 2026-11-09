@@ -88,10 +88,12 @@ impl CiphernodeHandle {
         self.network_status.clone()
     }
 
+    /// The latest ingestion progress of each chain reader, shared with the node.
     pub fn ingestion_status(&self) -> IngestionStatus {
         self.ingestion_status.clone()
     }
 
+    /// The compute pool of the ZK and TrBFV jobs, or `None` for a bootstrap node.
     pub fn task_pool(&self) -> Option<TaskPool> {
         self.task_pool.clone()
     }

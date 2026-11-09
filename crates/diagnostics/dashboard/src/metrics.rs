@@ -117,6 +117,7 @@ fn count(value: &str) -> Option<i64> {
     value.parse().ok()
 }
 
+/// Render one scrape as OpenMetrics text from a fresh registry, so no stale series remain.
 pub(crate) fn render(input: &MetricsInput<'_>) -> String {
     let mut registry = Registry::with_prefix("interfold");
     let runtime = input.runtime;
