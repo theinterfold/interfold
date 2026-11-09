@@ -153,7 +153,7 @@ pub(crate) fn render(input: &MetricsInput<'_>) -> String {
         i64::from(network.last_error.is_some()),
     );
 
-    render_operator(&mut registry, &input.operator);
+    render_operator(&mut registry, &input.operator, input.expected_chains);
     render_ingestion(&mut registry, &input.ingestion, input.expected_chains);
 
     gauge(
@@ -199,12 +199,13 @@ pub(crate) fn render(input: &MetricsInput<'_>) -> String {
     body
 }
 
-fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot) {
+fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot, expected: usize) {
+    // A node without an enabled chain has nothing to read, which is not a failed read.
     gauge(
         registry,
         "operator_status_up",
         "1 if the latest read of the operator state succeeded on every enabled chain",
-        i64::from(operator.error.is_none() && !operator.chains.is_empty()),
+        i64::from(operator.error.is_none() && operator.chains.len() == expected),
     );
     if operator.updated_at_ms > 0 {
         gauge(
@@ -664,6 +665,20 @@ mod tests {
         for phase in E3Phase::ALL {
             assert_eq!(serde_json::to_value(phase).unwrap(), phase.id());
         }
+    }
+
+    /// A node without an enabled chain reads nothing, so its operator status is up, not failed.
+    #[test]
+    fn a_node_without_an_enabled_chain_reports_the_operator_status_as_up() {
+        let runtime = runtime();
+        let mut input = input(&runtime);
+        input.operator.chains = Vec::new();
+        input.expected_chains = 0;
+
+        let body = render(&input);
+
+        assert_eq!(value(&body, "interfold_operator_status_up"), "1");
+        assert!(!body.contains("interfold_operator_active{"), "{body}");
     }
 
     /// With two enabled chains and a failed read on one, only the chain that was read has
