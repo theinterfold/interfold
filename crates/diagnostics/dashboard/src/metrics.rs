@@ -572,6 +572,7 @@ mod tests {
                 capacity: 2,
                 admitted: 2,
                 waiting: 5,
+                retrying: 1,
             }),
         }
     }

@@ -29,6 +29,8 @@ pub struct TaskPool {
     max_tasks: usize,
     /// Tasks that wait for a semaphore permit.
     waiting: Arc<AtomicUsize>,
+    /// Tasks that wait out a retry delay after a failure.
+    retrying: Arc<AtomicUsize>,
     thread_pool: Arc<ThreadPool>,
     task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
 }
@@ -42,11 +44,14 @@ pub struct TaskPoolLoad {
     /// the caller's future, so a closure whose caller dropped that future can still run on Rayon
     /// without being counted.
     pub admitted: usize,
-    /// Tasks that wait for admission. Retry delays do not count.
+    /// Tasks that wait for admission.
     pub waiting: usize,
+    /// Tasks that wait out a retry delay after a failure. A job that keeps failing shows here,
+    /// not in `admitted` or `waiting`.
+    pub retrying: usize,
 }
 
-/// Counts a task as waiting for admission until it is dropped, also when its future is.
+/// Counts a task in a gauge until it is dropped, also when its future is.
 struct Waiting<'a>(&'a AtomicUsize);
 
 impl<'a> Waiting<'a> {
@@ -90,6 +95,7 @@ impl TaskPool {
             semaphore: Arc::new(Semaphore::new(max_tasks)),
             max_tasks,
             waiting: Arc::new(AtomicUsize::new(0)),
+            retrying: Arc::new(AtomicUsize::new(0)),
             task_groups: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -102,6 +108,7 @@ impl TaskPool {
                 .max_tasks
                 .saturating_sub(self.semaphore.available_permits()),
             waiting: self.waiting.load(Ordering::Relaxed),
+            retrying: self.retrying.load(Ordering::Relaxed),
         }
     }
 
@@ -154,6 +161,7 @@ impl TaskPool {
             return Err(TaskPoolError::Cancelled(group.to_owned()));
         }
 
+        let _retrying = Waiting::start(&self.retrying);
         tokio::select! {
             biased;
             _ = cancellation.changed() => {
@@ -470,6 +478,7 @@ mod tests {
                 capacity: 1,
                 admitted: 0,
                 waiting: 0,
+                retrying: 0,
             }
         );
 
@@ -525,6 +534,7 @@ mod tests {
                 capacity: 1,
                 admitted: 0,
                 waiting: 0,
+                retrying: 0,
             }
         );
     }
@@ -550,7 +560,15 @@ mod tests {
             })
         };
 
-        tokio::task::yield_now().await;
+        // A task in a retry delay counts as retrying, not as waiting for admission.
+        timeout(Duration::from_secs(2), async {
+            while pool.load().retrying != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("retry wait did not start");
+        assert_eq!(pool.load().waiting, 0);
         pool.cancel_group("terminal-e3");
 
         assert!(matches!(
@@ -560,6 +578,7 @@ mod tests {
                 .expect("retry wait join failed"),
             Err(TaskPoolError::Cancelled(group)) if group == "terminal-e3"
         ));
+        assert_eq!(pool.load().retrying, 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
