@@ -23,7 +23,7 @@ use e3_zk_witness::WitnessError;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
-use fhe::trbfv::{ShareManager, TRBFV};
+use fhe::trbfv::{ShareManager, SmudgingBoundCalculatorConfig, SsSmudgingNoiseGenerator};
 use fhe::{bfv::Plaintext, bfv::PublicKey};
 use fhe_traits::FheEncoder;
 use ndarray::Array2;
@@ -72,14 +72,20 @@ pub fn pk_generation_sample_with_esi(
         .lambda()
         .map_err(|e| WitnessError::Sample(e.to_string()))?;
 
-    let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
-        .map_err(|e| WitnessError::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
     let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
         .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
-    let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, 0, lambda, &mut rng)
-        .map_err(|e| WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
+    let noise = SsSmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
+        threshold_params.clone(),
+        num_parties,
+        num_ciphertexts as usize,
+        lambda,
+    )?)?;
+    let esi_coeffs = fhe_math::rq::sample_uniform_coefficients_bigint(
+        &noise.smudging_bound().clone().into(),
+        noise.degree(),
+        &mut rng,
+    );
 
     let e_sm_rns_zeroizing = share_manager
         .bigints_to_poly(&esi_coeffs)

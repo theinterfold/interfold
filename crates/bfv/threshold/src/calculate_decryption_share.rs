@@ -5,19 +5,22 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::hash::Hash;
-use std::sync::Arc;
 
-use crate::helpers::{try_poly_from_sensitive_bytes, try_polys_from_sensitive_bytes_vec};
+use crate::helpers::try_poly_from_sensitive_bytes;
 /// This module defines event payloads that will generate a decryption share for the given ciphertext for this node
 use crate::TrBFVConfig;
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::utility_types::ArcBytes;
-use fhe::{bfv::Ciphertext, trbfv::ShareManager};
+use fhe::{
+    bfv::Ciphertext,
+    trbfv::{AggregatedSmudgingShare, SsSmudgingDecryptionConfig, SsSmudgingDecryptor},
+};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use fhe_traits::Serialize;
 use tracing::info;
+use zeroize::Zeroizing;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CalculateDecryptionShareRequest {
@@ -25,7 +28,7 @@ pub struct CalculateDecryptionShareRequest {
     pub name: String,
     /// TrBFV configuration
     pub trbfv_config: TrBFVConfig,
-    /// One or more Ciphertexts to decrypt
+    /// One ciphertext to decrypt; SS noise must not be reused across outputs.
     pub ciphertexts: Vec<ArcBytes>,
     /// A single summed polynomial for this nodes secret key.
     pub sk_poly_sum: SensitiveBytes,
@@ -36,12 +39,10 @@ pub struct CalculateDecryptionShareRequest {
 struct InnerRequest {
     /// TrBFV configuration
     pub trbfv_config: TrBFVConfig,
-    /// One or more Ciphertexts to decrypt
-    pub ciphertexts: Vec<Ciphertext>,
+    pub ciphertext: Ciphertext,
     /// A single summed polynomial for this nodes secret key.
     pub sk_poly_sum: Poly<PowerBasis>,
-    /// A vector of summed polynomials for this parties smudging noise
-    pub es_poly_sum: Vec<Poly<PowerBasis>>,
+    pub es_poly_sum: Poly<PowerBasis>,
 }
 
 impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
@@ -49,29 +50,31 @@ impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
     fn try_from(
         value: (&Cipher, CalculateDecryptionShareRequest),
     ) -> std::result::Result<InnerRequest, Self::Error> {
-        let trbfv_config = value.1.trbfv_config.clone();
-        let ciphertexts = value
-            .1
-            .ciphertexts
-            .into_iter()
-            .map(|ciphertext| {
-                Ciphertext::from_bytes(&ciphertext, &trbfv_config.params())
-                    .context("Could not parse ciphertext")
-            })
-            .collect::<Result<Vec<Ciphertext>>>()?;
-
+        let (cipher, req) = value;
+        ensure!(
+            req.ciphertexts.len() == 1,
+            "SS decryption requires exactly one ciphertext"
+        );
+        ensure!(
+            req.es_poly_sum.len() == 1,
+            "SS decryption requires exactly one smudging share"
+        );
+        let trbfv_config = req.trbfv_config;
+        let ciphertext = Ciphertext::from_bytes(&req.ciphertexts[0], &trbfv_config.params())
+            .context("Could not parse ciphertext")?;
         let sk_poly_sum =
-            try_poly_from_sensitive_bytes(value.1.sk_poly_sum, trbfv_config.params(), value.0)?;
-        let es_poly_sum = try_polys_from_sensitive_bytes_vec(
-            value.1.es_poly_sum,
-            trbfv_config.params(),
-            value.0,
-        )?;
+            try_poly_from_sensitive_bytes(req.sk_poly_sum, trbfv_config.params(), cipher)?;
+        let noise = req
+            .es_poly_sum
+            .into_iter()
+            .next()
+            .context("Missing smudging share")?;
+        let es_poly_sum = try_poly_from_sensitive_bytes(noise, trbfv_config.params(), cipher)?;
 
         Ok(InnerRequest {
             sk_poly_sum,
             es_poly_sum,
-            ciphertexts,
+            ciphertext,
             trbfv_config,
         })
     }
@@ -109,30 +112,22 @@ pub fn calculate_decryption_share(
     let num_ciphernodes = req.trbfv_config.num_parties() as usize;
     let threshold = req.trbfv_config.threshold() as usize;
     let params = req.trbfv_config.params();
-    let sk_poly_sum = req.sk_poly_sum;
+    let sk_poly_sum = Zeroizing::new(req.sk_poly_sum.into_ntt());
     let es_poly_sum = req.es_poly_sum;
+    let decryptor = SsSmudgingDecryptor::new(SsSmudgingDecryptionConfig::new(
+        num_ciphernodes,
+        threshold,
+        params,
+    )?);
 
     info!("Calculating d_share_poly...");
-    let d_share_poly = req
-        .ciphertexts
-        .into_iter()
-        .enumerate()
-        .map(|(index, ciphertext)| {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
-            info!("Create decryption share for ct index {}...", index);
-            // Currently there is a single smudging noise polynomial shared across all
-            // ciphertexts. When multiple per-ciphertext noises are supported, the
-            // index mapping here will need to change.
-            let es_idx = index % es_poly_sum.len();
-            share_manager
-                .decryption_share(
-                    Arc::new(ciphertext),
-                    sk_poly_sum.clone().into_ntt(),
-                    es_poly_sum[es_idx].clone(),
-                )
-                .context(format!("Could not decrypt ciphertext {}", index))
-        })
-        .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
+    // Import the saved aggregate at the storage boundary; consume it once for this output.
+    // Runtime recovery reuses the same successful response, not noise for a new ciphertext.
+    let noise = AggregatedSmudgingShare::from_transport(Zeroizing::new(es_poly_sum));
+    let d_share_poly = vec![decryptor
+        .decryption_share(&req.ciphertext, &sk_poly_sum, noise)
+        .context("Could not decrypt ciphertext 0")?
+        .into_parts()];
     info!("Returning successful result...");
 
     Ok(InnerResponse { d_share_poly }.into())

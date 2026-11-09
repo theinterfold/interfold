@@ -16,7 +16,7 @@ use e3_zk_witness::{threshold::pk_generation::PkGenerationCircuitData, WitnessEr
 use fhe::mbfv::PublicKeyShare;
 use fhe::{
     bfv::SecretKey,
-    trbfv::{smudging::SmudgingNoiseGenerator, ShareManager},
+    trbfv::{ShareManager, SsSmudgingNoiseGenerator},
 };
 
 pub fn generate(config: &Configs) -> Result<PkGenerationCircuitData, WitnessError> {
@@ -35,9 +35,12 @@ pub fn generate(config: &Configs) -> Result<PkGenerationCircuitData, WitnessErro
     let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone())?;
     // C1 supplies the same additive, all-N-participant bound as the sample noise setup.
-    let noise =
-        SmudgingNoiseGenerator::new(threshold_params.clone(), config.bounds.e_sm_bound.clone());
-    let e_sm = share_manager.bigints_to_poly(&noise.generate_smudging_error(&mut rng)?)?;
+    let noise = SsSmudgingNoiseGenerator::from_bound(
+        threshold_params.clone(),
+        config.bounds.e_sm_bound.clone(),
+    );
+    let e_sm =
+        share_manager.bigints_to_poly(&crate::smudging::sample_coefficients(&noise, &mut rng))?;
 
     Ok(PkGenerationCircuitData {
         pk0_share: CrtPolynomial::from_fhe_polynomial(pk_share.p0_share()),
