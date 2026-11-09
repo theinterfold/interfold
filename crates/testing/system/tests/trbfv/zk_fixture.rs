@@ -64,8 +64,9 @@ fn local_circuits(
 }
 
 /// Create a ZkBackend for integration tests of `preset` and `committee`.
-/// If the repository holds circuits for that pair and a local bb is found, installs them (fast
-/// path). Otherwise calls `ensure_installed()` to download bb + circuits (CI path).
+/// Installs the pair's current local circuits (`dist/circuits`, else a staged `circuits/bin`) when
+/// a local bb is found, as CI does. Otherwise (no current local circuits for the pair, or no local
+/// bb) calls `ensure_installed()` to download bb + circuits.
 pub async fn setup_test_zk_backend(
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,

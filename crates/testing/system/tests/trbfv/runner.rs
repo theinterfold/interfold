@@ -9,9 +9,9 @@
 //!
 //! [`run`] builds the nodes, executes the phases, injects the scenario's [`Fault`], and waits for
 //! the shares its [`Expect`] names. It does not judge the outcome: [`super::assertions::check`]
-//! does, over the observations. It does not assert how the nodes' actors order their events, and
-//! the DKG window it gives the nodes is far beyond the flow timeouts, so no progress deadline
-//! fires during a run. The timings and proofs the benchmark reports are in the observations too.
+//! does, over the observations. It does not assert how the nodes' actors order their events. The
+//! frozen DKG window (1,200 s; the benchmark's is ten times the key timeout) is far longer than a
+//! run's DKG, so no progress deadline fires. The benchmark's timings and proofs are observed too.
 
 use super::history::{
     aggregator_role_histories, key_roster, wait_for_event, wait_for_event_on_any, wait_until,
@@ -635,8 +635,9 @@ async fn disconnect_after_c0(env: &mut Env, request: &Request) -> Result<()> {
         published_c0,
     )
     .await?;
-    let events_before_disconnect = env.nodes.get_history(node_index).await?.len();
     env.nodes.disconnect_node(node_index).await?;
+    // Read after the disconnect returns, so everything the node logged while connected is kept.
+    let events_before_disconnect = env.nodes.get_history(node_index).await?.len();
     env.offline = Some(Offline {
         node_index,
         events_before_disconnect,

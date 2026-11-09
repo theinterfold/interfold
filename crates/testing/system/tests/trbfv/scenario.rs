@@ -66,8 +66,8 @@ impl Preset {
 #[derive(Debug, Clone, Copy)]
 pub enum Fault {
     None,
-    /// The committee party disconnects once it has published its encryption key (C0) and the
-    /// others have seen it. It can no longer share its DKG material, so the aggregator must
+    /// The committee party disconnects once it has published its encryption key (C0) and a peer
+    /// has seen it. It can no longer share its DKG material, so the aggregator must
     /// select a roster without it.
     OfflineAfterC0 {
         party_id: usize,

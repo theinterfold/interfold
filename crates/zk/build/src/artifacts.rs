@@ -397,14 +397,7 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
 fn vk_files(extension: &str) -> [(&'static str, String); 2] {
     [
         ("vk", extension.to_string()),
-        (
-            "vk_hash",
-            if extension == "vk" {
-                "vk_hash".to_string()
-            } else {
-                format!("{extension}_hash")
-            },
-        ),
+        ("vk_hash", format!("{extension}_hash")),
     ]
 }
 

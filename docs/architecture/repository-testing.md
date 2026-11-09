@@ -55,10 +55,10 @@ DHT records through the mock.
 
 `restart_node` removes a node, disconnects it from the mock (which holds gossip addressed to it
 meanwhile), shuts it down behind a barrier, and awaits the supplied closure to build a replacement.
-It attaches the replacement under the stopped node's peer ID, so the held gossip reaches it. The
-system keeps what the stopped node logged and joins it, deduplicated by delivery ID, with the
-replacement's history, so `get_history` still reads one history per node index. The full-proof
-scenario runner supplies the closure through its
+It attaches the replacement under its own peer ID and moves the gossip held for the stopped node's
+peer ID to it. The system keeps what the stopped node logged and joins it, deduplicated by delivery
+ID, with the replacement's history, so `get_history` still reads one history per node index. The
+full-proof scenario runner supplies the closure through its
 [`NodeFactory`](../../crates/testing/system/tests/trbfv/nodes.rs). A scenario that restarts a node
 gives every node a persisted event log and key-value store under a temporary directory, named by the
 node's address. A restart rebuilds the node on those stores with its own signer and RNG stream,

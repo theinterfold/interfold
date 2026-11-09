@@ -40,8 +40,9 @@ setting into this backend-owned choice. `check_status().await` reports setup sta
 `ensure_installed().await` prepares required tools/artifacts and may download/install them.
 Version/checksum requirements come from [versions.json](versions.json). `with_bb_timeout` bounds
 each proving process. `install_circuits_dir(dir, configurations)` installs a local circuits tree (a
-dist directory or a staged `circuits/bin`) under the archive admission rules, copying it; local
-builds and tests call it instead of writing `version.json` themselves.
+dist directory or a staged `circuits/bin`) under the archive admission rules, copying it. It is
+unpinned: it checks the tree against the tree's own `checksums.json`, not against a release pin, and
+records the configured circuits version. Only local builds and tests call it.
 
 `ZkProver::new(&backend)` executes proof generation and verification. Select the matching artifact
 directory with `resolve_artifacts_dir(preset, committee)` and use the explicit variant methods where
