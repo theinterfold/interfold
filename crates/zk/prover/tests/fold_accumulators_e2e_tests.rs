@@ -243,18 +243,22 @@ fn assert_recursive_vk_binding(
         "the first fold step must not refill the kernel's slot"
     );
 
-    let fake_acc = substitute_proof(
+    // A substituted predecessor carries the honest predecessor's public inputs, so the step's own
+    // constraints, slot 1 still empty included, hold: the witness solves, and only the recursive
+    // verification of the predecessor under its VK can reject it.
+    let fake_kernel = substitute_proof(
         prover,
-        fold,
+        kernel,
         CircuitVariant::Default,
-        &fields(&first),
+        &fields(&genesis),
         None,
-        "predecessor",
+        "kernel-predecessor",
     );
     let mut fake_genesis = input.clone();
-    fake_genesis["acc_vk"] = json!(fake_acc.vk);
-    fake_genesis["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
-    fake_genesis["acc_public_inputs"] = json!(fields(&fake_acc.proof));
+    fake_genesis["acc_vk"] = json!(fake_kernel.vk);
+    fake_genesis["acc_proof"] = json!(fold_witness_field_strings(&fake_kernel.proof.data).unwrap());
+    fake_genesis["acc_public_inputs"] = json!(fields(&fake_kernel.proof));
+    witness(&fold_path, &fake_genesis).expect("a substituted kernel leaves the step satisfiable");
     assert_fold_rejected(
         prover,
         fold,
@@ -262,6 +266,15 @@ fn assert_recursive_vk_binding(
         &fake_genesis,
         artifacts_dir,
         "substituted-genesis",
+    );
+
+    let fake_acc = substitute_proof(
+        prover,
+        fold,
+        CircuitVariant::Default,
+        &fields(&first),
+        None,
+        "predecessor",
     );
 
     // With a third slot, a continuation verifies a fold predecessor under the fold key.
@@ -281,6 +294,8 @@ fn assert_recursive_vk_binding(
         fake_prior["acc_vk"] = json!(fake_acc.vk);
         fake_prior["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
         fake_prior["acc_public_inputs"] = json!(fields(&fake_acc.proof));
+        witness(&fold_path, &fake_prior)
+            .expect("a substituted fold predecessor leaves the step satisfiable");
         assert_fold_rejected(
             prover,
             fold,
