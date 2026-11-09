@@ -117,7 +117,7 @@ pub fn own_key(fill: u8) -> OwnKey {
             hash: B256::repeat_byte(fill),
             len: 1_000,
         },
-        secret: BlobRef {
+        secret: crate::SealedRef {
             hash: B256::repeat_byte(!fill),
             len: 100,
         },
@@ -151,7 +151,7 @@ pub fn own_shares(recipients: &[u64]) -> OwnShares {
             hash: B256::repeat_byte(0xaa),
             len: 1_000,
         },
-        own_share: BlobRef {
+        own_share: crate::SealedRef {
             hash: B256::repeat_byte(0xab),
             len: 100,
         },
@@ -230,7 +230,7 @@ pub fn shares_checked(e3: E3Id, dealer: u64, valid: bool) -> Input {
 /// A decryption key the job runner made for this node, with one smudging-noise set.
 pub fn own_decryption_key(fill: u8) -> OwnDecryptionKey {
     OwnDecryptionKey {
-        key: BlobRef {
+        key: crate::SealedRef {
             hash: B256::repeat_byte(fill),
             len: 100,
         },

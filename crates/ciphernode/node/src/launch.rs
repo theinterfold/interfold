@@ -25,14 +25,14 @@ use alloy::{
         Authorization,
     },
 };
-use alloy_primitives::Address;
+use alloy_primitives::{keccak256, Address};
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
 use e3_chain::{ChainNode, Contracts, Release, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
-use e3_jobs::{Circuits, JobRunner, Proofs};
+use e3_jobs::{Circuits, JobLimits, JobRunner, Proofs};
 use e3_journal::Journal;
 use e3_p2p::{P2p, P2pConfig};
 use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
@@ -68,6 +68,8 @@ pub struct Config {
     /// Without a prover the node makes placeholder proofs, which only the mock verifiers of a test
     /// deployment accept.
     pub prover: Option<Prover>,
+    /// CPU threads kept for the node's own loops.
+    pub reserved_threads: usize,
     pub network: Network,
 }
 
@@ -85,6 +87,8 @@ pub struct Prover {
     pub circuits: PathBuf,
     /// How many proofs run at once: under the secure parameters each one can hold gigabytes.
     pub concurrent: usize,
+    /// The longest one `bb` run may take.
+    pub bb_timeout: Duration,
 }
 
 pub struct Network {
@@ -135,7 +139,7 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
     open_data_dir(&config.data_dir)?;
     let journal = Journal::open(config.data_dir.join("journal.redb"))?;
     let heartbeat = Heartbeat::start(&config.data_dir.join("ingestion"), chain_id, now())?;
-    let proofs = proofs(&config)?;
+    let (proofs, threads) = proofs(&config)?;
     let operator = config.operator;
     // Over a WebSocket, alloy's receipt waits would keep a new-block subscription open for good;
     // over HTTP they poll only while a transaction is unmined.
@@ -174,11 +178,12 @@ pub async fn launch(config: Config) -> anyhow::Result<()> {
         poll_interval: config.poll_interval,
         snapshot_every: 100,
     };
+    let scope = keccak256([release.id.as_slice(), operator.address().as_slice()].concat());
     let parts = Parts {
         operator,
         journal,
         blobs: blobs.clone(),
-        jobs: JobRunner::new(blobs, config.cipher, proofs),
+        jobs: JobRunner::new(blobs, config.cipher, proofs, JobLimits { threads, scope })?,
         rpc: ChainNode::new(chain, contracts),
         account: wallet,
         network,
@@ -254,9 +259,11 @@ pub async fn bootstrap(network: Network) -> anyhow::Result<()> {
     std::future::pending().await
 }
 
-fn proofs(config: &Config) -> anyhow::Result<Proofs> {
+/// The node's proofs, and the threads its other work may use.
+fn proofs(config: &Config) -> anyhow::Result<(Proofs, usize)> {
     let Some(prover) = &config.prover else {
-        return Ok(Proofs::Placeholder);
+        let threads = memory::threads_for_placeholders(config.reserved_threads);
+        return Ok((Proofs::Placeholder, threads));
     };
     // Proofs that a stop cut short run again from the start, so their files go.
     let proving = config.data_dir.join("proving");
@@ -266,10 +273,15 @@ fn proofs(config: &Config) -> anyhow::Result<Proofs> {
         }
     }
     let bb = BBPath::Custom(prover.bb.clone());
-    let backend = ZkBackend::new(bb, prover.circuits.clone(), proving);
-    let jobs = memory::proof_jobs(prover.concurrent);
-    let circuits = Circuits::new(ZkProver::new(&backend), jobs)?;
-    Ok(Proofs::Circuits(Box::new(circuits)))
+    let backend =
+        ZkBackend::new(bb, prover.circuits.clone(), proving).with_bb_timeout(prover.bb_timeout);
+    let capacity = memory::capacity(prover.concurrent, config.reserved_threads)?;
+    let circuits = Circuits::new(
+        ZkProver::new(&backend),
+        capacity.proofs,
+        capacity.bb_threads,
+    )?;
+    Ok((Proofs::Circuits(Box::new(circuits)), capacity.threads))
 }
 
 /// The layout of the node's files in a data directory: the machine's encoding, and the version of

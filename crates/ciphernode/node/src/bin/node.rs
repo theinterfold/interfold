@@ -78,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
             bb: noir.join("bin").join("bb"),
             circuits: noir.join("circuits"),
             concurrent: config.concurrent_proofs.unwrap_or(2),
+            bb_timeout: Duration::from_secs(12 * 60 * 60),
         }),
+        reserved_threads: 1,
         network: Network {
             id: config.network.id,
             identity: config.network.identity.0,

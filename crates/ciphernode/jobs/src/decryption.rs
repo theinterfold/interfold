@@ -8,7 +8,7 @@
 //! T+1 members' shares (C7), with the current node's library calls.
 
 use crate::{
-    placeholder, proofs, proofs::Circuits, trbfv, Blobs, JobError, Jobs, SealedDecryptionKey,
+    placeholder, proofs, proofs::Prover, trbfv, Blobs, JobError, Jobs, SealedDecryptionKey,
 };
 use alloy_primitives::{Address, B256, U256};
 use e3_bfv_client::compute_ct_commitment_with_params;
@@ -24,7 +24,7 @@ use e3_protocol::{
     dkg::KeyAnchor,
     node::CryptoParams,
     proof::{ProofType, ZkProof},
-    BlobRef,
+    BlobRef, SealedRef,
 };
 use e3_trbfv::{
     calculate_decryption_share::{calculate_decryption_share, CalculateDecryptionShareRequest},
@@ -91,7 +91,7 @@ impl<B: Blobs> Jobs<'_, B> {
     fn decryption_shares(
         &self,
         params: &CryptoParams,
-        key: &BlobRef,
+        key: &SealedRef,
         ciphertext: &BlobRef,
         domain: B256,
     ) -> Result<OwnShares, JobError> {
@@ -146,7 +146,7 @@ impl<B: Blobs> Jobs<'_, B> {
     /// key, smudged with its noise, under the decryption domain.
     fn prove_decryption_shares(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         key: &SealedDecryptionKey,
         ciphertexts: &[ArcBytes],
@@ -333,7 +333,7 @@ impl<B: Blobs> Jobs<'_, B> {
     /// ciphertext combine into the plaintext, folded with their C6 proofs.
     fn prove_plaintext(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         committee: &[Address],
         shares: &BTreeMap<Address, SharesMessage>,
@@ -374,13 +374,11 @@ impl<B: Blobs> Jobs<'_, B> {
         .map_err(JobError::crypto)?;
         let (work, artifacts) = (self.work("c7"), self.artifacts(prover, params)?);
         // C7 takes the variant the decryption aggregation verifies inside it.
-        let c7 = prover
-            .proving(|zk| {
-                let variant = CircuitVariant::Default;
-                DecryptedSharesAggregationCircuit
-                    .prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)
-            })
-            .map_err(JobError::crypto)?;
+        let c7 = prover.proving(|zk| {
+            let variant = CircuitVariant::Default;
+            DecryptedSharesAggregationCircuit
+                .prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)
+        })?;
         let slots: Vec<u32> = (0..c6.len() as u32).collect();
         let job = DecryptionAggregationJob {
             c6_inner_proofs: &c6,
@@ -388,12 +386,10 @@ impl<B: Blobs> Jobs<'_, B> {
             c7_proof: &c7,
         };
         let (work, preset) = (self.work("decryption"), trbfv::threshold_preset(params)?);
-        let proofs = prover
-            .proving(|zk| {
-                let (slots, size) = (c6.len(), params.committee_size);
-                prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)
-            })
-            .map_err(JobError::crypto)?;
+        let proofs = prover.proving(|zk| {
+            let (slots, size) = (c6.len(), params.committee_size);
+            prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)
+        })?;
         let proof = proofs
             .first()
             .ok_or(JobError::crypto("no decryption aggregation proof"))?;

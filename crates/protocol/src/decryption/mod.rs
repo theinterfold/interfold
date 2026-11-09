@@ -26,7 +26,7 @@ use crate::{
         Transaction, Work,
     },
     proof::{ProofType, SignedProof, ZkProof},
-    BlobRef, E3Id, UnixSecs,
+    BlobRef, E3Id, SealedRef, UnixSecs,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub enum DecryptionWork {
     /// This node's decryption share of each ciphertext, made with its sealed decryption key, and
     /// a C6 proof of each that binds `domain`.
     MakeShares {
-        key: BlobRef,
+        key: SealedRef,
         ciphertext: BlobRef,
         domain: B256,
     },
@@ -123,7 +123,7 @@ pub enum DecryptionFailure {
 pub(crate) struct Handover {
     pub(crate) roster: Vec<Address>,
     /// A roster member's sealed decryption key; none outside the roster.
-    pub(crate) key: Option<BlobRef>,
+    pub(crate) key: Option<SealedRef>,
     pub(crate) expelled: BTreeSet<Address>,
     /// Members that H members found sending a failing proof, who aggregate no phase.
     pub(crate) convicted: BTreeSet<Address>,
@@ -175,7 +175,7 @@ pub struct Decryption {
     members: Vec<Address>,
     params: CryptoParams,
     roster: Vec<Address>,
-    key: Option<BlobRef>,
+    key: Option<SealedRef>,
     published: PublishedKey,
     expelled: BTreeSet<Address>,
     ciphertext: Option<Ciphertext>,

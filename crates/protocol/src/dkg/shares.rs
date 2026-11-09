@@ -14,7 +14,7 @@ use super::{
 use crate::{
     node::Effect,
     proof::{ProofType, SignedProof, ZkProof},
-    BlobRef, E3Id,
+    BlobRef, E3Id, SealedRef,
 };
 use alloy_primitives::{Address, Bytes};
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 pub(super) struct Dealt {
     pub(super) contribution: Dealer,
     pub(super) pk_share: BlobRef,
-    pub(super) own_share: BlobRef,
+    pub(super) own_share: SealedRef,
     c0: ZkProof,
     pub(super) c1: SignedProof,
     pub(super) c2a: ZkProof,

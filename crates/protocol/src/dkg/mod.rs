@@ -24,7 +24,7 @@ use crate::{
     accusation::Verdict,
     node::{Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Work},
     proof::{SignedProof, ZkProof},
-    BlobRef, E3Id, UnixSecs,
+    BlobRef, E3Id, SealedRef, UnixSecs,
 };
 use aggregation::Aggregation;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
@@ -213,7 +213,7 @@ pub enum DkgWork {
     CheckShares {
         dealer: Address,
         committee: Vec<Address>,
-        secret: BlobRef,
+        secret: SealedRef,
         own_key: ZkProof,
         message: Box<SharesMessage>,
     },
@@ -223,8 +223,8 @@ pub enum DkgWork {
     MakeDecryptionKey {
         member: Address,
         committee: Vec<Address>,
-        secret: BlobRef,
-        own_share: BlobRef,
+        secret: SealedRef,
+        own_share: SealedRef,
         shares: BTreeMap<Address, BlobRef>,
         c2: BTreeMap<Address, (ZkProof, ZkProof)>,
     },
@@ -290,7 +290,7 @@ pub enum DkgSignature {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnKey {
     pub public: BlobRef,
-    pub secret: BlobRef,
+    pub secret: SealedRef,
     pub proof: ZkProof,
 }
 
@@ -298,7 +298,7 @@ pub struct OwnKey {
 pub struct OwnShares {
     pub pk_share: BlobRef,
     /// This node's own plaintext share rows, sealed in the job runner's blob store, for C4.
-    pub own_share: BlobRef,
+    pub own_share: SealedRef,
     pub c1: ZkProof,
     pub c2a: ZkProof,
     pub c2b: ZkProof,
@@ -310,7 +310,7 @@ pub struct OwnShares {
 pub struct OwnDecryptionKey {
     /// The summed secret-key and smudging-noise shares, sealed in the job runner's blob store,
     /// for decryption.
-    pub key: BlobRef,
+    pub key: SealedRef,
     pub c4a: ZkProof,
     pub c4b: Vec<ZkProof>,
 }
@@ -401,7 +401,7 @@ pub struct Dkg {
     /// This node's sealed decryption key, once made. The chain's key over the same roster needs it
     /// even when this node's DKG failed locally, as when the deadline passes before the node reads
     /// the key's publication.
-    sealed_key: Option<BlobRef>,
+    sealed_key: Option<SealedRef>,
     /// The chain published the committee key: the DKG is over.
     published: bool,
 }
@@ -475,7 +475,7 @@ impl Dkg {
     }
 
     /// This node's sealed decryption key, once it sent its keyshare.
-    pub(crate) fn decryption_key(&self) -> Option<BlobRef> {
+    pub(crate) fn decryption_key(&self) -> Option<SealedRef> {
         self.sealed_key
     }
 

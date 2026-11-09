@@ -14,7 +14,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -96,22 +97,59 @@ fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
     stderr.contains("Proof verification failed") || stdout.contains("Proof verification failed")
 }
 
-/// Runs bb and kills it at `timeout`. Output goes to files in `job_dir` so a full pipe
+/// Stops work a node no longer needs. Clones share one flag, which a running `bb` checks while it
+/// waits for the process.
+#[derive(Clone, Debug, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// What one bb run may use.
+#[derive(Clone, Debug)]
+struct BbLimits {
+    timeout: Duration,
+    cancel: Cancel,
+    /// Threads for bb; its own default takes every core.
+    threads: Option<usize>,
+}
+
+/// Runs bb and kills it at `timeout`, or as soon as its work is cancelled. Output goes to files in `job_dir` so a full pipe
 /// cannot stall bb, and `JobDirGuard` removes them. The timeout error carries the elapsed time
 /// and the end of bb's stderr, because the job directory is gone once the caller returns.
-fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, timeout: Duration) -> io::Result<Output> {
+fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, limits: &BbLimits) -> io::Result<Output> {
     let stdout_path = job_dir.join("bb.stdout");
     let stderr_path = job_dir.join("bb.stderr");
-    let mut child = StdCommand::new(bb)
+    let mut command = StdCommand::new(bb);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(fs::File::create(&stdout_path)?)
-        .stderr(fs::File::create(&stderr_path)?)
-        .spawn()?;
-    let started = Instant::now();
+        .stderr(fs::File::create(&stderr_path)?);
+    if let Some(threads) = limits.threads {
+        // Barretenberg sizes its thread pool from this variable.
+        command.env("HARDWARE_CONCURRENCY", threads.to_string());
+    }
+    let mut child = command.spawn()?;
+    let (started, timeout) = (Instant::now(), limits.timeout);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
+        }
+        if limits.cancel.is_cancelled() {
+            let _ = child.kill();
+            child.wait()?;
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "the work was cancelled",
+            ));
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
@@ -145,8 +183,8 @@ pub struct ZkProver {
     circuits_dir: PathBuf,
     work_dir: PathBuf,
     slow_low_memory: bool,
-    /// Wall-clock cap of one bb run, from the backend.
-    bb_timeout: Duration,
+    /// Wall-clock cap, cancel flag and thread budget of each bb run.
+    limits: BbLimits,
 }
 
 impl ZkProver {
@@ -156,8 +194,26 @@ impl ZkProver {
             circuits_dir: backend.circuits_dir.clone(),
             work_dir: backend.work_dir.clone(),
             slow_low_memory: false,
-            bb_timeout: backend.bb_timeout,
+            limits: BbLimits {
+                timeout: backend.bb_timeout,
+                cancel: Cancel::default(),
+                threads: None,
+            },
         }
+    }
+
+    /// Return a prover whose bb runs stop when `cancel` is set.
+    pub fn with_cancel(&self, cancel: Cancel) -> Self {
+        let mut prover = self.clone();
+        prover.limits.cancel = cancel;
+        prover
+    }
+
+    /// Return a prover whose bb runs use at most `threads` threads.
+    pub fn with_threads(&self, threads: usize) -> Self {
+        let mut prover = self.clone();
+        prover.limits.threads = Some(threads.max(1));
+        prover
     }
 
     /// Return a prover that asks Barretenberg to trade speed for a smaller memory peak.
@@ -328,7 +384,7 @@ impl ZkProver {
             args.push("--slow_low_memory");
         }
 
-        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, &self.limits)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -493,7 +549,7 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, &self.limits)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -631,7 +687,7 @@ mod tests {
             Path::new("/bin/sh"),
             &["-c", "echo 'proving step 3' >&2; sleep 30"],
             temp.path(),
-            Duration::from_millis(300),
+            &limits(Duration::from_millis(300)),
         );
 
         let error = result.unwrap_err();
@@ -651,10 +707,13 @@ mod tests {
             circuits_dir,
             temp.path().join("work"),
         );
-        assert_eq!(ZkProver::new(&backend).bb_timeout, DEFAULT_BB_TIMEOUT);
+        assert_eq!(ZkProver::new(&backend).limits.timeout, DEFAULT_BB_TIMEOUT);
 
         let backend = backend.with_bb_timeout(Duration::from_secs(90));
-        assert_eq!(ZkProver::new(&backend).bb_timeout, Duration::from_secs(90));
+        assert_eq!(
+            ZkProver::new(&backend).limits.timeout,
+            Duration::from_secs(90)
+        );
     }
 
     #[test]
@@ -766,6 +825,53 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
+    fn limits(timeout: Duration) -> BbLimits {
+        BbLimits {
+            timeout,
+            cancel: Cancel::default(),
+            threads: None,
+        }
+    }
+
+    /// Stopping an E3 must stop its bb too: a proof under the secure parameters can run for hours.
+    #[test]
+    fn a_cancelled_bb_is_killed_at_once() {
+        let temp = get_tempdir().unwrap();
+        let limits = limits(DEFAULT_BB_TIMEOUT);
+        let cancel = limits.cancel.clone();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            cancel.cancel();
+        });
+        let started = Instant::now();
+        let error = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "sleep 30"],
+            temp.path(),
+            &limits,
+        )
+        .unwrap_err();
+        canceller.join().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// bb takes its thread count from the environment.
+    #[test]
+    fn a_thread_budget_reaches_bb() {
+        let temp = get_tempdir().unwrap();
+        let mut limits = limits(DEFAULT_BB_TIMEOUT);
+        limits.threads = Some(3);
+        let output = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "printf %s \"$HARDWARE_CONCURRENCY\""],
+            temp.path(),
+            &limits,
+        )
+        .unwrap();
+        assert_eq!(output.stdout, b"3");
+    }
+
     #[test]
     fn a_finishing_bb_returns_its_output() {
         let temp = get_tempdir().unwrap();
@@ -774,7 +880,7 @@ mod tests {
             Path::new("/bin/echo"),
             &["proof-ok"],
             temp.path(),
-            DEFAULT_BB_TIMEOUT,
+            &limits(DEFAULT_BB_TIMEOUT),
         )
         .unwrap();
 
@@ -790,7 +896,7 @@ mod tests {
             Path::new("/bin/sh"),
             &["-c", "sleep 0.1; echo proof-ok"],
             temp.path(),
-            Duration::from_secs(u64::MAX),
+            &limits(Duration::from_secs(u64::MAX)),
         )
         .unwrap();
 

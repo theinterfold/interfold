@@ -438,7 +438,9 @@ where
             let mut wait = RETRY_AFTER;
             loop {
                 let (runner, work) = (jobs.clone(), job.clone());
-                match tokio::task::spawn_blocking(move || runner.run(&work)).await {
+                match tokio::task::spawn_blocking(move || runner.run(&work, &Default::default()))
+                    .await
+                {
                     Ok(Ok(result)) => {
                         let done = Input::Job(JobDone { e3: job.e3, result });
                         let _ = events.send(Event::Result(key, done)).await;

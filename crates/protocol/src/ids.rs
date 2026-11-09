@@ -37,3 +37,20 @@ impl BlobRef {
         }
     }
 }
+
+/// A secret this node stored, sealed with its cipher. It is a different type from [`BlobRef`], and
+/// a different space in the store, so no peer message can name one and no peer can fetch one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SealedRef {
+    pub hash: B256,
+    pub len: u64,
+}
+
+impl SealedRef {
+    pub fn of(bytes: &[u8]) -> Self {
+        Self {
+            hash: keccak256(bytes),
+            len: bytes.len() as u64,
+        }
+    }
+}

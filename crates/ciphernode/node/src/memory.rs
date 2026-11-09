@@ -4,37 +4,86 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! How many proofs the node runs at once: no more than the operator asked for, and no more than
-//! the machine's memory holds. A prover under the secure parameters can hold 13 GiB, and the node
-//! keeps 4 GiB for itself. A container's memory limit counts as the machine's.
+//! What the machine can run at once: no more proofs than the operator asked for and its memory
+//! holds, and no more threads than its cores less those kept for the node's own loops. A prover
+//! under the secure parameters can hold 13 GiB, and the node keeps 4 GiB for itself. A container's
+//! memory limit counts as the machine's.
 
 use std::{
     fs,
     path::{Path, PathBuf},
+    thread,
 };
 use tracing::warn;
 
 const PROVER_BYTES: u64 = 13 << 30;
 const RESERVE_BYTES: u64 = 4 << 30;
 
-/// `requested`, or fewer when the memory holds fewer; at least one, so a small machine still
-/// proves.
-pub(crate) fn proof_jobs(requested: usize) -> usize {
-    let jobs = jobs_for(requested, memory_limit());
-    if jobs < requested {
-        warn!(
-            requested,
-            jobs, "running fewer proofs at once, to fit the machine's memory"
-        );
-    }
-    jobs
+/// What the node's work may use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Capacity {
+    /// Proofs at once.
+    pub(crate) proofs: usize,
+    /// Threads for checks and threshold cryptography.
+    pub(crate) threads: usize,
+    /// Threads each `bb` may use, so running proofs together stay within the threads.
+    pub(crate) bb_threads: usize,
 }
 
-fn jobs_for(requested: usize, memory: Option<u64>) -> usize {
-    let fit = memory.map_or(usize::MAX, |bytes| {
-        usize::try_from(bytes.saturating_sub(RESERVE_BYTES) / PROVER_BYTES).unwrap_or(usize::MAX)
-    });
-    requested.min(fit).max(1)
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "this machine has {} GiB of memory for the node, and a prover needs {} GiB with {} GiB kept \
+     for the node; give it more memory",
+    .memory >> 30, PROVER_BYTES >> 30, RESERVE_BYTES >> 30
+)]
+pub(crate) struct HostTooSmall {
+    memory: u64,
+}
+
+/// The node's capacity on this machine for `requested` proofs at once and `reserved` threads kept
+/// for its own loops.
+pub(crate) fn capacity(requested: usize, reserved: usize) -> Result<Capacity, HostTooSmall> {
+    let cores = thread::available_parallelism().map_or(1, usize::from);
+    let capacity = capacity_of(requested, reserved, cores, memory_limit())?;
+    if capacity.proofs < requested {
+        warn!(
+            requested,
+            proofs = capacity.proofs,
+            "running fewer proofs at once, to fit the machine's memory"
+        );
+    }
+    Ok(capacity)
+}
+
+/// The capacity of a node that makes no real proofs, which needs no prover's memory.
+pub(crate) fn threads_for_placeholders(reserved: usize) -> usize {
+    let cores = thread::available_parallelism().map_or(1, usize::from);
+    cores.saturating_sub(reserved).max(1)
+}
+
+fn capacity_of(
+    requested: usize,
+    reserved: usize,
+    cores: usize,
+    memory: Option<u64>,
+) -> Result<Capacity, HostTooSmall> {
+    let fit = match memory {
+        Some(bytes) => usize::try_from(bytes.saturating_sub(RESERVE_BYTES) / PROVER_BYTES)
+            .unwrap_or(usize::MAX),
+        None => usize::MAX,
+    };
+    if fit == 0 {
+        return Err(HostTooSmall {
+            memory: memory.unwrap_or_default(),
+        });
+    }
+    let proofs = requested.max(1).min(fit);
+    let threads = cores.saturating_sub(reserved).max(1);
+    Ok(Capacity {
+        proofs,
+        threads,
+        bb_threads: (threads / proofs).max(1),
+    })
 }
 
 /// The smaller of the machine's memory and the limit of each memory cgroup the process is in.
@@ -97,12 +146,32 @@ mod tests {
     const GIB: u64 = 1 << 30;
 
     #[test]
-    fn a_machine_runs_as_many_proofs_as_its_memory_holds_and_at_least_one() {
-        assert_eq!(jobs_for(2, Some(32 * GIB)), 2);
-        assert_eq!(jobs_for(2, Some(28 * GIB)), 1);
-        assert_eq!(jobs_for(2, Some(16 * GIB)), 1);
-        assert_eq!(jobs_for(2, None), 2);
-        assert_eq!(jobs_for(4, Some(64 * GIB)), 4);
+    fn a_machine_runs_as_many_proofs_as_its_memory_holds() {
+        let proofs = |requested, memory| {
+            capacity_of(requested, 2, 12, memory)
+                .expect("the host fits a prover")
+                .proofs
+        };
+        assert_eq!(proofs(2, Some(32 * GIB)), 2);
+        assert_eq!(proofs(2, Some(28 * GIB)), 1);
+        assert_eq!(proofs(2, Some(17 * GIB)), 1);
+        assert_eq!(proofs(2, None), 2);
+        assert_eq!(proofs(4, Some(64 * GIB)), 4);
+    }
+
+    #[test]
+    fn a_machine_too_small_for_one_prover_is_refused() {
+        assert!(capacity_of(2, 2, 12, Some(16 * GIB)).is_err());
+    }
+
+    /// Threads kept for the node are not given to work, and proofs running together share the
+    /// rest.
+    #[test]
+    fn work_stays_within_the_threads_left_for_it() {
+        let capacity = capacity_of(2, 2, 12, Some(64 * GIB)).unwrap();
+        assert_eq!(capacity.threads, 10);
+        assert_eq!(capacity.bb_threads, 5);
+        assert_eq!(capacity_of(1, 8, 4, None).unwrap().threads, 1);
     }
 
     /// A container's limit lives in its own cgroup's folder, under cgroup v2 or v1.

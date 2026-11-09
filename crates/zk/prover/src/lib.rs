@@ -40,6 +40,6 @@ pub use e3_zk_config::{CircuitName, CircuitVariant};
 pub use error::ZkError;
 pub use node_fold_public::extract_node_fold_agg_commits;
 pub use proof::{DkgFoldAggCommits, Proof};
-pub use prover::ZkProver;
+pub use prover::{Cancel, ZkProver};
 pub use traits::Provable;
 pub use witness::{input_map, CompiledCircuit, WitnessGenerator};

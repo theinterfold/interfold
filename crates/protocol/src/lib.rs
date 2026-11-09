@@ -25,7 +25,7 @@ pub mod selection;
 pub mod testing;
 pub mod wire;
 
-pub use ids::{BlobRef, E3Id};
+pub use ids::{BlobRef, E3Id, SealedRef};
 
 /// The version of what a node persists of the machine: its inputs and effects in the journal, and
 /// its snapshots. Change it with any change to their encoding; a node refuses a data directory

@@ -15,7 +15,7 @@ use e3_protocol::{
     node::Body,
     proof::{SignedProof, ZkProof},
     testing::{address, e3, operator},
-    BlobRef,
+    BlobRef, SealedRef,
 };
 use tempfile::TempDir;
 
@@ -83,6 +83,26 @@ impl BlobStore for Forging {
 
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
         self.0.has(e3, blob)
+    }
+
+    fn serve(&self, _: E3Id, _: &B256) -> Option<Vec<u8>> {
+        Some(b"forged".to_vec())
+    }
+
+    fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError> {
+        self.0.put_sealed(e3, bytes)
+    }
+
+    fn get_sealed(&self, e3: E3Id, secret: &SealedRef) -> Result<Vec<u8>, BlobError> {
+        self.0.get_sealed(e3, secret)
+    }
+
+    fn keep(&self, e3: E3Id, key: &B256, value: &[u8]) -> Result<(), BlobError> {
+        self.0.keep(e3, key, value)
+    }
+
+    fn kept(&self, e3: E3Id, key: &B256) -> Result<Option<Vec<u8>>, BlobError> {
+        self.0.kept(e3, key)
     }
 
     fn close(&self, e3: E3Id) -> Result<(), BlobError> {

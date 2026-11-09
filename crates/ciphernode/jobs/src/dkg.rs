@@ -9,7 +9,7 @@
 //! current node.
 
 use crate::{
-    placeholder, proofs, proofs::Circuits, trbfv, Blobs, JobError, Jobs, OwnShareRows,
+    placeholder, proofs, proofs::Prover, trbfv, Blobs, JobError, Jobs, OwnShareRows,
     RecipientCiphertexts, SealedDecryptionKey,
 };
 use alloy_primitives::{keccak256, Address, B256};
@@ -24,7 +24,7 @@ use e3_protocol::{
     },
     node::CryptoParams,
     proof::{ProofType, SignedProof, ZkProof},
-    BlobRef,
+    BlobRef, SealedRef,
 };
 use e3_trbfv::{
     calculate_decryption_key::{calculate_decryption_key, CalculateDecryptionKeyRequest},
@@ -63,8 +63,6 @@ use fhe::{
 use fhe_traits::{DeserializeParametrized, FheEncoder, Serialize};
 use ndarray::Array2;
 use num_bigint::BigInt;
-use rand::rngs::OsRng;
-use rand_core::UnwrapErr;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -144,7 +142,7 @@ impl<B: Blobs> Jobs<'_, B> {
 
     pub(crate) fn make_encryption_key(&self, params: &CryptoParams) -> Result<OwnKey, JobError> {
         let bfv = trbfv::dkg_params(params)?;
-        let mut rng = UnwrapErr(OsRng);
+        let mut rng = self.rng("encryption key")?;
         let secret = SecretKey::random(&bfv, &mut rng);
         let public = PublicKey::new(&secret, &mut rng);
         let proof = self.prove_encryption_key(params, &public)?;
@@ -215,7 +213,7 @@ impl<B: Blobs> Jobs<'_, B> {
         let party = trbfv::party(committee, dealer)?;
         let config = trbfv::config(params)?;
         let dkg = trbfv::dkg_params(params)?;
-        let mut rng = UnwrapErr(OsRng);
+        let mut rng = self.rng("shares")?;
         let generated = gen_pk_share_and_sk_sss(
             &mut rng,
             self.cipher,
@@ -260,21 +258,22 @@ impl<B: Blobs> Jobs<'_, B> {
             })
             .collect::<Result<Vec<_>, JobError>>()?;
         let slots: Vec<usize> = (0..committee.len()).collect();
-        let encrypt = |secret| {
+        let encrypt = |purpose: String, secret| {
             BfvEncryptedShares::encrypt_all_extended_for_share_indices(
                 secret,
                 &recipient_keys,
                 &slots,
                 &dkg,
-                &mut UnwrapErr(OsRng),
+                &mut self.rng(&purpose)?,
                 Some(party),
             )
             .map_err(JobError::crypto)
         };
-        let (sk_encrypted, sk_witnesses) = encrypt(&sk_sss)?;
+        let (sk_encrypted, sk_witnesses) = encrypt("sk encryption".into(), &sk_sss)?;
         let (esi_encrypted, esi_witnesses): (Vec<_>, Vec<_>) = esi_sss
             .iter()
-            .map(encrypt)
+            .enumerate()
+            .map(|(index, shares)| encrypt(format!("esi encryption {index}"), shares))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .unzip();
@@ -405,7 +404,7 @@ impl<B: Blobs> Jobs<'_, B> {
     /// them.
     fn prove_dealing(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         generated: &GenPkShareAndSkSssResponse,
         sk_sss: &SharedSecret,
@@ -495,7 +494,7 @@ impl<B: Blobs> Jobs<'_, B> {
         &self,
         params: &CryptoParams,
         committee: &[Address],
-        secret: &BlobRef,
+        secret: &SealedRef,
         own_key: &ZkProof,
         message: &SharesMessage,
     ) -> Result<Verdict, JobError> {
@@ -585,8 +584,8 @@ impl<B: Blobs> Jobs<'_, B> {
         &self,
         params: &CryptoParams,
         member: Address,
-        secret: &BlobRef,
-        own_share: &BlobRef,
+        secret: &SealedRef,
+        own_share: &SealedRef,
         shares: &BTreeMap<Address, BlobRef>,
     ) -> Result<OwnDecryptionKey, JobError> {
         let own: OwnShareRows =
@@ -666,7 +665,7 @@ impl<B: Blobs> Jobs<'_, B> {
     #[allow(clippy::too_many_arguments)]
     fn prove_decryption_key(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         dkg: &Arc<BfvParameters>,
         member: Address,
@@ -794,8 +793,7 @@ impl<B: Blobs> Jobs<'_, B> {
         };
         let (work, artifacts) = (self.work("fold"), self.artifacts(prover, params)?);
         let fold = prover
-            .proving(|zk| prove_node_dkg_fold(zk, &input, &work, &artifacts))
-            .map_err(JobError::crypto)?
+            .proving(|zk| prove_node_dkg_fold(zk, &input, &work, &artifacts))?
             .proof;
         let (_, commits) =
             extract_node_fold_agg_commits(&fold, size.n, size.h, rows).map_err(JobError::crypto)?;
@@ -929,13 +927,10 @@ impl<B: Blobs> Jobs<'_, B> {
         };
         // C5 takes the variant the DKG aggregation verifies inside it.
         let work = self.work("c5");
-        let c5 = prover
-            .proving(|zk| {
-                let variant = CircuitVariant::Default;
-                PkAggregationCircuit
-                    .prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)
-            })
-            .map_err(JobError::crypto)?;
+        let c5 = prover.proving(|zk| {
+            let variant = CircuitVariant::Default;
+            PkAggregationCircuit.prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)
+        })?;
         let folds = folds
             .iter()
             .map(|fold| proofs::load(&self.blobs, &fold.proof, CircuitName::NodeFold))
@@ -952,9 +947,9 @@ impl<B: Blobs> Jobs<'_, B> {
             committee_addresses: committee,
         };
         let (work, preset) = (self.work("dkg"), trbfv::threshold_preset(params)?);
-        let proof = prover
-            .proving(|zk| prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size))
-            .map_err(JobError::crypto)?;
+        let proof = prover.proving(|zk| {
+            prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)
+        })?;
         let proof = proofs::store(&self.blobs, &proof)?;
         let commitment = *proof.public_inputs.last().ok_or(JobError::crypto(
             "the DKG aggregation proof has no public inputs",
@@ -974,7 +969,7 @@ impl<B: Blobs> Jobs<'_, B> {
     fn secret_key(
         &self,
         dkg: &Arc<BfvParameters>,
-        secret: &BlobRef,
+        secret: &SealedRef,
     ) -> Result<SecretKey, JobError> {
         deserialize_secret_key(&self.unseal(secret)?, dkg).map_err(JobError::crypto)
     }

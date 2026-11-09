@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::Jobs;
+use alloy_primitives::B256;
 use e3_crypto::Cipher;
-use e3_jobs::{BlobStore, Blobs, JobRunner, MemoryBlobs, Proofs};
+use e3_jobs::{BlobStore, Blobs, JobLimits, JobRunner, MemoryBlobs, Proofs};
 use e3_protocol::{
     node::{CryptoParams, Job, WorkResult},
     BlobRef, E3Id,
@@ -29,7 +30,12 @@ impl RealJobs {
                 let cipher = runtime
                     .block_on(Cipher::from_password(&format!("node {node}")))
                     .expect("a cipher");
-                JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder)
+                let limits = JobLimits {
+                    threads: 2,
+                    scope: B256::with_last_byte(node as u8),
+                };
+                JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder, limits)
+                    .expect("a job runner")
             })
             .collect();
         Self {
@@ -47,7 +53,7 @@ impl RealJobs {
 impl Jobs for RealJobs {
     fn run(&mut self, node: usize, job: &Job) -> WorkResult {
         self.runners[node]
-            .run(job)
+            .run(job, &Default::default())
             .expect("an honest node's job succeeds")
     }
 

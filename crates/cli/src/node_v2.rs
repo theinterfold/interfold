@@ -61,6 +61,7 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         bb: config.bb_binary(),
         circuits: config.circuits_dir(),
         concurrent: config.multithread_concurrent_jobs().unwrap_or(2),
+        bb_timeout: config.bb_timeout(),
     });
     Ok(Config {
         rpc_url: chain.rpc_url.clone(),
@@ -80,6 +81,7 @@ pub async fn config(config: &NodeConfig) -> Result<Config> {
         availability,
         data_dir: crate::node_state::folder(config),
         prover,
+        reserved_threads: config.multithread_reserve_threads(),
         network: network(config, identity),
         operator,
         cipher,

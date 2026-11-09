@@ -16,7 +16,7 @@ use e3_protocol::{
     },
     node::{CryptoParams, Job, Work, WorkResult},
     proof::{ProofType, ZkProof},
-    BlobRef, E3Id,
+    BlobRef, E3Id, SealedRef,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -76,7 +76,7 @@ impl MockJobs {
                 let public = blob(keccak256(proof.data.hash));
                 DkgWorkResult::EncryptionKeyMade(OwnKey {
                     public,
-                    secret: blob(keccak256(public.hash)),
+                    secret: sealed(keccak256(public.hash)),
                     proof,
                 })
             }
@@ -117,7 +117,7 @@ impl MockJobs {
                 };
                 DkgWorkResult::SharesMade(OwnShares {
                     pk_share,
-                    own_share: blob(self.hash()),
+                    own_share: sealed(self.hash()),
                     c1,
                     c2a: match fails {
                         true => ZkProof {
@@ -157,7 +157,7 @@ impl MockJobs {
                     ..proof
                 };
                 DkgWorkResult::DecryptionKeyMade(OwnDecryptionKey {
-                    key: blob(self.hash()),
+                    key: sealed(self.hash()),
                     c4a: binds(self.proof()),
                     c4b: vec![binds(self.proof())],
                 })
@@ -256,6 +256,10 @@ impl MockJobs {
             public_inputs: vec![self.hash()],
         }
     }
+}
+
+fn sealed(hash: B256) -> SealedRef {
+    SealedRef { hash, len: 1_000 }
 }
 
 fn blob(hash: B256) -> BlobRef {

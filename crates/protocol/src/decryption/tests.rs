@@ -16,7 +16,7 @@ use e3_committee::CiphernodesCommitteeSize;
 
 const NOW: u64 = 150_000;
 const PLAINTEXT_BUDGET: u64 = 10 * 60;
-const KEY: BlobRef = BlobRef {
+const KEY: crate::SealedRef = crate::SealedRef {
     hash: B256::repeat_byte(0x4e),
     len: 100,
 };

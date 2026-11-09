@@ -7,7 +7,9 @@
 //! A Minimum committee through every job with real threshold-BFV math: keys, shares, decryption
 //! keys, the committee key, encryption, decryption shares, and the plaintext.
 
-use crate::{trbfv, BlobStore, Blobs, JobRunner, MemoryBlobs, Proofs};
+use crate::{
+    trbfv, Attempt, BlobStore, Blobs, JobError, JobLimits, JobRunner, MemoryBlobs, Proofs,
+};
 use alloy_primitives::{Address, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
@@ -49,14 +51,20 @@ fn job(work: Work) -> Job {
 }
 
 fn dkg(runner: &JobRunner<MemoryBlobs>, work: DkgWork) -> DkgWorkResult {
-    match runner.run(&job(Work::Dkg(work))).unwrap() {
+    match runner
+        .run(&job(Work::Dkg(work)), &Attempt::default())
+        .unwrap()
+    {
         WorkResult::Dkg(result) => result,
         other => panic!("a DKG result, got {other:?}"),
     }
 }
 
 fn decryption(runner: &JobRunner<MemoryBlobs>, work: DecryptionWork) -> DecryptionWorkResult {
-    match runner.run(&job(Work::Decryption(work))).unwrap() {
+    match runner
+        .run(&job(Work::Decryption(work)), &Attempt::default())
+        .unwrap()
+    {
         WorkResult::Decryption(result) => result,
         other => panic!("a decryption result, got {other:?}"),
     }
@@ -69,6 +77,75 @@ fn unsigned(proof: e3_protocol::proof::ZkProof) -> SignedProof {
     }
 }
 
+/// Tests share one store between nodes, as a network would carry their blobs.
+fn runner(blobs: MemoryBlobs, cipher: Cipher, node: u8) -> JobRunner<MemoryBlobs> {
+    let limits = JobLimits {
+        threads: 2,
+        scope: B256::repeat_byte(node),
+    };
+    JobRunner::new(blobs, cipher, Proofs::Placeholder, limits).unwrap()
+}
+
+/// A job that runs again after a restart must use the inputs it drew before: its finished proofs
+/// are only valid for those.
+#[tokio::test]
+async fn a_repeated_job_has_the_same_random_inputs() {
+    let cipher = Cipher::from_password("node").await.unwrap();
+    let runner = runner(MemoryBlobs::default(), cipher, 1);
+    let key = || match dkg(&runner, DkgWork::MakeEncryptionKey) {
+        DkgWorkResult::EncryptionKeyMade(own) => own,
+        other => panic!("{other:?}"),
+    };
+    let (first, second) = (key(), key());
+    assert_eq!(first.public, second.public);
+    assert_eq!(first.proof, second.proof);
+
+    let member = Address::repeat_byte(1);
+    let committee = vec![member, Address::repeat_byte(2), Address::repeat_byte(3)];
+    let keys = BTreeMap::from([(committee[1], first.public), (committee[2], first.public)]);
+    let shares = || {
+        let work = DkgWork::MakeShares {
+            dealer: member,
+            committee: committee.clone(),
+            own_key: first.public,
+            keys: keys.clone(),
+        };
+        match dkg(&runner, work) {
+            DkgWorkResult::SharesMade(made) => made,
+            other => panic!("{other:?}"),
+        }
+    };
+    let (first, second) = (shares(), shares());
+    assert_eq!(first.pk_share, second.pk_share);
+    assert_eq!(first.c1, second.c1);
+    assert_eq!(first.recipients, second.recipients);
+}
+
+/// The seed comes from the operating system: two nodes never draw the same key.
+#[tokio::test]
+async fn nodes_draw_different_keys() {
+    let cipher = || Cipher::from_password("node");
+    let (one, other) = (
+        runner(MemoryBlobs::default(), cipher().await.unwrap(), 1),
+        runner(MemoryBlobs::default(), cipher().await.unwrap(), 1),
+    );
+    let key = |runner: &JobRunner<MemoryBlobs>| match dkg(runner, DkgWork::MakeEncryptionKey) {
+        DkgWorkResult::EncryptionKeyMade(own) => own.public,
+        other => panic!("{other:?}"),
+    };
+    assert_ne!(key(&one), key(&other));
+}
+
+#[tokio::test]
+async fn a_cancelled_job_does_not_run() {
+    let cipher = Cipher::from_password("node").await.unwrap();
+    let runner = runner(MemoryBlobs::default(), cipher, 1);
+    let attempt = Attempt::default();
+    attempt.cancel.cancel();
+    let result = runner.run(&job(Work::Dkg(DkgWork::MakeEncryptionKey)), &attempt);
+    assert!(matches!(result, Err(JobError::Cancelled)));
+}
+
 #[tokio::test]
 async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
     let blobs = MemoryBlobs::default();
@@ -79,7 +156,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
         let cipher = Cipher::from_password(&format!("node {member}"))
             .await
             .unwrap();
-        runners.push(JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder));
+        runners.push(runner(blobs.clone(), cipher, member.0[0]));
     }
 
     let keys: Vec<OwnKey> = runners
@@ -181,7 +258,7 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
 
     // The roster is the first two members; each sums the other's shares and its own.
     let roster = [0, 1];
-    let decryption_keys: Vec<BlobRef> = roster
+    let decryption_keys: Vec<e3_protocol::SealedRef> = roster
         .iter()
         .map(|&member| {
             let other = roster
@@ -316,15 +393,22 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
 async fn a_secret_is_stored_sealed_and_a_key_that_does_not_decode_fails_its_check() {
     let blobs = MemoryBlobs::default();
     let cipher = Cipher::from_password("node").await.unwrap();
-    let runner = JobRunner::new(blobs.clone(), cipher, Proofs::Placeholder);
+    let runner = runner(blobs.clone(), cipher, 1);
     let DkgWorkResult::EncryptionKeyMade(own) = dkg(&runner, DkgWork::MakeEncryptionKey) else {
         panic!("a key");
     };
     let dkg_params = trbfv::dkg_params(&params()).unwrap();
-    let stored = blobs.of(E3).get(&own.secret).unwrap();
+    let stored = blobs.of(E3).get_sealed(&own.secret).unwrap();
     assert!(e3_trbfv::helpers::deserialize_secret_key(&stored, &dkg_params).is_err());
     assert!(e3_trbfv::helpers::deserialize_secret_key(
-        &runner.jobs(E3).unseal(&own.secret).unwrap(),
+        &runner
+            .jobs(
+                &job(Work::Dkg(DkgWork::MakeEncryptionKey)),
+                &Attempt::default()
+            )
+            .unwrap()
+            .unseal(&own.secret)
+            .unwrap(),
         &dkg_params
     )
     .is_ok());
@@ -368,17 +452,22 @@ fn a_node_runs_at_most_its_limit_of_proofs_at_once() {
         "circuits".into(),
         "work".into(),
     );
-    let circuits = Circuits::new(ZkProver::new(&backend), 2).unwrap();
+    let circuits = Circuits::new(ZkProver::new(&backend), 2, 1).unwrap();
+    let attempt = crate::Attempt::default();
+    let prover = circuits.for_attempt(&attempt);
     let (running, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
     thread::scope(|scope| {
         for _ in 0..6 {
             scope.spawn(|| {
-                circuits.proving(|_| {
-                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
-                    most.fetch_max(now, Ordering::SeqCst);
-                    thread::sleep(Duration::from_millis(50));
-                    running.fetch_sub(1, Ordering::SeqCst);
-                })
+                prover
+                    .proving(|_| {
+                        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                        most.fetch_max(now, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(50));
+                        running.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<_, JobError>(())
+                    })
+                    .unwrap()
             });
         }
     });

@@ -4,18 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Bytes stored once per E3 and named by their Keccak-256 hash. The chain adapter stores published
-//! ciphertexts, the network adapter what peers send, and the job runner what it makes; the
-//! protocol only holds references. Each E3 keeps its own copy, so an E3's blobs can go when it
-//! ends even if another E3 has the same bytes.
+//! What a node stores for each E3, in three spaces. Public blobs are what messages carry, named by
+//! their Keccak-256 hash: the only space a peer can read. Sealed secrets are encrypted with the
+//! node's cipher, have their own reference type, and no network path reaches them. Kept values are
+//! what a job saved to resume from after a restart. Each E3 keeps its own copy, so an E3's data can
+//! go when it ends even if another E3 has the same bytes.
 
-use alloy_primitives::{B256, U256};
-use e3_protocol::{BlobRef, E3Id};
+use alloy_primitives::{keccak256, B256, U256};
+use e3_protocol::{BlobRef, E3Id, SealedRef};
 use std::{
     collections::{BTreeSet, HashMap},
     fs::{self, File},
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Condvar, Mutex, MutexGuard,
@@ -24,25 +25,34 @@ use std::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobError {
-    #[error("blob {0:?} is not in the store")]
-    Missing(BlobRef),
-    #[error("blob {0:?} no longer held its bytes, so the store removed it")]
-    Corrupt(BlobRef),
+    #[error("item {0} is not in the store")]
+    Missing(B256),
+    #[error("item {0} no longer held its bytes, so the store removed it")]
+    Corrupt(B256),
     #[error("the blobs of E3 {0} were deleted")]
     Deleted(E3Id),
     #[error("blob store: {0}")]
     Io(#[from] io::Error),
 }
 
-/// Blobs by the E3 whose work made or fetched them.
+/// What a node stores, by the E3 whose work made or fetched it.
 pub trait BlobStore: Clone + Send + Sync + 'static {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool;
-    /// Deletes the blobs of `e3` and refuses its later ones. A job or fetch can finish after its
-    /// E3 ended, so a write under way finishes first and none outlives the deletion.
+    /// The public blob of `e3` with this hash, for a peer that asks. This is the only way out of
+    /// the store for the network.
+    fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>>;
+    /// Stores bytes that the node's cipher already sealed.
+    fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError>;
+    fn get_sealed(&self, e3: E3Id, secret: &SealedRef) -> Result<Vec<u8>, BlobError>;
+    /// Saves a value a job can resume from under `key`; the value is complete on disk on return.
+    fn keep(&self, e3: E3Id, key: &B256, value: &[u8]) -> Result<(), BlobError>;
+    fn kept(&self, e3: E3Id, key: &B256) -> Result<Option<Vec<u8>>, BlobError>;
+    /// Deletes everything of `e3` and refuses its later writes. A job or fetch can finish after
+    /// its E3 ended, so a write under way finishes first and none outlives the deletion.
     fn close(&self, e3: E3Id) -> Result<(), BlobError>;
-    /// Closes every E3 with blobs here that `keep` rejects.
+    /// Closes every E3 with data here that `keep` rejects.
     fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError>;
 
     fn of(&self, e3: E3Id) -> E3Blobs<Self> {
@@ -53,11 +63,15 @@ pub trait BlobStore: Clone + Send + Sync + 'static {
     }
 }
 
-/// The blobs of one E3, for code that works on one.
+/// The store of one E3, for code that works on one.
 pub trait Blobs: Sync {
     fn put(&self, bytes: &[u8]) -> Result<BlobRef, BlobError>;
     fn get(&self, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, blob: &BlobRef) -> bool;
+    fn put_sealed(&self, bytes: &[u8]) -> Result<SealedRef, BlobError>;
+    fn get_sealed(&self, secret: &SealedRef) -> Result<Vec<u8>, BlobError>;
+    fn keep(&self, key: &B256, value: &[u8]) -> Result<(), BlobError>;
+    fn kept(&self, key: &B256) -> Result<Option<Vec<u8>>, BlobError>;
 }
 
 #[derive(Clone)]
@@ -77,6 +91,22 @@ impl<S: BlobStore> Blobs for E3Blobs<S> {
 
     fn has(&self, blob: &BlobRef) -> bool {
         self.store.has(self.e3, blob)
+    }
+
+    fn put_sealed(&self, bytes: &[u8]) -> Result<SealedRef, BlobError> {
+        self.store.put_sealed(self.e3, bytes)
+    }
+
+    fn get_sealed(&self, secret: &SealedRef) -> Result<Vec<u8>, BlobError> {
+        self.store.get_sealed(self.e3, secret)
+    }
+
+    fn keep(&self, key: &B256, value: &[u8]) -> Result<(), BlobError> {
+        self.store.keep(self.e3, key, value)
+    }
+
+    fn kept(&self, key: &B256) -> Result<Option<Vec<u8>>, BlobError> {
+        self.store.kept(self.e3, key)
     }
 }
 
@@ -146,52 +176,104 @@ impl Drop for Running<'_> {
     }
 }
 
-/// Blobs in memory; clones share them.
+/// The three spaces of a store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Space {
+    Public,
+    Sealed,
+    Kept,
+}
+
+impl Space {
+    const ALL: [Space; 3] = [Space::Public, Space::Sealed, Space::Kept];
+
+    fn folder(self) -> &'static str {
+        match self {
+            Space::Public => "public",
+            Space::Sealed => "sealed",
+            Space::Kept => "kept",
+        }
+    }
+}
+
+/// Everything in memory; clones share it.
 #[derive(Clone, Default)]
 pub struct MemoryBlobs {
-    blobs: Arc<Mutex<HashMap<BlobKey, Vec<u8>>>>,
+    items: Arc<Mutex<HashMap<ItemKey, Vec<u8>>>>,
     closing: Arc<Closing>,
 }
 
-type BlobKey = (E3Id, B256);
+type ItemKey = (E3Id, Space, B256);
 
 impl MemoryBlobs {
-    fn lock(&self) -> MutexGuard<'_, HashMap<BlobKey, Vec<u8>>> {
-        self.blobs.lock().expect("no holder of the lock panics")
+    fn lock(&self) -> MutexGuard<'_, HashMap<ItemKey, Vec<u8>>> {
+        self.items.lock().expect("no holder of the lock panics")
+    }
+
+    fn insert(&self, e3: E3Id, space: Space, name: B256, bytes: &[u8]) -> Result<(), BlobError> {
+        self.closing.write(e3, || {
+            self.lock()
+                .entry((e3, space, name))
+                .or_insert_with(|| bytes.to_vec());
+            Ok(())
+        })
+    }
+
+    fn read(&self, e3: E3Id, space: Space, name: &B256) -> Option<Vec<u8>> {
+        self.lock().get(&(e3, space, *name)).cloned()
     }
 }
 
 impl BlobStore for MemoryBlobs {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        self.closing.write(e3, || {
-            let blob = BlobRef::of(bytes);
-            let mut blobs = self.lock();
-            blobs
-                .entry((e3, blob.hash))
-                .or_insert_with(|| bytes.to_vec());
-            Ok(blob)
-        })
+        let blob = BlobRef::of(bytes);
+        self.insert(e3, Space::Public, blob.hash, bytes)?;
+        Ok(blob)
     }
 
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        self.lock()
-            .get(&(e3, blob.hash))
-            .cloned()
-            .ok_or(BlobError::Missing(*blob))
+        self.read(e3, Space::Public, &blob.hash)
+            .ok_or(BlobError::Missing(blob.hash))
     }
 
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
-        self.lock().contains_key(&(e3, blob.hash))
+        self.lock().contains_key(&(e3, Space::Public, blob.hash))
+    }
+
+    fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>> {
+        self.read(e3, Space::Public, hash)
+    }
+
+    fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError> {
+        let secret = SealedRef::of(bytes);
+        self.insert(e3, Space::Sealed, secret.hash, bytes)?;
+        Ok(secret)
+    }
+
+    fn get_sealed(&self, e3: E3Id, secret: &SealedRef) -> Result<Vec<u8>, BlobError> {
+        self.read(e3, Space::Sealed, &secret.hash)
+            .ok_or(BlobError::Missing(secret.hash))
+    }
+
+    fn keep(&self, e3: E3Id, key: &B256, value: &[u8]) -> Result<(), BlobError> {
+        self.closing.write(e3, || {
+            self.lock().insert((e3, Space::Kept, *key), value.to_vec());
+            Ok(())
+        })
+    }
+
+    fn kept(&self, e3: E3Id, key: &B256) -> Result<Option<Vec<u8>>, BlobError> {
+        Ok(self.read(e3, Space::Kept, key))
     }
 
     fn close(&self, e3: E3Id) -> Result<(), BlobError> {
         self.closing.close(e3);
-        self.lock().retain(|(held, _), _| *held != e3);
+        self.lock().retain(|(held, _, _), _| *held != e3);
         Ok(())
     }
 
     fn retain(&self, keep: impl Fn(&E3Id) -> bool) -> Result<(), BlobError> {
-        let e3s: BTreeSet<E3Id> = self.lock().keys().map(|(e3, _)| *e3).collect();
+        let e3s: BTreeSet<E3Id> = self.lock().keys().map(|(e3, _, _)| *e3).collect();
         for e3 in e3s.into_iter().filter(|e3| !keep(e3)) {
             self.close(e3)?;
         }
@@ -199,16 +281,20 @@ impl BlobStore for MemoryBlobs {
     }
 }
 
-/// Blobs as files, one directory per E3, each file named by its hash. A step that names a blob is
-/// journaled after `put` returns, so `put` returns only once the file is complete on disk.
+/// Files, one directory per E3 with one folder per space, each file named by its hash or key. A
+/// step that names an item is journaled after the write returns, so a write returns only once the
+/// file is complete on disk.
 #[derive(Clone)]
 pub struct FileBlobs {
     dir: PathBuf,
     closing: Arc<Closing>,
 }
 
-/// Numbers each write's partial file, so two writers of one blob never share one.
+/// Numbers each write's partial file, so two writers of one item never share one.
 static WRITES: AtomicU64 = AtomicU64::new(0);
+
+/// How many bytes of a kept file are the hash of its value.
+const KEPT_CHECK: usize = 32;
 
 impl FileBlobs {
     /// Opens the store in `dir` and removes the partial files a crash left.
@@ -220,14 +306,8 @@ impl FileBlobs {
             if !e3.is_dir() {
                 continue;
             }
-            for entry in fs::read_dir(e3)? {
-                let path = entry?.path();
-                if path
-                    .extension()
-                    .is_some_and(|extension| extension == "partial")
-                {
-                    fs::remove_file(path)?;
-                }
+            for space in Space::ALL {
+                remove_partial_files(&e3.join(space.folder()))?;
             }
         }
         Ok(Self {
@@ -240,20 +320,17 @@ impl FileBlobs {
         self.dir.join(format!("{}-{}", e3.chain_id, e3.number))
     }
 
-    fn path(&self, e3: E3Id, hash: &B256) -> PathBuf {
-        self.e3_dir(e3).join(hash.to_string())
+    fn path(&self, e3: E3Id, space: Space, name: &B256) -> PathBuf {
+        self.e3_dir(e3).join(space.folder()).join(name.to_string())
     }
 
-    fn write(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        let blob = BlobRef::of(bytes);
-        let path = self.path(e3, &blob.hash);
-        if self.has(e3, &blob) {
-            return Ok(blob);
-        }
-        let dir = self.e3_dir(e3);
-        if !dir.exists() {
-            fs::create_dir_all(&dir)?;
-            File::open(&self.dir)?.sync_all()?;
+    fn write(&self, e3: E3Id, space: Space, name: &B256, bytes: &[u8]) -> Result<(), BlobError> {
+        let path = self.path(e3, space, name);
+        let folder = path.parent().expect("an item's path has a folder");
+        if !folder.exists() {
+            fs::create_dir_all(folder)?;
+            sync_dir(&self.e3_dir(e3))?;
+            sync_dir(&self.dir)?;
         }
         let write = WRITES.fetch_add(1, Ordering::Relaxed);
         let partial = path.with_extension(format!("{}-{write}.partial", std::process::id()));
@@ -261,34 +338,106 @@ impl FileBlobs {
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&partial, &path)?;
-        File::open(&dir)?.sync_all()?;
-        Ok(blob)
+        sync_dir(folder)?;
+        Ok(())
     }
+
+    /// The bytes named by their hash. A file that no longer holds them, as after a disk fault, is
+    /// removed: the store then lacks the item, and a fetch can bring it again.
+    fn read_named(&self, e3: E3Id, space: Space, hash: &B256) -> Result<Vec<u8>, BlobError> {
+        let path = self.path(e3, space, hash);
+        match fs::read(&path) {
+            Ok(bytes) if keccak256(&bytes) == *hash => Ok(bytes),
+            Ok(_) => {
+                fs::remove_file(&path)?;
+                Err(BlobError::Corrupt(*hash))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(BlobError::Missing(*hash)),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    File::open(dir)?.sync_all()
+}
+
+fn remove_partial_files(folder: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(folder) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        entries => entries?,
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "partial")
+        {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 impl BlobStore for FileBlobs {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
-        self.closing.write(e3, || self.write(e3, bytes))
+        let blob = BlobRef::of(bytes);
+        if !self.has(e3, &blob) {
+            self.closing
+                .write(e3, || self.write(e3, Space::Public, &blob.hash, bytes))?;
+        }
+        Ok(blob)
     }
 
-    /// A file that no longer holds the blob's bytes, as after a disk fault, is removed: the store
-    /// then lacks the blob, and a fetch can bring it again.
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        let path = self.path(e3, &blob.hash);
-        match fs::read(&path) {
-            Ok(bytes) if BlobRef::of(&bytes) == *blob => Ok(bytes),
-            Ok(_) => {
-                fs::remove_file(&path)?;
-                Err(BlobError::Corrupt(*blob))
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(BlobError::Missing(*blob)),
-            Err(error) => Err(error.into()),
-        }
+        self.read_named(e3, Space::Public, &blob.hash)
     }
 
     /// Whether a file of the blob's length is here; `get` checks its bytes.
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
-        fs::metadata(self.path(e3, &blob.hash)).is_ok_and(|file| file.len() == blob.len)
+        fs::metadata(self.path(e3, Space::Public, &blob.hash))
+            .is_ok_and(|file| file.len() == blob.len)
+    }
+
+    fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>> {
+        self.read_named(e3, Space::Public, hash).ok()
+    }
+
+    fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError> {
+        let secret = SealedRef::of(bytes);
+        self.closing
+            .write(e3, || self.write(e3, Space::Sealed, &secret.hash, bytes))?;
+        Ok(secret)
+    }
+
+    fn get_sealed(&self, e3: E3Id, secret: &SealedRef) -> Result<Vec<u8>, BlobError> {
+        self.read_named(e3, Space::Sealed, &secret.hash)
+    }
+
+    fn keep(&self, e3: E3Id, key: &B256, value: &[u8]) -> Result<(), BlobError> {
+        let file = [keccak256(value).as_slice(), value].concat();
+        self.closing
+            .write(e3, || self.write(e3, Space::Kept, key, &file))
+    }
+
+    /// A kept value that no longer matches its check, as after a disk fault, is gone: its job
+    /// makes it again.
+    fn kept(&self, e3: E3Id, key: &B256) -> Result<Option<Vec<u8>>, BlobError> {
+        let path = self.path(e3, Space::Kept, key);
+        let file = match fs::read(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        match file.split_at_checked(KEPT_CHECK) {
+            Some((check, value)) if keccak256(value).as_slice() == check => {
+                Ok(Some(value.to_vec()))
+            }
+            _ => {
+                fs::remove_file(&path)?;
+                Ok(None)
+            }
+        }
     }
 
     fn close(&self, e3: E3Id) -> Result<(), BlobError> {
@@ -335,6 +484,62 @@ mod tests {
         }
     }
 
+    fn public(blobs: &FileBlobs, blob: &BlobRef) -> PathBuf {
+        blobs.path(e3(1), Space::Public, &blob.hash)
+    }
+
+    /// A peer that learned a secret's hash still gets nothing: serving reads the public space only.
+    #[test]
+    fn a_sealed_secret_cannot_be_served_even_by_its_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = FileBlobs::open(dir.path()).unwrap();
+        let secret = files.put_sealed(e3(1), b"sealed key share").unwrap();
+        assert_eq!(files.serve(e3(1), &secret.hash), None);
+        assert_eq!(
+            files.get_sealed(e3(1), &secret).unwrap(),
+            b"sealed key share"
+        );
+
+        let memory = MemoryBlobs::default();
+        let secret = memory.put_sealed(e3(1), b"sealed key share").unwrap();
+        assert_eq!(memory.serve(e3(1), &secret.hash), None);
+        assert_eq!(
+            memory.get_sealed(e3(1), &secret).unwrap(),
+            b"sealed key share"
+        );
+    }
+
+    /// A node serves what it stored after a restart too, and nothing can push it out.
+    #[test]
+    fn a_public_blob_is_served_after_the_store_is_opened_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let blob = FileBlobs::open(dir.path())
+            .unwrap()
+            .put(e3(1), b"proof")
+            .unwrap();
+        let reopened = FileBlobs::open(dir.path()).unwrap();
+        assert_eq!(reopened.serve(e3(1), &blob.hash).unwrap(), b"proof");
+        reopened.close(e3(1)).unwrap();
+        assert_eq!(reopened.serve(e3(1), &blob.hash), None);
+    }
+
+    /// A job resumes from what it kept, and a value a disk fault changed reads as absent.
+    #[test]
+    fn a_kept_value_survives_a_restart_and_reads_as_absent_when_damaged() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = B256::repeat_byte(7);
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        assert_eq!(blobs.kept(e3(1), &key).unwrap(), None);
+        blobs.keep(e3(1), &key, b"finished proof").unwrap();
+        let reopened = FileBlobs::open(dir.path()).unwrap();
+        assert_eq!(
+            reopened.kept(e3(1), &key).unwrap().as_deref(),
+            Some(b"finished proof".as_slice())
+        );
+        fs::write(reopened.path(e3(1), Space::Kept, &key), b"damaged").unwrap();
+        assert_eq!(reopened.kept(e3(1), &key).unwrap(), None);
+    }
+
     #[test]
     fn a_file_blob_reads_back_after_the_store_is_opened_again() {
         let dir = tempfile::tempdir().unwrap();
@@ -346,7 +551,7 @@ mod tests {
         assert_eq!(reopened.get(e3(1), &blob).unwrap(), b"share");
         let other = BlobRef::of(b"other");
         assert!(
-            matches!(reopened.get(e3(1), &other), Err(BlobError::Missing(missing)) if missing == other)
+            matches!(reopened.get(e3(1), &other), Err(BlobError::Missing(missing)) if missing == other.hash)
         );
     }
 
@@ -357,10 +562,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let blobs = FileBlobs::open(dir.path()).unwrap();
         let blob = blobs.put(e3(1), b"share").unwrap();
-        fs::write(blobs.path(e3(1), &blob.hash), b"shark").unwrap();
+        fs::write(public(&blobs, &blob), b"shark").unwrap();
         assert!(blobs.has(e3(1), &blob));
         assert!(
-            matches!(blobs.get(e3(1), &blob), Err(BlobError::Corrupt(corrupt)) if corrupt == blob)
+            matches!(blobs.get(e3(1), &blob), Err(BlobError::Corrupt(corrupt)) if corrupt == blob.hash)
         );
         assert!(!blobs.has(e3(1), &blob));
         assert!(matches!(
@@ -370,7 +575,7 @@ mod tests {
 
         assert_eq!(blobs.put(e3(1), b"share").unwrap(), blob);
         assert_eq!(blobs.get(e3(1), &blob).unwrap(), b"share");
-        fs::write(blobs.path(e3(1), &blob.hash), b"sha").unwrap();
+        fs::write(public(&blobs, &blob), b"sha").unwrap();
         assert!(!blobs.has(e3(1), &blob));
         blobs.put(e3(1), b"share").unwrap();
         assert_eq!(blobs.get(e3(1), &blob).unwrap(), b"share");
@@ -386,7 +591,7 @@ mod tests {
             for _ in 0..8 {
                 scope.spawn(|| {
                     for _ in 0..20 {
-                        let _ = fs::remove_file(blobs.path(e3(1), &BlobRef::of(&bytes).hash));
+                        let _ = fs::remove_file(public(&blobs, &BlobRef::of(&bytes)));
                         blobs.put(e3(1), &bytes).unwrap();
                     }
                 });

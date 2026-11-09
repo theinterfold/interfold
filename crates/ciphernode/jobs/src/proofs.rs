@@ -7,8 +7,9 @@
 //! The proofs of the node's work: circuits proved with `bb`, which the deployed verifiers and
 //! peers check, or placeholders, which only the mock verifiers of a test deployment accept.
 
-use crate::{trbfv, Blobs, JobError, Jobs};
+use crate::{trbfv, Attempt, Blobs, JobError, Jobs};
 use alloy_primitives::{keccak256, B256};
+use e3_fhe_params::BfvPreset;
 use e3_protocol::{
     accusation::{disputed_proof, Fault, Verdict},
     node::CryptoParams,
@@ -18,10 +19,10 @@ use e3_protocol::{
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::CircuitName;
 use e3_zk_prover::Proof;
-use e3_zk_prover::{Provable, ZkProver};
+use e3_zk_prover::{Cancel, Provable, ZkProver};
 use num_bigint::BigInt;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use std::{fs, io};
+use std::{fmt::Display, fs, io};
 
 pub enum Proofs {
     Placeholder,
@@ -38,18 +39,30 @@ pub struct Circuits {
 }
 
 impl Circuits {
-    pub fn new(prover: ZkProver, limit: usize) -> Result<Self, JobError> {
+    /// `threads` is how many threads each `bb` may use.
+    pub fn new(prover: ZkProver, limit: usize, threads: usize) -> Result<Self, JobError> {
         let pool = ThreadPoolBuilder::new()
             .num_threads(limit.max(1))
             .thread_name(|index| format!("proof-{index}"))
             .build()
             .map_err(JobError::crypto)?;
+        let prover = prover.with_threads(threads);
         Ok(Self { prover, pool })
     }
 
-    /// Runs `prove` on the proof pool, once one of its threads is free.
-    pub(crate) fn proving<T: Send>(&self, prove: impl FnOnce(&ZkProver) -> T + Send) -> T {
-        self.pool.install(|| prove(&self.prover))
+    /// The circuits as one attempt at a job uses them: it stops with the attempt's token, and
+    /// after a failed attempt `bb` trades speed for a smaller memory peak.
+    pub(crate) fn for_attempt<'a>(&'a self, attempt: &'a Attempt) -> Prover<'a> {
+        let zk = self.prover.with_cancel(attempt.cancel.clone());
+        let zk = match attempt.number {
+            0 => zk,
+            _ => zk.with_slow_low_memory(),
+        };
+        Prover {
+            zk,
+            pool: &self.pool,
+            cancel: &attempt.cancel,
+        }
     }
 
     pub(crate) fn close(&self, e3: E3Id) -> io::Result<()> {
@@ -60,6 +73,49 @@ impl Circuits {
     }
 }
 
+/// One attempt's view of the circuits.
+pub(crate) struct Prover<'a> {
+    zk: ZkProver,
+    pool: &'a ThreadPool,
+    cancel: &'a Cancel,
+}
+
+impl Prover<'_> {
+    fn stop_if_cancelled(&self) -> Result<(), JobError> {
+        match self.cancel.is_cancelled() {
+            true => Err(JobError::Cancelled),
+            false => Ok(()),
+        }
+    }
+
+    /// An error of cancelled work says so, whatever failed first.
+    fn outcome<T>(&self, result: Result<T, impl Display>) -> Result<T, JobError> {
+        self.stop_if_cancelled()?;
+        result.map_err(JobError::crypto)
+    }
+
+    /// Runs `prove` on the proof pool, once one of its threads is free.
+    pub(crate) fn proving<T: Send, E: Display + Send>(
+        &self,
+        prove: impl FnOnce(&ZkProver) -> Result<T, E> + Send,
+    ) -> Result<T, JobError> {
+        self.stop_if_cancelled()?;
+        self.pool.install(|| {
+            self.stop_if_cancelled()?;
+            self.outcome(prove(&self.zk))
+        })
+    }
+
+    fn verify(&self, proof: &Proof, work: &str, artifacts: &str) -> Result<bool, JobError> {
+        self.stop_if_cancelled()?;
+        self.outcome(self.zk.verify_proof(proof, work, 0, artifacts))
+    }
+
+    fn artifacts(&self, preset: BfvPreset, committee: &str) -> String {
+        self.zk.resolve_artifacts_dir(preset, committee)
+    }
+}
+
 /// Each E3's proofs run `bb` in a directory of its own, which goes when the E3's work ends.
 fn directory(e3: E3Id) -> String {
     format!("{}-{}", e3.chain_id, e3.number)
@@ -67,46 +123,51 @@ fn directory(e3: E3Id) -> String {
 
 impl<B: Blobs> Jobs<'_, B> {
     /// The circuits, or none where placeholders stand in.
-    pub(crate) fn prover(&self) -> Option<&Circuits> {
-        match self.proofs {
-            Proofs::Placeholder => None,
-            Proofs::Circuits(circuits) => Some(circuits),
-        }
+    pub(crate) fn prover(&self) -> Option<&Prover<'_>> {
+        self.prover.as_ref()
     }
 
     /// Prove `input` with the request's compiled `circuit` and store the proof. `work` names it
-    /// among this E3's proofs, since every proof runs `bb` in its own directory.
+    /// among this job's proofs, since every proof runs `bb` in its own directory. A repeated job
+    /// has the same inputs (its random ones come from its kept seed), so a proof it finished
+    /// before is taken as it is; a release with other circuits does not find it.
     pub(crate) fn prove<C: Provable>(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         circuit: C,
         config: &C::Config,
         input: &C::Input,
         work: &str,
     ) -> Result<ZkProof, JobError> {
+        let key = self.proof_key(work);
+        if let Some(kept) = self.blobs.kept(&key)? {
+            return bincode::deserialize(&kept).map_err(JobError::crypto);
+        }
         let (work, artifacts) = (self.work(work), self.artifacts(prover, params)?);
-        let proof = prover
-            .proving(|zk| circuit.prove(zk, config, input, &work, &artifacts))
-            .map_err(JobError::crypto)?;
-        store(&self.blobs, &proof)
+        let proof = prover.proving(|zk| circuit.prove(zk, config, input, &work, &artifacts))?;
+        let proof = store(&self.blobs, &proof)?;
+        let encoded = bincode::serialize(&proof).map_err(JobError::crypto)?;
+        self.blobs.keep(&key, &encoded)?;
+        Ok(proof)
+    }
+
+    fn proof_key(&self, work: &str) -> B256 {
+        keccak256([self.scope.as_slice(), self.job.as_slice(), work.as_bytes()].concat())
     }
 
     /// The verdict on proofs a member signed: the first that fails, or valid. A verifier that
     /// cannot run is an error, not a failing proof.
     pub(crate) fn verdict<'a>(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
         proofs: impl IntoIterator<Item = (ProofType, &'a ZkProof)>,
     ) -> Result<Verdict, JobError> {
         let artifacts = self.artifacts(prover, params)?;
         for (proof_type, proof) in proofs {
             let loaded = load(&self.blobs, proof, circuit(proof_type))?;
-            let valid = prover
-                .prover
-                .verify_proof(&loaded, &self.work("verify"), 0, &artifacts)
-                .map_err(JobError::crypto)?;
+            let valid = prover.verify(&loaded, &self.work("verify"), &artifacts)?;
             if !valid {
                 return Ok(Verdict::Fails(Fault {
                     proof_type,
@@ -127,13 +188,11 @@ impl<B: Blobs> Jobs<'_, B> {
     /// The directory of the request's compiled circuits.
     pub(crate) fn artifacts(
         &self,
-        prover: &Circuits,
+        prover: &Prover<'_>,
         params: &CryptoParams,
     ) -> Result<String, JobError> {
         let preset = trbfv::threshold_preset(params)?;
-        Ok(prover
-            .prover
-            .resolve_artifacts_dir(preset, params.committee_size.as_str()))
+        Ok(prover.artifacts(preset, params.committee_size.as_str()))
     }
 
     pub(crate) fn work(&self, name: &str) -> String {

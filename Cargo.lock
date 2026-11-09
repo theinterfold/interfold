@@ -3927,11 +3927,13 @@ dependencies = [
  "ndarray",
  "num-bigint 0.5.1",
  "rand 0.9.5",
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
  "rayon",
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
