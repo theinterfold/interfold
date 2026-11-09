@@ -858,13 +858,8 @@ async fn audit_histories(
     // key appeared.
     env.flush_nodes().await?;
     let holders = aggregator_role_histories(&env.nodes, &request.connected(), &env.e3_id).await?;
-    let role_events: Vec<InterfoldEvent> = holders
-        .iter()
-        .flat_map(|(_, history)| history.iter().cloned())
-        .collect();
 
-    let roster = accepted_roster(&role_events, &env.e3_id);
-    check_roster_built_key(&roster, key);
+    let roster = key_roster(key);
     if let Some(party) = request.offline_party {
         assert!(
             !roster.contains(&(party as u64)),
@@ -873,41 +868,26 @@ async fn audit_histories(
     }
     await_standby_share(env, request, &roster).await?;
 
-    let holder_nodes: Vec<usize> = holders.iter().map(|(node, _)| *node).collect();
-    check_key_submissions(env, &holder_nodes, key).await?;
+    check_key_submissions(&holders, &env.e3_id, key, &roster);
     check_no_faults(env, request).await?;
-    Ok(role_events)
+    Ok(holders
+        .into_iter()
+        .flat_map(|(_, history)| history.iter().cloned().collect::<Vec<_>>())
+        .collect())
 }
 
-/// The DKG roster every aggregator-role holder accepted; they must agree.
-fn accepted_roster(events: &[InterfoldEvent], e3_id: &E3id) -> Vec<u64> {
-    let rosters: Vec<&Vec<u64>> = events
+/// The party ids of the honest committee the published key lists, in the key's order.
+fn key_roster(key: &PublicKeyAggregated) -> Vec<u64> {
+    key.honest_committee_addresses
         .iter()
-        .filter_map(|event| match event.get_data() {
-            InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == *e3_id => {
-                Some(&data.party_ids)
-            }
-            _ => None,
+        .map(|address| {
+            key.committee_addresses
+                .iter()
+                .position(|member| member == address)
+                .expect("the published key lists an honest node outside the committee")
+                as u64
         })
-        .collect();
-    assert!(
-        !rosters.is_empty(),
-        "aggregator did not accept a DKG roster"
-    );
-    assert!(
-        rosters.iter().all(|roster| *roster == rosters[0]),
-        "aggregator accepted conflicting DKG rosters"
-    );
-    rosters[0].clone()
-}
-
-/// The accepted roster is the one the published key was built from.
-fn check_roster_built_key(roster: &[u64], key: &PublicKeyAggregated) {
-    let selected_addresses: Vec<Address> = roster
-        .iter()
-        .map(|&party_id| key.committee_addresses[party_id as usize])
-        .collect();
-    assert_eq!(selected_addresses, key.honest_committee_addresses);
+        .collect()
 }
 
 /// The aggregator can publish before a standby party's share lands; the standby party still has
@@ -937,30 +917,42 @@ async fn await_standby_share(env: &Env, request: &Request, roster: &[u64]) -> Re
 
 /// The runtime lets a demoted holder finish and submit the key it computed, and the chain keeps
 /// the first valid submission. Every submission must therefore be the key the committee goes on
-/// to use. A holder's own submission is `Local`; peers forward copies.
-async fn check_key_submissions(
-    env: &Env,
-    holders: &[usize],
+/// to use, built from the roster that key lists. A holder's own submission is `Local`; peers
+/// forward copies. A better-ranked proposal can replace an accepted roster until C4 fixes it, so
+/// each holder is checked against the last roster it selected before it submitted.
+fn check_key_submissions(
+    holders: &[(usize, CiphernodeHistory)],
+    e3_id: &E3id,
     key: &PublicKeyAggregated,
-) -> Result<()> {
+    roster: &[u64],
+) {
     let mut submissions = 0;
-    for &node_index in holders {
-        for event in env.nodes.get_history(node_index).await?.iter() {
-            if let (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data)) =
-                (event.source(), event.get_data())
-            {
-                if data.e3_id == env.e3_id {
+    for (node_index, history) in holders {
+        let mut selected: Option<&Vec<u64>> = None;
+        for event in history.iter() {
+            match (event.source(), event.get_data()) {
+                (_, InterfoldEventData::CommitmentRosterSelected(data)) if data.e3_id == *e3_id => {
+                    selected = Some(&data.party_ids);
+                }
+                (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data))
+                    if data.e3_id == *e3_id =>
+                {
                     submissions += 1;
                     assert!(
                         data.pubkey == key.pubkey,
                         "role holder {node_index} submitted a public key that differs from the one the committee used"
                     );
+                    assert_eq!(
+                        selected.map(Vec::as_slice),
+                        Some(roster),
+                        "role holder {node_index} submitted a key without having selected the roster it lists"
+                    );
                 }
+                _ => {}
             }
         }
     }
     assert!(submissions > 0, "no role holder submitted the public key");
-    Ok(())
 }
 
 /// No node may have accused, expelled, or failed anyone, or logged an actor error. The
