@@ -24,7 +24,7 @@ flags with their default values. The source of truth is the clap definitions in 
 | [Operator on-chain lifecycle](#operator-on-chain-lifecycle) | `ciphernode set-bond-owner`, `propose-bond-owner`, `accept-bond-owner`, `bond`, `tickets`, `register`, `deregister`, `activate`, `deactivate`, `status`, `faucet` |
 | [Keys and secrets](#keys-and-secrets)                       | `password set`, `password delete`, `wallet set`, `wallet get`                                                                                                     |
 | [Network](#network-commands)                                | `net get-peer-id`                                                                                                                                                 |
-| [Maintenance](#maintenance-commands)                        | `node validate`, `node reset-data`, `config check`, `rev`, `purge-all`                                                                                            |
+| [Maintenance](#maintenance-commands)                        | `node validate`, `node events`, `node reset-data`, `config check`, `rev`, `purge-all`                                                                             |
 
 Run `interfold <command> --help` to print the help text of one command. Run `interfold --version` to
 print the release version.
@@ -734,6 +734,21 @@ interfold node validate [--repair]
 
 The command takes the same data-folder lock as `interfold start`. Stop the node before you run it.
 Use it before an upgrade and after a crash. See [Upgrades](/operate/upgrades).
+
+### `interfold node events`
+
+Prints what the node noted for its operator, oldest first: DKG failures, Ready reports, accepted
+rosters, and proofs that failed. The command reads the node's feed and changes nothing, also while
+the node runs. The feed is bounded, so the oldest notes go first.
+
+```bash
+interfold node events [--since <sequence>] [--limit <count>]
+```
+
+| Flag      | Value  | Default | Description                            |
+| --------- | ------ | ------- | -------------------------------------- |
+| `--since` | Number | `0`     | Prints only notes after this sequence. |
+| `--limit` | Number | `100`   | Prints at most this many notes.        |
 
 ### `interfold node reset-data`
 

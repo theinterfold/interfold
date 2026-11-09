@@ -168,14 +168,14 @@ The keys below matter most on an operator node. The
 [Configuration Reference](/reference/configuration#node-keys) lists every node key, and
 [Chain keys](/reference/configuration#chain-keys) lists every chain key.
 
-| Key (under `node:`)           | Default                       | Meaning                                                                                         |
-| ----------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- |
-| `network`                     | Inferred from the chains      | P2P profile: `mainnet`, `sepolia`, or `local`.                                                  |
-| `quic_port`                   | `9091`                        | UDP port of the QUIC listener.                                                                  |
-| `peers`                       | Empty (profile DNS bootstrap) | libp2p addresses to dial. See [Networking](#networking).                                        |
-| `multithread_concurrent_jobs` | `2`                           | Requested prover jobs. The node lowers it to fit memory.                                        |
-| `startup_timeout_secs`        | `1800`                        | Time limit for startup and the first sync. After it, the node exits with an error.              |
-| `autowallet`                  | `false`                       | `true` generates a random wallet when none is stored. That key is not your registered operator. |
+| Key (under `node:`)           | Default                       | Meaning                                                                                                                                   |
+| ----------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `network`                     | Inferred from the chains      | P2P profile: `mainnet`, `sepolia`, or `local`.                                                                                            |
+| `quic_port`                   | `9091`                        | UDP port of the QUIC listener.                                                                                                            |
+| `peers`                       | Empty (profile DNS bootstrap) | libp2p addresses to dial. See [Networking](#networking).                                                                                  |
+| `multithread_concurrent_jobs` | `2`                           | Requested prover jobs. The node lowers it to fit memory.                                                                                  |
+| `startup_timeout_secs`        | `1800`                        | Time limit for the startup checks, and for going without a chain read before the first sync ends. After it, the node exits with an error. |
+| `autowallet`                  | `false`                       | `true` generates a random wallet when none is stored. That key is not your registered operator.                                           |
 
 | Key (under each `chains:` entry) | Default  | Meaning                                                                                                   |
 | -------------------------------- | -------- | --------------------------------------------------------------------------------------------------------- |

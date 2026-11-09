@@ -27,14 +27,14 @@
         {
           "name": "per-job witness and proof files in the bb work dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/prover.rs@291@let job_dir = self"
+          "ref": "crates/zk/prover/src/prover.rs@347@let job_dir = self"
         }
       ],
       "key_types": [
         {
           "name": "ZkProver",
           "what": "runs bb prove and bb verify as subprocesses with a wall-clock cap",
-          "ref": "crates/zk/prover/src/prover.rs@143@pub struct ZkProver"
+          "ref": "crates/zk/prover/src/prover.rs@181@pub struct ZkProver"
         },
         {
           "name": "Provable",
@@ -74,7 +74,7 @@
       ],
       "read_first": [
         { "why": "inputs, then witness, then prove for one circuit", "ref": "crates/zk/prover/src/traits.rs@56@fn prove_with_variant(" },
-        { "why": "the exact bb prove arguments", "ref": "crates/zk/prover/src/prover.rs@313@let mut args = vec![" },
+        { "why": "the exact bb prove arguments", "ref": "crates/zk/prover/src/prover.rs@369@let mut args = vec![" },
         {
           "why": "the backend: bb, the circuits and the work folder",
           "ref": "crates/zk/prover/src/backend/mod.rs@53@pub fn new(bb_binary: BBPath, circuits_dir: PathBuf, work_dir: PathBuf) -> Self {"
@@ -83,7 +83,7 @@
           "why": "install the pinned bb and circuits when missing",
           "ref": "crates/zk/prover/src/backend/setup.rs@84@pub async fn ensure_installed(&self) -> Result<(), ZkError> {"
         },
-        { "why": "verify another node's proof", "ref": "crates/zk/prover/src/prover.rs@376@pub fn verify_proof(" }
+        { "why": "verify another node's proof", "ref": "crates/zk/prover/src/prover.rs@432@pub fn verify_proof(" }
       ],
       "rust_patterns": [
         {

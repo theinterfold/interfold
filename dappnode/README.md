@@ -48,8 +48,8 @@ volumes.
 
 ## Updates and maintenance
 
-To upgrade, wait until the **Updates** view of the Node dashboard shows no active E3. Then update
-the package in Dappnode. The package restarts the node with the new release.
+To upgrade, wait until the Node dashboard lists no E3 that still owes work. Then update the package
+in Dappnode. The package restarts the node with the new release.
 
 When a release raises the storage schema, the package resets the node state before the node starts.
 The reset keeps the operator key and the libp2p key, and the node then syncs again from the chain.

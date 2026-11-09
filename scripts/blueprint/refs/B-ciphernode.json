@@ -3,36 +3,36 @@
     "id": "B1",
     "supported": true,
     "refs": [
-      "crates/cli/src/start.rs@55@e3_node::launch::launch(node)",
-      "crates/ciphernode/node/src/launch.rs@101@pub async fn launch(config: Config) -> anyhow::Result<()> {"
+      "crates/cli/src/start.rs@59@e3_node::launch::launch(node, stop)",
+      "crates/ciphernode/node/src/launch.rs@124@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
     ],
     "line_text": [
-      "result = e3_node::launch::launch(node) => result.context(\"the node stopped\"),",
-      "pub async fn launch(config: Config) -> anyhow::Result<()> {"
+      "e3_node::launch::launch(node, stop)",
+      "pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
     ],
     "note": "interfold start runs e3_node::launch::launch, which builds the adapters and runs the node."
   },
   {
     "id": "B2",
     "supported": true,
-    "refs": ["crates/cli/src/node_v2.rs@18@pub async fn config(config: &NodeConfig) -> Result<Config> {"],
-    "line_text": ["pub async fn config(config: &NodeConfig) -> Result<Config> {"],
+    "refs": ["crates/cli/src/node_v2.rs@21@pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> {"],
+    "line_text": ["pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> {"],
     "note": "The CLI maps the operator's configuration file into the node's launch configuration."
   },
   {
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/ciphernode/chain/src/writer.rs@216@let data = Registry::submitTicketCall {",
-      "crates/ciphernode/chain/src/writer.rs@269@let data = IInterfold::publishPlaintextOutputCall {",
-      "crates/ciphernode/chain/src/writer.rs@304@let data = ISlashingManager::proposeSlashCall {",
-      "crates/ciphernode/node/src/launch.rs@144@rpc_client(&http_url(&config.rpc_url)?, auth, poll)"
+      "crates/ciphernode/chain/src/writer.rs@245@let data = Registry::submitTicketCall {",
+      "crates/ciphernode/chain/src/writer.rs@299@let data = IInterfold::publishPlaintextOutputCall {",
+      "crates/ciphernode/chain/src/writer.rs@340@let data = ISlashingManager::proposeSlashCall {",
+      "crates/ciphernode/chain/src/link.rs@63@pub async fn connect(&self) -> Result<RpcClient, RpcError> {"
     ],
     "line_text": [
       "let data = Registry::submitTicketCall {",
       "let data = IInterfold::publishPlaintextOutputCall {",
       "let data = ISlashingManager::proposeSlashCall {",
-      ".connect_client(rpc_client(&http_url(&config.rpc_url)?, auth, poll).await?);"
+      "pub async fn connect(&self) -> Result<RpcClient, RpcError> {"
     ],
     "note": "The writer turns submissions into contract calls; the wallet sends them over the HTTP form of the RPC URL."
   },
@@ -40,8 +40,8 @@
     "id": "B4",
     "supported": true,
     "refs": [
-      "crates/ciphernode/chain/src/rpc.rs@58@.subscribe_logs(&filter)",
-      "crates/ciphernode/chain/src/reader.rs@201@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
+      "crates/ciphernode/chain/src/rpc.rs@59@.subscribe_logs(&filter)",
+      "crates/ciphernode/chain/src/reader.rs@220@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
       "crates/ciphernode/chain/src/decode.rs@194@I::E3Requested::SIGNATURE_HASH => {"
     ],
     "line_text": [
@@ -55,8 +55,8 @@
     "id": "B5",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@297@async fn read_chain<R: Rpc>(",
-      "crates/ciphernode/node/src/runtime.rs@311@events.send(Event::Input(Input::Chain(fact)))"
+      "crates/ciphernode/node/src/runtime.rs@373@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@392@events.send(Event::Input(Input::Chain(fact)))"
     ],
     "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
     "note": "The chain reader's task sends each fact to the event loop as an input."
@@ -64,8 +64,8 @@
   {
     "id": "B6",
     "supported": true,
-    "refs": ["crates/ciphernode/node/src/runtime.rs@329@async fn forward_peers("],
-    "line_text": ["async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::Sender<Event>) {"],
+    "refs": ["crates/ciphernode/node/src/runtime.rs@216@message = inbox.next() => {"],
+    "line_text": ["message = inbox.next() => {"],
     "note": "Admitted peer messages reach the event loop as inputs."
   },
   {
@@ -73,7 +73,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
-      "crates/protocol/src/node.rs@987@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+      "crates/protocol/src/node.rs@1159@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
       "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
@@ -95,8 +95,8 @@
     "id": "B9",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@128@Engine::open(parts.journal, genesis, settings.snapshot_every)",
-      "crates/ciphernode/node/src/runtime.rs@210@queue.extend(effects.dispatch(pending));"
+      "crates/ciphernode/node/src/runtime.rs@133@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@264@queue.extend(effects.dispatch(pending));"
     ],
     "line_text": [
       "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",
@@ -108,70 +108,67 @@
     "id": "B10",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@380@Effect::Submit(submission)",
-      "crates/ciphernode/node/src/runtime.rs@420@match writer.submit(&submission).await {"
+      "crates/ciphernode/node/src/effects.rs@175@Effect::Submit(submission) => self.submit(key, submission),",
+      "crates/ciphernode/node/src/effects.rs@224@match writer.submit(&submission).await {"
     ],
-    "line_text": [
-      "Effect::Submit(submission) => (submission.e3, self.submit(key, submission)),",
-      "match writer.submit(&submission).await {"
-    ],
+    "line_text": ["Effect::Submit(submission) => self.submit(key, submission),", "match writer.submit(&submission).await {"],
     "note": "A submission effect goes to the writer."
   },
   {
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@375@Effect::Gossip(message) => {",
-      "crates/ciphernode/node/src/runtime.rs@490@network.publish(envelope)"
+      "crates/ciphernode/node/src/effects.rs@169@Effect::Gossip(message) => self.gossip(key, message),",
+      "crates/ciphernode/node/src/effects.rs@309@network.publish(envelope)"
     ],
-    "line_text": ["Effect::Gossip(message) => {", "if let Err(failure) = network.publish(envelope).await {"],
+    "line_text": ["Effect::Gossip(message) => self.gossip(key, message),", "if let Err(failure) = network.publish(envelope).await {"],
     "note": "A gossip effect is signed and published to the peers."
   },
   {
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@379@Effect::Run(job) => (job.e3, self.run(key, job)),",
-      "crates/ciphernode/jobs/src/lib.rs@100@pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"
+      "crates/ciphernode/node/src/effects.rs@170@Effect::Run(job) => {",
+      "crates/ciphernode/jobs/src/lib.rs@144@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
     ],
-    "line_text": ["Effect::Run(job) => (job.e3, self.run(key, job)),", "pub fn run(&self, job: &Job) -> Result<WorkResult, JobError> {"],
+    "line_text": ["Effect::Run(job) => {", "pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"],
     "note": "A job effect runs on the job runner; its result comes back as an input."
   },
   {
     "id": "B13",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@381@Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),",
-      "crates/ciphernode/node/src/runtime.rs@553@availability.retrieve(reference)"
+      "crates/ciphernode/node/src/effects.rs@176@Effect::Fetch(fetch) => self.fetch(key, fetch),",
+      "crates/ciphernode/node/src/effects.rs@378@availability.retrieve(reference)"
     ],
-    "line_text": ["Effect::Fetch(fetch) => (fetch.e3, self.fetch(key, fetch)),", "match availability.retrieve(reference).await {"],
+    "line_text": ["Effect::Fetch(fetch) => self.fetch(key, fetch),", "match availability.retrieve(reference).await {"],
     "note": "A fetch effect reads a ciphertext from the availability layer."
   },
   {
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/swarm.rs@677@.send_request(&peer, (e3, blob.hash));",
-      "crates/ciphernode/p2p/src/swarm.rs@700@.send_response(channel, bytes);"
+      "crates/ciphernode/p2p/src/driver.rs@671@.send_request(&read.peer, (read.e3, read.hash));",
+      "crates/ciphernode/p2p/src/driver.rs@386@Some((channel, bytes)) = self.served.recv() => {"
     ],
-    "line_text": [".send_request(&peer, (e3, blob.hash));", ".send_response(channel, bytes);"],
+    "line_text": [".send_request(&read.peer, (read.e3, read.hash));", "Some((channel, bytes)) = self.served.recv() => {"],
     "note": "A node fetches a message's blobs from its publisher with a request-response protocol and serves its own."
   },
   {
     "id": "B15",
     "supported": true,
-    "refs": ["crates/ciphernode/jobs/src/proofs.rs@52@self.pool.install(|| prove(&self.prover))"],
-    "line_text": ["self.pool.install(|| prove(&self.prover))"],
+    "refs": ["crates/ciphernode/jobs/src/proofs.rs@105@self.pool.install(|| {"],
+    "line_text": ["self.pool.install(|| {"],
     "note": "Proof jobs run on their own bounded thread pool."
   },
   {
     "id": "B16",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/lib.rs@140@Ok(self.blobs.put(&sealed)?)",
-      "crates/ciphernode/jobs/src/proofs.rs@92@store(&self.blobs, &proof)"
+      "crates/ciphernode/jobs/src/lib.rs@196@self.blobs.put_sealed",
+      "crates/ciphernode/jobs/src/proofs.rs@162@store(&self.blobs, &proof)"
     ],
-    "line_text": ["Ok(self.blobs.put(&sealed)?)", "store(&self.blobs, &proof)"],
+    "line_text": ["Ok(self.blobs.put_sealed(&self.sealed(secret)?)?)", "let proof = store(&self.blobs, &proof)?;"],
     "note": "Jobs store their results, sealed secrets and proofs, in the E3's blobs and pass references back."
   }
 ]

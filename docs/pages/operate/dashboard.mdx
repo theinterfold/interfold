@@ -1,7 +1,7 @@
 ---
 title: 'Node Dashboard'
 description:
-  'Enable the local ciphernode dashboard on 127.0.0.1, read its views and JSON API, and use the
+  'Turn on the read-only status page of a ciphernode on 127.0.0.1, read its JSON form, and use the
   hosted Interfold dashboard for network data and the operator guide.'
 ---
 
@@ -10,27 +10,24 @@ import { LinkCard, LinkCards } from '@/components/ui'
 
 # Node Dashboard
 
-The Interfold has two dashboards. The local node dashboard runs inside your ciphernode process and
+The Interfold has two dashboards. The local status page runs inside your ciphernode process and
 shows what that node knows. The hosted dashboard is a public web app that reads the chain. This page
-is for operators who monitor a ciphernode. At the end, you can enable the local dashboard and open
-it safely from another computer. You can also read its JSON API, send alerts from it, and you know
-when to use the hosted dashboard.
+is for operators who monitor a ciphernode. At the end, you can turn on the status page and open it
+safely from another computer, and you know when to use the hosted dashboard.
 
-| Dashboard        | Where it runs                                    | Data source                                                     | Use it to                                                                       |
-| ---------------- | ------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Local dashboard  | In the `interfold start` process, on `127.0.0.1` | The EventStore of the node, live P2P state, logs, and RPC reads | Check peers, E3 traces, protocol events, and logs of one node                   |
-| Hosted dashboard | `https://dashboard.theinterfold.com`             | Contract events and views of one network                        | Inspect any E3, watch CRISP polls, and set up an operator from a browser wallet |
+| Dashboard        | Where it runs                                    | Data source                                         | Use it to                                                                       |
+| ---------------- | ------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Status page      | In the `interfold start` process, on `127.0.0.1` | The state of the node, its peers, and what it noted | Check peers, the chain position, activation, and the E3s the node holds         |
+| Hosted dashboard | `https://dashboard.theinterfold.com`             | Contract events and views of one network            | Inspect any E3, watch CRISP polls, and set up an operator from a browser wallet |
 
-## Local node dashboard
+## Local status page
 
-The `interfold` binary includes the local dashboard. It needs no separate installation. It is off
-until you set a port.
-
-### Enable the dashboard
+The `interfold` binary includes the status page. It needs no separate installation. It is off until
+you set a port.
 
 <Steps>
 
-### Set the dashboard port
+### Set the port
 
 Add `dashboard_port` to the node definition in the configuration file. For the default node, use the
 `node` key:
@@ -49,184 +46,44 @@ use `E3_NODES__<NAME>__DASHBOARD_PORT`.
 
 ### Restart the node
 
-Stop the node, then start it again with `interfold start -v`.
-
-The dashboard starts after the node finishes its startup. With `-v`, the log shows this line:
+Stop the node, then start it again. The log shows this line:
 
 ```text
-Dashboard available at http://127.0.0.1:9092
+node status at http://127.0.0.1:9092
 ```
 
-### Open the dashboard
+If the port is in use, the node logs a warning and runs without the page.
 
-On the computer that runs the node, open `http://127.0.0.1:9092` in a browser.
+### Open the page
 
-The page title is **Interfold · Node Observatory**. The chip at the top right shows the node name.
+The page has no login and only reads. It binds to `127.0.0.1`, so open it on the host of the node.
+From another computer, use an SSH tunnel:
+
+```bash
+ssh -L 9092:127.0.0.1:9092 <user>@<node-host>
+```
+
+Then open `http://127.0.0.1:9092`. Do not publish the port to a network.
 
 </Steps>
 
-<Callout type='warning'>
-  The dashboard has no authentication. Its API returns detailed protocol payloads and node
-  diagnostics. The server binds only to `127.0.0.1` for this reason. A port forward to a public
-  interface exposes this data to every client that can reach it.
-</Callout>
+### What the page shows
 
-### Open the dashboard from another computer
+The page reloads every five seconds.
 
-The dashboard listens only on the loopback interface of the host that runs the node. To open it from
-your own computer, use an SSH tunnel:
+| Part               | Meaning                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Operator and chain | The operator address, the chain, and the block the node has read to, of the newest it knows.                       |
+| Peers connected    | The peers the node has a connection to now.                                                                        |
+| Active             | Whether the operator is active on the chain, as the logs the node has read say.                                    |
+| Listed             | Whether the ciphernode registry lists the operator. An operator that is not listed cannot submit tickets.          |
+| E3s                | Each E3 the node holds, its stage, and what the node would give up if its state were deleted.                      |
+| Recent notes       | DKG failures, Ready reports, accepted rosters, and proofs that failed. `interfold node events` prints all of them. |
 
-```bash
-ssh -L 9092:127.0.0.1:9092 user@your-server
-```
+Before you stop a node for an update, check that the page shows no E3 that still owes work.
 
-Keep the SSH session open, then open `http://127.0.0.1:9092` on your own computer.
-
-In a container, `127.0.0.1` is the loopback interface of the container. A port that you publish with
-Docker does not reach it. Open the dashboard from the network namespace of the node process.
-
-### Views
-
-The dashboard has six views. The address of each view is `#<view>`, for example `#logs`, so you can
-bookmark it. The views refresh automatically while the browser tab is visible.
-
-| View           | What it shows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Overview**   | Operator address and peer ID. Network reach (connected and configured peers), registered and active nodes, E3 counts, and the number of durable events. The connected peers with remote address and direction. The on-chain operator state for each chain. The 12 newest protocol events.                                                                                                                                                                                                                  |
-| **E3 traces**  | Each E3 that this node saw. For the selected E3, the events of each phase: Request, Committee formation, DKG · C0, DKG · C1–C4, Key publication · C5, Encrypted computation, Decryption · C6–C7, and Output & rewards.                                                                                                                                                                                                                                                                                     |
-| **Flow graph** | The events of one E3 as a graph by phase, with an arrow from each event to the events that it caused.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Events**     | Up to 2,000 recent durable events from the EventStore. You can search, and filter by source (Local, Network, EVM) and by level (Errors, Warnings, Info, Debug).                                                                                                                                                                                                                                                                                                                                            |
-| **Logs**       | The operational log entries that the node keeps in memory. You can search, and filter by level. Each entry shows its fields, and the E3 ID and stage when they are present.                                                                                                                                                                                                                                                                                                                                |
-| **Updates**    | The installed version, the latest stable GitHub release and its notes, the number of active E3s, and a safe update sequence. The count is the E3s that this node is in while they run, and failed ones for one day after the failure. For failed E3s the count is an estimate: their slash reports are due until one day after the lifecycle deadline (see the [report deadline](/operate/upgrades#if-the-command-refuses)), which the dashboard does not know. The dashboard does not replace the binary. |
-
-The **Operator state** card on the Overview reads the chain at most once every 15 s. It shows the
-status: Active, Registered, Not registered, or Exit queued. It also shows the available tickets, the
-ticket balance, the ciphernode bond, and the node counts. The ticket balance and the ciphernode bond
-are raw token base units. Hover over a value to see the full number.
-
-The **Rewards** count on the card shows the number of E3 rewards that the operator earned as a
-committee member. The dashboard finds the reward of the operator in the `RewardsDistributed` and
-`RewardCredited` events of each E3. The count includes rewards that go to a separate bond owner
-wallet. See [Rewards](/operate/exits-and-slashing#rewards).
-
-The Events view gives each event a level:
-
-| Level    | Events                                                                                                                                                                                                                               |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Errors   | `InterfoldError`, `E3Failed`, `CommitteeFormationFailed`, `ProofVerificationFailed`, `SignedProofFailed`, `ThresholdShareCollectionFailed`, `EncryptionKeyCollectionFailed`, `ComputeRequestError`, `CommitmentConsistencyViolation` |
-| Warnings | `ProofFailureAccusation`, `AccusationVote`, `AccusationQuorumReached`, `SlashExecuted`, `CommitteeMemberExpelled`, and unknown EVM logs                                                                                              |
-| Info     | Other events that belong to an E3 phase                                                                                                                                                                                              |
-| Debug    | All other events                                                                                                                                                                                                                     |
-
-When a refresh fails, the dashboard keeps the last data and shows `Live refresh paused` with the
-error.
-
-### Common tasks
-
-- **Trace one E3.** Open **E3 traces** and select the E3. The current phase opens first. A trace
-  that stops in a phase shows where the E3 stopped.
-- **Find errors.** Open **Events** and set the level to **Errors**. Open an event to read its
-  payload.
-- **Check the network after a restart.** On **Overview**, compare the connected peers with the
-  configured peers. A network error appears in the **Connected nodes** panel.
-- **Prepare an upgrade.** Open **Updates**. Wait until the active E3 count is 0 before you stop the
-  node. See [Upgrades](/operate/upgrades).
-
-### JSON API
-
-The dashboard gets its data from a JSON API on the same port. You can call the API with `curl` on
-the host that runs the node:
-
-```bash
-curl -s http://127.0.0.1:9092/api/snapshot | jq '.network'
-```
-
-The API has five endpoints: `/api/snapshot`, `/api/e3`, `/api/events`, `/api/logs`, and
-`/api/updates`. [Dashboard API](/reference/dashboard-api) gives the parameters, the response fields,
-and the errors of each endpoint. For OpenAPI tools, use the
-[OpenAPI description](/dashboard-openapi.yaml).
-
-Protocol events come from the durable EventStore of the node. Log entries come from a bounded
-in-memory store, and the node also writes them to `ciphernode.jsonl` in the node data directory. Log
-entries are diagnostics, not protocol records.
-
-### Monitor the node with the API
-
-A monitoring system can read the API and send an alert when a value is out of range. This procedure
-makes a check that sends an alert when the node has fewer than 10 connected peers. The check needs
-`curl` and `jq` on the host of the node.
-
-<Steps>
-
-### Install the check script
-
-Save this script as `/usr/local/bin/check-interfold-peers.sh`. Set `PORT` to your `dashboard_port`,
-and set `MIN_PEERS` to your limit.
-
-```bash
-#!/usr/bin/env bash
-# Exit 0 when the peer count is good, 1 when it is low, 2 when the check fails.
-PORT=9092
-MIN_PEERS=10
-
-body=$(curl -sf --max-time 10 "http://127.0.0.1:${PORT}/api/snapshot") || {
-  echo "CRITICAL: dashboard API does not answer"
-  exit 2
-}
-peers=$(jq -e '.network.connected_peers | if type == "array" then length else error("no peer list") end' <<<"$body" 2>/dev/null) || {
-  echo "CRITICAL: response is not a dashboard snapshot"
-  exit 2
-}
-if [ "$peers" -lt "$MIN_PEERS" ]; then
-  echo "WARNING: ${peers} connected peers (minimum ${MIN_PEERS})"
-  exit 1
-fi
-echo "OK: ${peers} connected peers"
-```
-
-Make the script executable:
-
-```bash
-sudo chmod 755 /usr/local/bin/check-interfold-peers.sh
-```
-
-The exit codes follow the Nagios plugin convention: 0 is OK, 1 is a warning, and 2 is a critical
-failure. The script also fails when the node is stopped, and when the response is not a snapshot,
-for example HTML or a JSON object without a peer list.
-
-### Test the script
-
-Run `/usr/local/bin/check-interfold-peers.sh` on the host of the node. The script shows the peer
-count, for example `OK: 21 connected peers`.
-
-### Connect the script to your monitoring system
-
-Use a monitoring agent that runs a command and reads its exit code. Without such an agent, use a
-cron entry that runs your alert command when the check fails:
-
-```text
-*/5 * * * * /usr/local/bin/check-interfold-peers.sh || /usr/local/bin/send-alert "interfold peers"
-```
-
-`/usr/local/bin/send-alert` is an example. Replace it with the command that sends your alert.
-
-</Steps>
-
-Poll `/api/snapshot` at an interval of 30 s or more. Each request reads the new EventStore events
-and can start chain RPC reads.
-
-You can make checks for other values with the same method:
-
-| Condition                      | Endpoint        | `jq` expression or field                                                     |
-| ------------------------------ | --------------- | ---------------------------------------------------------------------------- |
-| Few connected peers            | `/api/snapshot` | `.network.connected_peers \| length`                                         |
-| Few peers on the gossip topic  | `/api/snapshot` | `.network.gossip_subscribed_peers`                                           |
-| Network error                  | `/api/snapshot` | `.network.last_error` is present                                             |
-| Operator not active on a chain | `/api/snapshot` | `.operator.chains[] \| select(.operator_active \| not) \| .chain_name`       |
-| Chain RPC read failed          | `/api/snapshot` | `.operator.error` is present                                                 |
-| More failed or degraded E3s    | `/api/snapshot` | `.protocol.e3_failed` and `.protocol.e3_degraded` increase between two polls |
-| New error log entries          | `/api/logs`     | `?level=error&since=<next_cursor of the previous poll>` returns entries      |
-| New release                    | `/api/updates`  | `.update_available` is `true`                                                |
+`GET /status.json` returns the same values for a monitoring system. See
+[Status page JSON](/reference/dashboard-api).
 
 ## Hosted dashboard
 
@@ -285,8 +142,13 @@ procedure.
   <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
     Symptoms, log lines, and checks for a node that does not behave as expected.
   </LinkCard>
-  <LinkCard title='Dashboard API' href='/reference/dashboard-api' icon='terminal' tag='Reference'>
-    Endpoints, parameters, and response fields of the JSON API.
+  <LinkCard
+    title='Status page JSON'
+    href='/reference/dashboard-api'
+    icon='terminal'
+    tag='Reference'
+  >
+    The fields of the status page, for a monitoring system.
   </LinkCard>
   <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
     Install a new release, and reset state when a release needs it.

@@ -171,12 +171,12 @@
     "id": "D13",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/dkg.rs@170@PkCircuit, &config, public, \"c0\"",
-      "crates/ciphernode/jobs/src/dkg.rs@462@PkGenerationCircuit, &c1_config, &c1, \"c1\"",
-      "crates/ciphernode/jobs/src/dkg.rs@444@let c2a = ShareComputationCircuitData {",
-      "crates/ciphernode/jobs/src/dkg.rs@449@let c2b = ShareComputationCircuitData {",
-      "crates/ciphernode/jobs/src/dkg.rs@327@let work = format!(\"{proof_type:?}-{slot}-{row}\");",
-      "crates/ciphernode/jobs/src/dkg.rs@715@let (c4a, c4b) = rayon::join("
+      "crates/ciphernode/jobs/src/dkg.rs@184@PkCircuit, &config, public, \"c0\"",
+      "crates/ciphernode/jobs/src/dkg.rs@475@PkGenerationCircuit, &c1_config, &c1, \"c1\"",
+      "crates/ciphernode/jobs/src/dkg.rs@457@let c2a = ShareComputationCircuitData {",
+      "crates/ciphernode/jobs/src/dkg.rs@462@let c2b = ShareComputationCircuitData {",
+      "crates/ciphernode/jobs/src/dkg.rs@340@let work = format!(\"{proof_type:?}-{slot}-{row}\");",
+      "crates/ciphernode/jobs/src/dkg.rs@728@let (c4a, c4b) = rayon::join("
     ],
     "line_text": [
       "self.prove(prover, params, PkCircuit, &config, public, \"c0\")",
@@ -192,14 +192,14 @@
     "id": "D14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/dkg.rs@890@fn aggregate_key(",
-      "crates/ciphernode/jobs/src/dkg.rs@936@prove_with_variant(zk, &c5_config, &c5",
-      "crates/ciphernode/jobs/src/dkg.rs@956@prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
+      "crates/ciphernode/jobs/src/dkg.rs@938@fn aggregate_key(",
+      "crates/ciphernode/jobs/src/dkg.rs@983@prove_with_variant(zk, &c5_config, &c5",
+      "crates/ciphernode/jobs/src/dkg.rs@1003@prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
     ],
     "line_text": [
       "fn aggregate_key(",
-      ".prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)",
-      ".proving(|zk| prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size))"
+      "PkAggregationCircuit.prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)",
+      "prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
     ],
     "note": "The committee key job proves C5 (PkAggregation), then the DKG aggregation that verifies C5 with the nodes' folded proofs."
   },
@@ -207,8 +207,8 @@
     "id": "D15",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/decryption.rs@381@prove_with_variant(zk, &config, &c7",
-      "crates/ciphernode/jobs/src/decryption.rs@394@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
+      "crates/ciphernode/jobs/src/decryption.rs@384@prove_with_variant(zk, &config, &c7",
+      "crates/ciphernode/jobs/src/decryption.rs@395@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
     ],
     "line_text": [
       ".prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)",

@@ -110,18 +110,17 @@ establish human uniqueness or prevent pre-request wallet splitting/collusion.
 Rust shortlists N-plus-buffer distinct owners with their eligible operator backups. An
 operator-count cutoff must not discard necessary owners. If any eligible operator lacks owner
 history, turn the owner shortlist off and rank every eligible operator; Solidity still rejects zero
-snapshot owners. Under a required identity policy at T−1 (or at an admission pause cutoff, which the
-contract also checks), a full node first reads `eligibilityAt(operator, T−1)` for every candidate,
-and the shortlist ranks only the eligible operators, whose owners hold a credential. The read must
-end within 20 seconds and at least 20 seconds before the ticket deadline. If it fails or runs out of
-time, the node does not know the deadline (a request still open at a restart), or the node has no
-chain access, the node turns the shortlist off: every eligible operator submits, and the ticket gas
-estimate fails for an operator whose owner has no credential, so it sends nothing. The node reads
-the policy history from its own log. Each startup also applies the policy logs that the log took in
-after the previous startup, so a node that ran an older release while the policy changed catches up
-when it upgrades again. If that replay fails, the node treats the policy as required until a replay
-succeeds, so selection asks the bonding registry instead of trusting a history that may miss a
-change. Committee formation requires N distinct snapshot owners, not N submissions.
+snapshot owners. For every owner-capped request a full node first reads
+`eligibilityAt(operator, T−1)` for every candidate, because only the bonding registry knows the
+admission cooldown, the pause cutoff, and the identity credentials. The shortlist ranks only the
+operators it confirms. The read must end within 20 seconds and at least 20 seconds before the ticket
+deadline. If it fails or runs out of time, the node turns the shortlist off: every eligible operator
+submits, and the contract rejects the others. Candidates also need the latest registry enablement
+and activity, which `validateTicket` checks when the ticket lands; both come from the node's log.
+Nodes that can make the same call take turns, 30 seconds apart. A rank past the twentieth shares the
+twentieth's turn, so every ticket holder keeps one; a node that finds its turn long past counts its
+turn from when it found it, so nodes that restart together keep their spacing. Committee formation
+requires N distinct snapshot owners, not N submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an

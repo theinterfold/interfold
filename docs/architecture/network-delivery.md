@@ -127,11 +127,11 @@ after artifact commit but before the derived request therefore need not lose pub
 narrow reconstruction path, not a transactional outbox for arbitrary network effects; see document
 recovery.
 
-Each publication starts only at SyncEnded. Ready/Roster retransmission similarly waits for local
+Each publication starts only at SyncEnded. Retransmission of a node's own messages waits for local
 replay, backs off 30 seconds to five minutes, and retains the latest own message per E3/party/kind
-for eight hours. Decryption-share event gossip backs off 60 seconds to ten minutes. Chain-terminal
-memory keeps the last 1,024 E3s and prevents later retransmission scheduling; replay schedules local
-messages in log order, while restart rebroadcast sends recent messages once without re-caching.
+for eight hours. Chain-terminal memory keeps the last 1,024 E3s and prevents later retransmission
+scheduling; replay schedules local messages in log order, while restart rebroadcast sends recent
+messages once without re-caching.
 
 A Kademlia inbound-put acknowledgment is not proof of storage: the receiver decides later. Count a
 put as replicated only when a post-upload lookup returns its record **from another peer**. This

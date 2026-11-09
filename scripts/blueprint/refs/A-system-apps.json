@@ -146,13 +146,10 @@
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@236@start::execute(config, peers, bootstrap)",
-      "crates/cli/src/start.rs@55@e3_node::launch::launch(node)"
+      "crates/cli/src/cli.rs@237@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/start.rs@59@e3_node::launch::launch(node, stop)"
     ],
-    "line_text": [
-      "start::execute(config, peers, bootstrap).await?",
-      "result = e3_node::launch::launch(node) => result.context(\"the node stopped\"),"
-    ],
+    "line_text": ["start::execute(config, peers, bootstrap).await?", "e3_node::launch::launch(node, stop)"],
     "note": "The Start subcommand calls start::execute, which maps the configuration and runs e3_node::launch::launch."
   },
   {
@@ -193,24 +190,24 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk/prover/src/prover.rs@105@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
-    "line_text": ["let mut child = StdCommand::new(bb)", "execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@130@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
+    "line_text": ["let mut command = StdCommand::new(bb);", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },
   {
     "id": "A23",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/swarm.rs@122@gossipsub: gossipsub::Behaviour,",
-      "crates/ciphernode/p2p/src/swarm.rs@124@kademlia: kad::Behaviour<MemoryStore>,",
-      "crates/ciphernode/p2p/src/swarm.rs@126@blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
-      "crates/ciphernode/p2p/src/swarm.rs@232@.with_quic()"
+      "crates/ciphernode/p2p/src/behaviour.rs@53@pub(crate) gossipsub: Gossipsub,",
+      "crates/ciphernode/p2p/src/behaviour.rs@55@pub(crate) kademlia: kad::Behaviour<MemoryStore>,",
+      "crates/ciphernode/p2p/src/behaviour.rs@57@pub(crate) blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
+      "crates/ciphernode/p2p/src/driver.rs@150@libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),"
     ],
     "line_text": [
-      "gossipsub: gossipsub::Behaviour,",
-      "kademlia: kad::Behaviour<MemoryStore>,",
-      "blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
-      ".with_quic()"
+      "pub(crate) gossipsub: Gossipsub,",
+      "pub(crate) kademlia: kad::Behaviour<MemoryStore>,",
+      "pub(crate) blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,",
+      "libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),"
     ],
     "note": "The swarm holds gossipsub for messages, Kademlia for peer lookups and a request-response protocol for blobs, over QUIC."
   }

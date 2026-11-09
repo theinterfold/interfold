@@ -51,8 +51,8 @@ the terminal, `journalctl`, or `docker logs`. The Docker image starts the node w
 
 The node also writes each log entry as JSON to `ciphernode.jsonl` in the node data directory, the
 directory that contains `db`. The file rotates at 25 MiB and keeps four old files,
-`ciphernode.jsonl.1` to `ciphernode.jsonl.4`. The **Logs** view of the
-[local dashboard](/operate/dashboard) shows the same entries.
+`ciphernode.jsonl.1` to `ciphernode.jsonl.4`. The [status page](/operate/dashboard) shows the node's
+recent notes, and `interfold node events` prints them all.
 
 <Callout type='info'>
   `interfold config get log_file` returns the base path of the event log, not a text log. The event
@@ -230,16 +230,16 @@ Search the log for these lines. Most are `INFO` lines, so the node must run with
 The `Starting the scoped Interfold P2P network` line shows the `identify` string of the node.
 Compare it with the string of a node that works.
 
-### Read the peer state from the dashboard API
+### Read the peer count from the status page
 
 If `dashboard_port` is set, run this command on the host of the node:
 
 ```bash
-curl -s http://127.0.0.1:<port>/api/snapshot | jq '.network'
+curl -s http://127.0.0.1:<port>/status.json | jq '.peers'
 ```
 
-An empty `connected_peers` list confirms that the node has no admitted peers. `last_error` shows the
-latest network error. [Dashboard API](/reference/dashboard-api#network) describes each field.
+A value of 0 confirms that the node has no connected peers.
+[Status page JSON](/reference/dashboard-api) describes each field.
 
 ### Check the chain configuration
 
@@ -259,7 +259,7 @@ Make sure that the firewall, the cloud security group, and the NAT allow inbound
 
 ## No connected peers
 
-**Symptom:** the **Overview** of the local dashboard shows 0 connected peers, or the log shows peer
+**Symptom:** the [status page](/operate/dashboard) shows 0 connected peers, or the log shows peer
 errors.
 
 The node uses QUIC over UDP. The node admits a peer only after the Identify check passes. The check
@@ -284,9 +284,8 @@ connection closes.
 | `Some bootstrap peers are unavailable; background retries will continue`                      | A bootstrap peer did not answer.                                             | The node retries every 60 s. Check the address if the warning continues.                                                                                                                                          |
 | `Disconnected a peer that did not establish the gossip subscription`                          | A peer connected but did not subscribe to the protocol gossip topic in 30 s. | The node disconnects the peer and dials it again only after `redial_after_seconds`: 30 s, doubling up to 30 minutes, plus up to 10%. A subscription ends the wait. Compare the releases if the warning continues. |
 
-The dashboard API shows `configured_peers`, `connected_peers`, and `gossip_subscribed_peers`. A peer
-that is connected but not subscribed to the gossip topic cannot take part in committee work. For the
-full check sequence, follow [the DHT checks](#checks).
+A peer that is connected but not subscribed to the gossip topic cannot take part in committee work.
+For the full check sequence, follow [the DHT checks](#checks).
 
 ## The node does not follow the chain
 
@@ -330,7 +329,7 @@ See [RPC endpoints](/operate/rpc-endpoints).
 | `failed to read Interfold release dependencies`                                                     | The `Interfold` contract has no `nodeReleaseRegistry()`. On 25 September 2026, the Sepolia deployment is an example.             | Use a chain whose deployment includes the node release gate.                                                                          |
 | `restored request contexts for E3s … belong to chain <id>, which the configuration does not have …` | The data folder has unfinished E3s of a chain that is not in the configuration, for example after a network change.              | Add the chain, or keep its entry with `enabled: false` and its `chain_id`. Or [reset node state](/operate/upgrades#reset-node-state). |
 | `restored E3 <id> is not in the Interfold contract …`                                               | The RPC endpoint is behind the chain, or the data folder is from another deployment.                                             | Check that the endpoint is synced and the `interfold` address is right. Reset node state only for another deployment.                 |
-| `ciphernode startup did not complete within …`                                                      | The startup sync took longer than `node.startup_timeout_secs`.                                                                   | Use a faster RPC endpoint, or increase `node.startup_timeout_secs` (default 1800).                                                    |
+| `no read of the chain succeeded for …`                                                              | The node could not read the chain for `node.startup_timeout_secs` before its first sync ended. Check the RPC endpoint.           |
 
 ## Out of memory
 

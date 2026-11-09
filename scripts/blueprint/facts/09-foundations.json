@@ -465,7 +465,7 @@
       "read_first": [
         {
           "why": "crate entry: module list and re-exports, including the BytesSerde derive",
-          "ref": "crates/utils/src/lib.rs@18@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
         },
         { "why": "ArcBytes, the shared byte buffer", "ref": "crates/utils/src/utility_types.rs@22@pub struct ArcBytes(Arc<Vec<u8>>);" },
         {
@@ -522,7 +522,7 @@
         },
         {
           "why": "where e3-utils re-exports the derive for other crates",
-          "ref": "crates/utils/src/lib.rs@18@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
         }
       ],
       "rust_patterns": [

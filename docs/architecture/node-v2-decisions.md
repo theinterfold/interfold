@@ -94,8 +94,8 @@ Each rule is checkable in review.
   this node's sealed decryption key, and only when it summed that key over the chain's roster.
 
 - **D19. One re-send rule for every message a node sends.** While the work a message feeds still
-  runs at the node, its latest message of each kind goes again after one minute, then at doubling
-  intervals up to ten minutes, for at most eight hours
+  runs at the node, its latest message of each kind goes again after 30 seconds, then at doubling
+  intervals up to five minutes, for at most eight hours
   ([threshold decryption](threshold-decryption.md), "Restart and redelivery limits"). Receivers keep
   the first copy. This replaces per-phase timers, document re-announcement as the only DKG recovery,
   and the promoted aggregator's roster re-proposal.
@@ -103,12 +103,12 @@ Each rule is checkable in review.
 - **D20. Selection reads the node's own registry history.** Activity, ticket balances, bond owners,
   and the identity policy are chain facts with their block times; selection reads them at T−1 for a
   request at T ([committee selection](committee-selection.md)). The node's load limit counts the
-  live E3s it holds a ticket for, so no separate counter can drift. Credentials are the exception:
-  under a required identity policy an owner-capped request first asks the bonding registry which
-  candidates are eligible at T−1 (`eligibilityAt`), since that rule, with its pause cutoffs and
-  credential windows, lives in the contract. The node ranks only those, so the owner shortlist
-  holds. The read gets 20 seconds and must end 20 seconds before the ticket deadline; without an
-  answer by then the node ranks every eligible operator, and the contract rejects the others.
+  live E3s it holds a ticket for, so no separate counter can drift. Eligibility is the exception:
+  every owner-capped request first asks the bonding registry which candidates are eligible at T−1
+  (`eligibilityAt`), since that rule, with its admission cooldown, pause cutoffs and credential
+  windows, lives in the contract. The node ranks only those, so the owner shortlist holds. The read
+  gets 20 seconds and must end 20 seconds before the ticket deadline; without an answer by then the
+  node ranks every eligible operator, and the contract rejects the others.
 
 - **D21. No history sync.** A node that restarts or joins late gets each peer message whose work
   still runs from the peer's re-sends (D19), and every chain fact from the reader, which resumes at
@@ -161,15 +161,16 @@ Each rule is checkable in review.
   offers no view of the policy, and a node that starts after the policy's event would not know it,
   so the node refreshes unconditionally: ten minutes after a start, then a minute and an hour after
   each window starts, since a refresh counts for the window of its block.
-- **D26. A data directory carries its layout.** The node writes the layout beside its files: the
-  protocol's `ENCODING_VERSION` for the journal and snapshots, and the store's version for the blob
-  folders and the wallet file. It refuses a directory in another layout, so an update never misreads
-  an old journal or deletes old blobs as foreign. A test fingerprints a sample journal and snapshot,
-  so an encoding change fails until its version changes. v2 has no migrations before its first
-  release: a layout change means starting from an empty directory. `node reset-data` cannot read a
-  journal in another layout, so it then refuses unless `--allow-active-e3s` confirms that the node's
-  E3s have ended; a release that changes the layout ships a reader for the old one or asks operators
-  for that confirmation.
+- **D26. A data directory says what it is.** A manifest in the folder names the layout and whose
+  data it is: the protocol's `ENCODING_VERSION` for the journal and snapshots, the store's version
+  for the blob folders and the wallet file, and the chain, the deployment and the operator. The node
+  refuses a directory of another layout or owner, so an update never misreads an old journal or
+  deletes old blobs as foreign. A test fingerprints a sample journal and snapshot, so an encoding
+  change fails until its version changes. v2 has no migrations before its first release: a layout
+  change means starting from an empty directory. `node reset-data` cannot read a journal in another
+  layout, so it then refuses unless `--allow-active-e3s` confirms that the node's E3s have ended; a
+  release that changes the layout ships a reader for the old one or asks operators for that
+  confirmation.
 - **D27. Jobs prove with the circuits directly, and a check binds what it received to the proof.** A
   job builds each circuit's input from the values it already holds and runs `bb`; no proof requests
   travel as events. A dealer proves C3 for every other member's slot, a member without a valid key
@@ -246,12 +247,10 @@ Each rule is checkable in review.
   re-sends.** Kept: 8 inbound connections per address group and 16 waiting for Identify, the oldest
   of the busiest group closed for a newer one; 8 addresses and 2 KiB per peer, from its latest
   Identify; a peer connected without the topic for 30 seconds is disconnected and its redials back
-  off up to half an hour, except configured peers, which can be bootstrap nodes; a signed copy
-  counts from 10 minutes before the receiver's clock to 2 minutes after it. Left out: a fair queue
-  per sender between the network and the node, where a full channel of 1,024 messages drops the
-  newest and its sender's re-send (D19) brings it again; and per-peer limits on blob fetches, which
-  start with the publisher, then the forwarding peer, within the global limits of 4,096 fetches and
-  1 GiB. Both wait for measurements under real load.
+  off up to half an hour, except bootstrap nodes, which offer no blobs and take no messages; a
+  signed copy counts from 10 minutes before the receiver's clock to 2 minutes after it. Added since:
+  a per-sender limit between the network and the node (D44), and per-peer limits on blob fetches
+  (D45).
 
 - **D34. Writer retries do not jitter.** Every call retries with waits that double from 30 seconds
   to ten minutes. The earlier node capped settlement retries at 30 minutes with up to 10% jitter.
@@ -273,6 +272,64 @@ Each rule is checkable in review.
   `E3StageChanged` and `CommitteeMemberExpelled`. `CommitteeFormationFailed`,
   `CommitteeActivationChanged`, `CommitteeViabilityUpdated`, and an expulsion's reason and count
   stay on the chain, where a forensic tool reads them.
+
+- **D38. A node starts only from a verified configuration.** `preflight::verify` returns the only
+  value a node can be built from. It reads, with one retry until the startup deadline, the chain
+  behind the RPC URL, the addresses Interfold uses, the randomness provider and the release
+  requirement, and it checks the prover and the host. The same deadline holds through the first
+  catch-up: a reader that reads nothing for that long ends the process for its supervisor. After the
+  first catch-up the node waits out an outage.
+
+- **D39. The chain says when a call is finished.** Each contract function reads its own reverts as
+  retry, applied or obsolete, from the decoded payload. A revert it cannot place is retried while
+  the node owes the call, because a lagging RPC or a paused contract passes. An obsolete call ends
+  its submission.
+
+- **D40. One builder for chain connections, and a provider's limit is learned once.** A WebSocket
+  reconnects for the life of the node, and each caller's own time limit decides how long it waits. A
+  refused log range narrows for good; a real failure leaves the range alone.
+
+- **D41. An effect says how long it is owed.** Each effect has a scope, and the runtime stops the
+  work the machine no longer owes, down to killing a running `bb`. A repeated job has the same
+  inputs: its randomness comes from a kept seed, and its finished proofs are kept. Essential tasks
+  are supervised: one that ends takes the node down, so its supervisor can restart it.
+
+- **D42. A blob store has three spaces.** Public blobs are what messages export, sealed ones have no
+  network path, and kept ones are the job runner's. Serving asks only whether a public blob is in an
+  E3 still held, so a restart serves what it served before.
+
+- **D43. Folding follows arrivals.** The aggregator folds one member's proof at a time, in the
+  roster's order, as the folds arrive, so the last step is the only one left when the last fold
+  comes.
+
+- **D44. Admission is one read-only rule, before the journal.** `Node::classify` drops, holds,
+  fetches or delivers a message, and a drop costs no durable record. An inbox bounded in bytes and
+  per sender sits between the network and the node, and the node reads it when it is ready. The hold
+  has shares per sender and per E3, and refuses rather than evicts; a held message expires. One
+  fetch runs per message, and a failed one is a journaled input that reopens exactly that attempt.
+
+- **D45. Fetching is fair and bounded.** At most 8 reads run, 2 per peer, and the sender with the
+  fewest running goes next. Bytes count only while a read runs. Disk reads and writes leave the
+  swarm's task.
+
+- **D46. One owner decides who to dial.** A transport guard below DNS refuses dials that reach this
+  node. `PeerBook` sees every outbound dial: it redials configured peers with jitter and a cooldown,
+  remembers rejections, moves an address to the identity that answered there unless the operator
+  named one, and holds Identify and subscription deadlines.
+
+- **D47. A vote is a vote, and a check verifies before it compares.** An accusation for an open
+  window is one more vote in it, so members that accuse in the same second reach their quorum. Every
+  check verifies signed proofs before it compares bound bytes, so an invalid proof always reaches
+  accusation.
+
+- **D48. A convicted member is left out of the roster a node chooses.** A roster a node receives is
+  judged only by chain facts, so nodes that count votes at different times never refuse each other's
+  rosters and stop the same DKG.
+
+- **D49. The node explains itself.** Transitions it admitted produce typed notes: why a DKG failed
+  and who it waited for, Ready progress, rosters, failing proofs. They go to the log and to a
+  bounded feed on disk, which `interfold node events` and the status page read. Dropped messages
+  make none, so a flood writes nothing durable.
 
 ## Problems in the earlier node, with the fix above them
 
