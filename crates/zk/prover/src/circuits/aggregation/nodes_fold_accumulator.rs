@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Sequential [`CircuitName::NodesFold`]: each step verifies one inner [`CircuitName::NodeFold`]
-//! proof and the previous accumulator (`nodes_fold` non-ZK proof). The first step proves
-//! [`CircuitName::NodesFoldKernel`] at runtime to obtain a valid genesis `UltraHonkProof` (see
-//! `circuits/bin/recursive_aggregation/nodes_fold_kernel`).
+//! Sequential [`CircuitName::NodesFold`]. The first inner [`CircuitName::NodeFold`] proof goes into
+//! [`CircuitName::NodesFoldKernel`], whose proof carries that node's row and starts the chain (see
+//! `circuits/bin/recursive_aggregation/nodes_fold_kernel`). Each later step verifies one more node
+//! proof and the accumulator: the kernel proof on the first step, a `nodes_fold` proof after that.
 
 use crate::circuits::aggregation::helpers::{
     parse_acc_public_field_strings_flat, sequential_fold, zero_field_hex_strings,
@@ -85,9 +85,9 @@ impl NodesFoldVks {
     }
 }
 
-/// Proves [`CircuitName::NodesFoldKernel`] for the same `inner` / `total_slots` / `slot_index` as the
-/// fold step.
-fn generate_nodes_fold_kernel_genesis_proof(
+/// Proves [`CircuitName::NodesFoldKernel`] over the chain's first node proof, at its slot. The proof
+/// carries that row and is the accumulator the first fold step verifies.
+fn generate_nodes_fold_kernel_proof(
     prover: &ZkProver,
     inner: &Proof,
     total_slots: usize,
@@ -150,14 +150,18 @@ fn generate_nodes_fold_kernel_genesis_proof(
         job_id,
         artifacts_dir,
     )?;
+    let _ = prover.cleanup(job_id);
     Ok(proof)
 }
 
-fn parse_nodes_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
+fn parse_nodes_fold_public_field_strings(
+    proof: &Proof,
+    circuit: CircuitName,
+) -> Result<Vec<String>, ZkError> {
     // `nodes_fold` per-slot width is the inner `node_fold` statement length, which is only known at
     // runtime; use the prefix-only parser and let the caller verify the total length against
     // `nodes_fold_acc_public_len(node_fold_fields, total_slots)`.
-    parse_acc_public_field_strings_flat(proof, CircuitName::NodesFold, NODES_FOLD_PREFIX_LEN)
+    parse_acc_public_field_strings_flat(proof, circuit, NODES_FOLD_PREFIX_LEN)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -171,7 +175,28 @@ fn generate_nodes_fold_step_with_vks(
     artifacts_dir: &str,
     vks: &NodesFoldVks,
 ) -> Result<Proof, ZkError> {
-    let is_first_step = prior_fold.is_none();
+    // The first node proof goes into the kernel on its own. The kernel proof already carries that
+    // row, so it is the accumulator the next step verifies; folding the same proof again on top of
+    // it would only repeat that verification.
+    let Some(prior) = prior_fold else {
+        // With one slot the chain would end on the kernel, which `DkgAggregator` does not accept.
+        if total_slots < 2 {
+            return Err(ZkError::InvalidInput(format!(
+                "nodes_fold needs at least two slots, got {total_slots}"
+            )));
+        }
+        let kernel_job_id = format!("{e3_id}-nodesfold-kernel");
+        return generate_nodes_fold_kernel_proof(
+            prover,
+            inner,
+            total_slots,
+            slot_index,
+            artifacts_dir,
+            &kernel_job_id,
+        );
+    };
+    // A kernel predecessor marks the first fold step, which the circuit verifies with the kernel key.
+    let is_first_step = prior.circuit == CircuitName::NodesFoldKernel;
 
     let nf_fields = node_fold_statement_field_count(inner)?;
     let node_fold_public_inputs = bytes_to_field_strings(inner.public_signals.as_ref())?;
@@ -183,47 +208,30 @@ fn generate_nodes_fold_step_with_vks(
 
     let expected_acc_pub = nodes_fold_acc_public_len(nf_fields, total_slots);
 
-    let (acc_vk_fields, acc_proof, acc_public_inputs) = if is_first_step {
-        let kernel_job_id = format!("{e3_id}-nodesfold-kernel");
-        let kernel_proof = generate_nodes_fold_kernel_genesis_proof(
-            prover,
-            inner,
-            total_slots,
-            slot_index,
-            artifacts_dir,
-            &kernel_job_id,
-        )?;
-        let acc_pi = bytes_to_field_strings(kernel_proof.public_signals.as_ref())?;
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "nodes_fold kernel proof public_inputs field count {} != expected {} (total_slots={})",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.kernel_vk.verification_key.clone(),
-            bytes_to_field_strings(&kernel_proof.data)?,
-            acc_pi,
-        )
+    let acc_pi = parse_nodes_fold_public_field_strings(
+        prior,
+        if is_first_step {
+            CircuitName::NodesFoldKernel
+        } else {
+            CircuitName::NodesFold
+        },
+    )?;
+    if acc_pi.len() != expected_acc_pub {
+        return Err(ZkError::InvalidInput(format!(
+            "prior {} public field count {} != expected {} (total_slots={})",
+            prior.circuit,
+            acc_pi.len(),
+            expected_acc_pub,
+            total_slots
+        )));
+    }
+    let acc_vk_fields = if is_first_step {
+        vks.kernel_vk.verification_key.clone()
     } else {
-        let p = prior_fold.expect("prior_fold required when is_first_step is false");
-        let acc_pi = parse_nodes_fold_public_field_strings(p)?;
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "prior nodes_fold public field count {} != expected {} (total_slots={})",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.fold_vk.verification_key.clone(),
-            bytes_to_field_strings(&p.data)?,
-            acc_pi,
-        )
+        vks.fold_vk.verification_key.clone()
     };
+    let acc_proof = bytes_to_field_strings(&prior.data)?;
+    let acc_public_inputs = acc_pi;
 
     let full_input = NodesFoldStepInput {
         inner_vk: vks.inner_vk.verification_key.clone(),
