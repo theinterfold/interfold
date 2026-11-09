@@ -154,6 +154,44 @@ fn ready_does_not_wait_for_a_dealer_this_node_had_no_valid_key_from() {
     assert_eq!(ready_sent(&effects), vec![members(&[1, ME])]);
 }
 
+/// The dealer sent its shares after all, but this node gave it nothing, so no roster can hold both
+/// of them: Ready does not wait for the check.
+#[test]
+fn ready_does_not_wait_for_the_check_of_a_keyless_dealer_s_late_shares() {
+    let mut node = with_its_key(ME);
+    add_valid_key(&mut node, 1);
+    node.step(KEY_CUTOFF, Input::Tick);
+    let effects = node.step(KEY_CUTOFF, shares_made(e3(1), own_shares(&[1])));
+    node.step(KEY_CUTOFF, sign(ME, signing(&effects)));
+    node.step(KEY_CUTOFF, shares_from(e3(1), 2, ME));
+    node.step(KEY_CUTOFF, shares_from(e3(1), 1, ME));
+    let effects = node.step(KEY_CUTOFF, shares_checked(e3(1), 1, true));
+    assert_eq!(ready_sent(&effects), vec![members(&[1, ME])]);
+    let effects = node.step(KEY_CUTOFF, shares_checked(e3(1), 2, true));
+    assert_eq!(ready_sent(&effects), vec![members(&[1, 2, ME])]);
+}
+
+#[test]
+fn each_ready_report_is_noted_with_the_committee_s_progress() {
+    use crate::node::{Note, Noted};
+    let [first, second, third] = ordered();
+    let mut node = verified_all(first);
+    let effects = node.step(NOW, ready(third, &[first, second, third], first));
+    let noted = effects.iter().find_map(|effect| match effect {
+        Effect::Note(Note { event, .. }) => Some(event.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        noted,
+        Some(Noted::Ready {
+            reporter: address(third),
+            dealers: 3,
+            reports: 2,
+            committee: 3,
+        })
+    );
+}
+
 #[test]
 fn a_later_verdict_grows_the_ready_report() {
     let mut node = dealt(ME);

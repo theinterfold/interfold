@@ -13,8 +13,8 @@ use e3_chain::{Call, Deadlines, Estimate, LogsError, RawLog, RpcError, Sortition
 use e3_crypto::Cipher;
 use e3_data_availability::DataReference;
 use e3_jobs::{JobLimits, Proofs};
-use e3_p2p::NetworkError;
-use e3_protocol::wire::Envelope;
+use e3_p2p::{InboxWriter, NetworkError};
+use e3_protocol::{node::PeerMessage, wire::Envelope};
 use futures::stream::BoxStream;
 use std::{
     collections::BTreeMap,
@@ -100,6 +100,12 @@ impl Network for Quiet {
     }
 
     fn admit(&self, _: BTreeSet<Address>) {}
+
+    fn connected(&self) -> usize {
+        0
+    }
+
+    async fn close(&self) {}
 }
 
 struct NoData;
@@ -117,7 +123,7 @@ async fn parts(
 ) -> (
     Settings,
     Parts<Chain, NoAccount, Quiet, MemoryBlobs>,
-    mpsc::Sender<PeerMessage>,
+    InboxWriter,
 ) {
     let contracts = Contracts {
         chain_id: 1,
@@ -136,9 +142,10 @@ async fn parts(
         poll_interval: Duration::from_millis(10),
         startup_timeout: STARTUP,
         snapshot_every: 100,
+        status_port: None,
         job_slots: 1,
     };
-    let (peers, inbound) = mpsc::channel(1);
+    let (peers, inbox) = e3_p2p::inbox();
     let blobs = MemoryBlobs::default();
     let limits = JobLimits {
         threads: 1,
@@ -153,9 +160,11 @@ async fn parts(
         rpc: chain,
         account: NoAccount,
         network: Quiet,
-        inbound,
+        inbox,
         availability: Arc::new(NoData),
         heartbeat: Heartbeat::start(&dir.join("ingestion"), 1, 0).unwrap(),
+        notes: NoteFeed::open(&dir.join("notes")).unwrap(),
+        notes_dir: dir.join("notes"),
     };
     (settings, parts, peers)
 }

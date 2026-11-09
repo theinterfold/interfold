@@ -209,3 +209,66 @@ fn a_ciphertext_reference_reads_its_decryption_deadline() {
     };
     assert_eq!(*ciphertext, expected);
 }
+
+#[test]
+fn the_registry_s_add_and_remove_logs_say_whether_an_operator_is_enabled() {
+    let node = Address::repeat_byte(0x71);
+    let (index, count) = (U256::from(1), U256::from(2));
+    let c = contracts();
+    let added = ICiphernodeRegistry::CiphernodeAdded {
+        node,
+        index,
+        numNodes: count,
+        size: count,
+    };
+    let removed = ICiphernodeRegistry::CiphernodeRemoved {
+        node,
+        index,
+        numNodes: count,
+        size: count,
+    };
+    let logs = [
+        log(c.registry, &added, 5, 0),
+        log(c.registry, &removed, 6, 0),
+    ];
+    let enabled: Vec<bool> = decode(&c, &logs)
+        .unwrap()
+        .into_iter()
+        .map(|decoded| match decoded {
+            Decoded::Fact(ChainEvent {
+                fact: ChainFact::OperatorEnabled { operator, enabled },
+                ..
+            }) if operator == node => enabled,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(enabled, [true, false]);
+}
+
+/// A stage field the node does not use still says the contracts changed under it.
+#[test]
+fn an_unknown_value_in_an_unused_stage_field_stops_ingestion() {
+    let c = contracts();
+    let changed = IInterfold::E3StageChanged {
+        e3Id: U256::from(7),
+        previousStage: 9,
+        newStage: 2,
+    };
+    let failed = IInterfold::E3Failed {
+        e3Id: U256::from(7),
+        failedAtStage: 9,
+        reason: 3,
+    };
+    for logs in [
+        [log(c.interfold, &changed, 5, 0)],
+        [log(c.interfold, &failed, 5, 0)],
+    ] {
+        assert!(matches!(
+            decode(&c, &logs),
+            Err(DecodeError::UnknownEnum {
+                kind: "stage",
+                value: 9
+            })
+        ));
+    }
+}

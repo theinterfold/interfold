@@ -7,6 +7,7 @@
 //! Three nodes in one process, each with its own blob store, connected over loopback QUIC.
 
 use super::*;
+use crate::Network;
 use alloy_primitives::Bytes;
 use alloy_signer::SignerSync;
 use e3_blobs::{BlobError, BlobStore, Blobs, E3Blobs, FileBlobs};
@@ -17,13 +18,14 @@ use e3_protocol::{
     testing::{address, e3, operator},
     BlobRef, SealedRef,
 };
+use libp2p::multiaddr::Protocol;
 use tempfile::TempDir;
 
 const WAIT: Duration = Duration::from_secs(30);
 
 struct Node {
     p2p: P2p,
-    inbound: mpsc::Receiver<PeerMessage>,
+    inbound: Inbox,
     store: FileBlobs,
     /// The blobs of E3 1, which most tests use.
     blobs: E3Blobs<FileBlobs>,
@@ -63,6 +65,7 @@ fn config(n: u64, peers: Vec<Multiaddr>) -> P2pConfig {
     P2pConfig {
         identity: [n as u8; 32],
         network: "test".into(),
+        deployment: "local".into(),
         protocol_version: 1,
         listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         peers,
@@ -192,7 +195,7 @@ async fn publish(node: &Node, envelope: Envelope) {
 }
 
 async fn received(node: &mut Node) -> PeerMessage {
-    tokio::time::timeout(WAIT, node.inbound.recv())
+    tokio::time::timeout(WAIT, node.inbound.next())
         .await
         .expect("a message in time")
         .expect("the network runs")
@@ -205,7 +208,7 @@ async fn fetch(node: &Node, message: PeerMessage) -> Result<(), NetworkError> {
 }
 
 async fn nothing(node: &mut Node, within: Duration) {
-    if let Ok(message) = tokio::time::timeout(within, node.inbound.recv()).await {
+    if let Ok(message) = tokio::time::timeout(within, node.inbound.next()).await {
         panic!("expected no message, got {message:?}");
     }
 }
@@ -300,13 +303,13 @@ async fn an_old_or_future_copy_is_not_delivered() {
 async fn a_recipient_finds_a_dealer_it_was_not_told_about() {
     let first = node(1, Vec::new()).await;
     let second = node(2, first.p2p.listening().to_vec()).await;
-    let mut third = node(3, first.p2p.listening().to_vec()).await;
+    let third = node(3, first.p2p.listening().to_vec()).await;
     let message = shares(&second, 2, 3);
     // A copy can arrive before the two have found each other; a re-send then reaches it.
     for sent_at in 10.. {
         assert!(sent_at < 20, "the recipient never fetched from the dealer");
         publish(&second, signed(message.clone(), 2, sent_at)).await;
-        let arrived = tokio::time::timeout(Duration::from_secs(5), third.inbound.recv()).await;
+        let arrived = tokio::time::timeout(Duration::from_secs(5), third.inbound.next()).await;
         let Ok(Some(arrived)) = arrived else {
             continue;
         };
@@ -323,7 +326,7 @@ async fn a_recipient_finds_a_dealer_it_was_not_told_about() {
 /// messages, so one that arrives shows the two connected.
 #[tokio::test(flavor = "multi_thread")]
 async fn nodes_that_know_only_a_bootstrap_node_find_each_other() {
-    let bootstrap = P2p::bootstrap(config(9, Vec::new())).await.unwrap();
+    let (bootstrap, _stopped) = P2p::bootstrap(config(9, Vec::new())).await.unwrap();
     let first = node(1, bootstrap.listening().to_vec()).await;
     let mut second = node(2, bootstrap.listening().to_vec()).await;
     let message = key(&first, 1);
@@ -345,47 +348,6 @@ async fn a_message_from_an_operator_the_node_does_not_know_is_not_taken() {
     assert_eq!(received(&mut second).await, message);
 }
 
-#[test]
-fn a_node_that_other_hosts_reach_shares_no_loopback_address() {
-    let address = |text: &str| -> Multiaddr { text.parse().unwrap() };
-    let loopback = address("/ip4/127.0.0.1/udp/9000/quic-v1");
-    let mapped = address("/ip6/::ffff:127.0.0.1/udp/9000/quic-v1");
-    let lan = address("/ip4/192.168.1.5/udp/9000/quic-v1");
-    let given = vec![loopback.clone(), mapped, lan.clone()];
-    let one_host: Vec<_> = routable(&[loopback], given.clone()).collect();
-    assert_eq!(one_host, given);
-    let reached: Vec<_> = routable(std::slice::from_ref(&lan), given).collect();
-    assert_eq!(reached, vec![lan]);
-}
-
-/// A peer's Identify can list the same address again, many addresses, or long ones; the node
-/// shares each once, and few of them.
-#[test]
-fn a_peer_s_addresses_are_shared_once_and_within_bounds() {
-    let lan = |port: u16| -> Multiaddr {
-        format!("/ip4/192.168.1.5/udp/{port}/quic-v1")
-            .parse()
-            .unwrap()
-    };
-    let listeners = [lan(1)];
-    let repeated = vec![lan(9000), lan(9000), lan(9001)];
-    assert_eq!(advertised(&listeners, repeated), vec![lan(9000), lan(9001)]);
-    let many: Vec<Multiaddr> = (0..20).map(|port| lan(9000 + port)).collect();
-    assert_eq!(advertised(&listeners, many.clone()), many[..MAX_ADVERTISED]);
-    let long = |n: usize| -> Multiaddr {
-        let name = ["a", "b", "c", "d", "e", "f"]
-            .map(|label| label.repeat(60))
-            .join(".");
-        format!("/dns4/{name}.n{n}.example/udp/9000/quic-v1")
-            .parse()
-            .unwrap()
-    };
-    let longs: Vec<Multiaddr> = (0..8).map(long).collect();
-    let kept = advertised(&listeners, longs);
-    let bytes: usize = kept.iter().map(|address| address.len()).sum();
-    assert!(bytes <= MAX_ADVERTISED_BYTES && !kept.is_empty() && kept.len() < MAX_ADVERTISED);
-}
-
 /// After a restart the node has not heard the message, so it knows no peer to ask.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_the_node_never_heard_cannot_be_fetched() {
@@ -398,7 +360,7 @@ async fn a_message_the_node_never_heard_cannot_be_fetched() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_message_that_names_too_many_bytes_is_not_fetched() {
+async fn a_message_that_names_too_many_blobs_is_not_fetched() {
     let [first, mut second, _third] = network().await;
     let mut message = shares(&first, 1, 2);
     let Body::Dkg(DkgMessage::Shares(sent)) = &mut message.body else {
@@ -406,9 +368,9 @@ async fn a_message_that_names_too_many_bytes_is_not_fetched() {
     };
     let huge = |n: u8| BlobRef {
         hash: B256::repeat_byte(n),
-        len: 30 * 1024 * 1024,
+        len: 1024,
     };
-    sent.c3a = (1..=40)
+    sent.c3a = (1..=200)
         .map(|n| SignedProof {
             proof: ZkProof {
                 data: huge(n),
@@ -456,4 +418,85 @@ async fn a_blob_with_other_bytes_is_never_stored() {
         "{result:?}"
     );
     assert!(!second.blobs.has(&forged));
+}
+
+/// A restarted node still serves what it holds: it asks the store, not a list made since it
+/// started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restarted_node_serves_what_it_holds() {
+    let first = node(1, Vec::new()).await;
+    let mut second = node(2, first.p2p.listening().to_vec()).await;
+    let message = key(&first, 1);
+    publish(&first, signed(message.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, message);
+    let Node {
+        p2p, store, _dir, ..
+    } = first;
+    p2p.close().await;
+    drop(p2p);
+    let peers = second.p2p.listening().to_vec();
+    let (restarted, _inbox) = P2p::start(config(1, peers), address(1), store)
+        .await
+        .unwrap();
+    restarted.admit((1..=3).map(address).collect());
+    for _ in 0..30 {
+        if fetch(&second, message.clone()).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    panic!("the restarted node never served its blob");
+}
+
+/// A blob of no bytes names nothing: an envelope that names one does not open.
+#[test]
+fn an_envelope_that_names_an_empty_blob_does_not_open() {
+    let message = PeerMessage {
+        e3: e3(1),
+        sender: address(1),
+        body: Body::Dkg(DkgMessage::EncryptionKey(KeyMessage {
+            key: BlobRef {
+                hash: B256::repeat_byte(1),
+                len: 0,
+            },
+            proof: SignedProof {
+                proof: ZkProof {
+                    data: BlobRef::of(b"proof"),
+                    public_inputs: Vec::new(),
+                },
+                signature: Bytes::new(),
+            },
+        })),
+    };
+    assert!(signed(message, 1, 10).open().is_none());
+}
+
+/// Peers of another deployment on the same network never mix.
+#[tokio::test(flavor = "multi_thread")]
+async fn nodes_of_another_deployment_do_not_share_messages() {
+    let first = node(1, Vec::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = FileBlobs::open(dir.path()).unwrap();
+    let mut other = config(2, first.p2p.listening().to_vec());
+    other.deployment = "elsewhere".into();
+    let (second, inbox) = P2p::start(other, address(2), blobs).await.unwrap();
+    second.admit((1..=3).map(address).collect());
+    let message = key(&first, 1);
+    let _ = first.p2p.publish(signed(message, 1, 10)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), inbox.next())
+            .await
+            .is_err(),
+        "a message crossed deployments"
+    );
+}
+
+/// A stop says goodbye and ends the network: the inbox closes.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_ends_the_network() {
+    let first = node(1, Vec::new()).await;
+    first.p2p.close().await;
+    tokio::time::timeout(WAIT, first.inbound.closed())
+        .await
+        .unwrap();
 }

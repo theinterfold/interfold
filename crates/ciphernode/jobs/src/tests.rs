@@ -315,6 +315,10 @@ async fn a_committee_s_jobs_decrypt_what_its_key_encrypts() {
             roster: roster.iter().map(|member| members[*member]).collect(),
             keyshares,
             folds: Vec::new(),
+            accumulator: e3_protocol::proof::ZkProof {
+                data: BlobRef::of(b"accumulator"),
+                public_inputs: Vec::new(),
+            },
         },
     ) {
         DkgWorkResult::KeyAggregated(key) => key,

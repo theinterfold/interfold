@@ -191,6 +191,10 @@ impl MockJobs {
                     data_hash: data_hash(proof),
                 })
             }
+            Work::Dkg(DkgWork::FoldRoster { slot, .. }) => DkgWorkResult::RosterFolded {
+                slot: *slot,
+                accumulator: self.proof(),
+            },
             Work::Dkg(DkgWork::AggregateKey { keyshares, .. }) => {
                 let shares: Vec<u8> = keyshares
                     .iter()

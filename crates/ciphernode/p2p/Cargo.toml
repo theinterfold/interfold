@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 e3-blobs = { workspace = true }
 e3-protocol = { workspace = true }
+e3-utils = { workspace = true }
 alloy-primitives = { workspace = true }
 futures = { workspace = true }
 libp2p = { workspace = true }

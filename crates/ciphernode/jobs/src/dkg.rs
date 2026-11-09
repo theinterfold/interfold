@@ -43,9 +43,10 @@ use e3_trbfv::{
 };
 use e3_zk_config::{CircuitName, CircuitVariant, DkgInputType};
 use e3_zk_prover::{
-    extract_node_fold_agg_commits, prove_dkg_aggregation, prove_node_dkg_fold, DkgAggregationInput,
-    DkgShareDecryptionCircuit, NodeDkgFoldInput, PkAggregationCircuit, PkCircuit,
-    PkGenerationCircuit, Provable, ShareComputationCircuit, ShareEncryptionCircuit,
+    extract_node_fold_agg_commits, generate_nodes_fold_step, prove_dkg_aggregation,
+    prove_node_dkg_fold, DkgAggregationInput, DkgShareDecryptionCircuit, NodeDkgFoldInput,
+    PkAggregationCircuit, PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
+    ShareEncryptionCircuit,
 };
 use e3_zk_witness::{
     compute_dkg_pk_commitment_from_public_key_bytes, compute_pk_commitment_from_keyshare_bytes,
@@ -129,14 +130,29 @@ impl<B: Blobs> Jobs<'_, B> {
                 member: *member,
                 verdict: self.check_keyshare(params, keyshare)?,
             },
+            DkgWork::FoldRoster {
+                slot,
+                slots,
+                fold,
+                accumulator,
+            } => DkgWorkResult::RosterFolded {
+                slot: *slot,
+                accumulator: self.fold_roster(params, *slot, *slots, fold, accumulator.as_ref())?,
+            },
             DkgWork::AggregateKey {
                 committee,
                 roster,
                 keyshares,
                 folds,
-            } => DkgWorkResult::KeyAggregated(
-                self.aggregate_key(params, committee, roster, keyshares, folds)?,
-            ),
+                accumulator,
+            } => DkgWorkResult::KeyAggregated(self.aggregate_key(
+                params,
+                committee,
+                roster,
+                keyshares,
+                folds,
+                accumulator,
+            )?),
         })
     }
 
@@ -168,7 +184,8 @@ impl<B: Blobs> Jobs<'_, B> {
         self.prove(prover, params, PkCircuit, &config, public, "c0")
     }
 
-    /// A key counts when it decodes under the request's DKG parameters and its C0 proof holds.
+    /// A key counts when its C0 proof holds, and the key decodes under the request's DKG
+    /// parameters and is the one the proof commits to.
     pub(crate) fn check_encryption_key(
         &self,
         params: &CryptoParams,
@@ -177,25 +194,22 @@ impl<B: Blobs> Jobs<'_, B> {
     ) -> Result<Verdict, JobError> {
         let bfv = trbfv::dkg_params(params)?;
         let bytes = self.blobs.get(key)?;
-        if PublicKey::from_bytes(&bytes, &bfv).is_err() {
-            return Ok(Verdict::Invalid);
-        }
+        let decodes = PublicKey::from_bytes(&bytes, &bfv).is_ok();
         let Some(prover) = self.prover() else {
-            return Ok(placeholder::verdict(placeholder::commits_to(proof, &bytes)));
+            let committed = decodes && placeholder::commits_to(proof, &bytes);
+            return Ok(placeholder::verdict(committed));
         };
-        // A valid proof counts only for the key bytes it commits to.
-        let commitment = compute_dkg_pk_commitment_from_public_key_bytes(
-            &bytes,
-            trbfv::threshold_preset(params)?,
-        )
-        .ok()
-        .map(B256::from);
-        if commitment.is_none()
-            || proofs::field(proof, CircuitName::PkBfv, "pk_commitment") != commitment
-        {
-            return Ok(Verdict::Invalid);
-        }
-        self.verdict(prover, params, [(ProofType::C0PkBfv, proof)])
+        self.checked(prover, params, [(ProofType::C0PkBfv, proof)], || {
+            let commitment = compute_dkg_pk_commitment_from_public_key_bytes(
+                &bytes,
+                trbfv::threshold_preset(params)?,
+            )
+            .ok()
+            .map(B256::from);
+            Ok(decodes
+                && commitment.is_some()
+                && proofs::field(proof, CircuitName::PkBfv, "pk_commitment") == commitment)
+        })
     }
 
     /// Generate this dealer's public-key share and its secret-key and smudging-noise shares, and
@@ -487,9 +501,9 @@ impl<B: Blobs> Jobs<'_, B> {
         Ok((c1?, c2a?, c2b?))
     }
 
-    /// Shares count when they decrypt, under this node's C0 secret, to the rows the dealer's C2
-    /// proofs commit to for this node's slot, each C3 encrypts such a row to this node's key, and
-    /// their C2 and C3 proofs hold.
+    /// Shares count when their C2 and C3 proofs hold, they decrypt under this node's C0 secret to
+    /// the rows the dealer's C2 proofs commit to for this node's slot, and each C3 encrypts such
+    /// a row to this node's key.
     fn check_shares(
         &self,
         params: &CryptoParams,
@@ -501,11 +515,9 @@ impl<B: Blobs> Jobs<'_, B> {
         let bytes = self.blobs.get(&message.shares)?;
         let dkg = trbfv::dkg_params(params)?;
         let key = self.secret_key(&dkg, secret)?;
-        let Ok(ciphertexts) = bincode::deserialize::<RecipientCiphertexts>(&bytes) else {
-            return Ok(Verdict::Invalid);
-        };
-        let Ok(shares) = decrypt_shares(&key, &dkg, &ciphertexts) else {
-            return Ok(Verdict::Invalid);
+        let decrypted = || {
+            let ciphertexts = bincode::deserialize::<RecipientCiphertexts>(&bytes).ok()?;
+            decrypt_shares(&key, &dkg, &ciphertexts).ok()
         };
         let c3 = message
             .c3a
@@ -518,23 +530,25 @@ impl<B: Blobs> Jobs<'_, B> {
                     .map(|c3| (ProofType::C3bESmShareEncryption, &c3.proof)),
             );
         let Some(prover) = self.prover() else {
-            let committed = c3
-                .into_iter()
-                .all(|(_, proof)| placeholder::commits_to(proof, &bytes));
+            let committed = decrypted().is_some()
+                && c3
+                    .into_iter()
+                    .all(|(_, proof)| placeholder::commits_to(proof, &bytes));
             return Ok(placeholder::verdict(committed));
         };
-        let party = trbfv::party(committee, message.recipient)?;
-        let rows = trbfv::threshold_params(params)?.moduli().len();
-        if !self.dealt_as_committed(params, party, &shares, message)?
-            || !c3_names_this_node(own_key, party, rows, message)
-        {
-            return Ok(Verdict::Invalid);
-        }
         let c2 = [
             (ProofType::C2aSkShareComputation, &message.c2a.proof),
             (ProofType::C2bESmShareComputation, &message.c2b.proof),
         ];
-        self.verdict(prover, params, c2.into_iter().chain(c3))
+        self.checked(prover, params, c2.into_iter().chain(c3), || {
+            let Some(shares) = decrypted() else {
+                return Ok(false);
+            };
+            let party = trbfv::party(committee, message.recipient)?;
+            let rows = trbfv::threshold_params(params)?.moduli().len();
+            Ok(self.dealt_as_committed(params, party, &shares, message)?
+                && c3_names_this_node(own_key, party, rows, message))
+        })
     }
 
     /// Whether the shares this node decrypted are the ones the dealer's C2 proofs commit to for
@@ -804,8 +818,8 @@ impl<B: Blobs> Jobs<'_, B> {
         })
     }
 
-    /// A roster member's decryption key counts when its C4 proofs hold for the roster dealers'
-    /// shares.
+    /// A roster member's decryption key counts when its C4 proofs hold and take the roster
+    /// dealers' shares.
     fn check_decryption_key(
         &self,
         params: &CryptoParams,
@@ -817,15 +831,14 @@ impl<B: Blobs> Jobs<'_, B> {
         let Some(prover) = self.prover() else {
             return Ok(Verdict::Valid);
         };
-        if !self.sums_committed_shares(params, member, committee, c2, message)? {
-            return Ok(Verdict::Invalid);
-        }
         let c4b = message
             .c4b
             .iter()
             .map(|c4b| (ProofType::C4bESmShareDecryption, &c4b.proof));
         let c4a = (ProofType::C4aSkShareDecryption, &message.c4a.proof);
-        self.verdict(prover, params, std::iter::once(c4a).chain(c4b))
+        self.checked(prover, params, std::iter::once(c4a).chain(c4b), || {
+            self.sums_committed_shares(params, member, committee, c2, message)
+        })
     }
 
     /// Whether a member's C4 proofs take, for each roster dealer, the share commitments that
@@ -855,7 +868,8 @@ impl<B: Blobs> Jobs<'_, B> {
         Ok(takes(&message.c4a.proof, |proofs| &proofs.0) && takes(&c4b.proof, |proofs| &proofs.1))
     }
 
-    /// A keyshare counts when its public-key share decodes and its C1 proof holds.
+    /// A keyshare counts when its C1 proof holds, and its public-key share decodes and is the one
+    /// the proof commits to.
     fn check_keyshare(
         &self,
         params: &CryptoParams,
@@ -863,23 +877,59 @@ impl<B: Blobs> Jobs<'_, B> {
     ) -> Result<Verdict, JobError> {
         let bytes = self.blobs.get(&keyshare.pk_share)?;
         let bfv = trbfv::threshold_params(params)?;
-        if PublicKeyShare::deserialize(&bytes, &bfv, trbfv::crp_poly(params)?).is_err() {
-            return Ok(Verdict::Invalid);
-        }
+        let crp = trbfv::crp_poly(params)?;
+        let decodes = PublicKeyShare::deserialize(&bytes, &bfv, crp.clone()).is_ok();
         let c1 = &keyshare.c1.proof;
         let Some(prover) = self.prover() else {
-            return Ok(placeholder::verdict(placeholder::commits_to(c1, &bytes)));
+            let committed = decodes && placeholder::commits_to(c1, &bytes);
+            return Ok(placeholder::verdict(committed));
         };
-        let crp = trbfv::crp_poly(params)?;
-        let commitment = compute_pk_commitment_from_keyshare_bytes(&bytes, &bfv, &crp)
-            .ok()
-            .map(B256::from);
-        if commitment.is_none()
-            || proofs::field(c1, CircuitName::PkGeneration, "pk_commitment") != commitment
-        {
-            return Ok(Verdict::Invalid);
-        }
-        self.verdict(prover, params, [(ProofType::C1PkGeneration, c1)])
+        self.checked(prover, params, [(ProofType::C1PkGeneration, c1)], || {
+            let commitment = compute_pk_commitment_from_keyshare_bytes(&bytes, &bfv, &crp)
+                .ok()
+                .map(B256::from);
+            Ok(decodes
+                && commitment.is_some()
+                && proofs::field(c1, CircuitName::PkGeneration, "pk_commitment") == commitment)
+        })
+    }
+
+    /// One step of the roster's fold: `fold` goes into `slot` of the accumulator.
+    fn fold_roster(
+        &self,
+        params: &CryptoParams,
+        slot: u32,
+        slots: usize,
+        fold: &ZkProof,
+        accumulator: Option<&ZkProof>,
+    ) -> Result<ZkProof, JobError> {
+        let Some(prover) = self.prover() else {
+            return placeholder::proof(
+                &self.blobs,
+                ProofType::C5PkAggregation,
+                &slot.to_be_bytes(),
+            );
+        };
+        let fold = proofs::load(&self.blobs, fold, CircuitName::NodeFold)?;
+        let accumulator = accumulator
+            .map(|proof| proofs::load(&self.blobs, proof, CircuitName::NodesFold))
+            .transpose()?;
+        let (work, artifacts) = (
+            self.work(&format!("roster-fold-{slot}")),
+            self.artifacts(prover, params)?,
+        );
+        let folded = prover.proving(|zk| {
+            generate_nodes_fold_step(
+                zk,
+                &fold,
+                accumulator.as_ref(),
+                slot,
+                slots,
+                &work,
+                &artifacts,
+            )
+        })?;
+        proofs::store(&self.blobs, &folded)
     }
 
     /// Sum the roster's public-key shares into the committee key. Its proof, which
@@ -892,6 +942,7 @@ impl<B: Blobs> Jobs<'_, B> {
         roster: &[Address],
         keyshares: &[KeyshareMessage],
         folds: &[NodeFold],
+        accumulator: &ZkProof,
     ) -> Result<AggregatedKey, JobError> {
         let bfv = trbfv::threshold_params(params)?;
         let crp = trbfv::crp_poly(params)?;
@@ -935,13 +986,14 @@ impl<B: Blobs> Jobs<'_, B> {
             .iter()
             .map(|fold| proofs::load(&self.blobs, &fold.proof, CircuitName::NodeFold))
             .collect::<Result<Vec<_>, _>>()?;
+        let accumulator = proofs::load(&self.blobs, accumulator, CircuitName::NodesFold)?;
         let party_ids = roster
             .iter()
             .map(|member| Ok(trbfv::party(committee, *member)? as u64))
             .collect::<Result<Vec<_>, JobError>>()?;
         let input = DkgAggregationInput {
             node_fold_proofs: &folds,
-            nodes_fold_proof: None,
+            nodes_fold_proof: Some(&accumulator),
             c5_proof: &c5,
             party_ids: &party_ids,
             committee_addresses: committee,

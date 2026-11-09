@@ -139,13 +139,29 @@ fn a_key_still_being_checked_at_the_cutoff_does_not_count() {
 fn a_committee_finalized_after_the_key_cutoff_starts_no_dkg() {
     let mut node = Node::new(address(ME));
     node.step(0, requested(10, e3(1)));
-    assert!(node
-        .step(KEY_CUTOFF, finalized(11, e3(1), committee()))
-        .is_empty());
+    let effects = node.step(KEY_CUTOFF, finalized(11, e3(1), committee()));
+    assert!(matches!(effects[..], [Effect::Note(_)]), "{effects:?}");
     assert_eq!(
         dkg(&node).failure(),
         Some(DkgFailure::StartedAfterKeyCutoff)
     );
+}
+
+/// An operator whose E3 fails at the key cutoff can read which members it waited for.
+#[test]
+fn too_few_keys_at_the_cutoff_notes_the_members_it_waited_for() {
+    use crate::node::{Note, Noted};
+    let mut node = with_its_key(ME);
+    let effects = node.step(KEY_CUTOFF, Input::Tick);
+    let [Effect::Note(Note {
+        event: Noted::DkgFailed { failure, missing },
+        ..
+    })] = &effects[..]
+    else {
+        panic!("one note: {effects:?}");
+    };
+    assert_eq!(*failure, DkgFailure::TooFewKeys);
+    assert_eq!(*missing, members(&[1, 2]));
 }
 
 #[test]
@@ -178,10 +194,10 @@ fn a_member_sends_its_key_again_until_the_dkg_ends() {
         });
         keys.count()
     };
-    assert_eq!(keys_sent(&node.step(NOW + 59, Input::Tick)), 0);
-    assert_eq!(keys_sent(&node.step(NOW + 60, Input::Tick)), 1);
-    assert_eq!(keys_sent(&node.step(NOW + 179, Input::Tick)), 0);
-    assert_eq!(keys_sent(&node.step(NOW + 180, Input::Tick)), 1);
+    assert_eq!(keys_sent(&node.step(NOW + 29, Input::Tick)), 0);
+    assert_eq!(keys_sent(&node.step(NOW + 30, Input::Tick)), 1);
+    assert_eq!(keys_sent(&node.step(NOW + 89, Input::Tick)), 0);
+    assert_eq!(keys_sent(&node.step(NOW + 90, Input::Tick)), 1);
     node.step(NOW + 200, key_published(12, e3(1), committee(), Vec::new()));
     assert_eq!(keys_sent(&node.step(NOW + 5_000, Input::Tick)), 0);
 }

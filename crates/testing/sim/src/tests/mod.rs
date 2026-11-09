@@ -60,6 +60,13 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
                 owner: operator,
             },
         );
+        sim.chain(
+            0,
+            ChainFact::OperatorEnabled {
+                operator,
+                enabled: true,
+            },
+        );
     }
     sim.chain(
         1,

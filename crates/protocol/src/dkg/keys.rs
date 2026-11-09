@@ -106,8 +106,13 @@ impl Dkg {
         if matches!(self.phase, Phase::CollectingKeys(_)) && live_keys >= self.h() {
             return self.start_shares();
         }
-        self.phase = Phase::Failed(DkgFailure::TooFewKeys);
-        Vec::new()
+        let missing: Vec<Address> = self
+            .members
+            .iter()
+            .filter(|member| self.is_live(member) && !self.keys.valid.contains(*member))
+            .copied()
+            .collect();
+        vec![self.fail(DkgFailure::TooFewKeys, missing)]
     }
 
     pub(super) fn collecting_keys(&self) -> bool {

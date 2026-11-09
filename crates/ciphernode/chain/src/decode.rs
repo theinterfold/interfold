@@ -211,6 +211,7 @@ impl Decoder<'_> {
             }
             I::E3StageChanged::SIGNATURE_HASH => {
                 let event: I::E3StageChanged = decode_event(log, "E3StageChanged")?;
+                any_stage(event.previousStage)?;
                 ChainFact::StageChanged {
                     e3: self.e3(event.e3Id),
                     stage: stage(event.newStage)?,
@@ -218,6 +219,7 @@ impl Decoder<'_> {
             }
             I::E3Failed::SIGNATURE_HASH => {
                 let event: I::E3Failed = decode_event(log, "E3Failed")?;
+                any_stage(event.failedAtStage)?;
                 ChainFact::Failed {
                     e3: self.e3(event.e3Id),
                     reason: failure(event.reason)?,
@@ -303,6 +305,20 @@ impl Decoder<'_> {
                     member: event.node,
                 }
             }
+            R::CiphernodeAdded::SIGNATURE_HASH => {
+                let event: R::CiphernodeAdded = decode_event(log, "CiphernodeAdded")?;
+                ChainFact::OperatorEnabled {
+                    operator: event.node,
+                    enabled: true,
+                }
+            }
+            R::CiphernodeRemoved::SIGNATURE_HASH => {
+                let event: R::CiphernodeRemoved = decode_event(log, "CiphernodeRemoved")?;
+                ChainFact::OperatorEnabled {
+                    operator: event.node,
+                    enabled: false,
+                }
+            }
             R::AccusationVoteValiditySet::SIGNATURE_HASH => {
                 let event: R::AccusationVoteValiditySet =
                     decode_event(log, "AccusationVoteValiditySet")?;
@@ -349,12 +365,6 @@ impl Decoder<'_> {
                     return Ok(None);
                 }
                 ChainFact::EligibilityReset
-            }
-            B::IdentityPolicyUpdated::SIGNATURE_HASH => {
-                let event: B::IdentityPolicyUpdated = decode_event(log, "IdentityPolicyUpdated")?;
-                ChainFact::IdentityPolicy {
-                    required: event.required,
-                }
             }
             _ => return Ok(None),
         };
@@ -471,6 +481,14 @@ fn committee_size(value: u8) -> Option<CiphernodesCommitteeSize> {
         1 => Some(CiphernodesCommitteeSize::Micro),
         2 => Some(CiphernodesCommitteeSize::Small),
         _ => None,
+    }
+}
+
+/// Checks a stage the node does not use: a value it does not know means the contracts changed.
+fn any_stage(value: u8) -> Result<(), DecodeError> {
+    match value {
+        0 => Ok(()),
+        value => stage(value).map(|_| ()),
     }
 }
 

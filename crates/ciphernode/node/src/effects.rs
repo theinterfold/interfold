@@ -8,7 +8,10 @@
 //! signature or a fetch once its result is journaled, a gossip once it is published, a submission
 //! once the writer finished it, and any effect the machine no longer owes.
 
-use crate::runtime::{now, Event};
+use crate::{
+    notes::NoteFeed,
+    runtime::{now, Event},
+};
 use alloy_primitives::keccak256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -20,8 +23,8 @@ use e3_jobs::{Attempt, Cancel, JobError, JobRunner};
 use e3_p2p::Network;
 use e3_protocol::{
     node::{
-        Effect, Eligibility, EligibilityRead, Fetch, Fetched, Input, Job, JobDone, Node,
-        PeerMessage, Scope, Signed, Signing, Submission,
+        BlobFetch, Effect, Eligibility, EligibilityRead, Fetch, FetchFailed, Fetched, Input, Job,
+        JobDone, Node, PeerMessage, Scope, Signed, Signing, Submission,
     },
     wire::Envelope,
     E3Id,
@@ -101,6 +104,7 @@ pub(crate) struct Effects<R, A, N, B> {
     pub(crate) network: Arc<N>,
     pub(crate) availability: Arc<dyn DataAvailabilityReader>,
     pub(crate) events: mpsc::Sender<Event>,
+    notes: NoteFeed,
     /// Places for jobs: one waiting beyond them holds no blocking thread.
     job_slots: Arc<Semaphore>,
     job_failures: Arc<Limited>,
@@ -117,6 +121,7 @@ pub(crate) struct EffectParts<R, A, N, B> {
     pub(crate) network: Arc<N>,
     pub(crate) availability: Arc<dyn DataAvailabilityReader>,
     pub(crate) events: mpsc::Sender<Event>,
+    pub(crate) notes: NoteFeed,
     pub(crate) job_slots: usize,
 }
 
@@ -137,6 +142,7 @@ where
             network: parts.network,
             availability: parts.availability,
             events: parts.events,
+            notes: parts.notes,
             job_slots: Arc::new(Semaphore::new(parts.job_slots.max(1))),
             job_failures: Arc::new(Limited::new(FAILURE_LOG)),
             tasks: BTreeMap::new(),
@@ -155,6 +161,11 @@ where
                     now.push(Event::Result(key, self.sign(signing)));
                     continue;
                 }
+                Effect::Note(note) => {
+                    self.notes.record(crate::runtime::now(), note);
+                    now.push(Event::Done(key));
+                    continue;
+                }
                 Effect::Gossip(message) => self.gossip(key, message),
                 Effect::Run(job) => {
                     let token = Cancel::default();
@@ -163,7 +174,7 @@ where
                 }
                 Effect::Submit(submission) => self.submit(key, submission),
                 Effect::Fetch(fetch) => self.fetch(key, fetch),
-                Effect::FetchBlobs(message) => self.fetch_blobs(key, message),
+                Effect::FetchBlobs(fetch) => self.fetch_blobs(key, fetch),
                 Effect::ReadEligibility(read) => self.read_eligibility(key, read),
             };
             self.tasks.entry(e3).or_default().push(Task {
@@ -302,19 +313,25 @@ where
         })
     }
 
-    fn fetch_blobs(&self, key: EffectKey, message: PeerMessage) -> JoinHandle<()> {
+    fn fetch_blobs(&self, key: EffectKey, fetch: BlobFetch) -> JoinHandle<()> {
         let (network, events) = (self.network.clone(), self.events.clone());
         tokio::spawn(async move {
-            match network.fetch(message.clone()).await {
-                Ok(()) => {
-                    let _ = events.send(Event::Result(key, Input::Peer(message))).await;
-                }
+            let BlobFetch { message, attempt } = fetch;
+            let result = match network.fetch(message.clone()).await {
+                Ok(()) => Input::Peer(message),
                 // The sender's re-send announces the message again.
                 Err(failure) => {
                     debug!(e3 = %message.e3, %failure, "fetching a peer's blobs failed");
-                    let _ = events.send(Event::Done(key)).await;
+                    Input::FetchFailed(FetchFailed {
+                        e3: message.e3,
+                        sender: message.sender,
+                        kind: message.body.kind(),
+                        id: message.id(),
+                        attempt,
+                    })
                 }
-            }
+            };
+            let _ = events.send(Event::Result(key, result)).await;
         })
     }
 

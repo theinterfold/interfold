@@ -92,6 +92,11 @@ impl NodeDir {
         self.folder.join("journal.redb")
     }
 
+    /// Where this folder's node keeps its notes for its operator.
+    pub fn notes(&self) -> PathBuf {
+        self.folder.join("notes")
+    }
+
     /// What the folder holds. It changes nothing on disk. With `expected`, state of another
     /// chain, deployment or operator reads as [`State::Foreign`].
     pub fn state(&self, expected: Option<&Identity>) -> State {

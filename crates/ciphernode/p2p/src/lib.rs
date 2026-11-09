@@ -7,11 +7,17 @@
 //! The v2 node's network: operator-signed peer messages, and the blobs they name, which a node
 //! fetches from the message's publisher once its machine admits the message.
 
+mod behaviour;
+mod driver;
+mod fetcher;
 mod inbound_ip_limits;
-mod subscription_health;
-mod swarm;
+mod inbox;
+mod peers;
+mod protocols;
+mod transport;
 
-pub use swarm::{P2p, P2pConfig, P2pError};
+pub use driver::{P2p, P2pConfig, P2pError};
+pub use inbox::{inbox, Inbox, InboxWriter};
 
 use alloy_primitives::Address;
 use e3_protocol::{node::PeerMessage, wire::Envelope};
@@ -29,6 +35,12 @@ pub trait Network: Send + Sync + 'static {
     /// Takes messages only from `senders` from now on: another sender's message is neither
     /// delivered nor passed on.
     fn admit(&self, senders: BTreeSet<Address>);
+
+    /// How many peers are connected now.
+    fn connected(&self) -> usize;
+
+    /// Says goodbye to the peers, so they do not have to time out.
+    fn close(&self) -> impl Future<Output = ()> + Send;
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -38,7 +50,7 @@ pub enum NetworkError {
     /// The sender's re-send brings the message, and the peers to ask, again.
     #[error("no peer that sent the message gave its blobs")]
     Unavailable,
-    #[error("too many blob bytes are on their way")]
+    #[error("the network has too much to do")]
     Busy,
     #[error("storing a blob: {0}")]
     Store(String),

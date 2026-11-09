@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! One chain's operator registry over time, from its logs: each operator's activity, ticket
-//! balance, and bond owner, and whether owners need an identity credential. The registry reads
-//! these at T−1 for a request made at T, so selection uses the chain's history, not its head.
+//! balance, and bond owner. The registry reads these at T−1 for a request made at T, so selection
+//! uses the chain's history, not its head; a ticket also needs the operator active and enabled when
+//! it is submitted.
 
 use crate::{selection::Eligible, UnixSecs};
 use alloy_primitives::{Address, U256};
@@ -16,7 +17,6 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Registry {
     operators: BTreeMap<Address, Operator>,
-    identity_required: History<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +24,8 @@ struct Operator {
     active: History<bool>,
     balance: History<U256>,
     owner: History<Address>,
+    /// Whether the ciphernode registry lists the operator now.
+    enabled: bool,
 }
 
 /// Values over time. A value counts from its timestamp on; a later value with the same timestamp
@@ -50,6 +52,10 @@ impl<T: Copy> History<T> {
     fn at(&self, time: UnixSecs) -> Option<T> {
         let index = self.points.partition_point(|(at, _)| *at <= time);
         index.checked_sub(1).map(|index| self.points[index].1)
+    }
+
+    fn latest(&self) -> Option<T> {
+        self.points.last().map(|(_, value)| *value)
     }
 }
 
@@ -78,6 +84,27 @@ impl Registry {
             .set(time, owner);
     }
 
+    pub(crate) fn set_enabled(&mut self, operator: Address, enabled: bool) {
+        self.operators.entry(operator).or_default().enabled = enabled;
+    }
+
+    /// Whether the registry still takes `operator`'s ticket, which needs it enabled and active now
+    /// as well as eligible at the request.
+    pub(crate) fn can_submit(&self, operator: Address) -> bool {
+        self.operators
+            .get(&operator)
+            .is_some_and(|operator| operator.enabled && operator.active.latest() == Some(true))
+    }
+
+    /// Whether `operator` is active now, and whether the ciphernode registry lists it.
+    pub(crate) fn standing(&self, operator: Address) -> (bool, bool) {
+        self.operators
+            .get(&operator)
+            .map_or((false, false), |operator| {
+                (operator.active.latest() == Some(true), operator.enabled)
+            })
+    }
+
     /// A new eligibility configuration makes every operator inactive until it refreshes against
     /// it; its refresh logs the operator active again.
     pub(crate) fn reset_activity(&mut self, time: UnixSecs) {
@@ -89,14 +116,6 @@ impl Registry {
     /// Every operator the registry's logs named.
     pub(crate) fn operators(&self) -> impl Iterator<Item = Address> + '_ {
         self.operators.keys().copied()
-    }
-
-    pub(crate) fn set_identity_required(&mut self, time: UnixSecs, required: bool) {
-        self.identity_required.set(time, required);
-    }
-
-    pub(crate) fn identity_required_at(&self, time: UnixSecs) -> bool {
-        self.identity_required.at(time).unwrap_or(false)
     }
 
     /// Every operator active at `time` with at least one ticket at `price`, and its owner then.
@@ -176,5 +195,21 @@ mod tests {
             .collect();
         assert_eq!(eligible, vec![operator(2)]);
         assert_eq!(registry.eligible_at(199, U256::from(10)).len(), 2);
+    }
+
+    /// Governance can remove a bonded operator, whose activity then says nothing about its ticket.
+    #[test]
+    fn a_ticket_needs_the_operator_enabled_and_active_now() {
+        let mut registry = Registry::default();
+        registry.set_active(100, operator(1), true);
+        assert!(!registry.can_submit(operator(1)));
+        registry.set_enabled(operator(1), true);
+        assert!(registry.can_submit(operator(1)));
+        registry.set_active(200, operator(1), false);
+        assert!(!registry.can_submit(operator(1)));
+        registry.set_active(300, operator(1), true);
+        registry.set_enabled(operator(1), false);
+        assert!(!registry.can_submit(operator(1)));
+        assert!(!registry.can_submit(operator(2)));
     }
 }

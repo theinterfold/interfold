@@ -12,8 +12,9 @@ use crate::{
     decryption::{Decryption, DecryptionWorkResult, Handover, PublishedKey},
     dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult, KeyAnchor},
     node::{
-        Body, CommitteeRequest, CommitteeSeed, CryptoParams, DataRef, Effect, Kind, PeerMessage,
-        Purpose, Stage, Submission, Transaction, WorkResult,
+        BlobFetch, Body, Classified, CommitteeRequest, CommitteeSeed, CryptoParams, DataRef,
+        Effect, FetchFailed, Kind, Note, Noted, PeerMessage, Purpose, Stage, Submission,
+        Transaction, WorkResult,
     },
     resend::Resend,
     BlobRef, E3Id, UnixSecs,
@@ -54,10 +55,20 @@ pub struct E3 {
     /// moves is watched again.
     marked: Option<(Stage, UnixSecs)>,
     failure: Option<Failure>,
+    /// The turns this node found long past, which count from when it found them.
+    overdue: BTreeMap<Duty, Overdue>,
     /// The message of each kind and sender whose blobs this node fetches. Another message of that
     /// kind from that sender waits until this one is taken, so a member makes the node download
     /// at most one message of each kind.
-    fetching: BTreeMap<(Address, Kind), B256>,
+    fetching: BTreeMap<(Address, Kind), Fetching>,
+}
+
+/// One message whose blobs this node brings in, at most one try at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Fetching {
+    id: B256,
+    attempt: u32,
+    running: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,14 +97,34 @@ pub(crate) struct Ticket {
     finalize_sent: bool,
 }
 
+/// A call that several nodes can make.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+enum Duty {
+    Finalize,
+    MarkFailed,
+    Settle,
+}
+
+/// A node looked at `duty` long after its turn, when it found the `deadline` that its turns count
+/// from long past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Overdue {
+    deadline: UnixSecs,
+    found: UnixSecs,
+}
+
 /// Nodes that can make the same call take turns, 30 seconds apart from one second after its
 /// deadline, because any of them can stay silent; the contract takes the first call. Places past
-/// the twentieth never call.
+/// the twentieth share its turn, so every node keeps one, at a bounded delay.
 const TURN: UnixSecs = 30;
 const TURNS: u64 = 20;
 
-fn turn(deadline: UnixSecs, place: u64) -> Option<UnixSecs> {
-    (place < TURNS).then(|| deadline + 1 + TURN * place)
+/// A node this far past its turn was not running: others likely restarted with it, and without
+/// the turn order they would all call at once.
+const LONG_PAST: UnixSecs = TURN;
+
+fn turn(start: UnixSecs, place: u64) -> UnixSecs {
+    start + 1 + TURN * place.min(TURNS - 1)
 }
 
 impl E3 {
@@ -128,6 +159,7 @@ impl E3 {
             slot,
             marked: None,
             failure: None,
+            overdue: BTreeMap::new(),
             fetching: BTreeMap::new(),
         }
     }
@@ -186,10 +218,7 @@ impl E3 {
             return Some(accusations.unwrap_or_default());
         }
         let failure = self.failure?;
-        let settles = self
-            .slot
-            .is_some_and(|slot| turn(failure.at, slot).is_some());
-        if (settles && !failure.settled) || (self.has_work() && !failure.released) {
+        if (self.slot.is_some() && !failure.settled) || (self.has_work() && !failure.released) {
             return None;
         }
         Some(failure.accusable_until.max(failure.at))
@@ -206,10 +235,7 @@ impl E3 {
             owed.push("an open accusation window");
         }
         if let Some(failure) = &self.failure {
-            let settles = self
-                .slot
-                .is_some_and(|slot| turn(failure.at, slot).is_some());
-            if settles && !failure.settled {
+            if self.slot.is_some() && !failure.settled {
                 owed.push("settling the failed E3 on chain");
             }
             if self.has_work() && !failure.released {
@@ -395,20 +421,58 @@ impl E3 {
         }
     }
 
-    /// Whether to fetch the blobs of `message`: the E3 admits it, and it is the one message of its
-    /// kind from its sender that this node fetches.
-    pub(crate) fn fetches(&mut self, now: UnixSecs, message: &PeerMessage) -> bool {
+    /// What to do with `message`, which has its handler here.
+    pub(crate) fn classify(&self, now: UnixSecs, message: &PeerMessage) -> Classified {
         if !self.admits(now, message) {
-            return false;
+            return Classified::Drop;
         }
+        if message.blobs().is_empty() {
+            return Classified::Deliver;
+        }
+        let slot = (message.sender, message.body.kind());
+        match self.fetching.get(&slot) {
+            None => Classified::Fetch,
+            Some(fetching) if fetching.id == message.id() && !fetching.running => Classified::Fetch,
+            Some(_) => Classified::Drop,
+        }
+    }
+
+    /// Starts a try at the blobs of `message`, which `classify` found it should fetch.
+    pub(crate) fn start_fetch(&mut self, message: PeerMessage) -> Effect {
         let id = message.id();
         let slot = (message.sender, message.body.kind());
-        *self.fetching.entry(slot).or_insert(id) == id
+        let attempt = self
+            .fetching
+            .get(&slot)
+            .filter(|fetching| fetching.id == id)
+            .map_or(0, |fetching| fetching.attempt.saturating_add(1));
+        let fetching = Fetching {
+            id,
+            attempt,
+            running: true,
+        };
+        self.fetching.insert(slot, fetching);
+        Effect::FetchBlobs(BlobFetch { message, attempt })
+    }
+
+    /// The try `failed` names is over; the sender's re-send of the message starts the next.
+    pub(crate) fn fetch_failed(&mut self, failed: &FetchFailed) {
+        if let Some(fetching) = self
+            .fetching
+            .get_mut(&(failed.sender, failed.kind))
+            .filter(|fetching| fetching.id == failed.id && fetching.attempt == failed.attempt)
+        {
+            fetching.running = false;
+        }
     }
 
     pub(crate) fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         let slot = (message.sender, message.body.kind());
-        if self.fetching.get(&slot) == Some(&message.id()) {
+        if self
+            .fetching
+            .get(&slot)
+            .is_some_and(|fetching| fetching.id == message.id())
+        {
             self.fetching.remove(&slot);
         }
         let mut effects = match message.body {
@@ -446,6 +510,13 @@ impl E3 {
             },
         };
         if let Some((member, fault)) = fault {
+            effects.push(Effect::Note(Note {
+                e3: self.id,
+                event: Noted::ProofFailed {
+                    member,
+                    proof_type: fault.proof_type,
+                },
+            }));
             effects.extend(self.accuse(now, member, fault));
         }
         effects.extend(self.hand_over_from_convicted(now));
@@ -528,18 +599,19 @@ impl E3 {
     }
 
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        self.note_turns_long_past(now);
         let mut effects = Vec::new();
-        if self.finalizer_due().is_some_and(|due| now >= due) {
+        if self.due(Duty::Finalize).is_some_and(|due| now >= due) {
             if let Some(ticket) = &mut self.ticket {
                 ticket.finalize_sent = true;
             }
             effects.push(self.submit(Transaction::FinalizeCommittee));
         }
-        if self.failure_due().is_some_and(|due| now >= due) {
+        if self.due(Duty::MarkFailed).is_some_and(|due| now >= due) {
             self.marked = self.watched();
             effects.push(self.submit(Transaction::MarkFailed));
         }
-        if self.settlement_due().is_some_and(|due| now >= due) {
+        if self.due(Duty::Settle).is_some_and(|due| now >= due) {
             if let Some(failure) = &mut self.failure {
                 failure.settle_sent = true;
             }
@@ -574,8 +646,8 @@ impl E3 {
             let decryption = self.decryption.as_ref().and_then(Decryption::next_deadline);
             dkg.into_iter()
                 .chain(decryption)
-                .chain(self.finalizer_due())
-                .chain(self.failure_due())
+                .chain(self.due(Duty::Finalize))
+                .chain(self.due(Duty::MarkFailed))
                 .chain(self.selecting.map(|selecting| selecting.by))
                 .min()
         });
@@ -593,7 +665,7 @@ impl E3 {
             work.flatten(),
             resend,
             accusation_due,
-            self.settlement_due(),
+            self.due(Duty::Settle),
         ]
         .into_iter()
         .flatten()
@@ -606,30 +678,54 @@ impl E3 {
         Some((self.stage, *deadline))
     }
 
-    /// This node's turn after the deadline of the stage it watches.
-    fn failure_due(&self) -> Option<UnixSecs> {
-        let watched = self.watched()?;
-        if self.marked == Some(watched) {
-            return None;
+    /// `duty`, if this node owes it: the deadline that its turns count from, and this node's
+    /// place among those that can make the call.
+    fn duty(&self, duty: Duty) -> Option<(UnixSecs, u64)> {
+        match duty {
+            Duty::Finalize => {
+                let ticket = self.ticket.filter(|ticket| !ticket.finalize_sent)?;
+                (self.stage == Stage::Requested).then_some((ticket.deadline, ticket.rank as u64))
+            }
+            Duty::MarkFailed => {
+                let watched = self
+                    .watched()
+                    .filter(|watched| self.marked != Some(*watched))?;
+                Some((watched.1, self.slot?))
+            }
+            Duty::Settle => {
+                let failure = self
+                    .failure
+                    .filter(|failure| !failure.settle_sent && !failure.settled)?;
+                Some((failure.at, self.slot?))
+            }
         }
-        turn(watched.1, self.slot?)
     }
 
-    fn settlement_due(&self) -> Option<UnixSecs> {
-        let failure = self
-            .failure
-            .filter(|failure| !failure.settle_sent && !failure.settled)?;
-        turn(failure.at, self.slot?)
+    /// When this node's turn at `duty` comes.
+    fn due(&self, duty: Duty) -> Option<UnixSecs> {
+        let (deadline, place) = self.duty(duty)?;
+        let start = match self.overdue.get(&duty) {
+            Some(overdue) if overdue.deadline == deadline => overdue.found,
+            _ => deadline,
+        };
+        Some(turn(start, place))
     }
 
-    /// After the committee deadline, in rank order, while the chain has not finalized the
-    /// committee.
-    fn finalizer_due(&self) -> Option<UnixSecs> {
-        let ticket = self.ticket.filter(|ticket| !ticket.finalize_sent)?;
-        if self.stage != Stage::Requested {
-            return None;
+    /// A turn found long past counts from now, once.
+    fn note_turns_long_past(&mut self, now: UnixSecs) {
+        for duty in [Duty::Finalize, Duty::MarkFailed, Duty::Settle] {
+            let Some((deadline, place)) = self.duty(duty) else {
+                continue;
+            };
+            let known = self
+                .overdue
+                .get(&duty)
+                .is_some_and(|overdue| overdue.deadline == deadline);
+            if !known && now > turn(deadline, place) + LONG_PAST {
+                let found = now;
+                self.overdue.insert(duty, Overdue { deadline, found });
+            }
         }
-        turn(ticket.deadline, ticket.rank as u64)
     }
 
     fn submit(&self, transaction: Transaction) -> Effect {

@@ -5,7 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use crate::node::ChainFact;
+use crate::{
+    accusation::{accusation_id, AccusationMessage, AccusationWorkResult, SignedVote, Vote},
+    node::{ChainFact, JobDone, WorkResult},
+    proof::{ProofType, SignedProof},
+};
+use alloy_primitives::B256;
 
 const ROSTER_BUDGET: u64 = 600;
 
@@ -97,60 +102,56 @@ fn an_expelled_aggregator_hands_over_at_once() {
     assert_eq!(accepted(&node), Some(members(&[second, third])));
 }
 
-/// An aggregator that H members found sending a failing proof hands over at once, as an expelled
-/// one does, without waiting for its slash to land.
-#[test]
-fn a_convicted_aggregator_hands_over_at_once() {
-    use crate::{
-        accusation::{accusation_id, AccusationMessage, AccusationWorkResult, SignedVote, Vote},
-        node::{JobDone, WorkResult},
-        proof::{ProofType, SignedProof},
-    };
-    use alloy_primitives::B256;
-
-    let [first, second, third] = ordered();
-    let manager = Address::repeat_byte(0x5a);
-    let mut node = Node::new(address(third));
-    node.step(0, chain(2, ChainFact::SlashingManager { manager }));
+/// Operator `me` after it dealt and verified every other member's shares, on a chain that takes
+/// accusations.
+fn accusing(me: u64) -> Node {
+    let mut node = Node::new(address(me));
+    node.step(0, chain(2, ChainFact::SlashingManager { manager: MANAGER }));
     node.step(0, chain(3, ChainFact::VoteValidity { secs: 600 }));
     node.step(0, requested(10, e3(1)));
     node.step(NOW, finalized(11, e3(1), committee()));
     let effects = node.step(NOW, key_made(e3(1), own_key(0xee)));
-    node.step(NOW, sign(third, signing(&effects)));
-    for n in others(third) {
+    node.step(NOW, sign(me, signing(&effects)));
+    for n in others(me) {
         add_valid_key(&mut node, n);
     }
-    let effects = node.step(NOW, shares_made(e3(1), own_shares(&others(third))));
-    node.step(NOW, sign(third, signing(&effects)));
-    for n in others(third) {
-        node.step(NOW, shares_from(e3(1), n, third));
+    let effects = node.step(NOW, shares_made(e3(1), own_shares(&others(me))));
+    node.step(NOW, sign(me, signing(&effects)));
+    for n in others(me) {
+        node.step(NOW, shares_from(e3(1), n, me));
         node.step(NOW, shares_checked(e3(1), n, true));
     }
-    node.step(NOW, ready(second, &[first, second, third], third));
-    node.step(NOW, roster(second, &[second, third], third));
-    assert_eq!(accepted(&node), None);
+    node
+}
 
-    // `second` accuses `first` of a failing proof, and this node finds the proof failing too.
+const MANAGER: Address = Address::repeat_byte(0x5a);
+
+/// `accuser` accuses `accused` of a failing proof, and this node, `me`, finds it failing too: H
+/// members have found it, so it is convicted.
+fn convict(node: &mut Node, me: u64, accused: u64, accuser: u64) {
     let proof = proof(0x51);
     let signed = SignedProof {
-        signature: signature(first, proof.payload_signing_hash(e3(1), ProofType::C0PkBfv)),
+        signature: signature(
+            accused,
+            proof.payload_signing_hash(e3(1), ProofType::C0PkBfv),
+        ),
         proof: proof.clone(),
     };
     let data_hash = B256::repeat_byte(0xd1);
     let vote = Vote {
         e3: e3(1),
-        accusation_id: accusation_id(e3(1), address(first), ProofType::C0PkBfv),
-        voter: address(second),
+        accusation_id: accusation_id(e3(1), address(accused), ProofType::C0PkBfv),
+        voter: address(accuser),
         data_hash,
         issued_at: NOW,
         deadline: NOW + 600,
     };
     let vote = SignedVote {
-        signature: signature(second, vote.signing_hash(manager)),
+        signature: signature(accuser, vote.signing_hash(MANAGER)),
         vote,
     };
     let accuse = AccusationMessage::Accuse {
-        accused: address(first),
+        accused: address(accused),
         proof_type: ProofType::C0PkBfv,
         proof: signed,
         vote,
@@ -159,7 +160,7 @@ fn a_convicted_aggregator_hands_over_at_once() {
         NOW,
         Input::Peer(PeerMessage {
             e3: e3(1),
-            sender: address(second),
+            sender: address(accuser),
             body: Body::Accusation(accuse),
         }),
     );
@@ -176,7 +177,42 @@ fn a_convicted_aggregator_hands_over_at_once() {
             result: verified,
         }),
     );
-    node.step(NOW, sign(third, signing(&effects)));
+    node.step(NOW, sign(me, signing(&effects)));
+}
+
+/// An aggregator that H members found sending a failing proof hands over at once, as an expelled
+/// one does, without waiting for its slash to land.
+#[test]
+fn a_convicted_aggregator_hands_over_at_once() {
+    let [first, second, third] = ordered();
+    let mut node = accusing(third);
+    node.step(NOW, ready(second, &[first, second, third], third));
+    node.step(NOW, roster(second, &[second, third], third));
+    assert_eq!(accepted(&node), None);
+    convict(&mut node, third, first, second);
+    assert_eq!(accepted(&node), Some(members(&[second, third])));
+}
+
+/// A member H members found sending a failing proof takes no place in a roster this node chooses.
+#[test]
+fn the_roster_this_node_proposes_leaves_out_a_convicted_member() {
+    let [first, second, third] = ordered();
+    let mut node = accusing(first);
+    convict(&mut node, first, second, third);
+    let effects = node.step(NOW, ready(third, &[first, second, third], first));
+    assert_eq!(rosters_sent(&effects), vec![members(&[first, third])]);
+    assert_eq!(accepted(&node), Some(members(&[first, third])));
+}
+
+/// Nodes count votes at different times, so a roster is judged only by chain facts: this node
+/// does not refuse one that names a member it has found convicted.
+#[test]
+fn a_received_roster_that_names_a_convicted_member_is_accepted() {
+    let [first, second, third] = ordered();
+    let mut node = accusing(second);
+    convict(&mut node, second, third, first);
+    node.step(NOW, roster(first, &[second, third], second));
+    node.step(NOW, ready(first, &[first, second, third], second));
     assert_eq!(accepted(&node), Some(members(&[second, third])));
 }
 

@@ -12,7 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_crypto::Cipher;
 use e3_entrypoint::fence::ProcessFence;
-use e3_node::launch::{launch, Availability, Config, Network, Prover, Proving};
+use e3_node::launch::{deployment, launch, Availability, Config, Network, Prover, Proving};
 use e3_zk_prover::BBPath;
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
@@ -97,10 +97,12 @@ async fn main() -> anyhow::Result<()> {
         reserved_threads: 1,
         network: Network {
             id: config.network.id,
+            deployment: deployment(config.interfold),
             identity: config.network.identity.0,
             listen: config.network.listen,
             peers: config.network.peers,
         },
+        status_port: None,
     };
     launch(config, stop).await
 }

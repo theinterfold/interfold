@@ -162,8 +162,10 @@ impl Accusations {
     }
 
     /// Whether to take `message` from `sender`: both it and the accused are live members, the
-    /// accused signed the proof, the vote is the sender's and counts, and the sender has no other
-    /// window open for the same accusation, so a member cannot open windows without end.
+    /// accused signed the proof, and the vote is the sender's and counts. An accusation opens a
+    /// window unless the sender has another open for the same accusation, so a member cannot open
+    /// windows without end; one for a window that is already open is one more vote in it, if it
+    /// signs the same evidence.
     pub(crate) fn admits(
         &self,
         now: UnixSecs,
@@ -178,16 +180,18 @@ impl Accusations {
                 vote,
             } => {
                 let ballot = Ballot::of(&vote.vote);
+                let opens_or_joins = match self.cases.get(&ballot) {
+                    Some(case) => case.data_hash == vote.vote.data_hash,
+                    None => !self.cases.iter().any(|(open, case)| {
+                        open.accusation_id == ballot.accusation_id && case.accuser == sender
+                    }),
+                };
                 sender != *accused
                     && self.is_member(*accused)
                     && vote.vote.accusation_id == accusation_id(self.e3, *accused, *proof_type)
                     && proof.is_signed_by(*accused, self.e3, *proof_type)
                     && self.counts(now, sender, vote)
-                    && !self.cases.iter().any(|(open, case)| {
-                        *open == ballot
-                            || (open.accusation_id == ballot.accusation_id
-                                && case.accuser == sender)
-                    })
+                    && opens_or_joins
             }
             AccusationMessage::Vote(vote) => {
                 let accused = self
@@ -200,10 +204,11 @@ impl Accusations {
     }
 
     /// A vote counts from a live member that signed it, for this E3, in a window that is no longer
-    /// than the vote validity and has not passed.
+    /// than the vote validity and has not passed. Without a validity accusations are off.
     fn counts(&self, now: UnixSecs, voter: Address, signed: &SignedVote) -> bool {
         let vote = &signed.vote;
-        vote.e3 == self.e3
+        self.validity != 0
+            && vote.e3 == self.e3
             && vote.voter == voter
             && self.is_member(voter)
             && vote.issued_at <= now.saturating_add(CLOCK_SKEW)
@@ -236,6 +241,12 @@ impl Accusations {
                 vote,
             } => {
                 let ballot = Ballot::of(&vote.vote);
+                // Members that accuse in the same second share a window; the contract takes their
+                // votes together.
+                if let Some(case) = self.cases.get_mut(&ballot) {
+                    case.votes.insert(sender, vote);
+                    return self.reached(now, ballot);
+                }
                 let mut case = Case::new(sender, accused, proof_type, proof, vote.vote.data_hash);
                 let early = self.early.remove(&ballot).into_iter().flatten();
                 let votes = early.filter(|(voter, early)| {

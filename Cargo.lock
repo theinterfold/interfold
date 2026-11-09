@@ -4021,6 +4021,7 @@ dependencies = [
  "alloy-signer",
  "e3-blobs",
  "e3-protocol",
+ "e3-utils",
  "futures",
  "libp2p",
  "serde_bytes",

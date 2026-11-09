@@ -8,13 +8,13 @@
 //! service, the operator key that `interfold wallet set` stored, and the node's port and peers.
 
 use crate::keystore;
-use alloy::{signers::local::PrivateKeySigner, transports::Authorization};
+use alloy::{primitives::Address, signers::local::PrivateKeySigner, transports::Authorization};
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_entrypoint::fence::ProcessFence;
 use e3_evm_config::{DataAvailabilityMode, RpcAuth};
-use e3_node::launch::{Availability, Config, Network, Prover, Proving};
+use e3_node::launch::{deployment, Availability, Config, Network, Prover, Proving};
 use e3_zk_prover::BBPath;
 use std::time::Duration;
 
@@ -79,7 +79,8 @@ pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> 
         fence,
         proving: proving(config),
         reserved_threads: config.multithread_reserve_threads(),
-        network: network(config, identity),
+        status_port: config.dashboard_port(),
+        network: network(config, identity, contracts.interfold.address()?),
         operator,
         cipher,
     })
@@ -103,13 +104,23 @@ fn proving(config: &NodeConfig) -> Proving {
 pub async fn bootstrap(config: &NodeConfig) -> Result<Network> {
     let cipher = Cipher::from_file(config.key_file()).await?;
     let (_, identity) = keys(config, &cipher).await?;
-    Ok(network(config, identity))
+    let chain = config
+        .chains()
+        .iter()
+        .find(|chain| chain.enabled.unwrap_or(true))
+        .context("a bootstrap node needs its chain's section, which names its deployment")?;
+    Ok(network(
+        config,
+        identity,
+        chain.contracts.interfold.address()?,
+    ))
 }
 
-fn network(config: &NodeConfig, identity: [u8; 32]) -> Network {
+fn network(config: &NodeConfig, identity: [u8; 32], interfold: Address) -> Network {
     Network {
         // The network ID, not its name, keeps custom networks apart.
         id: config.network().id().to_string(),
+        deployment: deployment(interfold),
         identity,
         listen: vec![format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.quic_port())],
         peers: config.peers(),

@@ -47,6 +47,19 @@ pub enum NodeCommands {
         #[arg(long)]
         if_schema_older: bool,
     },
+
+    /// Print what the node noted for its operator, oldest first: DKG failures, Ready reports,
+    /// rosters, and proofs that failed. Reads the node's feed and changes nothing, also while
+    /// the node runs.
+    Events {
+        /// Only notes after this sequence number.
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+
+        /// At most this many notes.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
 }
 
 pub async fn execute(out: Console, command: NodeCommands, config: &NodeConfig) -> Result<()> {
@@ -57,7 +70,22 @@ pub async fn execute(out: Console, command: NodeCommands, config: &NodeConfig) -
             allow_active_e3s,
             if_schema_older,
         } => reset_data(out, config, yes, allow_active_e3s, if_schema_older).await,
+        NodeCommands::Events { since, limit } => events(out, config, since, limit),
     }
+}
+
+fn events(out: Console, config: &NodeConfig, since: u64, limit: usize) -> Result<()> {
+    for entry in e3_node::notes::read(&crate::node_state::dir(config).notes(), since, limit)? {
+        log!(
+            out,
+            "{} {} E3 {}: {}",
+            entry.sequence,
+            entry.at,
+            entry.note.e3,
+            entry.note.event
+        );
+    }
+    Ok(())
 }
 
 /// Reports on the node's keys and state, and writes nothing.

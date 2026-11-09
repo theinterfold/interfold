@@ -344,6 +344,17 @@ pub fn keyshare_checked(e3: E3Id, member: u64, valid: bool) -> Input {
     })
 }
 
+/// One step of the roster's fold finished.
+pub fn roster_folded(e3: E3Id, slot: u32, fill: u8) -> Input {
+    Input::Job(JobDone {
+        e3,
+        result: WorkResult::Dkg(DkgWorkResult::RosterFolded {
+            slot,
+            accumulator: proof(fill),
+        }),
+    })
+}
+
 pub fn key_aggregated(e3: E3Id, fill: u8) -> Input {
     Input::Job(JobDone {
         e3,
@@ -506,7 +517,7 @@ pub fn fetched_from(effects: &[Effect]) -> Vec<Address> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::FetchBlobs(message) => Some(message.sender),
+            Effect::FetchBlobs(fetch) => Some(fetch.message.sender),
             _ => None,
         })
         .collect()
@@ -559,7 +570,7 @@ pub const INTERFOLD: Address = Address::repeat_byte(0x1f);
 pub const REQUEST: CommitteeRequest = CommitteeRequest {
     time: 1,
     ticket_price: U256::from_limbs([1, 0, 0, 0]),
-    owner_cap: true,
+    owner_cap: false,
     dkg_window: TIMING.window,
 };
 

@@ -214,8 +214,14 @@ impl Dkg {
             .filter(|verdict| **verdict == Some(true))
             .count();
         if valid <= self.t() {
-            self.phase = Phase::Failed(DkgFailure::TooFewValidDecryptionKeys);
-            return Vec::new();
+            let invalid: Vec<Address> = roster
+                .iter()
+                .filter(|member| {
+                    **member != self.me && self.decryption_keys.checked.get(*member) != Some(&true)
+                })
+                .copied()
+                .collect();
+            return vec![self.fail(DkgFailure::TooFewValidDecryptionKeys, invalid)];
         }
         let message = KeyshareMessage {
             pk_share: dealt.pk_share,

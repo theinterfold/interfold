@@ -56,8 +56,9 @@ pub enum JobError {
 }
 
 impl JobError {
+    /// With the error's whole chain of causes, which can say which member's input was bad.
     pub(crate) fn crypto(error: impl Display) -> Self {
-        Self::Crypto(error.to_string())
+        Self::Crypto(format!("{error:#}"))
     }
 }
 

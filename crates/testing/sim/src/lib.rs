@@ -338,9 +338,9 @@ impl<J: Jobs> Sim<J> {
                     self.nodes[node].acknowledge(key);
                     self.submit(address(self.nodes[node].operator), submission);
                 }
-                Effect::FetchBlobs(message) => {
+                Effect::FetchBlobs(fetch) => {
                     let at = self.now + self.delay();
-                    self.schedule(at, node, Input::Peer(message), Some(key));
+                    self.schedule(at, node, Input::Peer(fetch.message), Some(key));
                 }
                 Effect::ReadEligibility(read) => {
                     let eligible = Some(read.operators.into_iter().collect());
@@ -351,6 +351,7 @@ impl<J: Jobs> Sim<J> {
                     let at = self.now + self.delay();
                     self.schedule(at, node, answer, Some(key));
                 }
+                Effect::Note(_) => self.nodes[node].acknowledge(key),
                 Effect::Fetch(fetch) => {
                     let blob = self.available[&fetch.data.hash];
                     let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
@@ -596,7 +597,7 @@ fn fact_e3(fact: &ChainFact) -> Option<E3Id> {
         | ChainFact::TicketBalance { .. }
         | ChainFact::BondOwner { .. }
         | ChainFact::EligibilityReset
-        | ChainFact::IdentityPolicy { .. }
+        | ChainFact::OperatorEnabled { .. }
         | ChainFact::RandomnessProvider { .. }
         | ChainFact::SlashingManager { .. } => return None,
     };

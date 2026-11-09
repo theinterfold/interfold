@@ -10,7 +10,11 @@
 //! C4, which fixes the roster.
 
 use super::{Dealer, Dkg, DkgMessage, Phase};
-use crate::{failover::Failover, node::Effect, UnixSecs};
+use crate::{
+    failover::Failover,
+    node::{Effect, Noted},
+    UnixSecs,
+};
 use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -155,9 +159,15 @@ impl Dkg {
         let Some(best) = best else {
             return Vec::new();
         };
+        let noted = self.note(Noted::RosterAccepted {
+            proposer: best.proposer,
+            dealers: best.dealers.iter().map(|dealer| dealer.member).collect(),
+        });
         self.rosters.proposed.clear();
         self.rosters.accepted = Some(best);
-        self.start_decryption_key()
+        let mut effects = self.start_decryption_key();
+        effects.push(noted);
+        effects
     }
 
     /// A roster is usable when no member of it is expelled and it is supported: this node's
@@ -178,12 +188,16 @@ impl Dkg {
     }
 
     /// The first H live reporters, in committee order, whose reports all name each other's own
-    /// contributions.
+    /// contributions. This node leaves out the members it found convicted. It judges a roster it
+    /// receives only by chain facts: nodes that count votes at different times must not refuse
+    /// each other's rosters and stop the same DKG.
     fn select_ready_roster(&self) -> Option<Vec<Dealer>> {
         let reports: BTreeMap<Address, &[Dealer]> = self
             .ready
             .iter()
-            .filter(|(reporter, _)| self.is_live(reporter))
+            .filter(|(reporter, _)| {
+                self.is_live(reporter) && !self.rosters.failover.is_convicted(reporter)
+            })
             .map(|(reporter, report)| (*reporter, report.as_slice()))
             .collect();
         let candidates: Vec<Dealer> = reports

@@ -22,7 +22,7 @@ pub use timing::DkgTiming;
 
 use crate::{
     accusation::Verdict,
-    node::{Body, CryptoParams, Effect, Job, PeerMessage, Purpose, Signing, Work},
+    node::{Body, CryptoParams, Effect, Job, Note, Noted, PeerMessage, Purpose, Signing, Work},
     proof::{SignedProof, ZkProof},
     BlobRef, E3Id, SealedRef, UnixSecs,
 };
@@ -247,13 +247,23 @@ pub enum DkgWork {
         committee: Vec<Address>,
         keyshare: Box<KeyshareMessage>,
     },
-    /// Sum the roster's public-key shares into the committee key, prove C5, and combine the
-    /// roster members' folds. Keyshares and folds come in roster order.
+    /// Fold one roster member's proof into the roster's accumulator, at `slot` of `slots`. Slots
+    /// follow the roster's order, as the final circuit requires.
+    FoldRoster {
+        slot: u32,
+        slots: usize,
+        fold: ZkProof,
+        /// The fold of the slots before this one; none for the first.
+        accumulator: Option<ZkProof>,
+    },
+    /// Sum the roster's public-key shares into the committee key, prove C5, and combine it with
+    /// the roster's accumulator. Keyshares and folds come in roster order.
     AggregateKey {
         committee: Vec<Address>,
         roster: Vec<Address>,
         keyshares: Vec<KeyshareMessage>,
         folds: Vec<NodeFold>,
+        accumulator: ZkProof,
     },
 }
 
@@ -267,6 +277,7 @@ pub enum DkgWorkResult {
     DecryptionKeyChecked { member: Address, verdict: Verdict },
     ProofsFolded(NodeFold),
     KeyshareChecked { member: Address, verdict: Verdict },
+    RosterFolded { slot: u32, accumulator: ZkProof },
     KeyAggregated(AggregatedKey),
 }
 
@@ -436,8 +447,8 @@ impl Dkg {
             published: false,
         };
         if now >= timing.key_cutoff() {
-            dkg.phase = Phase::Failed(DkgFailure::StartedAfterKeyCutoff);
-            return (dkg, Vec::new());
+            let noted = dkg.fail(DkgFailure::StartedAfterKeyCutoff, Vec::new());
+            return (dkg, vec![noted]);
         }
         let make = dkg.run(DkgWork::MakeEncryptionKey);
         (dkg, vec![make])
@@ -497,10 +508,7 @@ impl Dkg {
             _ if !admitted => Vec::new(),
             DkgMessage::EncryptionKey(message) => self.receive_key(sender, message),
             DkgMessage::Shares(message) => self.receive_shares(sender, *message),
-            DkgMessage::Ready(dealers) => {
-                self.receive_ready(sender, dealers);
-                Vec::new()
-            }
+            DkgMessage::Ready(dealers) => vec![self.receive_ready(sender, dealers)],
             DkgMessage::Roster(dealers) => {
                 self.receive_roster(sender, dealers);
                 Vec::new()
@@ -556,6 +564,10 @@ impl Dkg {
                 self.keyshare_checked(member, verdict.is_valid());
                 Vec::new()
             }
+            DkgWorkResult::RosterFolded { slot, accumulator } => {
+                self.roster_folded(slot, accumulator);
+                Vec::new()
+            }
             DkgWorkResult::KeyAggregated(key) => self.key_aggregated(key),
         };
         effects.extend(self.advance(now));
@@ -586,15 +598,13 @@ impl Dkg {
             return Vec::new();
         }
         if member == self.me {
-            self.phase = Phase::Failed(DkgFailure::Expelled);
-            return Vec::new();
+            return vec![self.fail(DkgFailure::Expelled, Vec::new())];
         }
         if self
             .roster()
             .is_some_and(|roster| roster.iter().any(|d| d.member == member))
         {
-            self.phase = Phase::Failed(DkgFailure::RosterMemberExpelled);
-            return Vec::new();
+            return vec![self.fail(DkgFailure::RosterMemberExpelled, vec![member])];
         }
         let mut effects = self.close_keys_if_all_in();
         effects.extend(self.send_ready_if_due());
@@ -631,9 +641,25 @@ impl Dkg {
         effects.extend(self.pass_roster_deadlines(now));
         effects.extend(self.pass_aggregation_deadlines(now));
         if self.running() && now >= self.timing.deadline {
-            self.phase = Phase::Failed(DkgFailure::DeadlinePassed);
+            let unready: Vec<Address> = self
+                .members
+                .iter()
+                .filter(|member| self.is_live(member) && !self.ready.contains_key(*member))
+                .copied()
+                .collect();
+            effects.push(self.fail(DkgFailure::DeadlinePassed, unready));
         }
         effects
+    }
+
+    /// The DKG stops here, and the operator can read why.
+    fn fail(&mut self, failure: DkgFailure, missing: Vec<Address>) -> Effect {
+        self.phase = Phase::Failed(failure);
+        self.note(Noted::DkgFailed { failure, missing })
+    }
+
+    fn note(&self, event: Noted) -> Effect {
+        Effect::Note(Note { e3: self.e3, event })
     }
 
     pub(crate) fn next_deadline(&self) -> Option<UnixSecs> {

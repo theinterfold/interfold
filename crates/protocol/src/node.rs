@@ -18,12 +18,12 @@ use crate::{
         PlaintextPublication,
     },
     dkg::{
-        AttestationContext, DkgMessage, DkgSignature, DkgTiming, DkgWork, DkgWorkResult, KeyAnchor,
-        KeyPublication,
+        AttestationContext, DkgFailure, DkgMessage, DkgSignature, DkgTiming, DkgWork,
+        DkgWorkResult, KeyAnchor, KeyPublication,
     },
     proof::{ProofType, ZkProof},
     registry::Registry,
-    selection::{candidate_owners, candidates},
+    selection::{candidate_owners, candidates, Eligible},
     BlobRef, E3Id, Machine, Tick, UnixSecs,
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
@@ -224,9 +224,11 @@ pub enum ChainFact {
     },
     /// A new eligibility configuration: every operator is inactive until it refreshes.
     EligibilityReset,
-    /// Whether bond owners need an identity credential.
-    IdentityPolicy {
-        required: bool,
+    /// `CiphernodeAdded` or `CiphernodeRemoved`: whether the ciphernode registry lists the
+    /// operator, without which it takes no ticket.
+    OperatorEnabled {
+        operator: Address,
+        enabled: bool,
     },
 }
 
@@ -265,7 +267,7 @@ pub enum Body {
 
 /// What a message is, whatever it holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) enum Kind {
+pub enum Kind {
     EncryptionKey,
     Shares,
     Ready,
@@ -279,7 +281,7 @@ pub(crate) enum Kind {
 }
 
 impl Body {
-    pub(crate) fn kind(&self) -> Kind {
+    pub fn kind(&self) -> Kind {
         match self {
             Body::Dkg(DkgMessage::EncryptionKey(_)) => Kind::EncryptionKey,
             Body::Dkg(DkgMessage::Shares(_)) => Kind::Shares,
@@ -318,7 +320,7 @@ impl PeerMessage {
         keccak256(bincode::serialize(self).expect("a peer message encodes"))
     }
 
-    /// Its encoded bytes and its blobs' bytes.
+    /// Its encoded bytes and the bytes of the blobs it would bring.
     fn size(&self) -> u64 {
         let encoded = bincode::serialized_size(self).unwrap_or(u64::MAX);
         self.blobs()
@@ -355,6 +357,7 @@ impl Work {
             Work::Dkg(DkgWork::CheckDecryptionKey { .. }) => "dkg: check a decryption key",
             Work::Dkg(DkgWork::FoldProofs { .. }) => "dkg: fold this node's proofs",
             Work::Dkg(DkgWork::CheckKeyshare { .. }) => "dkg: check a keyshare",
+            Work::Dkg(DkgWork::FoldRoster { .. }) => "dkg: fold a roster member's proof",
             Work::Dkg(DkgWork::AggregateKey { .. }) => "dkg: aggregate the committee key",
             Work::Decryption(_) => "decryption",
             Work::Accusation(_) => "accusation: verify a proof",
@@ -413,9 +416,10 @@ pub struct Fetched {
     pub blob: BlobRef,
 }
 
-/// Which of `operators` the bonding registry finds eligible at `at`. Under a required identity
-/// policy an operator is eligible only while its owner holds a credential. The answer returns as
-/// [`Input::Eligibility`]; one after `by` comes too late to rank with.
+/// Which of `operators` the bonding registry finds eligible at `at`, which only it can say: an
+/// owner's admission cooldown and pause apply, and under a required identity policy so does its
+/// credential. The answer returns as [`Input::Eligibility`]; one after `by` comes too late to
+/// rank with.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EligibilityRead {
     pub e3: E3Id,
@@ -431,6 +435,24 @@ pub struct Eligibility {
     pub eligible: Option<BTreeSet<Address>>,
 }
 
+/// A fetch of a peer message's blobs came back with nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchFailed {
+    pub e3: E3Id,
+    pub sender: Address,
+    pub kind: Kind,
+    pub id: B256,
+    pub attempt: u32,
+}
+
+/// The blobs of `message` to bring into the store, from the peers that sent it. `attempt` counts
+/// this node's tries at this message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobFetch {
+    pub message: PeerMessage,
+    pub attempt: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Input {
     Chain(ChainEvent),
@@ -438,6 +460,7 @@ pub enum Input {
     Announced(PeerMessage),
     /// A peer's message whose blobs are in the store.
     Peer(PeerMessage),
+    FetchFailed(FetchFailed),
     Job(JobDone),
     Signed(Signed),
     Fetched(Fetched),
@@ -487,6 +510,80 @@ pub enum Transaction {
     },
 }
 
+/// What an operator would want to read about a step the node took. Only steps the node admitted
+/// make notes, so a flood of refused messages writes nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub e3: E3Id,
+    pub event: Noted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Noted {
+    /// The DKG stopped at this node, with the members it still waited for.
+    DkgFailed {
+        failure: DkgFailure,
+        missing: Vec<Address>,
+    },
+    /// A member named the dealers whose shares it verified: `reports` of the committee have.
+    Ready {
+        reporter: Address,
+        dealers: usize,
+        reports: usize,
+        committee: usize,
+    },
+    RosterAccepted {
+        proposer: Address,
+        dealers: Vec<Address>,
+    },
+    /// A proof that `member` signed fails.
+    ProofFailed {
+        member: Address,
+        proof_type: ProofType,
+    },
+}
+
+impl Noted {
+    /// Whether the operator should look at it.
+    pub fn is_warning(&self) -> bool {
+        matches!(self, Noted::DkgFailed { .. } | Noted::ProofFailed { .. })
+    }
+}
+
+impl std::fmt::Display for Noted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Noted::DkgFailed { failure, missing } if missing.is_empty() => {
+                write!(f, "the DKG failed here: {failure:?}")
+            }
+            Noted::DkgFailed { failure, missing } => {
+                let missing: Vec<String> = missing.iter().map(ToString::to_string).collect();
+                write!(
+                    f,
+                    "the DKG failed here: {failure:?}, waiting for {}",
+                    missing.join(", ")
+                )
+            }
+            Noted::Ready {
+                reporter,
+                dealers,
+                reports,
+                committee,
+            } => write!(
+                f,
+                "{reporter} verified {dealers} dealers; {reports} of {committee} members reported"
+            ),
+            Noted::RosterAccepted { proposer, dealers } => {
+                let dealers: Vec<String> = dealers.iter().map(ToString::to_string).collect();
+                write!(f, "roster from {proposer}: {}", dealers.join(", "))
+            }
+            Noted::ProofFailed { member, proof_type } => {
+                write!(f, "{member} signed a failing {proof_type:?} proof")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
     Run(Job),
@@ -494,10 +591,11 @@ pub enum Effect {
     Gossip(PeerMessage),
     Submit(Submission),
     Fetch(Fetch),
-    /// Bring the blobs a peer's message names into the store, from the peers that sent it; the
-    /// message comes back as `Input::Peer` once they are there.
-    FetchBlobs(PeerMessage),
+    /// The message comes back as `Input::Peer` once its blobs are there, and as
+    /// `Input::FetchFailed` if they did not come.
+    FetchBlobs(BlobFetch),
     ReadEligibility(EligibilityRead),
+    Note(Note),
 }
 
 impl Effect {
@@ -505,10 +603,12 @@ impl Effect {
         match self {
             Effect::Run(job) => job.e3,
             Effect::Sign(signing) => signing.e3,
-            Effect::Gossip(message) | Effect::FetchBlobs(message) => message.e3,
+            Effect::Gossip(message) => message.e3,
+            Effect::FetchBlobs(fetch) => fetch.message.e3,
             Effect::Submit(submission) => submission.e3,
             Effect::Fetch(fetch) => fetch.e3,
             Effect::ReadEligibility(read) => read.e3,
+            Effect::Note(note) => note.e3,
         }
     }
 
@@ -525,7 +625,11 @@ impl Effect {
                 Purpose::Decryption(_) => Scope::Live,
                 Purpose::Accusation(_) => Scope::Held,
             },
-            Effect::Gossip(message) | Effect::FetchBlobs(message) => match message.body {
+            Effect::Gossip(PeerMessage { body, .. })
+            | Effect::FetchBlobs(BlobFetch {
+                message: PeerMessage { body, .. },
+                ..
+            }) => match body {
                 Body::Dkg(_) => Scope::Dkg,
                 Body::Decryption(_) => Scope::Live,
                 Body::Accusation(_) => Scope::Held,
@@ -539,6 +643,7 @@ impl Effect {
                 _ => Scope::Live,
             },
             Effect::Fetch(_) | Effect::ReadEligibility(_) => Scope::Live,
+            Effect::Note(_) => Scope::Held,
         }
     }
 }
@@ -552,6 +657,19 @@ pub enum Scope {
     Live,
     /// While the node holds the E3: accusations and failure settlement go on after it fails.
     Held,
+}
+
+/// What the node does with a peer's message when the network announces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Classified {
+    /// It cannot use the message, which costs nothing more: it is not journaled.
+    Drop,
+    /// It waits for the chain fact that lets the node judge it.
+    Hold,
+    /// The node uses it once its blobs are here.
+    Fetch,
+    /// The node uses it now.
+    Deliver,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -617,6 +735,13 @@ impl Node {
 
     pub fn e3(&self, e3: &E3Id) -> Option<&E3> {
         self.e3s.get(e3)
+    }
+
+    /// Whether this node's operator is active on `chain_id` now, and listed by its registry.
+    pub fn standing(&self, chain_id: u64) -> (bool, bool) {
+        self.registries
+            .get(&chain_id)
+            .map_or((false, false), |registry| registry.standing(self.me))
     }
 
     /// Whether the node still owes an effect of `e3` with this `scope`.
@@ -710,8 +835,8 @@ impl Node {
                 registry.reset_activity(time);
                 Vec::new()
             }
-            ChainFact::IdentityPolicy { required } => {
-                registry.set_identity_required(time, required);
+            ChainFact::OperatorEnabled { operator, enabled } => {
+                registry.set_enabled(operator, enabled);
                 Vec::new()
             }
             ChainFact::CommitteeFinalized {
@@ -812,35 +937,29 @@ impl Node {
         }
     }
 
-    /// The registry accepted the request's randomness. Under a required identity policy an
-    /// owner-capped request first asks the bonding registry which operators' owners hold a
-    /// credential, while there is time for the read and for a ticket after it.
+    /// The registry accepted the request's randomness. An owner-capped request first asks the
+    /// bonding registry which operators may hold a seat, while there is time for the read and for
+    /// a ticket after it.
     fn select(&mut self, now: UnixSecs, e3: E3Id, seed: CommitteeSeed) -> Vec<Effect> {
         let Some(state) = self.e3s.get_mut(&e3) else {
             return Vec::new();
         };
         state.seeded(seed.deadline);
         let request = state.request;
-        let at = request.time.saturating_sub(1);
-        let registry = self.registries.entry(e3.chain_id).or_default();
         let by = (now + ELIGIBILITY_READ).min(seed.deadline.saturating_sub(TICKET_RESERVE));
-        if request.owner_cap
-            && registry.identity_required_at(at)
-            && now < by
-            && state.ticket().is_none()
-        {
+        if request.owner_cap && now < by && state.ticket().is_none() {
             if !state.await_eligibility(seed, by) {
                 return Vec::new();
             }
-            let operators = registry
-                .eligible_at(at, request.ticket_price)
+            let registry = self.registries.entry(e3.chain_id).or_default();
+            let operators = submitters(registry, &request)
                 .into_iter()
                 .map(|operator| operator.operator)
                 .collect();
             let read = EligibilityRead {
                 e3,
                 operators,
-                at,
+                at: request.time.saturating_sub(1),
                 by,
             };
             return vec![Effect::ReadEligibility(read)];
@@ -849,16 +968,15 @@ impl Node {
     }
 
     /// Rank the request's candidates from the registry at T−1 and submit this node's ticket if it
-    /// is one of them, before the committee deadline. Under a required identity policy only the
-    /// operators in `credentialed` keep the owner shortlist; without that answer the node ranks
-    /// every eligible operator, and the contract rejects the others. A node takes at most as many
-    /// E3s at once as it has tickets.
+    /// is one of them, before the committee deadline. Only the operators in `confirmed` keep the
+    /// owner shortlist; without that answer the node ranks every eligible operator, and the
+    /// contract rejects the others. A node takes at most as many E3s at once as it has tickets.
     fn rank(
         &mut self,
         now: UnixSecs,
         e3: E3Id,
         seed: CommitteeSeed,
-        credentialed: Option<&BTreeSet<Address>>,
+        confirmed: Option<&BTreeSet<Address>>,
     ) -> Vec<Effect> {
         let CommitteeSeed {
             seed,
@@ -876,14 +994,12 @@ impl Node {
             return Vec::new();
         }
         let request = state.request;
-        let at = request.time.saturating_sub(1);
         let registry = self.registries.entry(e3.chain_id).or_default();
-        let mut eligible = registry.eligible_at(at, request.ticket_price);
-        if let Some(credentialed) = credentialed {
-            eligible.retain(|operator| credentialed.contains(&operator.operator));
+        let mut eligible = submitters(registry, &request);
+        if let Some(confirmed) = confirmed {
+            eligible.retain(|operator| confirmed.contains(&operator.operator));
         }
-        let owner_cap =
-            request.owner_cap && (credentialed.is_some() || !registry.identity_required_at(at));
+        let owner_cap = request.owner_cap && confirmed.is_some();
         let committee = state.params.committee_size.values();
         let owners = candidate_owners(committee.n, committee.threshold);
         let ranked = candidates(e3, seed, &eligible, owner_cap, owners);
@@ -919,28 +1035,37 @@ impl Node {
         }
     }
 
-    /// A message waits in the bounded hold until the chain fact that lets the node judge it:
-    /// the committee's finalization for the DKG, the key's publication for decryption. Its blobs
-    /// are fetched only once its E3 admits it, so a sender outside the committee costs no
-    /// download.
-    fn apply_announced(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+    /// The one admission rule for what the network announces. It only reads, so the node can call
+    /// it before the journal, and what it drops costs no durable record. A message waits in the
+    /// bounded hold until the chain fact that lets the node judge it: the committee's finalization
+    /// for the DKG, the key's publication for decryption. Blobs are fetched only once the E3 admits
+    /// the message, so a sender outside the committee costs no download.
+    pub fn classify(&self, now: UnixSecs, message: &PeerMessage) -> Classified {
         if self.ended.contains(&message.e3) || !message.is_for(self.me) {
-            return Vec::new();
+            return Classified::Drop;
         }
-        match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.routes(&message.body) => {
-                if message.blobs().is_empty() {
-                    state.receive(now, message)
-                } else if state.fetches(now, &message) {
-                    vec![Effect::FetchBlobs(message)]
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => {
-                self.held.hold(message);
+        match self.e3s.get(&message.e3) {
+            Some(state) if state.routes(&message.body) => state.classify(now, message),
+            _ if self.held.has_room(message) => Classified::Hold,
+            _ => Classified::Drop,
+        }
+    }
+
+    fn apply_announced(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+        match self.classify(now, &message) {
+            Classified::Drop => Vec::new(),
+            Classified::Hold => {
+                self.held.hold(now, message);
                 Vec::new()
             }
+            Classified::Deliver => self
+                .e3s
+                .get_mut(&message.e3)
+                .map_or_else(Vec::new, |state| state.receive(now, message)),
+            Classified::Fetch => self
+                .e3s
+                .get_mut(&message.e3)
+                .map_or_else(Vec::new, |state| vec![state.start_fetch(message)]),
         }
     }
 
@@ -976,6 +1101,7 @@ impl Node {
     }
 
     fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
+        self.held.pass_deadlines(now);
         let mut effects: Vec<Effect> = self
             .e3s
             .values_mut()
@@ -1018,6 +1144,14 @@ fn request_slot(registry: &Registry, me: Address, request: &CommitteeRequest) ->
         .map(|slot| slot as u64)
 }
 
+/// The operators that can take a seat of `request`: eligible when it was made, and able to submit
+/// a ticket now.
+fn submitters(registry: &Registry, request: &CommitteeRequest) -> Vec<Eligible> {
+    let mut eligible = registry.eligible_at(request.time.saturating_sub(1), request.ticket_price);
+    eligible.retain(|operator| registry.can_submit(operator.operator));
+    eligible
+}
+
 impl Machine for Node {
     type Input = Input;
     type Effect = Effect;
@@ -1028,6 +1162,12 @@ impl Machine for Node {
             Input::Chain(event) => self.apply_chain(now, event),
             Input::Announced(message) => self.apply_announced(now, message),
             Input::Peer(message) => self.apply_peer(now, message),
+            Input::FetchFailed(failed) => {
+                if let Some(state) = self.e3s.get_mut(&failed.e3) {
+                    state.fetch_failed(&failed);
+                }
+                Vec::new()
+            }
             Input::Job(done) => self.apply_job(now, done),
             Input::Signed(signed) => self.apply_signed(now, signed),
             Input::Fetched(fetched) => match self.e3s.get_mut(&fetched.e3) {
@@ -1045,61 +1185,81 @@ impl Machine for Node {
     }
 
     fn next_deadline(&self) -> Option<UnixSecs> {
-        self.e3s.values().filter_map(E3::next_deadline).min()
+        let e3s = self.e3s.values().filter_map(E3::next_deadline);
+        e3s.chain(self.held.next_deadline()).min()
     }
 }
 
-/// Peer messages that wait for a chain fact, in arrival order. When a bound is full the
-/// oldest goes first: the E3's oldest for the per-E3 bound, the oldest of all for the total.
+/// Peer messages that wait for a chain fact, in arrival order. A message that would pass its
+/// sender's, its E3's, or the node's share is refused, so no sender can push out another's: the
+/// sender's re-send brings it again. A message that waits too long goes, so stale ones cannot
+/// hold the room.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Hold {
-    messages: VecDeque<PeerMessage>,
+    messages: VecDeque<Held>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Held {
+    message: PeerMessage,
+    expires: UnixSecs,
+}
+
+const HOLD_FOR: UnixSecs = 10 * 60;
+const HOLD_PER_SENDER_MESSAGES: usize = 64;
+const HOLD_PER_SENDER_BYTES: u64 = 128 * 1024 * 1024;
 const HOLD_PER_E3_MESSAGES: usize = 512;
 const HOLD_PER_E3_BYTES: u64 = 128 * 1024 * 1024;
 const HOLD_TOTAL_MESSAGES: usize = 1_024;
 const HOLD_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
 impl Hold {
-    fn hold(&mut self, message: PeerMessage) {
+    /// Whether the node should hold `message`: it holds no copy yet, and every share the message
+    /// would count against has room for it. Re-sends of a held message cost nothing.
+    fn has_room(&self, message: &PeerMessage) -> bool {
+        if self.messages.iter().any(|held| held.message == *message) {
+            return false;
+        }
         let size = message.size();
-        if size > HOLD_PER_E3_BYTES {
-            return;
-        }
-        while self
-            .usage(Some(&message.e3))
-            .is_full(HOLD_PER_E3_MESSAGES, HOLD_PER_E3_BYTES, size)
-        {
-            let oldest = self
-                .messages
-                .iter()
-                .position(|held| held.e3 == message.e3)
-                .expect("a full E3 holds a message");
-            self.messages.remove(oldest);
-        }
-        while self
-            .usage(None)
-            .is_full(HOLD_TOTAL_MESSAGES, HOLD_TOTAL_BYTES, size)
-        {
-            self.messages.pop_front();
-        }
-        self.messages.push_back(message);
+        let sender = self.usage(|held| held.sender == message.sender);
+        let e3 = self.usage(|held| held.e3 == message.e3);
+        let total = self.usage(|_| true);
+        sender.fits(HOLD_PER_SENDER_MESSAGES, HOLD_PER_SENDER_BYTES, size)
+            && e3.fits(HOLD_PER_E3_MESSAGES, HOLD_PER_E3_BYTES, size)
+            && total.fits(HOLD_TOTAL_MESSAGES, HOLD_TOTAL_BYTES, size)
+    }
+
+    fn hold(&mut self, now: UnixSecs, message: PeerMessage) {
+        self.messages.push_back(Held {
+            message,
+            expires: now.saturating_add(HOLD_FOR),
+        });
     }
 
     fn take(&mut self, e3: &E3Id) -> Vec<PeerMessage> {
-        let (taken, kept) = self.messages.drain(..).partition(|held| &held.e3 == e3);
+        let (taken, kept): (VecDeque<_>, VecDeque<_>) = self
+            .messages
+            .drain(..)
+            .partition(|held| &held.message.e3 == e3);
         self.messages = kept;
-        taken.into()
+        taken.into_iter().map(|held| held.message).collect()
     }
 
-    fn usage(&self, e3: Option<&E3Id>) -> Usage {
+    fn pass_deadlines(&mut self, now: UnixSecs) {
+        self.messages.retain(|held| now < held.expires);
+    }
+
+    fn next_deadline(&self) -> Option<UnixSecs> {
+        self.messages.iter().map(|held| held.expires).min()
+    }
+
+    fn usage(&self, counts: impl Fn(&PeerMessage) -> bool) -> Usage {
         self.messages
             .iter()
-            .filter(|held| e3.is_none_or(|e3| &held.e3 == e3))
+            .filter(|held| counts(&held.message))
             .fold(Usage::default(), |usage, held| Usage {
                 messages: usage.messages + 1,
-                bytes: usage.bytes + held.size(),
+                bytes: usage.bytes + held.message.size(),
             })
     }
 }
@@ -1111,15 +1271,15 @@ struct Usage {
 }
 
 impl Usage {
-    fn is_full(&self, max_messages: usize, max_bytes: u64, incoming: u64) -> bool {
-        self.messages > 0 && (self.messages >= max_messages || self.bytes + incoming > max_bytes)
+    fn fits(&self, max_messages: usize, max_bytes: u64, incoming: u64) -> bool {
+        self.messages < max_messages && self.bytes.saturating_add(incoming) <= max_bytes
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{dkg::DkgProofs, selection::Eligible, testing::*};
+    use crate::{dkg::DkgProofs, testing::*};
 
     fn node() -> Node {
         Node::new(address(ME))
@@ -1146,12 +1306,16 @@ mod tests {
                     operator: address(*operator),
                     owner: address(*operator),
                 },
+                ChainFact::OperatorEnabled {
+                    operator: address(*operator),
+                    enabled: true,
+                },
             ];
             for (offset, fact) in facts.into_iter().enumerate() {
                 let at = LogPosition {
                     chain_id: 1,
                     block: 0,
-                    log_index: (3 * index + offset) as u64,
+                    log_index: (4 * index + offset) as u64,
                 };
                 node.step(0, Input::Chain(ChainEvent { at, time: 0, fact }));
             }
@@ -1168,6 +1332,26 @@ mod tests {
                 interfold: INTERFOLD,
                 attestation: ATTESTATION,
                 request: CommitteeRequest { time, ..REQUEST },
+                committee_deadline: COMMITTEE_DEADLINE,
+                seed: None,
+            },
+        )
+    }
+
+    /// An owner-capped request at timestamp `time`.
+    fn capped_requested_at(block: u64, e3: E3Id, time: UnixSecs) -> Input {
+        chain(
+            block,
+            ChainFact::E3Requested {
+                e3,
+                params: params(e3_committee::CiphernodesCommitteeSize::Minimum),
+                interfold: INTERFOLD,
+                attestation: ATTESTATION,
+                request: CommitteeRequest {
+                    time,
+                    owner_cap: true,
+                    ..REQUEST
+                },
                 committee_deadline: COMMITTEE_DEADLINE,
                 seed: None,
             },
@@ -1241,7 +1425,7 @@ mod tests {
         registered(&mut node, &[1, 2, ME], 10);
         node.step(1, requested(1, e3(1)));
         let effects = node.step(5, seed_ready(5, e3(1), 42, 100));
-        let (_, ticket) = rank(&[1, 2, ME], 42, true).unwrap();
+        let (_, ticket) = rank(&[1, 2, ME], 42, false).unwrap();
         assert_eq!(
             submissions(&effects),
             vec![Transaction::SubmitTicket { ticket }]
@@ -1259,7 +1443,7 @@ mod tests {
             *seed = Some(U256::from(42));
         }
         let effects = node.step(5, Input::Chain(request));
-        let (_, ticket) = rank(&[1, 2, ME], 42, true).unwrap();
+        let (_, ticket) = rank(&[1, 2, ME], 42, false).unwrap();
         assert_eq!(
             submissions(&effects),
             vec![Transaction::SubmitTicket { ticket }]
@@ -1297,6 +1481,10 @@ mod tests {
             ChainFact::BondOwner {
                 operator: address(ME),
                 owner: address(ME),
+            },
+            ChainFact::OperatorEnabled {
+                operator: address(ME),
+                enabled: true,
             },
         ];
         for (log_index, fact) in (1..).zip(facts) {
@@ -1349,13 +1537,13 @@ mod tests {
     #[test]
     fn the_finalizer_calls_after_the_deadline_staggered_by_rank() {
         let seed = (0..1_000)
-            .find(|seed| rank(&[1, 2, ME], *seed, true).is_some_and(|(rank, _)| rank > 0))
+            .find(|seed| rank(&[1, 2, ME], *seed, false).is_some_and(|(rank, _)| rank > 0))
             .expect("a seed that ranks this node after another");
         let mut node = node();
         registered(&mut node, &[1, 2, ME], 10);
         node.step(1, requested(1, e3(1)));
         node.step(5, seed_ready(5, e3(1), seed, 100));
-        let (rank, _) = rank(&[1, 2, ME], seed, true).unwrap();
+        let (rank, _) = rank(&[1, 2, ME], seed, false).unwrap();
         let due = 100 + 1 + 30 * rank as u64;
         assert_eq!(node.next_deadline(), Some(due));
         assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
@@ -1374,22 +1562,21 @@ mod tests {
         assert!(submissions(&node.step(10_000, Input::Tick)).is_empty());
     }
 
-    /// A request under a required identity policy whose seed leaves this node off the owner
-    /// shortlist of all nine operators, and the effects of the seed.
-    fn credential_request() -> (Node, Vec<Effect>) {
+    /// An owner-capped request whose seed leaves this node off the owner shortlist of all nine
+    /// operators, and the effects of the seed.
+    fn capped_request() -> (Node, Vec<Effect>) {
         let operators: Vec<u64> = (1..=8).chain([ME]).collect();
         let seed = (0..1_000)
             .find(|seed| rank(&operators, *seed, true).is_none())
             .expect("a seed that leaves this node off the owner shortlist");
         let mut node = node();
         registered(&mut node, &operators, 10);
-        node.step(1, chain(1, ChainFact::IdentityPolicy { required: true }));
-        node.step(3, requested_at(3, e3(1), 3));
+        node.step(3, capped_requested_at(3, e3(1), 3));
         let effects = node.step(5, seed_ready(5, e3(1), seed, 100));
         (node, effects)
     }
 
-    fn credentialed(operators: &[u64]) -> Input {
+    fn confirmed(operators: &[u64]) -> Input {
         Input::Eligibility(Eligibility {
             e3: e3(1),
             eligible: Some(operators.iter().copied().map(address).collect()),
@@ -1397,8 +1584,8 @@ mod tests {
     }
 
     #[test]
-    fn under_a_required_identity_policy_the_shortlist_ranks_credentialed_operators_only() {
-        let (mut node, effects) = credential_request();
+    fn an_owner_capped_request_ranks_only_the_operators_the_bonding_registry_confirms() {
+        let (mut node, effects) = capped_request();
         let reads: Vec<&EligibilityRead> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -1411,18 +1598,80 @@ mod tests {
         };
         assert_eq!((read.at, read.by, read.operators.len()), (2, 25, 9));
         assert!(submissions(&effects).is_empty());
-        assert_eq!(submissions(&node.step(6, credentialed(&[1, ME]))).len(), 1);
+        assert_eq!(submissions(&node.step(6, confirmed(&[1, ME]))).len(), 1);
 
-        let (mut node, _) = credential_request();
-        assert!(submissions(&node.step(6, credentialed(&[1, 2]))).is_empty());
+        let (mut node, _) = capped_request();
+        assert!(submissions(&node.step(6, confirmed(&[1, 2]))).is_empty());
     }
 
     #[test]
     fn without_an_answer_in_time_the_node_ranks_every_eligible_operator() {
-        let (mut node, _) = credential_request();
+        let (mut node, _) = capped_request();
         assert!(submissions(&node.step(24, Input::Tick)).is_empty());
         assert_eq!(submissions(&node.step(25, Input::Tick)).len(), 1);
-        assert!(submissions(&node.step(26, credentialed(&[]))).is_empty());
+        assert!(submissions(&node.step(26, confirmed(&[]))).is_empty());
+    }
+
+    /// The contract rejects the ticket of an operator governance removed, and of one no longer
+    /// active, so neither takes a place among the candidates.
+    #[test]
+    fn an_operator_that_cannot_submit_is_no_candidate() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        let removed = ChainFact::OperatorEnabled {
+            operator: address(ME),
+            enabled: false,
+        };
+        node.step(2, chain(2, removed));
+        node.step(3, requested_at(3, e3(1), 3));
+        assert!(submissions(&node.step(5, seed_ready(5, e3(1), 42, 100))).is_empty());
+    }
+
+    /// A node ranked past every turn still finalizes if the ones ahead of it stay silent: ranks
+    /// count candidates, and they need not have submitted.
+    #[test]
+    fn a_rank_past_the_last_turn_shares_the_last_turn() {
+        let operators: Vec<u64> = (1..=30).chain([ME]).collect();
+        let seed = (0..1_000)
+            .find(|seed| rank(&operators, *seed, false).is_some_and(|(rank, _)| rank >= 20))
+            .expect("a seed that ranks this node past the twentieth");
+        let mut node = node();
+        registered(&mut node, &operators, 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(5, seed_ready(5, e3(1), seed, 100));
+        let last_turn = 100 + 1 + 30 * 19;
+        assert!(submissions(&node.step(last_turn - 1, Input::Tick)).is_empty());
+        let effects = node.step(last_turn, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::FinalizeCommittee]);
+    }
+
+    /// Nodes that restart together, long after a deadline, keep their spacing from when each
+    /// found its turn past: the first still goes first and the others wait theirs.
+    #[test]
+    fn a_turn_found_long_past_counts_from_when_it_was_found() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        let place = place(&[1, 2, ME]);
+        let restarted = TIMING.deadline + 1 + 30 * place + 3_600;
+        let due = restarted + 1 + 30 * place;
+        assert!(submissions(&node.step(restarted, Input::Tick)).is_empty());
+        assert_eq!(node.next_deadline(), Some(due));
+        assert!(submissions(&node.step(due - 1, Input::Tick)).is_empty());
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+        assert!(submissions(&node.step(due + 3_600, Input::Tick)).is_empty());
+    }
+
+    /// A node that wakes a little late for its turn takes it, rather than queueing again.
+    #[test]
+    fn a_turn_met_a_little_late_is_taken_at_once() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        let due = TIMING.deadline + 1 + 30 * place(&[1, 2, ME]);
+        let effects = node.step(due + 10, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
     }
 
     #[test]
@@ -1455,8 +1704,7 @@ mod tests {
         assert!(node.step(0, announced(key)).is_empty());
     }
 
-    /// A member that announces many messages, or withholds a blob of one, makes the node fetch
-    /// only its first message of each kind, again and again.
+    /// A member that announces many messages makes the node fetch only its first of each kind.
     #[test]
     fn a_member_s_other_message_of_a_kind_waits_until_the_first_is_taken() {
         let mut node = node();
@@ -1469,10 +1717,7 @@ mod tests {
             vec![address(1)]
         );
         assert!(node.step(0, announced(other.clone())).is_empty());
-        assert_eq!(
-            fetched_from(&node.step(60, announced(first.clone()))),
-            vec![address(1)]
-        );
+        assert!(node.step(60, announced(first.clone())).is_empty());
         assert_eq!(key_checks(&node.step(61, first)), vec![address(1)]);
         assert!(node.step(62, announced(other)).is_empty());
     }
@@ -1486,7 +1731,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_e3_hold_drops_its_oldest_message() {
+    fn a_full_e3_hold_keeps_what_it_has_and_refuses_the_newcomer() {
         let mut node = node();
         for n in 1..=513 {
             node.step(0, announced(key_from(e3(1), n)));
@@ -1494,21 +1739,144 @@ mod tests {
         node.step(0, requested(10, e3(1)));
         let fetched = fetched_from(&node.step(0, finalized(11, e3(1), members(1..=513))));
         assert_eq!(fetched.len(), 512);
-        assert!(!fetched.contains(&address(1)));
+        assert!(!fetched.contains(&address(513)));
     }
 
+    /// A full hold pushes out no other E3's messages.
     #[test]
-    fn a_full_hold_drops_the_oldest_message_of_any_e3() {
+    fn a_full_hold_refuses_a_newcomer_of_another_e3() {
         let mut node = node();
         for n in 1..=512 {
             node.step(0, announced(key_from(e3(1), n)));
             node.step(0, announced(key_from(e3(2), n)));
         }
         node.step(0, announced(key_from(e3(3), 1)));
+        node.step(0, requested(10, e3(3)));
+        assert!(fetched_from(&node.step(0, finalized(11, e3(3), members([1])))).is_empty());
+        node.step(0, requested(12, e3(1)));
+        let fetched = fetched_from(&node.step(0, finalized(13, e3(1), members(1..=512))));
+        assert_eq!(fetched.len(), 512);
+    }
+
+    /// Copies of a held message are not journaled or held again.
+    #[test]
+    fn a_copy_of_a_held_message_is_dropped() {
+        let mut node = node();
+        let key = peer_message(key_from(e3(1), 1));
+        assert_eq!(node.classify(0, &key), Classified::Hold);
+        node.step(0, Input::Announced(key.clone()));
+        assert_eq!(node.classify(0, &key), Classified::Drop);
+    }
+
+    /// One member cannot fill the hold: its share ends at its own messages.
+    #[test]
+    fn a_sender_over_its_share_of_the_hold_is_refused() {
+        let mut node = node();
+        for number in 1..=(HOLD_PER_SENDER_MESSAGES as u64 + 1) {
+            node.step(0, announced(key_from(e3(number), 1)));
+        }
+        assert!(matches!(
+            node.classify(0, &peer_message(key_from(e3(999), 1))),
+            Classified::Drop
+        ));
+        assert!(matches!(
+            node.classify(0, &peer_message(key_from(e3(999), 2))),
+            Classified::Hold
+        ));
+    }
+
+    #[test]
+    fn a_held_message_goes_when_it_waits_too_long() {
+        let mut node = node();
+        node.step(0, announced(key_from(e3(1), 1)));
+        assert_eq!(node.next_deadline(), Some(HOLD_FOR));
+        node.step(HOLD_FOR, Input::Tick);
+        assert_eq!(node.next_deadline(), None);
+        node.step(HOLD_FOR, requested(10, e3(1)));
+        let effects = node.step(HOLD_FOR, finalized(11, e3(1), members([1])));
+        assert!(fetched_from(&effects).is_empty());
+    }
+
+    fn peer_message(input: Input) -> PeerMessage {
+        match input {
+            Input::Peer(message) | Input::Announced(message) => message,
+            other => panic!("not a peer message: {other:?}"),
+        }
+    }
+
+    /// Copies of a message that is being fetched cost nothing: no effect, and no journal entry.
+    #[test]
+    fn a_copy_of_a_message_being_fetched_is_dropped_before_the_journal() {
+        let mut node = node();
         node.step(0, requested(10, e3(1)));
-        let fetched = fetched_from(&node.step(0, finalized(11, e3(1), members(1..=512))));
-        assert_eq!(fetched.len(), 511);
-        assert!(!fetched.contains(&address(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let key = key_from(e3(1), 1);
+        assert_eq!(
+            node.classify(0, &peer_message(key.clone())),
+            Classified::Fetch
+        );
+        assert_eq!(fetched_from(&node.step(0, announced(key.clone()))).len(), 1);
+        assert_eq!(
+            node.classify(0, &peer_message(key.clone())),
+            Classified::Drop
+        );
+        assert!(node.step(0, announced(key)).is_empty());
+    }
+
+    /// A failed fetch reopens exactly that attempt: the next copy tries again.
+    #[test]
+    fn a_failed_fetch_lets_the_next_copy_try_again() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let key = peer_message(key_from(e3(1), 1));
+        let effects = node.step(0, Input::Announced(key.clone()));
+        let [Effect::FetchBlobs(fetch)] = &effects[..] else {
+            panic!("one fetch: {effects:?}");
+        };
+        assert_eq!(fetch.attempt, 0);
+        let failed = |attempt| {
+            Input::FetchFailed(FetchFailed {
+                e3: e3(1),
+                sender: key.sender,
+                kind: key.body.kind(),
+                id: key.id(),
+                attempt,
+            })
+        };
+        node.step(0, failed(7));
+        assert_eq!(node.classify(0, &key), Classified::Drop, "another attempt");
+        node.step(0, failed(0));
+        assert_eq!(node.classify(0, &key), Classified::Fetch);
+        let effects = node.step(0, Input::Announced(key.clone()));
+        assert!(matches!(
+            &effects[..],
+            [Effect::FetchBlobs(BlobFetch { attempt: 1, .. })]
+        ));
+    }
+
+    #[test]
+    fn a_message_for_an_ended_e3_or_another_node_is_dropped() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(
+            0,
+            chain(
+                11,
+                ChainFact::StageChanged {
+                    e3: e3(1),
+                    stage: Stage::Complete,
+                },
+            ),
+        );
+        assert_eq!(
+            node.classify(0, &peer_message(key_from(e3(1), 1))),
+            Classified::Drop
+        );
+        assert_eq!(
+            node.classify(0, &peer_message(shares_from(e3(2), 1, 2))),
+            Classified::Drop
+        );
     }
 
     /// A sample of what the node journals and snapshots, through a DKG and a failure.
@@ -1594,7 +1962,7 @@ mod tests {
             }),
         };
         journal.extend(bincode::serialize(&fold).unwrap());
-        // The identity-policy read and its answer, which this sample's request does not need.
+        // The eligibility read and its answer, which this sample's request does not need.
         let read = Effect::ReadEligibility(EligibilityRead {
             e3: e3(1),
             operators: vec![address(1)],
@@ -1602,13 +1970,13 @@ mod tests {
             by: 25,
         });
         journal.extend(bincode::serialize(&read).unwrap());
-        journal.extend(bincode::serialize(&credentialed(&[1])).unwrap());
+        journal.extend(bincode::serialize(&confirmed(&[1])).unwrap());
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                13,
+                14,
                 alloy_primitives::b256!(
-                    "6aa7d1eab0497a45b2f2a347d229b590962eb59997382978e9af90d6c31a18fa"
+                    "a32f0352f3d0013d240337d5f16606f8cf62022382c7b57809138dc9f628fbc7"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
@@ -1711,14 +2079,10 @@ mod tests {
     }
 
     /// Settlement can stay closed for months after a failure, and accusations that expel no
-    /// member can come and be appealed even after it, until governance closes the E3. A member
-    /// past the settling turns keeps the work too.
+    /// member can come and be appealed even after it, until governance closes the E3.
     #[test]
     fn a_failed_committee_keeps_its_work_until_governance_releases_the_e3() {
-        let operators: Vec<u64> = (20..)
-            .map(|n| (1..=n).collect::<Vec<u64>>())
-            .find(|operators| place(&[operators.as_slice(), &[ME]].concat()) >= 20)
-            .expect("a committee where this node has no settling turn");
+        let operators = vec![1, 2];
         let mut node = node();
         node.step(0, requested(10, e3(1)));
         node.step(0, finalized(11, e3(1), members(operators.clone())));

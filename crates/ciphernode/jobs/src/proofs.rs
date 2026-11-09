@@ -118,6 +118,17 @@ impl Prover<'_> {
     }
 }
 
+/// A failing proof stays the verdict: `bound` runs only once every proof holds.
+fn settle(
+    verdict: Verdict,
+    bound: impl FnOnce() -> Result<bool, JobError>,
+) -> Result<Verdict, JobError> {
+    match verdict {
+        Verdict::Valid if !bound()? => Ok(Verdict::Invalid),
+        verdict => Ok(verdict),
+    }
+}
+
 /// Each E3's proofs run `bb` in a directory of its own, which goes when the E3's work ends.
 fn directory(e3: E3Id) -> String {
     format!("{}-{}", e3.chain_id, e3.number)
@@ -179,6 +190,19 @@ impl<B: Blobs> Jobs<'_, B> {
             }
         }
         Ok(Verdict::Valid)
+    }
+
+    /// The verdict on a member's message: a signed proof that fails is an accusation whatever
+    /// else is wrong with the message, and only once every proof holds does `bound` say whether
+    /// they are about this message's bytes.
+    pub(crate) fn checked<'a>(
+        &self,
+        prover: &Prover<'_>,
+        params: &CryptoParams,
+        proofs: impl IntoIterator<Item = (ProofType, &'a ZkProof)>,
+        bound: impl FnOnce() -> Result<bool, JobError>,
+    ) -> Result<Verdict, JobError> {
+        settle(self.verdict(prover, params, proofs)?, bound)
     }
 
     /// The hash of the evidence that a slash of `proof` carries, which votes sign.
@@ -269,4 +293,38 @@ pub(crate) fn load(
         .collect();
     let data = ArcBytes::from_bytes(&blobs.get(&proof.data)?);
     Ok(Proof::new(circuit, data, ArcBytes::from_bytes(&signals)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use e3_protocol::BlobRef;
+
+    fn failing() -> Verdict {
+        Verdict::Fails(Fault {
+            proof_type: ProofType::C4aSkShareDecryption,
+            proof: ZkProof {
+                data: BlobRef::of(b"proof"),
+                public_inputs: Vec::new(),
+            },
+            data_hash: B256::ZERO,
+        })
+    }
+
+    /// A signed proof that fails must reach accusation even if the message's bytes are wrong too.
+    #[test]
+    fn a_failing_proof_is_the_verdict_whatever_the_bytes_say() {
+        let bound = || panic!("the bytes are compared only once every proof holds");
+        assert_eq!(settle(failing(), bound).unwrap(), failing());
+    }
+
+    #[test]
+    fn proofs_that_hold_for_other_bytes_make_the_message_invalid() {
+        assert_eq!(
+            settle(Verdict::Valid, || Ok(false)).unwrap(),
+            Verdict::Invalid
+        );
+        assert_eq!(settle(Verdict::Valid, || Ok(true)).unwrap(), Verdict::Valid);
+    }
 }

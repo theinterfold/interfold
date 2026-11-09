@@ -36,13 +36,13 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
     if bootstrap {
         let network = node_v2::bootstrap(&config).await?;
         info!("LAUNCHING BOOTSTRAP NODE: ({})", config.name());
-        return tokio::select! {
-            result = e3_node::launch::bootstrap(network) => result.context("the node stopped"),
-            _ = &mut shutdown => {
-                info!("stopped");
-                Ok(())
-            }
+        let stop = async move {
+            let _ = (&mut shutdown).await;
+            info!("stopped");
         };
+        return e3_node::launch::bootstrap(network, stop)
+            .await
+            .context("the node stopped");
     }
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
     crate::node_state::inventory(&config).record(crate::node_state::dir(&config).path())?;

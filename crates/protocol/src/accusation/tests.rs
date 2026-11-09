@@ -420,6 +420,86 @@ mod cases {
         assert_eq!(node.next_deadline(), before);
     }
 
+    /// The operator reads who signed the proof that failed, and which circuit it was.
+    #[test]
+    fn a_failing_proof_is_noted_with_its_member_and_type() {
+        use crate::node::{Note, Noted};
+        let mut node = member(ME);
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Note(Note {
+                event: Noted::ProofFailed { member, proof_type: ProofType::C0PkBfv },
+                ..
+            }) if *member == address(1)
+        )));
+    }
+
+    /// Two members that find the same proof failing in the same second open the same window. Each
+    /// counts the other's vote, so a committee where H is two still reaches its quorum.
+    #[test]
+    fn members_that_accuse_in_the_same_second_count_each_other_s_votes() {
+        let mut node = member(ME);
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        assert!(matches!(
+            gossiped(&effects)[..],
+            [AccusationMessage::Accuse { .. }]
+        ));
+        let effects = node.step(NOW, accusation(2, NOW, 1));
+        let later = node.step(NOW + 30, Input::Tick);
+        let slashes: Vec<_> = slashes(&effects)
+            .into_iter()
+            .chain(slashes(&later))
+            .collect();
+        assert_eq!(slashes, [(address(1), 2)]);
+    }
+
+    /// The contract checks one evidence hash for all votes, so a vote for another does not join.
+    #[test]
+    fn an_accusation_for_other_evidence_does_not_join_an_open_window() {
+        let mut node = member(ME);
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        node.step(NOW, sign(ME, signing(&effects)));
+        let mut other = vote(2, NOW).vote;
+        other.data_hash = data_hash(2);
+        let accusation = from(
+            2,
+            AccusationMessage::Accuse {
+                accused: address(1),
+                proof_type: ProofType::C0PkBfv,
+                proof: key_proof(1),
+                vote: signed_vote(2, other),
+            },
+        );
+        let effects = node.step(NOW, accusation);
+        assert!(slashes(&effects).is_empty());
+        assert!(slashes(&node.step(NOW + 60, Input::Tick)).is_empty());
+    }
+
+    /// With no validity on chain, a member cannot open a window that lasts no time at all.
+    #[test]
+    fn a_chain_without_a_vote_validity_takes_no_accusation() {
+        let mut node = Node::new(address(ME));
+        node.step(0, chain(2, ChainFact::SlashingManager { manager: MANAGER }));
+        node.step(0, requested(10, e3(1)));
+        let mut members = vec![address(1), address(2), address(ME)];
+        members.sort();
+        node.step(0, finalized(11, e3(1), members));
+        let mut instant = vote(2, NOW).vote;
+        instant.deadline = NOW;
+        let accusation = from(
+            2,
+            AccusationMessage::Accuse {
+                accused: address(1),
+                proof_type: ProofType::C0PkBfv,
+                proof: key_proof(1),
+                vote: signed_vote(2, instant),
+            },
+        );
+        assert!(node.step(NOW, accusation).is_empty());
+    }
+
     /// A member has one window open for an accusation at a time, so it cannot make the others
     /// keep windows without end; once its window closes it can open another.
     #[test]

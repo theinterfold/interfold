@@ -32,8 +32,12 @@ impl Envelope {
         keccak256([DOMAIN, &encoded].concat())
     }
 
-    /// The message, if its sender's key signed all of it.
+    /// The message, if its sender's key signed all of it and every blob it names has bytes: no
+    /// honest message names an empty one.
     pub fn open(self) -> Option<PeerMessage> {
+        if self.message.blobs().iter().any(|blob| blob.len == 0) {
+            return None;
+        }
         let signature = Signature::try_from(self.signature.as_ref()).ok()?;
         let signer = signature
             .recover_address_from_prehash(&Self::signing_hash(&self.message, self.sent_at))

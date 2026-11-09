@@ -6,9 +6,9 @@
 
 //! The committee key (C5). Every member keeps the roster members' keyshares and folds, so any
 //! member can take over as the key aggregator. The aggregator checks every roster member's C1,
-//! sums the keyshares into the key, proves C5 with the folds, and asks the chain writer to
-//! publish it. An aggregator that has started finishes, even after another member takes over;
-//! the chain accepts one key.
+//! folds the members' folds one at a time as they arrive, sums the keyshares into the key, proves
+//! C5 with the fold of them, and asks the chain writer to publish it. An aggregator that has
+//! started finishes, even after another member takes over; the chain accepts one key.
 
 use super::{
     AggregatedKey, Dkg, DkgWork, KeyPublication, KeyshareMessage, NodeFoldMessage,
@@ -17,7 +17,7 @@ use super::{
 use crate::{
     failover::Failover,
     node::{Effect, Submission, Transaction},
-    proof::ProofType,
+    proof::{ProofType, ZkProof},
     UnixSecs,
 };
 use alloy_primitives::Address;
@@ -43,10 +43,21 @@ pub(super) struct Aggregation {
 enum Work {
     /// Not this node's work, or not yet.
     Idle,
-    /// This node aggregates: the C1 verdict of each roster member so far.
-    CheckingKeyshares(BTreeMap<Address, bool>),
+    /// This node aggregates: it checks the keyshares and folds the roster's folds.
+    Building(Box<Building>),
     Aggregating,
     Submitted,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Building {
+    /// The C1 verdict of each roster member so far.
+    verdicts: BTreeMap<Address, bool>,
+    /// The fold of the roster's first `filled` slots.
+    accumulator: Option<ZkProof>,
+    filled: usize,
+    /// One step of the fold runs at a time, and each step needs the one before it.
+    folding: bool,
 }
 
 impl Default for Aggregation {
@@ -92,8 +103,20 @@ impl Dkg {
     }
 
     pub(super) fn keyshare_checked(&mut self, member: Address, valid: bool) {
-        if let Work::CheckingKeyshares(verdicts) = &mut self.aggregation.work {
-            verdicts.entry(member).or_insert(valid);
+        if let Work::Building(building) = &mut self.aggregation.work {
+            building.verdicts.entry(member).or_insert(valid);
+        }
+    }
+
+    /// A step of the roster's fold finished. A repeated job's second result changes nothing.
+    pub(super) fn roster_folded(&mut self, slot: u32, accumulator: ZkProof) {
+        let Work::Building(building) = &mut self.aggregation.work else {
+            return;
+        };
+        if building.folding && slot as usize == building.filled {
+            building.accumulator = Some(accumulator);
+            building.filled += 1;
+            building.folding = false;
         }
     }
 
@@ -128,7 +151,8 @@ impl Dkg {
     }
 
     /// Start the aggregator's budget once every roster keyshare is here; as the aggregator, check
-    /// the keyshares, then aggregate once every C1 passed and every fold is here.
+    /// the keyshares, fold the roster's folds as they arrive, and aggregate once every C1 passed
+    /// and every slot is folded.
     pub(super) fn advance_aggregation(&mut self, now: UnixSecs) -> Vec<Effect> {
         let Some(roster) = self.roster_members() else {
             return Vec::new();
@@ -147,42 +171,61 @@ impl Dkg {
             .aggregation
             .failover
             .aggregator(&self.members, &self.expelled);
-        match &self.aggregation.work {
-            Work::Idle if aggregator == Some(self.me) => {
-                self.aggregation.work = Work::CheckingKeyshares(BTreeMap::new());
-                roster
-                    .iter()
-                    .zip(keyshares)
-                    .map(|(member, keyshare)| {
-                        self.run(DkgWork::CheckKeyshare {
-                            member: *member,
-                            committee: self.members.clone(),
-                            keyshare: Box::new(keyshare),
-                        })
-                    })
-                    .collect()
-            }
-            Work::CheckingKeyshares(verdicts) => {
-                let all_valid = roster
-                    .iter()
-                    .all(|member| verdicts.get(member) == Some(&true));
-                let folds: Option<Vec<_>> = roster
-                    .iter()
-                    .map(|member| Some(self.aggregation.folds.get(member)?.fold.clone()))
-                    .collect();
-                let (true, Some(folds)) = (all_valid, folds) else {
-                    return Vec::new();
-                };
-                self.aggregation.work = Work::Aggregating;
-                vec![self.run(DkgWork::AggregateKey {
+        let mut effects = Vec::new();
+        if self.aggregation.work == Work::Idle && aggregator == Some(self.me) {
+            self.aggregation.work = Work::Building(Box::default());
+            effects.extend(roster.iter().zip(&keyshares).map(|(member, keyshare)| {
+                self.run(DkgWork::CheckKeyshare {
+                    member: *member,
                     committee: self.members.clone(),
-                    roster,
-                    keyshares,
-                    folds,
-                })]
-            }
-            Work::Idle | Work::Aggregating | Work::Submitted => Vec::new(),
+                    keyshare: Box::new(keyshare.clone()),
+                })
+            }));
         }
+        let Work::Building(building) = &self.aggregation.work else {
+            return effects;
+        };
+        let (filled, folding) = (building.filled, building.folding);
+        if let Some(member) = roster.get(filled).filter(|_| !folding) {
+            if let Some(fold) = self.aggregation.folds.get(member) {
+                let step = DkgWork::FoldRoster {
+                    slot: filled as u32,
+                    slots: roster.len(),
+                    fold: fold.fold.proof.clone(),
+                    accumulator: building.accumulator.clone(),
+                };
+                effects.push(self.run(step));
+                if let Work::Building(building) = &mut self.aggregation.work {
+                    building.folding = true;
+                }
+            }
+            return effects;
+        }
+        let all_valid = roster
+            .iter()
+            .all(|member| building.verdicts.get(member) == Some(&true));
+        let (true, Some(accumulator)) = (
+            all_valid && filled == roster.len(),
+            building.accumulator.clone(),
+        ) else {
+            return effects;
+        };
+        let folds: Option<Vec<_>> = roster
+            .iter()
+            .map(|member| Some(self.aggregation.folds.get(member)?.fold.clone()))
+            .collect();
+        let Some(folds) = folds else {
+            return effects;
+        };
+        self.aggregation.work = Work::Aggregating;
+        effects.push(self.run(DkgWork::AggregateKey {
+            committee: self.members.clone(),
+            roster,
+            keyshares,
+            folds,
+            accumulator,
+        }));
+        effects
     }
 
     /// `member` aggregates the committee key no more; whether this is news.

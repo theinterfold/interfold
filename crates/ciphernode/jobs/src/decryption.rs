@@ -223,17 +223,21 @@ impl<B: Blobs> Jobs<'_, B> {
         let Some(anchor) = anchor else {
             return Ok(Verdict::Invalid);
         };
-        for ((share, c6), ciphertext) in message.shares.iter().zip(&message.c6).zip(&ciphertexts) {
-            let share = self.blobs.get(share)?;
-            if !self.c6_binds(params, &c6.proof, ciphertext, &share, domain, anchor)? {
-                return Ok(Verdict::Invalid);
-            }
-        }
         let c6 = message
             .c6
             .iter()
             .map(|c6| (ProofType::C6ThresholdShareDecryption, &c6.proof));
-        self.verdict(prover, params, c6)
+        self.checked(prover, params, c6, || {
+            for ((share, c6), ciphertext) in
+                message.shares.iter().zip(&message.c6).zip(&ciphertexts)
+            {
+                let share = self.blobs.get(share)?;
+                if !self.c6_binds(params, &c6.proof, ciphertext, &share, domain, anchor)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
     }
 
     /// Whether a valid C6 would be about this share of this ciphertext, under this domain, made

@@ -8,7 +8,9 @@
 //! both start the node here, each from its own configuration format.
 
 use crate::{
+    dir::NodeDir,
     heartbeat::Heartbeat,
+    notes::NoteFeed,
     preflight::{self, retry_until, Verified},
     runtime::{now, run, Parts, Settings},
 };
@@ -22,7 +24,7 @@ use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader
 use e3_entrypoint::fence::ProcessFence;
 use e3_jobs::{JobLimits, JobRunner};
 use e3_journal::Journal;
-use e3_p2p::{P2p, P2pConfig};
+use e3_p2p::{Network as _, P2p, P2pConfig};
 use e3_zk_prover::BBPath;
 use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -62,6 +64,8 @@ pub struct Config {
     /// CPU threads kept for the node's own loops.
     pub reserved_threads: usize,
     pub network: Network,
+    /// Serves a read-only status page on this port of this machine.
+    pub status_port: Option<u16>,
 }
 
 /// Where the node reads ciphertexts.
@@ -97,6 +101,8 @@ pub struct Prover {
 pub struct Network {
     /// Keeps the node apart from other networks: it is part of every protocol name.
     pub id: String,
+    /// Keeps it apart from other deployments on that network: see [`deployment`].
+    pub deployment: String,
     /// The ed25519 secret of the node's network identity.
     pub identity: [u8; 32],
     pub listen: Vec<String>,
@@ -134,6 +140,8 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
     let chain_id = contracts.chain_id;
     let journal = Journal::open(config.data_dir.join("journal.redb"))?;
     let heartbeat = Heartbeat::start(&config.data_dir.join("ingestion"), chain_id, now())?;
+    let notes_dir = NodeDir::new(&config.data_dir).notes();
+    let notes = NoteFeed::open(&notes_dir)?;
     let operator = config.operator.clone();
     let wallet = ProviderBuilder::new()
         .wallet(EthereumWallet::from(operator.clone()))
@@ -160,11 +168,12 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
     let p2p = P2pConfig {
         identity: config.network.identity,
         network: config.network.id,
+        deployment: config.network.deployment,
         protocol_version: release.protocol_version,
         listen: parse(&config.network.listen)?,
         peers: parse(&config.network.peers)?,
     };
-    let (network, inbound) = P2p::start(p2p, operator.address(), blobs.clone()).await?;
+    let (network, inbox) = P2p::start(p2p, operator.address(), blobs.clone()).await?;
     let listening: Vec<String> = network
         .listening()
         .iter()
@@ -184,6 +193,7 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         poll_interval: config.poll_interval,
         startup_timeout: config.startup_timeout,
         snapshot_every: 100,
+        status_port: config.status_port,
         job_slots: threads,
     };
     let scope = keccak256([release.id.as_slice(), operator.address().as_slice()].concat());
@@ -195,26 +205,43 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         rpc: ChainNode::new(rpc, contracts),
         account: wallet,
         network,
-        inbound,
+        inbox,
         availability,
         heartbeat,
+        notes,
+        notes_dir,
     };
     Ok(run(settings, parts, stop).await?)
 }
 
-/// Runs a node that only helps the others find each other: it answers their lookups and takes no
-/// part in their messages, the chain, or proofs.
-pub async fn bootstrap(network: Network) -> anyhow::Result<()> {
+/// What keeps the nodes of one deployment apart from another's on the same network: the Interfold
+/// contract they serve. The chain ID is optional in a node's configuration, so two nodes of one
+/// deployment could disagree on it, and each would split from the other. A bootstrap node knows
+/// this from its configuration, with no access to the chain.
+pub fn deployment(interfold: Address) -> String {
+    alloy_primitives::hex::encode(&keccak256(interfold.as_slice())[..8])
+}
+
+/// Runs a node that only helps the others find each other, until `stop` completes: it answers
+/// their lookups and takes no part in their messages, the chain, or proofs.
+pub async fn bootstrap(network: Network, stop: impl Future<Output = ()>) -> anyhow::Result<()> {
     let release = e3_ciphernode_config::current_node_release();
-    let _p2p = P2p::bootstrap(P2pConfig {
+    let (p2p, stopped) = P2p::bootstrap(P2pConfig {
         identity: network.identity,
         network: network.id,
+        deployment: network.deployment,
         protocol_version: release.protocol_version,
         listen: parse(&network.listen)?,
         peers: parse(&network.peers)?,
     })
     .await?;
-    std::future::pending().await
+    tokio::select! {
+        () = stopped.closed() => anyhow::bail!("the network stopped"),
+        () = stop => {
+            p2p.close().await;
+            Ok(())
+        }
+    }
 }
 
 fn parse<T: std::str::FromStr>(values: &[String]) -> anyhow::Result<Vec<T>>

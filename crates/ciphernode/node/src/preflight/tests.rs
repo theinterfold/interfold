@@ -197,9 +197,11 @@ async fn config(url: String, dir: &Path) -> Config {
         network: Network {
             id: "test".to_string(),
             identity: [1; 32],
+            deployment: "local".to_string(),
             listen: Vec::new(),
             peers: Vec::new(),
         },
+        status_port: None,
     }
 }
 

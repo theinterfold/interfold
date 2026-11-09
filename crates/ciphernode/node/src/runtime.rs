@@ -7,6 +7,8 @@
 use crate::{
     effects::{EffectParts, Effects},
     heartbeat::Heartbeat,
+    notes::NoteFeed,
+    status::{self, Board},
 };
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
@@ -16,14 +18,16 @@ use e3_data_availability::DataAvailabilityReader;
 use e3_engine::{EffectKey, Engine};
 use e3_jobs::JobRunner;
 use e3_journal::Journal;
-use e3_p2p::Network;
+use e3_p2p::{Inbox, Network};
 use e3_protocol::{
-    node::{Input, Node, PeerMessage},
+    node::{Classified, Input, Node},
     E3Id, UnixSecs,
 };
+use e3_utils::limited::Limited;
 use std::{
     collections::{BTreeSet, VecDeque},
     future::Future,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -41,6 +45,10 @@ const FIRST_REFRESH: Duration = Duration::from_secs(10 * 60);
 /// A refresh waits this long past a window's start, so the chain's block time is past it too.
 const REFRESH_MARGIN: UnixSecs = 60;
 const REFRESH_AGAIN: UnixSecs = 60 * 60;
+/// A log line about messages the node dropped comes at most this often.
+const REFUSED_LOG: Duration = Duration::from_secs(60);
+/// How often the status page's picture of the node is brought up to date.
+const BOARD_UPDATE: Duration = Duration::from_secs(5);
 
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
@@ -54,6 +62,8 @@ pub struct Settings {
     /// How long the reader may go without a successful read before it has first caught up.
     pub startup_timeout: Duration,
     pub snapshot_every: u64,
+    /// Where the read-only status page is served, if anywhere.
+    pub status_port: Option<u16>,
     /// Jobs that hold a thread at once; the others wait without one.
     pub job_slots: usize,
 }
@@ -69,10 +79,13 @@ pub struct Parts<R, A, N, B> {
     /// The operator's account that the writer sends from.
     pub account: A,
     pub network: N,
-    /// Peer messages from the network.
-    pub inbound: mpsc::Receiver<PeerMessage>,
+    /// Peer messages from the network, read one at a time when the node is ready for one.
+    pub inbox: Inbox,
     pub availability: Arc<dyn DataAvailabilityReader>,
     pub heartbeat: Heartbeat,
+    pub notes: NoteFeed,
+    /// Where `notes` keeps its feed, which the status page reads.
+    pub notes_dir: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,7 +128,8 @@ where
     N: Network,
     B: BlobStore,
 {
-    let genesis = Node::new(parts.operator.address());
+    let genesis_operator = parts.operator.address();
+    let genesis = Node::new(genesis_operator);
     let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
     // A stop can come between ending an E3's work and finishing its effects; that work is over.
     let (pending, over): (Vec<_>, Vec<_>) = pending.into_iter().partition(|pending| {
@@ -151,16 +165,22 @@ where
         from,
         settings.poll_interval,
     );
+    let board = Board::new(genesis_operator, chain_id);
+    let _status = settings.status_port.map(|port| {
+        let serving = status::serve(port, board.clone(), parts.notes_dir.clone());
+        AbortOnDrop(tokio::spawn(serving))
+    });
     let mut essential: JoinSet<NodeError> = JoinSet::new();
     let (heartbeat, poll, sender) = (parts.heartbeat, settings.poll_interval, events.clone());
     let startup_timeout = settings.startup_timeout;
-    essential.spawn(read_chain(reader, heartbeat, sender, poll, startup_timeout));
-    let sender = events.clone();
-    let inbound = parts.inbound;
-    essential.spawn(async move {
-        forward_peers(inbound, sender).await;
-        NodeError::TaskEnded("the network")
-    });
+    essential.spawn(read_chain(
+        reader,
+        heartbeat,
+        board.clone(),
+        sender,
+        poll,
+        startup_timeout,
+    ));
     let writer = Arc::new(Writer::new(
         parts.account,
         parts.blobs.clone(),
@@ -180,21 +200,43 @@ where
         network: Arc::new(parts.network),
         availability: parts.availability,
         events,
+        notes: parts.notes,
         job_slots: settings.job_slots,
     });
     let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
+    let inbox = parts.inbox;
+    let refused = Limited::new(REFUSED_LOG);
+    let mut board_update = tokio::time::interval(BOARD_UPDATE);
     tokio::pin!(stop);
     loop {
         let event = match queue.pop_front() {
             Some(event) => event,
             None => tokio::select! {
                 event = next_event(&mut receiver, engine.next_deadline()) => event?,
+                message = inbox.next() => {
+                    let Some(message) = message else {
+                        return Err(NodeError::TaskEnded("the network"));
+                    };
+                    if engine.machine().classify(now(), &message) == Classified::Drop {
+                        if let Some(held_back) = refused.pass() {
+                            debug!(e3 = %message.e3, held_back, "a peer's message is of no use");
+                        }
+                        continue;
+                    }
+                    Event::Input(Input::Announced(message))
+                }
+                _ = board_update.tick() => {
+                    board.machine(engine.machine());
+                    board.peers(effects.network.connected());
+                    continue;
+                }
                 ended = essential.join_next() => return Err(ended_task(ended)),
                 () = &mut stop => {
                     // Producers first, so nothing new starts while the work stops. What did not
-                    // finish stays in the outbox for the next start.
+                    // finish stays in the outbox for the next start. The peers hear last.
                     essential.abort_all();
                     effects.stop_all();
+                    effects.network.close().await;
                     return Ok(());
                 }
             },
@@ -280,6 +322,15 @@ fn sweep(blobs: &impl BlobStore, machine: &Node) {
     }
 }
 
+/// Stops a task when the node stops.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// The next event, or a tick at the machine's next deadline.
 async fn next_event(
     receiver: &mut mpsc::Receiver<Event>,
@@ -322,6 +373,7 @@ pub(crate) fn now() -> UnixSecs {
 async fn read_chain<R: Rpc>(
     mut reader: Reader<R>,
     mut heartbeat: Heartbeat,
+    board: Board,
     events: mpsc::Sender<Event>,
     poll: Duration,
     startup_timeout: Duration,
@@ -331,6 +383,7 @@ async fn read_chain<R: Rpc>(
         let read = reader.poll().await;
         if read.is_ok() {
             heartbeat.beat(now(), reader.head(), reader.read_to());
+            board.chain_read(reader.head(), reader.read_to());
             last_read = (!reader.caught_up() && last_read.is_some()).then(Instant::now);
         }
         match read {
@@ -354,18 +407,6 @@ async fn read_chain<R: Rpc>(
                 tokio::time::sleep(poll.max(RETRY_AFTER)).await;
             }
             Err(ReadError::Decode(failure)) => return failure.into(),
-        }
-    }
-}
-
-async fn forward_peers(mut inbound: mpsc::Receiver<PeerMessage>, events: mpsc::Sender<Event>) {
-    while let Some(message) = inbound.recv().await {
-        if events
-            .send(Event::Input(Input::Announced(message)))
-            .await
-            .is_err()
-        {
-            return;
         }
     }
 }

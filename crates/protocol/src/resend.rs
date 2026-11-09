@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Gossip loses messages, so a node sends its latest message of each kind again while the work it
-//! feeds still runs at this node: first after a minute, then twice as long each time up to ten
-//! minutes, for at most eight hours. Receivers keep the first copy, so a repeat changes nothing.
+//! feeds still runs at this node: first after half a minute, then twice as long each time up to
+//! five minutes, for at most eight hours. Receivers keep the first copy, so a repeat changes
+//! nothing.
 
 use crate::{
     accusation::{AccusationMessage, Ballot},
@@ -19,8 +20,8 @@ use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const FIRST_INTERVAL: UnixSecs = 60;
-const MAX_INTERVAL: UnixSecs = 10 * 60;
+const FIRST_INTERVAL: UnixSecs = 30;
+const MAX_INTERVAL: UnixSecs = 5 * 60;
 const MAX_SPAN: UnixSecs = 8 * 60 * 60;
 
 /// What a later message replaces: a member's newer Ready report replaces its older one, and shares
@@ -113,7 +114,7 @@ mod tests {
     use crate::testing::{address, e3};
 
     #[test]
-    fn a_message_goes_again_at_doubling_intervals_up_to_ten_minutes_for_eight_hours() {
+    fn a_message_goes_again_at_doubling_intervals_up_to_five_minutes_for_eight_hours() {
         let mut resend = Resend::default();
         resend.record(
             0,
@@ -129,8 +130,8 @@ mod tests {
                 sent_at.push(next);
             }
         }
-        assert_eq!(sent_at[..6], [60, 180, 420, 900, 1_500, 2_100]);
+        assert_eq!(sent_at[..7], [30, 90, 210, 450, 750, 1_050, 1_350]);
         assert!(sent_at.iter().all(|at| *at < MAX_SPAN));
-        assert_eq!(sent_at.last(), Some(&(MAX_SPAN - 300)));
+        assert!(*sent_at.last().unwrap() >= MAX_SPAN - MAX_INTERVAL);
     }
 }

@@ -47,6 +47,11 @@ impl Failover {
         self.convicted.insert(member)
     }
 
+    /// Whether H members found `member` sending a failing proof.
+    pub(crate) fn is_convicted(&self, member: &Address) -> bool {
+        self.convicted.contains(member)
+    }
+
     pub(crate) fn aggregator(
         &self,
         members: &[Address],

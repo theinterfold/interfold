@@ -12,7 +12,7 @@ use super::{
     RecipientShares, SharesMessage,
 };
 use crate::{
-    node::Effect,
+    node::{Effect, Noted},
     proof::{ProofType, SignedProof, ZkProof},
     BlobRef, E3Id, SealedRef,
 };
@@ -59,6 +59,10 @@ pub(super) struct Shares {
     checked: BTreeMap<Address, bool>,
     /// After the share checkpoint, Ready no longer waits for missing dealers.
     pub(super) checkpoint_passed: bool,
+    /// The dealers this node still waited for were all without a valid key here. Their shares
+    /// cannot join a roster with this node's, so Ready no longer waits for them, even if they
+    /// come after all.
+    waits_only_on_keyless: bool,
 }
 
 impl OwnShares {
@@ -266,41 +270,52 @@ impl Dkg {
                 .is_none_or(|earlier| earlier.iter().all(|dealer| dealers.contains(dealer)))
     }
 
-    pub(super) fn receive_ready(&mut self, reporter: Address, dealers: Vec<Dealer>) {
+    pub(super) fn receive_ready(&mut self, reporter: Address, dealers: Vec<Dealer>) -> Effect {
+        let noted = self.ready_noted(reporter, dealers.len());
         self.ready.insert(reporter, dealers);
+        noted
     }
 
-    /// Send a Ready report, or a larger one, once it names at least H dealers and either every
-    /// live dealer's shares are checked, the share checkpoint has passed, or only dealers without
-    /// a valid key at this node are missing: this node dealt those no shares, so no roster can
-    /// hold both, and waiting for them gains nothing.
+    fn ready_noted(&self, reporter: Address, dealers: usize) -> Effect {
+        let reports = self.ready.len() + usize::from(!self.ready.contains_key(&reporter));
+        self.note(Noted::Ready {
+            reporter,
+            dealers,
+            reports,
+            committee: self.members.len(),
+        })
+    }
+
+    /// Send a Ready report, or a larger one, once it names at least H dealers and every live
+    /// dealer's shares are checked, the share checkpoint has passed, or this node once waited
+    /// only for dealers without a valid key here.
     pub(super) fn send_ready_if_due(&mut self) -> Vec<Effect> {
         let Phase::Dealt(_, dealt) = &self.phase else {
             return Vec::new();
         };
-        let missing: Vec<&Address> = self
+        let outstanding: Vec<&Address> = self
             .members
             .iter()
             .filter(|member| {
                 **member != self.me
                     && self.is_live(member)
-                    && !self.shares.received.contains_key(*member)
+                    && !self.shares.checked.contains_key(*member)
             })
             .collect();
-        let unchecked = self
-            .shares
-            .received
-            .keys()
-            .any(|dealer| self.is_live(dealer) && !self.shares.checked.contains_key(dealer));
-        let complete = missing.is_empty() && !unchecked;
-        let only_keyless_missing = !missing.is_empty()
-            && missing
+        let keyless = !outstanding.is_empty()
+            && outstanding
                 .iter()
                 .all(|member| !self.keys.valid.contains(*member));
-        if !(complete || self.shares.checkpoint_passed || only_keyless_missing) {
+        if !(outstanding.is_empty()
+            || self.shares.checkpoint_passed
+            || self.shares.waits_only_on_keyless
+            || keyless)
+        {
             return Vec::new();
         }
-        let mut dealers = vec![dealt.contribution];
+        let contribution = dealt.contribution;
+        self.shares.waits_only_on_keyless |= keyless;
+        let mut dealers = vec![contribution];
         dealers.extend(
             self.shares
                 .checked
@@ -320,7 +335,8 @@ impl Dkg {
         if dealers.len() < self.h() || self.ready.get(&self.me) == Some(&dealers) {
             return Vec::new();
         }
+        let noted = self.ready_noted(self.me, dealers.len());
         self.ready.insert(self.me, dealers.clone());
-        vec![self.gossip(DkgMessage::Ready(dealers))]
+        vec![self.gossip(DkgMessage::Ready(dealers)), noted]
     }
 }
