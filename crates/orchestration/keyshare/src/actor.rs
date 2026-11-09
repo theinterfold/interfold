@@ -221,8 +221,8 @@ pub struct ThresholdKeyshare {
     active_aggregator_party_id: Option<u64>,
     is_aggregator: bool,
     effects_enabled: bool,
-    /// Whether the E3 ended. The actor then ignores events and collector deadlines, but stays alive
-    /// until its terminal cleanup succeeds.
+    /// Whether the E3 ended. The actor then ignores events, collector results and deadlines, and
+    /// selection retries and timing reads, but stays alive until its terminal cleanup succeeds.
     ended: bool,
     // Derived from canonical events and the lifecycle projection at hydration.
     canonical_key_published: bool,

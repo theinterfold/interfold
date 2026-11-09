@@ -181,10 +181,11 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
         msg: TypedEvent<CiphernodeSelected>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        if self
-            .state
-            .get()
-            .is_some_and(|state| !matches!(state.state, KeyshareState::Init))
+        if self.ended
+            || self
+                .state
+                .get()
+                .is_some_and(|state| !matches!(state.state, KeyshareState::Init))
         {
             return Box::pin(async {}.into_actor(self));
         }
@@ -210,6 +211,10 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
         Box::pin(async move { reader(e3_id).await }.into_actor(self).map(
             move |result, actor, ctx| {
                 actor.selection_timing_pending = false;
+                // The E3 can end while the timing read runs.
+                if actor.ended {
+                    return;
+                }
                 let result = result.and_then(|(deadline, window)| {
                     anyhow::ensure!(deadline > 0 && window > 0, "invalid frozen DKG timing");
                     actor.state.try_mutate_without_context(|mut state| {
@@ -235,6 +240,9 @@ impl Handler<TypedEvent<AllEncryptionKeysCollected>> for ThresholdKeyshare {
         msg: TypedEvent<AllEncryptionKeysCollected>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self.ended {
+            return;
+        }
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
@@ -277,6 +285,9 @@ impl Handler<TypedEvent<AllThresholdSharesCollected>> for ThresholdKeyshare {
         msg: TypedEvent<AllThresholdSharesCollected>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self.ended {
+            return;
+        }
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
@@ -365,6 +376,9 @@ impl Handler<TypedEvent<AllDecryptionKeySharesCollected>> for ThresholdKeyshare 
         msg: TypedEvent<AllDecryptionKeySharesCollected>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self.ended {
+            return;
+        }
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
@@ -420,8 +434,8 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         event: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        // No event or collector deadline starts work and no decryption work is redelivered after
-        // the end, also while the cleanup below retries.
+        // No event, collector result or deadline, or selection starts work and no decryption
+        // work is redelivered after the end, also while the cleanup below retries.
         self.ended = true;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;

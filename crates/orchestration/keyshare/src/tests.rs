@@ -897,8 +897,8 @@ async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()
     Ok(())
 }
 
-/// A store that stops when it starts, so it refuses every snapshot write, as a store whose
-/// mailbox rejects writes does.
+/// A store that stops when it starts, so it refuses every snapshot write and flush, as a store
+/// whose mailbox rejects writes does.
 struct StoppedStore;
 
 impl Actor for StoppedStore {
@@ -924,6 +924,13 @@ impl Handler<Insert> for StoppedStore {
 impl Handler<Remove> for StoppedStore {
     type Result = ();
     fn handle(&mut self, _: Remove, _: &mut Self::Context) {}
+}
+
+impl Handler<e3_events::Flush> for StoppedStore {
+    type Result = Result<()>;
+    fn handle(&mut self, _: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
+        Ok(())
+    }
 }
 
 /// Hold `value` in a persistable whose writes all fail.
@@ -5707,6 +5714,180 @@ async fn a_late_collector_timeout_does_not_fail_an_ended_e3() -> Result<()> {
         .await?;
 
     assert_no_collector_failure(&bus, &history, 1).await
+}
+
+/// A record of this node's BFV keypair whose flushes all fail, so an ended E3's terminal cleanup
+/// retries every second and the keyshare stays alive.
+async fn unsettleable_bfv_key() -> DurableIntent<BfvKeyIntent> {
+    let flushes = StoppedStore.start();
+    actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+    DurableIntent::new(
+        DataStore::from_in_mem(&InMemStore::new(false).start())
+            .with_flush_recipient(flushes.recipient())
+            .scope("bfv_key"),
+    )
+}
+
+/// Start `keyshare` and end its E3, whose terminal cleanup then retries. Returns the actor and the
+/// record of its BFV keypair.
+async fn start_ended(
+    mut keyshare: ThresholdKeyshare,
+    e3_id: &E3id,
+) -> Result<(Addr<ThresholdKeyshare>, DurableIntent<BfvKeyIntent>)> {
+    let bfv_key = unsettleable_bfv_key().await;
+    keyshare.bfv_keys = bfv_key.clone();
+    let actor = keyshare.start();
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            1,
+            EventSource::Local,
+        ))
+        .await?;
+    Ok((actor, bfv_key))
+}
+
+#[actix::test]
+async fn a_late_encryption_key_batch_starts_no_share_generation_for_an_ended_e3() -> Result<()> {
+    let e3_id = E3id::new("100", 1);
+    let (keyshare, repo, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let (actor, _) = start_ended(keyshare, &e3_id).await?;
+    // A collector's result can reach the keyshare after the E3 ends.
+    actor
+        .send(TypedEvent::new(
+            AllEncryptionKeysCollected {
+                keys: vec![own_key(&e3_id).key, peer_key(&e3_id, 1).key],
+            },
+            test_ec(2),
+        ))
+        .await?;
+
+    assert!(matches!(
+        repo.read().await?.expect("saved keyshare state").state,
+        KeyshareState::CollectingEncryptionKeys(_)
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_late_threshold_share_batch_is_not_recorded_for_an_ended_e3() -> Result<()> {
+    let e3_id = E3id::new("101", 1);
+    let (keyshare, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let (actor, _) = start_ended(keyshare, &e3_id).await?;
+    actor
+        .send(TypedEvent::new(
+            AllThresholdSharesCollected::new(
+                HashMap::from([(1, peer_share(&e3_id, 1).share)]),
+                HashMap::new(),
+            ),
+            test_ec(2),
+        ))
+        .await?;
+
+    // The cleanup runs again only a second later, so a recorded batch would still be here.
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.collected_threshold_share_ids.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_late_decryption_key_share_batch_does_not_fail_an_ended_e3() -> Result<()> {
+    let e3_id = E3id::new("102", 1);
+    let (keyshare, _, _, history) = build_actor(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let bus = keyshare.bus.clone();
+    let (actor, _) = start_ended(keyshare, &e3_id).await?;
+    // No party is recorded as honest, so this batch would fail a live E3.
+    actor
+        .send(TypedEvent::new(
+            AllDecryptionKeySharesCollected {
+                shares: HashMap::new(),
+            },
+            test_ec(2),
+        ))
+        .await?;
+
+    assert_no_collector_failure(&bus, &history, 2).await
+}
+
+#[actix::test]
+async fn a_selection_retry_generates_no_bfv_keypair_for_an_ended_e3() -> Result<()> {
+    let e3_id = E3id::new("103", 1);
+    let (keyshare, _, _, _) = build_actor(&e3_id, KeyshareState::Init, 7_200, 7_200, &[]).await?;
+    let (actor, bfv_key) = start_ended(keyshare, &e3_id).await?;
+    // A selection whose keypair record or DKG timing read failed runs again later.
+    actor
+        .send(TypedEvent::new(selection(&e3_id), test_ec(2)))
+        .await?;
+
+    assert!(bfv_key.restore().await?.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_dkg_timing_read_returning_after_the_end_starts_no_dkg() -> Result<()> {
+    let e3_id = E3id::new("104", 1);
+    let (mut keyshare, repo, _, _) =
+        build_actor(&e3_id, KeyshareState::Init, 7_200, 7_200, &[]).await?;
+    keyshare.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = None;
+        state.dkg_window_secs = None;
+        Ok(state)
+    })?;
+    let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_ended = Arc::clone(&ended);
+    keyshare.dkg_timing_reader = Arc::new(move |_| {
+        let read_ended = Arc::clone(&read_ended);
+        Box::pin(async move {
+            while !read_ended.load(std::sync::atomic::Ordering::SeqCst) {
+                actix::clock::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            let now = crate::domain::timeout_policy::now_unix_secs();
+            Ok((now + 7_200, 7_200))
+        })
+    });
+    keyshare.bfv_keys = unsettleable_bfv_key().await;
+    let actor = keyshare.start();
+
+    // The selection reads the DKG timing, and the read returns after the E3 ends.
+    actor.do_send(TypedEvent::new(selection(&e3_id), test_ec(1)));
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            2,
+            EventSource::Local,
+        ))
+        .await?;
+    ended.store(true, std::sync::atomic::Ordering::SeqCst);
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+
+    let state = repo.read().await?.expect("saved keyshare state");
+    assert_eq!(state.dkg_deadline_unix_secs, None);
+    Ok(())
 }
 
 #[actix::test]
