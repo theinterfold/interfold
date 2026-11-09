@@ -839,6 +839,58 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
     Ok(())
 }
 
+/// A party restarted while its C6 proof is open has `ShareDecryptionProofPending` in its log and no
+/// `DecryptionshareCreated`. The saved request reaches a prover that lost its pending work, and the
+/// signed proof publishes the party's share once, also when a second resume trigger repeats it.
+#[actix::test]
+async fn a_c6_request_after_a_restart_publishes_one_decryption_share() -> Result<()> {
+    let EventFixture {
+        bus,
+        errors,
+        history,
+    } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
+    let id = E3id::new("86", 1);
+    let (keys, pending) = c6_fixture(&id)?;
+    actor.canonical_keys = keys;
+    let request = || TypedEvent::new(pending.clone(), test_ctx(pending.clone()));
+
+    actor.handle_share_decryption_proof_pending(request());
+    actor.handle_share_decryption_proof_pending(request());
+    // The repeated request starts no second proof.
+    assert_eq!(actor.share_decryption_correlation.len(), 1);
+
+    let proof = Proof::new(
+        CircuitName::ThresholdShareDecryption,
+        ArcBytes::from_bytes(&[1]),
+        ArcBytes::from_bytes(&[2]),
+    );
+    let correlation = *actor.share_decryption_correlation.keys().next().unwrap();
+    actor.handle_share_decryption_proof_response(&correlation, vec![proof]);
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+
+    let shares: Vec<_> = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::DecryptionshareCreated(share) => Some(share),
+            _ => None,
+        })
+        .collect();
+    let [share] = shares.as_slice() else {
+        panic!("expected one DecryptionshareCreated, got {shares:?}");
+    };
+    assert_eq!(share.e3_id, id);
+    assert_eq!(share.party_id, pending.party_id);
+    assert_eq!(share.node, pending.node);
+    assert_eq!(share.decryption_share, pending.decryption_share);
+    assert_eq!(share.signed_decryption_proofs.len(), 1);
+    assert!(actor.pending_share_decryption.is_empty());
+    assert_no_events(&errors).await?;
+    Ok(())
+}
+
 #[actix::test]
 async fn a_c6_request_after_the_e3_ended_is_ignored() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;

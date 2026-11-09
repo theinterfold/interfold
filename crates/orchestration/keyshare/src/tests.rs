@@ -3034,6 +3034,112 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
     Ok(())
 }
 
+/// Party 1 published no encryption key, so it dealt this node no share and has no verified
+/// contribution. The active aggregator proposes the roster of the dealers that did publish, the
+/// E3 does not fail, and the keyless party is left out.
+#[actix::test]
+async fn the_roster_leaves_out_a_party_that_never_published_its_key() -> Result<()> {
+    let e3_id = E3id::new("54", 1);
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let current = AggregatingDecryptionKey {
+        signed_sk_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            0,
+        )),
+        signed_e_sm_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            0,
+        )),
+        ..aggregating_decryption_key_for_roster_test()
+    };
+    // The share batch holds party 2 only, and its C2/C3 proofs verified. This node leads.
+    let CommitteeActor {
+        mut actor,
+        bus,
+        history,
+        ..
+    } = committee_actor(&e3_id, &signers, current, cipher, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::from([2]));
+        recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
+        recovery.active_aggregator_party_id = Some(0);
+        recovery.is_aggregator = true;
+    })
+    .await?;
+    actor.record_threshold_share(&TypedEvent::new(
+        ThresholdShareCreated {
+            signed_c2a_proof: Some(c2_proof(&e3_id, ProofType::C2aSkShareComputation, 2)),
+            signed_c2b_proof: Some(c2_proof(&e3_id, ProofType::C2bESmShareComputation, 2)),
+            ..peer_share(&e3_id, 2)
+        },
+        test_ec(2),
+    ))?;
+    actor.maybe_publish_dkg_ready(test_ec(3))?;
+    let own_ready = actor
+        .recovery
+        .try_get()?
+        .dkg_ready
+        .expect("this node reports its verified dealers");
+    assert_eq!(
+        own_ready
+            .dealers
+            .iter()
+            .map(|dealer| dealer.party_id)
+            .collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+    // Party 2 holds the same contributions, so H = 2 parties are ready.
+    actor.record_dkg_coordination(
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            2,
+            DkgCoordinationKind::Ready,
+            own_ready.dealers.clone(),
+            &signers[2],
+        )?,
+        test_ec(4),
+    )?;
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
+        .await?;
+
+    let roster = actix::clock::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            let roster = events
+                .into_iter()
+                .find_map(|event| match event.into_data() {
+                    InterfoldEventData::DkgCoordination(roster)
+                        if roster.kind == DkgCoordinationKind::Roster =>
+                    {
+                        Some(roster)
+                    }
+                    _ => None,
+                });
+            if let Some(roster) = roster {
+                return Ok::<_, anyhow::Error>(roster);
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    assert_eq!(
+        roster
+            .dealers
+            .iter()
+            .map(|dealer| dealer.party_id)
+            .collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+    assert_no_collector_failure(&bus, &history, 1).await?;
+    Ok(())
+}
+
 #[actix::test]
 async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
     let (bus, _history) = test_bus();
