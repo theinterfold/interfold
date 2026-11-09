@@ -246,6 +246,26 @@ fn handle_threshold_share_decryption_proof(
     req: ThresholdShareDecryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    // Match share calculation: one SS output per dealt noise aggregate.
+    if req.ciphertext_bytes.len() != 1 {
+        return Err(make_zk_error(
+            &request,
+            "SS decryption requires exactly one ciphertext".to_string(),
+        ));
+    }
+    if req.es_poly_sum.len() != 1 {
+        return Err(make_zk_error(
+            &request,
+            "SS decryption requires exactly one smudging share".to_string(),
+        ));
+    }
+    if req.d_share_bytes.len() != 1 {
+        return Err(make_zk_error(
+            &request,
+            "SS decryption proof requires exactly one decryption share".to_string(),
+        ));
+    }
+
     // 1. Build threshold BFV parameters from preset
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
@@ -262,21 +282,8 @@ fn handle_threshold_share_decryption_proof(
         .map_err(|e| make_zk_error(&request, format!("sk_poly_sum decrypt: {}", e)))?;
     let s = CrtPolynomial::from_fhe_polynomial(&sk_poly);
 
-    // 4. For each index, build circuit data and generate proof
+    // 4. Build circuit data and generate the single output's proof
     let num_indices = req.ciphertext_bytes.len();
-    if req.es_poly_sum.is_empty() {
-        return Err(make_zk_error(&request, "empty es_poly_sum".to_string()));
-    }
-    if req.d_share_bytes.len() < num_indices {
-        return Err(make_zk_error(
-            &request,
-            format!(
-                "d_share_bytes too short: {} < {}",
-                req.d_share_bytes.len(),
-                num_indices
-            ),
-        ));
-    }
     let mut proofs = Vec::with_capacity(num_indices);
     let bb_work_base = zk_bb_work_id(&request);
     let artifacts_dir =
@@ -296,11 +303,8 @@ fn handle_threshold_share_decryption_proof(
             })?;
 
         // Decrypt es_poly_sum → Poly → CrtPolynomial (e)
-        // Currently there is a single smudging noise polynomial shared across all
-        // ciphertexts (see calculate_decryption_share.rs).
-        let es_idx = i % req.es_poly_sum.len();
         let e_poly = try_poly_from_sensitive_bytes(
-            req.es_poly_sum[es_idx].clone(),
+            req.es_poly_sum[i].clone(),
             threshold_params.clone(),
             cipher,
         )
@@ -388,11 +392,11 @@ mod threshold_share_decryption_tests {
             (valid_pk, "sk_poly_sum decrypt"),
         ] {
             let req = ThresholdShareDecryptionProofRequest {
-                ciphertext_bytes: vec![],
+                ciphertext_bytes: vec![e3_utils::utility_types::ArcBytes::from_bytes(&[])],
                 aggregated_pk_bytes: e3_utils::utility_types::ArcBytes::from_bytes(&key),
                 sk_poly_sum: SensitiveBytes::new(vec![], &cipher).unwrap(),
-                es_poly_sum: vec![],
-                d_share_bytes: vec![],
+                es_poly_sum: vec![SensitiveBytes::new(vec![], &cipher).unwrap()],
+                d_share_bytes: vec![e3_utils::utility_types::ArcBytes::from_bytes(&[])],
                 decryption_domain: e3_committee_hash::DecryptionDomainContext {
                     interfold_address: Default::default(),
                     committee_hash: Default::default(),
