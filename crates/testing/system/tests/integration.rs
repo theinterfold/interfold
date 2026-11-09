@@ -26,9 +26,9 @@ use trbfv::runner::{run, Scenario};
 // Full-proof trBFV scenarios
 //
 // Each scenario runs a whole E3 on real ciphernodes with real proofs and asserts its outcome:
-// the key, the plaintext, the DKG roster, and the absence of faults. Failover and restart are
-// pinned deterministically in the owning crates (aggregator, sortition, keyshare, evm writer),
-// so no scenario here waits for a progress deadline.
+// the key, the plaintext, the DKG roster, and the absence of faults. It does not assert how the
+// nodes order their events, and its DKG window is far beyond the flow timeouts, so no scenario
+// here waits for a progress deadline.
 //
 // Proof-system and timeout settings come from the environment (`CIPHERNODE_SKIP_PROOF_AGGREGATION`,
 // `E3_*_COLLECTION_TIMEOUT_SECS`, `E3_CUSTOM_BB`).

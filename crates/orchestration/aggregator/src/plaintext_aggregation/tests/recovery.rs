@@ -890,7 +890,7 @@ impl Handler<EventStoreQueryBy<SeqAgg>> for CountingHistoryReader {
     }
 }
 
-pub(super) fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
+fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
     use alloy::primitives::U256;
     use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
     let id = E3id::new("42", 1);
@@ -914,7 +914,7 @@ pub(super) fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof>
         .collect()
 }
 
-pub(super) fn signed_c7_result(id: &E3id, proofs: &[Proof]) -> AggregationProofSigned {
+fn signed_c7_result(id: &E3id, proofs: &[Proof]) -> AggregationProofSigned {
     AggregationProofSigned {
         e3_id: id.clone(),
         signed_proofs: proofs

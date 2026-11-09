@@ -33,17 +33,10 @@ contract EmitLogs {
     uint32 totalLength,
     bytes chunk
   );
-  event CommitteeProofPublished(uint256 indexed e3Id, address[] nodes, bytes32 pkCommitment, bytes proof);
-
-  // Same names as ICiphernodeRegistry, so the production error decoder recognizes them.
-  error CommitteeAlreadyPublished();
-  error CommitteeNotPublished();
 
   string _value;
 
   uint256 count = 0;
-
-  mapping(uint256 => bytes32) committeePublicKeys;
 
   constructor() {
     _value = "";
@@ -94,18 +87,5 @@ contract EmitLogs {
       totalLength,
       chunk
     );
-  }
-
-  // Like CiphernodeRegistryOwnable.publishCommittee, the first publication wins.
-  function publishCommittee(uint256 e3Id, bytes32 pkCommitment, bytes calldata proof, bytes calldata) external {
-    if (committeePublicKeys[e3Id] != bytes32(0)) revert CommitteeAlreadyPublished();
-    committeePublicKeys[e3Id] = pkCommitment;
-    emit CommitteeProofPublished(e3Id, new address[](0), pkCommitment, proof);
-  }
-
-  function committeePublicKey(uint256 e3Id) external view returns (bytes32) {
-    bytes32 commitment = committeePublicKeys[e3Id];
-    if (commitment == bytes32(0)) revert CommitteeNotPublished();
-    return commitment;
   }
 }

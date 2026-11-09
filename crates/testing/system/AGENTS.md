@@ -5,11 +5,9 @@ This is the cross-capability/multi-node harness owner; `src/main.rs` intentional
 - Prefer observable history, disk restart, and final output assertions over mailbox timing or
   reimplemented reducer logic. Reuse the existing ciphernode-system harness and replay loaders.
 - A full-proof scenario asserts outcomes (key, plaintext, accepted roster, no faults), never how
-  actors order their events, and never waits for a progress deadline. Event order, failover and
-  restart are pinned by deterministic tests in the owning crate; inject the event the sortition
-  layer emits rather than waiting for a timer. Add a fault as a named `trbfv_scenario_*` test with
-  its own CI leg, not as an environment switch on an existing one. Timing and exports belong in
-  `tests/trbfv/benchmark.rs`, not in the runner's assertions.
+  actors order their events, and never waits for a progress deadline. Add a fault as a named
+  `trbfv_scenario_*` test with its own CI leg, not as an environment switch on an existing one.
+  Timing and exports belong in `tests/trbfv/benchmark.rs`, not in the runner's assertions.
 - Keep node buses, stores, RNGs, and terminal cleanup isolated. Multi-node proof benchmarks need
   per-node RNG mutexes rather than one shared lock that hides resource contention.
 - The manifest enables builder test helpers and test-only proof aggregation skipping. Cargo feature

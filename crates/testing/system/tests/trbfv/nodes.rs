@@ -60,10 +60,11 @@ impl NodeFactory {
     pub async fn build(&self, role: &str) -> Result<CiphernodeHandle> {
         let salt = self.next_salt.fetch_add(1, Ordering::Relaxed);
         let rng = derive_shared_rng(self.rng_base, salt);
-        // The address comes from the node's seeded RNG, so a seeded run gives each node the
-        // same one.
-        let addr = Address::from_slice(&rng.lock().unwrap().random::<[u8; 20]>()).to_string();
-        println!("Building {role} {addr}");
+        // The signer comes from the node's seeded RNG, so a seeded run gives each node the same
+        // address, committee and party assignment.
+        let signer =
+            PrivateKeySigner::from_bytes(&rng.lock().unwrap().random::<[u8; 32]>().into())?;
+        println!("Building {role} {}", signer.address());
 
         let mut builder =
             CiphernodeBuilder::full(rng, self.cipher.clone(), self.zk_backend.clone())
@@ -71,7 +72,7 @@ impl NodeFactory {
                 .with_shared_taskpool(&self.task_pool)
                 .with_multithread_concurrent_jobs(self.concurrent_jobs)
                 .with_shared_multithread_report(&self.multithread_report)
-                .with_signer(PrivateKeySigner::random())
+                .with_signer(signer)
                 .with_eventstore_aggregate_config_for_testing(self.aggregate_config.clone())
                 .with_dkg_timing_reader_for_testing(self.dkg_timing_reader.clone())
                 .with_chains(std::slice::from_ref(&self.chain_config()))
@@ -177,7 +178,8 @@ pub fn determine_committee(
     collector_addr: &str,
 ) -> Result<CommitteeFinalized> {
     let total_selection_size = threshold_n + calculate_buffer_size(threshold_m, threshold_n);
-    let tickets: Vec<Ticket> = (0..TICKET_BALANCE / TICKET_PRICE)
+    // Tickets are numbered from 1, as in the nodes' own request-time view.
+    let tickets: Vec<Ticket> = (1..=TICKET_BALANCE / TICKET_PRICE)
         .map(|ticket_id| Ticket { ticket_id })
         .collect();
     let registered_nodes: Vec<RegisteredNode> = registered_addrs

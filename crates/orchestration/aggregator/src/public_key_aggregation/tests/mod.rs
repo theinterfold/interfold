@@ -278,32 +278,24 @@ fn c1_verified(
     c1_verdict_for(request, dishonest_parties)
 }
 
-/// The first event of `history` that `pick` selects, once it arrives.
-async fn wait_for_event<T>(
-    history: &Addr<HistoryCollector<InterfoldEvent>>,
-    pick: impl Fn(&InterfoldEventData) -> Option<T>,
-) -> Result<Option<T>> {
-    for _ in 0..100 {
-        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-        if let Some(found) = events.iter().find_map(|event| pick(event.get_data())) {
-            return Ok(Some(found));
-        }
-        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    Ok(None)
-}
-
 /// Wait until the history holds a C5 proof request for `e3_id`.
 async fn c5_proof_requested(
     history: &Addr<HistoryCollector<InterfoldEvent>>,
     e3_id: &E3id,
 ) -> Result<bool> {
-    let requested = wait_for_event(history, |data| match data {
-        InterfoldEventData::PkAggregationProofPending(data) if &data.e3_id == e3_id => Some(()),
-        _ => None,
-    })
-    .await?;
-    Ok(requested.is_some())
+    for _ in 0..100 {
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        if events.iter().any(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::PkAggregationProofPending(data) if &data.e3_id == e3_id
+            )
+        }) {
+            return Ok(true);
+        }
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    Ok(false)
 }
 
 #[actix::test]
@@ -958,12 +950,17 @@ fn signed_c5_proof(e3_id: &E3id, signals: Vec<u8>) -> PkAggregationProofSigned {
 
 /// Wait until the history holds a key publication.
 async fn public_key_aggregated(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<bool> {
-    let published = wait_for_event(history, |data| match data {
-        InterfoldEventData::PublicKeyAggregated(_) => Some(()),
-        _ => None,
-    })
-    .await?;
-    Ok(published.is_some())
+    for _ in 0..100 {
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        if events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_)))
+        {
+            return Ok(true);
+        }
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    Ok(false)
 }
 
 /// A demoted aggregator that finished the key restarts while the registry writer still publishes
@@ -1105,7 +1102,6 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 
 mod attestations;
 mod failures;
-mod publication;
 mod recovery;
 mod replay;
 

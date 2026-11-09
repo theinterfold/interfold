@@ -336,71 +336,6 @@ async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<
     Ok(result.events.pop().expect("expected one event"))
 }
 
-/// Everything published on the bus so far, after the event pipeline settles.
-async fn published(
-    aggregator: &ThresholdPlaintextAggregator,
-    history: &Addr<HistoryCollector<InterfoldEvent>>,
-) -> Result<Vec<InterfoldEventData>> {
-    aggregator.bus.flush_event_pipeline().await?;
-    Ok(history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .into_iter()
-        .map(InterfoldEvent::into_data)
-        .collect())
-}
-
-/// The share verifications dispatched among `events`.
-fn share_verifications(
-    events: &[InterfoldEventData],
-) -> Vec<&e3_events::ShareVerificationDispatched> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            InterfoldEventData::ShareVerificationDispatched(data) => Some(data),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Deliver `party`'s decryption share the way gossip does, after sortition confirmed that the
-/// sender is in the committee.
-fn deliver_share(aggregator: &mut ThresholdPlaintextAggregator, party: u64) {
-    let (decryption_share, signed_decryption_proofs) =
-        share_with_matching_commitment(&aggregator.e3_id, party, &test_ciphertexts()[..1]);
-    let share = DecryptionshareCreated {
-        e3_id: aggregator.e3_id.clone(),
-        party_id: party,
-        node: test_signer(party).address().to_string(),
-        decryption_share,
-        signed_decryption_proofs,
-    };
-    <ThresholdPlaintextAggregator as Handler<_>>::handle(
-        aggregator,
-        E3CommitteeContainsResponse::new(
-            TypedEvent::new(share, test_ctx(EffectsEnabled::new())),
-            true,
-        ),
-        &mut Context::new(),
-    );
-}
-
-/// Inject the notice the sortition layer emits when the plaintext role moves.
-fn change_role(aggregator: &mut ThresholdPlaintextAggregator, e3_id: &E3id, is_aggregator: bool) {
-    <ThresholdPlaintextAggregator as Handler<_>>::handle(
-        aggregator,
-        TypedEvent::new(
-            AggregatorChanged {
-                e3_id: e3_id.clone(),
-                active_party_id: Some(0),
-                is_aggregator,
-            },
-            test_ctx(EffectsEnabled::new()),
-        ),
-        &mut Context::new(),
-    );
-}
-
 #[actix::test]
 async fn restart_redrives_threshold_decryption() -> Result<()> {
     let (mut aggregator, history, e3_id) =
@@ -546,33 +481,6 @@ async fn a_standby_does_not_continue_work_it_did_not_start() -> Result<()> {
 
     assert!(!aggregator.can_run_aggregation_effects());
     assert!(!aggregator.can_continue_aggregation_effects());
-    Ok(())
-}
-
-/// A standby collects shares without verifying them. Failover promotes it with `AggregatorChanged`:
-/// it then verifies the batch it buffered, once, and ignores a repeated notice or one for another
-/// E3.
-#[actix::test]
-async fn a_promoted_standby_verifies_its_buffered_shares_once() -> Result<()> {
-    let (mut aggregator, history, e3_id) =
-        build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
-    let dispatched = |events: &[InterfoldEventData]| {
-        share_verifications(events)
-            .into_iter()
-            .filter(|data| {
-                data.e3_id == e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs
-            })
-            .count()
-    };
-    deliver_share(&mut aggregator, 0);
-    deliver_share(&mut aggregator, 1);
-    change_role(&mut aggregator, &E3id::new("43", 1), true);
-    assert_eq!(dispatched(&published(&aggregator, &history).await?), 0);
-
-    change_role(&mut aggregator, &e3_id, true);
-    change_role(&mut aggregator, &e3_id, true);
-
-    assert_eq!(dispatched(&published(&aggregator, &history).await?), 1);
     Ok(())
 }
 

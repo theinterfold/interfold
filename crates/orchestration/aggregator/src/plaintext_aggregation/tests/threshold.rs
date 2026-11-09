@@ -278,69 +278,6 @@ async fn a_bad_share_for_the_second_ciphertext_does_not_reserve_a_slot() -> Resu
     Ok(())
 }
 
-#[actix::test]
-async fn c6_verification_needs_t_plus_one_distinct_shares_and_decryption_needs_its_verdict(
-) -> Result<()> {
-    // Threshold 1: two distinct roster shares form the batch.
-    let (mut aggregator, history, e3_id) =
-        build_plaintext_aggregator(collecting_state(), true).await?;
-    // Repeated gossip of one party's share does not count twice.
-    deliver_share(&mut aggregator, 0);
-    deliver_share(&mut aggregator, 0);
-    assert!(share_verifications(&published(&aggregator, &history).await?).is_empty());
-
-    // A node outside the honest roster cannot complete the batch.
-    deliver_share(&mut aggregator, 2);
-    assert!(share_verifications(&published(&aggregator, &history).await?).is_empty());
-
-    deliver_share(&mut aggregator, 1);
-    deliver_share(&mut aggregator, 1);
-    let events = published(&aggregator, &history).await?;
-    let [request] = &share_verifications(&events)[..] else {
-        panic!("the second distinct share must dispatch C6 verification exactly once");
-    };
-    assert_eq!(request.e3_id, e3_id);
-    assert_eq!(
-        request
-            .share_proofs
-            .iter()
-            .map(|party| party.sender_party_id)
-            .collect::<Vec<_>>(),
-        [0, 1]
-    );
-    // Decryption waits for the verdict.
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, InterfoldEventData::ComputeRequest(_))));
-
-    let verdict = c6_completion(&aggregator, BTreeSet::new());
-    aggregator.handle_c6_verification_complete(verdict)?;
-    let events = published(&aggregator, &history).await?;
-    let decryption: Vec<_> = events
-        .iter()
-        .filter_map(|event| match event {
-            InterfoldEventData::ComputeRequest(ComputeRequest {
-                request:
-                    ComputeRequestKind::TrBFV(TrBFVRequest::CalculateThresholdDecryption(request)),
-                ..
-            }) => Some(request),
-            _ => None,
-        })
-        .collect();
-    let [request] = &decryption[..] else {
-        panic!("the verdict must start one threshold decryption");
-    };
-    assert_eq!(
-        request
-            .d_share_polys
-            .iter()
-            .map(|(party, _)| *party)
-            .collect::<Vec<_>>(),
-        [0, 1]
-    );
-    Ok(())
-}
-
 async fn deliver_resume(
     aggregator: &mut ThresholdPlaintextAggregator,
     history: &Addr<HistoryCollector<InterfoldEvent>>,

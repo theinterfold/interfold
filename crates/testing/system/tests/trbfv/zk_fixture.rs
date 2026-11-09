@@ -116,6 +116,43 @@ pub fn active_committee() -> e3_committee::CiphernodesCommitteeSize {
     })
 }
 
+/// Preset that `circuits/bin` was built for, from its `.active-preset.json`. `None` when the
+/// stamp is missing, malformed or pre-dates the field, as the circuits then match no preset.
+fn active_preset() -> Option<String> {
+    let raw = std::fs::read_to_string(
+        workspace_root()
+            .join("circuits")
+            .join("bin")
+            .join(".active-preset.json"),
+    )
+    .ok()?;
+    let stamp: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    Some(stamp.get("preset")?.as_str()?.to_owned())
+}
+
+/// The `dist/circuits/checksums.json` entries of `pair`, or `None` when the manifest is missing
+/// or lists nothing for it, so the dist circuits cannot be verified.
+async fn dist_manifest_entries(
+    dist_circuits: &Path,
+    pair: &Path,
+) -> Result<Option<Vec<(String, String)>>> {
+    let Ok(raw) = tokio::fs::read(dist_circuits.join("checksums.json")).await else {
+        return Ok(None);
+    };
+    let manifest: serde_json::Value = serde_json::from_slice(&raw)?;
+    ensure!(
+        manifest["algorithm"] == "sha256",
+        "dist circuit manifest must use sha256"
+    );
+    let files: HashMap<String, String> = serde_json::from_value(manifest["files"].clone())?;
+    let prefix = format!("{}/", pair.display());
+    let entries: Vec<_> = files
+        .into_iter()
+        .filter(|(file, _)| file.starts_with(&prefix))
+        .collect();
+    Ok((!entries.is_empty()).then_some(entries))
+}
+
 async fn copy_file(src: &Path, dst: &Path) -> Result<()> {
     tokio::fs::copy(src, dst)
         .await
@@ -232,9 +269,24 @@ async fn stage_local_fixture(backend: &ZkBackend, bb: &Path, preset_subdir: &str
     let dist_pair = root.join("dist/circuits").join(&pair);
     let bin = root.join("circuits/bin");
     let pair_dir = backend.circuits_dir.join(&pair);
-    if dist_pair.join("recursive/dkg/pk/pk.json").exists() {
+    let dist_entries = if dist_pair.join("recursive/dkg/pk/pk.json").exists() {
+        dist_manifest_entries(&root.join("dist/circuits"), &pair).await?
+    } else {
+        None
+    };
+    if let Some(entries) = dist_entries {
         copy_dir_recursive(&dist_pair, &pair_dir).await?;
-    } else if bin.join("dkg/target/pk.json").exists() && bin.join(".active-preset.json").exists() {
+        // The checksums recorded below would accept whatever was copied, so a corrupted or
+        // replaced artifact must fail here, with its original mismatch.
+        for (file, checksum) in &entries {
+            backend
+                .locate_manifest_artifact(file, checksum)
+                .await
+                .with_context(|| format!("dist artifact {file} disagrees with its manifest"))?;
+        }
+    } else if bin.join("dkg/target/pk.json").exists()
+        && active_preset().as_deref() == Some(preset_subdir)
+    {
         for (variant, vk_ext, circuits) in STAGED {
             for &circuit in circuits {
                 stage_circuit(&bin, &pair_dir, variant, vk_ext, circuit).await?;
@@ -243,8 +295,9 @@ async fn stage_local_fixture(backend: &ZkBackend, bb: &Path, preset_subdir: &str
     } else {
         println!(
             "No verifiable local circuit fixtures for preset `{}` \
-             (need either dist/circuits/{0}/recursive/dkg/pk/pk.json \
-             or circuits/bin + circuits/bin/.active-preset.json); \
+             (need either dist/circuits/{0}/recursive/dkg/pk/pk.json with an entry for it in \
+             dist/circuits/checksums.json, or circuits/bin built for preset `{preset_subdir}` \
+             with circuits/bin/.active-preset.json); \
              downloading release circuits via ensure_installed()...",
             pair.display()
         );

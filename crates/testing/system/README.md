@@ -39,9 +39,7 @@ parts are mocked or ignored is specific to the scenario, not guaranteed by the p
   a whole E3 on real ciphernodes through [ciphernode_system](tests/ciphernode_system/mod.rs) and the
   [scenario runner](tests/trbfv/runner.rs), plus P2P forwarding tests. A scenario asserts outcomes
   only: the key, the plaintext, the accepted DKG roster, and the absence of faults. It does not
-  assert how actors order their events, and it does not wait for a progress deadline; failover,
-  restart and event ordering are pinned in the owning crates (aggregator, sortition, keyshare, EVM
-  writer).
+  assert how actors order their events, and it does not wait for a progress deadline.
 - [large_work_plan_recovery.rs](tests/large_work_plan_recovery.rs): persisted large-work-plan
   recovery scenarios.
 - [layout_lock.rs](tests/layout_lock.rs): listed persisted/wire serde roots, repository value types,

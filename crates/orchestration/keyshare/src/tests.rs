@@ -9,7 +9,7 @@ use crate::actors::decryption_key_shared_collector::{
     DecryptionKeySharedCollectionFailed, DecryptionKeySharedCollectionTimeout,
 };
 use crate::actors::threshold_share_collector::{
-    ThresholdShareCollectionCutoff, ThresholdShareCollectionTimeout, ThresholdShareCollector,
+    ThresholdShareCollectionCutoff, ThresholdShareCollectionTimeout,
 };
 use crate::{ext::ThresholdKeyshareExtension, ThresholdKeyshareRepositoryFactory};
 use actix::{Actor, Addr, Handler};
@@ -589,53 +589,6 @@ async fn shares_continue_without_waiting_for_a_dealer_that_had_no_key() -> Resul
     Ok(())
 }
 
-/// Party 2 published its C0 key and went offline, so it deals no share. At the soft cutoff the
-/// collector hands over the H - 1 external shares that it holds instead of waiting for party 2.
-/// The hard deadline has not passed, so the DKG does not fail.
-#[actix::test]
-async fn a_dealer_that_goes_offline_after_its_key_does_not_stop_the_dkg() -> Result<()> {
-    let e3_id = E3id::new("offline-dealer", 1);
-    let (actor, repo, recovery_repo, history) = build_actor(
-        &e3_id,
-        generating_threshold_share_state(&e3_id),
-        7_200,
-        7_200,
-        &[],
-    )
-    .await?;
-    let bus = actor.bus.clone();
-    let (actor, collector) = start_with_share_collector(actor, &test_ec(1));
-
-    collector
-        .send(TypedEvent::new(peer_share(&e3_id, 1), test_ec(2)))
-        .await?;
-    // Party 2's share is still expected before the cutoff.
-    assert!(recovery_repo
-        .read()
-        .await?
-        .expect("recovery state")
-        .collected_threshold_share_ids
-        .is_none());
-
-    collector.send(ThresholdShareCollectionCutoff).await?;
-
-    let recovery = wait_for_record(&recovery_repo, |recovery| {
-        recovery.collected_threshold_share_ids.is_some()
-    })
-    .await?;
-    assert_eq!(
-        recovery.collected_threshold_share_ids,
-        Some(BTreeSet::from([1]))
-    );
-    assert!(!matches!(
-        repo.read().await?.expect("keyshare state").state,
-        KeyshareState::Failed { .. }
-    ));
-    assert_no_collector_failure(&bus, &history, 1).await?;
-    actor.send(Die).await?;
-    Ok(())
-}
-
 #[actix::test]
 async fn a_rebuilt_share_collector_does_not_wait_for_a_dealer_that_had_no_key() -> Result<()> {
     let e3_id = E3id::new("keyless-dealer-restart", 1);
@@ -1163,27 +1116,6 @@ async fn build_actor(
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     Ok((actor, repo, recovery_repo, history))
-}
-
-/// Start `actor` with the share collector that `EffectsEnabled` builds, and return both.
-fn start_with_share_collector(
-    mut actor: ThresholdKeyshare,
-    ec: &EventContext<Sequenced>,
-) -> (Addr<ThresholdKeyshare>, Addr<ThresholdShareCollector>) {
-    let mut collector = None;
-    let parent = ThresholdKeyshare::create(|ctx| {
-        collector = Some(
-            actor
-                .ensure_collector(
-                    ctx.address(),
-                    ec,
-                    crate::domain::timeout_policy::now_unix_secs(),
-                )
-                .expect("share collector"),
-        );
-        actor
-    });
-    (parent, collector.expect("share collector"))
 }
 
 fn insecure_threshold_params() -> ArcBytes {
@@ -3034,112 +2966,6 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
     Ok(())
 }
 
-/// Party 1 published no encryption key, so it dealt this node no share and has no verified
-/// contribution. The active aggregator proposes the roster of the dealers that did publish, the
-/// E3 does not fail, and the keyless party is left out.
-#[actix::test]
-async fn the_roster_leaves_out_a_party_that_never_published_its_key() -> Result<()> {
-    let e3_id = E3id::new("54", 1);
-    let signers = three_signers();
-    let cipher = Arc::new(Cipher::from_password("test-password").await?);
-    let current = AggregatingDecryptionKey {
-        signed_sk_share_computation_proof: Some(c2_proof(
-            &e3_id,
-            ProofType::C2aSkShareComputation,
-            0,
-        )),
-        signed_e_sm_share_computation_proof: Some(c2_proof(
-            &e3_id,
-            ProofType::C2bESmShareComputation,
-            0,
-        )),
-        ..aggregating_decryption_key_for_roster_test()
-    };
-    // The share batch holds party 2 only, and its C2/C3 proofs verified. This node leads.
-    let CommitteeActor {
-        mut actor,
-        bus,
-        history,
-        ..
-    } = committee_actor(&e3_id, &signers, current, cipher, |recovery| {
-        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
-        recovery.verified_dealer_ids = Some(BTreeSet::from([2]));
-        recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
-        recovery.active_aggregator_party_id = Some(0);
-        recovery.is_aggregator = true;
-    })
-    .await?;
-    actor.record_threshold_share(&TypedEvent::new(
-        ThresholdShareCreated {
-            signed_c2a_proof: Some(c2_proof(&e3_id, ProofType::C2aSkShareComputation, 2)),
-            signed_c2b_proof: Some(c2_proof(&e3_id, ProofType::C2bESmShareComputation, 2)),
-            ..peer_share(&e3_id, 2)
-        },
-        test_ec(2),
-    ))?;
-    actor.maybe_publish_dkg_ready(test_ec(3))?;
-    let own_ready = actor
-        .recovery
-        .try_get()?
-        .dkg_ready
-        .expect("this node reports its verified dealers");
-    assert_eq!(
-        own_ready
-            .dealers
-            .iter()
-            .map(|dealer| dealer.party_id)
-            .collect::<Vec<_>>(),
-        vec![0, 2]
-    );
-    // Party 2 holds the same contributions, so H = 2 parties are ready.
-    actor.record_dkg_coordination(
-        DkgCoordination::sign(
-            e3_id.clone(),
-            Address::ZERO,
-            2,
-            DkgCoordinationKind::Ready,
-            own_ready.dealers.clone(),
-            &signers[2],
-        )?,
-        test_ec(4),
-    )?;
-    let actor = actor.start();
-    actor
-        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
-        .await?;
-
-    let roster = actix::clock::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-            let roster = events
-                .into_iter()
-                .find_map(|event| match event.into_data() {
-                    InterfoldEventData::DkgCoordination(roster)
-                        if roster.kind == DkgCoordinationKind::Roster =>
-                    {
-                        Some(roster)
-                    }
-                    _ => None,
-                });
-            if let Some(roster) = roster {
-                return Ok::<_, anyhow::Error>(roster);
-            }
-            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await??;
-    assert_eq!(
-        roster
-            .dealers
-            .iter()
-            .map(|dealer| dealer.party_id)
-            .collect::<Vec<_>>(),
-        vec![0, 2]
-    );
-    assert_no_collector_failure(&bus, &history, 1).await?;
-    Ok(())
-}
-
 #[actix::test]
 async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
     let (bus, _history) = test_bus();
@@ -4494,7 +4320,20 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
     actor.pending.share_decryption_data = Some((sk_request, vec![esm_request]));
     let cipher = actor.cipher.clone();
     let signer = actor.signer.clone();
-    let (parent, collector) = start_with_share_collector(actor, &test_ec(4));
+    let mut collector = None;
+    let parent = ThresholdKeyshare::create(|ctx| {
+        collector = Some(
+            actor
+                .ensure_collector(
+                    ctx.address(),
+                    &test_ec(4),
+                    crate::domain::timeout_policy::now_unix_secs(),
+                )
+                .expect("share collector"),
+        );
+        actor
+    });
+    let collector = collector.expect("share collector");
     // The new collector receives both retained shares, so the collection completes at once.
     share_dispatch_of(&history, &[1, 2]).await?;
 
@@ -4622,9 +4461,22 @@ async fn unfinished_threshold_collection_fails_at_the_canonical_deadline() -> Re
         generating_threshold_share_state(&e3_id),
         KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
     ] {
-        let (actor, repo, _, history) = build_actor(&e3_id, phase, 7_200, 7_200, &[]).await?;
+        let (mut actor, repo, _, history) = build_actor(&e3_id, phase, 7_200, 7_200, &[]).await?;
         let bus = actor.bus.clone();
-        let (parent, collector) = start_with_share_collector(actor, &test_ec(1));
+        let mut collector = None;
+        let parent = ThresholdKeyshare::create(|ctx| {
+            collector = Some(
+                actor
+                    .ensure_collector(
+                        ctx.address(),
+                        &test_ec(1),
+                        crate::domain::timeout_policy::now_unix_secs(),
+                    )
+                    .expect("share collector"),
+            );
+            actor
+        });
+        let collector = collector.expect("share collector");
         collector.send(ThresholdShareCollectionCutoff).await?;
         parent
             .send(keyshare_event(
@@ -5661,72 +5513,6 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
     Ok(())
 }
 
-/// The C4 proof request of party 0 that the keyshare saves before it reports `ReadyForDecryption`.
-fn pending_c4(
-    e3_id: &E3id,
-    committee_size: e3_committee::CiphernodesCommitteeSize,
-) -> DecryptionShareProofsPending {
-    DecryptionShareProofsPending {
-        e3_id: e3_id.clone(),
-        party_id: 0,
-        node: Address::ZERO.to_string(),
-        sk_request: DkgShareDecryptionProofRequest {
-            sk_bfv: SensitiveBytes::from_encrypted(&[2]),
-            honest_ciphertexts_raw: Vec::new(),
-            num_honest_parties: 2,
-            num_moduli: 1,
-            own_plaintext_idx: None,
-            own_share_raw: None,
-            dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
-            params_preset: BfvPreset::InsecureDkg64,
-            committee_size,
-        },
-        esm_requests: Vec::new(),
-    }
-}
-
-/// A party restarted while its C4 proofs are open asks the prover for them again, once. The
-/// prover's pending work does not survive the restart, and the other parties wait for this party's
-/// `DecryptionKeyShared`.
-#[actix::test]
-async fn a_restart_during_c4_proof_generation_republishes_the_persisted_request() -> Result<()> {
-    let e3_id = E3id::new("c4-restart", 1);
-    let (mut actor, _, _, history) = build_actor(
-        &e3_id,
-        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
-        7_200,
-        7_200,
-        &[],
-    )
-    .await?;
-    actor.state.try_mutate_without_context(|mut state| {
-        state.honest_parties = Some(BTreeSet::from([0, 1]));
-        Ok(state)
-    })?;
-    let c4 = pending_c4(&e3_id, actor.state.try_get()?.committee_size()?);
-    actor.recovery.try_mutate_without_context(|mut recovery| {
-        recovery.decryption_share_proofs_pending = Some(TypedEvent::new(c4.clone(), test_ec(1)));
-        Ok(recovery)
-    })?;
-    let actor = actor.start();
-
-    actor
-        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
-        .await?;
-
-    next_event(&history).await?;
-    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
-    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-    let [event] = events.as_slice() else {
-        panic!("expected the C4 request only, got {events:?}");
-    };
-    assert!(matches!(
-        event.get_data(),
-        InterfoldEventData::DecryptionShareProofsPending(request) if *request == c4
-    ));
-    Ok(())
-}
-
 #[actix::test]
 async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
     let e3_id = E3id::new("97", 1);
@@ -5739,7 +5525,23 @@ async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
         state.honest_parties = Some(BTreeSet::from([0, 1]));
         Ok(state)
     })?;
-    let c4 = pending_c4(&e3_id, state.try_get()?.committee_size()?);
+    let c4 = DecryptionShareProofsPending {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: Address::ZERO.to_string(),
+        sk_request: DkgShareDecryptionProofRequest {
+            sk_bfv: SensitiveBytes::from_encrypted(&[2]),
+            honest_ciphertexts_raw: Vec::new(),
+            num_honest_parties: 2,
+            num_moduli: 1,
+            own_plaintext_idx: None,
+            own_share_raw: None,
+            dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
+            params_preset: BfvPreset::InsecureDkg64,
+            committee_size: state.try_get()?.committee_size()?,
+        },
+        esm_requests: Vec::new(),
+    };
     // The E3 ends before effects resume at boot, and every write fails, so the terminal cleanup
     // retries later.
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {

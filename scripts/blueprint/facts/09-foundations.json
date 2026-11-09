@@ -775,12 +775,12 @@
         {
           "name": "CiphernodeSystemBuilder",
           "what": "integration-local builder for groups of nodes and their optional network mock",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@37@pub struct CiphernodeSystemBuilder<'a> {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@31@pub struct CiphernodeSystemBuilder<'a> {"
         },
         {
           "name": "CiphernodeSystem",
           "what": "built nodes and network mock, with restart support",
-          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@114@pub struct CiphernodeSystem {"
+          "ref": "crates/testing/system/tests/ciphernode_system/mod.rs@108@pub struct CiphernodeSystem {"
         },
         {
           "name": "Libp2pMock",
@@ -800,11 +800,11 @@
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@415@.simulate_libp2p()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@414@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/testing/system/tests/trbfv/zk_fixture.rs@278@async fn setup_test_zk_backend("
+          "ref": "crates/testing/system/tests/trbfv/zk_fixture.rs@331@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
@@ -820,7 +820,7 @@
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@409@let nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@408@let nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",

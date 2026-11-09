@@ -22,16 +22,13 @@ use std::time::Duration;
 
 pub async fn run_from_env() -> Result<()> {
     let mode = std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
+    let preset = super::runner::Preset::from_mode(&mode)?;
     let jobs = std::env::var("BENCHMARK_MULTITHREAD_JOBS")
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|&n| n >= 1)
         .unwrap_or(1);
-    let run = run(&Scenario::benchmark(
-        super::runner::Preset::from_mode(&mode),
-        jobs,
-    ))
-    .await?;
+    let run = run(&Scenario::benchmark(preset, jobs)).await?;
 
     let report = Report::new(&run);
     println!("{}", report.serialize());
@@ -145,8 +142,8 @@ fn wall_seconds_between<'a>(
     (end_us >= start_us).then(|| (end_us - start_us) as f64 / 1_000_000.0)
 }
 
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+fn json_string(s: &str) -> String {
+    serde_json::Value::String(s.to_owned()).to_string()
 }
 
 /// The two aggregator proofs the contract benchmarks verify, as a JSON object body.
@@ -183,8 +180,8 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
         .iter()
         .map(|op| {
             format!(
-                "    {{\"name\": \"{}\", \"avg_seconds\": {:.9}, \"runs\": {}, \"total_seconds\": {:.9}}}",
-                json_escape(&op.name),
+                "    {{\"name\": {}, \"avg_seconds\": {:.9}, \"runs\": {}, \"total_seconds\": {:.9}}}",
+                json_string(&op.name),
                 op.avg_seconds,
                 op.runs,
                 op.total_seconds
@@ -198,8 +195,8 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
         .iter()
         .map(|(label, duration)| {
             format!(
-                "    {{\"label\": \"{}\", \"seconds\": {:.9}, \"metric\": \"wall_clock\"}}",
-                json_escape(label),
+                "    {{\"label\": {}, \"seconds\": {:.9}, \"metric\": \"wall_clock\"}}",
+                json_string(label),
                 duration.as_secs_f64(),
             )
         })
@@ -220,8 +217,8 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
     let benchmark_config_json = format!(
         concat!(
             "  \"benchmark_config\": {{\n",
-            "    \"mode\": \"{}\",\n",
-            "    \"bfv_preset_subdir\": \"{}\",\n",
+            "    \"mode\": {},\n",
+            "    \"bfv_preset_subdir\": {},\n",
             "    \"bfv_preset\": \"{:?}\",\n",
             "    \"lambda\": {},\n",
             "    \"proof_aggregation_enabled\": {},\n",
@@ -234,8 +231,8 @@ fn summary_json(run: &Run, mode: &str, report: &Report) -> String {
             "    \"testmode_harness\": true\n",
             "  }},\n"
         ),
-        json_escape(mode),
-        json_escape(config.preset.subdir()),
+        json_string(mode),
+        json_string(config.preset.subdir()),
         config.preset.bfv_preset(),
         config.lambda,
         config.proof_aggregation_enabled,

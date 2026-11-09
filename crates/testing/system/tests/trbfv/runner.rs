@@ -8,10 +8,9 @@
 //! across real ciphernodes joined by a simulated network, and checks its outcome.
 //!
 //! [`run`] asserts what a correct run must produce: the key and plaintext, the accepted DKG
-//! roster, and the absence of faults. It does not assert how the nodes' actors order their events;
-//! the owning crates pin that. Failover and restart are also pinned there, deterministically, so
-//! no scenario here waits for a progress deadline. The timings and proofs the benchmark reports
-//! are returned in [`Run`].
+//! roster, and the absence of faults. It does not assert how the nodes' actors order their events,
+//! and the DKG window it gives the nodes is far beyond the flow timeouts, so no progress deadline
+//! fires during a run. The timings and proofs the benchmark reports are returned in [`Run`].
 
 use super::history::{
     aggregator_role_histories, collect_honest_run_faults, wait_for_event, wait_for_event_on_any,
@@ -26,7 +25,7 @@ use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSy
 use actix::{Actor, Addr};
 use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolEvent;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_crypto::Cipher;
 use e3_event_system::EventSystem;
@@ -68,12 +67,12 @@ pub enum Preset {
 }
 
 impl Preset {
-    /// Any mode other than `secure` selects the insecure parameters.
-    pub fn from_mode(mode: &str) -> Self {
-        if mode == "secure" {
-            Preset::Secure
-        } else {
-            Preset::Insecure
+    /// The preset for a benchmark mode, which is `insecure` or `secure`.
+    pub fn from_mode(mode: &str) -> Result<Self> {
+        match mode {
+            "insecure" => Ok(Preset::Insecure),
+            "secure" => Ok(Preset::Secure),
+            other => bail!("unsupported BENCHMARK_MODE {other:?}: expected `insecure` or `secure`"),
         }
     }
 

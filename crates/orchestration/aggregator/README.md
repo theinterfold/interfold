@@ -55,11 +55,11 @@ Run `cargo test --locked -p e3-aggregator` from the repository root. Prepare the
 graph includes chain fixtures and the prover. Actor tests with mock proofs do not validate recursive
 proofs.
 
-Public-key [tests](src/public_key_aggregation/tests) cover attestations, failures, replay, and
-roster-bound key publication; plaintext [tests](src/plaintext_aggregation/tests) cover share
-admission, thresholds, publication, completion, and recovery. Neighboring `workflow_tests.rs` files
-exercise pure phase decisions separately from actor delivery. Multi-node flows are in
-[e3-tests](../../testing/system/README.md). See [AGENTS.md](AGENTS.md) for change-specific rules.
+Public-key [tests](src/public_key_aggregation/tests) cover attestations, failures, and replay;
+plaintext [tests](src/plaintext_aggregation/tests) cover share admission, thresholds, publication,
+completion, and recovery. Neighboring `workflow_tests.rs` files exercise pure phase decisions
+separately from actor delivery. Multi-node flows are in [e3-tests](../../testing/system/README.md).
+See [AGENTS.md](AGENTS.md) for change-specific rules.
 
 The BFV/event setup tuple is private to these aggregation tests. Event-only consumers use
 event-system's opt-in fixture rather than constructing unrelated BFV material.

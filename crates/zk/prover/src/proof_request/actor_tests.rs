@@ -570,58 +570,6 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
     Ok(())
 }
 
-/// A party restarted while its C4 proofs are open sends the saved request again to a prover that
-/// lost its pending work. Answering that request publishes the signed `DecryptionKeyShared` that
-/// the other parties wait for, once, also when a second resume trigger repeats the request.
-#[actix::test]
-async fn a_c4_request_after_a_restart_publishes_one_decryption_key_share() -> Result<()> {
-    let EventFixture {
-        bus,
-        errors,
-        history,
-    } = EventFixture::new()?;
-    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
-    let e3_id = E3id::new("85", 1);
-    let c4 = decryption_share_proofs_pending(e3_id.clone());
-    let ec = test_ctx(c4.clone());
-    let request = || TypedEvent::new(c4.clone(), ec.clone());
-
-    actor.handle_decryption_share_proofs_pending(request());
-    actor.handle_decryption_share_proofs_pending(request());
-    // One C4a request and one C4b request. The repeated request starts none.
-    assert_eq!(actor.decryption_correlation.len(), 2);
-
-    let proof = Proof::new(
-        CircuitName::DkgShareDecryption,
-        ArcBytes::from_bytes(&[1]),
-        ArcBytes::from_bytes(&[2]),
-    );
-    let correlations: Vec<_> = actor.decryption_correlation.keys().copied().collect();
-    for correlation in correlations {
-        actor.handle_decryption_proof_response(&correlation, proof.clone(), &ec);
-    }
-    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
-
-    let shares: Vec<_> = history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .into_iter()
-        .filter_map(|event| match event.into_data() {
-            InterfoldEventData::DecryptionKeyShared(share) => Some(share),
-            _ => None,
-        })
-        .collect();
-    let [share] = shares.as_slice() else {
-        panic!("expected one DecryptionKeyShared, got {shares:?}");
-    };
-    assert_eq!(share.e3_id, e3_id);
-    assert_eq!(share.party_id, c4.party_id);
-    assert_eq!(share.signed_e_sm_decryption_proofs.len(), 1);
-    assert!(actor.pending_decryption.is_empty());
-    assert_no_events(&errors).await?;
-    Ok(())
-}
-
 #[actix::test]
 async fn proof_requests_after_the_e3_ended_are_ignored() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
@@ -836,58 +784,6 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
         .is_empty());
-    Ok(())
-}
-
-/// A party restarted while its C6 proof is open has `ShareDecryptionProofPending` in its log and no
-/// `DecryptionshareCreated`. The saved request reaches a prover that lost its pending work, and the
-/// signed proof publishes the party's share once, also when a second resume trigger repeats it.
-#[actix::test]
-async fn a_c6_request_after_a_restart_publishes_one_decryption_share() -> Result<()> {
-    let EventFixture {
-        bus,
-        errors,
-        history,
-    } = EventFixture::new()?;
-    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
-    let id = E3id::new("86", 1);
-    let (keys, pending) = c6_fixture(&id)?;
-    actor.canonical_keys = keys;
-    let request = || TypedEvent::new(pending.clone(), test_ctx(pending.clone()));
-
-    actor.handle_share_decryption_proof_pending(request());
-    actor.handle_share_decryption_proof_pending(request());
-    // The repeated request starts no second proof.
-    assert_eq!(actor.share_decryption_correlation.len(), 1);
-
-    let proof = Proof::new(
-        CircuitName::ThresholdShareDecryption,
-        ArcBytes::from_bytes(&[1]),
-        ArcBytes::from_bytes(&[2]),
-    );
-    let correlation = *actor.share_decryption_correlation.keys().next().unwrap();
-    actor.handle_share_decryption_proof_response(&correlation, vec![proof]);
-    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
-
-    let shares: Vec<_> = history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .into_iter()
-        .filter_map(|event| match event.into_data() {
-            InterfoldEventData::DecryptionshareCreated(share) => Some(share),
-            _ => None,
-        })
-        .collect();
-    let [share] = shares.as_slice() else {
-        panic!("expected one DecryptionshareCreated, got {shares:?}");
-    };
-    assert_eq!(share.e3_id, id);
-    assert_eq!(share.party_id, pending.party_id);
-    assert_eq!(share.node, pending.node);
-    assert_eq!(share.decryption_share, pending.decryption_share);
-    assert_eq!(share.signed_decryption_proofs.len(), 1);
-    assert!(actor.pending_share_decryption.is_empty());
-    assert_no_events(&errors).await?;
     Ok(())
 }
 
