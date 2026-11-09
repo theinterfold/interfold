@@ -207,8 +207,8 @@
     "id": "D15",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/decryption.rs@384@prove_with_variant(zk, &config, &c7",
-      "crates/ciphernode/jobs/src/decryption.rs@395@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
+      "crates/ciphernode/jobs/src/decryption.rs@385@prove_with_variant(zk, &config, &c7",
+      "crates/ciphernode/jobs/src/decryption.rs@396@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
     ],
     "line_text": [
       ".prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)",

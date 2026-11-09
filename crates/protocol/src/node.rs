@@ -297,6 +297,10 @@ impl Body {
     }
 }
 
+/// The blobs one message may name. A peer that names more only makes work: each entry costs a
+/// signature check when the message is admitted, and a fetch and a verification after that.
+pub const MAX_MESSAGE_BLOBS: usize = 128;
+
 impl PeerMessage {
     /// Whether `node` uses this message: a share message only reaches its recipient's DKG.
     pub fn is_for(&self, node: Address) -> bool {
@@ -346,6 +350,38 @@ pub enum Work {
 }
 
 impl Work {
+    /// Whether the job makes proofs, which can hold the machine for hours. The checks that a
+    /// deadline waits on must not queue behind them.
+    pub fn proves(&self) -> bool {
+        matches!(
+            self,
+            Work::Dkg(
+                DkgWork::MakeEncryptionKey
+                    | DkgWork::MakeShares { .. }
+                    | DkgWork::MakeDecryptionKey { .. }
+                    | DkgWork::FoldProofs { .. }
+                    | DkgWork::FoldRoster { .. }
+                    | DkgWork::AggregateKey { .. }
+            ) | Work::Decryption(
+                DecryptionWork::MakeShares { .. } | DecryptionWork::AggregatePlaintext { .. }
+            )
+        )
+    }
+
+    /// Whether the job checks a proof a member signed, which can end in an accusation.
+    fn checks_a_member(&self) -> bool {
+        matches!(
+            self,
+            Work::Dkg(
+                DkgWork::CheckEncryptionKey { .. }
+                    | DkgWork::CheckShares { .. }
+                    | DkgWork::CheckDecryptionKey { .. }
+                    | DkgWork::CheckKeyshare { .. }
+            ) | Work::Decryption(DecryptionWork::CheckShares { .. })
+                | Work::Accusation(_)
+        )
+    }
+
     /// The kind of work, for logs.
     pub fn name(&self) -> &'static str {
         match self {
@@ -615,6 +651,9 @@ impl Effect {
     /// What the effect's life depends on.
     pub fn scope(&self) -> Scope {
         match self {
+            // A check of what a member signed is owed even after the DKG is over: a bad proof is
+            // still an accusation.
+            Effect::Run(job) if job.work.checks_a_member() => Scope::Held,
             Effect::Run(job) => match job.work {
                 Work::Dkg(_) => Scope::Dkg,
                 Work::Decryption(_) => Scope::Live,
@@ -664,6 +703,9 @@ pub enum Scope {
 pub enum Classified {
     /// It cannot use the message, which costs nothing more: it is not journaled.
     Drop,
+    /// It could use the message later, and the hold has no room for it: a share is full. Not
+    /// journaled; the sender's re-send brings it again.
+    Full,
     /// It waits for the chain fact that lets the node judge it.
     Hold,
     /// The node uses it once its blobs are here.
@@ -821,7 +863,7 @@ impl Node {
             ChainFact::SeedReady { e3, seed } => self.select(now, e3, seed),
             ChainFact::OperatorActive { operator, active } => {
                 registry.set_active(time, operator, active);
-                Vec::new()
+                self.select_again_if_me(now, operator)
             }
             ChainFact::TicketBalance { operator, balance } => {
                 registry.set_balance(time, operator, balance);
@@ -837,7 +879,7 @@ impl Node {
             }
             ChainFact::OperatorEnabled { operator, enabled } => {
                 registry.set_enabled(operator, enabled);
-                Vec::new()
+                self.select_again_if_me(now, operator)
             }
             ChainFact::CommitteeFinalized {
                 e3,
@@ -967,6 +1009,24 @@ impl Node {
         self.rank(now, e3, seed, None)
     }
 
+    /// This node's registry standing changed: a request it could not take a ticket in can have
+    /// room for it now, until its deadline. Others ranked it without this node, so it asks no
+    /// shortlist and the contract decides.
+    fn select_again_if_me(&mut self, now: UnixSecs, operator: Address) -> Vec<Effect> {
+        if operator != self.me {
+            return Vec::new();
+        }
+        let open: Vec<(E3Id, CommitteeSeed)> = self
+            .e3s
+            .iter()
+            .filter(|(_, state)| state.ticket().is_none())
+            .filter_map(|(e3, state)| Some((*e3, state.ranked_with()?)))
+            .collect();
+        open.into_iter()
+            .flat_map(|(e3, seed)| self.rank(now, e3, seed, None))
+            .collect()
+    }
+
     /// Rank the request's candidates from the registry at T−1 and submit this node's ticket if it
     /// is one of them, before the committee deadline. Only the operators in `confirmed` keep the
     /// owner shortlist; without that answer the node ranks every eligible operator, and the
@@ -987,10 +1047,16 @@ impl Node {
             .values()
             .filter(|state| state.ticket().is_some() && state.running())
             .count() as u64;
-        let Some(state) = self.e3s.get(&e3) else {
+        let Some(state) = self.e3s.get_mut(&e3) else {
             return Vec::new();
         };
-        if state.ticket().is_some() || now >= committee_deadline {
+        state.remember_seed(CommitteeSeed {
+            seed,
+            deadline: committee_deadline,
+        });
+        let state = &*state;
+        if state.ticket().is_some() || now >= committee_deadline || state.stage != Stage::Requested
+        {
             return Vec::new();
         }
         let request = state.request;
@@ -1041,19 +1107,23 @@ impl Node {
     /// for the DKG, the key's publication for decryption. Blobs are fetched only once the E3 admits
     /// the message, so a sender outside the committee costs no download.
     pub fn classify(&self, now: UnixSecs, message: &PeerMessage) -> Classified {
-        if self.ended.contains(&message.e3) || !message.is_for(self.me) {
+        if self.ended.contains(&message.e3)
+            || !message.is_for(self.me)
+            || message.blobs().len() > MAX_MESSAGE_BLOBS
+        {
             return Classified::Drop;
         }
         match self.e3s.get(&message.e3) {
             Some(state) if state.routes(&message.body) => state.classify(now, message),
+            _ if self.held.holds(message) => Classified::Drop,
             _ if self.held.has_room(message) => Classified::Hold,
-            _ => Classified::Drop,
+            _ => Classified::Full,
         }
     }
 
     fn apply_announced(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
         match self.classify(now, &message) {
-            Classified::Drop => Vec::new(),
+            Classified::Drop | Classified::Full => Vec::new(),
             Classified::Hold => {
                 self.held.hold(now, message);
                 Vec::new()
@@ -1214,12 +1284,13 @@ const HOLD_TOTAL_MESSAGES: usize = 1_024;
 const HOLD_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
 impl Hold {
-    /// Whether the node should hold `message`: it holds no copy yet, and every share the message
-    /// would count against has room for it. Re-sends of a held message cost nothing.
+    /// Whether a copy of `message` waits here already: its re-sends cost nothing.
+    fn holds(&self, message: &PeerMessage) -> bool {
+        self.messages.iter().any(|held| held.message == *message)
+    }
+
+    /// Whether every share `message` would count against has room for it.
     fn has_room(&self, message: &PeerMessage) -> bool {
-        if self.messages.iter().any(|held| held.message == *message) {
-            return false;
-        }
         let size = message.size();
         let sender = self.usage(|held| held.sender == message.sender);
         let e3 = self.usage(|held| held.e3 == message.e3);
@@ -1612,6 +1683,65 @@ mod tests {
         assert!(submissions(&node.step(26, confirmed(&[]))).is_empty());
     }
 
+    /// Every entry of a message costs a signature check, so the limit comes before them.
+    #[test]
+    fn a_message_that_names_too_many_blobs_is_dropped_unread() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        let shares = DecryptionMessage::Shares(crate::decryption::SharesMessage {
+            shares: vec![BlobRef::of(b"share"); MAX_MESSAGE_BLOBS + 1],
+            c6: Vec::new(),
+        });
+        let message = PeerMessage {
+            e3: e3(1),
+            sender: address(1),
+            body: Body::Decryption(shares),
+        };
+        assert_eq!(node.classify(1, &message), Classified::Drop);
+    }
+
+    /// An operator that is back before the deadline can still take its seat.
+    #[test]
+    fn a_node_that_comes_back_before_the_deadline_gets_its_ticket() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        let away = ChainFact::OperatorActive {
+            operator: address(ME),
+            active: false,
+        };
+        node.step(2, chain(2, away));
+        let inactive_later = ChainFact::OperatorActive {
+            operator: address(ME),
+            active: true,
+        };
+        node.step(3, requested_at(3, e3(1), 1));
+        assert!(submissions(&node.step(5, seed_ready(5, e3(1), 42, 100))).is_empty());
+        let effects = node.step(6, chain(6, inactive_later));
+        assert!(matches!(
+            submissions(&effects)[..],
+            [Transaction::SubmitTicket { .. }]
+        ));
+    }
+
+    /// A check of what a member signed outlives the DKG: a bad proof is still an accusation.
+    #[test]
+    fn a_check_of_a_member_s_proof_is_owed_after_the_key_is_published() {
+        let check = Effect::Run(Job {
+            e3: e3(1),
+            params: params(e3_committee::CiphernodesCommitteeSize::Minimum),
+            work: Work::Dkg(DkgWork::CheckEncryptionKey {
+                sender: address(1),
+                key: BlobRef::of(b"key"),
+                proof: proof(1),
+            }),
+        });
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        node.step(100, key_published(12, e3(1), members([1]), members([1])));
+        assert!(owes(&node, &check));
+    }
+
     /// The contract rejects the ticket of an operator governance removed, and of one no longer
     /// active, so neither takes a place among the candidates.
     #[test]
@@ -1661,6 +1791,20 @@ mod tests {
         let effects = node.step(due, Input::Tick);
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
         assert!(submissions(&node.step(due + 3_600, Input::Tick)).is_empty());
+    }
+
+    /// A second late restart, before the turn counted from the first came, spaces the turns again.
+    #[test]
+    fn a_turn_counted_from_a_late_restart_can_be_found_long_past_again() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1, 2])));
+        let place = place(&[1, 2, ME]);
+        let first = TIMING.deadline + 1 + 30 * place + 3_600;
+        node.step(first, Input::Tick);
+        let second = first + 1 + 30 * place + 3_600;
+        assert!(submissions(&node.step(second, Input::Tick)).is_empty());
+        assert_eq!(node.next_deadline(), Some(second + 1 + 30 * place));
     }
 
     /// A node that wakes a little late for its turn takes it, rather than queueing again.
@@ -1777,7 +1921,7 @@ mod tests {
         }
         assert!(matches!(
             node.classify(0, &peer_message(key_from(e3(999), 1))),
-            Classified::Drop
+            Classified::Full
         ));
         assert!(matches!(
             node.classify(0, &peer_message(key_from(e3(999), 2))),
@@ -1976,7 +2120,7 @@ mod tests {
             (
                 14,
                 alloy_primitives::b256!(
-                    "a32f0352f3d0013d240337d5f16606f8cf62022382c7b57809138dc9f628fbc7"
+                    "99ee9b7dd0e475d2af191cd9d0783913d91f0e905623f3d5664cf87c41959ffb"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

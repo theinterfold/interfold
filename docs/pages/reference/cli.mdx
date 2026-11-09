@@ -715,22 +715,19 @@ See [network settings](/reference/configuration#network-settings).
 
 ### `interfold node validate`
 
-Checks the stored state of one node without a start. The command checks these items:
+Checks one stopped node without a start. The command checks these items:
 
-- This binary can load the storage schema.
-- The event log is intact.
-- The snapshot cursor is consistent.
-- No committee tickets are orphaned.
+- The node's password opens its keys.
+- This binary can read the layout of the node's data.
+- The node's journal can be read, and which E3s it holds.
 
-Without `--repair`, the command changes no files. It exits with an error when a check fails.
+The command creates nothing and changes no node state. It exits with an error when a check fails. A
+journal that the node did not close cleanly needs the recovery that a start runs: start the node
+once, stop it, and run the command again.
 
 ```bash
-interfold node validate [--repair]
+interfold node validate
 ```
-
-| Flag       | Value | Default | Description                                                            |
-| ---------- | ----- | ------- | ---------------------------------------------------------------------- |
-| `--repair` | None  | Off     | Repairs a safe log tail, or builds a stale sortition projection again. |
 
 The command takes the same data-folder lock as `interfold start`. Stop the node before you run it.
 Use it before an upgrade and after a crash. See [Upgrades](/operate/upgrades).

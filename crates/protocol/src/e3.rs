@@ -44,6 +44,8 @@ pub struct E3 {
     /// The seed to rank with once the bonding registry says which operators may hold a seat,
     /// and the time to rank without knowing.
     selecting: Option<Selecting>,
+    /// The seed this node last ranked with, for when its standing changes before the deadline.
+    ranked_with: Option<CommitteeSeed>,
     ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
@@ -153,6 +155,7 @@ impl E3 {
             slashing,
             request,
             selecting: None,
+            ranked_with: None,
             ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
@@ -374,6 +377,14 @@ impl E3 {
 
     pub(crate) fn ticket(&self) -> Option<u64> {
         self.ticket.map(|ticket| ticket.number)
+    }
+
+    pub(crate) fn remember_seed(&mut self, seed: CommitteeSeed) {
+        self.ranked_with = Some(seed);
+    }
+
+    pub(crate) fn ranked_with(&self) -> Option<CommitteeSeed> {
+        self.ranked_with
     }
 
     pub(crate) fn submit_ticket(
@@ -711,17 +722,13 @@ impl E3 {
         Some(turn(start, place))
     }
 
-    /// A turn found long past counts from now, once.
+    /// A turn found long past counts from now: the node was not running when it came.
     fn note_turns_long_past(&mut self, now: UnixSecs) {
         for duty in [Duty::Finalize, Duty::MarkFailed, Duty::Settle] {
-            let Some((deadline, place)) = self.duty(duty) else {
+            let (Some((deadline, _)), Some(due)) = (self.duty(duty), self.due(duty)) else {
                 continue;
             };
-            let known = self
-                .overdue
-                .get(&duty)
-                .is_some_and(|overdue| overdue.deadline == deadline);
-            if !known && now > turn(deadline, place) + LONG_PAST {
+            if now > due + LONG_PAST {
                 let found = now;
                 self.overdue.insert(duty, Overdue { deadline, found });
             }

@@ -4,7 +4,7 @@
     "supported": true,
     "refs": [
       "crates/cli/src/start.rs@59@e3_node::launch::launch(node, stop)",
-      "crates/ciphernode/node/src/launch.rs@124@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
+      "crates/ciphernode/node/src/launch.rs@137@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
     ],
     "line_text": [
       "e3_node::launch::launch(node, stop)",
@@ -55,8 +55,8 @@
     "id": "B5",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@373@async fn read_chain<R: Rpc>(",
-      "crates/ciphernode/node/src/runtime.rs@392@events.send(Event::Input(Input::Chain(fact)))"
+      "crates/ciphernode/node/src/runtime.rs@392@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@411@events.send(Event::Input(Input::Chain(fact)))"
     ],
     "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
     "note": "The chain reader's task sends each fact to the event loop as an input."
@@ -64,7 +64,7 @@
   {
     "id": "B6",
     "supported": true,
-    "refs": ["crates/ciphernode/node/src/runtime.rs@216@message = inbox.next() => {"],
+    "refs": ["crates/ciphernode/node/src/runtime.rs@221@message = inbox.next() => {"],
     "line_text": ["message = inbox.next() => {"],
     "note": "Admitted peer messages reach the event loop as inputs."
   },
@@ -73,7 +73,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
-      "crates/protocol/src/node.rs@1159@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+      "crates/protocol/src/node.rs@1229@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
       "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
@@ -85,8 +85,8 @@
     "id": "B8",
     "supported": true,
     "refs": [
-      "crates/ciphernode/engine/src/lib.rs@150@self.store.commit(Step {",
-      "crates/state/journal/src/lib.rs@103@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
+      "crates/ciphernode/engine/src/lib.rs@195@self.store.commit(Step {",
+      "crates/state/journal/src/lib.rs@119@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
     ],
     "line_text": ["self.store.commit(Step {", "fn commit(&mut self, step: Step) -> Result<(), StoreError> {"],
     "note": "Each step commits the input, the outbox changes and, at intervals, a snapshot in one redb transaction."
@@ -95,8 +95,8 @@
     "id": "B9",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@133@Engine::open(parts.journal, genesis, settings.snapshot_every)",
-      "crates/ciphernode/node/src/runtime.rs@264@queue.extend(effects.dispatch(pending));"
+      "crates/ciphernode/node/src/runtime.rs@135@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@275@queue.extend(effects.dispatch(pending));"
     ],
     "line_text": [
       "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",
@@ -108,8 +108,8 @@
     "id": "B10",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/effects.rs@175@Effect::Submit(submission) => self.submit(key, submission),",
-      "crates/ciphernode/node/src/effects.rs@224@match writer.submit(&submission).await {"
+      "crates/ciphernode/node/src/effects.rs@179@Effect::Submit(submission) => self.submit(key, submission),",
+      "crates/ciphernode/node/src/effects.rs@228@match writer.submit(&submission).await {"
     ],
     "line_text": ["Effect::Submit(submission) => self.submit(key, submission),", "match writer.submit(&submission).await {"],
     "note": "A submission effect goes to the writer."
@@ -118,8 +118,8 @@
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/effects.rs@169@Effect::Gossip(message) => self.gossip(key, message),",
-      "crates/ciphernode/node/src/effects.rs@309@network.publish(envelope)"
+      "crates/ciphernode/node/src/effects.rs@173@Effect::Gossip(message) => self.gossip(key, message),",
+      "crates/ciphernode/node/src/effects.rs@314@network.publish(envelope)"
     ],
     "line_text": ["Effect::Gossip(message) => self.gossip(key, message),", "if let Err(failure) = network.publish(envelope).await {"],
     "note": "A gossip effect is signed and published to the peers."
@@ -128,7 +128,7 @@
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/effects.rs@170@Effect::Run(job) => {",
+      "crates/ciphernode/node/src/effects.rs@174@Effect::Run(job) => {",
       "crates/ciphernode/jobs/src/lib.rs@144@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
     ],
     "line_text": ["Effect::Run(job) => {", "pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"],
@@ -138,8 +138,8 @@
     "id": "B13",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/effects.rs@176@Effect::Fetch(fetch) => self.fetch(key, fetch),",
-      "crates/ciphernode/node/src/effects.rs@378@availability.retrieve(reference)"
+      "crates/ciphernode/node/src/effects.rs@180@Effect::Fetch(fetch) => self.fetch(key, fetch),",
+      "crates/ciphernode/node/src/effects.rs@383@availability.retrieve(reference)"
     ],
     "line_text": ["Effect::Fetch(fetch) => self.fetch(key, fetch),", "match availability.retrieve(reference).await {"],
     "note": "A fetch effect reads a ciphertext from the availability layer."
@@ -148,7 +148,7 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/driver.rs@671@.send_request(&read.peer, (read.e3, read.hash));",
+      "crates/ciphernode/p2p/src/driver.rs@694@.send_request(&read.peer, (read.e3, read.hash));",
       "crates/ciphernode/p2p/src/driver.rs@386@Some((channel, bytes)) = self.served.recv() => {"
     ],
     "line_text": [".send_request(&read.peer, (read.e3, read.hash));", "Some((channel, bytes)) = self.served.recv() => {"],

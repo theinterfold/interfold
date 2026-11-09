@@ -12,7 +12,7 @@ use alloy::primitives::Address;
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
-use e3_engine::Engine;
+use e3_engine::{restore, Store, Stored};
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use e3_journal::Journal;
 use e3_node::dir::{Inventory, NodeDir, State};
@@ -43,15 +43,36 @@ impl std::fmt::Display for Held {
     }
 }
 
-/// The E3s a current folder's journal holds. The node keeps each E3, and the key share it dealt in
-/// it, until the E3 ends.
-pub fn held_e3s(dir: &NodeDir, operator: Address) -> Result<Vec<Held>> {
+/// The same path with its links resolved, or as given when it does not exist yet.
+pub fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The E3s a stopped node holds, read without changing its journal. A journal the node did not
+/// close cleanly needs the recovery a start runs, so it is an error here.
+pub fn inspect_held(dir: &NodeDir, operator: Address) -> Result<Vec<Held>> {
     if !dir.journal().exists() {
         return Ok(Vec::new());
     }
-    let journal = Journal::open(dir.journal())?;
-    let (engine, _) = Engine::open(journal, Node::new(operator), u64::MAX)?;
-    let machine = engine.machine();
+    let stored = Journal::read_existing(dir.journal()).context(
+        "the journal cannot be read without changing it; if the node did not stop cleanly, start \
+         it once to recover the journal",
+    )?;
+    held_in(stored, operator)
+}
+
+/// The E3s a folder's journal holds, for a command about to delete it. A journal the node did not
+/// close cleanly is recovered first.
+fn held_e3s(dir: &NodeDir, operator: Address) -> Result<Vec<Held>> {
+    if !dir.journal().exists() {
+        return Ok(Vec::new());
+    }
+    held_in(Journal::open(dir.journal())?.read()?, operator)
+}
+
+/// The node keeps each E3, and the key share it dealt in it, until the E3 ends.
+fn held_in(stored: Stored, operator: Address) -> Result<Vec<Held>> {
+    let machine = restore(stored, Node::new(operator))?;
     Ok(machine
         .held()
         .map(|e3| Held {
@@ -123,18 +144,20 @@ impl Plan {
     }
 }
 
-/// Holds the lock of every node whose lock is under `root` and returns the node folders under
-/// `root`, at any depth, that `checked` does not name: whatever deletes `root` deletes their E3s
-/// unchecked. A fence in `fences` already covers its lock. Nothing is created.
-pub fn guard(
-    root: &Path,
-    checked: &[PathBuf],
-    fences: &mut Vec<ProcessFence>,
-) -> Result<Vec<PathBuf>> {
+/// What is under a folder a command is about to delete, beyond what the command checked.
+pub struct Guarded {
+    /// Node folders it did not name: deleting the folder deletes their E3s unchecked.
+    pub unchecked: Vec<PathBuf>,
+    /// The lists of where keys under it ran, which may name state outside it.
+    pub inventories: Vec<Inventory>,
+}
+
+/// Holds the lock of every node whose lock is under `root`, and says what `root` holds at any
+/// depth that `checked` does not name. A fence in `fences` already covers its lock. Nothing is
+/// created.
+pub fn guard(root: &Path, checked: &[PathBuf], fences: &mut Vec<ProcessFence>) -> Result<Guarded> {
     let mut contents = Contents::default();
     scan(root, &mut BTreeSet::new(), &mut contents)?;
-    let canonical =
-        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
     for lock in &contents.locks {
         if !held.contains(&canonical(lock)) {
@@ -142,19 +165,23 @@ pub fn guard(
         }
     }
     let checked: BTreeSet<PathBuf> = checked.iter().map(|folder| canonical(folder)).collect();
-    Ok(contents
-        .nodes
-        .into_iter()
-        .filter(|folder| !checked.contains(&canonical(folder)))
-        .collect())
+    Ok(Guarded {
+        unchecked: contents
+            .nodes
+            .into_iter()
+            .filter(|folder| !checked.contains(&canonical(folder)))
+            .collect(),
+        inventories: contents.inventories,
+    })
 }
 
 /// What a folder holds at any depth: the node folders, each with its journal at
-/// `v2/journal.redb`, and the lock files of the nodes that use them.
+/// `v2/journal.redb`, the lock files of the nodes that use them, and the lists of where keys ran.
 #[derive(Default)]
 struct Contents {
     nodes: Vec<PathBuf>,
     locks: Vec<PathBuf>,
+    inventories: Vec<Inventory>,
 }
 
 /// Every folder counts as a node folder when its journal exists, also inside another node's
@@ -189,6 +216,8 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
                     return Err(error).with_context(|| format!("reading {}", path.display()))
                 }
             }
+        } else {
+            contents.inventories.extend(Inventory::at(&path));
         }
     }
     Ok(())

@@ -68,11 +68,11 @@ pub fn write(db_file: &Path, cipher: &Cipher, private_key: &[u8; 32]) -> Result<
     Ok(keys)
 }
 
-/// Seals a new random pair unless the store holds one.
-pub fn ensure(db_file: &Path, cipher: &Cipher) -> Result<()> {
+/// Seals a new random pair unless the store holds one. True when this call made the pair.
+pub fn ensure(db_file: &Path, cipher: &Cipher) -> Result<bool> {
     let tree = open(db_file)?;
     match (tree.contains_key(OPERATOR)?, tree.contains_key(NETWORK)?) {
-        (true, true) => return Ok(()),
+        (true, true) => return Ok(false),
         (false, false) => {}
         _ => bail!("the wallet store holds only one of the operator and network keys"),
     }
@@ -86,13 +86,13 @@ pub fn ensure(db_file: &Path, cipher: &Cipher) -> Result<()> {
         tx.apply_batch(&batch)?;
         Ok(true)
     });
-    match written {
-        Ok(_) => {}
+    let made = match written {
+        Ok(made) => made,
         Err(sled::transaction::TransactionError::Storage(error)) => return Err(error.into()),
         Err(sled::transaction::TransactionError::Abort(())) => unreachable!("never aborts"),
-    }
+    };
     tree.flush()?;
-    Ok(())
+    Ok(made)
 }
 
 fn sealed_pair(cipher: &Cipher, private_key: &[u8; 32]) -> Result<(sled::Batch, Keys)> {
@@ -137,7 +137,7 @@ mod tests {
         let key: [u8; 32] = alloy::hex::decode(NEW_KEY)?.try_into().unwrap();
         let written = write(&db_file, &cipher, &key)?;
         let peer_id = Keypair::ed25519_from_bytes(key)?.public().to_peer_id();
-        ensure(&db_file, &cipher)?;
+        assert!(!ensure(&db_file, &cipher)?);
         let keys = read(&db_file, &cipher)?.expect("the keys sealed here");
         assert_eq!(
             (keys.address(), keys.peer_id()?),

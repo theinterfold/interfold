@@ -46,8 +46,13 @@ pub async fn execute(
     let input = ask_for_private_key(private_key)?;
     let key = Zeroizing::new(FixedBytes::<32>::from_hex(&*input)?.0);
     let cipher = Cipher::from_file(config.key_file()).await?;
+    // A first key has run nowhere. A key that replaces another keeps the old one's list, which
+    // still says where its E3s may be.
+    let first = !config.db_file().exists();
     keystore::write(&config.db_file(), &cipher, &key)?;
-    crate::node_state::inventory(config).create()?;
+    if first {
+        crate::node_state::inventory(config).create()?;
+    }
     log!(
         out,
         "Wallet key has been successfully stored and encrypted."

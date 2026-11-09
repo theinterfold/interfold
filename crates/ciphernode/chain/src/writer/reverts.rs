@@ -40,12 +40,13 @@ fn early(stage: &InvalidStage) -> bool {
 pub(super) fn ticket(revert: &[u8]) -> Option<Verdict> {
     use RegistryError::*;
     Some(match RegistryError::abi_decode(revert).ok()? {
-        CommitteeNotRequested(_) | SortitionSeedUnavailable(_) => Retry,
+        // An operator that is not eligible now, or whose activation a lagging chain node has not
+        // seen, can be eligible before the deadline.
+        CommitteeNotRequested(_) | SortitionSeedUnavailable(_) | NodeNotEligible(_) => Retry,
         NodeAlreadySubmitted(_) => Applied,
-        CommitteeAlreadyFinalized(_)
-        | CommitteeDeadlineReached(_)
-        | InvalidTicketNumber(_)
-        | NodeNotEligible(_) => Obsolete,
+        CommitteeAlreadyFinalized(_) | CommitteeDeadlineReached(_) | InvalidTicketNumber(_) => {
+            Obsolete
+        }
         _ => return None,
     })
 }

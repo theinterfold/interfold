@@ -120,8 +120,8 @@ mod cases {
     use crate::{
         accusation::{accusation_id, SignedVote, Vote},
         node::{
-            Body, ChainFact, Effect, Input, JobDone, Node, PeerMessage, Purpose, Stage, Submission,
-            Transaction, Work, WorkResult,
+            Body, ChainFact, Classified, Effect, Input, JobDone, Node, PeerMessage, Purpose, Stage,
+            Submission, Transaction, Work, WorkResult,
         },
         proof::{ProofType, SignedProof},
         testing::*,
@@ -455,6 +455,31 @@ mod cases {
         assert_eq!(slashes, [(address(1), 2)]);
     }
 
+    /// A vote already counted costs nothing: copies of it are not taken again.
+    #[test]
+    fn a_vote_or_accusation_already_counted_is_not_taken_again() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        let accuse = peer_message(accusation(2, NOW, 1));
+        let vote = peer_message(from(3, AccusationMessage::Vote(vote(3, NOW))));
+        assert_eq!(node.classify(NOW, &vote), Classified::Deliver);
+        node.step(NOW, Input::Peer(vote.clone()));
+        assert_eq!(node.classify(NOW, &vote), Classified::Drop, "an early vote");
+        node.step(NOW, Input::Peer(accuse.clone()));
+        assert_eq!(
+            node.classify(NOW, &vote),
+            Classified::Drop,
+            "a counted vote"
+        );
+        assert_eq!(node.classify(NOW, &accuse), Classified::Drop);
+    }
+
+    fn peer_message(input: Input) -> PeerMessage {
+        match input {
+            Input::Peer(message) => message,
+            other => panic!("not a peer message: {other:?}"),
+        }
+    }
+
     /// The contract checks one evidence hash for all votes, so a vote for another does not join.
     #[test]
     fn an_accusation_for_other_evidence_does_not_join_an_open_window() {
@@ -501,9 +526,9 @@ mod cases {
     }
 
     /// A member has one window open for an accusation at a time, so it cannot make the others
-    /// keep windows without end; once its window closes it can open another.
+    /// keep windows without end, one after another.
     #[test]
-    fn a_member_opens_one_window_at_a_time_for_an_accusation() {
+    fn a_member_opens_one_window_for_an_accusation() {
         let mut node = member(ME);
         let opens = |effects: Vec<Effect>| {
             effects.iter().any(|effect| {
@@ -517,7 +542,96 @@ mod cases {
         assert!(!opens(node.step(NOW + 1, accusation(2, NOW + 1, 1))));
         let after = NOW + VALIDITY + 1;
         node.step(after, Input::Tick);
-        assert!(opens(node.step(after, accusation(2, after, 1))));
+        assert!(!opens(node.step(after, accusation(2, after, 1))));
+    }
+
+    fn accuses(node: &Node) -> bool {
+        node.e3(&e3(1)).unwrap().accuses()
+    }
+
+    fn checked(proof: crate::proof::ZkProof, fails: bool) -> Input {
+        Input::Job(JobDone {
+            e3: e3(1),
+            result: WorkResult::Accusation(AccusationWorkResult::Verified {
+                proof_type: ProofType::C0PkBfv,
+                proof,
+                fails,
+                data_hash: data_hash(1),
+            }),
+        })
+    }
+
+    /// Nothing can come of a window on a proof that holds, and windows keep a completed E3 and its
+    /// blobs: it ends with this node's check, and the same proof opens no other.
+    #[test]
+    fn a_window_on_a_proof_that_holds_ends_and_no_other_opens() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        node.step(NOW, accusation(2, NOW, 1));
+        assert!(accuses(&node));
+        node.step(NOW, verified(false));
+        assert!(!accuses(&node));
+        let again = peer_message(accusation(3, NOW + 1, 1));
+        assert_eq!(node.classify(NOW + 1, &again), Classified::Drop);
+    }
+
+    /// The first copy of a ballot can carry another proof of the accused's, one that holds. It
+    /// has the window only until it is checked: the real accusation, sent again, then opens it.
+    #[test]
+    fn a_proof_that_holds_does_not_take_the_place_of_the_real_evidence() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        let other = proof(9);
+        let hash = other.payload_signing_hash(e3(1), ProofType::C0PkBfv);
+        let copied = from(
+            3,
+            AccusationMessage::Accuse {
+                accused: address(1),
+                proof_type: ProofType::C0PkBfv,
+                proof: SignedProof {
+                    signature: signature(1, hash),
+                    proof: other.clone(),
+                },
+                vote: vote(3, NOW),
+            },
+        );
+        node.step(NOW, copied);
+        node.step(NOW, checked(other, false));
+        assert!(!accuses(&node));
+
+        let effects = node.step(NOW + 30, accusation(2, NOW, 1));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Run(job) if matches!(job.work, Work::Accusation(_))
+        )));
+        assert!(accuses(&node));
+    }
+
+    /// A vote for an accusation that never comes must not keep the E3.
+    #[test]
+    fn votes_waiting_for_an_accusation_keep_nothing() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        node.step(NOW, from(3, AccusationMessage::Vote(vote(3, NOW))));
+        assert!(!accuses(&node));
+    }
+
+    /// What this node would only throw away is refused before it costs a journal entry.
+    #[test]
+    fn a_vote_past_the_early_limit_or_for_other_evidence_is_not_taken() {
+        let mut node = member_of(ME, &[1, 2, 3]);
+        for earlier in 1..=super::super::cases::EARLY_VOTES_PER_MEMBER as u64 {
+            node.step(
+                NOW,
+                from(3, AccusationMessage::Vote(vote(3, NOW - earlier))),
+            );
+        }
+        let past_the_limit = peer_message(from(3, AccusationMessage::Vote(vote(3, NOW))));
+        assert_eq!(node.classify(NOW, &past_the_limit), Classified::Drop);
+
+        let mut node = member_of(ME, &[1, 2, 3]);
+        node.step(NOW, accusation(2, NOW, 1));
+        let mut other = vote(3, NOW).vote;
+        other.data_hash = data_hash(2);
+        let other = peer_message(from(3, AccusationMessage::Vote(signed_vote(3, other))));
+        assert_eq!(node.classify(NOW, &other), Classified::Drop);
     }
 
     /// A member's votes that come before their accusations wait in a bounded number; one past it

@@ -51,12 +51,12 @@
         {
           "name": "Commands",
           "what": "top-level commands, including node operations, program tooling, update, uninstall and rev",
-          "ref": "crates/cli/src/cli.rs@308@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@313@pub enum Commands {"
         },
         {
           "name": "RemoteCommand",
           "what": "the allow-list of commands that a running node accepts over its control port",
-          "ref": "crates/cli/src/cli.rs@478@pub enum RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@483@pub enum RemoteCommand {"
         },
         {
           "name": "CiphernodeCommands",
@@ -87,7 +87,7 @@
           "why": "dispatch, including commands that run without config and start's setup path",
           "ref": "crates/cli/src/cli.rs@109@pub async fn execute("
         },
-        { "why": "the full command list", "ref": "crates/cli/src/cli.rs@308@pub enum Commands {" },
+        { "why": "the full command list", "ref": "crates/cli/src/cli.rs@313@pub enum Commands {" },
         {
           "why": "what interfold start does before the node is built",
           "ref": "crates/cli/src/start.rs@20@pub async fn execute(mut config: NodeConfig"
@@ -115,17 +115,17 @@
         {
           "pattern": "serde-derive",
           "note": "RemoteCli is serialized to JSON for the control port",
-          "ref": "crates/cli/src/cli.rs@462@#[derive(Clone, Debug, Serialize, Deserialize)]"
+          "ref": "crates/cli/src/cli.rs@467@#[derive(Clone, Debug, Serialize, Deserialize)]"
         },
         {
           "pattern": "enum-match",
           "note": "the main dispatch: one arm per top-level command",
-          "ref": "crates/cli/src/cli.rs@235@match self.command {"
+          "ref": "crates/cli/src/cli.rs@240@match self.command {"
         },
         {
           "pattern": "trait-impl",
           "note": "TryFrom maps a Commands value to the remote allow-list or returns an error",
-          "ref": "crates/cli/src/cli.rs@504@impl TryFrom<Commands> for RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@509@impl TryFrom<Commands> for RemoteCommand {"
         },
         {
           "pattern": "closure",

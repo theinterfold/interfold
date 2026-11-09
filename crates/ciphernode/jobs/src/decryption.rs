@@ -204,10 +204,10 @@ impl<B: Blobs> Jobs<'_, B> {
         anchor: Option<KeyAnchor>,
         message: &SharesMessage,
     ) -> Result<Verdict, JobError> {
-        if message.shares.len() != message.c6.len() {
-            return Ok(Verdict::Invalid);
-        }
         let Some(prover) = self.prover() else {
+            if message.shares.len() != message.c6.len() {
+                return Ok(Verdict::Invalid);
+            }
             for (share, c6) in message.shares.iter().zip(&message.c6) {
                 let bound = [self.blobs.get(share)?.as_slice(), domain.as_slice()].concat();
                 if !placeholder::commits_to(&c6.proof, &bound) {
@@ -216,18 +216,19 @@ impl<B: Blobs> Jobs<'_, B> {
             }
             return Ok(Verdict::Valid);
         };
-        let ciphertexts = self.ciphertexts(ciphertext)?;
-        if message.shares.len() != ciphertexts.len() {
-            return Ok(Verdict::Invalid);
-        }
-        let Some(anchor) = anchor else {
-            return Ok(Verdict::Invalid);
-        };
         let c6 = message
             .c6
             .iter()
             .map(|c6| (ProofType::C6ThresholdShareDecryption, &c6.proof));
         self.checked(prover, params, c6, || {
+            let ciphertexts = self.ciphertexts(ciphertext)?;
+            let Some(anchor) = anchor else {
+                return Ok(false);
+            };
+            if message.shares.len() != message.c6.len() || message.shares.len() != ciphertexts.len()
+            {
+                return Ok(false);
+            }
             for ((share, c6), ciphertext) in
                 message.shares.iter().zip(&message.c6).zip(&ciphertexts)
             {

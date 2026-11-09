@@ -8,7 +8,7 @@ use crate::{
     keystore,
     node_state::{self, Plan},
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
@@ -19,7 +19,7 @@ use e3_node::dir::State;
 #[derive(Subcommand, Clone, Debug)]
 pub enum NodeCommands {
     /// Check a stopped node: its password and keys, the layout of its data, and the E3s it holds.
-    /// Exits non-zero on failure and changes no file.
+    /// Exits non-zero on failure. It creates nothing and changes no node state.
     Validate,
 
     /// Delete the node's data but keep its operator and network keys.
@@ -123,7 +123,8 @@ async fn validate(out: Console, config: &NodeConfig) -> Result<()> {
         State::Foreign(_) => bail!("data: {folder} belongs to another node"),
         State::Unreadable(why) => bail!("data: {folder} cannot be read: {why}"),
         State::Current(manifest) => {
-            let held = node_state::held_e3s(&dir, manifest.identity.operator)?;
+            let held = node_state::inspect_held(&dir, manifest.identity.operator)
+                .with_context(|| format!("data: {folder}"))?;
             log!(out, "data: readable; the node holds {} E3(s)", held.len());
             for held in held {
                 log!(out, "  {held}");
@@ -160,13 +161,16 @@ async fn reset_data(
         return Ok(());
     }
     let mut fences = vec![ProcessFence::acquire(&config.db_file(), &config.name())?];
-    if !folder.exists() {
+    // Also what a volume that is not mounted looks like, so the list keeps naming the folder.
+    if dir.state(None) == State::Absent {
         log!(out, "The node has no data. Nothing to reset.");
         return Ok(());
     }
     let mut plan = Plan::default();
     for (name, credential) in [("key", config.key_file()), ("keystore", config.db_file())] {
-        if credential.starts_with(&folder) {
+        let inside = credential.starts_with(&folder)
+            || node_state::canonical(&credential).starts_with(node_state::canonical(&folder));
+        if inside {
             plan.refusals.push(format!(
                 "the node's {name} at {} is inside the folder this deletes; move it out first",
                 credential.display()
@@ -175,7 +179,7 @@ async fn reset_data(
     }
     plan.check(&format!("node '{}'", config.name()), &dir);
     // Another node's `data_dir` may sit inside this folder: it is fenced, and its journal checked.
-    let others = node_state::guard(&folder, &[config.node_data_dir()], &mut fences)?;
+    let others = node_state::guard(&folder, &[config.node_data_dir()], &mut fences)?.unchecked;
     plan.blockers.extend(others.iter().map(|other| {
         format!(
             "{} holds the journal of another node, whose E3s this command cannot check; move it \
@@ -294,6 +298,74 @@ mod tests {
         let error = reset(&config, true).await.unwrap_err();
         assert!(error.to_string().contains("inside the folder"), "{error:#}");
         assert!(config.key_file().exists());
+        Ok(())
+    }
+
+    /// An empty folder the list names may be a volume that is not mounted.
+    #[tokio::test]
+    async fn an_empty_folder_stays_on_the_list() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = node(dir.path())?;
+        let folder = node_state::dir(&config).path().to_path_buf();
+        std::fs::create_dir_all(&folder)?;
+        node_state::inventory(&config).record(&folder)?;
+        let (out, _messages) = Console::channel();
+        reset_data(out, &config, true, false, false).await?;
+        assert_eq!(node_state::inventory(&config).read().folders, [folder]);
+        Ok(())
+    }
+
+    /// The same key by another path: the node's folder is reached through a link.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_key_inside_the_folder_by_another_path_stops_the_reset() -> Result<()> {
+        let (dir, physical) = (tempfile::tempdir()?, tempfile::tempdir()?);
+        let config = node(dir.path())?;
+        let folder = node_state::dir(&config).path().to_path_buf();
+        std::fs::create_dir_all(folder.parent().unwrap())?;
+        std::os::unix::fs::symlink(physical.path(), &folder)?;
+        std::fs::write(
+            physical.path().join("manifest.json"),
+            format!(r#"{{"encoding":0,"store":0,{IDENTITY}}}"#),
+        )?;
+        std::fs::write(physical.path().join("key"), b"key")?;
+        let config_file = dir.path().join("elsewhere.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\n  key_file: {}\n",
+                physical.path().join("key").display()
+            ),
+        )?;
+        let config = load_config(
+            "_default",
+            Some(config_file.to_string_lossy().into_owned()),
+            None,
+        )?
+        .node;
+        assert_eq!(node_state::dir(&config).path(), folder);
+        let error = reset(&config, true).await.unwrap_err();
+        assert!(error.to_string().contains("inside the folder"), "{error:#}");
+        assert!(physical.path().join("key").exists());
+        Ok(())
+    }
+
+    /// `validate` promises to leave a stopped node as it is, its journal included.
+    #[tokio::test]
+    async fn validate_changes_no_byte_of_the_journal() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = node(dir.path())?;
+        let state = node_state::dir(&config);
+        state.open(&e3_node::dir::Identity {
+            chain_id: 1,
+            interfold: alloy::primitives::Address::repeat_byte(1),
+            operator: alloy::primitives::Address::repeat_byte(2),
+        })?;
+        drop(e3_journal::Journal::open(state.journal())?);
+        let before = std::fs::read(state.journal())?;
+        let (out, _messages) = Console::channel();
+        super::validate(out, &config).await?;
+        assert_eq!(std::fs::read(state.journal())?, before);
         Ok(())
     }
 

@@ -203,16 +203,20 @@ impl Cli {
             Err(e) => return Err(e),
         };
 
-        // The purge commands delete the node folders. They write no log file, password, or wallet
-        // there, because a later purge would treat such files as node state.
-        let purges = matches!(
+        // The purge commands delete the node folders, and the inspecting commands promise to leave
+        // them as they are. None writes a log file, password, or wallet there: a later purge would
+        // treat such files as node state.
+        let leaves_no_files = matches!(
             self.command,
             Commands::PurgeAll { .. }
                 | Commands::Nodes {
                     command: NodeCommands::Purge { .. }
                 }
+                | Commands::Node {
+                    command: node::NodeCommands::Validate | node::NodeCommands::Events { .. }
+                }
         );
-        if purges {
+        if leaves_no_files {
             setup_simple_tracing(log_level);
         } else {
             setup_tracing(&config, log_level)?;
@@ -220,7 +224,7 @@ impl Cli {
         info!("Config loaded from: {:?}", config.config_file());
 
         // Config commands only read configuration, so they do not create a password or a wallet.
-        let creates_secrets = !purges && !matches!(self.command, Commands::Config { .. });
+        let creates_secrets = !leaves_no_files && !matches!(self.command, Commands::Config { .. });
 
         if creates_secrets && config.autopassword() {
             e3_entrypoint::password::set::autopassword(&config).await?;
@@ -228,8 +232,9 @@ impl Cli {
 
         if creates_secrets && config.autowallet() {
             let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
-            crate::keystore::ensure(&config.db_file(), &cipher)?;
-            crate::node_state::inventory(&config).create()?;
+            if crate::keystore::ensure(&config.db_file(), &cipher)? {
+                crate::node_state::inventory(&config).create()?;
+            }
         }
 
         match self.command {

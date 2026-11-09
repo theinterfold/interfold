@@ -171,6 +171,16 @@ fn ready_does_not_wait_for_the_check_of_a_keyless_dealer_s_late_shares() {
     assert_eq!(ready_sent(&effects), vec![members(&[1, 2, ME])]);
 }
 
+/// A member cannot make the node journal the same report again and again.
+#[test]
+fn a_ready_report_that_does_not_grow_is_not_taken() {
+    let [first, second, third] = ordered();
+    let mut node = verified_all(first);
+    let report = ready(third, &[first, second, third], first);
+    assert!(!node.step(NOW, report.clone()).is_empty());
+    assert!(node.step(NOW, report).is_empty());
+}
+
 #[test]
 fn each_ready_report_is_noted_with_the_committee_s_progress() {
     use crate::node::{Note, Noted};

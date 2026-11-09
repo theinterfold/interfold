@@ -144,6 +144,7 @@ async fn parts(
         snapshot_every: 100,
         status_port: None,
         job_slots: 1,
+        proof_slots: 1,
     };
     let (peers, inbox) = e3_p2p::inbox();
     let blobs = MemoryBlobs::default();

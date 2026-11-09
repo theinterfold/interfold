@@ -51,8 +51,9 @@ pub struct Accusations {
     /// This node's check of each proof, by its type and bytes. A vote's evidence hash counts
     /// only when it is the hash of the proof this node checked.
     verdicts: BTreeMap<(ProofType, ZkProof), Checked>,
-    /// The (accused, proof type) pairs this node accused.
-    accused: BTreeSet<(Address, ProofType)>,
+    /// The windows each member has opened, by accusation. A member that follows the protocol
+    /// accuses once; more windows, one after another, would keep an E3 and its blobs without end.
+    opened: BTreeSet<(Address, B256)>,
     expelled: BTreeSet<Address>,
     /// Members that H members found sending a failing proof, in some window.
     convicted: BTreeSet<Address>,
@@ -122,7 +123,7 @@ impl Accusations {
             cases: BTreeMap::new(),
             early: BTreeMap::new(),
             verdicts: BTreeMap::new(),
-            accused: BTreeSet::new(),
+            opened: BTreeSet::new(),
             expelled: BTreeSet::new(),
             convicted: BTreeSet::new(),
         }
@@ -144,15 +145,16 @@ impl Accusations {
         };
         self.verdicts
             .insert((proof_type, proof.proof.clone()), checked);
+        let id = accusation_id(self.e3, accused, proof_type);
         if self.validity == 0
             || accused == self.me
             || !self.is_member(accused)
-            || !self.accused.insert((accused, proof_type))
+            || !self.opened.insert((self.me, id))
         {
             return Vec::new();
         }
         let ballot = Ballot {
-            accusation_id: accusation_id(self.e3, accused, proof_type),
+            accusation_id: id,
             issued_at: now,
             deadline: now.saturating_add(self.validity),
         };
@@ -161,11 +163,11 @@ impl Accusations {
         self.vote(ballot).into_iter().collect()
     }
 
-    /// Whether to take `message` from `sender`: both it and the accused are live members, the
-    /// accused signed the proof, and the vote is the sender's and counts. An accusation opens a
-    /// window unless the sender has another open for the same accusation, so a member cannot open
-    /// windows without end; one for a window that is already open is one more vote in it, if it
-    /// signs the same evidence.
+    /// Whether to take `message` from `sender`, which costs a journal entry: both it and the
+    /// accused are live members, the accused signed the proof, and the vote is the sender's and
+    /// counts. An accusation opens a window if the sender has not opened one for that accusation
+    /// and this node did not find the proof holding; one for a window that is already open is one
+    /// more vote in it, if it signs the same evidence.
     pub(crate) fn admits(
         &self,
         now: UnixSecs,
@@ -181,10 +183,13 @@ impl Accusations {
             } => {
                 let ballot = Ballot::of(&vote.vote);
                 let opens_or_joins = match self.cases.get(&ballot) {
-                    Some(case) => case.data_hash == vote.vote.data_hash,
-                    None => !self.cases.iter().any(|(open, case)| {
-                        open.accusation_id == ballot.accusation_id && case.accuser == sender
-                    }),
+                    Some(case) => {
+                        case.data_hash == vote.vote.data_hash && !case.votes.contains_key(&sender)
+                    }
+                    None => {
+                        !self.opened.contains(&(sender, ballot.accusation_id))
+                            && !self.holds(*proof_type, &proof.proof)
+                    }
                 };
                 sender != *accused
                     && self.is_member(*accused)
@@ -194,13 +199,36 @@ impl Accusations {
                     && opens_or_joins
             }
             AccusationMessage::Vote(vote) => {
-                let accused = self
-                    .cases
-                    .get(&Ballot::of(&vote.vote))
-                    .map(|case| case.accused);
-                accused != Some(sender) && self.counts(now, sender, vote)
+                let ballot = Ballot::of(&vote.vote);
+                let useful = match self.cases.get(&ballot) {
+                    Some(case) => {
+                        case.accused != sender
+                            && case.data_hash == vote.vote.data_hash
+                            && !case.votes.contains_key(&sender)
+                    }
+                    None => {
+                        let waiting = self
+                            .early
+                            .values()
+                            .filter(|votes| votes.contains_key(&sender))
+                            .count();
+                        waiting < EARLY_VOTES_PER_MEMBER
+                            && !self
+                                .early
+                                .get(&ballot)
+                                .is_some_and(|votes| votes.contains_key(&sender))
+                    }
+                };
+                useful && self.counts(now, sender, vote)
             }
         }
+    }
+
+    /// Whether this node's own check found `proof` holding.
+    fn holds(&self, proof_type: ProofType, proof: &ZkProof) -> bool {
+        self.verdicts
+            .get(&(proof_type, proof.clone()))
+            .is_some_and(|checked| !checked.fails)
     }
 
     /// A vote counts from a live member that signed it, for this E3, in a window that is no longer
@@ -247,6 +275,7 @@ impl Accusations {
                     case.votes.insert(sender, vote);
                     return self.reached(now, ballot);
                 }
+                self.opened.insert((sender, ballot.accusation_id));
                 let mut case = Case::new(sender, accused, proof_type, proof, vote.vote.data_hash);
                 let early = self.early.remove(&ballot).into_iter().flatten();
                 let votes = early.filter(|(voter, early)| {
@@ -269,19 +298,11 @@ impl Accusations {
                 let ballot = Ballot::of(&vote.vote);
                 match self.cases.get_mut(&ballot) {
                     Some(case) => {
-                        if vote.vote.data_hash == case.data_hash {
-                            case.votes.insert(sender, vote);
-                        }
+                        case.votes.insert(sender, vote);
                         self.reached(now, ballot)
                     }
                     None => {
-                        let waiting = self
-                            .early
-                            .values()
-                            .filter(|votes| votes.contains_key(&sender));
-                        if waiting.count() < EARLY_VOTES_PER_MEMBER {
-                            self.early.entry(ballot).or_default().insert(sender, vote);
-                        }
+                        self.early.entry(ballot).or_default().insert(sender, vote);
                         Vec::new()
                     }
                 }
@@ -289,7 +310,9 @@ impl Accusations {
         }
     }
 
-    /// This node verified an accused proof: it votes in every window that accuses those bytes.
+    /// This node verified an accused proof. If it fails, the node votes in every window that
+    /// accuses those bytes. If it holds, those windows end: nothing can come of them, and another
+    /// member's copy of a ballot must not keep the real evidence out of it.
     pub(crate) fn verified(&mut self, now: UnixSecs, result: AccusationWorkResult) -> Vec<Effect> {
         let AccusationWorkResult::Verified {
             proof_type,
@@ -305,6 +328,10 @@ impl Accusations {
             .collect();
         self.verdicts
             .insert((proof_type, proof), Checked { data_hash, fails });
+        if !fails {
+            self.cases.retain(|ballot, _| !ballots.contains(ballot));
+            return Vec::new();
+        }
         let mut effects = Vec::new();
         for ballot in ballots {
             effects.extend(self.vote(ballot));
@@ -482,15 +509,15 @@ impl Accusations {
         &self.convicted
     }
 
-    /// Whether any accusation is open: its window has not passed.
+    /// Whether any accusation is open: its window has not passed. A vote that waits for an
+    /// accusation that may never come is not one, and keeps nothing.
     pub(crate) fn running(&self) -> bool {
-        !self.cases.is_empty() || !self.early.is_empty()
+        !self.cases.is_empty()
     }
 
     /// When the last open window closes.
     pub(crate) fn closes_at(&self) -> Option<UnixSecs> {
-        let ballots = self.cases.keys().chain(self.early.keys());
-        ballots.map(|ballot| ballot.deadline + 1).max()
+        self.cases.keys().map(|ballot| ballot.deadline + 1).max()
     }
 
     fn is_member(&self, member: Address) -> bool {

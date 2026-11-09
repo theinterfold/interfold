@@ -26,7 +26,7 @@ use libp2p::{
     identify,
     identity::Keypair,
     kad,
-    request_response::{self, OutboundRequestId, ResponseChannel},
+    request_response::{self, InboundRequestId, OutboundRequestId, ResponseChannel},
     swarm::{dial_opts::DialOpts, DialError, SwarmEvent},
     Multiaddr, PeerId, Swarm,
 };
@@ -39,7 +39,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, oneshot, watch, Semaphore};
+use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, info, warn};
 
 /// Commands waiting for the swarm's task. Past this, a command is told the node is busy.
@@ -61,8 +61,11 @@ const PEER_CHECK: Duration = Duration::from_secs(5);
 /// duplicate cache stops for only a minute.
 const MAX_COPY_AGE: u64 = 10 * 60;
 const MAX_CLOCK_AHEAD: u64 = 2 * 60;
-/// The blobs the node reads from disk for peers at once; a request past them finds it busy.
+/// The blobs the node serves at once, from the disk read until the peer has them; a request past
+/// them finds nothing, and asks another peer. A peer that stops reading holds its places only until
+/// the request times out.
 const MAX_SERVING: usize = 8;
+const MAX_SERVING_PER_PEER: usize = 2;
 /// How long a stop waits for connections to say goodbye.
 const DRAIN: Duration = Duration::from_secs(2);
 /// A log line that can repeat with every message comes at most this often.
@@ -188,6 +191,8 @@ impl P2p {
             requests: HashMap::new(),
             publishes: VecDeque::new(),
             serving: Arc::new(Semaphore::new(MAX_SERVING)),
+            serving_per_peer: HashMap::new(),
+            responses: HashMap::new(),
             served_writer,
             served,
             stored_writer,
@@ -323,7 +328,13 @@ struct PendingPublish {
 }
 
 /// A blob read for a peer, ready to send.
-type Served = (ResponseChannel<Option<ByteBuf>>, Option<ByteBuf>);
+struct Served {
+    peer: PeerId,
+    request: InboundRequestId,
+    place: OwnedSemaphorePermit,
+    channel: ResponseChannel<Option<ByteBuf>>,
+    bytes: Option<ByteBuf>,
+}
 
 /// What became of a blob that arrived.
 enum Stored {
@@ -355,6 +366,9 @@ struct Driver<S> {
     /// Publishes that found no peer on the topic yet.
     publishes: VecDeque<PendingPublish>,
     serving: Arc<Semaphore>,
+    serving_per_peer: HashMap<PeerId, usize>,
+    /// Responses on their way, each holding its place until the peer has it.
+    responses: HashMap<InboundRequestId, (PeerId, OwnedSemaphorePermit)>,
     served_writer: mpsc::UnboundedSender<Served>,
     served: mpsc::UnboundedReceiver<Served>,
     stored_writer: mpsc::UnboundedSender<(u64, Stored)>,
@@ -383,9 +397,7 @@ impl<S: BlobStore> Driver<S> {
                     }
                 },
                 event = self.swarm.select_next_some() => self.on_event(event),
-                Some((channel, bytes)) = self.served.recv() => {
-                    let _ = self.swarm.behaviour_mut().blobs.send_response(channel, bytes);
-                }
+                Some(served) = self.served.recv() => self.on_served(served),
                 Some((read, stored)) = self.stored.recv() => self.on_stored(read, stored),
                 _ = dials.tick() => self.dial_peers(),
                 _ = retry.tick() => self.retry_publishes(),
@@ -502,7 +514,10 @@ impl<S: BlobStore> Driver<S> {
 
     fn retry_publishes(&mut self) {
         for pending in std::mem::take(&mut self.publishes) {
-            self.try_publish(pending);
+            // A caller that stopped waiting no longer owes this message.
+            if !pending.done.is_closed() {
+                self.try_publish(pending);
+            }
         }
     }
 
@@ -621,7 +636,14 @@ impl<S: BlobStore> Driver<S> {
         if !peers.contains(&propagation) {
             peers.push(propagation);
         }
-        self.sources.insert(peer_message.id(), peers);
+        // A bootstrap peer offers no blobs. Who carried a message does not matter otherwise: its
+        // signature says who wrote it, and refusing the first copy would make the network's own
+        // duplicate filter drop the honest copies behind it.
+        let book = &self.swarm.behaviour().peers;
+        peers.retain(|peer| !book.takes_no_messages(peer));
+        if !peers.is_empty() {
+            self.sources.insert(peer_message.id(), peers);
+        }
         let sender = peer_message.sender;
         if !self.inbox.push(peer_message, message.data.len() as u64) {
             if let Some(held_back) = self.refused.pass() {
@@ -637,8 +659,9 @@ impl<S: BlobStore> Driver<S> {
         let Some(done) = self.fetcher.join(&id, done) else {
             return;
         };
-        let missing: Vec<BlobRef> = message
-            .blobs()
+        // A message can name one blob many times; one read brings it.
+        let named: BTreeSet<BlobRef> = message.blobs().into_iter().collect();
+        let missing: Vec<BlobRef> = named
             .into_iter()
             .filter(|blob| !self.blobs.has(message.e3, blob))
             .collect();
@@ -676,12 +699,15 @@ impl<S: BlobStore> Driver<S> {
     fn on_blobs(&mut self, event: request_response::Event<(E3Id, B256), Option<ByteBuf>>) {
         match event {
             request_response::Event::Message {
+                peer,
                 message:
                     request_response::Message::Request {
-                        request, channel, ..
+                        request_id,
+                        request,
+                        channel,
                     },
                 ..
-            } => self.serve(request, channel),
+            } => self.serve(peer, request_id, request, channel),
             request_response::Event::Message {
                 message:
                     request_response::Message::Response {
@@ -710,14 +736,59 @@ impl<S: BlobStore> Driver<S> {
                     self.start_reads();
                 }
             }
-            _ => {}
+            request_response::Event::ResponseSent { request_id, .. }
+            | request_response::Event::InboundFailure { request_id, .. } => {
+                if let Some((peer, _place)) = self.responses.remove(&request_id) {
+                    self.lower_serving(peer);
+                }
+            }
+        }
+    }
+
+    fn lower_serving(&mut self, peer: PeerId) {
+        if let Some(count) = self.serving_per_peer.get_mut(&peer) {
+            *count -= 1;
+            if *count == 0 {
+                self.serving_per_peer.remove(&peer);
+            }
+        }
+    }
+
+    fn on_served(&mut self, served: Served) {
+        let Served {
+            peer,
+            request,
+            place,
+            channel,
+            bytes,
+        } = served;
+        let blobs = &mut self.swarm.behaviour_mut().blobs;
+        match blobs.send_response(channel, bytes) {
+            Ok(()) => {
+                self.responses.insert(request, (peer, place));
+            }
+            Err(_) => self.lower_serving(peer),
         }
     }
 
     /// Reads the blob a peer asked for off this task. Only public blobs of E3s the node still
-    /// holds can be read, and a request past the limit finds nothing.
-    fn serve(&mut self, (e3, hash): (E3Id, B256), channel: ResponseChannel<Option<ByteBuf>>) {
-        let Ok(permit) = self.serving.clone().try_acquire_owned() else {
+    /// holds can be read, and a request past the limits finds nothing.
+    fn serve(
+        &mut self,
+        peer: PeerId,
+        request: InboundRequestId,
+        (e3, hash): (E3Id, B256),
+        channel: ResponseChannel<Option<ByteBuf>>,
+    ) {
+        let running = self
+            .serving_per_peer
+            .get(&peer)
+            .copied()
+            .unwrap_or_default();
+        let place = (running < MAX_SERVING_PER_PEER)
+            .then(|| self.serving.clone().try_acquire_owned().ok())
+            .flatten();
+        let Some(place) = place else {
             let _ = self
                 .swarm
                 .behaviour_mut()
@@ -725,17 +796,25 @@ impl<S: BlobStore> Driver<S> {
                 .send_response(channel, None);
             return;
         };
+        *self.serving_per_peer.entry(peer).or_default() += 1;
         let (blobs, served) = (self.blobs.clone(), self.served_writer.clone());
         tokio::task::spawn_blocking(move || {
             let bytes = blobs.serve(e3, &hash).map(ByteBuf::from);
-            let _ = served.send((channel, bytes));
-            drop(permit);
+            let _ = served.send(Served {
+                peer,
+                request,
+                place,
+                channel,
+                bytes,
+            });
         });
     }
 
     /// Checks and stores a blob off this task. A fetch that ended keeps nothing.
     fn store(&mut self, read: u64, bytes: Vec<u8>) {
         let Some((e3, blob)) = self.fetcher.expected(read) else {
+            self.fetcher.failed(read);
+            self.start_reads();
             return;
         };
         let (blobs, stored) = (self.blobs.clone(), self.stored_writer.clone());

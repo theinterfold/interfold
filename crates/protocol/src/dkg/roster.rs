@@ -68,12 +68,10 @@ impl Dkg {
             && dealers
                 .iter()
                 .all(|dealer| self.is_member(dealer.member) && self.is_live(&dealer.member));
-        let held_is_usable = self
-            .rosters
-            .proposed
-            .get(&proposer)
-            .is_some_and(|held| self.is_usable(proposer, held));
-        well_formed && !held_is_usable
+        let held = self.rosters.proposed.get(&proposer);
+        let replaces =
+            held.is_none_or(|held| held.as_slice() != dealers && !self.is_usable(proposer, held));
+        well_formed && replaces
     }
 
     pub(super) fn receive_roster(&mut self, proposer: Address, dealers: Vec<Dealer>) {

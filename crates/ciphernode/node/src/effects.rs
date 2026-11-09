@@ -105,8 +105,10 @@ pub(crate) struct Effects<R, A, N, B> {
     pub(crate) availability: Arc<dyn DataAvailabilityReader>,
     pub(crate) events: mpsc::Sender<Event>,
     notes: NoteFeed,
-    /// Places for jobs: one waiting beyond them holds no blocking thread.
+    /// Places for jobs that check or compute: one waiting beyond them holds no blocking thread.
     job_slots: Arc<Semaphore>,
+    /// Places for jobs that make proofs, apart, so a check never waits behind an hour-long proof.
+    proof_slots: Arc<Semaphore>,
     job_failures: Arc<Limited>,
     tasks: BTreeMap<E3Id, Vec<Task>>,
 }
@@ -123,6 +125,7 @@ pub(crate) struct EffectParts<R, A, N, B> {
     pub(crate) events: mpsc::Sender<Event>,
     pub(crate) notes: NoteFeed,
     pub(crate) job_slots: usize,
+    pub(crate) proof_slots: usize,
 }
 
 impl<R, A, N, B> Effects<R, A, N, B>
@@ -144,6 +147,7 @@ where
             events: parts.events,
             notes: parts.notes,
             job_slots: Arc::new(Semaphore::new(parts.job_slots.max(1))),
+            proof_slots: Arc::new(Semaphore::new(parts.proof_slots.max(1))),
             job_failures: Arc::new(Limited::new(FAILURE_LOG)),
             tasks: BTreeMap::new(),
         }
@@ -236,18 +240,18 @@ where
     /// A job that fails, as for a full disk, runs again until it succeeds or the node no longer
     /// owes it. Its attempts after the first use less memory.
     fn run(&self, key: EffectKey, job: Job, cancel: Cancel) -> JoinHandle<()> {
-        let (jobs, events, slots) = (
-            self.jobs.clone(),
-            self.events.clone(),
-            self.job_slots.clone(),
-        );
+        let slots = match job.work.proves() {
+            true => self.proof_slots.clone(),
+            false => self.job_slots.clone(),
+        };
+        let (jobs, events) = (self.jobs.clone(), self.events.clone());
         let failures = self.job_failures.clone();
         tokio::spawn(async move {
-            let Ok(_slot) = slots.acquire_owned().await else {
-                return;
-            };
             let mut backoff = Backoff::JOB;
             for number in 0.. {
+                let Ok(slot) = slots.clone().acquire_owned().await else {
+                    return;
+                };
                 let attempt = Attempt {
                     number,
                     cancel: cancel.clone(),
@@ -264,6 +268,7 @@ where
                     Ok(Err(failure)) => format!("{failure:#}"),
                     Err(panic) => format!("it panicked: {panic}"),
                 };
+                drop(slot);
                 if let Some(held_back) = failures.pass() {
                     error!(e3 = %job.e3, attempt = number, held_back, %failure, "a job failed");
                 }

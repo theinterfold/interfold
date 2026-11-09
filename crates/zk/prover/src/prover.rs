@@ -549,7 +549,12 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = run_bb(&self.bb_binary, &args, &job_dir, &self.limits)?;
+        // Verifying is quick, and many run at once beside the provers: each takes one thread.
+        let limits = BbLimits {
+            threads: Some(1),
+            ..self.limits.clone()
+        };
+        let output = run_bb(&self.bb_binary, &args, &job_dir, &limits)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);

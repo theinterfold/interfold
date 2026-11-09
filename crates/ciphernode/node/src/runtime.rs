@@ -66,6 +66,8 @@ pub struct Settings {
     pub status_port: Option<u16>,
     /// Jobs that hold a thread at once; the others wait without one.
     pub job_slots: usize,
+    /// Jobs that make proofs at once.
+    pub proof_slots: usize,
 }
 
 /// What the node talks to.
@@ -202,79 +204,96 @@ where
         events,
         notes: parts.notes,
         job_slots: settings.job_slots,
+        proof_slots: settings.proof_slots,
     });
     let mut queue: VecDeque<Event> = effects.dispatch(pending).into();
     let inbox = parts.inbox;
     let refused = Limited::new(REFUSED_LOG);
+    let hold_full = Limited::new(REFUSED_LOG);
     let mut board_update = tokio::time::interval(BOARD_UPDATE);
     tokio::pin!(stop);
-    loop {
-        let event = match queue.pop_front() {
-            Some(event) => event,
-            None => tokio::select! {
-                event = next_event(&mut receiver, engine.next_deadline()) => event?,
-                message = inbox.next() => {
-                    let Some(message) = message else {
-                        return Err(NodeError::TaskEnded("the network"));
-                    };
-                    if engine.machine().classify(now(), &message) == Classified::Drop {
-                        if let Some(held_back) = refused.pass() {
-                            debug!(e3 = %message.e3, held_back, "a peer's message is of no use");
+    let outcome = async {
+        loop {
+            let event = match queue.pop_front() {
+                Some(event) => event,
+                None => tokio::select! {
+                    event = next_event(&mut receiver, engine.next_deadline()) => event?,
+                    message = inbox.next() => {
+                        let Some(message) = message else {
+                            return Err(NodeError::TaskEnded("the network"));
+                        };
+                        match engine.machine().classify(now(), &message) {
+                            Classified::Drop => {
+                                if let Some(held_back) = refused.pass() {
+                                    debug!(e3 = %message.e3, held_back, "a peer's message is of no use");
+                                }
+                                continue;
+                            }
+                            Classified::Full => {
+                                if let Some(held_back) = hold_full.pass() {
+                                    warn!(
+                                        e3 = %message.e3, sender = %message.sender, held_back,
+                                        "no room to hold a peer's message; its re-send brings it again"
+                                    );
+                                }
+                                continue;
+                            }
+                            _ => Event::Input(Input::Announced(message)),
                         }
+                    }
+                    _ = board_update.tick() => {
+                        board.machine(engine.machine());
+                        board.peers(effects.network.connected());
                         continue;
                     }
-                    Event::Input(Input::Announced(message))
-                }
-                _ = board_update.tick() => {
-                    board.machine(engine.machine());
-                    board.peers(effects.network.connected());
+                    ended = essential.join_next() => return Err(ended_task(ended)),
+                    () = &mut stop => return Ok(()),
+                },
+            };
+            let (input, answers) = match event {
+                Event::Input(input) => (input, None),
+                Event::Result(key, input) => (input, Some(key)),
+                Event::Done(key) => {
+                    engine.acknowledge(key)?;
                     continue;
                 }
-                ended = essential.join_next() => return Err(ended_task(ended)),
-                () = &mut stop => {
-                    // Producers first, so nothing new starts while the work stops. What did not
-                    // finish stays in the outbox for the next start. The peers hear last.
-                    essential.abort_all();
-                    effects.stop_all();
-                    effects.network.close().await;
-                    return Ok(());
-                }
-            },
-        };
-        let (input, answers) = match event {
-            Event::Input(input) => (input, None),
-            Event::Result(key, input) => (input, Some(key)),
-            Event::Done(key) => {
+            };
+            debug!(input = %brief(&input), "applying");
+            let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
+            // The answer to an effect and the end of that effect are one commit, so a crash
+            // cannot leave an answered effect to run again.
+            let (next, pending) = match answers {
+                Some(key) => engine.answer(now(), input, key)?,
+                None => engine.apply(now(), input)?,
+            };
+            engine = next;
+            let operators = engine.machine().operators();
+            if operators != admitted {
+                effects.network.admit(operators.clone());
+                admitted = operators;
+            }
+            queue.extend(effects.dispatch(pending));
+            for key in effects.stop_ended(engine.machine()) {
                 engine.acknowledge(key)?;
-                continue;
             }
-        };
-        debug!(input = %brief(&input), "applying");
-        let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
-        let (next, pending) = engine.apply(now(), input)?;
-        engine = next;
-        let operators = engine.machine().operators();
-        if operators != admitted {
-            effects.network.admit(operators.clone());
-            admitted = operators;
-        }
-        if let Some(key) = answers {
-            engine.acknowledge(key)?;
-        }
-        queue.extend(effects.dispatch(pending));
-        for key in effects.stop_ended(engine.machine()) {
-            engine.acknowledge(key)?;
-        }
-        let still: BTreeSet<&E3Id> = engine.machine().working().collect();
-        for e3 in working.iter().filter(|e3| !still.contains(e3)) {
-            if let Err(error) = effects.blobs.close(*e3) {
-                warn!(%e3, %error, "deleting the blobs of ended work failed");
-            }
-            if let Err(error) = effects.jobs.close(*e3) {
-                warn!(%e3, %error, "deleting the proving files of ended work failed");
+            let still: BTreeSet<&E3Id> = engine.machine().working().collect();
+            for e3 in working.iter().filter(|e3| !still.contains(e3)) {
+                if let Err(error) = effects.blobs.close(*e3) {
+                    warn!(%e3, %error, "deleting the blobs of ended work failed");
+                }
+                if let Err(error) = effects.jobs.close(*e3) {
+                    warn!(%e3, %error, "deleting the proving files of ended work failed");
+                }
             }
         }
     }
+    .await;
+    // Producers first, so nothing new starts while the work stops. What did not finish stays in
+    // the outbox for the next start. The peers hear last, on every way out.
+    essential.abort_all();
+    effects.stop_all();
+    effects.network.close().await;
+    outcome
 }
 
 /// An essential task ended while the node runs: the process should end, so its supervisor can

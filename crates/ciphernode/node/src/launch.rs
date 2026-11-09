@@ -88,6 +88,19 @@ pub enum Proving {
     Placeholder,
 }
 
+impl Proving {
+    /// What makes the proofs, unless placeholders stand in.
+    pub(crate) fn prover(&self) -> Option<&Prover> {
+        match self {
+            Proving::Circuits(prover) => Some(prover),
+            #[cfg(any(test, feature = "testing"))]
+            Proving::AsInstalled(prover) => Some(prover),
+            #[cfg(any(test, feature = "testing"))]
+            Proving::Placeholder => None,
+        }
+    }
+}
+
 pub struct Prover {
     pub bb: BBPath,
     /// The compiled circuits, by preset and committee size.
@@ -120,14 +133,22 @@ impl Config {
     }
 }
 
-/// Runs the node until `stop` completes or the node fails.
+/// Runs the node until `stop` completes or the node fails. A stop during startup ends it too.
 pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {
-    start(preflight::verify(config).await?, stop).await
+    tokio::pin!(stop);
+    let verified = tokio::select! {
+        verified = preflight::verify(config) => verified?,
+        () = &mut stop => return Ok(()),
+    };
+    start(verified, stop).await
 }
 
 /// Builds the node from what startup verified and runs it. The fence in the configuration stays
 /// held until this ends.
-async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Result<()> {
+async fn start(
+    verified: Verified,
+    mut stop: std::pin::Pin<&mut impl Future<Output = ()>>,
+) -> anyhow::Result<()> {
     let Verified {
         config,
         rpc,
@@ -136,6 +157,7 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         standing,
         proofs,
         threads,
+        proof_slots,
     } = verified;
     let chain_id = contracts.chain_id;
     let journal = Journal::open(config.data_dir.join("journal.redb"))?;
@@ -152,8 +174,12 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         let deadline = Instant::now() + config.startup_timeout;
         let what = "acknowledging the release";
         let landed = retry_until(deadline, ACKNOWLEDGE_LIMIT, what, || wallet.send_once(call));
+        let landed = tokio::select! {
+            landed = landed => landed?,
+            () = &mut stop => return Ok(()),
+        };
         anyhow::ensure!(
-            landed.await?,
+            landed,
             "the chain refused this node's release acknowledgement"
         );
     }
@@ -173,7 +199,10 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         listen: parse(&config.network.listen)?,
         peers: parse(&config.network.peers)?,
     };
-    let (network, inbox) = P2p::start(p2p, operator.address(), blobs.clone()).await?;
+    let (network, inbox) = tokio::select! {
+        started = P2p::start(p2p, operator.address(), blobs.clone()) => started?,
+        () = &mut stop => return Ok(()),
+    };
     let listening: Vec<String> = network
         .listening()
         .iter()
@@ -195,6 +224,7 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         snapshot_every: 100,
         status_port: config.status_port,
         job_slots: threads,
+        proof_slots,
     };
     let scope = keccak256([release.id.as_slice(), operator.address().as_slice()].concat());
     let parts = Parts {
@@ -211,7 +241,7 @@ async fn start(verified: Verified, stop: impl Future<Output = ()>) -> anyhow::Re
         notes,
         notes_dir,
     };
-    Ok(run(settings, parts, stop).await?)
+    Ok(run(settings, parts, stop.as_mut()).await?)
 }
 
 /// What keeps the nodes of one deployment apart from another's on the same network: the Interfold

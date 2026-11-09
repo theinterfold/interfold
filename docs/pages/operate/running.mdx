@@ -599,9 +599,9 @@ these steps with the node stopped:
 interfold node validate
 ```
 
-The command changes no files. It ends with `VALIDATION PASSED` or reports `FAIL` lines, and it exits
-with a non-zero status on a failure. In Docker, run it through the image entrypoint with the same
-volume and configuration:
+The command creates nothing and changes no node state. It prints the node's keys and what its data
+holds, and it exits with a non-zero status on a failure. In Docker, run it through the image
+entrypoint with the same volume and configuration:
 
 ```bash
 docker run --rm \
@@ -611,19 +611,10 @@ docker run --rm \
   node validate --config /home/ciphernode/.config/interfold/config.yaml
 ```
 
-### Repair a recoverable tail
+### Recover a journal that was not closed
 
-If the report shows only an uncommitted event-log tail, or a stale sortition projection, run:
-
-```bash
-interfold node validate --repair
-```
-
-The repair indexes complete uncommitted frames again, cuts a torn tail, or rebuilds the sortition
-projection from intact events. It never removes an indexed event.
-
-Validation checks the storage schema before it reads or repairs event logs. An unsupported schema
-reports the recovery instruction and skips all event and snapshot checks.
+If the report says that the journal cannot be read without changing it, the node did not stop
+cleanly. Start the node once to recover the journal, stop it, and run the validation again.
 
 ### Start the node
 
@@ -853,9 +844,9 @@ new_image() {
     new_image net get-peer-id
     ```
 
-11. Validate the state. Continue only if the report shows `empty store will be initialized` and ends
-    with `VALIDATION PASSED — state is intact and consistent.` Otherwise, do not start the new
-    image. Keep the old container and the volume, and contact the protocol team.
+11. Validate the state. Continue only if the report shows `data: none yet` and the command exits
+    with status 0. Otherwise, do not start the new image. Keep the old container and the volume, and
+    contact the protocol team.
 
     ```bash
     new_image node validate

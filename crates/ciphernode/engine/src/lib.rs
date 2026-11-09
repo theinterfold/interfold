@@ -36,6 +36,8 @@ pub struct Step {
     pub entry: Vec<u8>,
     pub effects: Vec<(EffectKey, Vec<u8>)>,
     pub snapshot: Option<Vec<u8>>,
+    /// The effect this step answers, which ends with it.
+    pub answers: Option<EffectKey>,
 }
 
 /// What a store holds when the engine opens it.
@@ -67,6 +69,39 @@ pub enum Error {
     Encoding(#[from] bincode::Error),
 }
 
+/// The machine a store's contents rebuild, without the store: what a read-only look at a stopped
+/// node's journal needs.
+pub fn restore<M: Machine + DeserializeOwned>(stored: Stored, genesis: M) -> Result<M, Error>
+where
+    M::Input: DeserializeOwned,
+{
+    Ok(replay(stored.snapshot, stored.journal, genesis)?.0)
+}
+
+/// The machine, its last step, and the steps since its snapshot.
+fn replay<M: Machine + DeserializeOwned>(
+    snapshot: Option<(u64, Vec<u8>)>,
+    journal: Vec<(u64, Vec<u8>)>,
+    genesis: M,
+) -> Result<(M, u64, u64), Error>
+where
+    M::Input: DeserializeOwned,
+{
+    let (mut machine, mut last_seq) = match snapshot {
+        Some((seq, bytes)) => (decode(&bytes)?, seq),
+        None => (genesis, 0),
+    };
+    let mut steps_since_snapshot = 0;
+    for (seq, bytes) in journal {
+        let entry: Entry<M::Input> = decode(&bytes)?;
+        // The step's effects were committed with it; replay only rebuilds the state.
+        machine.step(entry.now, entry.input);
+        last_seq = seq;
+        steps_since_snapshot += 1;
+    }
+    Ok((machine, last_seq, steps_since_snapshot))
+}
+
 #[derive(Serialize, Deserialize)]
 struct Entry<I> {
     now: UnixSecs,
@@ -89,18 +124,8 @@ impl<M: Machine, S: Store> Engine<M, S> {
     /// the effects that are still pending.
     pub fn open(store: S, genesis: M, snapshot_every: u64) -> Result<Running<M, S>, Error> {
         let stored = store.read()?;
-        let (mut machine, mut last_seq) = match stored.snapshot {
-            Some((seq, bytes)) => (decode(&bytes)?, seq),
-            None => (genesis, 0),
-        };
-        let mut steps_since_snapshot = 0;
-        for (seq, bytes) in stored.journal {
-            let entry: Entry<M::Input> = decode(&bytes)?;
-            // The step's effects were committed with it; replay only rebuilds the state.
-            machine.step(entry.now, entry.input);
-            last_seq = seq;
-            steps_since_snapshot += 1;
-        }
+        let (machine, last_seq, steps_since_snapshot) =
+            replay(stored.snapshot, stored.journal, genesis)?;
         let pending = stored
             .outbox
             .into_iter()
@@ -123,7 +148,27 @@ impl<M: Machine, S: Store> Engine<M, S> {
 
     /// Step the machine with `input` and commit the step. On error the engine is gone: its state
     /// may be ahead of the store, so the caller restarts from the store.
-    pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {
+    pub fn apply(self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {
+        self.step(now, input, None)
+    }
+
+    /// As [`Self::apply`], for the input that answers the effect at `key`: the effect ends in the
+    /// same commit, so a crash cannot leave an answered effect to run again.
+    pub fn answer(
+        self,
+        now: UnixSecs,
+        input: M::Input,
+        key: EffectKey,
+    ) -> Result<Running<M, S>, Error> {
+        self.step(now, input, Some(key))
+    }
+
+    fn step(
+        mut self,
+        now: UnixSecs,
+        input: M::Input,
+        answers: Option<EffectKey>,
+    ) -> Result<Running<M, S>, Error> {
         let seq = self.next_seq;
         let entry = bincode::serialize(&Entry { now, input: &input })?;
         let effects = self.machine.step(now, input);
@@ -152,6 +197,7 @@ impl<M: Machine, S: Store> Engine<M, S> {
             entry,
             effects: encoded,
             snapshot,
+            answers,
         })?;
         self.next_seq = seq + 1;
         self.steps_since_snapshot = match snapshot_due {

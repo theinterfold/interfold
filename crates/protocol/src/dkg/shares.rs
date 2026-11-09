@@ -264,10 +264,10 @@ impl Dkg {
                 .all(|pair| pair[0].member < pair[1].member)
             && dealers.iter().all(|dealer| self.is_member(dealer.member))
             && dealers.iter().any(|dealer| dealer.member == reporter)
-            && self
-                .ready
-                .get(&reporter)
-                .is_none_or(|earlier| earlier.iter().all(|dealer| dealers.contains(dealer)))
+            && self.ready.get(&reporter).is_none_or(|earlier| {
+                earlier.len() < dealers.len()
+                    && earlier.iter().all(|dealer| dealers.contains(dealer))
+            })
     }
 
     pub(super) fn receive_ready(&mut self, reporter: Address, dealers: Vec<Dealer>) -> Effect {

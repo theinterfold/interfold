@@ -114,18 +114,21 @@ fn cgroup_limits(membership: &str) -> Vec<PathBuf> {
         let mut fields = line.splitn(3, ':');
         let (hierarchy, controllers) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""));
         let relative = fields.next().unwrap_or("").trim_start_matches('/');
+        // A parent's limit binds its children, so every cgroup on the way up counts.
+        let ancestors = Path::new(relative).ancestors();
         if hierarchy == "0" && controllers.is_empty() {
-            paths.push(
-                Path::new("/sys/fs/cgroup")
-                    .join(relative)
-                    .join("memory.max"),
+            paths.extend(
+                ancestors.map(|cgroup| Path::new("/sys/fs/cgroup").join(cgroup).join("memory.max")),
             );
         } else if controllers
             .split(',')
             .any(|controller| controller == "memory")
         {
-            let v1 = Path::new("/sys/fs/cgroup/memory").join(relative);
-            paths.push(v1.join("memory.limit_in_bytes"));
+            paths.extend(ancestors.map(|cgroup| {
+                Path::new("/sys/fs/cgroup/memory")
+                    .join(cgroup)
+                    .join("memory.limit_in_bytes")
+            }));
         }
     }
     paths.sort();
@@ -182,6 +185,8 @@ mod tests {
         assert!(v2.contains(&PathBuf::from(
             "/sys/fs/cgroup/system.slice/docker-abc.scope/memory.max"
         )));
+        // A limit on the slice above a service binds the service.
+        assert!(v2.contains(&PathBuf::from("/sys/fs/cgroup/system.slice/memory.max")));
         let v1 = cgroup_limits("12:cpu,cpuacct:/docker/abc\n7:memory:/docker/abc\n");
         assert!(v1.contains(&PathBuf::from(
             "/sys/fs/cgroup/memory/docker/abc/memory.limit_in_bytes"

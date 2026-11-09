@@ -8,7 +8,7 @@
 //! Every commit is one fsynced redb transaction.
 
 use e3_engine::{EffectKey, Step, Store, StoreError, Stored};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition};
 use std::path::Path;
 
 const JOURNAL: TableDefinition<u64, &[u8]> = TableDefinition::new("journal");
@@ -35,35 +35,17 @@ impl Journal {
         Ok(Self { db })
     }
 
+    /// What a stopped node's journal holds, without writing to it. A journal that was not closed
+    /// cleanly cannot be read this way: the next start recovers it.
+    pub fn read_existing(path: impl AsRef<Path>) -> Result<Stored, StoreError> {
+        let db = ReadOnlyDatabase::open(path)
+            .map_err(redb::Error::from)
+            .map_err(store_error)?;
+        read_tables(&db).map_err(store_error)
+    }
+
     fn read_tables(&self) -> Result<Stored, redb::Error> {
-        let txn = self.db.begin_read()?;
-        let snapshot = txn
-            .open_table(SNAPSHOT)?
-            .last()?
-            .map(|(seq, bytes)| (seq.value(), bytes.value().to_vec()));
-        let after = snapshot.as_ref().map_or(0, |(seq, _)| *seq);
-        let journal = txn
-            .open_table(JOURNAL)?
-            .range(after + 1..)?
-            .map(|entry| {
-                let (seq, bytes) = entry?;
-                Ok((seq.value(), bytes.value().to_vec()))
-            })
-            .collect::<Result<_, redb::StorageError>>()?;
-        let outbox = txn
-            .open_table(OUTBOX)?
-            .iter()?
-            .map(|entry| {
-                let (key, bytes) = entry?;
-                let (seq, index) = key.value();
-                Ok((EffectKey { seq, index }, bytes.value().to_vec()))
-            })
-            .collect::<Result<_, redb::StorageError>>()?;
-        Ok(Stored {
-            snapshot,
-            journal,
-            outbox,
-        })
+        read_tables(&self.db)
     }
 
     fn commit_step(&self, step: Step) -> Result<(), redb::Error> {
@@ -73,6 +55,9 @@ impl Journal {
         let mut outbox = txn.open_table(OUTBOX)?;
         for (key, bytes) in &step.effects {
             outbox.insert((key.seq, key.index), bytes.as_slice())?;
+        }
+        if let Some(key) = step.answers {
+            outbox.remove((key.seq, key.index))?;
         }
         drop(outbox);
         if let Some(snapshot) = &step.snapshot {
@@ -93,6 +78,37 @@ impl Journal {
         txn.commit()?;
         Ok(())
     }
+}
+
+fn read_tables(db: &impl ReadableDatabase) -> Result<Stored, redb::Error> {
+    let txn = db.begin_read()?;
+    let snapshot = txn
+        .open_table(SNAPSHOT)?
+        .last()?
+        .map(|(seq, bytes)| (seq.value(), bytes.value().to_vec()));
+    let after = snapshot.as_ref().map_or(0, |(seq, _)| *seq);
+    let journal = txn
+        .open_table(JOURNAL)?
+        .range(after + 1..)?
+        .map(|entry| {
+            let (seq, bytes) = entry?;
+            Ok((seq.value(), bytes.value().to_vec()))
+        })
+        .collect::<Result<_, redb::StorageError>>()?;
+    let outbox = txn
+        .open_table(OUTBOX)?
+        .iter()?
+        .map(|entry| {
+            let (key, bytes) = entry?;
+            let (seq, index) = key.value();
+            Ok((EffectKey { seq, index }, bytes.value().to_vec()))
+        })
+        .collect::<Result<_, redb::StorageError>>()?;
+    Ok(Stored {
+        snapshot,
+        journal,
+        outbox,
+    })
 }
 
 impl Store for Journal {
@@ -132,6 +148,7 @@ mod tests {
                 entry: b"a".to_vec(),
                 effects: vec![(key(1, 0), b"x".to_vec())],
                 snapshot: None,
+                answers: None,
             })
             .unwrap();
         journal
@@ -140,6 +157,7 @@ mod tests {
                 entry: b"b".to_vec(),
                 effects: vec![(key(2, 0), b"y".to_vec())],
                 snapshot: Some(b"state at 2".to_vec()),
+                answers: None,
             })
             .unwrap();
         journal
@@ -148,6 +166,7 @@ mod tests {
                 entry: b"c".to_vec(),
                 effects: vec![(key(3, 0), b"z".to_vec())],
                 snapshot: None,
+                answers: None,
             })
             .unwrap();
         journal.acknowledge(key(1, 0)).unwrap();
@@ -174,6 +193,7 @@ mod tests {
                     entry: vec![seq as u8],
                     effects: Vec::new(),
                     snapshot: (seq == 3).then(|| b"state at 3".to_vec()),
+                    answers: None,
                 })
                 .unwrap();
         }

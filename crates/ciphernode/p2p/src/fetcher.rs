@@ -10,7 +10,10 @@
 
 use crate::NetworkError;
 use alloy_primitives::{Address, B256};
-use e3_protocol::{node::PeerMessage, BlobRef, E3Id};
+use e3_protocol::{
+    node::{PeerMessage, MAX_MESSAGE_BLOBS},
+    BlobRef, E3Id,
+};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     hash::Hash,
@@ -25,7 +28,7 @@ const MAX_ACTIVE_PER_PEER: usize = 2;
 const MAX_ACTIVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_WAITING: usize = 4_096;
 /// No honest message names more: a dealer's shares for one member are the largest.
-const MAX_BLOBS: usize = 128;
+const MAX_BLOBS: usize = MAX_MESSAGE_BLOBS;
 const MAX_MESSAGE_BYTES: u64 = 512 * 1024 * 1024;
 /// A fetch that long in the queue ends, and the sender's re-send starts another.
 const LONGEST_FETCH: Duration = Duration::from_secs(10 * 60);
@@ -61,6 +64,7 @@ struct Fetch<P> {
 
 struct Ticket<P> {
     fetch: u64,
+    sender: Address,
     blob: BlobRef,
     peer_index: usize,
     peer: P,
@@ -156,6 +160,7 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
             *self.per_sender.entry(sender).or_default() += 1;
             let running = Ticket {
                 fetch,
+                sender,
                 blob,
                 peer_index,
                 peer,
@@ -205,19 +210,13 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
                 self.per_peer.remove(&running.peer);
             }
         }
-        if let Some(sender) = self.fetches.get(&running.fetch).map(|fetch| fetch.sender) {
-            self.lower_sender(sender);
-        }
-        Some(running)
-    }
-
-    fn lower_sender(&mut self, sender: Address) {
-        if let Some(count) = self.per_sender.get_mut(&sender) {
+        if let Some(count) = self.per_sender.get_mut(&running.sender) {
             *count -= 1;
             if *count == 0 {
-                self.per_sender.remove(&sender);
+                self.per_sender.remove(&running.sender);
             }
         }
+        Some(running)
     }
 
     /// The read's blob is in the store.
@@ -275,18 +274,7 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
             return;
         };
         self.of_message.remove(&fetch.id);
-        // Reads still running answer to no one: their room comes back now.
-        let orphans: Vec<u64> = self
-            .tickets
-            .iter()
-            .filter(|(_, running)| running.fetch == number)
-            .map(|(ticket, _)| *ticket)
-            .collect();
-        for ticket in orphans {
-            if self.release(ticket).is_some() {
-                self.lower_sender(fetch.sender);
-            }
-        }
+        // Reads still running keep their place: their bytes are still coming.
         for done in fetch.done {
             let _ = done.send(result.clone());
         }

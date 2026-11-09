@@ -201,12 +201,13 @@ pub struct Inventory {
     path: PathBuf,
 }
 
-/// What an inventory says.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Recorded {
-    /// No list, or one that cannot be read: where this key ran is not known.
-    Unknown,
-    Folders(Vec<PathBuf>),
+/// What an inventory says. No list, or one that cannot be read, knows nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recorded {
+    /// Whether these are all the folders the key ran in. Only a list begun with its key is: a
+    /// list that was lost says nothing of where the key ran before.
+    pub complete: bool,
+    pub folders: Vec<PathBuf>,
 }
 
 impl Inventory {
@@ -217,55 +218,62 @@ impl Inventory {
         }
     }
 
+    /// The inventory at `path`, if that is the file of one.
+    pub fn at(path: &Path) -> Option<Self> {
+        (path.file_name()? == INVENTORY).then(|| Self {
+            path: path.to_path_buf(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn read(&self) -> Recorded {
         fs::read(&self.path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .map_or(Recorded::Unknown, Recorded::Folders)
+            .unwrap_or_default()
     }
 
-    /// Starts an empty list for a new key; a list already here stays.
+    /// Starts the list of a new key, which has run nowhere yet. A list already here stays.
     pub fn create(&self) -> Result<(), DirError> {
         if self.path.exists() {
             return Ok(());
         }
-        self.write(&[])
+        self.write(&Recorded {
+            complete: true,
+            folders: Vec::new(),
+        })
     }
 
     /// Records `folder`, durably, before anything is written there, so a crash during its first
-    /// start leaves no state the list does not name.
+    /// start leaves no state the list does not name. A list that was lost stays incomplete.
     pub fn record(&self, folder: &Path) -> Result<(), DirError> {
-        let mut folders = self.known();
-        if !folders.iter().any(|known| known == folder) {
-            folders.push(folder.to_path_buf());
-            self.write(&folders)?;
+        let mut recorded = self.read();
+        if recorded.folders.iter().any(|known| known == folder) {
+            return Ok(());
         }
-        Ok(())
+        recorded.folders.push(folder.to_path_buf());
+        self.write(&recorded)
     }
 
     /// A reset emptied `folder` on purpose, so its absence no longer means anything is lost.
     pub fn forget(&self, folder: &Path) -> Result<(), DirError> {
-        let mut folders = self.known();
-        let before = folders.len();
-        folders.retain(|known| known != folder);
-        match folders.len() == before {
+        let mut recorded = self.read();
+        let before = recorded.folders.len();
+        recorded.folders.retain(|known| known != folder);
+        match recorded.folders.len() == before {
             true => Ok(()),
-            false => self.write(&folders),
+            false => self.write(&recorded),
         }
     }
 
-    fn known(&self) -> Vec<PathBuf> {
-        match self.read() {
-            Recorded::Folders(folders) => folders,
-            Recorded::Unknown => Vec::new(),
-        }
-    }
-
-    fn write(&self, folders: &[PathBuf]) -> Result<(), DirError> {
+    fn write(&self, recorded: &Recorded) -> Result<(), DirError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        write_durably(&self.path, &serde_json::to_vec_pretty(folders)?)?;
+        write_durably(&self.path, &serde_json::to_vec_pretty(recorded)?)?;
         Ok(())
     }
 }
@@ -380,29 +388,55 @@ mod tests {
         ));
     }
 
+    fn recorded(complete: bool, folders: &[&Path]) -> Recorded {
+        Recorded {
+            complete,
+            folders: folders.iter().map(|folder| folder.to_path_buf()).collect(),
+        }
+    }
+
     /// The list is what tells a missing data volume from a node that never ran.
     #[test]
-    fn an_inventory_knows_where_a_key_ran_and_says_when_it_cannot_tell() {
+    fn a_new_key_s_list_knows_every_folder_it_ran_in() {
         let dir = tempfile::tempdir().unwrap();
-        let key = dir.path().join("cn1/key");
-        let inventory = Inventory::beside(&key);
-        assert_eq!(inventory.read(), Recorded::Unknown);
+        let inventory = Inventory::beside(&dir.path().join("cn1/key"));
+        assert_eq!(inventory.read(), Recorded::default());
 
         inventory.create().unwrap();
-        assert_eq!(inventory.read(), Recorded::Folders(Vec::new()));
+        assert_eq!(inventory.read(), recorded(true, &[]));
 
         let folder = dir.path().join("data/cn1/v2");
         inventory.record(&folder).unwrap();
         inventory.record(&folder).unwrap();
-        assert_eq!(inventory.read(), Recorded::Folders(vec![folder.clone()]));
+        assert_eq!(inventory.read(), recorded(true, &[&folder]));
 
         inventory.create().unwrap();
-        assert_eq!(inventory.read(), Recorded::Folders(vec![folder.clone()]));
+        assert_eq!(inventory.read(), recorded(true, &[&folder]));
 
         inventory.forget(&folder).unwrap();
-        assert_eq!(inventory.read(), Recorded::Folders(Vec::new()));
+        assert_eq!(inventory.read(), recorded(true, &[]));
+    }
+
+    /// A start must not turn "where this key ran is not known" into a short list that looks whole.
+    #[test]
+    fn a_list_that_was_lost_stays_incomplete() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("cn1/key");
+        let inventory = Inventory::beside(&key);
+        let folder = dir.path().join("data/cn1/v2");
+
+        inventory.record(&folder).unwrap();
+        assert_eq!(inventory.read(), recorded(false, &[&folder]));
 
         fs::write(key.with_file_name(INVENTORY), b"not json").unwrap();
-        assert_eq!(inventory.read(), Recorded::Unknown);
+        assert_eq!(inventory.read(), Recorded::default());
+        inventory.record(&folder).unwrap();
+        assert_eq!(inventory.read(), recorded(false, &[&folder]));
+    }
+
+    #[test]
+    fn only_the_file_of_an_inventory_is_one() {
+        assert!(Inventory::at(Path::new("cn1/stores.json")).is_some());
+        assert!(Inventory::at(Path::new("cn1/key")).is_none());
     }
 }

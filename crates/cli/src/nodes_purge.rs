@@ -10,7 +10,8 @@ use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
 use e3_console::Console;
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
-use e3_node::dir::{NodeDir, Recorded};
+use e3_node::dir::{NodeDir, Recorded, State};
+use std::collections::BTreeSet;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -103,15 +104,39 @@ fn survey(nodes: &[NodeConfig], dir: &Path, fences: &mut Vec<ProcessFence>) -> R
         ));
     }
     // Everything under both folders goes: a profile's `data_dir` can put a node anywhere in them,
-    // and a profile removed from the configuration leaves its folder behind.
+    // and a profile removed from the configuration leaves its folder, and its key's list, behind.
     let named: Vec<PathBuf> = nodes.iter().map(NodeConfig::node_data_dir).collect();
-    let mut unchecked = Vec::new();
+    let own: BTreeSet<PathBuf> = nodes
+        .iter()
+        .map(|node| node_state::canonical(node_state::inventory(node).path()))
+        .collect();
+    let (mut unchecked, mut left_behind) = (Vec::new(), Vec::new());
     for root in DELETED {
-        unchecked.extend(node_state::guard(&dir.join(root), &named, fences)?);
+        let found = node_state::guard(&dir.join(root), &named, fences)?;
+        unchecked.extend(found.unchecked);
+        left_behind.extend(
+            found
+                .inventories
+                .into_iter()
+                .filter(|list| !own.contains(&node_state::canonical(list.path()))),
+        );
     }
     for node in nodes {
-        plan.check(&node.name(), &node_state::dir(node));
-        check_recorded(&mut plan, node);
+        let current = node_state::dir(node);
+        plan.check(&node.name(), &current);
+        let recorded = node_state::inventory(node).read();
+        if !recorded.complete && (node.db_file().exists() || node.key_file().exists()) {
+            plan.blockers.push(no_full_record(&node.name()));
+        }
+        check_recorded(&mut plan, &node.name(), recorded, Some(current.path()));
+    }
+    for list in left_behind {
+        let owner = format!("the key beside {}", list.path().display());
+        let recorded = list.read();
+        if !recorded.complete {
+            plan.blockers.push(no_full_record(&owner));
+        }
+        check_recorded(&mut plan, &owner, recorded, None);
     }
     plan.blockers.extend(unchecked.iter().map(|folder| {
         format!(
@@ -123,37 +148,24 @@ fn survey(nodes: &[NodeConfig], dir: &Path, fences: &mut Vec<ProcessFence>) -> R
     Ok(plan)
 }
 
-/// Adds the folders `node`'s key has run in. One that is gone may be a data volume that is not
-/// mounted, and without a list nothing says where the key ran.
-fn check_recorded(plan: &mut Plan, node: &NodeConfig) {
-    let current = node_state::dir(node);
-    match node_state::inventory(node).read() {
-        Recorded::Folders(folders) => {
-            for folder in folders {
-                if folder == current.path() && folder.exists() {
-                    continue;
-                }
-                let name = node.name();
-                match folder.exists() {
-                    true => plan.check(
-                        &format!("{name}'s folder at {}", folder.display()),
-                        &NodeDir::new(folder),
-                    ),
-                    false => plan.blockers.push(format!(
-                        "{name} ran in {}, which is not there now (is its volume mounted?), so \
-                         its E3s cannot be checked",
-                        folder.display()
-                    )),
-                }
-            }
+fn no_full_record(owner: &str) -> String {
+    format!("{owner} has keys but no full record of where it ran, so its E3s elsewhere cannot be checked")
+}
+
+/// Adds the folders a key's list names; `checked` is one already looked at. A folder that holds no
+/// node now, gone or empty, may be a data volume that is not mounted.
+fn check_recorded(plan: &mut Plan, owner: &str, recorded: Recorded, checked: Option<&Path>) {
+    for folder in recorded.folders {
+        let dir = NodeDir::new(&folder);
+        match dir.state(None) {
+            State::Absent => plan.blockers.push(format!(
+                "{owner} ran in {}, which holds nothing now (is its volume mounted?), so its E3s \
+                 cannot be checked",
+                folder.display()
+            )),
+            _ if Some(folder.as_path()) == checked => {}
+            _ => plan.check(&format!("{owner}'s folder at {}", folder.display()), &dir),
         }
-        Recorded::Unknown if node.db_file().exists() || node.key_file().exists() => {
-            plan.blockers.push(format!(
-                "{} has keys but no record of where it ran, so its E3s elsewhere cannot be checked",
-                node.name()
-            ));
-        }
-        Recorded::Unknown => {}
     }
 }
 
@@ -308,11 +320,67 @@ mod tests {
         let error = purge(&config, config_file.clone(), dir.path(), false)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("not there now"), "{error:#}");
+        assert!(error.to_string().contains("holds nothing now"), "{error:#}");
         assert!(config.key_file().exists());
 
         purge(&config, config_file, dir.path(), true).await?;
         assert!(!config.key_file().exists());
+        Ok(())
+    }
+
+    /// An empty mount point is there, and looks like a node that holds nothing.
+    #[tokio::test]
+    async fn an_empty_folder_the_key_ran_in_stops_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        crate::node_state::inventory(&config).create()?;
+        let current = crate::node_state::dir(&config);
+        crate::node_state::inventory(&config).record(current.path())?;
+        std::fs::create_dir_all(current.path())?;
+
+        let error = purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("holds nothing now"), "{error:#}");
+        Ok(())
+    }
+
+    /// Removing a profile leaves its key and list behind, and the state the list names elsewhere.
+    #[tokio::test]
+    async fn the_list_of_a_removed_profile_still_counts() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        let key = dir.path().join(".interfold/config/removed/key");
+        let list = e3_node::dir::Inventory::beside(&key);
+        list.create()?;
+        list.record(&dir.path().join("volume/removed/v2"))?;
+
+        let error = purge(&config, config_file.clone(), dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("volume/removed"), "{error:#}");
+        assert!(list.path().exists());
+
+        purge(&config, config_file, dir.path(), true).await?;
+        assert!(!list.path().exists());
+        Ok(())
+    }
+
+    /// A list that lost its history must not let the purge delete the key.
+    #[tokio::test]
+    async fn keys_whose_list_is_not_whole_stop_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (config, config_file) = one_node(dir.path())?;
+        std::fs::create_dir_all(config.key_file().parent().unwrap())?;
+        std::fs::write(config.key_file(), b"key")?;
+        let current = crate::node_state::dir(&config);
+        crate::node_state::inventory(&config).record(current.path())?;
+        std::fs::create_dir_all(current.path())?;
+        let error = purge(&config, config_file, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no full record"), "{error:#}");
+        assert!(config.key_file().exists());
         Ok(())
     }
 
@@ -325,7 +393,7 @@ mod tests {
         let error = purge(&config, config_file.clone(), dir.path(), false)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("no record"), "{error:#}");
+        assert!(error.to_string().contains("no full record"), "{error:#}");
 
         crate::node_state::inventory(&config).create()?;
         purge(&config, config_file, dir.path(), false).await?;

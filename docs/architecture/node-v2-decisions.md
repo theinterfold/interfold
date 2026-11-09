@@ -331,6 +331,28 @@ Each rule is checkable in review.
   bounded feed on disk, which `interfold node events` and the status page read. Dropped messages
   make none, so a flood writes nothing durable.
 
+- **D50. An accusation window must have a reason to stay open.** A member opens one window per
+  accusation, in the whole life of an E3: a member that follows the protocol accuses once, and
+  windows that follow each other would keep a completed E3 and its key share without end. A window
+  on a proof this node found holding ends at that check, and the same proof opens no other. Votes
+  that wait for an accusation keep nothing. The first copy of a ballot can carry another proof, so a
+  proof that holds also must not keep real evidence out: the real accusation, sent again, opens the
+  window once the other one ends.
+
+- **D51. Who carried a message does not matter; who signed it does.** A bootstrap peer offers no
+  blobs, so it is never asked for them. Its gossip is still taken: refusing the first copy of a
+  message would make gossipsub's duplicate filter drop the honest copies behind it.
+
+- **D52. The deployment's name is the Interfold address alone.** The chain ID is optional in the
+  configuration, and two nodes of one deployment must never disagree on the name. Two deployments at
+  one address on different chains would share a namespace, which their different chain facts and
+  operators already keep apart.
+
+- **D53. The operator's RPC is inside the node's trust boundary.** The node acts on what one RPC
+  says: its logs, its receipts, and the reverts that end a transaction's retries. A malicious RPC
+  can already make the node miss or take part in anything. Checking each answer against a second,
+  independent RPC is the design for a node that should not trust its RPC, and is not built.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

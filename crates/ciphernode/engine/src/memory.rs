@@ -49,6 +49,9 @@ impl Store for MemoryStore {
         let mut inner = self.inner();
         inner.journal.insert(step.seq, step.entry);
         inner.outbox.extend(step.effects);
+        if let Some(key) = step.answers {
+            inner.outbox.remove(&key);
+        }
         if let Some(snapshot) = step.snapshot {
             inner.snapshot = Some((step.seq, snapshot));
         }

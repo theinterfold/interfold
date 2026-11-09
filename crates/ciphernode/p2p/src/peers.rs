@@ -47,6 +47,8 @@ const OUTAGE_DIALS: u32 = 3;
 const IDENTIFY_LIMIT: Duration = Duration::from_secs(30);
 /// How long a peer that identified as something else stays refused.
 const REJECTED_FOR: Duration = Duration::from_secs(10 * 60);
+/// How long a peer that did not identify in time stays refused: it may only have been slow.
+const UNIDENTIFIED_FOR: Duration = Duration::from_secs(30);
 const MAX_REJECTED: usize = 1_024;
 
 /// How long a connected peer may stay without the network's topic.
@@ -127,12 +129,24 @@ impl PeerBook {
         let connected = |peer: &PeerId| self.connections.contains_key(peer);
         let mut due = Vec::new();
         let mut waits = Vec::new();
-        for (index, peer) in self.configured.iter().enumerate() {
-            if peer.peer().is_some_and(|peer| connected(&peer)) || now < peer.next_dial {
+        for (index, configured) in self.configured.iter().enumerate() {
+            let settled = configured
+                .peer()
+                .is_some_and(|peer| connected(&peer) || !self.may_dial(&peer, now));
+            if settled || now < configured.next_dial {
                 continue;
             }
-            due.push(peer.address.clone());
-            due.extend(peer.fallback.clone());
+            due.push(configured.address.clone());
+            // Under the identity the operator named: a concrete address is no proof of who is
+            // there now.
+            let fallback = configured
+                .fallback
+                .clone()
+                .map(|fallback| match configured.pinned {
+                    Some(pinned) => fallback.with(Protocol::P2p(pinned)),
+                    None => fallback,
+                });
+            due.extend(fallback);
             waits.push(index);
         }
         for index in waits {
@@ -151,10 +165,15 @@ impl PeerBook {
         let wait = FIRST_REDIAL
             .saturating_mul(1 << doublings)
             .min(LONGEST_REDIAL);
+        self.with_jitter(wait, self.configured[index].address.as_ref(), failed)
+    }
+
+    /// `wait` and a share of it that differs from node to node, so nodes do not dial in step.
+    fn with_jitter(&self, wait: Duration, subject: &[u8], attempt: u32) -> Duration {
         let mut seed = Sha256::new();
         seed.update(self.me.to_bytes());
-        seed.update(self.configured[index].address.as_ref());
-        seed.update(failed.to_be_bytes());
+        seed.update(subject);
+        seed.update(attempt.to_be_bytes());
         let seed: [u8; 8] = seed.finalize()[..8].try_into().expect("eight bytes");
         let percent = u64::from_be_bytes(seed) % (REDIAL_JITTER_PERCENT + 1);
         wait + wait.mul_f64(percent as f64 / 100.0)
@@ -190,7 +209,8 @@ impl PeerBook {
         now: Instant,
     ) {
         let bare = strip_peer_id(address.clone());
-        for configured in &mut self.configured {
+        let rejected = self.is_rejected(&peer, now);
+        for configured in self.configured.iter_mut().filter(|_| !rejected) {
             let dialed = strip_peer_id(configured.address.clone()) == bare;
             if configured.pinned.is_none() && dialed {
                 configured.reached = Some(peer);
@@ -240,6 +260,11 @@ impl PeerBook {
 
     /// The peer identified as another network or release, or lacks what the network needs.
     pub(crate) fn reject(&mut self, peer: PeerId, now: Instant) {
+        self.remember_rejection(peer, now + REJECTED_FOR, now);
+        self.awaiting_identify.remove(&peer);
+    }
+
+    fn remember_rejection(&mut self, peer: PeerId, until: Instant, now: Instant) {
         self.rejected.retain(|_, until| now < *until);
         if self.rejected.len() >= MAX_REJECTED && !self.rejected.contains_key(&peer) {
             let soonest = self.rejected.iter().min_by_key(|(_, until)| **until);
@@ -247,8 +272,7 @@ impl PeerBook {
                 self.rejected.remove(&soonest);
             }
         }
-        self.rejected.insert(peer, now + REJECTED_FOR);
-        self.awaiting_identify.remove(&peer);
+        self.rejected.insert(peer, until);
     }
 
     pub(crate) fn is_rejected(&self, peer: &PeerId, now: Instant) -> bool {
@@ -265,8 +289,14 @@ impl PeerBook {
             .collect();
         for peer in &late {
             self.awaiting_identify.remove(peer);
+            self.remember_rejection(*peer, now + UNIDENTIFIED_FOR, now);
         }
         late
+    }
+
+    /// Whether `peer` said it takes no part in messages.
+    pub(crate) fn takes_no_messages(&self, peer: &PeerId) -> bool {
+        self.no_messages.contains(peer)
     }
 
     /// A dial of `address` reached `obtained`, not the peer it expected. For an address the
@@ -331,13 +361,16 @@ impl PeerBook {
                 self.backoff.remove(&soonest);
             }
         }
-        let (disconnects, redial) = self.backoff.entry(peer).or_insert((0, now));
-        *disconnects = disconnects.saturating_add(1);
+        let disconnects = self
+            .backoff
+            .get(&peer)
+            .map_or(1, |(disconnects, _)| disconnects.saturating_add(1));
         let doublings = disconnects.saturating_sub(1).min(16);
         let wait = SUBSCRIPTION_GRACE
             .saturating_mul(1 << doublings)
             .min(MAX_SUBSCRIPTION_BACKOFF);
-        *redial = now + wait;
+        let wait = self.with_jitter(wait, &peer.to_bytes(), disconnects);
+        self.backoff.insert(peer, (disconnects, now + wait));
         wait
     }
 
@@ -587,6 +620,69 @@ mod tests {
         );
     }
 
+    /// A concrete address is no proof of who answers there now, so an identity the operator
+    /// named goes with it.
+    #[test]
+    fn the_last_address_of_a_named_peer_is_dialed_under_its_name() {
+        let start = Instant::now();
+        let peer = PeerId::random();
+        let named = address(&format!("/dns4/boot.example/udp/9501/quic-v1/p2p/{peer}"));
+        let mut book = book(vec![named.clone()], start);
+        let connection = ConnectionId::new_unchecked(1);
+        book.established(
+            peer,
+            connection,
+            named.clone(),
+            Some(address(ADDRESS)),
+            start,
+        );
+        book.closed(peer, connection);
+        let concrete = address(&format!("{ADDRESS}/p2p/{peer}"));
+        assert_eq!(
+            book.due_dials(start + Duration::from_secs(60)),
+            [named, concrete]
+        );
+    }
+
+    #[test]
+    fn a_configured_peer_that_was_refused_is_not_dialed_until_its_time_is_over() {
+        let start = Instant::now();
+        let mut book = book(vec![address(ADDRESS)], start);
+        let peer = PeerId::random();
+        let connection = ConnectionId::new_unchecked(1);
+        book.established(peer, connection, address(ADDRESS), None, start);
+        book.closed(peer, connection);
+        book.reject(peer, start);
+        assert!(book.due_dials(start + Duration::from_secs(60)).is_empty());
+        book.established(
+            peer,
+            ConnectionId::new_unchecked(2),
+            address(ADDRESS),
+            None,
+            start,
+        );
+        book.closed(peer, ConnectionId::new_unchecked(2));
+        assert_eq!(book.due_dials(start + REJECTED_FOR).len(), 1);
+    }
+
+    #[test]
+    fn a_peer_that_did_not_identify_is_not_dialed_for_a_moment() {
+        let start = Instant::now();
+        let mut book = book(Vec::new(), start);
+        let peer = PeerId::random();
+        book.established(
+            peer,
+            ConnectionId::new_unchecked(1),
+            address(ADDRESS),
+            None,
+            start,
+        );
+        let late = start + IDENTIFY_LIMIT;
+        assert_eq!(book.unidentified(late), [peer]);
+        assert!(!book.may_dial(&peer, late));
+        assert!(book.may_dial(&peer, late + UNIDENTIFIED_FOR));
+    }
+
     #[test]
     fn an_address_without_an_identity_takes_the_one_that_answers_there_and_a_named_one_does_not() {
         let start = Instant::now();
@@ -706,14 +802,12 @@ mod tests {
         let mut book = book(Vec::new(), start);
         let peer = PeerId::random();
         let first = book.disconnected_unsubscribed(peer, start);
-        assert_eq!(first, SUBSCRIPTION_GRACE);
+        assert!(first >= SUBSCRIPTION_GRACE && first <= SUBSCRIPTION_GRACE * 6 / 5);
         assert!(!book.may_dial(&peer, start));
         let redialed = start + first;
         assert!(book.may_dial(&peer, redialed));
-        assert_eq!(
-            book.disconnected_unsubscribed(peer, redialed),
-            SUBSCRIPTION_GRACE * 2
-        );
+        let second = book.disconnected_unsubscribed(peer, redialed);
+        assert!(second >= SUBSCRIPTION_GRACE * 2);
     }
 
     #[test]

@@ -301,6 +301,22 @@ async fn a_ticket_the_chain_has_or_cannot_take_sends_nothing() {
     }
 }
 
+/// An operator that is not eligible now can be before the deadline, so its ticket waits.
+#[tokio::test(start_paused = true)]
+async fn a_ticket_waits_out_an_operator_that_is_not_eligible_yet() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(reverts(Registry::NodeNotEligible {}));
+    });
+    writer(&account, &blobs)
+        .submit(&submission(Transaction::SubmitTicket { ticket: 3 }))
+        .await
+        .unwrap();
+    assert_eq!(account.labels(), ["submitTicket"]);
+}
+
 /// With slashing off for this reason, nothing the node waits for turns it on.
 #[tokio::test(start_paused = true)]
 async fn a_slash_of_a_disabled_reason_sends_nothing() {

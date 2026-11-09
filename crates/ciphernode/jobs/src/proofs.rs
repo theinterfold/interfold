@@ -22,7 +22,7 @@ use e3_zk_prover::Proof;
 use e3_zk_prover::{Cancel, Provable, ZkProver};
 use num_bigint::BigInt;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use std::{fmt::Display, fs, io};
+use std::{collections::BTreeSet, fmt::Display, fs, io};
 
 pub enum Proofs {
     /// Proofs only the mock verifiers of a test deployment accept.
@@ -178,7 +178,12 @@ impl<B: Blobs> Jobs<'_, B> {
         proofs: impl IntoIterator<Item = (ProofType, &'a ZkProof)>,
     ) -> Result<Verdict, JobError> {
         let artifacts = self.artifacts(prover, params)?;
+        // A message can repeat one proof to make the node verify it many times.
+        let mut seen = BTreeSet::new();
         for (proof_type, proof) in proofs {
+            if !seen.insert((proof_type, proof)) {
+                continue;
+            }
             let loaded = load(&self.blobs, proof, circuit(proof_type))?;
             let valid = prover.verify(&loaded, &self.work("verify"), &artifacts)?;
             if !valid {

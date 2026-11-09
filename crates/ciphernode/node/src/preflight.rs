@@ -19,7 +19,7 @@ use alloy_primitives::Address;
 use e3_chain::{standing, Contracts, Release, Standing};
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold};
 use e3_jobs::{Circuits, Proofs};
-use e3_zk_prover::{ZkBackend, ZkProver};
+use e3_zk_prover::{SetupStatus, ZkBackend, ZkProver};
 use std::{collections::BTreeSet, fmt::Display, future::Future, time::Duration};
 use tokio::time::Instant;
 use tracing::{info, warn};
@@ -41,6 +41,8 @@ pub struct Verified {
     pub(crate) proofs: Proofs,
     /// Threads the node's jobs may use.
     pub(crate) threads: usize,
+    /// Jobs that make proofs at once.
+    pub(crate) proof_slots: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +61,8 @@ pub enum Refused {
     },
     #[error("the ciphernode registry has no randomness provider")]
     NoRandomness,
+    #[error("the prover is not ready after installing it: {0}")]
+    ProverNotReady(String),
     #[error("{what} did not succeed in {after:?}; the last failure was: {last}")]
     TimedOut {
         what: &'static str,
@@ -111,7 +115,7 @@ pub async fn verify(config: Config) -> anyhow::Result<Verified> {
         interfold: config.interfold,
         operator,
     })?;
-    let (proofs, threads) = proofs(&config, deadline).await?;
+    let (proofs, threads, proof_slots) = proofs(&config, deadline).await?;
     info!(
         chain = chain.id,
         "the chain and this host fit the configuration"
@@ -124,6 +128,7 @@ pub async fn verify(config: Config) -> anyhow::Result<Verified> {
         standing,
         proofs,
         threads,
+        proof_slots,
     })
 }
 
@@ -138,18 +143,13 @@ fn positive(config: &Config) -> Result<(), Refused> {
     if config.max_log_range == 0 {
         return Err(Refused::NotPositive("the log range"));
     }
-    let prover = match &config.proving {
-        Proving::Circuits(prover) => prover,
-        #[cfg(any(test, feature = "testing"))]
-        Proving::AsInstalled(prover) => prover,
-        #[cfg(any(test, feature = "testing"))]
-        Proving::Placeholder => return Ok(()),
-    };
-    if prover.bb_timeout.is_zero() {
-        return Err(Refused::NotPositive("the bb timeout"));
-    }
-    if prover.concurrent == 0 {
-        return Err(Refused::NotPositive("the number of concurrent proofs"));
+    if let Some(prover) = config.proving.prover() {
+        if prover.bb_timeout.is_zero() {
+            return Err(Refused::NotPositive("the bb timeout"));
+        }
+        if prover.concurrent == 0 {
+            return Err(Refused::NotPositive("the number of concurrent proofs"));
+        }
     }
     Ok(())
 }
@@ -210,7 +210,7 @@ impl ChainFacts {
 
 /// The node's proofs and the threads its jobs may use. The host must fit a prover before anything
 /// is installed for it.
-async fn proofs(config: &Config, deadline: Instant) -> anyhow::Result<(Proofs, usize)> {
+async fn proofs(config: &Config, deadline: Instant) -> anyhow::Result<(Proofs, usize, usize)> {
     let (prover, install) = match &config.proving {
         Proving::Circuits(prover) => (prover, true),
         #[cfg(any(test, feature = "testing"))]
@@ -218,7 +218,7 @@ async fn proofs(config: &Config, deadline: Instant) -> anyhow::Result<(Proofs, u
         #[cfg(any(test, feature = "testing"))]
         Proving::Placeholder => {
             let threads = memory::threads_for_placeholders(config.reserved_threads);
-            return Ok((Proofs::Placeholder, threads));
+            return Ok((Proofs::Placeholder, threads, threads));
         }
     };
     let capacity = memory::capacity(prover.concurrent, config.reserved_threads)?;
@@ -239,13 +239,22 @@ async fn proofs(config: &Config, deadline: Instant) -> anyhow::Result<(Proofs, u
             || backend.ensure_installed(),
         )
         .await?;
+        // An operator's own `bb` is not replaced, so installing can leave one that cannot work.
+        match backend.check_status().await {
+            SetupStatus::Ready => {}
+            status => return Err(Refused::ProverNotReady(format!("{status:?}")).into()),
+        }
     }
     let circuits = Circuits::new(
         ZkProver::new(&backend),
         capacity.proofs,
         capacity.bb_threads,
     )?;
-    Ok((Proofs::Circuits(Box::new(circuits)), capacity.threads))
+    Ok((
+        Proofs::Circuits(Box::new(circuits)),
+        capacity.threads,
+        capacity.proofs,
+    ))
 }
 
 /// Repeats `attempt`, each try limited to `limit`, until it succeeds or `deadline` passes.
