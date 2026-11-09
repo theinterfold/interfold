@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Account, Call, Contracts, Estimate, RpcError};
+use crate::{Account, Call, Estimate, RpcError};
 use alloy::{
     eips::{eip1559::Eip1559Estimation, BlockId},
     network::TransactionBuilder,
@@ -12,8 +12,6 @@ use alloy::{
     rpc::types::TransactionRequest,
 };
 use alloy_primitives::{keccak256, B256};
-use alloy_sol_types::SolCall;
-use e3_evm_contracts::{IBondingRegistry, IInterfold, INodeReleaseRegistry};
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -274,111 +272,15 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     }
 }
 
-/// The node release this build is. The registries count an operator active only once it
-/// acknowledged a release the chain accepts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Release {
-    pub id: B256,
-    pub protocol_version: u32,
-    pub node_generation: u32,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ReleaseError {
-    #[error(
-        "the chain requires protocol {protocol} and node generation {generation} or later; \
-         this node is protocol {ours_protocol}, generation {ours_generation}"
-    )]
-    Unsupported {
-        protocol: u32,
-        generation: u32,
-        ours_protocol: u32,
-        ours_generation: u32,
-    },
-    #[error("acknowledging the release reverted")]
-    Reverted,
-    #[error(transparent)]
-    Rpc(#[from] RpcError),
-}
-
 impl<P: Provider + WalletProvider + Send + Sync> Wallet<P> {
-    /// Acknowledges `release` for the operator, unless the release registry has it already and the
-    /// operator is active or not registered. A chain that requires another protocol, or a later
-    /// node generation, cannot run this node.
-    pub async fn acknowledge_release(
-        &self,
-        contracts: &Contracts,
-        release: Release,
-    ) -> Result<(), ReleaseError> {
-        let operator = self.provider.default_signer_address();
-        let address = IInterfold::new(contracts.interfold, &self.provider)
-            .nodeReleaseRegistry()
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let registry = INodeReleaseRegistry::new(address, &self.provider);
-        let protocol = registry
-            .requiredProtocolVersion()
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let generation = registry
-            .requiredNodeGeneration()
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        if protocol != release.protocol_version || release.node_generation < generation {
-            return Err(ReleaseError::Unsupported {
-                protocol,
-                generation,
-                ours_protocol: release.protocol_version,
-                ours_generation: release.node_generation,
-            });
-        }
-        let acknowledged = registry
-            .operatorNodeRelease(operator)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let bonding = IBondingRegistry::new(contracts.bonding, &self.provider);
-        let registered = bonding
-            .isRegistered(operator)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let active = bonding
-            .isActive(operator)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let current = acknowledged.releaseId == release.id
-            && acknowledged.protocolVersion == release.protocol_version
-            && acknowledged.nodeGeneration == release.node_generation;
-        if current && (!registered || active) {
-            return Ok(());
-        }
-        let call = Call {
-            label: "acknowledgeNodeRelease",
-            to: address,
-            data: INodeReleaseRegistry::acknowledgeNodeReleaseCall {
-                releaseId: release.id,
-                protocolVersion: release.protocol_version,
-                nodeGeneration: release.node_generation,
+    /// Sends `call` if the chain takes it, and says whether it landed.
+    pub async fn send_once(&self, call: &Call) -> Result<bool, RpcError> {
+        match self.estimate(call).await? {
+            Estimate::Gas(gas) => {
+                self.send(call, gas.saturating_mul(call.gas_multiplier))
+                    .await
             }
-            .abi_encode()
-            .into(),
-            gas_multiplier: 2,
-            not_yet: &[],
-        };
-        let Estimate::Gas(gas) = self.estimate(&call).await? else {
-            return Err(ReleaseError::Reverted);
-        };
-        match self
-            .send(&call, gas.saturating_mul(call.gas_multiplier))
-            .await?
-        {
-            true => Ok(()),
-            false => Err(ReleaseError::Reverted),
+            Estimate::Reverts(_) => Ok(false),
         }
     }
 }

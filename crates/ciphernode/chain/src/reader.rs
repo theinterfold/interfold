@@ -7,6 +7,7 @@
 use crate::{decode, Contracts, DecodeError, Decoded, PendingRead, RawLog, RpcError};
 use alloy_primitives::Address;
 use alloy_primitives::U256;
+use e3_evm::log_window::LogWindow;
 use e3_protocol::{
     dkg::DkgTiming,
     node::{ChainEvent, ChainFact, CommitteeRequest, CommitteeSeed},
@@ -17,7 +18,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::Instant;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// A reader waiting for announcements still reads this often, so the health check sees it read
 /// and a log the chain node did not announce, as across a reconnection, is read late rather than
@@ -33,10 +34,20 @@ const LONGEST_ANSWER: Duration = Duration::from_secs(30);
 struct Unanswered;
 
 /// The answer to `request`, or a failure once the chain node took too long.
-async fn answer<T>(request: impl Future<Output = Result<T, RpcError>>) -> Result<T, RpcError> {
+async fn answer<T, E: From<RpcError>>(request: impl Future<Output = Result<T, E>>) -> Result<T, E> {
     tokio::time::timeout(LONGEST_ANSWER, request)
         .await
-        .unwrap_or_else(|_| Err(RpcError::new(Unanswered)))
+        .unwrap_or_else(|_| Err(RpcError::new(Unanswered).into()))
+}
+
+/// Why a chain node gave no logs.
+#[derive(Debug, thiserror::Error)]
+pub enum LogsError {
+    /// The provider refuses this many blocks or logs in one answer; fewer would do.
+    #[error("the provider refused the range: {0}")]
+    TooWide(RpcError),
+    #[error(transparent)]
+    Failed(#[from] RpcError),
 }
 
 /// What the reader needs from a chain node.
@@ -59,7 +70,7 @@ pub trait Rpc {
         addresses: &[Address],
         from: u64,
         to: u64,
-    ) -> impl Future<Output = Result<Vec<RawLog>, RpcError>> + Send;
+    ) -> impl Future<Output = Result<Vec<RawLog>, LogsError>> + Send;
 
     /// The registry's sortition state of `e3`.
     fn sortition(
@@ -142,11 +153,9 @@ pub struct Reader<R> {
     contracts: Contracts,
     /// Blocks closer to the head than this may still be replaced.
     confirmations: u64,
-    max_range: u64,
-    /// How many blocks the next `logs` request covers. Providers cap a request's blocks or logs
-    /// with different limits, so a failed request halves it and a successful one doubles it, up
-    /// to `max_range`.
-    range: u64,
+    /// How many blocks the next `logs` request covers. A provider's limit does not change, so what
+    /// the provider refused is not asked of it again.
+    window: LogWindow,
     /// The first block not read yet.
     next: u64,
     /// The chain node's head at the last poll.
@@ -171,13 +180,11 @@ impl<R: Rpc> Reader<R> {
         from: u64,
         poll: Duration,
     ) -> Self {
-        let max_range = max_range.max(1);
         Self {
             rpc,
             contracts,
             confirmations,
-            max_range,
-            range: max_range,
+            window: LogWindow::with_max(max_range),
             next: from,
             head: 0,
             poll,
@@ -196,30 +203,27 @@ impl<R: Rpc> Reader<R> {
         self.next.saturating_sub(1)
     }
 
+    /// The newest confirmed block, while one is unread.
+    fn unread(&self) -> Option<u64> {
+        self.head
+            .checked_sub(self.confirmations)
+            .filter(|confirmed| *confirmed >= self.next)
+    }
+
+    /// Whether the last poll left no confirmed block unread.
+    pub fn caught_up(&self) -> bool {
+        self.unread().is_none()
+    }
+
     /// The facts of the next confirmed blocks, in log order; none when no block was confirmed
     /// since the last poll. A failed poll returns no facts and leaves the reader where it was.
     pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {
-        let head = answer(self.rpc.head()).await?;
-        self.head = head;
-        let Some(confirmed) = head
-            .checked_sub(self.confirmations)
-            .filter(|confirmed| *confirmed >= self.next)
-        else {
+        self.head = answer(self.rpc.head()).await?;
+        let Some(confirmed) = self.unread() else {
             return Ok(Vec::new());
         };
-        let to = confirmed.min(self.next.saturating_add(self.range - 1));
-        let decoded = loop {
-            let addresses = self.contracts.addresses();
-            let logs = match answer(self.rpc.logs(&addresses, self.next, to)).await {
-                Ok(logs) => {
-                    self.range = self.range.saturating_mul(2).min(self.max_range);
-                    logs
-                }
-                Err(error) => {
-                    self.range = (self.range / 2).max(1);
-                    return Err(error.into());
-                }
-            };
+        let (to, decoded) = loop {
+            let (to, logs) = self.fetch(confirmed).await?;
             let decoded = decode(&self.contracts, &logs)?;
             let (mut providers, mut managers) = (BTreeSet::new(), BTreeSet::new());
             for decoded in &decoded {
@@ -240,7 +244,7 @@ impl<R: Rpc> Reader<R> {
                 }
             }
             if providers.is_empty() && managers.is_empty() {
-                break decoded;
+                break (to, decoded);
             }
             // The new contracts' logs in these blocks were filtered out.
             self.contracts.randomness.extend(providers);
@@ -257,17 +261,42 @@ impl<R: Rpc> Reader<R> {
         Ok(events)
     }
 
+    /// The logs from the next block on, in as many blocks up to `confirmed` as the provider serves
+    /// at once, and the last of those blocks. A refused range is asked for again at once in fewer
+    /// blocks; a provider that refuses a single block has no range limit to learn.
+    async fn fetch(&mut self, confirmed: u64) -> Result<(u64, Vec<RawLog>), ReadError> {
+        let addresses = self.contracts.addresses();
+        loop {
+            let to = self.window.end_for(self.next, confirmed);
+            match answer(self.rpc.logs(&addresses, self.next, to)).await {
+                Ok(logs) => return Ok((to, logs)),
+                Err(LogsError::Failed(failure)) => return Err(failure.into()),
+                Err(LogsError::TooWide(refusal)) => {
+                    if !self.window.shrink() {
+                        let refusal = format!("the provider refuses even one block: {refusal}");
+                        return Err(RpcError(refusal.into()).into());
+                    }
+                    let blocks = self.window.width();
+                    match self.window.is_narrow() {
+                        true => warn!(
+                            blocks, %refusal,
+                            "the provider allows few blocks per request, so reading history is \
+                             slow; an endpoint with a wider limit reads it faster"
+                        ),
+                        false => debug!(blocks, %refusal, "asking the provider for fewer blocks"),
+                    }
+                }
+            }
+        }
+    }
+
     /// Waits after a successful poll until the chain may hold a log the reader has not read. It
     /// returns at once while confirmed blocks are unread. Otherwise it waits for the chain node to
     /// announce a log after them; while an announced block lacks its confirmations, or when the
     /// node announces nothing, it waits for the poll interval. With the request for announcements,
     /// it waits `LONGEST_WAIT` at most.
     pub async fn wait(&mut self) {
-        let unread = self
-            .head
-            .checked_sub(self.confirmations)
-            .is_some_and(|confirmed| confirmed >= self.next);
-        if unread {
+        if self.unread().is_some() {
             return;
         }
         let deadline = Instant::now() + LONGEST_WAIT;

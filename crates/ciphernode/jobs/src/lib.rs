@@ -135,6 +135,7 @@ impl<S: BlobStore> JobRunner<S> {
     pub fn close(&self, e3: E3Id) -> std::io::Result<()> {
         match &self.proofs {
             Proofs::Circuits(circuits) => circuits.close(e3),
+            #[cfg(any(test, feature = "testing"))]
             Proofs::Placeholder => Ok(()),
         }
     }
@@ -171,6 +172,7 @@ impl<S: BlobStore> JobRunner<S> {
             cipher: &self.cipher,
             prover: match &self.proofs {
                 Proofs::Circuits(circuits) => Some(circuits.for_attempt(attempt)),
+                #[cfg(any(test, feature = "testing"))]
                 Proofs::Placeholder => None,
             },
         })

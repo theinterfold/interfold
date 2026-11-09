@@ -25,7 +25,7 @@
 
 /// Narrowest range the window can reach. One block always satisfies a range cap, so the node keeps a
 /// usable window against any provider.
-pub(crate) const MIN_LOG_WINDOW: u64 = 1;
+pub const MIN_LOG_WINDOW: u64 = 1;
 
 /// Window width at or below which a sync is slow enough that the operator should know. A provider
 /// that caps the range this tightly needs hundreds of thousands of calls to read a long history.
@@ -85,7 +85,7 @@ const RANGE_QUALIFIED_MARKERS: &[&str] = &["limited to", "query timeout exceeded
 const RANGE_CONTEXT_MARKER: &str = "range";
 
 /// Report whether `message` says the provider refused the block range or the result set size.
-pub(crate) fn is_range_limit_error(message: &str) -> bool {
+pub fn is_range_limit_error(message: &str) -> bool {
     let message = message.to_lowercase();
     if RANGE_LIMIT_MARKERS
         .iter()
@@ -102,7 +102,7 @@ pub(crate) fn is_range_limit_error(message: &str) -> bool {
 
 /// Current `eth_getLogs` block window for one chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LogWindow {
+pub struct LogWindow {
     width: u64,
 }
 
@@ -120,14 +120,14 @@ impl LogWindow {
 
     /// Start at `max_width`, the widest range the chain configuration allows. A width below the
     /// floor is raised to it, because one block always satisfies a range cap.
-    pub(crate) fn with_max(max_width: u64) -> Self {
+    pub fn with_max(max_width: u64) -> Self {
         Self {
             width: max_width.max(MIN_LOG_WINDOW),
         }
     }
 
     /// The current window width in blocks.
-    pub(crate) fn width(&self) -> u64 {
+    pub fn width(&self) -> u64 {
         self.width
     }
 
@@ -135,7 +135,7 @@ impl LogWindow {
     ///
     /// Saturating arithmetic keeps a window near `u64::MAX` from wrapping to a range that ends below
     /// its own start.
-    pub(crate) fn end_for(&self, cursor: u64, to_block: u64) -> u64 {
+    pub fn end_for(&self, cursor: u64, to_block: u64) -> u64 {
         cursor.saturating_add(self.width - 1).min(to_block)
     }
 
@@ -145,7 +145,7 @@ impl LogWindow {
     /// single block is not applying a range cap, and the caller must report the error instead of
     /// narrowing further. The floor bounds the narrowing of one chunk by the logarithm of the
     /// starting width, whatever range the chain configures.
-    pub(crate) fn shrink(&mut self) -> bool {
+    pub fn shrink(&mut self) -> bool {
         if self.width <= MIN_LOG_WINDOW {
             return false;
         }
@@ -154,7 +154,7 @@ impl LogWindow {
     }
 
     /// Report whether the window is narrow enough that the operator should be told.
-    pub(crate) fn is_narrow(&self) -> bool {
+    pub fn is_narrow(&self) -> bool {
         self.width <= NARROW_LOG_WINDOW_WARN
     }
 }

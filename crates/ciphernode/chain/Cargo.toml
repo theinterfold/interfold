@@ -10,6 +10,7 @@ repository.workspace = true
 e3-blobs = { workspace = true }
 e3-committee = { workspace = true }
 e3-data-availability = { workspace = true }
+e3-evm = { workspace = true }
 e3-evm-contracts = { workspace = true }
 futures = { workspace = true }
 e3-evm-transactions = { workspace = true }
@@ -27,3 +28,4 @@ tracing = { workspace = true }
 e3-protocol = { workspace = true, features = ["testing"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = "0.26"

@@ -25,6 +25,8 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{fmt::Display, fs, io};
 
 pub enum Proofs {
+    /// Proofs only the mock verifiers of a test deployment accept.
+    #[cfg(any(test, feature = "testing"))]
     Placeholder,
     Circuits(Box<Circuits>),
 }

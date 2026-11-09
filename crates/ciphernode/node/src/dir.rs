@@ -149,7 +149,7 @@ impl NodeDir {
             State::Newer(found) => Err(DirError::Newer { folder, found }),
             State::Foreign(found) => Err(DirError::Foreign {
                 folder,
-                found,
+                found: Box::new(found),
                 expected: *identity,
             }),
             State::Unreadable(why) => Err(DirError::Unreadable { folder, why }),
@@ -179,7 +179,7 @@ pub enum DirError {
     )]
     Foreign {
         folder: PathBuf,
-        found: Manifest,
+        found: Box<Manifest>,
         expected: Identity,
     },
     #[error("{} cannot be read ({why}): use another directory", .folder.display())]

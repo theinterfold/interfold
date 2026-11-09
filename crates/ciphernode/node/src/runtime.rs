@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{sync::mpsc, task::JoinSet, time::Instant};
 use tracing::{debug, warn};
 
 /// How long a failed chain read waits before it runs again.
@@ -51,6 +51,8 @@ pub struct Settings {
     pub confirmations: u64,
     pub max_log_range: u64,
     pub poll_interval: Duration,
+    /// How long the reader may go without a successful read before it has first caught up.
+    pub startup_timeout: Duration,
     pub snapshot_every: u64,
     /// Jobs that hold a thread at once; the others wait without one.
     pub job_slots: usize,
@@ -85,6 +87,10 @@ pub enum NodeError {
     TaskEnded(&'static str),
     #[error("{0} panicked: {1}")]
     TaskPanicked(&'static str, String),
+    #[error(
+        "no read of the chain succeeded for {waited:?} before the node first caught up: {failure}"
+    )]
+    ChainSilent { waited: Duration, failure: String },
 }
 
 pub(crate) enum Event {
@@ -94,7 +100,6 @@ pub(crate) enum Event {
     Result(EffectKey, Input),
     /// An effect that finished without a result.
     Done(EffectKey),
-    Fatal(NodeError),
 }
 
 /// Runs the node until `stop` completes, or until its inputs, its journal, its chain logs or one
@@ -146,17 +151,15 @@ where
         from,
         settings.poll_interval,
     );
-    let mut essential = JoinSet::new();
+    let mut essential: JoinSet<NodeError> = JoinSet::new();
     let (heartbeat, poll, sender) = (parts.heartbeat, settings.poll_interval, events.clone());
-    essential.spawn(async move {
-        read_chain(reader, heartbeat, sender, poll).await;
-        "the chain reader"
-    });
+    let startup_timeout = settings.startup_timeout;
+    essential.spawn(read_chain(reader, heartbeat, sender, poll, startup_timeout));
     let sender = events.clone();
     let inbound = parts.inbound;
     essential.spawn(async move {
         forward_peers(inbound, sender).await;
-        "the network"
+        NodeError::TaskEnded("the network")
     });
     let writer = Arc::new(Writer::new(
         parts.account,
@@ -166,7 +169,7 @@ where
     let (refresher, operator) = (writer.clone(), parts.operator.address());
     essential.spawn(async move {
         refresh_each_window(refresher, operator).await;
-        "the operator refresh"
+        NodeError::TaskEnded("the operator refresh")
     });
     let mut effects = Effects::new(EffectParts {
         rpc: Arc::new(parts.rpc),
@@ -203,7 +206,6 @@ where
                 engine.acknowledge(key)?;
                 continue;
             }
-            Event::Fatal(error) => return Err(error),
         };
         debug!(input = %brief(&input), "applying");
         let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
@@ -235,9 +237,9 @@ where
 
 /// An essential task ended while the node runs: the process should end, so its supervisor can
 /// restart it, rather than run on without the task.
-fn ended_task(ended: Option<Result<&'static str, tokio::task::JoinError>>) -> NodeError {
+fn ended_task(ended: Option<Result<NodeError, tokio::task::JoinError>>) -> NodeError {
     match ended {
-        Some(Ok(task)) => NodeError::TaskEnded(task),
+        Some(Ok(reason)) => reason,
         Some(Err(error)) => NodeError::TaskPanicked("an essential task", error.to_string()),
         None => NodeError::Stopped,
     }
@@ -314,34 +316,44 @@ pub(crate) fn now() -> UnixSecs {
         .as_secs()
 }
 
+/// Reads the chain for as long as the node runs. Until the first catch-up, a chain node that stops
+/// answering ends the process for its supervisor: this one may never serve the node's logs. A long
+/// catch-up that keeps reading is fine, and after it the reader waits out any outage.
 async fn read_chain<R: Rpc>(
     mut reader: Reader<R>,
     mut heartbeat: Heartbeat,
     events: mpsc::Sender<Event>,
     poll: Duration,
-) {
+    startup_timeout: Duration,
+) -> NodeError {
+    let mut last_read = Some(Instant::now());
     loop {
         let read = reader.poll().await;
         if read.is_ok() {
             heartbeat.beat(now(), reader.head(), reader.read_to());
+            last_read = (!reader.caught_up() && last_read.is_some()).then(Instant::now);
         }
         match read {
             Ok(facts) => {
                 for fact in facts {
                     if events.send(Event::Input(Input::Chain(fact))).await.is_err() {
-                        return;
+                        return NodeError::Stopped;
                     }
                 }
                 reader.wait().await;
             }
             Err(ReadError::Rpc(failure)) => {
                 warn!(%failure, "reading the chain failed; trying again");
+                if let Some(waited) = last_read
+                    .map(|read| read.elapsed())
+                    .filter(|waited| *waited >= startup_timeout)
+                {
+                    let failure = failure.to_string();
+                    return NodeError::ChainSilent { waited, failure };
+                }
                 tokio::time::sleep(poll.max(RETRY_AFTER)).await;
             }
-            Err(ReadError::Decode(failure)) => {
-                let _ = events.send(Event::Fatal(failure.into())).await;
-                return;
-            }
+            Err(ReadError::Decode(failure)) => return failure.into(),
         }
     }
 }

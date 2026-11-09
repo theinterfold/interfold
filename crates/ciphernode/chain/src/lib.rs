@@ -9,7 +9,9 @@
 //! turns the node's submissions into the operator's transactions.
 
 mod decode;
+mod link;
 mod reader;
+mod release;
 mod rpc;
 #[cfg(test)]
 mod testing;
@@ -18,9 +20,11 @@ mod writer;
 
 use decode::{decode, Decoded, PendingRead};
 pub use decode::{Contracts, DecodeError, RawLog};
-pub use reader::{Deadlines, ReadError, Reader, Rpc, Sortition};
+pub use link::Endpoint;
+pub use reader::{Deadlines, LogsError, ReadError, Reader, Rpc, Sortition};
+pub use release::{standing, Release, Standing, Unsupported};
 pub use rpc::ChainNode;
-pub use wallet::{Release, ReleaseError, Wallet};
+pub use wallet::Wallet;
 pub use writer::{Account, Call, Estimate, WriteError, Writer};
 
 /// A chain node request that failed.

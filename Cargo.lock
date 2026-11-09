@@ -3539,6 +3539,7 @@ dependencies = [
  "e3-blobs",
  "e3-committee",
  "e3-data-availability",
+ "e3-evm",
  "e3-evm-contracts",
  "e3-evm-transactions",
  "e3-protocol",
@@ -3548,6 +3549,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 
@@ -3963,6 +3965,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "e3-blobs",

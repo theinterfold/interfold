@@ -7,7 +7,9 @@
 use super::*;
 use crate::testing::contracts;
 use alloy_primitives::{address, bytes, B256};
+use alloy_sol_types::SolError;
 use e3_blobs::{BlobStore, Blobs, MemoryBlobs};
+use e3_evm_contracts::E3Stage;
 use e3_protocol::{
     accusation::{SignedVote, Vote},
     decryption::PlaintextPublication,
@@ -28,6 +30,8 @@ struct Script {
     estimates: VecDeque<Result<Estimate, &'static str>>,
     /// Whether each send succeeds on chain, in order; success once the script runs out.
     sends: VecDeque<bool>,
+    /// Estimates get no answer.
+    stuck: bool,
     estimated: usize,
     /// Each sent call with its gas limit.
     sent: Vec<(Call, u64)>,
@@ -52,6 +56,9 @@ impl FakeAccount {
 
 impl Account for FakeAccount {
     async fn estimate(&self, _: &Call) -> Result<Estimate, RpcError> {
+        if self.0.lock().unwrap().stuck {
+            std::future::pending::<()>().await;
+        }
         let mut script = self.0.lock().unwrap();
         script.estimated += 1;
         match script.estimates.pop_front() {
@@ -169,6 +176,142 @@ async fn an_earlier_stage_is_waited_out_and_a_later_one_ends_the_call() {
         .submit(&plaintext(&blobs))
         .await
         .unwrap();
+    assert!(account.sent().is_empty());
+}
+
+/// A plaintext that landed and one that no longer can both end the call, with nothing sent.
+#[tokio::test(start_paused = true)]
+async fn a_plaintext_the_chain_has_or_refuses_for_good_sends_nothing() {
+    let blobs = MemoryBlobs::default();
+    let (complete, failed) = (E3Stage::Complete as u8, E3Stage::Failed as u8);
+    let expired = reverts(IInterfold::CommitteeDutiesCompleted {
+        e3Id: U256::from(7),
+        expiration: U256::from(1),
+    });
+    for revert in [
+        reverts(stage(4, complete)),
+        reverts(stage(4, failed)),
+        expired,
+    ] {
+        let account = FakeAccount::default();
+        account.script(|script| script.estimates.push_back(revert));
+        writer(&account, &blobs)
+            .submit(&plaintext(&blobs))
+            .await
+            .unwrap();
+        assert!(account.sent().is_empty());
+    }
+}
+
+/// A revert the node cannot place is no answer: a lagging RPC or a paused contract can pass, so
+/// the call goes on while the node owes it.
+#[tokio::test(start_paused = true)]
+async fn a_call_goes_on_through_a_revert_it_cannot_place() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        let paused = bytes!("9e87fac8");
+        script.estimates.push_back(Ok(Estimate::Reverts(paused)));
+    });
+    writer(&account, &blobs)
+        .submit(&submission(Transaction::FinalizeCommittee))
+        .await
+        .unwrap();
+    assert_eq!(account.labels(), ["finalizeCommittee"]);
+}
+
+fn committee_publication(blobs: &MemoryBlobs) -> Submission {
+    submission(Transaction::PublishCommittee(KeyPublication {
+        commitment: B256::repeat_byte(0xc0),
+        public_key: blobs.of(E3).put(&[1; 200 * 1024]).unwrap(),
+        proof: ZkProof {
+            data: blobs.of(E3).put(b"proof").unwrap(),
+            public_inputs: vec![B256::repeat_byte(1)],
+        },
+        attestations: Vec::new(),
+    }))
+}
+
+/// Another aggregator's equal commitment landed first: this one's chunks can still complete the
+/// key's copy on chain.
+#[tokio::test]
+async fn a_published_key_still_sends_its_chunks() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(reverts(Registry::CommitteeAlreadyPublished {}));
+    });
+    writer(&account, &blobs)
+        .submit(&committee_publication(&blobs))
+        .await
+        .unwrap();
+    assert_eq!(
+        account.labels(),
+        [
+            "publishCommitteePublicKey",
+            "publishCommitteePublicKey",
+            "publishCommitteePublicKey"
+        ]
+    );
+}
+
+/// A committee that can no longer publish has no key for chunks to follow.
+#[tokio::test]
+async fn a_committee_that_cannot_publish_sends_no_chunks() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(reverts(Registry::ThresholdNotMet {}));
+    });
+    writer(&account, &blobs)
+        .submit(&committee_publication(&blobs))
+        .await
+        .unwrap();
+    assert!(account.sent().is_empty());
+}
+
+/// A refresh that never gets an answer must not hold the refresh cycle.
+#[tokio::test(start_paused = true)]
+async fn a_stuck_refresh_ends_at_its_limit() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| script.stuck = true);
+    let started = tokio::time::Instant::now();
+    writer(&account, &blobs)
+        .refresh_operator(address!("0x00000000000000000000000000000000000000aa"))
+        .await;
+    assert_eq!(started.elapsed(), REFRESH_LIMIT);
+}
+
+/// A ticket the chain already has, or one too late for the committee, ends the call.
+#[tokio::test(start_paused = true)]
+async fn a_ticket_the_chain_has_or_cannot_take_sends_nothing() {
+    let blobs = MemoryBlobs::default();
+    for revert in [
+        reverts(Registry::NodeAlreadySubmitted {}),
+        reverts(Registry::CommitteeDeadlineReached {}),
+    ] {
+        let account = FakeAccount::default();
+        account.script(|script| script.estimates.push_back(revert));
+        writer(&account, &blobs)
+            .submit(&submission(Transaction::SubmitTicket { ticket: 3 }))
+            .await
+            .unwrap();
+        assert!(account.sent().is_empty());
+    }
+}
+
+/// With slashing off for this reason, nothing the node waits for turns it on.
+#[tokio::test(start_paused = true)]
+async fn a_slash_of_a_disabled_reason_sends_nothing() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(reverts(ISlashingManager::SlashReasonDisabled {}));
+    });
+    let (slash, ..) = slash(&blobs);
+    writer(&account, &blobs).submit(&slash).await.unwrap();
     assert!(account.sent().is_empty());
 }
 

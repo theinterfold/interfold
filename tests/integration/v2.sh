@@ -91,7 +91,7 @@ if [[ "${V2_PREBUILT:-false}" != "true" ]]; then
     # Without the feature the CLI refuses a configuration that skips proofs.
     (cd "$ROOT_DIR" && cargo build --bin interfold --features e3-cli/test-only-skip-proof-aggregation)
   else
-    (cd "$ROOT_DIR" && cargo build --bin e3-node)
+    (cd "$ROOT_DIR" && cargo build --bin e3-node --features e3-node/testing)
   fi
   (cd "$ROOT_DIR" && cargo build -p e3-tests --bin fake_encrypt)
 fi

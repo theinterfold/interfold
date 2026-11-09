@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Contracts, Deadlines, RawLog, Rpc, RpcError, Sortition};
+use crate::{Contracts, Deadlines, LogsError, RawLog, Rpc, RpcError, Sortition};
 use alloy::{
     eips::BlockId,
     providers::Provider,
@@ -12,6 +12,7 @@ use alloy::{
     rpc::types::{Filter, Log},
 };
 use alloy_primitives::{Address, B256, U256};
+use e3_evm::log_window::is_range_limit_error;
 use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold};
 use e3_protocol::{node::LogPosition, UnixSecs};
 use futures::{future::try_join_all, ready, stream::BoxStream, Stream, StreamExt};
@@ -70,24 +71,27 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
         addresses: &[Address],
         from: u64,
         to: u64,
-    ) -> Result<Vec<RawLog>, RpcError> {
+    ) -> Result<Vec<RawLog>, LogsError> {
         let c = &self.contracts;
         let filter = Filter::new()
             .address(addresses.to_vec())
             .from_block(from)
             .to_block(to);
-        let logs = self
-            .provider
-            .get_logs(&filter)
-            .await
-            .map_err(RpcError::new)?;
+        let logs = self.provider.get_logs(&filter).await.map_err(|error| {
+            let refused = is_range_limit_error(&error.to_string());
+            let error = RpcError::new(error);
+            match refused {
+                true => LogsError::TooWide(error),
+                false => LogsError::Failed(error),
+            }
+        })?;
         let mut times: BTreeMap<u64, UnixSecs> = BTreeMap::new();
         let mut raw = Vec::with_capacity(logs.len());
         for log in logs {
             let (Some(block), Some(log_index), Some(transaction)) =
                 (log.block_number, log.log_index, log.transaction_hash)
             else {
-                return Err(RpcError("a log without its block position".into()));
+                return Err(RpcError("a log without its block position".into()).into());
             };
             let time = match log.block_timestamp.or_else(|| times.get(&block).copied()) {
                 Some(time) => time,

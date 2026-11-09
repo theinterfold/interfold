@@ -4,14 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Runs one v2 node from a JSON configuration file.
+//! Runs one v2 node from a JSON configuration file, for tests: it may use placeholder proofs and
+//! a `bb` and circuits that no release pins.
 
 use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Context;
 use e3_crypto::Cipher;
 use e3_entrypoint::fence::ProcessFence;
-use e3_node::launch::{launch, Availability, Config, Network, Prover};
+use e3_node::launch::{launch, Availability, Config, Network, Prover, Proving};
+use e3_zk_prover::BBPath;
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 use tracing_subscriber::EnvFilter;
@@ -74,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
         confirmations: config.confirmations,
         max_log_range: 2_000,
         poll_interval: Duration::from_millis(config.poll_interval_ms),
+        startup_timeout: Duration::from_secs(5 * 60),
         availability: Availability::Http(config.availability_url),
         fence: ProcessFence::acquire_at(
             &config.data_dir.join(e3_entrypoint::fence::LOCK_FILE_NAME),
@@ -82,12 +85,15 @@ async fn main() -> anyhow::Result<()> {
         data_dir: config.data_dir,
         operator,
         cipher: Cipher::from_password(&config.cipher_password).await?,
-        prover: config.noir_dir.map(|noir| Prover {
-            bb: noir.join("bin").join("bb"),
-            circuits: noir.join("circuits"),
-            concurrent: config.concurrent_proofs.unwrap_or(2),
-            bb_timeout: Duration::from_secs(12 * 60 * 60),
-        }),
+        proving: match config.noir_dir {
+            Some(noir) => Proving::AsInstalled(Prover {
+                bb: BBPath::Custom(noir.join("bin").join("bb")),
+                circuits: noir.join("circuits"),
+                concurrent: config.concurrent_proofs.unwrap_or(2),
+                bb_timeout: Duration::from_secs(12 * 60 * 60),
+            }),
+            None => Proving::Placeholder,
+        },
         reserved_threads: 1,
         network: Network {
             id: config.network.id,

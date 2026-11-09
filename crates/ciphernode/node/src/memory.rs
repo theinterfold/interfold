@@ -56,6 +56,7 @@ pub(crate) fn capacity(requested: usize, reserved: usize) -> Result<Capacity, Ho
 }
 
 /// The capacity of a node that makes no real proofs, which needs no prover's memory.
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn threads_for_placeholders(reserved: usize) -> usize {
     let cores = thread::available_parallelism().map_or(1, usize::from);
     cores.saturating_sub(reserved).max(1)

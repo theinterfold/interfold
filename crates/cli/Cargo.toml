@@ -8,7 +8,7 @@ repository.workspace = true
 build = "build.rs"
 
 [features]
-test-only-skip-proof-aggregation = []
+test-only-skip-proof-aggregation = ["e3-node/testing"]
 
 [[bin]]
 name = "interfold"

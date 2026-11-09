@@ -14,7 +14,9 @@ use e3_ciphernode_config::NodeConfig;
 use e3_crypto::Cipher;
 use e3_entrypoint::fence::ProcessFence;
 use e3_evm_config::{DataAvailabilityMode, RpcAuth};
-use e3_node::launch::{Availability, Config, Network, Prover};
+use e3_node::launch::{Availability, Config, Network, Prover, Proving};
+use e3_zk_prover::BBPath;
+use std::time::Duration;
 
 pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> {
     let chains: Vec<_> = config
@@ -56,14 +58,6 @@ pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> 
         .unwrap_or_default();
     let cipher = Cipher::from_file(config.key_file()).await?;
     let (operator, identity) = keys(config, &cipher).await?;
-    // Test deployments with mock verifiers take placeholder proofs, and so do test binaries told
-    // to skip proof aggregation.
-    let prover = (!config.skip_proof_aggregation()).then(|| Prover {
-        bb: config.bb_binary(),
-        circuits: config.circuits_dir(),
-        concurrent: config.multithread_concurrent_jobs().unwrap_or(2),
-        bb_timeout: config.bb_timeout(),
-    });
     Ok(Config {
         rpc_url: chain.rpc_url.clone(),
         rpc_auth: match &chain.rpc_auth {
@@ -79,14 +73,29 @@ pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> 
         confirmations: chain.ingestion_confirmations()?,
         max_log_range: chain.rpc_log_range_blocks()?,
         poll_interval: chain.rpc_poll_interval()?,
+        startup_timeout: Duration::from_secs(config.startup_timeout_secs()),
         availability,
         data_dir: crate::node_state::dir(config).path().to_path_buf(),
         fence,
-        prover,
+        proving: proving(config),
         reserved_threads: config.multithread_reserve_threads(),
         network: network(config, identity),
         operator,
         cipher,
+    })
+}
+
+/// How the node proves. A production build refuses, before this, a configuration that skips proofs.
+fn proving(config: &NodeConfig) -> Proving {
+    #[cfg(feature = "test-only-skip-proof-aggregation")]
+    if config.skip_proof_aggregation() {
+        return Proving::Placeholder;
+    }
+    Proving::Circuits(Prover {
+        bb: BBPath::new(config.bb_binary(), config.using_custom_bb()),
+        circuits: config.circuits_dir(),
+        concurrent: config.multithread_concurrent_jobs().unwrap_or(2),
+        bb_timeout: config.bb_timeout(),
     })
 }
 

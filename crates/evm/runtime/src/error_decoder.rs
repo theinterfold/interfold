@@ -6,7 +6,7 @@
 
 //! Pure decoding of raw EVM revert data into human-readable contract errors.
 
-use crate::contracts::{ICiphernodeRegistry, IInterfold, ISlashingManager};
+use crate::contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold, ISlashingManager};
 use alloy::sol_types::{Panic, Revert, SolError, SolInterface};
 
 /// Try to decode raw revert data into a human-readable error string.
@@ -32,6 +32,9 @@ pub fn decode_error(data: &[u8]) -> Option<String> {
         return Some(format!("{err:?}"));
     }
     if let Ok(err) = ISlashingManager::ISlashingManagerErrors::abi_decode(data) {
+        return Some(format!("{err:?}"));
+    }
+    if let Ok(err) = IBondingRegistry::IBondingRegistryErrors::abi_decode(data) {
         return Some(format!("{err:?}"));
     }
 

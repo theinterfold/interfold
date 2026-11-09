@@ -9,31 +9,53 @@
 use super::*;
 use alloy_primitives::U256;
 use e3_blobs::MemoryBlobs;
-use e3_chain::{Call, Deadlines, Estimate, RawLog, RpcError, Sortition};
+use e3_chain::{Call, Deadlines, Estimate, LogsError, RawLog, RpcError, Sortition};
 use e3_crypto::Cipher;
 use e3_data_availability::DataReference;
 use e3_jobs::{JobLimits, Proofs};
 use e3_p2p::NetworkError;
 use e3_protocol::wire::Envelope;
 use futures::stream::BoxStream;
-use std::{collections::BTreeMap, future::pending, path::Path};
+use std::{
+    collections::BTreeMap,
+    future::pending,
+    path::Path,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
-#[derive(Clone)]
+const STARTUP: Duration = Duration::from_secs(120);
+
+#[derive(Clone, Default)]
 struct Chain {
     panics: bool,
+    head: u64,
+    logs_fail: bool,
+    /// How long each log request takes.
+    slow_logs: Duration,
+    /// Heads asked so far; after `heads_ok` of them, the chain node fails every request.
+    heads: Arc<AtomicUsize>,
+    heads_ok: Option<usize>,
 }
 
 impl Rpc for Chain {
     async fn head(&self) -> Result<u64, RpcError> {
         assert!(!self.panics, "the reader panics");
-        Ok(0)
+        let asked = self.heads.fetch_add(1, Ordering::SeqCst);
+        if self.heads_ok.is_some_and(|ok| asked >= ok) {
+            return Err(RpcError("the chain node is down".into()));
+        }
+        Ok(self.head)
     }
 
     async fn announce(&self, _: &[Address]) -> Result<Option<BoxStream<'static, u64>>, RpcError> {
         Ok(None)
     }
 
-    async fn logs(&self, _: &[Address], _: u64, _: u64) -> Result<Vec<RawLog>, RpcError> {
+    async fn logs(&self, _: &[Address], _: u64, _: u64) -> Result<Vec<RawLog>, LogsError> {
+        tokio::time::sleep(self.slow_logs).await;
+        if self.logs_fail {
+            return Err(RpcError("logs are not served".into()).into());
+        }
         Ok(Vec::new())
     }
 
@@ -91,7 +113,7 @@ impl DataAvailabilityReader for NoData {
 
 async fn parts(
     dir: &Path,
-    panics: bool,
+    chain: Chain,
 ) -> (
     Settings,
     Parts<Chain, NoAccount, Quiet, MemoryBlobs>,
@@ -112,6 +134,7 @@ async fn parts(
         confirmations: 0,
         max_log_range: 10,
         poll_interval: Duration::from_millis(10),
+        startup_timeout: STARTUP,
         snapshot_every: 100,
         job_slots: 1,
     };
@@ -127,7 +150,7 @@ async fn parts(
         journal: Journal::open(dir.join("journal.redb")).unwrap(),
         blobs: blobs.clone(),
         jobs: JobRunner::new(blobs, cipher, Proofs::Placeholder, limits).unwrap(),
-        rpc: Chain { panics },
+        rpc: chain,
         account: NoAccount,
         network: Quiet,
         inbound,
@@ -141,7 +164,11 @@ async fn parts(
 #[tokio::test]
 async fn a_reader_that_panics_ends_the_node() {
     let dir = tempfile::tempdir().unwrap();
-    let (settings, parts, _peers) = parts(dir.path(), true).await;
+    let chain = Chain {
+        panics: true,
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
     let ended = run(settings, parts, pending()).await.unwrap_err();
     assert!(matches!(ended, NodeError::TaskPanicked(..)), "{ended}");
 }
@@ -149,7 +176,7 @@ async fn a_reader_that_panics_ends_the_node() {
 #[tokio::test]
 async fn a_network_that_stops_ends_the_node() {
     let dir = tempfile::tempdir().unwrap();
-    let (settings, parts, peers) = parts(dir.path(), false).await;
+    let (settings, parts, peers) = parts(dir.path(), Chain::default()).await;
     drop(peers);
     let ended = run(settings, parts, pending()).await.unwrap_err();
     assert!(
@@ -161,7 +188,51 @@ async fn a_network_that_stops_ends_the_node() {
 #[tokio::test]
 async fn a_stop_ends_the_node_without_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    let (settings, parts, _peers) = parts(dir.path(), false).await;
+    let (settings, parts, _peers) = parts(dir.path(), Chain::default()).await;
     let stop = tokio::time::sleep(Duration::from_millis(50));
     run(settings, parts, stop).await.unwrap();
+}
+
+/// A chain node that never serves the node's logs ends the process for its supervisor, instead
+/// of leaving a node up that reads nothing.
+#[tokio::test(start_paused = true)]
+async fn a_chain_node_that_refuses_the_logs_ends_the_node_at_the_startup_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 5,
+        logs_fail: true,
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    let ended = run(settings, parts, pending()).await.unwrap_err();
+    assert!(matches!(ended, NodeError::ChainSilent { .. }), "{ended}");
+}
+
+/// Reading a long history takes longer than the startup limit, and keeps making progress.
+#[tokio::test(start_paused = true)]
+async fn a_long_catch_up_that_keeps_reading_is_fine() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 1_000,
+        slow_logs: Duration::from_secs(20),
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    run(settings, parts, tokio::time::sleep(STARTUP * 20))
+        .await
+        .unwrap();
+}
+
+/// Once the node has caught up, an outage is the node's to wait out.
+#[tokio::test(start_paused = true)]
+async fn an_outage_after_the_first_catch_up_does_not_end_the_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        heads_ok: Some(1),
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    run(settings, parts, tokio::time::sleep(STARTUP * 20))
+        .await
+        .unwrap();
 }

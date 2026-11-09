@@ -14,7 +14,10 @@ use e3_protocol::{
     node::{CommitteeSeed, CryptoParams, DataRef},
     E3Id,
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc;
 
 const CONFIRMATIONS: u64 = 3;
@@ -41,8 +44,12 @@ struct Chain {
     logs: Vec<RawLog>,
     /// The registry's accepted seed and committee deadline.
     seed: Option<CommitteeSeed>,
-    /// Requests for more blocks than this fail, as a provider's cap does.
+    /// Requests for more blocks than this are refused, as a provider's cap does.
     cap: Option<u64>,
+    /// How many blocks each log request covered.
+    requested: Vec<u64>,
+    /// Failures of the next log requests that say nothing about their range.
+    log_failures: VecDeque<&'static str>,
     reads_fail: bool,
     /// Reads of contract state get no answer.
     reads_held: bool,
@@ -77,8 +84,8 @@ impl FakeNode {
         node
     }
 
-    fn with(&self, change: impl FnOnce(&mut Chain)) {
-        change(&mut self.0.lock().unwrap());
+    fn with<T>(&self, change: impl FnOnce(&mut Chain) -> T) -> T {
+        change(&mut self.0.lock().unwrap())
     }
 
     /// Mines `log`: the head moves to its block, and the announcements of its contract name it.
@@ -144,12 +151,16 @@ impl Rpc for FakeNode {
         addresses: &[Address],
         from: u64,
         to: u64,
-    ) -> Result<Vec<RawLog>, RpcError> {
+    ) -> Result<Vec<RawLog>, LogsError> {
         // A chain node answers over the network, so the reader waits here like it does there.
         tokio::task::yield_now().await;
-        let chain = self.0.lock().unwrap();
+        let mut chain = self.0.lock().unwrap();
+        chain.requested.push(to - from + 1);
+        if let Some(failure) = chain.log_failures.pop_front() {
+            return Err(RpcError(failure.into()).into());
+        }
         if chain.cap.is_some_and(|cap| to - from + 1 > cap) {
-            return Err(RpcError("block range too large".into()));
+            return Err(LogsError::TooWide(RpcError("block range too large".into())));
         }
         let logs = chain
             .logs
@@ -381,8 +392,10 @@ async fn a_read_the_chain_node_never_answers_fails_the_poll_in_time() {
     assert_eq!(blocks(&reader.poll().await.unwrap()), [5, 5, 5, 5]);
 }
 
+/// A provider's limit is learned once: a refused range is halved in the same poll, and what the
+/// provider refused is not asked of it again.
 #[tokio::test]
-async fn a_range_the_provider_rejects_is_requested_again_in_halves() {
+async fn a_range_the_provider_rejects_is_learned_for_good() {
     let node = FakeNode::default();
     node.with(|chain| {
         chain.head = 2_003;
@@ -391,12 +404,46 @@ async fn a_range_the_provider_rejects_is_requested_again_in_halves() {
     });
     let mut reader = reader(&node, 1_000);
     let mut read = Vec::new();
-    for _ in 0..40 {
-        if let Ok(events) = reader.poll().await {
-            read.extend(blocks(&events));
-        }
+    for _ in 0..9 {
+        read.extend(blocks(&reader.poll().await.unwrap()));
     }
     assert_eq!(read, [100, 600, 1_900]);
+    assert_eq!(reader.read_to(), 2_000);
+    let requested = node.with(|chain| chain.requested.clone());
+    assert_eq!(requested[..2], [1_000, 500]);
+    assert!(requested[2..].iter().all(|blocks| *blocks <= 250));
+}
+
+/// A chain node that only failed says nothing about the range, so the window stays.
+#[tokio::test]
+async fn a_failed_request_leaves_the_range_alone() {
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 2_003;
+        chain.log_failures.push_back("connection reset");
+    });
+    let mut reader = reader(&node, 1_000);
+    assert!(matches!(reader.poll().await, Err(ReadError::Rpc(_))));
+    reader.poll().await.unwrap();
+    assert_eq!(node.with(|chain| chain.requested.clone()), [1_000, 1_000]);
+}
+
+/// A provider that refuses one block is not limiting the range: the reader says so and stays
+/// where it was.
+#[tokio::test]
+async fn a_provider_that_refuses_one_block_is_reported() {
+    let node = FakeNode::default();
+    node.with(|chain| {
+        chain.head = 2_003;
+        chain.cap = Some(0);
+    });
+    let mut reader = reader(&node, 4);
+    let Err(ReadError::Rpc(failure)) = reader.poll().await else {
+        panic!("the provider refused every range");
+    };
+    assert!(failure.to_string().contains("even one block"), "{failure}");
+    assert_eq!(node.with(|chain| chain.requested.clone()), [4, 2, 1]);
+    assert_eq!(reader.read_to(), 0);
 }
 
 /// Governance replaced the provider, so the node did not know the one this request names. A mock

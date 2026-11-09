@@ -4,11 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod reverts;
+
 use crate::{Contracts, RpcError};
 use alloy_primitives::{keccak256, Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolError, SolValue};
+use alloy_sol_types::{SolCall, SolValue};
 use e3_blobs::{BlobError, BlobStore, Blobs};
 use e3_data_availability::public_key::ChunkLayout;
+use e3_evm::error_decoder::decode_error;
 use e3_evm_contracts::{
     IBondingRegistry, ICiphernodeRegistry as Registry, IInterfold, ISlashingManager,
 };
@@ -18,6 +21,7 @@ use e3_protocol::{
     node::{Submission, Transaction},
     proof::{verifier_calldata, ZkProof},
 };
+use reverts::{Reading, Verdict};
 use std::{fmt::Display, future::Future, iter, time::Duration};
 use tracing::{debug, info, warn};
 
@@ -46,6 +50,10 @@ mod extra {
 const FIRST_RETRY: Duration = Duration::from_secs(30);
 const LONGEST_RETRY: Duration = Duration::from_secs(600);
 
+/// The longest one refresh may take, from its estimate through broadcast and receipt. The cycle
+/// must go on to its next refresh, which a stuck one would block.
+const REFRESH_LIMIT: Duration = Duration::from_secs(30 * 60);
+
 /// Tickets estimated at the same time land one after another, and a later insertion into the top
 /// N can cost more than its estimate.
 const TICKET_GAS_MULTIPLIER: u64 = 2;
@@ -63,22 +71,12 @@ pub struct Call {
     pub data: Bytes,
     /// The gas limit as a multiple of the estimate.
     pub gas_multiplier: u64,
-    /// Errors that mean the operator's chain node has not seen what the call needs yet.
-    pub(crate) not_yet: &'static [[u8; 4]],
 }
 
-impl Call {
-    /// Whether `revert` only means "not yet": one of the call's waiting errors, or an E3 stage
-    /// before the one the call needs, because the node acted on a stage change that its chain node
-    /// has not seen.
-    fn waits_out(&self, revert: &[u8]) -> bool {
-        let listed = revert
-            .get(..4)
-            .is_some_and(|selector| self.not_yet.iter().any(|error| error == selector));
-        listed
-            || IInterfold::InvalidStage::abi_decode(revert)
-                .is_ok_and(|stage| stage.actual < stage.expected)
-    }
+/// One call of a submission and how to read its reverts.
+struct Step {
+    call: Call,
+    reverts: Reading,
 }
 
 /// The gas a call takes now, or the revert it hits.
@@ -114,9 +112,13 @@ pub struct Writer<A, B> {
     contracts: Contracts,
 }
 
-enum Progress {
+/// How a delivered step ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Delivered {
+    /// The chain has what the call asks for.
     Done,
-    NotYet(String),
+    /// The chain can no longer take it, nor what follows it.
+    Obsolete,
 }
 
 impl<A: Account, B: BlobStore> Writer<A, B> {
@@ -128,63 +130,95 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
         }
     }
 
-    /// Sends `submission`'s calls in order. A call is done when it succeeds, or when it reverts
-    /// with an error it does not wait out: then the chain has its effect already, or can no longer
-    /// take it. Until then it tries again; the node stops the calls of an E3 it no longer holds.
+    /// Sends `submission`'s calls in order, each until the chain says it is finished; a call the
+    /// chain can no longer take ends the submission. The node stops the calls of an E3 it no longer
+    /// owes.
     pub async fn submit(&self, submission: &Submission) -> Result<(), WriteError> {
         let blobs = self.blobs.of(submission.e3);
-        for call in calls(&self.contracts, &blobs, submission)? {
-            self.deliver(&submission.e3, &call).await;
+        for step in calls(&self.contracts, &blobs, submission)? {
+            if self.deliver(&submission.e3, &step).await == Delivered::Obsolete {
+                break;
+            }
         }
         Ok(())
     }
 
     /// Refreshes `operator`'s activity and owner capacity. Under a required identity policy an
     /// owner's capacity reads zero from the start of each 30-day window until its operators
-    /// refresh. An unregistered operator's call reverts, so nothing is sent.
+    /// refresh. A refresh that does not finish in time is left to the next one.
     pub async fn refresh_operator(&self, operator: Address) {
         let data = IBondingRegistry::refreshOperatorStatusCall { operator };
-        let call = Call {
-            label: "refreshOperatorStatus",
-            to: self.contracts.bonding,
-            data: data.abi_encode().into(),
-            gas_multiplier: REFRESH_GAS_MULTIPLIER,
-            not_yet: &[],
+        let step = Step {
+            call: Call {
+                label: "refreshOperatorStatus",
+                to: self.contracts.bonding,
+                data: data.abi_encode().into(),
+                gas_multiplier: REFRESH_GAS_MULTIPLIER,
+            },
+            reverts: reverts::refresh,
         };
-        self.deliver(&operator, &call).await;
+        let refresh = self.deliver(&operator, &step);
+        if tokio::time::timeout(REFRESH_LIMIT, refresh).await.is_err() {
+            warn!(%operator, "the refresh did not finish in time; the next one tries again");
+        }
     }
 
     /// `of` names what the call is for, in logs.
-    async fn deliver(&self, of: &(dyn Display + Sync), call: &Call) {
-        let mut wait = FIRST_RETRY;
+    async fn deliver(&self, of: &(dyn Display + Sync), step: &Step) -> Delivered {
+        let (label, mut wait) = (step.call.label, FIRST_RETRY);
         loop {
-            match self.attempt(of, call).await {
-                Ok(Progress::Done) => return,
-                Ok(Progress::NotYet(reason)) => debug!(%of, call = call.label, %reason, "not yet"),
-                Err(error) => warn!(%of, call = call.label, %error, "the attempt failed"),
+            match self.attempt(of, step).await {
+                Ok(Some(delivered)) => return delivered,
+                Ok(None) => {}
+                Err(error) => warn!(%of, call = label, %error, "the attempt failed"),
             }
             tokio::time::sleep(wait).await;
             wait = (wait * 2).min(LONGEST_RETRY);
         }
     }
 
-    async fn attempt(&self, of: &(dyn Display + Sync), call: &Call) -> Result<Progress, RpcError> {
+    /// One try at `step`: how it ended, or `None` when it goes again.
+    async fn attempt(
+        &self,
+        of: &(dyn Display + Sync),
+        step: &Step,
+    ) -> Result<Option<Delivered>, RpcError> {
+        let call = &step.call;
         let gas = match self.account.estimate(call).await? {
             Estimate::Gas(gas) => gas,
-            Estimate::Reverts(revert) if call.waits_out(&revert) => {
-                return Ok(Progress::NotYet(format!("reverts with {revert}")));
-            }
-            Estimate::Reverts(revert) => {
-                info!(%of, call = call.label, %revert, "nothing to send: the call reverts");
-                return Ok(Progress::Done);
-            }
+            Estimate::Reverts(revert) => return Ok(read_revert(of, step, &revert)),
         };
         let gas = gas.saturating_mul(call.gas_multiplier);
         if !self.account.send(call, gas).await? {
-            return Ok(Progress::NotYet("reverted on chain".into()));
+            warn!(%of, call = call.label, "the transaction reverted on chain; checking it again");
+            return Ok(None);
         }
         info!(%of, call = call.label, "landed");
-        Ok(Progress::Done)
+        Ok(Some(Delivered::Done))
+    }
+}
+
+/// What `step`'s `revert` means, in the log and for the delivery.
+fn read_revert(of: &(dyn Display + Sync), step: &Step, revert: &Bytes) -> Option<Delivered> {
+    let call = step.call.label;
+    let error = decode_error(revert).unwrap_or_else(|| revert.to_string());
+    match (step.reverts)(revert) {
+        Some(Verdict::Retry) => {
+            debug!(%of, call, %error, "not yet");
+            None
+        }
+        Some(Verdict::Applied) => {
+            info!(%of, call, %error, "nothing to send: the chain has it already");
+            Some(Delivered::Done)
+        }
+        Some(Verdict::Obsolete) => {
+            warn!(%of, call, %error, "the chain can no longer take this call");
+            Some(Delivered::Obsolete)
+        }
+        None => {
+            warn!(%of, call, %error, "the call reverts for a reason the node cannot place; trying again");
+            None
+        }
     }
 }
 
@@ -193,46 +227,36 @@ fn calls(
     contracts: &Contracts,
     blobs: &impl Blobs,
     submission: &Submission,
-) -> Result<Vec<Call>, WriteError> {
-    use IInterfold::{
-        E3NotFailed, FailureConditionNotMet, MarkE3FailedInGracePeriod, SettlementBlocked,
-    };
-    use Registry::{
-        CommitteeNotFinalized, CommitteeNotPublished, CommitteeNotRequested,
-        SortitionSeedUnavailable, SubmissionWindowNotClosed,
-    };
+) -> Result<Vec<Step>, WriteError> {
     let e3 = submission.e3.number;
-    let call = |to, label, data: Vec<u8>, not_yet: &'static [[u8; 4]]| Call {
-        label,
-        to,
-        data: data.into(),
-        gas_multiplier: 1,
-        not_yet,
+    let step = |to, label, data: Vec<u8>, reverts: Reading| Step {
+        call: Call {
+            label,
+            to,
+            data: data.into(),
+            gas_multiplier: 1,
+        },
+        reverts,
     };
-    let registry = |label, data, not_yet| call(contracts.registry, label, data, not_yet);
-    let interfold = |label, data, not_yet| call(contracts.interfold, label, data, not_yet);
+    let registry = |label, data, reverts| step(contracts.registry, label, data, reverts);
+    let interfold = |label, data, reverts| step(contracts.interfold, label, data, reverts);
     Ok(match &submission.transaction {
         Transaction::SubmitTicket { ticket } => {
             let data = Registry::submitTicketCall {
                 e3Id: e3,
                 ticketNumber: U256::from(*ticket),
             };
-            let not_yet = &[
-                CommitteeNotRequested::SELECTOR,
-                SortitionSeedUnavailable::SELECTOR,
-            ];
-            vec![Call {
-                gas_multiplier: TICKET_GAS_MULTIPLIER,
-                ..registry("submitTicket", data.abi_encode(), not_yet)
-            }]
+            let mut ticket = registry("submitTicket", data.abi_encode(), reverts::ticket);
+            ticket.call.gas_multiplier = TICKET_GAS_MULTIPLIER;
+            vec![ticket]
         }
         Transaction::FinalizeCommittee => {
             let data = Registry::finalizeCommitteeCall { e3Id: e3 };
-            let not_yet = &[
-                SubmissionWindowNotClosed::SELECTOR,
-                CommitteeNotRequested::SELECTOR,
-            ];
-            vec![registry("finalizeCommittee", data.abi_encode(), not_yet)]
+            vec![registry(
+                "finalizeCommittee",
+                data.abi_encode(),
+                reverts::finalize_committee,
+            )]
         }
         // The key's chunks are only logs, from which readers assemble any complete copy that
         // matches the commitment. So they go out even when another aggregator's equal commitment
@@ -257,13 +281,19 @@ fn calls(
                     totalLength: layout.total_length(),
                     chunk: Bytes::copy_from_slice(&key[range]),
                 };
-                let not_yet = &[CommitteeNotPublished::SELECTOR];
-                registry("publishCommitteePublicKey", chunk.abi_encode(), not_yet)
+                registry(
+                    "publishCommitteePublicKey",
+                    chunk.abi_encode(),
+                    reverts::key_chunk,
+                )
             });
-            let not_yet = &[CommitteeNotFinalized::SELECTOR];
-            iter::once(registry("publishCommittee", publish.abi_encode(), not_yet))
-                .chain(chunks)
-                .collect()
+            iter::once(registry(
+                "publishCommittee",
+                publish.abi_encode(),
+                reverts::publish_committee,
+            ))
+            .chain(chunks)
+            .collect()
         }
         Transaction::PublishPlaintext(publication) => {
             let data = IInterfold::publishPlaintextOutputCall {
@@ -271,28 +301,34 @@ fn calls(
                 plaintextOutput: blobs.get(&publication.plaintext)?.into(),
                 proof: proof_calldata(blobs, &publication.proof)?,
             };
-            vec![interfold("publishPlaintextOutput", data.abi_encode(), &[])]
+            vec![interfold(
+                "publishPlaintextOutput",
+                data.abi_encode(),
+                reverts::plaintext,
+            )]
         }
         // Before its grace period ends, the contract takes the call only from committee members.
         Transaction::MarkFailed => {
             let data = IInterfold::markE3FailedCall { e3Id: e3 };
-            let not_yet = &[
-                FailureConditionNotMet::SELECTOR,
-                MarkE3FailedInGracePeriod::SELECTOR,
-            ];
-            vec![interfold("markE3Failed", data.abi_encode(), not_yet)]
+            vec![interfold(
+                "markE3Failed",
+                data.abi_encode(),
+                reverts::mark_failed,
+            )]
         }
         // With a committee, settlement opens a day after the E3's lifecycle deadline, once no
         // accusation is open.
         Transaction::SettleFailure => {
             let data = IInterfold::processE3FailureCall { e3Id: e3 };
-            let not_yet = &[E3NotFailed::SELECTOR, SettlementBlocked::SELECTOR];
-            vec![interfold("processE3Failure", data.abi_encode(), not_yet)]
+            vec![interfold(
+                "processE3Failure",
+                data.abi_encode(),
+                reverts::settle_failure,
+            )]
         }
         // Each of the first voters can send it in turn; the contract takes one proposal for the
-        // proof, and a later one reverts, which means nothing to send. A window that starts
-        // further past the newest block's time than the clock skew waits for the chain to catch
-        // up.
+        // proof. A window that starts further past the newest block's time than the clock skew
+        // waits for the chain to catch up.
         Transaction::ProposeSlash {
             manager,
             accused,
@@ -306,8 +342,12 @@ fn calls(
                 operator: *accused,
                 proof: slash_evidence(*proof_type, votes, &disputed)?,
             };
-            let not_yet = &[ISlashingManager::AccusationIssuedInFuture::SELECTOR];
-            vec![call(*manager, "proposeSlash", data.abi_encode(), not_yet)]
+            vec![step(
+                *manager,
+                "proposeSlash",
+                data.abi_encode(),
+                reverts::propose_slash,
+            )]
         }
     })
 }

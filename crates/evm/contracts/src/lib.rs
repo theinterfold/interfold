@@ -169,6 +169,7 @@ sol! {
         error E3AlreadyComplete(uint256 e3Id);
         error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
         error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+        error CommitteeDutiesCompleted(uint256 e3Id, uint256 expiration);
         // Declared by IE3RefundManager. `processE3Failure` forwards it unchanged.
         error SettlementBlocked();
     }
@@ -263,6 +264,8 @@ sol! {
         error InvalidAccusationWindow();
         error AccusationIssuedInFuture();
         error SlashSubmissionDeadlinePassed();
+        error SlashReasonDisabled();
+        error AccusationSlashingDisabled();
     }
 }
 
@@ -495,6 +498,7 @@ sol! {
         error InvalidPublicKeyLength(uint256 supplied, uint256 maximum);
         error InvalidPublicKeyChunk();
         error PublicKeyPublisherNotCommitteeMember();
+        error CommitteeObligationsAlreadyReleased(uint256 e3Id);
     }
 }
 
@@ -519,6 +523,8 @@ sol! {
     #[sol(rpc, abi)]
     #[derive(Debug)]
     interface IBondingRegistry {
+        error NotRegistered();
+
         function setBondOwner(address bondOwner) external;
         function proposeBondOwner(address operator, address newOwner) external;
         function acceptBondOwner(address operator) external;

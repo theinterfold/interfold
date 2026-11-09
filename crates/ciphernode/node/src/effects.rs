@@ -40,12 +40,14 @@ use tracing::{debug, error, warn};
 
 /// A wait between attempts that doubles up to a limit.
 #[derive(Clone, Copy, Debug)]
-struct Backoff {
+pub(crate) struct Backoff {
     wait: Duration,
     longest: Duration,
 }
 
 impl Backoff {
+    /// A node that cannot start yet has nothing else to do.
+    pub(crate) const STARTUP: Self = Self::new(1, 30);
     /// A failed job is this node's own: a key check near its cutoff cannot wait long.
     const JOB: Self = Self::new(5, 60);
     const SUBMISSION: Self = Self::new(30, 600);
@@ -59,7 +61,7 @@ impl Backoff {
         }
     }
 
-    fn next(&mut self) -> Duration {
+    pub(crate) fn next(&mut self) -> Duration {
         let wait = self.wait;
         self.wait = (self.wait * 2).min(self.longest);
         wait

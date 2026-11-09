@@ -10,7 +10,7 @@
 pub mod error_decoder;
 pub mod helpers;
 mod log_fetcher;
-mod log_window;
+pub mod log_window;
 mod operator_status;
 
 use e3_evm_contracts as contracts;
