@@ -414,15 +414,21 @@ async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() ->
     plan.e_sm_share_encryption_requests = recipients
         .map(|party| encryption(party, DkgInputType::SmudgingNoise))
         .collect();
-    let planned: Vec<_> = plan_threshold_dispatch(
-        plan.proof_request.clone(),
-        plan.sk_share_computation_request.clone(),
-        plan.e_sm_share_computation_request.clone(),
-        plan.sk_share_encryption_requests.clone(),
-        plan.e_sm_share_encryption_requests.clone(),
-    )
+    // The canonical seq order: C1, C2a, C2b, then the C3a and C3b rows.
+    let planned: Vec<_> = [
+        ZkRequest::PkGeneration(plan.proof_request.clone()),
+        ZkRequest::ShareComputation(plan.sk_share_computation_request.clone()),
+        ZkRequest::ShareComputation(plan.e_sm_share_computation_request.clone()),
+    ]
     .into_iter()
-    .map(|item| ComputeRequestKind::Zk(item.request))
+    .chain(
+        plan.sk_share_encryption_requests
+            .iter()
+            .chain(&plan.e_sm_share_encryption_requests)
+            .cloned()
+            .map(ZkRequest::ShareEncryption),
+    )
+    .map(ComputeRequestKind::Zk)
     .collect();
 
     bus.publish_without_context(plan)?;
