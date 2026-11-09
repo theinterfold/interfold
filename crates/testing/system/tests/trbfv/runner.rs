@@ -127,7 +127,7 @@ pub struct Observations {
     pub role_holders: Vec<(usize, CiphernodeHistory)>,
     pub nodes: Vec<NodeHistory>,
     /// The node a fault took offline, if any.
-    pub offline_node: Option<usize>,
+    pub offline: Option<Offline>,
     /// Set when the scenario expects the standby party to deal, and the run aggregates proofs.
     pub standby: Option<Standby>,
     /// The party a fault restarted, once it has.
@@ -220,6 +220,14 @@ pub struct Restarted {
     pub share_published: bool,
 }
 
+/// The node a fault disconnected, and how many events it had logged by then. It cannot collect
+/// its own DKG shares afterwards, so only that earlier history must be free of faults.
+#[derive(Debug, Clone, Copy)]
+pub struct Offline {
+    pub node_index: usize,
+    pub events_before_disconnect: usize,
+}
+
 /// Everything the phases of one run share.
 struct Env {
     scenario: Scenario,
@@ -238,6 +246,8 @@ struct Env {
     factory: NodeFactory,
     /// The party a fault restarted, once it has.
     restarted: Option<Restarted>,
+    /// The node a fault disconnected, once it has.
+    offline: Option<Offline>,
     /// Stands in for the chain: whatever it publishes reaches every node's own durable event
     /// pipeline.
     bus: BusHandle,
@@ -368,6 +378,7 @@ impl Env {
             nodes,
             factory,
             restarted: None,
+            offline: None,
             bus,
             multithread_report,
             timings: Timings {
@@ -414,10 +425,11 @@ pub async fn run(scenario: &Scenario) -> Result<Observations> {
 
     let decrypted = encrypt_and_decrypt(&mut env, &request, &key).await?;
 
-    let role_holders = role_holders(&env, &request).await?;
     let roster = key_roster(&key);
     let standby = await_standby_share(&env, &request, &roster).await;
     let restarted = await_restarted_share(&env).await;
+    // Read after the share waits, so a holder that submits a key during them is still audited.
+    let role_holders = role_holders(&env, &request).await?;
     let nodes = node_histories(&env).await?;
 
     let multithread = env.multithread_report.send(ToReport).await?;
@@ -437,7 +449,7 @@ pub async fn run(scenario: &Scenario) -> Result<Observations> {
         plaintext_aggregator_events: decrypted.history.to_vec(),
         role_holders,
         nodes,
-        offline_node: request.offline_node(),
+        offline: env.offline,
         standby,
         restarted,
         multithread,
@@ -583,7 +595,7 @@ async fn inject_decryption_fault(
     }
 }
 
-async fn disconnect_after_c0(env: &Env, request: &Request) -> Result<()> {
+async fn disconnect_after_c0(env: &mut Env, request: &Request) -> Result<()> {
     let Some(party_id) = request.offline_party else {
         return Ok(());
     };
@@ -623,7 +635,12 @@ async fn disconnect_after_c0(env: &Env, request: &Request) -> Result<()> {
         published_c0,
     )
     .await?;
+    let events_before_disconnect = env.nodes.get_history(node_index).await?.len();
     env.nodes.disconnect_node(node_index).await?;
+    env.offline = Some(Offline {
+        node_index,
+        events_before_disconnect,
+    });
     println!("Disconnected committee party {party_id} at node index {node_index} after C0");
     Ok(())
 }

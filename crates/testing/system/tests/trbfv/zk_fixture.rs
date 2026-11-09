@@ -80,12 +80,10 @@ pub async fn setup_test_zk_backend(
         committee_dir,
         &temp.path().join("staged"),
     )?;
-    let local_bb = match local {
-        Some(_) => find_bb().await,
-        None => None,
-    };
+    // A custom bb (E3_CUSTOM_BB or PATH) is used and checked whether or not local circuits exist.
     // The installer never replaces a custom binary, so the developer's bb stays untouched.
-    let bb = match &local_bb {
+    let custom_bb = find_bb().await;
+    let bb = match &custom_bb {
         Some(bb) => BBPath::Custom(bb.clone()),
         None => BBPath::Default(noir_dir.join("bin").join("bb")),
     };
@@ -94,23 +92,30 @@ pub async fn setup_test_zk_backend(
         noir_dir.join("circuits"),
         noir_dir.join("work").join("test_node"),
     );
-    match (local, local_bb) {
-        (Some(circuits), Some(bb)) => {
-            let version = backend
-                .verify_bb()
-                .await
-                .context("run local bb --version")?;
-            ensure!(
-                version == backend.config.required_bb_version,
-                "local bb is {version}, tests need {} ({})",
-                backend.config.required_bb_version,
-                bb.display()
-            );
+    if let Some(bb) = &custom_bb {
+        let version = backend
+            .verify_bb()
+            .await
+            .context("run local bb --version")?;
+        ensure!(
+            version == backend.config.required_bb_version,
+            "local bb is {version}, tests need {} ({})",
+            backend.config.required_bb_version,
+            bb.display()
+        );
+    }
+    match (local, &custom_bb) {
+        (Some(circuits), Some(_)) => {
             backend
                 .install_circuits_dir(&circuits, &[(&preset_dir, committee_dir)])
                 .await
                 .with_context(|| {
-                    format!("install local circuits for {preset_dir}/{committee_dir}")
+                    format!(
+                        "install local circuits for {preset_dir}/{committee_dir} from {}; a \
+                         current tree must carry a complete checksums.json (`pnpm store:circuits \
+                         checksums --dir <tree>`), or be removed",
+                        circuits.display()
+                    )
                 })?;
         }
         _ => {

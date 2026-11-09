@@ -30,19 +30,41 @@ pub async fn run_from_env() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .filter(|&n| n >= 1)
         .unwrap_or(1);
+    let folded_output = std::env::var("BENCHMARK_FOLDED_OUTPUT").ok();
+    let summary_output = std::env::var("BENCHMARK_SUMMARY_OUTPUT").ok();
+    if let (Some(folded), Some(summary)) = (&folded_output, &summary_output) {
+        anyhow::ensure!(
+            resolved_output(folded)? != resolved_output(summary)?,
+            "BENCHMARK_FOLDED_OUTPUT and BENCHMARK_SUMMARY_OUTPUT name the same file: {folded}"
+        );
+    }
     let run = run_and_check(&Scenario::benchmark(preset, jobs)).await?;
 
     let report = Report::new(&run);
     println!("{}", report.serialize());
-    if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
+    if let Some(path) = folded_output {
         fs::write(&path, folded_artifacts_json(&run, ""))?;
         println!("Wrote folded benchmark proofs to {path}");
     }
-    if let Ok(path) = std::env::var("BENCHMARK_SUMMARY_OUTPUT") {
+    if let Some(path) = summary_output {
         fs::write(&path, summary_json(&run, &mode, &report))?;
         println!("Wrote benchmark summary to {path}");
     }
     Ok(())
+}
+
+/// An output file's path with its directory resolved, so `a/../b.json` and `b.json` compare equal.
+/// The directory must exist; the file need not.
+fn resolved_output(path: &str) -> Result<std::path::PathBuf> {
+    let path = std::path::Path::new(path);
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => std::path::Path::new("."),
+    };
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("benchmark output {} names no file", path.display()))?;
+    Ok(fs::canonicalize(dir)?.join(name))
 }
 
 /// Labelled wall-clock phases, in the order the report lists them.
@@ -58,20 +80,19 @@ impl Report {
             ("Committee Finalization Complete", t.committee_finalization),
         ];
 
-        // Peers forward the published key, so time the phase to the local publication only.
-        let p2_events = run
-            .role_holders
-            .iter()
-            .flat_map(|(_, history)| history.iter())
-            .filter(|event| {
+        // Peers forward the published key, so time the phase within the holder that published it.
+        let p2_secs = run.role_holders.iter().find_map(|(_, history)| {
+            let own_events = history.iter().filter(|event| {
                 !matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_))
                     || event.source() == EventSource::Local
             });
-        if let Some(secs) = wall_seconds_between(
-            p2_events,
-            |d| matches!(d, InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == run.e3_id),
-            |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == run.e3_id),
-        ) {
+            wall_seconds_between(
+                own_events,
+                |d| matches!(d, InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == run.e3_id),
+                |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == run.e3_id),
+            )
+        });
+        if let Some(secs) = p2_secs {
             phases.push((
                 "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
                 Duration::from_secs_f64(secs),

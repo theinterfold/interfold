@@ -13,7 +13,7 @@ use super::history::collect_honest_run_faults;
 use super::runner::Observations;
 use super::scenario::{Scenario, VOTES_PER_VOTER};
 use e3_bfv_client::decode_bytes_to_vec_u64;
-use e3_events::{prelude::*, EventSource, InterfoldEventData};
+use e3_events::{prelude::*, EventSource, InterfoldEvent, InterfoldEventData};
 use e3_utils::utility_types::ArcBytes;
 use fhe::bfv::BfvParameters;
 
@@ -130,36 +130,44 @@ fn check_restarted_share(scenario: &Scenario, observed: &Observations) {
 
 /// The runtime lets a demoted holder finish and submit the key it computed, and the chain keeps
 /// the first valid submission. Every submission must therefore be the key the committee goes on
-/// to use, built from the roster that key lists. A holder's own submission is `Local`; peers
-/// forward copies. A better-ranked proposal can replace an accepted roster until C4 fixes it, so
-/// each holder is checked against the last roster it selected before it submitted.
+/// to use, with the same committee, honest subset and commitment. A holder's own submission is
+/// `Local`; peers forward copies. A better-ranked proposal can replace an accepted roster until
+/// C4 fixes it, so each submitting holder's final roster must be the one the key lists.
 fn check_key_submissions(observed: &Observations) {
+    let key = &observed.key;
     let mut submissions = 0;
     for (node_index, history) in &observed.role_holders {
-        let mut selected: Option<&Vec<u64>> = None;
+        let mut final_roster: Option<&Vec<u64>> = None;
+        let mut submitted = false;
         for event in history.iter() {
             match (event.source(), event.get_data()) {
                 (_, InterfoldEventData::CommitmentRosterSelected(data))
                     if data.e3_id == observed.e3_id =>
                 {
-                    selected = Some(&data.party_ids);
+                    final_roster = Some(&data.party_ids);
                 }
                 (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data))
                     if data.e3_id == observed.e3_id =>
                 {
-                    submissions += 1;
+                    submitted = true;
                     assert!(
-                        data.pubkey == observed.key.pubkey,
-                        "role holder {node_index} submitted a public key that differs from the one the committee used"
-                    );
-                    assert_eq!(
-                        selected.map(Vec::as_slice),
-                        Some(observed.roster.as_slice()),
-                        "role holder {node_index} submitted a key without having selected the roster it lists"
+                        data.pubkey == key.pubkey
+                            && data.committee_addresses == key.committee_addresses
+                            && data.honest_committee_addresses == key.honest_committee_addresses
+                            && data.pk_commitment == key.pk_commitment,
+                        "role holder {node_index} submitted a key that differs from the one the committee used"
                     );
                 }
                 _ => {}
             }
+        }
+        if submitted {
+            submissions += 1;
+            assert_eq!(
+                final_roster.map(Vec::as_slice),
+                Some(observed.roster.as_slice()),
+                "role holder {node_index} submitted a key whose roster is not the one it selected"
+            );
         }
     }
     assert!(submissions > 0, "no role holder submitted the public key");
@@ -167,20 +175,23 @@ fn check_key_submissions(observed: &Observations) {
 
 /// No node may have accused, expelled, or failed anyone, or logged an actor error. The
 /// disconnected node cannot collect its own DKG shares, so it can fail locally without failing the
-/// E3.
+/// E3: only what it logged before the disconnect is scanned.
 fn check_no_faults(observed: &Observations) {
     let mut faults = Vec::new();
     for node in &observed.nodes {
-        if Some(node.index) == observed.offline_node {
-            continue;
-        }
+        let history: &[InterfoldEvent] = match observed.offline {
+            Some(offline) if offline.node_index == node.index => {
+                &node.history[..offline.events_before_disconnect.min(node.history.len())]
+            }
+            _ => &node.history,
+        };
         let context = if node.index == 0 {
             "observer node 0".to_string()
         } else {
             format!("participant node {} ({})", node.index, node.address)
         };
         faults.extend(collect_honest_run_faults(
-            &node.history,
+            history,
             &observed.e3_id,
             &context,
         ));
