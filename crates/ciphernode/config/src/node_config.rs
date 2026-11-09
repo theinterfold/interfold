@@ -12,7 +12,12 @@ use anyhow::Result;
 use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 
 /// The structure within the app configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -219,6 +224,18 @@ impl NodeConfig {
         }
         if node.max_buffered_net_bytes == 0 {
             bail!("node.max_buffered_net_bytes must be greater than zero");
+        }
+        if let Some(addr) = node.metrics_addr {
+            // The dashboard and the control port listen on 127.0.0.1 over TCP. A metrics address on
+            // the same port that covers loopback would take the port from them at startup.
+            let covers_loopback =
+                addr.ip().is_unspecified() || addr.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST);
+            if covers_loopback && node.dashboard_port == Some(addr.port()) {
+                bail!("node.metrics_addr and node.dashboard_port must not use the same port");
+            }
+            if covers_loopback && node.ctrl_port == addr.port() {
+                bail!("node.metrics_addr and node.ctrl_port must not use the same port");
+            }
         }
 
         let network =
@@ -758,6 +775,34 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert!(!default.skip_proof_aggregation());
+        Ok(())
+    }
+
+    /// A metrics address that covers loopback must not take the dashboard or the control port,
+    /// which listen on 127.0.0.1; the same port on another interface is allowed.
+    #[test]
+    fn metrics_addr_must_not_take_a_loopback_listener_port() -> Result<()> {
+        let scoped = |yaml: &str| {
+            serde_yaml::from_str::<UnscopedNodeConfig>(yaml)
+                .map_err(anyhow::Error::from)?
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+        };
+
+        let dashboard = scoped("node:\n  dashboard_port: 9092\n  metrics_addr: \"0.0.0.0:9092\"\n");
+        assert!(format!("{:#}", dashboard.unwrap_err()).contains("dashboard_port"));
+        let ctrl = scoped("node:\n  metrics_addr: \"127.0.0.1:50505\"\n");
+        assert!(format!("{:#}", ctrl.unwrap_err()).contains("ctrl_port"));
+        let other_interface =
+            scoped("node:\n  dashboard_port: 9092\n  metrics_addr: \"10.0.0.5:9092\"\n")?;
+        assert_eq!(
+            other_interface.metrics_addr(),
+            Some("10.0.0.5:9092".parse().unwrap())
+        );
         Ok(())
     }
 

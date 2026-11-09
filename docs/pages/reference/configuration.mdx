@@ -144,7 +144,9 @@ The `node` key and each entry under `nodes` accept the same keys. Every key is o
 | `bootstrap`      | Boolean                   | `false`                     | `interfold nodes up` starts this profile as a bootstrap peer (`interfold start --bootstrap`): networking and chain reads only.                 |
 
 Each profile on one host needs its own `quic_port` and `ctrl_port`, and its own `dashboard_port` and
-`metrics_addr` when it sets them.
+`metrics_addr` when it sets them. A `metrics_addr` on `0.0.0.0`, `::`, or `127.0.0.1` must not use
+the `dashboard_port` or the `ctrl_port` of the same profile; the configuration load fails if it
+does.
 
 ### Node keys
 
