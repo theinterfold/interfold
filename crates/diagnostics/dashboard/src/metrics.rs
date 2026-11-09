@@ -250,12 +250,12 @@ fn render_operator(registry: &mut Registry, operator: &OperatorStatusSnapshot, e
     );
     let ticket_balance = family::<FloatGauge>(
         registry,
-        "operator_ticket_balance",
+        "operator_ticket_balance_base_units",
         "Ticket balance of the operator, in token base units",
     );
     let bond = family::<FloatGauge>(
         registry,
-        "operator_bond",
+        "operator_bond_base_units",
         "Ciphernode bond of the operator, in token base units",
     );
     let registered_nodes = family::<Gauge>(
@@ -630,7 +630,7 @@ mod tests {
             "8"
         );
         assert_eq!(
-            value(&body, "interfold_operator_bond{chain_id=\"1\"}"),
+            value(&body, "interfold_operator_bond_base_units{chain_id=\"1\"}"),
             "3.2e22"
         );
         assert_eq!(
@@ -684,7 +684,10 @@ mod tests {
 
         let body = render(&input);
 
-        assert!(!body.contains("interfold_operator_bond{"), "{body}");
+        assert!(
+            !body.contains("interfold_operator_bond_base_units{"),
+            "{body}"
+        );
         assert!(!body.contains("NaN"), "{body}");
         assert_eq!(
             value(
