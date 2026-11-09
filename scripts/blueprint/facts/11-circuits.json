@@ -172,7 +172,7 @@
       "key_types": [
         {
           "name": "SecretKeyShareComputation",
-          "what": "the C2a statement: secret commitment, secret, the share grid and the parity matrix",
+          "what": "the C2a statement: secret commitment, secret and the share grid",
           "ref": "circuits/lib/src/core/dkg/share_computation.nr@36@pub struct SecretKeyShareComputation<"
         },
         {
@@ -188,15 +188,15 @@
         },
         {
           "why": "execute: secret commitment, consistency, range, parity, then commit to shares",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@95@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@85@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
         },
         {
           "why": "the share-at-zero check: y at point 0 equals the secret coefficient",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@154@assert(self.y[coeff_idx][mod_idx][0] == secret_coeff)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@144@assert(self.y[coeff_idx][mod_idx][0] == secret_coeff)"
         },
         {
-          "why": "the parity check: the parity matrix times the shares is zero modulo each prime",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@309@ModU64::new(q_j as u64).assert_zero_mod(sum)"
+          "why": "the parity check: each window of T + 2 shares, weighted by alternating binomial coefficients, is zero modulo each prime",
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@315@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
         }
       ],
       "rust_patterns": [],
@@ -239,7 +239,7 @@
         {
           "name": "SmudgingNoiseShareComputation",
           "what": "the C2b statement: the same shape as C2a, with the centered noise as the secret",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@65@pub struct SmudgingNoiseShareComputation<"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@60@pub struct SmudgingNoiseShareComputation<"
         }
       ],
       "read_first": [
@@ -249,11 +249,11 @@
         },
         {
           "why": "execute: the same body shape as C2a",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@172@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@161@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
         },
         {
           "why": "the noise commitment check, after centering each modulus",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@217@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@206@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
         }
       ],
       "rust_patterns": [],
