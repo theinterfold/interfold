@@ -68,7 +68,10 @@ bound plus the unique remainder interval, not trusted because a hint computed th
   through the primitive's arithmetic first. A remainder interval alone is insufficient.
 - C7 derives u through bounded interpolation and Garner reconstruction, not witnessed `u_global` or
   CRT quotients. Its inverse and reduction hints are bounded. `rounded_decode` constrains quotient
-  and remainder and compares every message coefficient (IF-002/IF-012).
+  and remainder and compares every message coefficient (IF-002/IF-012). Every input to those helpers
+  needs a quotient under `BIT_K` or valid inputs cannot be proven: the Lagrange products are reduced
+  after every factor, so each quotient stays below the largest party id. Unreduced, the product of
+  the other ids reaches `n!/(n-T)!` (about 2^35 at 19 parties).
 - The C7 rounded decode `round(t*u/Q)` with t mapped to zero must remain equivalent to the modular
   reference decode `-Q^-1 * (t*u mod Q) mod t`. Keep the boundary assertions; historical exhaustive
   comparison across 44 parameter pairs is evidence for that reformulation, not every future tuple.
