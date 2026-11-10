@@ -20,7 +20,6 @@ use e3_events::{
     Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest,
     ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_fhe_params::build_pair_for_preset;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
@@ -264,7 +263,7 @@ mod tests {
                     committee_n: 0,
                     committee_h: 0,
                     n_moduli: 0,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -356,7 +355,7 @@ mod tests {
                     committee_n: 3,
                     committee_h: 2,
                     n_moduli: 1,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -454,7 +453,7 @@ mod tests {
                 committee_n: 0,
                 committee_h: 0,
                 n_moduli: 0,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             },
             test_ctx(DKGRecursiveAggregationComplete {
@@ -545,7 +544,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         actor.persist_meta(&e3_id, &meta, &ec)?;
@@ -581,7 +580,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =
@@ -604,10 +603,10 @@ mod tests {
             panic!("expected a resumed compute request");
         };
         assert_eq!(request.e3_id, e3_id);
-        assert!(matches!(
-            request.request,
-            ComputeRequestKind::Zk(ZkRequest::NodeDkgFold(_))
-        ));
+        let ComputeRequestKind::Zk(ZkRequest::NodeDkgFold(fold)) = request.request else {
+            panic!("expected a resumed node fold");
+        };
+        assert_eq!(fold.params_preset, meta.params_profile.threshold_preset());
         Ok(())
     }
 
@@ -663,7 +662,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =

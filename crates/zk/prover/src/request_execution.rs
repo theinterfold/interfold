@@ -46,9 +46,9 @@ use e3_events::{
 };
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
-use e3_fhe_params::BfvParamSet;
 #[cfg(test)]
 use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvParamSet, BfvProfile};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_trbfv::helpers::deserialize_secret_key;
@@ -570,6 +570,19 @@ fn make_zk_error(request: &ComputeRequest, msg: String) -> ComputeRequestError {
     )
 }
 
+fn admitted_profile_artifacts(
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+    request: &ComputeRequest,
+) -> Result<String, ComputeRequestError> {
+    profile
+        .ensure_admission_enabled()
+        .map_err(|e| make_zk_error(request, e.to_string()))?;
+    profile
+        .artifacts_dir_for_committee(committee)
+        .map_err(|e| make_zk_error(request, e.to_string()))
+}
+
 /// Barretenberg work subdirectory under `work_dir`: must be unique for concurrent jobs that share
 /// the same [`e3_events::E3id`] (e.g. three ciphernodes proving C0 in parallel).
 ///
@@ -591,12 +604,16 @@ fn handle_share_computation_proof(
     req: ShareComputationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     // 1. Build BFV threshold parameters
-    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let (threshold_params, _dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_computation::Configs::new(
-        req.params_preset,
+        req.params_profile.threshold_preset(),
         &threshold_params,
         req.committee_size,
     )
@@ -642,8 +659,6 @@ fn handle_share_computation_proof(
 
     let bb_work = zk_bb_work_id(&request);
     let inner_job_id = format!("{bb_work}_c2_inner");
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
     // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
     let circuit = ShareComputationCircuit;
@@ -678,11 +693,13 @@ fn handle_pk_generation_proof(
     req: PkGenerationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     // 1. Build BFV parameters from the threshold preset
-    let params = BfvParamSet::from(req.params_preset).build_arc();
+    let params = BfvParamSet::from(req.params_profile.threshold_preset()).build_arc();
 
     let config = e3_zk_config::threshold::pk_generation::Configs::new(
-        req.params_preset,
+        req.params_profile.threshold_preset(),
         &params,
         req.committee_size,
     )
@@ -734,8 +751,6 @@ fn handle_pk_generation_proof(
     // 5. Generate proof via Provable trait
     let circuit = PkGenerationCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
@@ -759,13 +774,8 @@ fn handle_pk_bfv_proof(
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // Admission and namespace resolution precede key decoding and artifact/process access.
-    req.params_profile
-        .ensure_admission_enabled()
-        .map_err(|e| make_zk_error(&request, e.to_string()))?;
-    let artifacts_dir = req
-        .params_profile
-        .artifacts_dir_for_committee(req.committee_size)
-        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     let dkg_preset = req
         .params_profile
         .dkg_preset()
@@ -809,9 +819,12 @@ fn handle_share_encryption_proof(
     req: ShareEncryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // 1. Build DKG params from threshold preset
-    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let (_threshold_params, dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_encryption::Configs::new(&dkg_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -862,11 +875,9 @@ fn handle_share_encryption_proof(
         e1_rns,
     };
 
-    // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
+    // 6. Generate proof under the same profile's artifact namespace.
     let circuit = ShareEncryptionCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {
@@ -895,8 +906,12 @@ fn handle_dkg_share_decryption_proof(
     req: DkgShareDecryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let (threshold_params, dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::new(&threshold_params, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -1016,8 +1031,6 @@ fn handle_dkg_share_decryption_proof(
 
     let circuit = ShareDecryptionCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {

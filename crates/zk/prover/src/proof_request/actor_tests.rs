@@ -249,7 +249,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
 
@@ -266,7 +266,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             sk: sensitive(),
             eek: sensitive(),
             e_sm: sensitive(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(DkgInputType::SecretKey),
@@ -308,7 +308,7 @@ fn decryption_share_proofs_pending(e3_id: E3id) -> DecryptionShareProofsPending 
         own_plaintext_idx: None,
         own_share_raw: None,
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     DecryptionShareProofsPending {
@@ -440,7 +440,7 @@ async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() ->
         e0_rns_raw: SensitiveBytes::from_encrypted(&[]),
         e1_rns_raw: SensitiveBytes::from_encrypted(&[]),
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         recipient_party_id,
         row_index: 0,

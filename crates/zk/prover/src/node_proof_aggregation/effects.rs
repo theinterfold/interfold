@@ -13,6 +13,14 @@ impl NodeProofAggregator {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        let profile = msg.proof_request.params_profile;
+        if let Err(error) = profile
+            .ensure_admission_enabled()
+            .and_then(|()| profile.validate_committee(msg.proof_request.committee_size))
+        {
+            error!(%e3_id, %error, "Unsupported DKG proof profile");
+            return;
+        }
         if self
             .recovery_index
             .entries
@@ -52,9 +60,7 @@ impl NodeProofAggregator {
         let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
 
         let committee = msg.proof_request.committee_size.values();
-        let (committee_n, committee_h, n_moduli) = match build_pair_for_preset(
-            msg.proof_request.params_preset,
-        ) {
+        let (committee_n, committee_h, n_moduli) = match profile.build_pair() {
             Ok((threshold_params, _)) => {
                 (committee.n, committee.h, threshold_params.moduli().len())
             }
@@ -77,7 +83,7 @@ impl NodeProofAggregator {
             committee_n,
             committee_h,
             n_moduli,
-            params_preset: msg.proof_request.params_preset,
+            params_profile: profile,
             committee_size: msg.proof_request.committee_size,
         };
 

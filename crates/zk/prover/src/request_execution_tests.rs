@@ -77,6 +77,69 @@ async fn c0_execution_uses_the_profile_dkg_and_artifact_namespace() {
 }
 
 #[actix::test]
+async fn dkg_generation_rejects_disabled_profiles_before_reading_witnesses() {
+    use e3_fhe_params::BfvProfile;
+    let temp = tempfile::tempdir().unwrap();
+    let prover = unavailable_prover(temp.path());
+    let cipher = Cipher::from_password("execution-test").await.unwrap();
+    let secret = || e3_crypto::SensitiveBytes::from_encrypted(&[]);
+    let profile = BfvProfile::SyncDecInsecure64;
+    let committee = CiphernodesCommitteeSize::Minimum;
+    let kinds = [
+        ZkRequest::PkGeneration(PkGenerationProofRequest::new(
+            ArcBytes::default(),
+            secret(),
+            secret(),
+            secret(),
+            profile,
+            committee,
+        )),
+        ZkRequest::ShareComputation(ShareComputationProofRequest {
+            secret_raw: secret(),
+            secret_sss_raw: secret(),
+            dkg_input_type: DkgInputType::SecretKey,
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::ShareEncryption(ShareEncryptionProofRequest {
+            share_row_raw: secret(),
+            ciphertext_raw: ArcBytes::default(),
+            recipient_pk_raw: ArcBytes::default(),
+            u_rns_raw: secret(),
+            e0_rns_raw: secret(),
+            e1_rns_raw: secret(),
+            dkg_input_type: DkgInputType::SecretKey,
+            params_profile: profile,
+            committee_size: committee,
+            recipient_party_id: 0,
+            row_index: 0,
+            esi_index: 0,
+        }),
+        ZkRequest::DkgShareDecryption(DkgShareDecryptionProofRequest {
+            sk_bfv: secret(),
+            honest_ciphertexts_raw: Vec::new(),
+            num_honest_parties: 2,
+            num_moduli: 3,
+            own_plaintext_idx: None,
+            own_share_raw: None,
+            dkg_input_type: DkgInputType::SecretKey,
+            params_profile: profile,
+            committee_size: committee,
+        }),
+    ];
+    for kind in kinds {
+        let request = ComputeRequest::zk(kind, CorrelationId::new(), E3id::new("7", 31_337));
+        let error = execute_zk_request(&prover, &cipher, request.clone(), &mut |_| {}).unwrap_err();
+        assert_eq!(error.request(), &request);
+        assert!(
+            matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(message))
+            if message.contains("sync-insecure-64") && message.contains("disabled"))
+        );
+    }
+    assert!(!prover.work_dir().exists());
+}
+
+#[actix::test]
 async fn verification_execution_preserves_correlations_and_error_classification() {
     let temp = tempfile::tempdir().unwrap();
     let prover = unavailable_prover(temp.path());

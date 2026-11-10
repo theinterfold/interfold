@@ -17,7 +17,7 @@ use e3_events::{
     InterfoldEventData, PkGenerationProofRequest, ShareComputationProofRequest,
     ShareEncryptionProofRequest, ThresholdShare, ThresholdSharePending, TypedEvent, Unsequenced,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_keyshare::{ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::ArcBytes;
@@ -28,21 +28,21 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 fn pending_small_work_plan() -> ThresholdSharePending {
     let committee = CiphernodesCommitteeSize::Small;
     let n = committee.values().n;
-    let preset = BfvPreset::SecureThreshold8192;
+    let profile = BfvProfile::SsSecure8192;
     let empty = SensitiveBytes::from_encrypted(&[]);
     let proof_request = PkGenerationProofRequest {
         pk0_share: ArcBytes::from_bytes(&[]),
         sk: empty.clone(),
         eek: empty.clone(),
         e_sm: empty.clone(),
-        params_preset: preset,
+        params_profile: profile,
         committee_size: committee,
     };
     let computation = |kind| ShareComputationProofRequest {
         secret_raw: empty.clone(),
         secret_sss_raw: empty.clone(),
         dkg_input_type: kind,
-        params_preset: preset,
+        params_profile: profile,
         committee_size: committee,
     };
 
@@ -59,7 +59,7 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         e0_rns_raw: empty.clone(),
         e1_rns_raw: empty.clone(),
         dkg_input_type: kind,
-        params_preset: preset,
+        params_profile: profile,
         committee_size: committee,
         recipient_party_id: party_id,
         row_index,
@@ -182,6 +182,18 @@ async fn large_small_work_plan_survives_reopen_and_fresh_proof_dispatch() -> Res
 
     let first = dispatch_work_plan(recovered.clone()).await?;
     let second = dispatch_work_plan(recovered).await?;
+    ensure!(
+        first.iter().all(|request| match request {
+            ComputeRequestKind::Zk(e3_events::ZkRequest::PkGeneration(request)) =>
+                request.params_profile == BfvProfile::SsSecure8192,
+            ComputeRequestKind::Zk(e3_events::ZkRequest::ShareComputation(request)) =>
+                request.params_profile == BfvProfile::SsSecure8192,
+            ComputeRequestKind::Zk(e3_events::ZkRequest::ShareEncryption(request)) =>
+                request.params_profile == BfvProfile::SsSecure8192,
+            _ => false,
+        }),
+        "recovered proof work lost its request profile"
+    );
     ensure!(first == second, "proof work changed after fresh dispatch");
     Ok(())
 }
