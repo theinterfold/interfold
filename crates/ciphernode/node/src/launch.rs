@@ -8,7 +8,7 @@
 //! both start the node here, each from its own configuration format.
 
 use crate::{
-    dir::{Inventory, NodeDir},
+    dir::NodeDir,
     heartbeat::Heartbeat,
     notes::NoteFeed,
     preflight::{self, retry_until, Verified},
@@ -57,8 +57,6 @@ pub struct Config {
     pub startup_timeout: Duration,
     pub availability: Availability,
     pub data_dir: PathBuf,
-    /// The list of folders this node's key has run in, which `data_dir` joins.
-    pub inventory: Inventory,
     /// Held while the node runs, so no other node or maintenance command can use its directory.
     pub fence: ProcessFence,
     pub operator: PrivateKeySigner,

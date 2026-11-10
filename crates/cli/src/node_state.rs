@@ -8,16 +8,14 @@
 //! out from it before they change anything. The operator's keys are not in the node's folder: they
 //! stay in the keystore, so deleting the folder keeps the node's identity.
 
-use crate::keystore::{self, Keys};
 use alloy::primitives::Address;
 use anyhow::{bail, Context, Result};
-use e3_ciphernode_config::{paths_engine::DEFAULT_KEY_NAME, NodeConfig};
+use e3_ciphernode_config::NodeConfig;
 use e3_console::{log, Console};
-use e3_crypto::Cipher;
 use e3_engine::{restore, Store, Stored};
 use e3_entrypoint::fence::{ProcessFence, LOCK_FILE_NAME};
 use e3_journal::Journal;
-use e3_node::dir::{Inventory, NodeDir, State};
+use e3_node::dir::{NodeDir, State};
 use e3_protocol::{node::Node, E3Id};
 use std::{
     collections::BTreeSet,
@@ -29,25 +27,44 @@ pub fn dir(config: &NodeConfig) -> NodeDir {
     NodeDir::new(config.node_data_dir().join("v2"))
 }
 
-pub fn inventory(config: &NodeConfig) -> Inventory {
-    Inventory::beside(&config.key_file())
-}
-
-/// Seals `private_key` as the wallet of `config`'s node. A profile's first keys have run nowhere,
-/// so their list starts complete; keys that replace others keep the list, which still says where
-/// the old keys' E3s may be.
-pub fn seal_wallet(config: &NodeConfig, cipher: &Cipher, private_key: &[u8; 32]) -> Result<Keys> {
-    let (keys, first) = keystore::write(&config.db_file(), cipher, private_key)?;
-    if first {
-        inventory(config).create()?;
+/// Deletes the data of `nodes` and keeps their keys. It works out what stands in the way under
+/// every node's lock before it deletes anything, so a refusal leaves every node as it was.
+pub fn clear(out: &Console, nodes: &[NodeConfig], allow_active_e3s: bool) -> Result<()> {
+    let (mut fences, mut plan, mut folders) = (Vec::new(), Plan::default(), Vec::new());
+    for node in nodes {
+        let dir = dir(node);
+        // Nothing to lose here, and a node that never ran gets no lock file.
+        if dir.state(None) == State::Absent {
+            continue;
+        }
+        fences.push(ProcessFence::acquire(&node.db_file(), &node.name())?);
+        let folder = dir.path().to_path_buf();
+        for (name, credential) in [("key", node.key_file()), ("keystore", node.db_file())] {
+            if credential.starts_with(&folder)
+                || canonical(&credential).starts_with(canonical(&folder))
+            {
+                plan.refusals.push(format!(
+                    "the node's {name} at {} is inside the folder this deletes; move it out first",
+                    credential.display()
+                ));
+            }
+        }
+        plan.check(&format!("node '{}'", node.name()), &dir);
+        // Another node's `data_dir` may sit inside this folder: it is fenced, and stops this.
+        let others = guard(&folder, &mut fences)?;
+        plan.blockers.extend(others.iter().map(|other| {
+            format!(
+                "{} holds the journal of another node, whose E3s this command cannot check; move \
+                 it out first",
+                other.display()
+            )
+        }));
+        folders.push(folder);
     }
-    Ok(keys)
-}
-
-/// Makes `config`'s node a random wallet unless it has one.
-pub fn ensure_wallet(config: &NodeConfig, cipher: &Cipher) -> Result<()> {
-    if keystore::ensure(&config.db_file(), cipher)? {
-        inventory(config).create()?;
+    plan.settle(out, allow_active_e3s)?;
+    for folder in folders {
+        std::fs::remove_dir_all(&folder)?;
+        log!(out, "Removed {}", folder.display());
     }
     Ok(())
 }
@@ -65,7 +82,7 @@ impl std::fmt::Display for Held {
 }
 
 /// The same path with its links resolved, or as given when it does not exist yet.
-pub fn canonical(path: &Path) -> PathBuf {
+fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
@@ -106,14 +123,14 @@ fn held_in(stored: Stored, operator: Address) -> Result<Vec<Held>> {
 /// What a maintenance command found. `blockers` stop it unless the operator overrides them;
 /// `refusals` stop it whatever the operator says.
 #[derive(Default)]
-pub struct Plan {
-    pub refusals: Vec<String>,
-    pub blockers: Vec<String>,
+struct Plan {
+    refusals: Vec<String>,
+    blockers: Vec<String>,
 }
 
 impl Plan {
     /// Adds what `dir` holds, under the name `label`.
-    pub fn check(&mut self, label: &str, dir: &NodeDir) {
+    fn check(&mut self, label: &str, dir: &NodeDir) {
         match dir.state(None) {
             State::Absent => {}
             State::Current(manifest) => match held_e3s(dir, manifest.identity.operator) {
@@ -146,7 +163,7 @@ impl Plan {
     }
 
     /// Goes ahead or stops. An override goes ahead, and says what it skipped.
-    pub fn settle(self, out: &Console, allow_active_e3s: bool) -> Result<()> {
+    fn settle(self, out: &Console, allow_active_e3s: bool) -> Result<()> {
         if !self.refusals.is_empty() {
             bail!("Deleted nothing: {}.", self.refusals.join("; "));
         }
@@ -165,19 +182,9 @@ impl Plan {
     }
 }
 
-/// What is under a folder a command is about to delete, beyond what the command checked.
-pub struct Guarded {
-    /// Node folders it did not name: deleting the folder deletes their E3s unchecked.
-    pub unchecked: Vec<PathBuf>,
-    /// The lists of where keys under it ran, which may name state outside it; a key with no list
-    /// counts as one that says nothing.
-    pub inventories: BTreeSet<Inventory>,
-}
-
-/// Holds the lock of every node whose lock is under `root`, and says what `root` holds at any
-/// depth that `checked` does not name. A fence in `fences` already covers its lock. Nothing is
-/// created.
-pub fn guard(root: &Path, checked: &[PathBuf], fences: &mut Vec<ProcessFence>) -> Result<Guarded> {
+/// Holds the lock of every node whose lock is under `root`, and lists the node folders under it,
+/// at any depth. A fence in `fences` already covers its lock. Nothing is created.
+fn guard(root: &Path, fences: &mut Vec<ProcessFence>) -> Result<Vec<PathBuf>> {
     let mut contents = Contents::default();
     scan(root, &mut BTreeSet::new(), &mut contents)?;
     let held: BTreeSet<PathBuf> = fences.iter().map(|fence| canonical(fence.path())).collect();
@@ -186,24 +193,15 @@ pub fn guard(root: &Path, checked: &[PathBuf], fences: &mut Vec<ProcessFence>) -
             fences.push(ProcessFence::hold_existing(lock)?);
         }
     }
-    let checked: BTreeSet<PathBuf> = checked.iter().map(|folder| canonical(folder)).collect();
-    Ok(Guarded {
-        unchecked: contents
-            .nodes
-            .into_iter()
-            .filter(|folder| !checked.contains(&canonical(folder)))
-            .collect(),
-        inventories: contents.inventories,
-    })
+    Ok(contents.nodes)
 }
 
 /// What a folder holds at any depth: the node folders, each with its journal at
-/// `v2/journal.redb`, the lock files of the nodes that use them, and the lists of where keys ran.
+/// `v2/journal.redb`, and the lock files of the nodes that use them.
 #[derive(Default)]
 struct Contents {
     nodes: Vec<PathBuf>,
     locks: Vec<PathBuf>,
-    inventories: BTreeSet<Inventory>,
 }
 
 /// Every folder counts as a node folder when its journal exists, also inside another node's
@@ -238,10 +236,6 @@ fn scan(dir: &Path, visited: &mut BTreeSet<PathBuf>, contents: &mut Contents) ->
                     return Err(error).with_context(|| format!("reading {}", path.display()))
                 }
             }
-        } else if entry.file_name() == DEFAULT_KEY_NAME {
-            contents.inventories.insert(Inventory::beside(&path));
-        } else {
-            contents.inventories.extend(Inventory::at(&path));
         }
     }
     Ok(())

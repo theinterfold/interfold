@@ -6,8 +6,7 @@
 
 //! A node's folder on disk: what it holds, whose state it is, and whether this binary can use it.
 //! `interfold start`, `validate`, `reset-data` and `purge` all read it through [`NodeDir`], so they
-//! cannot disagree. The list of folders a key has run in lives beside the key, because a folder that
-//! is missing, as when a data volume is not mounted, cannot say that it existed.
+//! cannot disagree.
 
 use alloy_primitives::Address;
 use e3_protocol::ENCODING_VERSION;
@@ -22,7 +21,6 @@ use std::{
 const STORE_VERSION: u32 = 2;
 
 const MANIFEST: &str = "manifest.json";
-const INVENTORY: &str = "stores.json";
 
 /// The files of a node in its folder; others, such as its configuration, may share it.
 const NODE_FILES: [&str; 3] = ["journal.redb", "blobs", "unmined.json"];
@@ -195,90 +193,6 @@ pub enum DirError {
     Encoding(#[from] serde_json::Error),
 }
 
-/// The node folders a key has run in, kept beside the key.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Inventory {
-    path: PathBuf,
-}
-
-/// What an inventory says. No list, or one that cannot be read, knows nothing.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Recorded {
-    /// Whether these are all the folders the key ran in. Only a list begun with its key is: a
-    /// list that was lost says nothing of where the key ran before.
-    pub complete: bool,
-    pub folders: Vec<PathBuf>,
-}
-
-impl Inventory {
-    /// The inventory beside the key file at `key_file`.
-    pub fn beside(key_file: &Path) -> Self {
-        Self {
-            path: key_file.with_file_name(INVENTORY),
-        }
-    }
-
-    /// The inventory at `path`, if that is the file of one.
-    pub fn at(path: &Path) -> Option<Self> {
-        (path.file_name()? == INVENTORY).then(|| Self {
-            path: path.to_path_buf(),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn read(&self) -> Recorded {
-        fs::read(&self.path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    /// Starts the list of a new key, which has run nowhere yet. A list already here stays.
-    pub fn create(&self) -> Result<(), DirError> {
-        if self.path.exists() {
-            return Ok(());
-        }
-        self.write(&Recorded {
-            complete: true,
-            folders: Vec::new(),
-        })
-    }
-
-    /// Records `folder`, durably, once it holds a manifest and before it holds anything else: a
-    /// crash leaves no E3 the list does not name, and a folder on the list that is empty now is
-    /// one that was lost. A list that was lost stays incomplete.
-    pub fn record(&self, folder: &Path) -> Result<(), DirError> {
-        let mut recorded = self.read();
-        if recorded.folders.iter().any(|known| known == folder) {
-            return Ok(());
-        }
-        recorded.folders.push(folder.to_path_buf());
-        self.write(&recorded)
-    }
-
-    /// A reset emptied `folder` on purpose, so its absence no longer means anything is lost.
-    pub fn forget(&self, folder: &Path) -> Result<(), DirError> {
-        let mut recorded = self.read();
-        let before = recorded.folders.len();
-        recorded.folders.retain(|known| known != folder);
-        match recorded.folders.len() == before {
-            true => Ok(()),
-            false => self.write(&recorded),
-        }
-    }
-
-    fn write(&self, recorded: &Recorded) -> Result<(), DirError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        write_durably(&self.path, &serde_json::to_vec_pretty(recorded)?)?;
-        Ok(())
-    }
-}
-
 /// Writes `bytes` at `path` so that a crash leaves the old file or the whole new one.
 fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let partial = path.with_extension("partial");
@@ -387,57 +301,5 @@ mod tests {
             NodeDir::new(dir.path()).state(None),
             State::Unreadable(_)
         ));
-    }
-
-    fn recorded(complete: bool, folders: &[&Path]) -> Recorded {
-        Recorded {
-            complete,
-            folders: folders.iter().map(|folder| folder.to_path_buf()).collect(),
-        }
-    }
-
-    /// The list is what tells a missing data volume from a node that never ran.
-    #[test]
-    fn a_new_key_s_list_knows_every_folder_it_ran_in() {
-        let dir = tempfile::tempdir().unwrap();
-        let inventory = Inventory::beside(&dir.path().join("cn1/key"));
-        assert_eq!(inventory.read(), Recorded::default());
-
-        inventory.create().unwrap();
-        assert_eq!(inventory.read(), recorded(true, &[]));
-
-        let folder = dir.path().join("data/cn1/v2");
-        inventory.record(&folder).unwrap();
-        inventory.record(&folder).unwrap();
-        assert_eq!(inventory.read(), recorded(true, &[&folder]));
-
-        inventory.create().unwrap();
-        assert_eq!(inventory.read(), recorded(true, &[&folder]));
-
-        inventory.forget(&folder).unwrap();
-        assert_eq!(inventory.read(), recorded(true, &[]));
-    }
-
-    /// A start must not turn "where this key ran is not known" into a short list that looks whole.
-    #[test]
-    fn a_list_that_was_lost_stays_incomplete() {
-        let dir = tempfile::tempdir().unwrap();
-        let key = dir.path().join("cn1/key");
-        let inventory = Inventory::beside(&key);
-        let folder = dir.path().join("data/cn1/v2");
-
-        inventory.record(&folder).unwrap();
-        assert_eq!(inventory.read(), recorded(false, &[&folder]));
-
-        fs::write(key.with_file_name(INVENTORY), b"not json").unwrap();
-        assert_eq!(inventory.read(), Recorded::default());
-        inventory.record(&folder).unwrap();
-        assert_eq!(inventory.read(), recorded(false, &[&folder]));
-    }
-
-    #[test]
-    fn only_the_file_of_an_inventory_is_one() {
-        assert!(Inventory::at(Path::new("cn1/stores.json")).is_some());
-        assert!(Inventory::at(Path::new("cn1/key")).is_none());
     }
 }

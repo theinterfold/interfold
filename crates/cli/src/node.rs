@@ -4,10 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{
-    keystore,
-    node_state::{self, Plan},
-};
+use crate::{keystore, node_state};
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use e3_ciphernode_config::NodeConfig;
@@ -160,37 +157,11 @@ async fn reset_data(
         );
         return Ok(());
     }
-    let mut fences = vec![ProcessFence::acquire(&config.db_file(), &config.name())?];
-    // Also what a volume that is not mounted looks like, so the list keeps naming the folder.
     if dir.state(None) == State::Absent {
         log!(out, "The node has no data. Nothing to reset.");
         return Ok(());
     }
-    let mut plan = Plan::default();
-    for (name, credential) in [("key", config.key_file()), ("keystore", config.db_file())] {
-        let inside = credential.starts_with(&folder)
-            || node_state::canonical(&credential).starts_with(node_state::canonical(&folder));
-        if inside {
-            plan.refusals.push(format!(
-                "the node's {name} at {} is inside the folder this deletes; move it out first",
-                credential.display()
-            ));
-        }
-    }
-    plan.check(&format!("node '{}'", config.name()), &dir);
-    // Another node's `data_dir` may sit inside this folder: it is fenced, and its journal checked.
-    let others = node_state::guard(&folder, &[config.node_data_dir()], &mut fences)?.unchecked;
-    plan.blockers.extend(others.iter().map(|other| {
-        format!(
-            "{} holds the journal of another node, whose E3s this command cannot check; move it \
-             out first",
-            other.display()
-        )
-    }));
-    plan.settle(&out, allow_active_e3s)?;
-    std::fs::remove_dir_all(&folder)?;
-    node_state::inventory(config).forget(&folder)?;
-    log!(out, "Removed {}", folder.display());
+    node_state::clear(&out, std::slice::from_ref(config), allow_active_e3s)?;
     log!(
         out,
         "The operator and network keys stay. Verify with: interfold wallet get --name {}",
@@ -298,20 +269,6 @@ mod tests {
         let error = reset(&config, true).await.unwrap_err();
         assert!(error.to_string().contains("inside the folder"), "{error:#}");
         assert!(config.key_file().exists());
-        Ok(())
-    }
-
-    /// An empty folder the list names may be a volume that is not mounted.
-    #[tokio::test]
-    async fn an_empty_folder_stays_on_the_list() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let config = node(dir.path())?;
-        let folder = node_state::dir(&config).path().to_path_buf();
-        std::fs::create_dir_all(&folder)?;
-        node_state::inventory(&config).record(&folder)?;
-        let (out, _messages) = Console::channel();
-        reset_data(out, &config, true, false, false).await?;
-        assert_eq!(node_state::inventory(&config).read().folders, [folder]);
         Ok(())
     }
 

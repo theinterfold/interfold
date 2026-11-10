@@ -369,6 +369,12 @@ Each rule is checkable in review.
   line, so it stays as short as the committees are small. Four members that stop reading can still
   hold all eight places for a request's timeout.
 
+- **D56. Purge deletes data, never keys.** `nodes purge` and `purge-all` are `reset-data` for every
+  node in the configuration, all or none. A key may be the only one that can claim a bond, and a
+  command that deletes one would have to know every folder it ever ran in, which no file can
+  promise. Deleting a key is a deliberate act by hand. A folder of a profile that the configuration
+  no longer names stays.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

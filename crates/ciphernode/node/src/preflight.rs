@@ -115,7 +115,6 @@ pub async fn verify(config: Config) -> anyhow::Result<Verified> {
         interfold: config.interfold,
         operator,
     })?;
-    config.inventory.record(&config.data_dir)?;
     let (proofs, threads, proof_slots) = proofs(&config, deadline).await?;
     info!(
         chain = chain.id,

@@ -40,23 +40,18 @@ pub enum NodeCommands {
     /// List all process statuses
     Ps,
 
-    /// Delete `.interfold/data` and `.interfold/config` in the current directory, including each
-    /// node's operator key and libp2p key. To clear a node's state and keep its identity, use
-    /// `interfold node reset-data`.
+    /// Delete the data of every node in the configuration. Every node keeps its operator key and
+    /// libp2p key: this is `interfold node reset-data` for all of them, all or none.
     ///
-    /// Refuses when it finds a running node whose state it deletes. Refuses when such a node holds
-    /// key-share state for an E3 that it has not seen complete. Refuses when it cannot check such
-    /// a node. The chain cannot restore a deleted key share.
+    /// Refuses while a node runs, and while a node holds an E3 that has not ended: the chain cannot
+    /// restore a deleted key share. Refuses too where it cannot tell.
     Purge {
         /// Confirm the deletion.
         #[arg(long)]
         yes: bool,
 
-        /// Override the refusal for an active key share and for a node that the command cannot
-        /// check. The node permanently loses its key share. Check first that each listed E3 is
-        /// complete or failed on chain, and that one day has passed after its lifecycle deadline.
-        /// The command checks every store that each node recorded at a start; for a node that has
-        /// not started with this release, it checks the store at the configured path.
+        /// Delete the data even when a node holds an E3 that has not ended, or when the command
+        /// cannot check a node. The node gives up what it still owes each E3 the command lists.
         #[arg(long)]
         allow_active_e3s: bool,
     },
@@ -114,7 +109,7 @@ pub async fn execute(
         NodeCommands::Purge {
             yes,
             allow_active_e3s,
-        } => nodes_purge::execute(out, config, config_string, yes, allow_active_e3s).await?,
+        } => nodes_purge::execute(&out, config, config_string, yes, allow_active_e3s)?,
     };
 
     Ok(())

@@ -203,9 +203,8 @@ impl Cli {
             Err(e) => return Err(e),
         };
 
-        // The purge commands delete the node folders, and the inspecting commands promise to leave
-        // them as they are. None writes a log file, password, or wallet there: a later purge would
-        // treat such files as node state.
+        // The purge commands clear the nodes, and the inspecting commands promise to leave them as
+        // they are. None makes a log file, a password, or a wallet.
         let leaves_no_files = matches!(
             self.command,
             Commands::PurgeAll { .. }
@@ -232,7 +231,7 @@ impl Cli {
 
         if creates_secrets && config.autowallet() {
             let cipher = e3_crypto::Cipher::from_file(config.key_file()).await?;
-            crate::node_state::ensure_wallet(&config, &cipher)?;
+            crate::keystore::ensure(&config.db_file(), &cipher)?;
         }
 
         match self.command {
@@ -378,18 +377,15 @@ pub enum Commands {
         command: ProgramCommands,
     },
 
-    /// Run `nodes purge`, then delete the local program cache. Deletes each node's operator key
+    /// Run `nodes purge`, then delete the local program cache. Every node keeps its operator key
     /// and libp2p key.
     PurgeAll {
         /// Confirm the deletion.
         #[arg(long)]
         yes: bool,
 
-        /// Override the refusal for an active key share and for a node that the command cannot
-        /// check. The node permanently loses its key share. Check first that each listed E3 is
-        /// complete or failed on chain, and that one day has passed after its lifecycle deadline.
-        /// The command checks every store that each node recorded at a start; for a node that has
-        /// not started with this release, it checks the store at the configured path.
+        /// Delete the data even when a node holds an E3 that has not ended, or when the command
+        /// cannot check a node. The node gives up what it still owes each E3 the command lists.
         #[arg(long)]
         allow_active_e3s: bool,
     },
