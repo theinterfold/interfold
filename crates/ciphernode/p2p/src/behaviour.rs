@@ -6,9 +6,9 @@
 
 //! Every libp2p setting of the node, in one place, each with its reason.
 
-use crate::{inbound_ip_limits::InboundIpLimits, peers::PeerBook, protocols::Protocols};
-use alloy_primitives::B256;
-use e3_protocol::E3Id;
+use crate::{
+    inbound_ip_limits::InboundIpLimits, peers::PeerBook, protocols::Protocols, serving::BlobRequest,
+};
 use libp2p::{
     connection_limits::{self, ConnectionLimits},
     gossipsub::{self, MessageId, WhitelistSubscriptionFilter},
@@ -28,8 +28,9 @@ pub(crate) const MAX_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_BLOB_BYTES: u64 = 32 * 1024 * 1024;
 /// A blob's response carries CBOR framing on top of its bytes.
 const RESPONSE_FRAMING: u64 = 64 * 1024;
-/// How long a peer has to answer one blob request.
-const BLOB_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a blob request may take, its wait for a place included: long enough for a dealer on
+/// the slowest supported uplink to reach the last of a large committee.
+const BLOB_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// The blob requests that may run at once on one connection.
 const BLOB_STREAMS: usize = 8;
 /// The library's tick-based defaults (history, gossip windows) assume one second.
@@ -54,7 +55,7 @@ pub(crate) struct Behaviour {
     pub(crate) identify: identify::Behaviour,
     pub(crate) kademlia: kad::Behaviour<MemoryStore>,
     /// A request names the blob's E3 and hash: each E3 keeps its own copy of its blobs.
-    pub(crate) blobs: cbor::Behaviour<(E3Id, B256), Option<ByteBuf>>,
+    pub(crate) blobs: cbor::Behaviour<BlobRequest, Option<ByteBuf>>,
 }
 
 impl Behaviour {
@@ -150,7 +151,7 @@ fn kademlia(key: &Keypair, protocols: &Protocols) -> kad::Behaviour<MemoryStore>
     kademlia
 }
 
-fn blobs(protocols: &Protocols, messages: bool) -> cbor::Behaviour<(E3Id, B256), Option<ByteBuf>> {
+fn blobs(protocols: &Protocols, messages: bool) -> cbor::Behaviour<BlobRequest, Option<ByteBuf>> {
     let codec =
         cbor::codec::Codec::default().set_response_size_maximum(MAX_BLOB_BYTES + RESPONSE_FRAMING);
     let support = match messages {

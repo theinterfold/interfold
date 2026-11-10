@@ -440,6 +440,11 @@ impl E3 {
         }
     }
 
+    /// The E3's committee, once the chain has named one with this node on it.
+    pub(crate) fn committee(&self) -> Option<&[Address]> {
+        self.dkg.as_ref().map(Dkg::members)
+    }
+
     /// Whether this node takes `message` now; it can tell before it fetches any blob the message
     /// names.
     pub(crate) fn admits(&self, now: UnixSecs, message: &PeerMessage) -> bool {

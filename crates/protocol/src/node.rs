@@ -730,6 +730,15 @@ pub enum Classified {
     Deliver,
 }
 
+/// Who the network deals with, as the chain has told this node so far.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Admission {
+    /// Every operator a chain's registry named: the senders whose messages the network takes.
+    pub senders: BTreeSet<Address>,
+    /// The committee of each E3 this node is on: only its members may read the E3's blobs.
+    pub committees: BTreeMap<E3Id, BTreeSet<Address>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     me: Address,
@@ -772,12 +781,20 @@ impl Node {
         self.managers.get(&chain_id).into_iter().flatten()
     }
 
-    /// Every operator a chain's registry named: the senders whose messages the network takes.
-    pub fn operators(&self) -> BTreeSet<Address> {
-        self.registries
-            .values()
-            .flat_map(Registry::operators)
-            .collect()
+    /// Who the network deals with now.
+    pub fn admission(&self) -> Admission {
+        Admission {
+            senders: self
+                .registries
+                .values()
+                .flat_map(Registry::operators)
+                .collect(),
+            committees: self
+                .e3s
+                .iter()
+                .filter_map(|(e3, state)| Some((*e3, state.committee()?.iter().copied().collect())))
+                .collect(),
+        }
     }
 
     /// Every E3 the node holds, each until it ends, with the key share of an E3 it dealt in.
@@ -1519,6 +1536,22 @@ mod tests {
             .enumerate()
             .find(|(_, candidate)| candidate.operator == address(ME))
             .map(|(rank, candidate)| (rank, candidate.ticket))
+    }
+
+    /// Blobs go to the committee of an E3 this node is on, from the step the chain names it.
+    #[test]
+    fn the_admission_names_the_committee_of_an_e3_this_node_is_on() {
+        let mut node = node();
+        registered(&mut node, &[1], 1);
+        node.step(1, requested(1, e3(1)));
+        node.step(1, requested(2, e3(2)));
+        assert_eq!(node.admission().senders, [address(1)].into());
+        assert!(node.admission().committees.is_empty());
+
+        node.step(3, finalized(3, e3(1), members([1, 2])));
+        node.step(4, finalized(4, e3(2), vec![address(1), address(2)]));
+        let committee = members([1, 2]).into_iter().collect();
+        assert_eq!(node.admission().committees, [(e3(1), committee)].into());
     }
 
     #[test]

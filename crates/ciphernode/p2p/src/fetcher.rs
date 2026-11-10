@@ -24,7 +24,8 @@ use tokio::sync::oneshot;
 pub(crate) type Done = oneshot::Sender<Result<(), NetworkError>>;
 
 const MAX_ACTIVE: usize = 8;
-const MAX_ACTIVE_PER_PEER: usize = 2;
+/// A node asks one peer for no more than this at once, and serves a member no more than this.
+pub(crate) const MAX_ACTIVE_PER_PEER: usize = 2;
 const MAX_ACTIVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_WAITING: usize = 4_096;
 /// No honest message names more: a dealer's shares for one member are the largest.

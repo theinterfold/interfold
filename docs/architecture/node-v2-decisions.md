@@ -358,6 +358,17 @@ Each rule is checkable in review.
   after the reader first catches up: an E3 may have moved on while the node was away. A job holds
   its place until its process has ended, so a stop can wait for `bb` to go.
 
+- **D55. A blob goes only to its E3's committee, in the order asked.** Peer IDs are free and the
+  chain names none, so a node signs its peer ID once with its operator key, and every blob request
+  shows that proof. A node answers with bytes only when the proof names an operator on the committee
+  of the blob's E3 and names the peer on the connection. A peer that claims a member it cannot prove
+  to be is dropped. The proof travels in the request because a fetch can be the first thing on a new
+  connection. Eight blobs are served at once, and a member may have two requests out, the most an
+  honest node sends one peer. A request past the free places waits its turn: a committee asks for
+  its blobs all at once, and a refusal would cost it a re-send's wait. Only members stand in the
+  line, so it stays as short as the committees are small. Four members that stop reading can still
+  hold all eight places for a request's timeout.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

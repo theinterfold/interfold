@@ -14,14 +14,17 @@ mod inbound_ip_limits;
 mod inbox;
 mod peers;
 mod protocols;
+mod serving;
 mod transport;
 
 pub use driver::{P2p, P2pConfig, P2pError};
 pub use inbox::{inbox, Inbox, InboxWriter};
 
-use alloy_primitives::Address;
-use e3_protocol::{node::PeerMessage, wire::Envelope};
-use std::{collections::BTreeSet, future::Future};
+use e3_protocol::{
+    node::{Admission, PeerMessage},
+    wire::Envelope,
+};
+use std::future::Future;
 
 /// What the node needs from the network. Inbound, an adapter delivers each peer message whose
 /// envelope opens and that is for this node, before it fetches any blob the message names.
@@ -32,9 +35,9 @@ pub trait Network: Send + Sync + 'static {
     /// Brings the blobs `message` names into the node's store, from the peers that sent it.
     fn fetch(&self, message: PeerMessage) -> impl Future<Output = Result<(), NetworkError>> + Send;
 
-    /// Takes messages only from `senders` from now on: another sender's message is neither
-    /// delivered nor passed on.
-    fn admit(&self, senders: BTreeSet<Address>);
+    /// Deals only with those `admission` names from now on: another sender's message is neither
+    /// delivered nor passed on, and a blob goes only to a member of its E3's committee.
+    fn admit(&self, admission: Admission);
 
     /// How many peers are connected now.
     fn connected(&self) -> usize;

@@ -16,6 +16,7 @@ use crate::{
 };
 use alloy::{network::EthereumWallet, providers::ProviderBuilder, transports::Authorization};
 use alloy_primitives::{keccak256, Address};
+use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
 use e3_chain::{ChainNode, Endpoint, Standing, Wallet};
@@ -25,6 +26,7 @@ use e3_entrypoint::fence::ProcessFence;
 use e3_jobs::{JobLimits, JobRunner};
 use e3_journal::Journal;
 use e3_p2p::{Network as _, P2p, P2pConfig};
+use e3_protocol::wire::PeerProof;
 use e3_zk_prover::BBPath;
 use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -201,8 +203,15 @@ async fn start(
         listen: parse(&config.network.listen)?,
         peers: parse(&config.network.peers)?,
     };
+    let proof = PeerProof {
+        operator: operator.address(),
+        signature: operator
+            .sign_hash_sync(&p2p.proof_hash()?)?
+            .as_bytes()
+            .into(),
+    };
     let (network, inbox) = tokio::select! {
-        started = P2p::start(p2p, operator.address(), blobs.clone()) => started?,
+        started = P2p::start(p2p, proof, blobs.clone()) => started?,
         () = &mut stop => return Ok(()),
     };
     let listening: Vec<String> = network

@@ -13,12 +13,17 @@ use crate::{
     inbox::{inbox, Inbox, InboxWriter},
     peers::{advertised, strip_peer_id, PeerBook},
     protocols::{Protocols, Standing},
+    serving::{BlobRequest, Serving},
     transport::{DialGuard, RecentDials},
     Network, NetworkError,
 };
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use e3_blobs::{BlobStore, MemoryBlobs};
-use e3_protocol::{node::PeerMessage, wire::Envelope, BlobRef, E3Id};
+use e3_protocol::{
+    node::{Admission, PeerMessage},
+    wire::{Envelope, PeerProof},
+    BlobRef, E3Id,
+};
 use e3_utils::limited::Limited;
 use futures::StreamExt;
 use libp2p::{
@@ -39,7 +44,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info, warn};
 
 /// Commands waiting for the swarm's task. Past this, a command is told the node is busy.
@@ -61,11 +66,6 @@ const PEER_CHECK: Duration = Duration::from_secs(5);
 /// duplicate cache stops for only a minute.
 const MAX_COPY_AGE: u64 = 10 * 60;
 const MAX_CLOCK_AHEAD: u64 = 2 * 60;
-/// The blobs the node serves at once, from the disk read until the peer has them; a request past
-/// them finds nothing, and asks another peer. A peer that stops reading holds its places only until
-/// the request times out.
-const MAX_SERVING: usize = 8;
-const MAX_SERVING_PER_PEER: usize = 2;
 /// How long a stop waits for connections to say goodbye.
 const DRAIN: Duration = Duration::from_secs(2);
 /// A log line that can repeat with every message comes at most this often.
@@ -88,6 +88,22 @@ pub struct P2pConfig {
     pub peers: Vec<Multiaddr>,
 }
 
+impl P2pConfig {
+    /// The hash the node's operator key signs to say this network identity is theirs.
+    pub fn proof_hash(&self) -> Result<B256, P2pError> {
+        Ok(PeerProof::signing_hash(&self.peer()?.to_bytes()))
+    }
+
+    fn key(&self) -> Result<Keypair, P2pError> {
+        Keypair::ed25519_from_bytes(self.identity)
+            .map_err(|error| P2pError::Identity(error.to_string()))
+    }
+
+    fn peer(&self) -> Result<PeerId, P2pError> {
+        Ok(self.key()?.public().to_peer_id())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum P2pError {
     #[error("network identity: {0}")]
@@ -101,7 +117,7 @@ pub enum P2pError {
 /// The node's place on the peer-to-peer network.
 pub struct P2p {
     commands: mpsc::Sender<Command>,
-    admitted: watch::Sender<BTreeSet<Address>>,
+    admitted: watch::Sender<Admission>,
     peer: PeerId,
     listening: Vec<Multiaddr>,
     connected: Arc<AtomicUsize>,
@@ -114,31 +130,34 @@ enum Command {
 }
 
 impl P2p {
-    /// Joins the network as operator `me`. Peer messages for this node arrive in the returned
-    /// inbox as their envelopes open; `fetch` brings their blobs into `blobs`. The inbox closes
-    /// when the network stops.
+    /// Joins the network as the operator that `proof` names. Peer messages for this node arrive
+    /// in the returned inbox as their envelopes open; `fetch` brings their blobs into `blobs`. The
+    /// inbox closes when the network stops.
     pub async fn start(
         config: P2pConfig,
-        me: Address,
+        proof: PeerProof,
         blobs: impl BlobStore,
     ) -> Result<(Self, Inbox), P2pError> {
-        Self::join(config, true, me, blobs).await
+        if !proof.holds_for(&config.peer()?.to_bytes()) {
+            let why = "the operator's proof does not name this network identity";
+            return Err(P2pError::Identity(why.into()));
+        }
+        Self::join(config, true, proof, blobs).await
     }
 
     /// Joins the network only to help peers find each other: the node answers their lookups and
     /// takes no part in their messages. The inbox only says when the network stopped.
     pub async fn bootstrap(config: P2pConfig) -> Result<(Self, Inbox), P2pError> {
-        Self::join(config, false, Address::ZERO, MemoryBlobs::default()).await
+        Self::join(config, false, PeerProof::default(), MemoryBlobs::default()).await
     }
 
     async fn join(
         config: P2pConfig,
         messages: bool,
-        me: Address,
+        proof: PeerProof,
         blobs: impl BlobStore,
     ) -> Result<(Self, Inbox), P2pError> {
-        let key = Keypair::ed25519_from_bytes(config.identity)
-            .map_err(|error| P2pError::Identity(error.to_string()))?;
+        let key = config.key()?;
         let peer = key.public().to_peer_id();
         let protocols =
             Protocols::new(&config.network, &config.deployment, config.protocol_version);
@@ -171,7 +190,7 @@ impl P2p {
         let listening = listening(&mut swarm, peer, config.listen.len()).await?;
         let (writer, reader) = inbox();
         let (commands, command_receiver) = mpsc::channel(MAX_COMMANDS);
-        let (admitted, senders) = watch::channel(BTreeSet::new());
+        let (admitted, admission) = watch::channel(Admission::default());
         let (served_writer, served) = mpsc::unbounded_channel();
         let (stored_writer, stored) = mpsc::unbounded_channel();
         let connected = Arc::new(AtomicUsize::new(0));
@@ -180,19 +199,17 @@ impl P2p {
             swarm,
             protocols,
             messages,
-            me,
+            proof,
             blobs,
             inbox: writer,
-            senders,
+            admission,
             recent_dials,
             sources: Recent::default(),
             advertised: Recent::default(),
             fetcher: Fetcher::default(),
             requests: HashMap::new(),
             publishes: VecDeque::new(),
-            serving: Arc::new(Semaphore::new(MAX_SERVING)),
-            serving_per_peer: HashMap::new(),
-            responses: HashMap::new(),
+            serving: Serving::default(),
             served_writer,
             served,
             stored_writer,
@@ -273,8 +290,8 @@ impl Network for P2p {
         result.await.map_err(|_| NetworkError::Stopped)?
     }
 
-    fn admit(&self, senders: BTreeSet<Address>) {
-        self.admitted.send_replace(senders);
+    fn admit(&self, admission: Admission) {
+        self.admitted.send_replace(admission);
     }
 
     fn connected(&self) -> usize {
@@ -327,11 +344,16 @@ struct PendingPublish {
     done: Done,
 }
 
-/// A blob read for a peer, ready to send.
+/// A member's request for a blob, on its way through the line.
+struct Asked {
+    e3: E3Id,
+    hash: B256,
+    channel: ResponseChannel<Option<ByteBuf>>,
+}
+
+/// A blob read for a member, ready to send.
 struct Served {
-    peer: PeerId,
     request: InboundRequestId,
-    place: OwnedSemaphorePermit,
     channel: ResponseChannel<Option<ByteBuf>>,
     bytes: Option<ByteBuf>,
 }
@@ -350,11 +372,12 @@ struct Driver<S> {
     protocols: Protocols,
     /// Whether the node takes part in the network's messages; a bootstrap node does not.
     messages: bool,
-    me: Address,
+    /// The operator this node is, and its word for it, which every blob request shows.
+    proof: PeerProof,
     blobs: S,
     inbox: InboxWriter,
-    /// The operators whose messages the node takes.
-    senders: watch::Receiver<BTreeSet<Address>>,
+    /// Whose messages the node takes, and who may read each E3's blobs.
+    admission: watch::Receiver<Admission>,
     recent_dials: RecentDials,
     /// The peers that sent each message, by its ID.
     sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
@@ -365,10 +388,7 @@ struct Driver<S> {
     requests: HashMap<OutboundRequestId, u64>,
     /// Publishes that found no peer on the topic yet.
     publishes: VecDeque<PendingPublish>,
-    serving: Arc<Semaphore>,
-    serving_per_peer: HashMap<PeerId, usize>,
-    /// Responses on their way, each holding its place until the peer has it.
-    responses: HashMap<InboundRequestId, (PeerId, OwnedSemaphorePermit)>,
+    serving: Serving<InboundRequestId, Asked>,
     served_writer: mpsc::UnboundedSender<Served>,
     served: mpsc::UnboundedReceiver<Served>,
     stored_writer: mpsc::UnboundedSender<(u64, Stored)>,
@@ -620,7 +640,7 @@ impl<S: BlobStore> Driver<S> {
         let admitted = fresh
             && opened
                 .as_ref()
-                .is_some_and(|opened| self.senders.borrow().contains(&opened.sender));
+                .is_some_and(|opened| self.admission.borrow().senders.contains(&opened.sender));
         let acceptance = match (&opened, admitted) {
             (Some(_), true) => MessageAcceptance::Accept,
             (Some(_), false) => MessageAcceptance::Ignore,
@@ -630,7 +650,8 @@ impl<S: BlobStore> Driver<S> {
             .behaviour_mut()
             .gossipsub
             .report_message_validation_result(&id, &propagation, acceptance);
-        let Some(peer_message) = opened.filter(|opened| admitted && opened.is_for(self.me)) else {
+        let me = self.proof.operator;
+        let Some(peer_message) = opened.filter(|opened| admitted && opened.is_for(me)) else {
             return;
         };
         let mut peers: Vec<PeerId> = message.source.into_iter().collect();
@@ -688,16 +709,19 @@ impl<S: BlobStore> Driver<S> {
 
     fn start_reads(&mut self) {
         for read in self.fetcher.next_reads() {
-            let request = self
-                .swarm
-                .behaviour_mut()
-                .blobs
-                .send_request(&read.peer, (read.e3, read.hash));
+            let request = self.swarm.behaviour_mut().blobs.send_request(
+                &read.peer,
+                BlobRequest {
+                    e3: read.e3,
+                    hash: read.hash,
+                    requester: self.proof.clone(),
+                },
+            );
             self.requests.insert(request, read.ticket);
         }
     }
 
-    fn on_blobs(&mut self, event: request_response::Event<(E3Id, B256), Option<ByteBuf>>) {
+    fn on_blobs(&mut self, event: request_response::Event<BlobRequest, Option<ByteBuf>>) {
         match event {
             request_response::Event::Message {
                 peer,
@@ -708,7 +732,7 @@ impl<S: BlobStore> Driver<S> {
                         channel,
                     },
                 ..
-            } => self.serve(peer, request_id, request, channel),
+            } => self.on_asked(peer, request_id, request, channel),
             request_response::Event::Message {
                 message:
                     request_response::Message::Response {
@@ -739,76 +763,88 @@ impl<S: BlobStore> Driver<S> {
             }
             request_response::Event::ResponseSent { request_id, .. }
             | request_response::Event::InboundFailure { request_id, .. } => {
-                if let Some((peer, _place)) = self.responses.remove(&request_id) {
-                    self.lower_serving(peer);
-                }
+                self.serving.end(request_id);
+                self.serve_next();
             }
         }
     }
 
-    fn lower_serving(&mut self, peer: PeerId) {
-        if let Some(count) = self.serving_per_peer.get_mut(&peer) {
-            *count -= 1;
-            if *count == 0 {
-                self.serving_per_peer.remove(&peer);
+    /// Takes a peer's request for a blob. Only a member of the blob's E3 gets an answer with
+    /// bytes. The claim costs nothing to check, so it comes first; a peer that claims a member it
+    /// cannot prove to be is dropped, so a false claim costs it a new identity and connection.
+    fn on_asked(
+        &mut self,
+        peer: PeerId,
+        request: InboundRequestId,
+        asked: BlobRequest,
+        channel: ResponseChannel<Option<ByteBuf>>,
+    ) {
+        let BlobRequest {
+            e3,
+            hash,
+            requester,
+        } = asked;
+        let member = self
+            .admission
+            .borrow()
+            .committees
+            .get(&e3)
+            .is_some_and(|committee| committee.contains(&requester.operator));
+        if !member {
+            self.answer_nothing(channel);
+            return;
+        }
+        if !requester.holds_for(&peer.to_bytes()) {
+            if let Some(held_back) = self.refused.pass() {
+                let operator = requester.operator;
+                warn!(%peer, %operator, held_back, "a peer claimed to be a member it cannot prove to be");
             }
+            self.refuse(peer);
+            return;
+        }
+        let asked = Asked { e3, hash, channel };
+        match self.serving.ask(request, requester.operator, asked) {
+            Ok(()) => self.serve_next(),
+            Err(Asked { channel, .. }) => self.answer_nothing(channel),
+        }
+    }
+
+    fn answer_nothing(&mut self, channel: ResponseChannel<Option<ByteBuf>>) {
+        let _ = self
+            .swarm
+            .behaviour_mut()
+            .blobs
+            .send_response(channel, None);
+    }
+
+    /// Starts the disk reads whose turn it is, off this task.
+    fn serve_next(&mut self) {
+        while let Some((request, asked)) = self.serving.next_turn() {
+            let Asked { e3, hash, channel } = asked;
+            let (blobs, served) = (self.blobs.clone(), self.served_writer.clone());
+            tokio::task::spawn_blocking(move || {
+                let bytes = blobs.serve(e3, &hash).map(ByteBuf::from);
+                let _ = served.send(Served {
+                    request,
+                    channel,
+                    bytes,
+                });
+            });
         }
     }
 
     fn on_served(&mut self, served: Served) {
         let Served {
-            peer,
             request,
-            place,
             channel,
             bytes,
         } = served;
+        self.serving.read(request);
         let blobs = &mut self.swarm.behaviour_mut().blobs;
-        match blobs.send_response(channel, bytes) {
-            Ok(()) => {
-                self.responses.insert(request, (peer, place));
-            }
-            Err(_) => self.lower_serving(peer),
+        if blobs.send_response(channel, bytes).is_err() {
+            self.serving.end(request);
+            self.serve_next();
         }
-    }
-
-    /// Reads the blob a peer asked for off this task. Only public blobs of E3s the node still
-    /// holds can be read, and a request past the limits finds nothing.
-    fn serve(
-        &mut self,
-        peer: PeerId,
-        request: InboundRequestId,
-        (e3, hash): (E3Id, B256),
-        channel: ResponseChannel<Option<ByteBuf>>,
-    ) {
-        let running = self
-            .serving_per_peer
-            .get(&peer)
-            .copied()
-            .unwrap_or_default();
-        let place = (running < MAX_SERVING_PER_PEER)
-            .then(|| self.serving.clone().try_acquire_owned().ok())
-            .flatten();
-        let Some(place) = place else {
-            let _ = self
-                .swarm
-                .behaviour_mut()
-                .blobs
-                .send_response(channel, None);
-            return;
-        };
-        *self.serving_per_peer.entry(peer).or_default() += 1;
-        let (blobs, served) = (self.blobs.clone(), self.served_writer.clone());
-        tokio::task::spawn_blocking(move || {
-            let bytes = blobs.serve(e3, &hash).map(ByteBuf::from);
-            let _ = served.send(Served {
-                peer,
-                request,
-                place,
-                channel,
-                bytes,
-            });
-        });
     }
 
     /// Checks and stores a blob off this task. A fetch that ended keeps nothing.
@@ -841,18 +877,22 @@ impl<S: BlobStore> Driver<S> {
         self.start_reads();
     }
 
+    /// Drops `peer`, and does not dial or keep it for a while.
+    fn refuse(&mut self, peer: PeerId) {
+        let behaviour = self.swarm.behaviour_mut();
+        behaviour.peers.reject(peer, Instant::now());
+        behaviour.kademlia.remove_peer(&peer);
+        let _ = self.swarm.disconnect_peer_id(peer);
+    }
+
     /// A peer of another network or protocol version is dropped and not dialed for a while; a
     /// peer of this one becomes a routing entry at the addresses it listens on, which replace
     /// those it gave before, so a peer cannot make the node keep and dial addresses without end.
     fn on_identify(&mut self, peer: PeerId, info: identify::Info) {
-        let now = Instant::now();
         let standing = self.protocols.standing(&info);
         if standing == Standing::Refused {
             info!(%peer, version = %info.protocol_version, "refused a peer of another network");
-            let behaviour = self.swarm.behaviour_mut();
-            behaviour.peers.reject(peer, now);
-            behaviour.kademlia.remove_peer(&peer);
-            let _ = self.swarm.disconnect_peer_id(peer);
+            self.refuse(peer);
             return;
         }
         let behaviour = self.swarm.behaviour_mut();

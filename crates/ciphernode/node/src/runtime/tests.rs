@@ -16,7 +16,7 @@ use e3_engine::{Step, Store};
 use e3_jobs::{JobLimits, Proofs};
 use e3_p2p::{InboxWriter, NetworkError};
 use e3_protocol::{
-    node::{Effect, Note, Noted, PeerMessage},
+    node::{Admission, Effect, Note, Noted, PeerMessage},
     proof::ProofType,
     wire::Envelope,
     E3Id,
@@ -105,7 +105,7 @@ impl Network for Quiet {
         Ok(())
     }
 
-    fn admit(&self, _: BTreeSet<Address>) {}
+    fn admit(&self, _: Admission) {}
 
     fn connected(&self) -> usize {
         0

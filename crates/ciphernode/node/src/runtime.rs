@@ -141,7 +141,7 @@ where
     // What was under way at the last stop waits for the chain: an E3 may have moved on meanwhile.
     let mut recovered = Some(recovered);
     sweep(&parts.blobs, engine.machine());
-    let mut admitted = engine.machine().operators();
+    let mut admitted = engine.machine().admission();
     parts.network.admit(admitted.clone());
     let chain_id = settings.contracts.chain_id;
     let from = engine
@@ -277,10 +277,11 @@ where
                 None => engine.apply(now(), input)?,
             };
             engine = next;
-            let operators = engine.machine().operators();
-            if operators != admitted {
-                effects.network.admit(operators.clone());
-                admitted = operators;
+            // Before the step's effects go out: a peer can ask for what they announce at once.
+            let admission = engine.machine().admission();
+            if admission != admitted {
+                effects.network.admit(admission.clone());
+                admitted = admission;
             }
             queue.extend(effects.dispatch(pending));
             for key in effects.stop_ended(engine.machine()) {

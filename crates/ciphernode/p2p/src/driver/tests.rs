@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Three nodes in one process, each with its own blob store, connected over loopback QUIC.
+//! Nodes in one process, each with its own blob store, connected over loopback QUIC.
 
 use super::*;
 use crate::Network;
@@ -38,7 +38,23 @@ async fn node(n: u64, peers: Vec<Multiaddr>) -> Node {
 
 /// A node whose store serves other bytes than it holds.
 async fn forger(n: u64, peers: Vec<Multiaddr>) -> Node {
-    started(n, peers, Forging).await
+    started(n, peers, |blobs| {
+        Answering(blobs, |_: &FileBlobs, _: E3Id, _: &B256| {
+            Some(b"forged".to_vec())
+        })
+    })
+    .await
+}
+
+/// A node that takes a moment over every read, so that requests overlap.
+async fn slow(n: u64, peers: Vec<Multiaddr>) -> Node {
+    started(n, peers, |blobs| {
+        Answering(blobs, |store: &FileBlobs, e3: E3Id, hash: &B256| {
+            std::thread::sleep(Duration::from_millis(300));
+            store.serve(e3, hash)
+        })
+    })
+    .await
 }
 
 async fn started<S: BlobStore>(
@@ -48,10 +64,12 @@ async fn started<S: BlobStore>(
 ) -> Node {
     let dir = tempfile::tempdir().unwrap();
     let blobs = FileBlobs::open(dir.path()).unwrap();
-    let (p2p, inbound) = P2p::start(config(n, peers), address(n), serve(blobs.clone()))
+    let config = config(n, peers);
+    let proof = proof_of(n, &config);
+    let (p2p, inbound) = P2p::start(config, proof, serve(blobs.clone()))
         .await
         .unwrap();
-    p2p.admit((1..=3).map(address).collect());
+    p2p.admit(team(1..=3));
     Node {
         p2p,
         inbound,
@@ -72,24 +90,48 @@ fn config(n: u64, peers: Vec<Multiaddr>) -> P2pConfig {
     }
 }
 
-#[derive(Clone)]
-struct Forging(FileBlobs);
+/// Operator `n`'s word that the network identity of `config` is theirs.
+fn proof_of(n: u64, config: &P2pConfig) -> PeerProof {
+    let signature = operator(n)
+        .sign_hash_sync(&config.proof_hash().unwrap())
+        .unwrap();
+    PeerProof {
+        operator: address(n),
+        signature: signature.as_bytes().into(),
+    }
+}
 
-impl BlobStore for Forging {
+/// `operators` send messages and are the committee of E3s 1 and 2.
+fn team(operators: impl IntoIterator<Item = u64>) -> Admission {
+    let members: BTreeSet<_> = operators.into_iter().map(address).collect();
+    Admission {
+        committees: [e3(1), e3(2)].map(|e3| (e3, members.clone())).into(),
+        senders: members,
+    }
+}
+
+/// A store that answers peers' requests with `.1`.
+#[derive(Clone)]
+struct Answering<F>(FileBlobs, F);
+
+impl<F> BlobStore for Answering<F>
+where
+    F: Fn(&FileBlobs, E3Id, &B256) -> Option<Vec<u8>> + Clone + Send + Sync + 'static,
+{
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError> {
         self.0.put(e3, bytes)
     }
 
-    fn get(&self, _: E3Id, _: &BlobRef) -> Result<Vec<u8>, BlobError> {
-        Ok(b"forged".to_vec())
+    fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
+        self.0.get(e3, blob)
     }
 
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool {
         self.0.has(e3, blob)
     }
 
-    fn serve(&self, _: E3Id, _: &B256) -> Option<Vec<u8>> {
-        Some(b"forged".to_vec())
+    fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>> {
+        (self.1)(&self.0, e3, hash)
     }
 
     fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError> {
@@ -192,6 +234,26 @@ fn shares(node: &Node, sender: u64, recipient: u64) -> PeerMessage {
 
 async fn publish(node: &Node, envelope: Envelope) {
     node.p2p.publish(envelope).await.unwrap();
+}
+
+/// Operator `signer` sends copies of `message` until all of `nodes` have heard it: a node that
+/// just connected is not on the topic yet.
+async fn heard_by(publisher: &Node, signer: u64, nodes: &mut [Node], message: &PeerMessage) {
+    let mut waiting: Vec<usize> = (0..nodes.len()).collect();
+    for copy in 10..120 {
+        publish(publisher, signed(message.clone(), signer, copy)).await;
+        for index in std::mem::take(&mut waiting) {
+            let wait = Duration::from_millis(250);
+            let heard = tokio::time::timeout(wait, nodes[index].inbound.next()).await;
+            if !matches!(heard, Ok(Some(_))) {
+                waiting.push(index);
+            }
+        }
+        if waiting.is_empty() {
+            return;
+        }
+    }
+    panic!("a node never heard the message");
 }
 
 async fn received(node: &mut Node) -> PeerMessage {
@@ -339,11 +401,11 @@ async fn nodes_that_know_only_a_bootstrap_node_find_each_other() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_from_an_operator_the_node_does_not_know_is_not_taken() {
     let [first, mut second, _third] = network().await;
-    second.p2p.admit([2, 3].map(address).into());
+    second.p2p.admit(team([2, 3]));
     let message = key(&first, 1);
     publish(&first, signed(message.clone(), 1, 10)).await;
     nothing(&mut second, Duration::from_secs(3)).await;
-    second.p2p.admit((1..=3).map(address).collect());
+    second.p2p.admit(team(1..=3));
     publish(&first, signed(message.clone(), 1, 70)).await;
     assert_eq!(received(&mut second).await, message);
 }
@@ -434,11 +496,10 @@ async fn a_restarted_node_serves_what_it_holds() {
     } = first;
     p2p.close().await;
     drop(p2p);
-    let peers = second.p2p.listening().to_vec();
-    let (restarted, _inbox) = P2p::start(config(1, peers), address(1), store)
-        .await
-        .unwrap();
-    restarted.admit((1..=3).map(address).collect());
+    let config = config(1, second.p2p.listening().to_vec());
+    let proof = proof_of(1, &config);
+    let (restarted, _inbox) = P2p::start(config, proof, store).await.unwrap();
+    restarted.admit(team(1..=3));
     for _ in 0..30 {
         if fetch(&second, message.clone()).await.is_ok() {
             return;
@@ -446,6 +507,101 @@ async fn a_restarted_node_serves_what_it_holds() {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     panic!("the restarted node never served its blob");
+}
+
+/// A peer with a good proof of an operator off the committee gets nothing; a member gets the blob.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blob_goes_only_to_a_member_of_its_committee() {
+    let first = node(1, Vec::new()).await;
+    let peers = first.p2p.listening().to_vec();
+    let mut nodes = [node(2, peers.clone()).await, node(4, peers).await];
+    let message = key(&first, 1);
+    heard_by(&first, 1, &mut nodes, &message).await;
+    let [member, stranger] = &nodes;
+
+    let result = fetch(stranger, message.clone()).await;
+    assert!(
+        matches!(result, Err(NetworkError::Unavailable)),
+        "{result:?}"
+    );
+    assert!(message.blobs().iter().all(|blob| !stranger.blobs.has(blob)));
+    fetch(member, message.clone()).await.unwrap();
+    assert!(message.blobs().iter().all(|blob| member.blobs.has(blob)));
+}
+
+/// Operator 2's real proof, shown by a peer it does not name.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_shows_the_proof_of_another_peer_gets_nothing_and_is_dropped() {
+    let first = node(1, Vec::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileBlobs::open(dir.path()).unwrap();
+    let copied = proof_of(2, &config(2, Vec::new()));
+    let identity = config(4, first.p2p.listening().to_vec());
+    let (p2p, inbound) = P2p::join(identity, true, copied, store.clone())
+        .await
+        .unwrap();
+    p2p.admit(team(1..=3));
+    let mut impostor = [Node {
+        p2p,
+        inbound,
+        blobs: store.of(e3(1)),
+        store,
+        _dir: dir,
+    }];
+    let message = key(&first, 1);
+    heard_by(&first, 1, &mut impostor, &message).await;
+
+    let result = fetch(&impostor[0], message.clone()).await;
+    assert!(
+        matches!(result, Err(NetworkError::Unavailable)),
+        "{result:?}"
+    );
+    assert!(message
+        .blobs()
+        .iter()
+        .all(|blob| !impostor[0].blobs.has(blob)));
+    for _ in 0..60 {
+        if first.p2p.connected() == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    panic!("the impostor stayed connected");
+}
+
+/// A node must not run under a proof that fails at every peer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_does_not_start_on_a_proof_of_another_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = FileBlobs::open(dir.path()).unwrap();
+    let copied = proof_of(2, &config(2, Vec::new()));
+    let started = P2p::start(config(1, Vec::new()), copied, blobs).await;
+    assert!(matches!(started, Err(P2pError::Identity(_))));
+}
+
+/// Nine members ask one publisher for two blobs each at the same moment, more than it serves at
+/// once. Every one of them is served on its first try.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_committee_that_asks_at_once_is_served_on_the_first_try() {
+    let publisher = slow(1, Vec::new()).await;
+    let committee = team(1..=10);
+    publisher.p2p.admit(committee.clone());
+    let mut members = Vec::new();
+    for n in 2..=10 {
+        let member = node(n, publisher.p2p.listening().to_vec()).await;
+        member.p2p.admit(committee.clone());
+        members.push(member);
+    }
+    let message = key(&publisher, 1);
+    heard_by(&publisher, 1, &mut members, &message).await;
+
+    let fetches = members.iter().map(|member| fetch(member, message.clone()));
+    for result in futures::future::join_all(fetches).await {
+        result.unwrap();
+    }
+    for member in &members {
+        assert!(message.blobs().iter().all(|blob| member.blobs.has(blob)));
+    }
 }
 
 /// A blob of no bytes names nothing: an envelope that names one does not open.
@@ -479,8 +635,9 @@ async fn nodes_of_another_deployment_do_not_share_messages() {
     let blobs = FileBlobs::open(dir.path()).unwrap();
     let mut other = config(2, first.p2p.listening().to_vec());
     other.deployment = "elsewhere".into();
-    let (second, inbox) = P2p::start(other, address(2), blobs).await.unwrap();
-    second.admit((1..=3).map(address).collect());
+    let proof = proof_of(2, &other);
+    let (second, inbox) = P2p::start(other, proof, blobs).await.unwrap();
+    second.admit(team(1..=3));
     let message = key(&first, 1);
     let _ = first.p2p.publish(signed(message, 1, 10)).await;
     assert!(

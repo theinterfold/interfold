@@ -4,17 +4,47 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Peer messages as the network carries them: each signed by its sender's operator key over all
-//! of it, so a relay can change no field, and a receiver knows the sender without trusting the
-//! peer that forwarded it.
+//! What the network carries under an operator's signature. A peer message is signed over all of
+//! it, so a relay can change no field, and a receiver knows the sender without trusting the peer
+//! that forwarded it. A peer proof ties a network identity to an operator.
 
 use crate::{node::PeerMessage, UnixSecs};
-use alloy_primitives::{keccak256, Bytes, Signature, B256};
+use alloy_primitives::{keccak256, Address, Bytes, Signature, B256};
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 /// Keeps an envelope signature from passing as any other signature of the operator key.
 const DOMAIN: &[u8] = b"interfold v2 peer message";
+/// The same for a peer proof.
+const PEER_DOMAIN: &[u8] = b"interfold v2 peer identity";
+
+/// An operator's word that a network identity is theirs. Peer IDs are free and the chain names
+/// none, so nothing else ties a peer to an operator. It names the peer, so a peer that is shown
+/// one cannot pass it off as its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerProof {
+    pub operator: Address,
+    pub signature: Bytes,
+}
+
+impl PeerProof {
+    /// The hash the operator key signs for the network identity `peer`.
+    pub fn signing_hash(peer: &[u8]) -> B256 {
+        keccak256([PEER_DOMAIN, peer].concat())
+    }
+
+    /// Whether `operator` signed that `peer` is theirs.
+    pub fn holds_for(&self, peer: &[u8]) -> bool {
+        Signature::try_from(self.signature.as_ref())
+            .ok()
+            .and_then(|signature| {
+                signature
+                    .recover_address_from_prehash(&Self::signing_hash(peer))
+                    .ok()
+            })
+            .is_some_and(|signer| signer == self.operator)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
@@ -107,5 +137,25 @@ mod tests {
         assert_eq!(copied.open(), None, "only the sender makes a new copy");
 
         assert_eq!(signed(ready(1), 2).open(), None);
+    }
+
+    #[test]
+    fn a_peer_proof_holds_only_for_the_peer_it_names_and_the_operator_that_signed() {
+        let proof = PeerProof {
+            operator: address(1),
+            signature: operator(1)
+                .sign_hash_sync(&PeerProof::signing_hash(b"peer one"))
+                .unwrap()
+                .as_bytes()
+                .into(),
+        };
+        assert!(proof.holds_for(b"peer one"));
+        assert!(!proof.holds_for(b"peer two"), "another peer cannot use it");
+
+        let mut claimed = proof.clone();
+        claimed.operator = address(2);
+        assert!(!claimed.holds_for(b"peer one"));
+
+        assert!(!PeerProof::default().holds_for(b"peer one"));
     }
 }
