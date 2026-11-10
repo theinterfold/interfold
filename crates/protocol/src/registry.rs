@@ -113,6 +113,14 @@ impl Registry {
         }
     }
 
+    /// How many operators the ciphernode registry lists now, by its logs.
+    pub(crate) fn listed(&self) -> u64 {
+        self.operators
+            .values()
+            .filter(|operator| operator.enabled)
+            .count() as u64
+    }
+
     /// Every operator the registry's logs named.
     pub(crate) fn operators(&self) -> impl Iterator<Item = Address> + '_ {
         self.operators.keys().copied()
@@ -195,6 +203,18 @@ mod tests {
             .collect();
         assert_eq!(eligible, vec![operator(2)]);
         assert_eq!(registry.eligible_at(199, U256::from(10)).len(), 2);
+    }
+
+    #[test]
+    fn the_listed_operators_are_those_the_last_log_of_each_enabled() {
+        let mut registry = Registry::default();
+        assert_eq!(registry.listed(), 0);
+        registry.set_enabled(operator(1), true);
+        registry.set_enabled(operator(2), true);
+        registry.set_active(100, operator(3), true);
+        assert_eq!(registry.listed(), 2);
+        registry.set_enabled(operator(1), false);
+        assert_eq!(registry.listed(), 1);
     }
 
     /// Governance can remove a bonded operator, whose activity then says nothing about its ticket.

@@ -821,6 +821,13 @@ impl Node {
             .map_or((false, false), |registry| registry.standing(self.me))
     }
 
+    /// How many operators the registry of `chain_id` lists, by the logs this node applied.
+    pub fn listed(&self, chain_id: u64) -> u64 {
+        self.registries
+            .get(&chain_id)
+            .map_or(0, |registry| registry.listed())
+    }
+
     /// Whether the node still owes an effect of `e3` with this `scope`.
     pub fn owes(&self, e3: &E3Id, scope: Scope) -> bool {
         self.e3s.get(e3).is_some_and(|state| match scope {

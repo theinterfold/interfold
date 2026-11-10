@@ -192,6 +192,10 @@ impl Rpc for FakeNode {
         self.read(block, |_| TIMING.window).await
     }
 
+    async fn listed(&self, _: u64) -> Result<u64, RpcError> {
+        Ok(0)
+    }
+
     async fn eligible(
         &self,
         operators: &[Address],

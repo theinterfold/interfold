@@ -109,6 +109,25 @@ pub enum NodeError {
         "no read of the chain succeeded for {waited:?} before the node first caught up: {failure}"
     )]
     ChainSilent { waited: Duration, failure: String },
+    #[error(
+        "the ciphernode registry lists {listed} operators at block {block}, and this node read \
+         {read} from its logs, which start at block {start_block}. Its history is incomplete: set \
+         each contract's deploy_block to the block it was deployed in, then run `interfold node \
+         reset-data`"
+    )]
+    MissedRegistrations {
+        listed: u64,
+        block: u64,
+        read: u64,
+        start_block: u64,
+    },
+}
+
+/// What the chain says when the reader first catches up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Listed {
+    block: u64,
+    operators: u64,
 }
 
 pub(crate) enum Event {
@@ -119,7 +138,7 @@ pub(crate) enum Event {
     /// An effect that finished without a result.
     Done(EffectKey),
     /// The reader has read every confirmed block for the first time since the start.
-    CaughtUp,
+    CaughtUp(Listed),
 }
 
 /// Runs the node until `stop` completes, or until its inputs, its journal, its chain logs or one
@@ -143,7 +162,7 @@ where
     sweep(&parts.blobs, engine.machine());
     let mut admitted = engine.machine().admission();
     parts.network.admit(admitted.clone());
-    let chain_id = settings.contracts.chain_id;
+    let (chain_id, start_block) = (settings.contracts.chain_id, settings.start_block);
     let from = engine
         .machine()
         .applied(chain_id)
@@ -255,9 +274,23 @@ where
                     engine.acknowledge(key)?;
                     continue;
                 }
-                Event::CaughtUp => {
-                    let recovered = recovered.take().unwrap_or_default();
+                Event::CaughtUp(listed) => {
                     let machine = engine.machine();
+                    // The node's operators come from logs, so the chain shows whether it read them
+                    // all. A chain node behind the journal cannot say yet.
+                    let current = machine
+                        .applied(chain_id)
+                        .is_none_or(|at| at.block <= listed.block);
+                    let read = machine.listed(chain_id);
+                    if current && read != listed.operators {
+                        return Err(NodeError::MissedRegistrations {
+                            listed: listed.operators,
+                            block: listed.block,
+                            read,
+                            start_block,
+                        });
+                    }
+                    let recovered = recovered.take().unwrap_or_default();
                     let (owed, over): (Vec<_>, Vec<_>) = recovered
                         .into_iter()
                         .partition(|work| machine.owes(&work.effect.e3(), work.effect.scope()));
@@ -398,9 +431,32 @@ pub(crate) fn now() -> UnixSecs {
         .as_secs()
 }
 
-/// Reads the chain for as long as the node runs. Until the first catch-up, a chain node that stops
-/// answering ends the process for its supervisor: this one may never serve the node's logs. A long
-/// catch-up that keeps reading is fine, and after it the reader waits out any outage.
+/// How far a start has come, and how long the chain node may still take.
+#[derive(Clone, Copy)]
+enum Startup {
+    /// Reading the history, last with progress at this time: a long catch-up that keeps reading
+    /// is fine.
+    CatchingUp(Instant),
+    /// At the head for the first time, with the registry's count due by this time. Later polls do
+    /// not move it, or a count that fails would hold up the recovered work for good.
+    Counting(Instant),
+    Complete,
+}
+
+impl Startup {
+    /// How long the start went without what it needs, once that is past `limit`.
+    fn overdue(self, limit: Duration) -> Option<Duration> {
+        match self {
+            Startup::CatchingUp(read) => Some(read.elapsed()).filter(|waited| *waited >= limit),
+            Startup::Counting(by) => (Instant::now() >= by).then_some(limit),
+            Startup::Complete => None,
+        }
+    }
+}
+
+/// Reads the chain for as long as the node runs. Until its start is complete, a chain node that
+/// stops answering ends the process for its supervisor: this one may never serve what the node
+/// needs. After it the reader waits out any outage.
 async fn read_chain<R: Rpc>(
     mut reader: Reader<R>,
     mut heartbeat: Heartbeat,
@@ -409,14 +465,18 @@ async fn read_chain<R: Rpc>(
     poll: Duration,
     startup_timeout: Duration,
 ) -> NodeError {
-    let mut last_read = Some(Instant::now());
-    let mut told = false;
+    let mut startup = Startup::CatchingUp(Instant::now());
     loop {
         let read = reader.poll().await;
         if read.is_ok() {
             heartbeat.beat(now(), reader.head(), reader.read_to());
             board.chain_read(reader.head(), reader.read_to());
-            last_read = (!reader.caught_up() && last_read.is_some()).then(Instant::now);
+            if let Startup::CatchingUp(_) = startup {
+                startup = match reader.caught_up() {
+                    true => Startup::Counting(Instant::now() + startup_timeout),
+                    false => Startup::CatchingUp(Instant::now()),
+                };
+            }
         }
         match read {
             Ok(facts) => {
@@ -425,20 +485,35 @@ async fn read_chain<R: Rpc>(
                         return NodeError::Stopped;
                     }
                 }
-                if !told && reader.caught_up() {
-                    told = true;
-                    if events.send(Event::CaughtUp).await.is_err() {
-                        return NodeError::Stopped;
+                if let Startup::Counting(_) = startup {
+                    // After this poll's facts and before the next poll's, so the node compares
+                    // the count with exactly the logs up to this block.
+                    match reader.listed().await {
+                        Ok(operators) => {
+                            startup = Startup::Complete;
+                            let block = reader.read_to();
+                            let caught_up = Event::CaughtUp(Listed { block, operators });
+                            if events.send(caught_up).await.is_err() {
+                                return NodeError::Stopped;
+                            }
+                        }
+                        Err(failure) => {
+                            warn!(
+                                %failure,
+                                "reading the registry's operator count failed; trying again"
+                            );
+                            if let Some(waited) = startup.overdue(startup_timeout) {
+                                let failure = format!("the registry's operator count: {failure}");
+                                return NodeError::ChainSilent { waited, failure };
+                            }
+                        }
                     }
                 }
                 reader.wait().await;
             }
             Err(ReadError::Rpc(failure)) => {
                 warn!(%failure, "reading the chain failed; trying again");
-                if let Some(waited) = last_read
-                    .map(|read| read.elapsed())
-                    .filter(|waited| *waited >= startup_timeout)
-                {
+                if let Some(waited) = startup.overdue(startup_timeout) {
                     let failure = failure.to_string();
                     return NodeError::ChainSilent { waited, failure };
                 }

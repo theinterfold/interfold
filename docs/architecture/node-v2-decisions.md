@@ -393,6 +393,14 @@ Each rule is checkable in review.
   a confirmed copy is done, an unconfirmed one waits, and a chunk it cannot find goes out. When the
   logs cannot be read the chunk goes out too, because a repeated chunk costs only gas.
 
+- **D59. A node shows that it read the whole registry.** Operators come from logs, from the
+  configured `deploy_block` on, and nothing else tells a node that it missed some. Once the reader
+  first catches up, at every start, the node compares how many operators it read with
+  `numCiphernodes` at the same block and stops if they differ, unless its journal is already past
+  that block, as behind a chain node that lags. A later start block would otherwise leave it ranking
+  committees from part of the operators, and submitting no ticket when its own is among the missing.
+  Only a reset repairs a history with a hole, so the error says so.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

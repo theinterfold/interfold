@@ -43,6 +43,13 @@ struct Chain {
     /// Heads asked so far; after `heads_ok` of them, the chain node fails every request.
     heads: Arc<AtomicUsize>,
     heads_ok: Option<usize>,
+    /// How many operators the registry lists.
+    listed: u64,
+    /// The first this many requests for the count fail.
+    listed_failures: usize,
+    /// How many blocks the head moves at each request for it.
+    advancing: u64,
+    listed_asked: Arc<AtomicUsize>,
 }
 
 impl Rpc for Chain {
@@ -52,7 +59,7 @@ impl Rpc for Chain {
         if self.heads_ok.is_some_and(|ok| asked >= ok) {
             return Err(RpcError("the chain node is down".into()));
         }
-        Ok(self.head)
+        Ok(self.head + asked as u64 * self.advancing)
     }
 
     async fn announce(&self, _: &[Address]) -> Result<Option<BoxStream<'static, u64>>, RpcError> {
@@ -77,6 +84,13 @@ impl Rpc for Chain {
 
     async fn dkg_window(&self, _: U256, _: u64) -> Result<UnixSecs, RpcError> {
         unreachable!("no log asks for it")
+    }
+
+    async fn listed(&self, _: u64) -> Result<u64, RpcError> {
+        if self.listed_asked.fetch_add(1, Ordering::SeqCst) < self.listed_failures {
+            return Err(RpcError("the count is not served".into()));
+        }
+        Ok(self.listed)
     }
 
     async fn eligible(&self, _: &[Address], _: UnixSecs) -> Result<BTreeSet<Address>, RpcError> {
@@ -262,6 +276,114 @@ async fn a_stop_ends_the_node_without_an_error() {
     let (settings, parts, _peers) = parts(dir.path(), Chain::default()).await;
     let stop = tokio::time::sleep(Duration::from_millis(50));
     run(settings, parts, stop).await.unwrap();
+}
+
+/// A node whose logs start after some operators registered would rank committees from part of
+/// them, and submit no ticket if its own operator is among the missing.
+#[tokio::test]
+async fn a_node_that_read_fewer_operators_than_the_registry_lists_ends() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 5,
+        listed: 3,
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    let ended = run(settings, parts, pending()).await.unwrap_err();
+    assert!(
+        matches!(
+            ended,
+            NodeError::MissedRegistrations {
+                listed: 3,
+                read: 0,
+                ..
+            }
+        ),
+        "{ended}"
+    );
+}
+
+/// Polls that succeed at the head do not finish the catch-up: the work a restart recovered waits
+/// for it, so a count that never comes must not leave a node up that looks healthy.
+#[tokio::test(start_paused = true)]
+async fn a_registry_count_that_never_comes_ends_the_node_at_the_startup_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 5,
+        listed_failures: usize::MAX,
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    let ended = run(settings, parts, pending()).await.unwrap_err();
+    assert!(matches!(ended, NodeError::ChainSilent { .. }), "{ended}");
+}
+
+/// New blocks keep the reader busy, and do not give a count that fails more time.
+#[tokio::test(start_paused = true)]
+async fn an_advancing_head_does_not_put_off_the_count_s_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        advancing: 3,
+        listed_failures: usize::MAX,
+        slow_logs: Duration::from_secs(1),
+        ..Default::default()
+    };
+    let (mut settings, parts, _peers) = parts(dir.path(), chain).await;
+    settings.max_log_range = 1;
+    let ended = tokio::time::timeout(STARTUP * 2, run(settings, parts, pending()))
+        .await
+        .expect("the deadline ends the start")
+        .unwrap_err();
+    assert!(matches!(ended, NodeError::ChainSilent { .. }), "{ended}");
+}
+
+/// The start is not complete while the count is due, so an outage then still ends the node.
+#[tokio::test(start_paused = true)]
+async fn an_outage_while_the_count_is_due_ends_the_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        heads_ok: Some(1),
+        listed_failures: 1,
+        ..Default::default()
+    };
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    let ended = run(settings, parts, pending()).await.unwrap_err();
+    assert!(matches!(ended, NodeError::ChainSilent { .. }), "{ended}");
+}
+
+/// The time the history took is not the count's: its deadline starts when it is first due.
+#[tokio::test(start_paused = true)]
+async fn a_slow_last_read_leaves_the_count_its_whole_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 5,
+        listed_failures: 1,
+        slow_logs: Duration::from_secs(20),
+        ..Default::default()
+    };
+    let asked = chain.listed_asked.clone();
+    let (mut settings, parts, _peers) = parts(dir.path(), chain).await;
+    settings.startup_timeout = Duration::from_secs(10);
+    run(settings, parts, tokio::time::sleep(STARTUP))
+        .await
+        .unwrap();
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_registry_count_that_fails_for_a_while_is_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Chain {
+        head: 5,
+        listed_failures: 2,
+        ..Default::default()
+    };
+    let asked = chain.listed_asked.clone();
+    let (settings, parts, _peers) = parts(dir.path(), chain).await;
+    run(settings, parts, tokio::time::sleep(STARTUP))
+        .await
+        .unwrap();
+    assert_eq!(asked.load(Ordering::SeqCst), 3);
 }
 
 /// A chain node that never serves the node's logs ends the process for its supervisor, instead

@@ -161,6 +161,16 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
         Ok(secs(windows.dkgWindow))
     }
 
+    async fn listed(&self, block: u64) -> Result<u64, RpcError> {
+        let listed = ICiphernodeRegistry::new(self.contracts.registry, &self.provider)
+            .numCiphernodes()
+            .block(BlockId::number(block))
+            .call()
+            .await
+            .map_err(RpcError::new)?;
+        Ok(listed.saturating_to())
+    }
+
     async fn eligible(
         &self,
         operators: &[Address],

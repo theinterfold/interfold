@@ -329,6 +329,7 @@ See [RPC endpoints](/operate/rpc-endpoints).
 | `restored request contexts for E3s … belong to chain <id>, which the configuration does not have …` | The data folder has unfinished E3s of a chain that is not in the configuration, for example after a network change.              | Add the chain, or keep its entry with `enabled: false` and its `chain_id`. Or [reset node state](/operate/upgrades#reset-node-state). |
 | `restored E3 <id> is not in the Interfold contract …`                                               | The RPC endpoint is behind the chain, or the data folder is from another deployment.                                             | Check that the endpoint is synced and the `interfold` address is right. Reset node state only for another deployment.                 |
 | `no read of the chain succeeded for …`                                                              | The node could not read the chain for `node.startup_timeout_secs` before its first sync ended. Check the RPC endpoint.           |
+| `the ciphernode registry lists <x> operators at block <n>, and this node read <y> …`                | The node's logs start after some operators registered, so a contract's `deploy_block` is too late, or the endpoint lost logs.    | Set each `deploy_block` to the block the contract was deployed in, then [reset node state](/operate/upgrades#reset-node-state).       |
 
 ## Out of memory
 

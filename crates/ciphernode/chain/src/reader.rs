@@ -93,6 +93,9 @@ pub trait Rpc {
         block: u64,
     ) -> impl Future<Output = Result<UnixSecs, RpcError>> + Send;
 
+    /// How many operators the ciphernode registry lists at `block`.
+    fn listed(&self, block: u64) -> impl Future<Output = Result<u64, RpcError>> + Send;
+
     /// Which of `operators` the bonding registry finds eligible at `at`.
     fn eligible(
         &self,
@@ -201,6 +204,11 @@ impl<R: Rpc> Reader<R> {
     /// The last block whose logs the reader delivered.
     pub fn read_to(&self) -> u64 {
         self.next.saturating_sub(1)
+    }
+
+    /// How many operators the ciphernode registry lists at the last block the reader delivered.
+    pub async fn listed(&mut self) -> Result<u64, RpcError> {
+        answer(self.rpc.listed(self.read_to())).await
     }
 
     /// The newest confirmed block, while one is unread.
