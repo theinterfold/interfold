@@ -11,7 +11,7 @@ use crate::{
     dir::NodeDir,
     heartbeat::Heartbeat,
     notes::NoteFeed,
-    preflight::{self, retry_until, Verified},
+    preflight::{self, Verified},
     runtime::{now, run, Parts, Settings},
 };
 use alloy::{network::EthereumWallet, providers::ProviderBuilder, transports::Authorization};
@@ -19,7 +19,7 @@ use alloy_primitives::{keccak256, Address};
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
-use e3_chain::{ChainNode, Endpoint, Standing, Wallet};
+use e3_chain::{acknowledge, ChainNode, Endpoint, Standing, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader};
 use e3_entrypoint::fence::ProcessFence;
@@ -31,9 +31,6 @@ use e3_zk_prover::BBPath;
 use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::info;
-
-/// The longest one attempt to acknowledge the release may take, with its wait for the receipt.
-const ACKNOWLEDGE_LIMIT: Duration = Duration::from_secs(6 * 60);
 
 pub struct Config {
     /// An `http(s)://` or `ws(s)://` URL of the chain's RPC node.
@@ -174,14 +171,15 @@ async fn start(
     let wallet = Wallet::new(wallet, chain_id, config.confirmations, unmined)?;
     if let Standing::Unacknowledged(call) = &standing {
         let deadline = Instant::now() + config.startup_timeout;
-        let what = "acknowledging the release";
-        let landed = retry_until(deadline, ACKNOWLEDGE_LIMIT, what, || wallet.send_once(call));
-        let landed = tokio::select! {
-            landed = landed => landed?,
+        let acknowledged = tokio::time::timeout_at(deadline, acknowledge(&wallet, call));
+        let acknowledged = tokio::select! {
+            acknowledged = acknowledged => acknowledged,
             () = &mut stop => return Ok(()),
         };
+        let acknowledged = acknowledged
+            .map_err(|_| anyhow::anyhow!("the release acknowledgement did not land in time"))?;
         anyhow::ensure!(
-            landed,
+            acknowledged,
             "the chain refused this node's release acknowledgement"
         );
     }

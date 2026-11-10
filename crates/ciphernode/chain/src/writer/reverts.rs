@@ -8,7 +8,8 @@
 //! says so. A revert no function lists here says nothing of the kind, so the call goes on for as
 //! long as the node owes it.
 
-use alloy_sol_types::SolInterface;
+use super::extra::InvalidNodeRelease;
+use alloy_sol_types::{SolError, SolInterface};
 use e3_evm_contracts::{
     E3Stage,
     IBondingRegistry::IBondingRegistryErrors as BondingError,
@@ -165,6 +166,13 @@ pub(super) fn propose_slash(revert: &[u8]) -> Option<Verdict> {
         | AccusationSlashingDisabled(_) => Obsolete,
         _ => return None,
     })
+}
+
+/// Any other revert comes from the operator's status refresh, which the next try can pass.
+pub(super) fn acknowledge(revert: &[u8]) -> Option<Verdict> {
+    InvalidNodeRelease::abi_decode(revert)
+        .ok()
+        .map(|_| Obsolete)
 }
 
 pub(super) fn refresh(revert: &[u8]) -> Option<Verdict> {

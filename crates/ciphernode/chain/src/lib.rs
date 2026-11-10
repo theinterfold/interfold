@@ -25,7 +25,7 @@ pub use reader::{Deadlines, LogsError, ReadError, Reader, Rpc, Sortition};
 pub use release::{standing, Release, Standing, Unsupported};
 pub use rpc::ChainNode;
 pub use wallet::Wallet;
-pub use writer::{Account, Call, Estimate, WriteError, Writer};
+pub use writer::{acknowledge, Account, Call, Estimate, WriteError, Writer};
 
 /// A chain node request that failed.
 #[derive(Debug, thiserror::Error)]

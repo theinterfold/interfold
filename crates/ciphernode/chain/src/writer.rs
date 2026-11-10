@@ -36,6 +36,9 @@ mod extra {
             bytes signature;
         }
 
+        /// `NodeReleaseRegistry`: an acknowledgement of a release that names no version.
+        error InvalidNodeRelease();
+
         /// `DkgFoldAttestationLib.PartySlotBinding`.
         struct PartySlotBinding {
             uint256 partyId;
@@ -79,16 +82,22 @@ struct Step {
     reverts: Reading,
 }
 
-/// The gas a call takes now, or the revert it hits.
+/// What the chain says about a call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Estimate {
+    /// The confirmed state takes the call, and the call takes this gas at the newest block.
     Gas(u64),
+    /// The confirmed state refuses the call.
     Reverts(Bytes),
+    /// The confirmed state takes the call and the newest blocks refuse it. They can still be
+    /// replaced, so what they show counts once they are confirmed.
+    NotYet(Bytes),
 }
 
 /// What the writer needs from the chain: the operator's account.
 pub trait Account {
-    /// `call` from the operator against the newest block.
+    /// Whether the confirmed state takes `call` from the operator, and the gas it takes where it
+    /// will run: the two can differ for as long as the newest blocks are unconfirmed.
     fn estimate(&self, call: &Call) -> impl Future<Output = Result<Estimate, RpcError>> + Send;
 
     /// Sends `call` with the gas limit `gas` and waits for its receipt: whether it succeeded.
@@ -136,7 +145,7 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
     pub async fn submit(&self, submission: &Submission) -> Result<(), WriteError> {
         let blobs = self.blobs.of(submission.e3);
         for step in calls(&self.contracts, &blobs, submission)? {
-            if self.deliver(&submission.e3, &step).await == Delivered::Obsolete {
+            if deliver(&self.account, &submission.e3, &step).await == Delivered::Obsolete {
                 break;
             }
         }
@@ -157,45 +166,60 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
             },
             reverts: reverts::refresh,
         };
-        let refresh = self.deliver(&operator, &step);
+        let refresh = deliver(&self.account, &operator, &step);
         if tokio::time::timeout(REFRESH_LIMIT, refresh).await.is_err() {
             warn!(%operator, "the refresh did not finish in time; the next one tries again");
         }
     }
+}
 
-    /// `of` names what the call is for, in logs.
-    async fn deliver(&self, of: &(dyn Display + Sync), step: &Step) -> Delivered {
-        let (label, mut wait) = (step.call.label, FIRST_RETRY);
-        loop {
-            match self.attempt(of, step).await {
-                Ok(Some(delivered)) => return delivered,
-                Ok(None) => {}
-                Err(error) => warn!(%of, call = label, %error, "the attempt failed"),
-            }
-            tokio::time::sleep(wait).await;
-            wait = (wait * 2).min(LONGEST_RETRY);
+/// Sends the operator's acknowledgement of this node's release until the chain has it: whether
+/// the chain can take it at all.
+pub async fn acknowledge<A: Account>(account: &A, call: &Call) -> bool {
+    let step = Step {
+        call: call.clone(),
+        reverts: reverts::acknowledge,
+    };
+    deliver(account, &"the node's release", &step).await == Delivered::Done
+}
+
+/// `of` names what the call is for, in logs.
+async fn deliver<A: Account>(account: &A, of: &(dyn Display + Sync), step: &Step) -> Delivered {
+    let (label, mut wait) = (step.call.label, FIRST_RETRY);
+    loop {
+        match attempt(account, of, step).await {
+            Ok(Some(delivered)) => return delivered,
+            Ok(None) => {}
+            Err(error) => warn!(%of, call = label, %error, "the attempt failed"),
         }
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(LONGEST_RETRY);
     }
+}
 
-    /// One try at `step`: how it ended, or `None` when it goes again.
-    async fn attempt(
-        &self,
-        of: &(dyn Display + Sync),
-        step: &Step,
-    ) -> Result<Option<Delivered>, RpcError> {
-        let call = &step.call;
-        let gas = match self.account.estimate(call).await? {
-            Estimate::Gas(gas) => gas,
-            Estimate::Reverts(revert) => return Ok(read_revert(of, step, &revert)),
-        };
-        let gas = gas.saturating_mul(call.gas_multiplier);
-        if !self.account.send(call, gas).await? {
-            warn!(%of, call = call.label, "the transaction reverted on chain; checking it again");
+/// One try at `step`: how it ended, or `None` when it goes again.
+async fn attempt<A: Account>(
+    account: &A,
+    of: &(dyn Display + Sync),
+    step: &Step,
+) -> Result<Option<Delivered>, RpcError> {
+    let call = &step.call;
+    let gas = match account.estimate(call).await? {
+        Estimate::Gas(gas) => gas,
+        Estimate::Reverts(revert) => return Ok(read_revert(of, step, &revert)),
+        Estimate::NotYet(revert) => {
+            let error = decode_error(&revert).unwrap_or_else(|| revert.to_string());
+            debug!(%of, call = call.label, %error, "the newest blocks refuse the call; not yet");
             return Ok(None);
         }
-        info!(%of, call = call.label, "landed");
-        Ok(Some(Delivered::Done))
+    };
+    let gas = gas.saturating_mul(call.gas_multiplier);
+    if !account.send(call, gas).await? {
+        warn!(%of, call = call.label, "the transaction reverted on chain; checking it again");
+        return Ok(None);
     }
+    info!(%of, call = call.label, "landed");
+    Ok(Some(Delivered::Done))
 }
 
 /// What `step`'s `revert` means, in the log and for the delivery.

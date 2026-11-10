@@ -231,6 +231,56 @@ fn committee_publication(blobs: &MemoryBlobs) -> Submission {
     }))
 }
 
+/// The newest blocks can show the call done by another node, or refuse it for good. Neither counts
+/// until those blocks are confirmed, and meanwhile a send would only revert.
+#[tokio::test(start_paused = true)]
+async fn a_call_the_newest_blocks_refuse_waits_for_them_to_be_confirmed() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    let finalized = Registry::CommitteeAlreadyFinalized {};
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(Ok(Estimate::NotYet(finalized.abi_encode().into())));
+        script.estimates.push_back(reverts(finalized));
+    });
+    writer(&account, &blobs)
+        .submit(&submission(Transaction::FinalizeCommittee))
+        .await
+        .unwrap();
+    assert!(account.sent().is_empty());
+    assert_eq!(account.0.lock().unwrap().estimated, 2);
+}
+
+fn acknowledgement() -> Call {
+    Call {
+        label: "acknowledgeNodeRelease",
+        to: address!("0000000000000000000000000000000000000abc"),
+        data: bytes!("01"),
+        gas_multiplier: 2,
+    }
+}
+
+/// An acknowledgement that runs out of gas is not the chain refusing the release.
+#[tokio::test(start_paused = true)]
+async fn an_acknowledgement_that_reverts_on_chain_goes_again() {
+    let account = FakeAccount::default();
+    account.script(|script| script.sends.push_back(false));
+    assert!(acknowledge(&account, &acknowledgement()).await);
+    assert_eq!(account.sent().len(), 2);
+}
+
+#[tokio::test]
+async fn the_chain_can_refuse_an_acknowledgement() {
+    let account = FakeAccount::default();
+    account.script(|script| {
+        script
+            .estimates
+            .push_back(reverts(extra::InvalidNodeRelease {}));
+    });
+    assert!(!acknowledge(&account, &acknowledgement()).await);
+    assert!(account.sent().is_empty());
+}
+
 /// Another aggregator's equal commitment landed first: this one's chunks can still complete the
 /// key's copy on chain.
 #[tokio::test]

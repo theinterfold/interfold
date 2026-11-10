@@ -10,8 +10,9 @@ use alloy::{
     network::TransactionBuilder,
     providers::{Provider, WalletProvider},
     rpc::types::TransactionRequest,
+    transports::{RpcError as TransportFailure, TransportErrorKind},
 };
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{keccak256, Bytes, B256};
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,9 +28,10 @@ use tokio::sync::Mutex;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The operator's account on one chain over JSON-RPC. Calls run concurrently; only choosing a
-/// nonce and broadcasting take turns. Its view of the chain is the reader's: a call is checked
-/// against the confirmed head and counts as landed once its block is confirmed, so no reorg the
-/// reader would survive undoes a call the writer finished.
+/// nonce and broadcasting take turns. Whether a call goes out follows the reader's view of the
+/// chain: it is checked against the confirmed head and counts as landed once its block is
+/// confirmed, so no reorg the reader would survive undoes a call the writer finished. Its gas
+/// follows where it will run, the newest block.
 pub struct Wallet<P> {
     provider: P,
     chain_id: u64,
@@ -177,6 +179,17 @@ impl<P: Provider + WalletProvider> Wallet<P> {
     }
 }
 
+/// What a call's failure says: the revert it hit, or a chain node that did not answer.
+fn revert_of(error: TransportFailure<TransportErrorKind>) -> Result<Bytes, RpcError> {
+    match error
+        .as_error_resp()
+        .and_then(|reply| reply.as_revert_data())
+    {
+        Some(revert) => Ok(revert),
+        None => Err(RpcError::new(error)),
+    }
+}
+
 impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     async fn estimate(&self, call: &Call) -> Result<Estimate, RpcError> {
         let head = self
@@ -185,20 +198,18 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .await
             .map_err(RpcError::new)?;
         let confirmed = BlockId::number(head.saturating_sub(self.confirmations));
+        let request = self.request(call);
+        if let Err(error) = self.provider.call(request.clone()).block(confirmed).await {
+            return Ok(Estimate::Reverts(revert_of(error)?));
+        }
         match self
             .provider
-            .estimate_gas(self.request(call))
-            .block(confirmed)
+            .estimate_gas(request)
+            .block(BlockId::latest())
             .await
         {
             Ok(gas) => Ok(Estimate::Gas(gas)),
-            Err(error) => match error
-                .as_error_resp()
-                .and_then(|reply| reply.as_revert_data())
-            {
-                Some(revert) => Ok(Estimate::Reverts(revert)),
-                None => Err(RpcError::new(error)),
-            },
+            Err(error) => Ok(Estimate::NotYet(revert_of(error)?)),
         }
     }
 
@@ -272,22 +283,88 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     }
 }
 
-impl<P: Provider + WalletProvider + Send + Sync> Wallet<P> {
-    /// Sends `call` if the chain takes it, and says whether it landed.
-    pub async fn send_once(&self, call: &Call) -> Result<bool, RpcError> {
-        match self.estimate(call).await? {
-            Estimate::Gas(gas) => {
-                self.send(call, gas.saturating_mul(call.gas_multiplier))
-                    .await
-            }
-            Estimate::Reverts(_) => Ok(false),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::{
+        network::EthereumWallet,
+        providers::{mock::Asserter, ProviderBuilder},
+        signers::local::PrivateKeySigner,
+    };
+    use alloy_primitives::{Address, U256};
+    use serde::de::DeserializeOwned;
+    use serde_json::json;
+
+    const CONFIRMATIONS: u64 = 3;
+
+    fn wallet(
+        asserter: Asserter,
+        dir: &tempfile::TempDir,
+    ) -> Wallet<impl Provider + WalletProvider> {
+        let provider = ProviderBuilder::new()
+            .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+            .connect_mocked_client(asserter);
+        Wallet::new(provider, 1, CONFIRMATIONS, dir.path().join("unmined.json")).unwrap()
+    }
+
+    fn call() -> Call {
+        Call {
+            label: "acknowledgeNodeRelease",
+            to: Address::repeat_byte(1),
+            data: Bytes::from_static(&[1]),
+            gas_multiplier: 1,
+        }
+    }
+
+    /// The JSON-RPC error of a call that reverted with `data`.
+    fn revert_payload<Payload: DeserializeOwned>(data: &str) -> Payload {
+        let payload = json!({ "code": 3, "message": "execution reverted", "data": data });
+        serde_json::from_value(payload).unwrap()
+    }
+
+    /// The gas is the newest block's; the confirmed state only says whether the call goes out.
+    #[tokio::test]
+    async fn the_gas_comes_from_the_estimate_after_the_confirmed_state_took_the_call() {
+        let (asserter, dir) = (Asserter::new(), tempfile::tempdir().unwrap());
+        asserter.push_success(&U256::from(100));
+        asserter.push_success(&Bytes::new());
+        asserter.push_success(&U256::from(259_000));
+        let estimate = wallet(asserter, &dir).estimate(&call()).await.unwrap();
+        assert_eq!(estimate, Estimate::Gas(259_000));
+    }
+
+    #[tokio::test]
+    async fn the_confirmed_state_refusing_a_call_is_a_revert() {
+        let (asserter, dir) = (Asserter::new(), tempfile::tempdir().unwrap());
+        asserter.push_success(&U256::from(100));
+        asserter.push_failure(revert_payload("0x1234"));
+        let estimate = wallet(asserter, &dir).estimate(&call()).await.unwrap();
+        assert_eq!(
+            estimate,
+            Estimate::Reverts(Bytes::from_static(&[0x12, 0x34]))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_newest_blocks_refusing_a_call_is_not_yet_a_revert() {
+        let (asserter, dir) = (Asserter::new(), tempfile::tempdir().unwrap());
+        asserter.push_success(&U256::from(100));
+        asserter.push_success(&Bytes::new());
+        asserter.push_failure(revert_payload("0x1234"));
+        let estimate = wallet(asserter, &dir).estimate(&call()).await.unwrap();
+        assert_eq!(
+            estimate,
+            Estimate::NotYet(Bytes::from_static(&[0x12, 0x34]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_chain_node_that_does_not_answer_is_no_verdict() {
+        let (asserter, dir) = (Asserter::new(), tempfile::tempdir().unwrap());
+        asserter.push_success(&U256::from(100));
+        asserter.push_failure_msg("the chain node is overloaded");
+        assert!(wallet(asserter, &dir).estimate(&call()).await.is_err());
+    }
 
     fn fees(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Eip1559Estimation {
         Eip1559Estimation {

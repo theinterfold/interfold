@@ -377,6 +377,15 @@ Each rule is checkable in review.
   promise. Deleting a key is a deliberate act by hand. A folder of a profile that the configuration
   no longer names stays.
 
+- **D57. Whether a call goes out follows the reader; its gas follows where it will run.** A call is
+  checked against the confirmed head, so the writer and the reader agree on what has happened. Its
+  gas is estimated at the newest block, the state it will run on, because a change in the last few
+  blocks can change the path the call takes: an operator that registered a moment ago runs its
+  release acknowledgement through a status refresh the confirmed state skips. When the newest blocks
+  refuse a call that the confirmed state takes, the node neither sends it nor counts it as done:
+  those blocks can still be replaced. The acknowledgement goes through the same delivery as every
+  other call, so a send that reverts is tried again and does not end the start.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**
