@@ -34,8 +34,7 @@ in a `.interfold` directory next to the configuration file.
     <FileTree.Folder name='data' defaultOpen>
       <FileTree.Folder name='<node>' defaultOpen>
         <FileTree.Folder name='db' />
-        <FileTree.File name='log.0' />
-        <FileTree.File name='log.<chain_id>' />
+        <FileTree.Folder name='v2' />
         <FileTree.File name='ciphernode.jsonl' />
         <FileTree.File name='interfold.lock' />
       </FileTree.Folder>
@@ -46,12 +45,12 @@ in a `.interfold` directory next to the configuration file.
 
 `<node>` is the node name. The default node, which the `node` key configures, is `_default`.
 
-| Item               | Path                             | Contents                                                                      | If it is missing                                                                                        |
-| ------------------ | -------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Key file           | `.interfold/config/<node>/key`   | The encryption password. The node derives the encryption key from it.         | The node cannot decrypt its keys. `interfold password set` with the same password makes the file again. |
-| Key/value store    | `.interfold/data/<node>/db`      | The encrypted operator key, the encrypted libp2p keypair, and protocol state. | The identity is lost, unless you have another copy of the operator private key.                         |
-| Event log          | `.interfold/data/<node>/log.<n>` | The durable events: `log.0` and one file for each chain ID.                   | The key/value store and the event log no longer match.                                                  |
-| Configuration file | `interfold.config.yaml`          | Chains, contract addresses, peers, and ports.                                 | The node cannot start. You can write the file again.                                                    |
+| Item               | Path                           | Contents                                                                   | If it is missing                                                                                        |
+| ------------------ | ------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Key file           | `.interfold/config/<node>/key` | The encryption password. The node derives the encryption key from it.      | The node cannot decrypt its keys. `interfold password set` with the same password makes the file again. |
+| Key/value store    | `.interfold/data/<node>/db`    | The encrypted operator key and the encrypted libp2p keypair.               | The identity is lost, unless you have another copy of the operator private key.                         |
+| Node data          | `.interfold/data/<node>/v2`    | The journal, the blobs, and the key shares of the E3s that the node holds. | The node syncs again from the chain, and it loses its key shares of the E3s that have not ended.        |
+| Configuration file | `interfold.config.yaml`        | Chains, contract addresses, peers, and ports.                              | The node cannot start. You can write the file again.                                                    |
 
 The other files are not part of the identity:
 
@@ -60,11 +59,9 @@ The other files are not part of the identity:
 - `.interfold/noir` holds the prover files. At startup, the node downloads them when they are
   missing.
 
-The paths change when the configuration sets `config_dir`, `data_dir`, `key_file`, `db_file`, or
-`log_file`. See [Storage paths](/reference/configuration#storage-paths). To see the paths that the
-node uses, run `interfold config get key_file`, `interfold config get db_file`, and
-`interfold config get log_file` with `--name <node>`. The log file path is the base name. The real
-event-log files add an index, for example `log.0`.
+The paths change when the configuration sets `config_dir`, `data_dir`, `key_file`, or `db_file`. See
+[Storage paths](/reference/configuration#storage-paths). To see the paths that the node uses, run
+`interfold config get key_file` and `interfold config get db_file` with `--name <node>`.
 
 ### Why both directories must move together
 
@@ -124,8 +121,8 @@ interfold net get-peer-id --name <node>
 interfold node validate --name <node>
 ```
 
-The validation report includes a line such as `read 1234 event(s) across 2 aggregate(s)`. Use the
-event count as a second check after the move.
+The validation report includes a line such as `data: readable; the node holds 2 E3(s)`. Use the
+number of E3s as a second check after the move.
 
 ### Make an archive
 
@@ -164,8 +161,8 @@ interfold net get-peer-id --name <node>
 interfold node validate --name <node>
 ```
 
-The address, the peer ID, and the event count must be equal to the values that you recorded. The
-report must end with `VALIDATION PASSED`. Do not start the node if a value is different.
+The address, the peer ID, and the number of E3s must be equal to the values that you recorded. The
+command must exit with status 0. Do not start the node if a value is different.
 
 ### Update the network settings
 
@@ -216,8 +213,8 @@ circuits and prover caches are excluded. Use the package for the same network on
 
 ## Migrate and upgrade together
 
-A release that changes the storage schema needs a state reset, which deletes the event history that
-a migration keeps. Do the steps in this order:
+A release that changes the layout of the node's data needs a state reset, which deletes the data
+that a migration keeps. Do the steps in this order:
 
 1. Migrate the node with the procedure on this page.
 2. Verify the address and the peer ID on the new server.

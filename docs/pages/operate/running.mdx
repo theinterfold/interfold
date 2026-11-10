@@ -623,26 +623,25 @@ Start the node only when the validation passes.
 </Steps>
 
 <Callout type='warning'>
-  Do not start a node when validation reports `FAIL` and the repair cannot fix it. Copy the data
-  directory before you try a restore or a new sync. The repair cannot fix corruption in committed
-  records or a storage schema that the binary does not support.
+  Do not start a node when validation fails. Copy the data directory before you try a restore or a
+  new sync.
 </Callout>
 
-When the node cannot write or flush its event log, it stops so that the process manager can restart
-it. Repeated storage failures are an infrastructure problem. Stop the node, keep a copy of the data,
-and run the validation before the next start. When a release changes the storage schema, see
+When the node cannot write to its journal, it stops so that the process manager can restart it.
+Repeated storage failures are an infrastructure problem. Stop the node, keep a copy of the data, and
+run the validation before the next start. When a release changes the layout of the data, see
 [Upgrades](/operate/upgrades).
 
 ## Data and backups
 
 A CLI node keeps all state in a `.interfold` directory next to its configuration file. The password
-file is in `.interfold/config/<name>/`. The key store and the event log are in
+file is in `.interfold/config/<name>/`. The key store and the node data are in
 `.interfold/data/<name>/`. Run `interfold config get db_file` to print the path on your host. The
 [requirements](/operate/requirements#disk-and-storage) page lists the contents. The Docker image
 keeps the state on its volume. See [Docker state](#docker-state).
 
-Back up the complete `.interfold` directory as one unit, while the node is stopped. The event log
-refers to files in its `event-blobs-v1` directory. Do not delete those files to free space.
+Back up the complete `.interfold` directory as one unit, while the node is stopped. Do not delete
+files in the node data to free space.
 
 <Callout type='warning'>
   The key store holds the encrypted operator key, and the password file is next to it. A copy of the
@@ -658,11 +657,11 @@ The image entrypoint sets `E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold
 `E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data`, unless the container sets them. Thus the
 node keeps all of its state on the volume at `/home/ciphernode/.local/share/interfold`:
 
-| Path on the volume    | Contents                                                                        |
-| --------------------- | ------------------------------------------------------------------------------- |
-| `config/_default/key` | Key file with the password that encrypts the stored keys                        |
-| `data/_default/db`    | Key/value store: wallet key, libp2p keypair, key shares, and protocol snapshots |
-| `data/_default/log.*` | Event logs                                                                      |
+| Path on the volume    | Contents                                                 |
+| --------------------- | -------------------------------------------------------- |
+| `config/_default/key` | Key file with the password that encrypts the stored keys |
+| `data/_default/db`    | Key/value store: wallet key and libp2p keypair           |
+| `data/_default/v2/`   | Node data: journal, blobs, and key shares                |
 
 A restart, a new container, and a new image all keep this state. `docker rm` does not delete a named
 volume.
@@ -692,7 +691,7 @@ The key/value store holds the key shares of the node, and the chain cannot resto
   Do not remove or recreate the old container before you copy its state. `docker rm`, `docker
   compose down`, and `docker compose up` with a new image all remove the old container. The copy
   puts the key file and the stored keys on the volume. Run `interfold node reset-data` only after
-  the copy, and only with the new image. Never use `interfold nodes purge` for this migration.
+  the copy, and only with the new image.
 </Callout>
 
 Do this procedure one time for each node, when the node serves no active E3. An earlier image uses
@@ -800,11 +799,10 @@ new_image() {
    new_image node reset-data --yes
    ```
 
-   The output must end with this line. If it says `No identity was present`, stop and contact the
-   protocol team.
+   The output must end with this line:
 
    ```text
-   The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name _default
+   The operator and network keys stay. Verify with: interfold wallet get --name _default
    ```
 
    If the command refuses, use the cases in

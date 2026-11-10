@@ -75,9 +75,9 @@ docker run --rm --volumes-from <stopped-package-container> --workdir /data \
 
 To leave the network, complete the
 [exit checklist](https://docs.theinterfold.com/operate/exits-and-slashing#exit-checklist) before you
-remove the package. The package volume holds the operator key, and its removal does not run the
-checks of `interfold nodes purge`. To change the operator key or the password, exit first, then
-install the package with a new volume.
+remove the package. The package volume holds the operator key, and no command checks for unfinished
+work when you remove it. To change the operator key or the password, exit first, then install the
+package with a new volume.
 
 ## Custom RPC
 

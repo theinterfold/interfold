@@ -171,24 +171,14 @@ The node keeps its state in a `.interfold` directory next to its configuration f
 | ------------------------ | ------------------------------------------------------------------------ |
 | `config/<name>/key`      | The file that holds the encryption password for the local key store.     |
 | `data/<name>/db`         | The key/value store, with the encrypted wallet key and libp2p key.       |
-| `data/<name>/log.*`      | The append-only event log, with its `event-blobs-v1` directory.          |
+| `data/<name>/v2/`        | The journal, the blobs of the E3s that the node holds, and their proofs. |
 | `noir/`                  | The Barretenberg binary, circuit artifacts, and prover work directories. |
 
 `<name>` is the node profile name. The default profile is `_default`. The `data_dir` and
 `config_dir` keys move the data and key directories.
 
-Disk use grows with the E3 history that the node keeps. Events up to 32 MiB stay inside the event
-log. A larger local event, for example a proof work plan, goes to a separate file in
-`event-blobs-v1`. Each blob file is limited to 512 MiB. The node checks the length and SHA-256 hash
-of each blob when it reads it.
-
-At startup, the node deletes only blob files that no committed event references. Blob files that the
-event log references stay on disk, also after their E3 completes.
-
-<Callout type='warning'>
-  Do not delete files in `event-blobs-v1` to free space. The event history that refers to them
-  becomes unreadable. Expand the volume instead.
-</Callout>
+Disk use follows the E3s that the node holds. The journal keeps a snapshot and the steps after it.
+The node deletes the blobs of an E3 when the work on that E3 ends.
 
 The disk values in the hardware table are first allocations, not retention estimates. Monitor free
 space and growth for each E3, and expand the volume before it is full. Back up the complete

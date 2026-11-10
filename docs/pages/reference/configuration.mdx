@@ -86,15 +86,15 @@ To change a value in a `chains` entry, use variable substitution in the file.
 The node keeps its files in a `.interfold` folder next to the configuration file. Each node profile
 gets its own subfolder, named after the profile. The default profile is `_default`.
 
-| File                | Default path                                      | Override                 |
-| ------------------- | ------------------------------------------------- | ------------------------ |
-| Password key file   | `.interfold/config/<name>/key`                    | `config_dir`, `key_file` |
-| Key/value store     | `.interfold/data/<name>/db`                       | `data_dir`, `db_file`    |
-| Event log           | `.interfold/data/<name>/log`                      | `data_dir`, `log_file`   |
-| Operational log     | `ciphernode.jsonl` in the folder of the event log | None                     |
-| Barretenberg binary | `.interfold/noir/bin/bb`                          | `custom_bb`              |
-| Circuits            | `.interfold/noir/circuits`                        | None                     |
-| Prover work folder  | `.interfold/noir/work/<name>`                     | None                     |
+| File                | Default path                                   | Override                 |
+| ------------------- | ---------------------------------------------- | ------------------------ |
+| Password key file   | `.interfold/config/<name>/key`                 | `config_dir`, `key_file` |
+| Key/value store     | `.interfold/data/<name>/db`                    | `data_dir`, `db_file`    |
+| Node data           | `.interfold/data/<name>/v2`                    | `data_dir`               |
+| Operational log     | `ciphernode.jsonl` in the folder of `log_file` | `data_dir`, `log_file`   |
+| Barretenberg binary | `.interfold/noir/bin/bb`                       | `custom_bb`              |
+| Circuits            | `.interfold/noir/circuits`                     | None                     |
+| Prover work folder  | `.interfold/noir/work/<name>`                  | None                     |
 
 The paths follow these rules:
 
@@ -171,7 +171,7 @@ key, so the peer ID follows the wallet.
 | `data_dir`   | Path | Top-level value | Base folder for the store and event log of this profile. |
 | `key_file`   | Path | `key`           | Key file that holds the password.                        |
 | `db_file`    | Path | `db`            | Key/value store.                                         |
-| `log_file`   | Path | `log`           | Event log. The node writes the protocol events here.     |
+| `log_file`   | Path | `log`           | The node writes `ciphernode.jsonl` in its folder.        |
 
 ### Compute and startup limits
 

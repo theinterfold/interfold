@@ -55,9 +55,8 @@ directory that contains `db`. The file rotates at 25 MiB and keeps four old file
 recent notes, and `interfold node events` prints them all.
 
 <Callout type='info'>
-  `interfold config get log_file` returns the base path of the event log, not a text log. The event
-  log files (`log.0` and one for each chain) are binary. The data directory is the parent directory
-  of the path that `interfold config get db_file` returns.
+  The data directory is the parent directory of the path that `interfold config get db_file`
+  returns.
 </Callout>
 
 ## Not selected for committees
@@ -323,8 +322,8 @@ See [RPC endpoints](/operate/rpc-endpoints).
 | `another interfold instance is already running for node '<node>' against this data directory …`     | A second process uses the same data directory.                                                                                   | Stop the other process first.                                                                                                         |
 | `ciphernode protocol version <x> does not match required version <y>`                               | The release is for a different protocol version.                                                                                 | Install the release that the chain requires. See [Upgrades](/operate/upgrades).                                                       |
 | `ciphernode generation <x> is below required generation <y>`                                        | Governance requires a newer node release.                                                                                        | Install the new release.                                                                                                              |
-| `On-disk schema version <v> is older than this binary's supported version …`                        | The release raised the storage schema.                                                                                           | [Reset node state](/operate/upgrades#reset-node-state).                                                                               |
-| `On-disk state has no schema marker …`                                                              | The event log exists without the matching key/value store.                                                                       | Restore the stopped backup, or reset the state.                                                                                       |
+| `… holds data from an earlier release, which this binary cannot read …`                             | The release changed the layout of the node's data.                                                                               | [Reset node state](/operate/upgrades#reset-node-state).                                                                               |
+| `… holds data from a later release …`                                                               | A newer release wrote the data.                                                                                                  | Run that release or a newer one.                                                                                                      |
 | `chain '<name>' has Interfold enabled but no data_availability reader; …`                           | The chain entry has no `data_availability` block. A configuration from an earlier `interfold ciphernode setup` does not have it. | Add the block. See [Data availability](/reference/configuration#data-availability).                                                   |
 | `failed to read Interfold release dependencies`                                                     | The `Interfold` contract has no `nodeReleaseRegistry()`. On 25 September 2026, the Sepolia deployment is an example.             | Use a chain whose deployment includes the node release gate.                                                                          |
 | `restored request contexts for E3s … belong to chain <id>, which the configuration does not have …` | The data folder has unfinished E3s of a chain that is not in the configuration, for example after a network change.              | Add the chain, or keep its entry with `enabled: false` and its `chain_id`. Or [reset node state](/operate/upgrades#reset-node-state). |
