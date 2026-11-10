@@ -16,6 +16,14 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&msg.e3_id) {
             return;
         }
+        if let Err(error) = msg
+            .params_profile
+            .ensure_admission_enabled()
+            .and_then(|()| msg.params_profile.validate_committee(msg.committee_size))
+        {
+            error!(e3_id = %msg.e3_id, %error, "Unsupported C0 proof generation profile");
+            return;
+        }
         let correlation_id = CorrelationId::new();
         self.pending.insert(
             correlation_id,
@@ -28,7 +36,7 @@ impl ProofRequestActor {
         let request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 msg.key.pk_bfv.clone(),
-                msg.params_preset,
+                msg.params_profile,
                 msg.committee_size,
             )),
             correlation_id,

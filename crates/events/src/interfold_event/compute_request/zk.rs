@@ -10,7 +10,7 @@ use derivative::Derivative;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvPreset, BfvProfile};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
 use serde::{Deserialize, Serialize};
@@ -239,7 +239,8 @@ pub struct PkBfvProofRequest {
     /// The BFV public key bytes.
     #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
     pub pk_bfv: ArcBytes,
-    pub params_preset: BfvPreset,
+    /// Request-time profile; threshold bytes alone cannot select the DKG statement.
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -265,12 +266,12 @@ pub struct PkGenerationProofRequest {
 impl PkBfvProofRequest {
     pub fn new(
         pk_bfv: impl Into<ArcBytes>,
-        params_preset: BfvPreset,
+        params_profile: BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> Self {
         Self {
             pk_bfv: pk_bfv.into(),
-            params_preset,
+            params_profile,
             committee_size,
         }
     }

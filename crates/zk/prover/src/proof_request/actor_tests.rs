@@ -38,6 +38,48 @@ async fn assert_no_events(history: &Addr<HistoryCollector<InterfoldEvent>>) -> R
 }
 
 #[actix::test]
+async fn c0_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() -> Result<()> {
+    use e3_fhe_params::BfvProfile;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    for (index, profile) in [
+        BfvProfile::SsInsecure64,
+        BfvProfile::SsSecure8192,
+        BfvProfile::SyncDecInsecure64,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let event = EncryptionKeyPending {
+            e3_id: E3id::new((index + 1).to_string(), 1),
+            key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[1]))),
+            params_profile: profile,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        actor.handle_encryption_key_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+    }
+    bus.flush_event_pipeline().await?;
+    let profiles: Vec<_> = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::ComputeRequest(ComputeRequest {
+                request: ComputeRequestKind::Zk(ZkRequest::PkBfv(request)),
+                ..
+            }) => Some(request.params_profile),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        profiles,
+        [BfvProfile::SsInsecure64, BfvProfile::SsSecure8192]
+    );
+    assert_eq!(actor.pending.len(), 2);
+    Ok(())
+}
+
+#[actix::test]
 async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
@@ -58,7 +100,7 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_fhe_params::BfvProfile::SsInsecure64,
                     e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -137,7 +179,7 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_fhe_params::BfvProfile::SsInsecure64,
                     e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -283,7 +325,7 @@ fn request_proofs(actor: &mut ProofRequestActor, e3_id: &E3id) {
     let c0 = EncryptionKeyPending {
         e3_id: e3_id.clone(),
         key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     let c4 = decryption_share_proofs_pending(e3_id.clone());

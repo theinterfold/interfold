@@ -642,7 +642,7 @@ pub(crate) mod tests {
         let request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 ArcBytes::from_bytes(&[]),
-                BfvPreset::default(),
+                e3_fhe_params::BfvProfile::SsInsecure64,
                 CiphernodesCommitteeSize::Micro,
             )),
             correlation_id,

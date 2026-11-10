@@ -85,7 +85,9 @@ async fn benchmark_trbfv_actor() -> Result<()> {
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     use e3_events::{
-        CiphernodeSelected, E3Requested, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced,
+        CiphernodeSelected, ComputeRequest, CorrelationId, E3Requested, EncryptionKey,
+        EncryptionKeyPending, InterfoldEvent, KeyshareCreated, PkBfvProofRequest, TakeEvents,
+        Unsequenced, ZkRequest,
     };
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
@@ -173,15 +175,32 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         crypto_config_id: local_evt_3.crypto_config_id,
         ..Default::default()
     };
+    let local_evt_5 = EncryptionKeyPending {
+        e3_id: local_evt_3.e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[1]))),
+        params_profile: local_evt_3.params_profile,
+        committee_size: e3_committee::CiphernodesCommitteeSize::Minimum,
+    };
+    let local_evt_6 = ComputeRequest::zk(
+        ZkRequest::PkBfv(PkBfvProofRequest::new(
+            local_evt_5.key.pk_bfv.clone(),
+            local_evt_5.params_profile,
+            local_evt_5.committee_size,
+        )),
+        CorrelationId::new(),
+        local_evt_5.e3_id.clone(),
+    );
 
     bus.publish_without_context(evt_1.clone())?;
     bus.publish_without_context(evt_2.clone())?;
     bus.publish_without_context(local_evt_3.clone())?; // This is a local event which should not be broadcast to the network
     bus.publish_without_context(local_evt_4.clone())?;
+    bus.publish_without_context(local_evt_5.clone())?;
+    bus.publish_without_context(local_evt_6.clone())?;
 
     // check the history of the event bus
     let history = history_collector
-        .send(TakeEvents::<InterfoldEvent>::new(4))
+        .send(TakeEvents::<InterfoldEvent>::new(6))
         .await?;
 
     assert_eq!(
@@ -200,7 +219,9 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
             evt_1.into(),
             evt_2.into(),
             local_evt_3.into(),
-            local_evt_4.into()
+            local_evt_4.into(),
+            local_evt_5.into(),
+            local_evt_6.into()
         ], // all local events that have been broadcast but no
         // events from the loopback
         "NetEventTranslator must not retransmit forwarded event to event bus"
