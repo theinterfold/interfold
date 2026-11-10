@@ -558,7 +558,11 @@ jobs:
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration trbfv_scenario_party_offline_after_c0 -- --exact --nocapture'
+        # `--exact` exits 0 when the name matches nothing, so require the one passed test.
+        run: |
+          set -o pipefail
+          cargo test -p e3-tests --test integration trbfv_scenario_party_offline_after_c0 -- --exact --nocapture | tee "$RUNNER_TEMP/scenario.log"
+          grep -Eq 'test result: ok\. 1 passed' "$RUNNER_TEMP/scenario.log"
 
       - name: Run full-proof DKG integration with standby node
         if: matrix.leg == 'standby-node'
@@ -567,7 +571,11 @@ jobs:
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration trbfv_scenario_standby_node -- --exact --nocapture'
+        # `--exact` exits 0 when the name matches nothing, so require the one passed test.
+        run: |
+          set -o pipefail
+          cargo test -p e3-tests --test integration trbfv_scenario_standby_node -- --exact --nocapture | tee "$RUNNER_TEMP/scenario.log"
+          grep -Eq 'test result: ok\. 1 passed' "$RUNNER_TEMP/scenario.log"
 
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]
