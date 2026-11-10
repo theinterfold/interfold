@@ -18,7 +18,7 @@ use std::{
 };
 
 /// The version of the blob store's folders and the wallet's file.
-const STORE_VERSION: u32 = 2;
+const STORE_VERSION: u32 = 1;
 
 const MANIFEST: &str = "manifest.json";
 

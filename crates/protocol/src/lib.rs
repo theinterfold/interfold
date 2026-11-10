@@ -28,9 +28,9 @@ pub mod wire;
 pub use ids::{BlobRef, E3Id, SealedRef};
 
 /// The version of what a node persists of the machine: its inputs and effects in the journal, and
-/// its snapshots. Change it with any change to their encoding; a node refuses a data directory
-/// written in another version.
-pub const ENCODING_VERSION: u32 = 14;
+/// its snapshots. A node refuses a data directory written in another version. It counts released
+/// encodings: an encoding no release has used keeps its number.
+pub const ENCODING_VERSION: u32 = 1;
 pub use machine::{Machine, Tick, UnixSecs};
 
 use alloy_primitives::{Address, U256};

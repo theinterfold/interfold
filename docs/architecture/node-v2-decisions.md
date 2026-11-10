@@ -166,11 +166,12 @@ Each rule is checkable in review.
   for the blob folders and the wallet file, and the chain, the deployment and the operator. The node
   refuses a directory of another layout or owner, so an update never misreads an old journal or
   deletes old blobs as foreign. A test fingerprints a sample journal and snapshot, so an encoding
-  change fails until its version changes. v2 has no migrations before its first release: a layout
-  change means starting from an empty directory. `node reset-data` cannot read a journal in another
-  layout, so it then refuses unless `--allow-active-e3s` confirms that the node's E3s have ended; a
-  release that changes the layout ships a reader for the old one or asks operators for that
-  confirmation.
+  change cannot go unnoticed. The versions count released layouts: both stay at 1 through the first
+  release, and only a change to a released layout raises one. v2 has no migrations before its first
+  release: a layout change means starting from an empty directory. `node reset-data` cannot read a
+  journal in another layout, so it then refuses unless `--allow-active-e3s` confirms that the node's
+  E3s have ended; a release that changes the layout ships a reader for the old one or asks operators
+  for that confirmation.
 - **D27. Jobs prove with the circuits directly, and a check binds what it received to the proof.** A
   job builds each circuit's input from the values it already holds and runs `bb`; no proof requests
   travel as events. A dealer proves C3 for every other member's slot, a member without a valid key

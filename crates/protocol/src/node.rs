@@ -2217,12 +2217,13 @@ mod tests {
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
-                14,
+                1,
                 alloy_primitives::b256!(
                     "a29eae0a7dc3eef8e59b9354512d8306c4bd2add4c15f16037b35b87bc64637c"
                 )
             ),
-            "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"
+            "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \
+             release used the old one"
         );
     }
 
