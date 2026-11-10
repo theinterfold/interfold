@@ -7,7 +7,7 @@
 mod reverts;
 
 use crate::{Contracts, RpcError};
-use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use e3_blobs::{BlobError, BlobStore, Blobs};
 use e3_data_availability::public_key::ChunkLayout;
@@ -76,10 +76,12 @@ pub struct Call {
     pub gas_multiplier: u64,
 }
 
-/// One call of a submission and how to read its reverts.
+/// One call of a submission and how the chain shows that it is finished.
 struct Step {
     call: Call,
     reverts: Reading,
+    /// A call that only writes a log never reverts for having been made, so its log says.
+    chunk: Option<KeyChunk>,
 }
 
 /// What the chain says about a call.
@@ -94,6 +96,26 @@ pub enum Estimate {
     NotYet(Bytes),
 }
 
+/// One chunk of a committee's public key, which a member publishes as a log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyChunk {
+    pub registry: Address,
+    pub e3: U256,
+    pub candidate: B256,
+    pub index: u16,
+    /// No chunk of the key is older than this block.
+    pub since: u64,
+}
+
+/// Where the chain holds a log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnChain {
+    Absent,
+    /// In a block that can still be replaced.
+    Unconfirmed,
+    Confirmed,
+}
+
 /// What the writer needs from the chain: the operator's account.
 pub trait Account {
     /// Whether the confirmed state takes `call` from the operator, and the gas it takes where it
@@ -102,6 +124,10 @@ pub trait Account {
 
     /// Sends `call` with the gas limit `gas` and waits for its receipt: whether it succeeded.
     fn send(&self, call: &Call, gas: u64) -> impl Future<Output = Result<bool, RpcError>> + Send;
+
+    /// Where the chain holds the operator's copy of `chunk`.
+    fn key_chunk(&self, chunk: &KeyChunk)
+        -> impl Future<Output = Result<OnChain, RpcError>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -165,6 +191,7 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
                 gas_multiplier: REFRESH_GAS_MULTIPLIER,
             },
             reverts: reverts::refresh,
+            chunk: None,
         };
         let refresh = deliver(&self.account, &operator, &step);
         if tokio::time::timeout(REFRESH_LIMIT, refresh).await.is_err() {
@@ -179,6 +206,7 @@ pub async fn acknowledge<A: Account>(account: &A, call: &Call) -> bool {
     let step = Step {
         call: call.clone(),
         reverts: reverts::acknowledge,
+        chunk: None,
     };
     deliver(account, &"the node's release", &step).await == Delivered::Done
 }
@@ -204,6 +232,24 @@ async fn attempt<A: Account>(
     step: &Step,
 ) -> Result<Option<Delivered>, RpcError> {
     let call = &step.call;
+    if let Some(chunk) = &step.chunk {
+        match account.key_chunk(chunk).await {
+            Ok(OnChain::Confirmed) => {
+                info!(
+                    %of, call = call.label, index = chunk.index,
+                    "nothing to send: the chain has it already"
+                );
+                return Ok(Some(Delivered::Done));
+            }
+            Ok(OnChain::Unconfirmed) => return Ok(None),
+            Ok(OnChain::Absent) => {}
+            // Finding out must not hold up the key: a repeated chunk costs only gas.
+            Err(error) => warn!(
+                %of, call = call.label, %error,
+                "the chain's chunks could not be read; sending"
+            ),
+        }
+    }
     let gas = match account.estimate(call).await? {
         Estimate::Gas(gas) => gas,
         Estimate::Reverts(revert) => return Ok(read_revert(of, step, &revert)),
@@ -261,6 +307,7 @@ fn calls(
             gas_multiplier: 1,
         },
         reverts,
+        chunk: None,
     };
     let registry = |label, data, reverts| step(contracts.registry, label, data, reverts);
     let interfold = |label, data, reverts| step(contracts.interfold, label, data, reverts);
@@ -305,11 +352,19 @@ fn calls(
                     totalLength: layout.total_length(),
                     chunk: Bytes::copy_from_slice(&key[range]),
                 };
-                registry(
+                let mut step = registry(
                     "publishCommitteePublicKey",
                     chunk.abi_encode(),
                     reverts::key_chunk,
-                )
+                );
+                step.chunk = Some(KeyChunk {
+                    registry: contracts.registry,
+                    e3,
+                    candidate,
+                    index,
+                    since: publication.finalized_block,
+                });
+                step
             });
             iter::once(registry(
                 "publishCommittee",

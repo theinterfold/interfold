@@ -2219,7 +2219,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "a29eae0a7dc3eef8e59b9354512d8306c4bd2add4c15f16037b35b87bc64637c"
+                    "a95254f17725fe6b380a6b074ac4f931633b4ac2ce2c4146950c69321d3f2fb7"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \
@@ -2441,6 +2441,7 @@ mod tests {
                 public_key: BlobRef::of(b"key"),
                 proof: proof(1),
                 attestations: Vec::new(),
+                finalized_block: 11,
             }),
         });
         assert!(owes(&node, &make_key) && owes(&node, &publish));

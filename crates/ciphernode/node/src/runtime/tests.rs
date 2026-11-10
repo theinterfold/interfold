@@ -9,7 +9,9 @@
 use super::*;
 use alloy_primitives::U256;
 use e3_blobs::MemoryBlobs;
-use e3_chain::{Call, Deadlines, Estimate, LogsError, RawLog, RpcError, Sortition};
+use e3_chain::{
+    Call, Deadlines, Estimate, KeyChunk, LogsError, OnChain, RawLog, RpcError, Sortition,
+};
 use e3_crypto::Cipher;
 use e3_data_availability::DataReference;
 use e3_engine::{Step, Store};
@@ -90,6 +92,10 @@ impl Account for NoAccount {
     }
 
     async fn send(&self, _: &Call, _: u64) -> Result<bool, RpcError> {
+        pending().await
+    }
+
+    async fn key_chunk(&self, _: &KeyChunk) -> Result<OnChain, RpcError> {
         pending().await
     }
 }

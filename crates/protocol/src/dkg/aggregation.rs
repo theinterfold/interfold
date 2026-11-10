@@ -146,6 +146,7 @@ impl Dkg {
                 public_key: key.public_key,
                 proof: key.proof,
                 attestations,
+                finalized_block: self.timing.finalized_block,
             }),
         })]
     }

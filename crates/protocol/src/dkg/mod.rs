@@ -87,6 +87,8 @@ pub struct KeyPublication {
     pub proof: ZkProof,
     /// One per roster member, ascending by party ID.
     pub attestations: Vec<SignedAttestation>,
+    /// The block the committee was finalized in: no chunk of the key is older.
+    pub finalized_block: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

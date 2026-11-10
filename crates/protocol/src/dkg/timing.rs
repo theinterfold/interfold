@@ -14,6 +14,8 @@ pub struct DkgTiming {
     pub deadline: UnixSecs,
     /// The frozen DKG window, which ends at the deadline.
     pub window: u64,
+    /// The block the committee was finalized in: nothing of its key is on chain before it.
+    pub finalized_block: u64,
 }
 
 impl DkgTiming {
@@ -40,7 +42,11 @@ mod tests {
 
     #[test]
     fn cutoffs_are_a_share_of_the_window_at_least_a_second_in_and_never_past_the_deadline() {
-        let timing = |deadline, window| DkgTiming { deadline, window };
+        let timing = |deadline, window| DkgTiming {
+            deadline,
+            window,
+            finalized_block: 0,
+        };
         assert_eq!(timing(10_000, 1_000).key_cutoff(), 9_100);
         assert_eq!(timing(10_000, 1_000).share_checkpoint(), 9_750);
         assert_eq!(timing(10_000, 5).key_cutoff(), 9_996);

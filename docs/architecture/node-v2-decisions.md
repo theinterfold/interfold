@@ -386,6 +386,13 @@ Each rule is checkable in review.
   those blocks can still be replaced. The acknowledgement goes through the same delivery as every
   other call, so a send that reverts is tried again and does not end the start.
 
+- **D58. A call that only writes a log is finished when its log says so.** A restart runs a
+  publication again from its first call. The chain refuses a repeated state change with a revert
+  that the node reads as done, but a key chunk is only a log, so nothing refuses it. Before each
+  chunk the node looks for its own copy in the logs since the block the committee was finalized in:
+  a confirmed copy is done, an unconfirmed one waits, and a chunk it cannot find goes out. When the
+  logs cannot be read the chunk goes out too, because a repeated chunk costs only gas.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

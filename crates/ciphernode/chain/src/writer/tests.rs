@@ -35,6 +35,8 @@ struct Script {
     estimated: usize,
     /// Each sent call with its gas limit.
     sent: Vec<(Call, u64)>,
+    /// What each look for a key chunk on chain finds, in order; nothing once the script runs out.
+    chunks: VecDeque<Result<OnChain, &'static str>>,
 }
 
 #[derive(Clone, Default)]
@@ -72,6 +74,14 @@ impl Account for FakeAccount {
         let mut script = self.0.lock().unwrap();
         script.sent.push((call.clone(), gas));
         Ok(script.sends.pop_front().unwrap_or(true))
+    }
+
+    async fn key_chunk(&self, _: &KeyChunk) -> Result<OnChain, RpcError> {
+        match self.0.lock().unwrap().chunks.pop_front() {
+            Some(Ok(found)) => Ok(found),
+            Some(Err(message)) => Err(RpcError(message.into())),
+            None => Ok(OnChain::Absent),
+        }
     }
 }
 
@@ -228,7 +238,69 @@ fn committee_publication(blobs: &MemoryBlobs) -> Submission {
             public_inputs: vec![B256::repeat_byte(1)],
         },
         attestations: Vec::new(),
+        finalized_block: 11,
     }))
+}
+
+const PUBLISH_AND_THREE_CHUNKS: [&str; 4] = [
+    "publishCommittee",
+    "publishCommitteePublicKey",
+    "publishCommitteePublicKey",
+    "publishCommitteePublicKey",
+];
+
+/// A node that restarts runs its publication again from the top. Nothing on chain reverts for a
+/// chunk it already holds, so the chain's logs are what keep the chunks from going out twice.
+#[tokio::test]
+async fn the_chunks_the_chain_has_are_not_sent_again() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script.chunks.extend([
+            Ok(OnChain::Confirmed),
+            Ok(OnChain::Absent),
+            Ok(OnChain::Confirmed),
+        ])
+    });
+    writer(&account, &blobs)
+        .submit(&committee_publication(&blobs))
+        .await
+        .unwrap();
+    assert_eq!(
+        account.labels(),
+        ["publishCommittee", "publishCommitteePublicKey"]
+    );
+}
+
+/// A chunk in a block that can still be replaced is neither finished nor sent again.
+#[tokio::test(start_paused = true)]
+async fn a_chunk_in_an_unconfirmed_block_waits_for_its_confirmations() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script.chunks.extend([
+            Ok(OnChain::Unconfirmed),
+            Ok(OnChain::Confirmed),
+            Ok(OnChain::Confirmed),
+            Ok(OnChain::Confirmed),
+        ])
+    });
+    writer(&account, &blobs)
+        .submit(&committee_publication(&blobs))
+        .await
+        .unwrap();
+    assert_eq!(account.labels(), ["publishCommittee"]);
+}
+
+#[tokio::test]
+async fn chunks_still_go_out_when_the_chain_s_logs_cannot_be_read() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        script.chunks.extend([Err("the range is too wide")]);
+    });
+    writer(&account, &blobs)
+        .submit(&committee_publication(&blobs))
+        .await
+        .unwrap();
+    assert_eq!(account.labels(), PUBLISH_AND_THREE_CHUNKS);
 }
 
 /// The newest blocks can show the call done by another node, or refuse it for good. Neither counts
@@ -476,6 +548,7 @@ async fn a_committee_publishes_its_proof_then_its_key_in_chunks() {
             public_inputs: vec![B256::repeat_byte(1)],
         },
         attestations: Vec::new(),
+        finalized_block: 11,
     };
     let publish = submission(Transaction::PublishCommittee(publication));
     writer(&account, &blobs).submit(&publish).await.unwrap();

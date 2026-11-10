@@ -407,6 +407,7 @@ impl<R: Rpc> Reader<R> {
                 let dkg = DkgTiming {
                     deadline: answer(rpc.deadlines(e3.number, block)).await?.dkg,
                     window: answer(rpc.dkg_window(e3.number, block)).await?,
+                    finalized_block: at.block,
                 };
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })
             }

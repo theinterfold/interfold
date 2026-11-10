@@ -25,6 +25,7 @@ const POLL: Duration = Duration::from_millis(250);
 const TIMING: DkgTiming = DkgTiming {
     deadline: 900,
     window: 300,
+    finalized_block: 5,
 };
 const COMPUTE_DEADLINE: UnixSecs = 1_500;
 const DECRYPTION_DEADLINE: UnixSecs = 2_000;

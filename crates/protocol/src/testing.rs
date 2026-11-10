@@ -592,6 +592,7 @@ pub const ATTESTATION: AttestationContext = AttestationContext {
 pub const TIMING: DkgTiming = DkgTiming {
     deadline: 100_000,
     window: 10_000,
+    finalized_block: 11,
 };
 
 pub fn finalized(block: u64, e3: E3Id, members: Vec<Address>) -> Input {

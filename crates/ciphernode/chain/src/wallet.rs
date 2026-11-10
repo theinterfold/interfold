@@ -4,15 +4,17 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{Account, Call, Estimate, RpcError};
+use crate::{Account, Call, Estimate, KeyChunk, OnChain, RpcError};
 use alloy::{
     eips::{eip1559::Eip1559Estimation, BlockId},
     network::TransactionBuilder,
     providers::{Provider, WalletProvider},
-    rpc::types::TransactionRequest,
+    rpc::types::{Filter, TransactionRequest},
     transports::{RpcError as TransportFailure, TransportErrorKind},
 };
 use alloy_primitives::{keccak256, Bytes, B256};
+use alloy_sol_types::SolEvent;
+use e3_evm_contracts::ICiphernodeRegistry::CommitteePublicKeyChunkPublished;
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -213,6 +215,39 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
         }
     }
 
+    async fn key_chunk(&self, chunk: &KeyChunk) -> Result<OnChain, RpcError> {
+        let head = self
+            .provider
+            .get_block_number()
+            .await
+            .map_err(RpcError::new)?;
+        let filter = Filter::new()
+            .address(chunk.registry)
+            .event_signature(CommitteePublicKeyChunkPublished::SIGNATURE_HASH)
+            .topic1(B256::from(chunk.e3))
+            .topic2(self.provider.default_signer_address().into_word())
+            .topic3(chunk.candidate)
+            .from_block(chunk.since)
+            .to_block(head);
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .map_err(RpcError::new)?;
+        let oldest = logs
+            .iter()
+            .filter_map(|log| {
+                let event = log.log_decode::<CommitteePublicKeyChunkPublished>().ok()?;
+                (event.inner.data.chunkIndex == chunk.index).then_some(log.block_number?)
+            })
+            .min();
+        Ok(match oldest {
+            None => OnChain::Absent,
+            Some(block) if block <= head.saturating_sub(self.confirmations) => OnChain::Confirmed,
+            Some(_) => OnChain::Unconfirmed,
+        })
+    }
+
     /// Fees are estimated before the nonce is chosen, so the turn only signs and broadcasts. An
     /// RPC node's pending count can miss a transaction that another node behind the same endpoint
     /// accepted a moment ago, so a new nonce also skips the ones this process sent recently. The
@@ -289,6 +324,7 @@ mod tests {
     use alloy::{
         network::EthereumWallet,
         providers::{mock::Asserter, ProviderBuilder},
+        rpc::types::Log,
         signers::local::PrivateKeySigner,
     };
     use alloy_primitives::{Address, U256};
@@ -364,6 +400,57 @@ mod tests {
         asserter.push_success(&U256::from(100));
         asserter.push_failure_msg("the chain node is overloaded");
         assert!(wallet(asserter, &dir).estimate(&call()).await.is_err());
+    }
+
+    fn chunk(index: u16) -> KeyChunk {
+        KeyChunk {
+            registry: Address::repeat_byte(9),
+            e3: U256::from(7),
+            candidate: B256::repeat_byte(5),
+            index,
+            since: 10,
+        }
+    }
+
+    /// A log of the chunk at `index`, in `block`.
+    fn chunk_log(index: u16, block: u64) -> Log {
+        let event = CommitteePublicKeyChunkPublished {
+            e3Id: U256::from(7),
+            publisher: Address::repeat_byte(2),
+            candidateHash: B256::repeat_byte(5),
+            nodes: Vec::new(),
+            pkCommitment: B256::repeat_byte(6),
+            chunkIndex: index,
+            chunkCount: 5,
+            totalLength: 100,
+            chunk: Bytes::from_static(&[1]),
+        };
+        Log {
+            inner: alloy_primitives::Log {
+                address: Address::repeat_byte(9),
+                data: event.encode_log_data(),
+            },
+            block_number: Some(block),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_chunk_counts_once_its_block_is_confirmed() {
+        let found = |logs: Vec<Log>| async move {
+            let (asserter, dir) = (Asserter::new(), tempfile::tempdir().unwrap());
+            asserter.push_success(&U256::from(100));
+            asserter.push_success(&logs);
+            wallet(asserter, &dir).key_chunk(&chunk(2)).await.unwrap()
+        };
+        assert_eq!(found(Vec::new()).await, OnChain::Absent);
+        assert_eq!(found(vec![chunk_log(1, 50)]).await, OnChain::Absent);
+        assert_eq!(found(vec![chunk_log(2, 97)]).await, OnChain::Confirmed);
+        assert_eq!(found(vec![chunk_log(2, 98)]).await, OnChain::Unconfirmed);
+        assert_eq!(
+            found(vec![chunk_log(2, 99), chunk_log(2, 60)]).await,
+            OnChain::Confirmed
+        );
     }
 
     fn fees(max_fee_per_gas: u128, max_priority_fee_per_gas: u128) -> Eip1559Estimation {
