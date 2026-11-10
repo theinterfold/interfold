@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "bfv": {
     "encryptionScheme": "fhe.rs:BFV",
     "encryptionSchemeId": "0x2c2a814a0495f913a3a312fc4771e37552bc14f8a2d4075a08122d356f0849c6",
@@ -30,7 +30,6 @@
           "error1Variance": "10"
         },
         "parameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
-        "cryptoConfigId": "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
         "search": {
           "n": "19",
           "z": "100000",
@@ -70,7 +69,6 @@
           "error1Variance": "10"
         },
         "parameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
-        "cryptoConfigId": "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
         "search": {
           "n": "20",
           "z": "100000",

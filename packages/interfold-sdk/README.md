@@ -68,7 +68,7 @@ const requestParams = {
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
-  paramSet: 0, // Insecure64 for development
+  profile: 'ss-insecure-64', // Development only
   computeProviderParams: '0x...',
   customParams: '0x...',
 }
@@ -347,7 +347,7 @@ await sdk.requestE3({
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [bigint, bigint],
   e3Program: `0x${string}`,
-  paramSet: 0,
+  profile: 'ss-insecure-64',
   computeProviderParams: `0x${string}`,
   customParams: '0x',
   maxFee: amount,
@@ -489,6 +489,11 @@ interface SDKConfig {
 
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
+
+New requests select `profile: 'ss-insecure-64'` or `profile: 'ss-secure-8192'` together with
+`committeeSize`. The SDK derives the registry slot and protocol/DKG/committee-bound configuration
+ID; do not supply a separate parameter-set or protocol selector. `sync-insecure-64` remains
+disabled.
 
 | Preset name               | On-chain `paramSet` index | Use case                                                                 |
 | ------------------------- | ------------------------- | ------------------------------------------------------------------------ |

@@ -25,7 +25,7 @@ fn export_config_is_deterministic_json_without_compiler_tools() {
     let first = export();
     assert_eq!(first, export());
     let document: Value = serde_json::from_slice(&first).unwrap();
-    assert_eq!(document["formatVersion"], 1);
+    assert_eq!(document["formatVersion"], 2);
     assert!(document["bfv"].get("messageCoeffsCount").is_none());
     assert_eq!(
         document["zk"]["messageCoeffsCount"],
@@ -84,7 +84,6 @@ fn metadata_preserves_frozen_identities_exact_integers_and_owner_dimensions() {
             u64::from(record.param_set),
             vector["paramSet"].as_u64().unwrap()
         );
-        assert_eq!(record.crypto_config_id, vector["cryptoConfigId"]);
         assert_eq!(record.parameter_hash, vector["parameterHash"]);
         assert_eq!(record.dkg.name, preset.dkg_counterpart().unwrap().name());
         let selected = BfvParamSet::from(preset);

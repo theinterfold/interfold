@@ -3,10 +3,9 @@
 //! BFV metadata for code generation. Decimal strings preserve integer precision in other languages.
 
 use crate::{
-    bfv_encryption_scheme_id, bfv_parameter_hash, bfv_profile_crypto_config_id,
-    current_bfv_crypto_config_id, encode_bfv_params, search::bfv::BfvSearchConfig, BfvPreset,
-    BfvProfile, BfvProfileError, PresetError, BFV_ENCRYPTION_SCHEME, BFV_PROFILE_CONFIG_DOMAIN,
-    INTERFOLD_BFV_VERSION,
+    bfv_encryption_scheme_id, bfv_parameter_hash, bfv_profile_crypto_config_id, encode_bfv_params,
+    search::bfv::BfvSearchConfig, BfvPreset, BfvProfile, BfvProfileError, PresetError,
+    BFV_ENCRYPTION_SCHEME, BFV_PROFILE_CONFIG_DOMAIN, INTERFOLD_BFV_VERSION,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use fhe::bfv::BfvParameters;
@@ -38,7 +37,6 @@ impl BfvMetadata {
                 threshold: ParameterMetadata::new(preset.name(), &threshold),
                 dkg: ParameterMetadata::new(dkg_preset.name(), &dkg),
                 parameter_hash: bfv_parameter_hash(&encoded_params).to_string(),
-                crypto_config_id: current_bfv_crypto_config_id(&encoded_params).to_string(),
                 search: preset
                     .search_config()
                     .ok_or(PresetError::MissingSearchConfig(preset.name()))?
@@ -128,7 +126,6 @@ pub struct BfvPresetMetadata {
     pub threshold: ParameterMetadata,
     pub dkg: ParameterMetadata,
     pub parameter_hash: String,
-    pub crypto_config_id: String,
     pub search: SearchMetadata,
 }
 

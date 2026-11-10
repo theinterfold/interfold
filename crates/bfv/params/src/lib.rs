@@ -22,13 +22,16 @@ pub use builder::{
     build_bfv_params, build_bfv_params_arc, build_bfv_params_from_set,
     build_bfv_params_from_set_arc, build_pair_for_preset, try_build_bfv_params_arc,
 };
-pub use constants::{BFV_ENCRYPTION_SCHEME, BFV_PROFILE_CONFIG_DOMAIN, INTERFOLD_BFV_VERSION};
+pub use constants::{
+    BFV_ENCRYPTION_SCHEME, BFV_PROFILE_CONFIG_DOMAIN, INTERFOLD_BFV_VERSION,
+    LEGACY_BFV_CONFIG_VERSION,
+};
 pub use crp::{create_deterministic_crp_from_default_seed, create_deterministic_crp_from_seed};
 #[cfg(feature = "abi-encoding")]
 pub use encoding::{
     bfv_crypto_config_id, bfv_encryption_scheme_id, bfv_parameter_hash,
-    bfv_profile_crypto_config_id, current_bfv_crypto_config_id, decode_bfv_params,
-    decode_bfv_params_arc, encode_bfv_params, EncodingError,
+    bfv_profile_crypto_config_id, decode_bfv_params, decode_bfv_params_arc, encode_bfv_params,
+    EncodingError,
 };
 pub use presets::{
     default_param_set, BfvParamSet, BfvPreset, LambdaConfig, ParameterType, PresetError,

@@ -57,6 +57,8 @@ pub enum BfvProfileError {
     AdmissionDisabled(&'static str),
     #[error("BFV profile {0} has no supported DKG preset")]
     UnsupportedDkgPreset(&'static str),
+    #[error("Unsupported BFV crypto configuration {0}")]
+    UnsupportedConfiguration(String),
 }
 
 impl BfvProfile {
@@ -215,6 +217,27 @@ impl BfvProfile {
             &crate::encode_bfv_params(&dkg),
             committee,
             self.statement_version(),
+        ))
+    }
+
+    /// Resolve the exact request identity, never the shared threshold bytes alone.
+    /// Callers decide admission separately so a disabled profile cannot become SS work.
+    #[cfg(feature = "abi-encoding")]
+    pub fn from_crypto_config_id(
+        param_set: u8,
+        committee: CiphernodesCommitteeSize,
+        crypto_config_id: alloy_primitives::B256,
+    ) -> Result<Self, BfvProfileError> {
+        for profile in Self::ALL {
+            if profile.param_set() == param_set
+                && profile.supports_committee(committee)
+                && profile.crypto_config_id(committee)? == crypto_config_id
+            {
+                return Ok(profile);
+            }
+        }
+        Err(BfvProfileError::UnsupportedConfiguration(
+            crypto_config_id.to_string(),
         ))
     }
 }

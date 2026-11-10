@@ -15,13 +15,10 @@ library ActiveCryptoConfig {
         BfvProtocol.ENCRYPTION_SCHEME_ID;
     bytes32 internal constant CIRCUIT_VERSION = BfvProtocol.CIRCUIT_VERSION;
 
-    bytes32 internal constant INSECURE_CONFIG_ID =
-        BfvProtocol.INSECURE_CONFIG_ID;
     uint8 internal constant INSECURE_PARAM_SET = BfvProtocol.INSECURE_PARAM_SET;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
         BfvProtocol.INSECURE_PARAM_SET_HASH;
 
-    bytes32 internal constant SECURE_CONFIG_ID = BfvProtocol.SECURE_CONFIG_ID;
     uint8 internal constant SECURE_PARAM_SET = BfvProtocol.SECURE_PARAM_SET;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         BfvProtocol.SECURE_PARAM_SET_HASH;
@@ -45,7 +42,8 @@ library ActiveCryptoConfig {
     uint32 internal constant SMALL_N = BfvProtocol.SMALL_N;
 
     // Production default. The public MAX_COMMITTEE_SIZE constant reads N.
-    bytes32 internal constant CONFIG_ID = SECURE_CONFIG_ID;
+    bytes32 internal constant CONFIG_ID =
+        BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID;
     uint8 internal constant PARAM_SET = SECURE_PARAM_SET;
     bytes32 internal constant PARAM_SET_HASH = SECURE_PARAM_SET_HASH;
     uint8 internal constant COMMITTEE_SIZE = SMALL_COMMITTEE_SIZE;
@@ -54,7 +52,8 @@ library ActiveCryptoConfig {
     uint32 internal constant N = SMALL_N;
 
     // Testnet default. Sepolia can still request secure minimum explicitly.
-    bytes32 internal constant TESTNET_CONFIG_ID = INSECURE_CONFIG_ID;
+    bytes32 internal constant TESTNET_CONFIG_ID =
+        BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID;
     uint8 internal constant TESTNET_PARAM_SET = INSECURE_PARAM_SET;
     bytes32 internal constant TESTNET_PARAM_SET_HASH = INSECURE_PARAM_SET_HASH;
     uint8 internal constant TESTNET_COMMITTEE_SIZE = MINIMUM_COMMITTEE_SIZE;
@@ -67,11 +66,27 @@ library ActiveCryptoConfig {
         return chainId == 11155111 || chainId == 31337 || chainId == 1337;
     }
 
-    function configIdForParamSet(
-        uint8 paramSet
+    function configIdForRequest(
+        uint8 paramSet,
+        uint8 committeeSize
     ) internal pure returns (bytes32) {
-        if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
-        if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
+        // Only SS profiles are admitted in this release, even where synchronized threshold bytes match.
+        if (paramSet == INSECURE_PARAM_SET) {
+            if (committeeSize == MINIMUM_COMMITTEE_SIZE)
+                return BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID;
+            if (committeeSize == MICRO_COMMITTEE_SIZE)
+                return BfvProtocol.SS_INSECURE_64_MICRO_CONFIG_ID;
+            if (committeeSize == SMALL_COMMITTEE_SIZE)
+                return BfvProtocol.SS_INSECURE_64_SMALL_CONFIG_ID;
+        }
+        if (paramSet == SECURE_PARAM_SET) {
+            if (committeeSize == MINIMUM_COMMITTEE_SIZE)
+                return BfvProtocol.SS_SECURE_8192_MINIMUM_CONFIG_ID;
+            if (committeeSize == MICRO_COMMITTEE_SIZE)
+                return BfvProtocol.SS_SECURE_8192_MICRO_CONFIG_ID;
+            if (committeeSize == SMALL_COMMITTEE_SIZE)
+                return BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID;
+        }
         revert IInterfold.UnsupportedCryptoConfig();
     }
 

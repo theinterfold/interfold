@@ -68,7 +68,7 @@ function MyComponent() {
         committeeSize: CommitteeSize.Minimum,
         inputWindow: [now, now + 300n] as const,
         e3Program: '0x...',
-        paramSet: 0,
+        profile: 'ss-insecure-64',
         computeProviderParams: '0x...',
         customParams: '0x...',
       }

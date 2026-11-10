@@ -17,26 +17,23 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use async_trait::async_trait;
-use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
+use e3_committee::CiphernodesCommitteeSize;
+pub use e3_fhe_params::BfvProfile;
 use eyre::Result;
 use std::marker::PhantomData;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::events::E3Requested;
 use crate::nonce::send_with_next_nonce;
 
-fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
-    static IDS: [OnceLock<B256>; BfvPreset::ON_CHAIN_PARAMETER_SETS.len()] =
-        [const { OnceLock::new() }; BfvPreset::ON_CHAIN_PARAMETER_SETS.len()];
-    let (index, (_, preset)) = BfvPreset::ON_CHAIN_PARAMETER_SETS
-        .iter()
-        .enumerate()
-        .find(|(_, (id, _))| *id == param_set)
-        .ok_or_else(|| eyre::eyre!("unsupported BFV parameter set: {}", param_set))?;
-    Ok(*IDS[index].get_or_init(|| {
-        let threshold = BfvParamSet::from(*preset).build();
-        current_bfv_crypto_config_id(&encode_bfv_params(&threshold))
-    }))
+fn crypto_config_id_for_profile(
+    profile: BfvProfile,
+    committee_size: CommitteeSize,
+) -> Result<B256> {
+    let committee = CiphernodesCommitteeSize::try_from(u8::from(committee_size))
+        .map_err(|error| eyre::eyre!("{error:#}"))?;
+    profile.ensure_admission_enabled()?;
+    Ok(profile.crypto_config_id(committee)?)
 }
 
 #[cfg(test)]
@@ -44,33 +41,37 @@ mod crypto_config_tests {
     use super::*;
 
     #[test]
-    fn request_identities_match_frozen_vectors_without_admitting_historical_slots() {
+    fn request_identities_match_frozen_profiles_without_admitting_disabled_work() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../bfv/params/tests/fixtures/bfv_protocol.json"
+            "../../../bfv/params/tests/fixtures/bfv_profiles.json"
         ))
         .unwrap();
-        for vector in fixture["vectors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|vector| vector["preset"].is_string())
-        {
-            let param_set = vector["paramSet"].as_u64().unwrap() as u8;
-            assert_eq!(
-                crypto_config_id_for_param_set(param_set)
+        for vector in fixture["profiles"].as_array().unwrap() {
+            let profile: BfvProfile = vector["profile"].as_str().unwrap().parse().unwrap();
+            for configuration in vector["configurations"].as_array().unwrap() {
+                let committee: CiphernodesCommitteeSize = configuration["committee"]
+                    .as_str()
                     .unwrap()
-                    .to_string(),
-                vector["cryptoConfigId"].as_str().unwrap()
-            );
+                    .parse()
+                    .unwrap();
+                let result = crypto_config_id_for_profile(
+                    profile,
+                    CommitteeSize::try_from(committee as u8).unwrap(),
+                );
+                if profile.admission_enabled() {
+                    assert_eq!(
+                        result.unwrap().to_string(),
+                        configuration["cryptoConfigId"].as_str().unwrap()
+                    );
+                } else {
+                    assert!(result.unwrap_err().to_string().contains("disabled"));
+                }
+            }
         }
-        for param_set in [1, 255] {
-            assert_eq!(
-                crypto_config_id_for_param_set(param_set)
-                    .unwrap_err()
-                    .to_string(),
-                format!("unsupported BFV parameter set: {param_set}")
-            );
-        }
+        assert!(
+            crypto_config_id_for_profile(BfvProfile::SsInsecure64, CommitteeSize::__Invalid)
+                .is_err()
+        );
     }
 }
 
@@ -100,7 +101,7 @@ pub trait InterfoldRead {
         committee_size: CommitteeSize,
         input_window: [U256; 2],
         e3_program: Address,
-        param_set: u8,
+        params_profile: BfvProfile,
         compute_provider_params: Bytes,
     ) -> Result<U256>;
 
@@ -131,7 +132,7 @@ pub trait InterfoldWrite {
         committee_size: CommitteeSize,
         input_window: [U256; 2],
         e3_program: Address,
-        param_set: u8,
+        params_profile: BfvProfile,
         compute_provider_params: Bytes,
         custom_params: Bytes,
     ) -> Result<(TransactionReceipt, U256)>;
@@ -319,18 +320,19 @@ where
         committee_size: CommitteeSize,
         input_window: [U256; 2],
         e3_program: Address,
-        param_set: u8,
+        params_profile: BfvProfile,
         compute_provider_params: Bytes,
     ) -> Result<U256> {
+        let crypto_config_id = crypto_config_id_for_profile(params_profile, committee_size)?;
         let e3_request = E3RequestParams {
             committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
-            paramSet: param_set,
+            paramSet: params_profile.param_set(),
             computeProviderParams: compute_provider_params,
             customParams: Bytes::new(),
             expectedFeeToken: Address::ZERO,
-            expectedCryptoConfigId: B256::ZERO,
+            expectedCryptoConfigId: crypto_config_id,
             maxFee: U256::ZERO,
         };
 
@@ -389,7 +391,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         committee_size: CommitteeSize,
         input_window: [U256; 2],
         e3_program: Address,
-        param_set: u8,
+        params_profile: BfvProfile,
         compute_provider_params: Bytes,
         custom_params: Bytes,
     ) -> Result<(TransactionReceipt, U256)> {
@@ -397,15 +399,15 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             .wallet_address
             .ok_or_else(|| eyre::eyre!("No wallet address configured"))?;
 
+        let crypto_config_id = crypto_config_id_for_profile(params_profile, committee_size)?;
         let contract = Interfold::new(self.contract_address, &self.provider);
         let fee_token = contract.feeToken().call().await?;
-        let crypto_config_id = crypto_config_id_for_param_set(param_set)?;
 
         let quote_request = E3RequestParams {
             committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
-            paramSet: param_set,
+            paramSet: params_profile.param_set(),
             computeProviderParams: compute_provider_params.clone(),
             customParams: custom_params.clone(),
             expectedFeeToken: fee_token,
@@ -417,7 +419,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
-            paramSet: param_set,
+            paramSet: params_profile.param_set(),
             computeProviderParams: compute_provider_params,
             customParams: custom_params,
             expectedFeeToken: fee_token,
