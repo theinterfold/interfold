@@ -265,7 +265,7 @@ mod task_group_tests {
             |kind| ComputeRequest::zk(kind, e3_events::CorrelationId::new(), e3_id.clone());
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
-            params_preset: e3_fhe_params::BfvPreset::default(),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         assert_eq!(
@@ -308,7 +308,7 @@ mod task_group_tests {
         let e3_id = E3id::new("7", 1);
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
-            params_preset: e3_fhe_params::BfvPreset::default(),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         let request = |kind| ComputeRequest::zk(kind, CorrelationId::new(), e3_id.clone());
@@ -390,7 +390,7 @@ mod task_group_tests {
         let request = ComputeRequest::zk(
             ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
                 party_proofs: vec![],
-                params_preset: e3_fhe_params::BfvPreset::default(),
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
             }),
             CorrelationId::new(),

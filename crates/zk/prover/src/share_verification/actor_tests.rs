@@ -9,11 +9,11 @@ use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
-    hlc_factory::HlcFactory, ComputeRequestErrorKind, EffectsEnabled, Event, EventBus,
-    EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload, Sequencer,
-    StoreEventRequested, Unsequenced, ZkError,
+    hlc_factory::HlcFactory, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, Event,
+    EventBus, EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload,
+    Sequencer, StoreEventRequested, Unsequenced, ZkError,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_utils::utility_types::ArcBytes;
 use std::{collections::BTreeSet, time::Duration};
 
@@ -63,6 +63,40 @@ fn signed_c6(signer: &PrivateKeySigner, e3_id: &E3id, marker: u8) -> SignedProof
 }
 
 #[actix::test]
+async fn disabled_profile_does_not_dispatch_or_classify_a_verification_batch() {
+    let e3_event_system::test_support::EventFixture { bus, history, .. } =
+        e3_event_system::test_support::EventFixture::new().unwrap();
+    let mut actor = ShareVerificationActor::new(&bus, HashMap::new());
+    for kind in [
+        VerificationKind::ShareProofs,
+        VerificationKind::DecryptionProofs,
+        VerificationKind::PkGenerationProofs,
+        VerificationKind::ThresholdDecryptionProofs,
+    ] {
+        let dispatch = ShareVerificationDispatched {
+            e3_id: E3id::new("disabled-profile", 1),
+            kind,
+            share_proofs: Vec::new(),
+            decryption_proofs: Vec::new(),
+            pre_dishonest: BTreeSet::from([0]),
+            params_profile: BfvProfile::SyncDecInsecure64,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone()))
+            .sequence(0);
+        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch, ec));
+        bus.flush_event_pipeline().await.unwrap();
+        assert!(actor.pending_consistency.is_empty());
+        assert!(actor.pending.is_empty());
+        assert!(history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[actix::test]
 async fn local_verifier_error_preserves_pending_work_without_accusing_parties() {
     let bus = test_bus();
     let history = bus.history();
@@ -84,14 +118,14 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
             party_proof_hashes: HashMap::new(),
             party_public_signals: HashMap::new(),
             party_proof_data: HashMap::new(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
     );
     let request = ComputeRequest::zk(
         ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
             party_proofs: Vec::new(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,
@@ -119,6 +153,7 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
 async fn restored_committee_authorizes_c6_without_replayed_finalization_event() {
     let bus = test_bus();
     let e3_id = E3id::new("0", 31_337);
+    let profile = BfvProfile::SsSecure8192;
     let signers = [
         PrivateKeySigner::random(),
         PrivateKeySigner::random(),
@@ -154,7 +189,7 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
             .collect(),
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: profile,
         committee_size: CiphernodesCommitteeSize::Minimum,
     })
     .expect("publish C6 verification dispatch");
@@ -163,10 +198,35 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
         .await
         .expect("restored committee did not authorize C6 before timeout")
         .expect("wait for consistency request");
+    let ec = event.get_ctx().clone();
     let InterfoldEventData::CommitmentConsistencyCheckRequested(request) = event.into_data() else {
         panic!("unexpected event type")
     };
     assert_eq!(request.e3_id, e3_id);
+    assert_eq!(request.party_proofs.len(), 2);
+    let verification_requested = bus.wait_for(EventType::ComputeRequest);
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+    bus.publish(
+        CommitmentConsistencyCheckComplete {
+            e3_id: e3_id.clone(),
+            kind: request.kind,
+            correlation_id: request.correlation_id,
+            inconsistent_parties: BTreeSet::new(),
+        },
+        ec,
+    )
+    .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(2), verification_requested)
+        .await
+        .unwrap()
+        .unwrap();
+    let InterfoldEventData::ComputeRequest(request) = event.into_data() else {
+        panic!("expected ZK verification request");
+    };
+    let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(request)) = request.request else {
+        panic!("expected C6 batch verification");
+    };
+    assert_eq!(request.params_profile, profile);
     assert_eq!(request.party_proofs.len(), 2);
 }
 
@@ -239,7 +299,7 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
             share_proofs: Vec::new(),
             decryption_proofs: vec![proof],
             pre_dishonest: BTreeSet::new(),
-            params_preset: BfvPreset::InsecureDkg64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
@@ -293,7 +353,7 @@ async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
         }],
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureDkg64,
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     let ec =

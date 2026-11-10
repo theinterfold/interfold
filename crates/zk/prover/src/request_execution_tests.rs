@@ -77,7 +77,7 @@ async fn c0_execution_uses_the_profile_dkg_and_artifact_namespace() {
 }
 
 #[actix::test]
-async fn dkg_generation_rejects_disabled_profiles_before_reading_witnesses() {
+async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access() {
     use e3_fhe_params::BfvProfile;
     let temp = tempfile::tempdir().unwrap();
     let prover = unavailable_prover(temp.path());
@@ -126,6 +126,21 @@ async fn dkg_generation_rejects_disabled_profiles_before_reading_witnesses() {
             params_profile: profile,
             committee_size: committee,
         }),
+        ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+            party_proofs: Vec::new(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::VerifyShareDecryptionProofs(VerifyShareDecryptionProofsRequest {
+            party_proofs: Vec::new(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::ReverifyAccusedProof(VerifyShareProofsRequest {
+            party_proofs: Vec::new(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
     ];
     for kind in kinds {
         let request = ComputeRequest::zk(kind, CorrelationId::new(), E3id::new("7", 31_337));
@@ -143,6 +158,8 @@ async fn dkg_generation_rejects_disabled_profiles_before_reading_witnesses() {
 async fn verification_execution_preserves_correlations_and_error_classification() {
     let temp = tempfile::tempdir().unwrap();
     let prover = unavailable_prover(temp.path());
+    // Reach VK lookup, but never execute a process: no VK exists under this temporary root.
+    std::fs::write(temp.path().join("absent-bb"), []).unwrap();
     let cipher = Cipher::from_password("execution-test").await.unwrap();
     let e3_id = E3id::new("7", 31_337);
     let signed = SignedProofPayload {
@@ -158,15 +175,18 @@ async fn verification_execution_preserves_correlations_and_error_classification(
         // Authentication is the upstream verification actor's boundary, not this executor's.
         signature: ArcBytes::default(),
     };
-    let bundle = |signed_proofs| VerifyShareProofsRequest {
+    let bundle = |params_profile, signed_proofs| VerifyShareProofsRequest {
         party_proofs: vec![PartyProofsToVerify {
             sender_party_id: 2,
             signed_proofs,
         }],
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
-    for reverify in [false, true] {
+    for (profile, directory, reverify) in [
+        (BfvProfile::SsInsecure64, "insecure-64/minimum", false),
+        (BfvProfile::SsSecure8192, "secure-8192/minimum", true),
+    ] {
         let kind = |bundle| {
             if reverify {
                 ZkRequest::ReverifyAccusedProof(bundle)
@@ -175,7 +195,7 @@ async fn verification_execution_preserves_correlations_and_error_classification(
             }
         };
         let request = ComputeRequest::zk(
-            kind(bundle(vec![signed.clone()])),
+            kind(bundle(profile, vec![signed.clone()])),
             CorrelationId::new(),
             e3_id.clone(),
         );
@@ -185,14 +205,15 @@ async fn verification_execution_preserves_correlations_and_error_classification(
         .unwrap_err();
         assert_eq!(error.request(), &request);
         assert!(
-            matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message)) if message.contains("verifier process failed"))
+            matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message))
+                if message.contains("verifier process failed") && message.contains(directory))
         );
 
         // A wrong circuit is a completed rejection, unlike an unavailable verifier process.
         let mut wrong = signed.clone();
         wrong.payload.proof.circuit = e3_zk_config::CircuitName::PkBfv;
         let request = ComputeRequest::zk(
-            kind(bundle(vec![wrong.clone()])),
+            kind(bundle(profile, vec![wrong.clone()])),
             CorrelationId::new(),
             e3_id.clone(),
         );
@@ -207,6 +228,31 @@ async fn verification_execution_preserves_correlations_and_error_classification(
         assert_eq!(
             result.party_results[0].failed_signed_payload.as_ref(),
             Some(&wrong)
+        );
+
+        let mut c4a = signed.clone();
+        c4a.payload.proof_type = ProofType::C4aSkShareDecryption;
+        c4a.payload.proof.circuit = e3_zk_config::CircuitName::DkgShareDecryption;
+        let mut c4b = c4a.clone();
+        c4b.payload.proof_type = ProofType::C4bESmShareDecryption;
+        let request = ComputeRequest::zk(
+            ZkRequest::VerifyShareDecryptionProofs(VerifyShareDecryptionProofsRequest {
+                party_proofs: vec![e3_events::PartyShareDecryptionProofsToVerify {
+                    sender_party_id: 2,
+                    signed_sk_decryption_proof: c4a,
+                    signed_e_sm_decryption_proofs: vec![c4b],
+                }],
+                params_profile: profile,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            }),
+            CorrelationId::new(),
+            e3_id.clone(),
+        );
+        let error = execute_zk_request(&prover, &cipher, request.clone(), &mut |_| {}).unwrap_err();
+        assert_eq!(error.request(), &request);
+        assert!(
+            matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message))
+            if message.contains("C4 verifier process failed") && message.contains(directory))
         );
     }
 }

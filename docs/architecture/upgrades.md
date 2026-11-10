@@ -220,11 +220,12 @@ Storage schema and gossip/sync wire majors are unchanged.
 ## BFV profile cutover
 
 Nodes snapshot the selected profile and validated chain configuration ID; SS chain admission is
-unchanged and synchronized insecure-64/minimum remains disabled. C0–C4 generation and C0
-verification retain that profile; batch verification and aggregate dispatch still derive SS presets.
-Storage schema 9, keyshare recovery 9, sortition recovery 2, and node-fold recovery 2 reject the
-previous layouts; gossip/sync majors stay unchanged because the changed request, selection, and
-proof-work payloads are local-only. The unreleased protocol 9/generation 2 target remains unchanged.
+unchanged and synchronized insecure-64/minimum remains disabled. C0–C4 generation, C0 verification,
+and batch verification (including accusation re-verification) retain that profile. Recursive/C5–C7
+generation and canonical-key APIs still use derived SS presets. Storage schema 9, keyshare recovery
+9, sortition recovery 2, and node-fold recovery 2 reject the previous layouts; gossip/sync majors
+stay unchanged because the changed request, selection, and proof-work payloads are local-only. The
+unreleased protocol 9/generation 2 target remains unchanged.
 [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades contracts, nodes, and
 applications together with no active E3s; reset/resync and rollback use the
 [existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.

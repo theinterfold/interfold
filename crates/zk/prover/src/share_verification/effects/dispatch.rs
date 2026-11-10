@@ -11,13 +11,22 @@ impl ShareVerificationActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        // An unsupported local configuration must not produce peer-fault verdicts or evidence.
+        if let Err(error) = msg
+            .params_profile
+            .ensure_admission_enabled()
+            .and_then(|()| msg.params_profile.validate_committee(msg.committee_size))
+        {
+            error!(%e3_id, %error, "Unsupported share-proof verification profile");
+            return;
+        }
 
         info!(
             "handling ShareVerificationDispatched {:?}, {:?}",
             e3_id, msg.kind
         );
 
-        let params_preset = msg.params_preset;
+        let params_profile = msg.params_profile;
         let committee_size = msg.committee_size;
         match msg.kind {
             VerificationKind::ShareProofs
@@ -30,7 +39,7 @@ impl ShareVerificationActor {
                     msg.share_proofs,
                     msg.pre_dishonest,
                     ec,
-                    params_preset,
+                    params_profile,
                     committee_size,
                     |pending, passed| {
                         pending.ecdsa_passed_share_proofs = passed;
@@ -44,7 +53,7 @@ impl ShareVerificationActor {
                     msg.decryption_proofs,
                     msg.pre_dishonest,
                     ec,
-                    params_preset,
+                    params_profile,
                     committee_size,
                     |pending, passed| {
                         pending.ecdsa_passed_decryption_proofs = passed;

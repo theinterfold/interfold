@@ -14,6 +14,7 @@ use e3_events::{
     ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector, ProofPayload, ProofType,
     Seed, TakeEvents, Unsequenced, ZkError,
 };
+use e3_fhe_params::BfvPreset;
 use e3_zk_config::CircuitName;
 use std::collections::{BTreeSet, HashMap};
 
@@ -94,7 +95,7 @@ async fn build_public_key_aggregator_with_committee(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -231,7 +232,7 @@ fn micro_aggregator(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -346,7 +347,7 @@ fn booted_micro_aggregator(
             fhe: fhe.clone(),
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery,
@@ -563,7 +564,7 @@ async fn a_c1_verdict_on_other_keyshares_does_not_complete_c1() -> Result<()> {
     let other_keyshares =
         PublicKeyAggregation::plan_c1_dispatch(&submission_order[1..], &c1_proofs[1..]).request(
             &e3_id,
-            BfvPreset::InsecureThreshold64,
+            BfvProfile::SsInsecure64,
             CiphernodesCommitteeSize::Micro,
         );
     let (mut aggregator, _repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
@@ -823,7 +824,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),

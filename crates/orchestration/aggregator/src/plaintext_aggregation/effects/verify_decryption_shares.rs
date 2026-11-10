@@ -74,7 +74,7 @@ impl ThresholdPlaintextAggregator {
             share_proofs: ThresholdPlaintextAggregation::plan_c6_dispatch(c6_proofs),
             decryption_proofs: vec![],
             pre_dishonest: BTreeSet::new(),
-            params_preset: self.params_preset,
+            params_profile: self.params_profile,
             committee_size: self.committee_size,
         }
     }
@@ -215,7 +215,7 @@ impl ThresholdPlaintextAggregator {
         // Recheck the saved share bytes against the verified proof before computation.
         let share_mismatch_parties =
             ThresholdPlaintextAggregation::verify_shares_match_c6_commitments(
-                self.params_preset,
+                self.params_profile.threshold_preset(),
                 &honest_shares,
                 &state.c6_proofs,
             );

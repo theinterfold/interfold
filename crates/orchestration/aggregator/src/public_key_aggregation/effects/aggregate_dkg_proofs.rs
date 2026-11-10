@@ -121,7 +121,7 @@ impl PublicKeyAggregator {
                     c5_proof: c5_proof.clone(),
                     party_ids,
                     committee_addresses,
-                    params_preset: self.params_preset,
+                    params_preset: self.params_profile.threshold_preset(),
                     committee_size: self.committee_size,
                 }),
                 corr,

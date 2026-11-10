@@ -43,7 +43,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
     }
     let request = PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs).request(
         &e3_id,
-        BfvPreset::InsecureThreshold64,
+        BfvProfile::SsInsecure64,
         CiphernodesCommitteeSize::Minimum,
     );
 
@@ -64,7 +64,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -242,7 +242,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -295,7 +295,7 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),

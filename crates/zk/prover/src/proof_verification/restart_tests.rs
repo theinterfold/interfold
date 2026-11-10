@@ -126,7 +126,7 @@ pub(super) async fn check_c0_restart(
             let history = bus.history();
             let actors = setup_zk_actors(&bus, &backend, observer.clone(), HashMap::new(), recovery, false, repositories.clone(), e3_task_pool::TaskPool::new(1, 1), "restart-test".to_owned());
             let accusations = AccusationManager::setup(&bus, e3_id.clone(), observer,
-                Address::repeat_byte(9), members, 1, 300, 30, BfvPreset::InsecureThreshold64);
+                Address::repeat_byte(9), members, 1, 300, 30, BfvProfile::SsInsecure64);
             EventConverter::setup(&bus);
             let recovered_documents = recover_document_state(&reader, &aggregates, &HashSet::from([e3_id.clone()])).await.unwrap();
             let hash = ContentHash::from_content(&document.value);

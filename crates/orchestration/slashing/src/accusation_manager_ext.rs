@@ -184,7 +184,7 @@ impl AccusationManagerExtension {
             vote_quorum_h,
             vote_validity_secs,
             self.accusation_deadline_skew_secs,
-            meta.params_profile.threshold_preset(),
+            meta.params_profile,
         );
         let manager = if effects_enabled {
             manager

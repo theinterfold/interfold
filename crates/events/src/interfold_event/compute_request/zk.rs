@@ -464,8 +464,8 @@ impl PkGenerationProofResponse {
 pub struct VerifyShareProofsRequest {
     /// Proofs grouped by sender party_id.
     pub party_proofs: Vec<PartyProofsToVerify>,
-    /// BFV preset for parameter resolution (determines circuit artifact directory).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the circuit artifact namespace.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -508,8 +508,8 @@ pub struct PartyVerificationResult {
 pub struct VerifyShareDecryptionProofsRequest {
     /// C4 proofs grouped by sender party_id.
     pub party_proofs: Vec<PartyShareDecryptionProofsToVerify>,
-    /// BFV preset for parameter resolution (determines circuit artifact directory).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the circuit artifact namespace.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }

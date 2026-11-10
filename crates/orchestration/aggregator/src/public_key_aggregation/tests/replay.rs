@@ -112,7 +112,7 @@ impl ReplayedAggregator {
             .unzip();
         PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs).request(
             &self.e3_id,
-            BfvPreset::InsecureThreshold64,
+            BfvProfile::SsInsecure64,
             CiphernodesCommitteeSize::Minimum,
         )
     }

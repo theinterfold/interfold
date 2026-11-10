@@ -92,12 +92,21 @@ fn forwarded_accusations_only_reverify_c3() {
     let accused = signer(3);
     let committee = vec![me.address(), accuser.address(), accused.address()];
 
-    for proof_type in [
-        ProofType::C3aSkShareEncryption,
-        ProofType::C3bESmShareEncryption,
-        ProofType::C6ThresholdShareDecryption,
+    use e3_fhe_params::BfvProfile;
+    for (proof_type, profile) in [
+        (ProofType::C3aSkShareEncryption, BfvProfile::SsInsecure64),
+        (ProofType::C3bESmShareEncryption, BfvProfile::SsSecure8192),
+        (
+            ProofType::C6ThresholdShareDecryption,
+            BfvProfile::SsInsecure64,
+        ),
+        (
+            ProofType::C3aSkShareEncryption,
+            BfvProfile::SyncDecInsecure64,
+        ),
     ] {
         let mut v = voting_with(&me, committee.clone(), 1, 2);
+        v.params_profile = profile;
         let failure = proof_failure(&accused, 2, proof_type);
         let accusation = accusation_from_failure(&accuser, &failure, true, NOW);
         let id = AccusationVoting::accusation_id(&accusation);
@@ -112,10 +121,10 @@ fn forwarded_accusations_only_reverify_c3() {
         assert!(v.on_vote_received(vote.clone(), &ctx()).is_empty());
         let actions = v.on_accusation_received(accusation, &ctx());
 
-        if proof_type == ProofType::C6ThresholdShareDecryption {
+        if proof_type == ProofType::C6ThresholdShareDecryption || !profile.admission_enabled() {
             assert!(
                 actions.is_empty(),
-                "forwarded C6 must not start voting or ZK"
+                "unsupported forwarded proof must not start voting or ZK"
             );
             assert!(v.on_vote_received(vote, &ctx()).is_empty());
             assert!(v.on_vote_timeout(id).is_none());
@@ -142,6 +151,7 @@ fn forwarded_accusations_only_reverify_c3() {
             panic!("expected forwarded share proof verification");
         };
         assert_eq!(batch.committee_size, CiphernodesCommitteeSize::Minimum);
+        assert_eq!(batch.params_profile, profile);
         assert_eq!(batch.party_proofs.len(), 1);
         assert_eq!(batch.party_proofs[0].sender_party_id, 2);
         assert_eq!(

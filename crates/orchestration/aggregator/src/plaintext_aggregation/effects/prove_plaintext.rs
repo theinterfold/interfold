@@ -20,7 +20,7 @@ impl ThresholdPlaintextAggregator {
                 proof_request: DecryptedSharesAggregationProofRequest {
                     d_share_polys: shares.clone(),
                     plaintext: plaintext.clone(),
-                    params_preset: self.params_preset,
+                    params_preset: self.params_profile.threshold_preset(),
                     threshold_m,
                     threshold_n,
                     committee_size: self.committee_size,
@@ -266,7 +266,7 @@ impl ThresholdPlaintextAggregator {
                     c6_total_slots,
                     jobs,
                     committee_addresses: self.committee_addresses.clone(),
-                    params_preset: self.params_preset,
+                    params_preset: self.params_profile.threshold_preset(),
                     committee_size: self.committee_size,
                 }),
                 corr,

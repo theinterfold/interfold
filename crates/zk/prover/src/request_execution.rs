@@ -1066,9 +1066,9 @@ fn handle_verify_share_proofs(
     req: VerifyShareProofsRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let e3_id_str = request.e3_id.to_string();
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let e3_id_str = request.e3_id.to_string();
 
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
@@ -1139,9 +1139,9 @@ fn handle_verify_share_decryption_proofs(
     req: VerifyShareDecryptionProofsRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let e3_id_str = request.e3_id.to_string();
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let e3_id_str = request.e3_id.to_string();
 
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
