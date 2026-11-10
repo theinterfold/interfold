@@ -134,6 +134,59 @@ test('generated parameters retain independent ABI and configuration-ID vectors',
   assert.deepEqual(Object.keys(BFV_PARAMS.insecure64), ['degree', 'plaintextModulus', 'moduli', 'error1Variance'])
 })
 
+test('profile metadata retains independently calculated protocol/DKG/committee-bound identities', () => {
+  const expected = JSON.parse(readFileSync(join(root, 'crates/bfv/params/tests/fixtures/bfv_profiles.json'), 'utf8'))
+  const metadata = JSON.parse(readFileSync(join(packageRoot, 'crypto-config.json'), 'utf8'))
+  assert.equal(metadata.bfv.profileConfigDomain, expected.profileConfigDomain)
+  assert.equal(metadata.bfv.encryptionSchemeId, expected.encryptionSchemeId)
+  assert.equal(metadata.bfv.profiles.length, expected.profiles.length)
+  const abi = AbiCoder.defaultAbiCoder()
+  const encode = (params: { degree: string; plaintextModulus: string; moduli: string[]; error1Variance: string }) =>
+    abi.encode(
+      ['tuple(uint256,uint256,uint256[],string)'],
+      [[params.degree, params.plaintextModulus, params.moduli, params.error1Variance]],
+    )
+  for (const vector of expected.profiles) {
+    const profile = metadata.bfv.profiles.find((profile: { profile: string }) => profile.profile === vector.profile)
+    assert.ok(profile)
+    assert.equal(profile.protocol, vector.protocol)
+    assert.equal(profile.statementVersion, vector.statementVersion)
+    assert.equal(encode(profile.dkg), vector.encodedDkgParameters)
+    assert.equal(keccak256(encode(profile.threshold)), vector.thresholdParameterHash)
+    assert.equal(keccak256(encode(profile.dkg)), vector.dkgParameterHash)
+    assert.deepEqual(
+      profile.configurations.map(({ committee, cryptoConfigId }: { committee: string; cryptoConfigId: string }) => ({
+        committee,
+        cryptoConfigId,
+      })),
+      vector.configurations,
+    )
+    for (const configuration of profile.configurations) {
+      const committee = metadata.committees.find((record: { name: string }) => record.name === configuration.committee)
+      assert.ok(committee)
+      const calculated = keccak256(
+        abi.encode(
+          ['bytes32', 'bytes32', 'bytes32', 'bytes32', 'bytes32', 'uint8', 'uint32', 'uint32', 'uint32', 'bytes32'],
+          [
+            id(metadata.bfv.profileConfigDomain),
+            metadata.bfv.encryptionSchemeId,
+            id(profile.protocol),
+            profile.thresholdParameterHash,
+            profile.dkgParameterHash,
+            committee.committeeSize,
+            committee.n,
+            committee.t,
+            committee.h,
+            id(profile.statementVersion),
+          ],
+        ),
+      )
+      assert.equal(calculated, configuration.cryptoConfigId)
+      assert.equal(configuration.admissionEnabled, profile.protocol === 'secret-shared')
+    }
+  }
+})
+
 test('the snapshot check preserves the checked source and its modification time', () => {
   const binding = join(packageRoot, 'crypto-config.json')
   const before = readFileSync(binding)

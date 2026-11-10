@@ -31,6 +31,22 @@ fn export_config_is_deterministic_json_without_compiler_tools() {
         document["zk"]["messageCoeffsCount"],
         e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
     );
+    let synchronized = document["bfv"]["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["profile"] == "sync-insecure-64")
+        .unwrap();
+    assert_eq!(synchronized["protocol"], "synchronized");
+    let configurations = synchronized["configurations"].as_array().unwrap();
+    assert_eq!(configurations.len(), 1);
+    assert_eq!(configurations[0]["committee"], "minimum");
+    assert_eq!(configurations[0]["admissionEnabled"], false);
+    assert!(document["buildPairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|pair| pair[0] != "sync-insecure-64"));
 }
 
 #[test]

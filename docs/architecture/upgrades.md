@@ -217,6 +217,14 @@ the governance batch that raises the required protocol version, and upgrade ever
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
 Storage schema and gossip/sync wire majors are unchanged.
 
+## BFV profile cutover
+
+Profiles are metadata-only for now: SS admission is unchanged and synchronized insecure-64/minimum
+remains disabled. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades contracts,
+nodes, and applications together with no active E3s; incompatible local state follows the
+[existing reset policy](#controlled-state-reset-never-directory-deletion). Release artifact
+qualification still applies.
+
 ## Dependency replacement
 
 There are **no concurrent registry generations**. Each request validates/snapshots one coherent

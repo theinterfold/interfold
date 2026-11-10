@@ -85,6 +85,144 @@
           "minPrimeBits": 50
         }
       }
+    ],
+    "profileConfigDomain": "interfold:bfv:crypto-config:v1",
+    "profiles": [
+      {
+        "profile": "ss-insecure-64",
+        "protocol": "secret-shared",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 0,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_64",
+          "degree": "64",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "134217089",
+            "134215681",
+            "134215553"
+          ],
+          "error1Variance": "12617929386"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_64",
+          "degree": "64",
+          "plaintextModulus": "134217089",
+          "moduli": [
+            "536852993",
+            "536854657"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "dkgParameterHash": "0xcddc8c4eb7777d248cc3420777296e6cfb674701baeb6a52a82a6a1cfe766111",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0x5fec4d6a3c71793e00e8a04a6762d260587ea165b332309d92a6bfd72fcf3e92",
+            "artifactsDir": "insecure-64/minimum",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "micro",
+            "cryptoConfigId": "0x447075ed6fac1de9c55bbd9a361bba8c870effc1d1af6924f96802d37e905343",
+            "artifactsDir": "insecure-64/micro",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "small",
+            "cryptoConfigId": "0xe05dc026e537ba9f61d06760554e54841a7c1516ab643cad440bdbcc0d8789c1",
+            "artifactsDir": "insecure-64/small",
+            "admissionEnabled": true
+          }
+        ]
+      },
+      {
+        "profile": "ss-secure-8192",
+        "protocol": "secret-shared",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 2,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_8192",
+          "degree": "8192",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "576460752317792257",
+            "576460752317399041",
+            "576460752316776449"
+          ],
+          "error1Variance": "17723039943798878305460955570711717478400"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_8192",
+          "degree": "8192",
+          "plaintextModulus": "576460752317792257",
+          "moduli": [
+            "2305843009214758913",
+            "2305843009214988289"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "dkgParameterHash": "0x48b8fc7b65df7a249450af84d5b0645e35d21898cc8e0d5e1bc860c9299a087c",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0x86c32bb95b830c20bec1e9eb4773bb1be0b139cf3117c46a7d708a36e7d399ce",
+            "artifactsDir": "secure-8192/minimum",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "micro",
+            "cryptoConfigId": "0x02f42e1af8a22b1776eda846dce9ae90577cd6b1bdd3b4bb33c5ef4d9730fa59",
+            "artifactsDir": "secure-8192/micro",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "small",
+            "cryptoConfigId": "0xdf63ace029f44b127e6295f4652ed95ceb10ac543c49507b2e85b3cabc806980",
+            "artifactsDir": "secure-8192/small",
+            "admissionEnabled": true
+          }
+        ]
+      },
+      {
+        "profile": "sync-insecure-64",
+        "protocol": "synchronized",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 0,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_64",
+          "degree": "64",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "134217089",
+            "134215681",
+            "134215553"
+          ],
+          "error1Variance": "12617929386"
+        },
+        "dkg": {
+          "name": "INSECURE_SYNCHRONIZED_DKG_64",
+          "degree": "64",
+          "plaintextModulus": "268434178",
+          "moduli": [
+            "536869633",
+            "536870273"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "dkgParameterHash": "0x01d5e5e1a61ff5d31cc17874e4ea6753b3870f7a4e6e2cb4dc6c4304b933e45c",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0xb1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05",
+            "artifactsDir": "sync-insecure-64/minimum",
+            "admissionEnabled": false
+          }
+        ]
+      }
     ]
   },
   "zk": {

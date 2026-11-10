@@ -39,9 +39,18 @@ Consumers resolve a named preset to metadata, build its threshold/DKG pair as ne
 scalar bounds/CRP at this shared boundary. Searching custom parameters is an exploratory workflow,
 not installation of matching Noir circuits or deployed verifiers.
 
+Protocol-specific profiles in [`profiles.rs`](src/profiles.rs) select the protocol and paired
+parameters together. A threshold tuple alone cannot identify the protocol: synchronized insecure-64
+reuses the SS threshold parameters but has a distinct DKG tuple. Its definition is restricted to
+minimum committees and remains disabled for admission; native BFV construction and round trips do
+not qualify its DKG packing, circuits, or execution.
+
 For repository code generation, `pnpm build:circuits export-config` exports current parameter pairs,
-search recipes, and protocol hashes alongside committee and circuit metadata. It runs no search or
-compiler and writes nothing; large integers are decimal strings.
+search recipes, and protocol hashes alongside committee and circuit metadata. The additional profile
+catalogue carries protocol/DKG/committee-bound identities and distinct artifact namespaces. It is
+not the build/release matrix. The existing threshold-only identities remain active until the
+coordinated contract/node/client cutover. Export runs no search or compiler and writes nothing;
+large integers are decimal strings.
 
 ## Modules
 
@@ -377,8 +386,9 @@ assert_eq!(decoded_params.moduli(), params.moduli());
 
 Run `cargo test --locked -p e3-fhe-params --features abi-encoding` from the root. Inline suites
 cover exact preset lookup/pairs, fallible construction, deterministic CRP, ABI round trips,
-full-width scalar arithmetic, prime selection, and search validation. These native tests do not run
-a prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
+full-width scalar arithmetic, prime selection, and search validation. The profile identity
+regression covers protocol, parameter, committee, and statement separation. These tests do not run a
+prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
 not regenerate them to make a failing implementation pass.
 [Circuit artifacts](../../../docs/architecture/circuit-artifacts.md) describes matching generated
 outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.
