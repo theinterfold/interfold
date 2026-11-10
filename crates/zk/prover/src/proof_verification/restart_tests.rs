@@ -110,7 +110,8 @@ pub(super) async fn check_c0_restart(
                     committees,
                     e3_cache: HashMap::from([(e3_id.clone(), E3Meta {
                         threshold_m: 1, threshold_n: 3, seed: Seed([0; 32]),
-                        params_preset: BfvPreset::InsecureThreshold64,
+                        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+                        crypto_config_id: [0; 32],
                         params: ArcBytes::default(), error_size: ArcBytes::default(),
                     })]),
                     ..Default::default()

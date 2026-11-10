@@ -7,7 +7,8 @@
 use super::*;
 use crate::{
     ContextRepositoryFactory, DkgFoldAttestationContextRepositoryFactory, E3ContextSnapshot,
-    E3MetaExtension, RequestRouterCheckpoint, DKG_FOLD_ATTESTATION_CONTEXT_KEY,
+    E3Meta, E3MetaExtension, MetaRepositoryFactory, RequestRouterCheckpoint,
+    DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
 };
 use actix::Actor;
 use async_trait::async_trait;
@@ -43,8 +44,13 @@ struct SelectionRecoveryExtension {
 
 #[async_trait]
 impl E3Extension for SelectionRecoveryExtension {
-    fn on_event(&self, _: &mut E3Context, event: &InterfoldEvent) {
-        if matches!(event.get_data(), InterfoldEventData::CiphernodeSelected(_)) {
+    fn on_event(&self, ctx: &mut E3Context, event: &InterfoldEvent) {
+        if let InterfoldEventData::CiphernodeSelected(selection) = event.get_data() {
+            let meta = ctx
+                .get_dependency(META_KEY)
+                .expect("hydrated request metadata");
+            assert_eq!(selection.params_profile, meta.params_profile);
+            assert_eq!(selection.crypto_config_id, meta.crypto_config_id);
             self.selections.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -158,6 +164,21 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     let aggregate_id = AggregateId::from_chain_id(Some(31337));
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let repositories = store.repositories();
+    let saved_request = E3Requested {
+        e3_id: recovered_e3.clone(),
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
+        crypto_config_id: [42; 32],
+        ..Default::default()
+    };
+    let context_repositories = repositories
+        .router()
+        .repositories()
+        .context(&recovered_e3)
+        .repositories();
+    context_repositories
+        .meta(&recovered_e3)
+        .write_sync(&E3Meta::from(&saved_request))
+        .await?;
     repositories
         .router()
         .repositories()
@@ -165,7 +186,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         .write_sync(&E3ContextSnapshot {
             e3_id: recovered_e3.clone(),
             recipients: Vec::new(),
-            dependencies: Vec::new(),
+            dependencies: vec!["meta".into()],
         })
         .await?;
     let recovery_store = repositories.request_router_checkpoint();
@@ -180,11 +201,16 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     let selections = Arc::new(AtomicUsize::new(0));
     let router = E3RouterBuilder {
         bus: test_bus(),
-        extensions: vec![Box::new(SelectionRecoveryExtension {
-            selections: selections.clone(),
-        })],
+        extensions: vec![
+            E3MetaExtension::create(),
+            Box::new(SelectionRecoveryExtension {
+                selections: selections.clone(),
+            }),
+        ],
         recovered_selections: vec![CiphernodeSelected {
             e3_id: recovered_e3.clone(),
+            params_profile: saved_request.params_profile,
+            crypto_config_id: saved_request.crypto_config_id,
             ..Default::default()
         }],
         recovery_store: recovery_store.clone(),
@@ -212,6 +238,8 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
             InterfoldEvent::<Unsequenced>::test_event("request")
                 .data(E3Requested {
                     e3_id: live_e3.clone(),
+                    params_profile: saved_request.params_profile,
+                    crypto_config_id: [93; 32],
                     ..Default::default()
                 })
                 .seq(14)
@@ -226,9 +254,100 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     assert_eq!(checkpoint.replay_cursors.get(&aggregate_id), Some(&14));
     assert_eq!(
         checkpoint.contexts.into_iter().collect::<HashSet<_>>(),
-        HashSet::from([recovered_e3, live_e3])
+        HashSet::from([recovered_e3, live_e3.clone()])
     );
     assert_eq!(selections.load(Ordering::SeqCst), 1);
+    let live_meta = repositories
+        .router()
+        .repositories()
+        .context(&live_e3)
+        .repositories()
+        .meta(&live_e3)
+        .read()
+        .await?
+        .unwrap();
+    assert_eq!(live_meta.params_profile, saved_request.params_profile);
+    assert_eq!(live_meta.crypto_config_id, [93; 32]);
+    Ok(())
+}
+
+#[actix::test]
+async fn disabled_profile_rejects_live_and_restored_contexts() -> Result<()> {
+    let e3_id = E3id::new("11", 31337);
+    let request = E3Requested {
+        e3_id: e3_id.clone(),
+        params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+        crypto_config_id: [42; 32],
+        ..Default::default()
+    };
+    let flags = EffectFlags::default();
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    let bus = test_bus();
+    let router = E3Router::builder(&bus, store.clone())
+        .with(E3MetaExtension::create())
+        .with(Box::new(EffectsFlagExtension {
+            flags: flags.clone(),
+        }))
+        .build()
+        .await?;
+    send_in_order(
+        &router,
+        vec![
+            (request.clone().into(), 1),
+            (
+                CiphernodeSelected {
+                    e3_id: e3_id.clone(),
+                    params_profile: request.params_profile,
+                    crypto_config_id: request.crypto_config_id,
+                    ..Default::default()
+                }
+                .into(),
+                2,
+            ),
+        ],
+    )
+    .await?;
+    assert!(flags.lock().unwrap().is_empty());
+    assert!(repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .unwrap()
+        .contexts
+        .is_empty());
+
+    let context = repositories.router().repositories().context(&e3_id);
+    let meta = E3Meta::from(&request);
+    assert!(
+        meta.share_enc_preset().is_err(),
+        "synchronized DKG must not fall back to an SS preset"
+    );
+    context
+        .repositories()
+        .meta(&e3_id)
+        .write_sync(&meta)
+        .await?;
+    context
+        .write_sync(&E3ContextSnapshot {
+            e3_id: e3_id.clone(),
+            recipients: Vec::new(),
+            dependencies: vec!["meta".into()],
+        })
+        .await?;
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![e3_id],
+            ..Default::default()
+        })
+        .await?;
+    let error = E3Router::builder(&bus, store)
+        .with(E3MetaExtension::create())
+        .build()
+        .await
+        .expect_err("disabled profile must fail hydration");
+    assert!(error.to_string().contains("disabled"));
     Ok(())
 }
 

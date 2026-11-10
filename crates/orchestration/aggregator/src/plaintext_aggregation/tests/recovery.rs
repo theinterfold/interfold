@@ -164,7 +164,8 @@ async fn context(store: &DataStore, id: &E3id) -> Result<E3Context> {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::from_bytes(&encode_bfv_params(
                 &BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc(),
             )),
@@ -626,7 +627,7 @@ async fn deferred_plaintext_restart(
             e3_id: id.clone(),
             threshold_m: 1,
             threshold_n: 3,
-            params_preset: key.params_preset,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             ..Default::default()
         },
         1,

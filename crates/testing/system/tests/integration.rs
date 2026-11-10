@@ -84,7 +84,9 @@ async fn benchmark_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced};
+    use e3_events::{
+        CiphernodeSelected, E3Requested, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced,
+    };
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -161,16 +163,25 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         e3_id: E3id::new("1235", 1),
         threshold_m: 2,
         threshold_n: 5,
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
+        crypto_config_id: [42; 32],
         ..CiphernodeSelected::default()
+    };
+    let local_evt_4 = E3Requested {
+        e3_id: local_evt_3.e3_id.clone(),
+        params_profile: local_evt_3.params_profile,
+        crypto_config_id: local_evt_3.crypto_config_id,
+        ..Default::default()
     };
 
     bus.publish_without_context(evt_1.clone())?;
     bus.publish_without_context(evt_2.clone())?;
     bus.publish_without_context(local_evt_3.clone())?; // This is a local event which should not be broadcast to the network
+    bus.publish_without_context(local_evt_4.clone())?;
 
     // check the history of the event bus
     let history = history_collector
-        .send(TakeEvents::<InterfoldEvent>::new(3))
+        .send(TakeEvents::<InterfoldEvent>::new(4))
         .await?;
 
     assert_eq!(
@@ -185,7 +196,12 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
             .into_iter()
             .map(|e| e.into_data())
             .collect::<Vec<_>>(),
-        vec![evt_1.into(), evt_2.into(), local_evt_3.into()], // all local events that have been broadcast but no
+        vec![
+            evt_1.into(),
+            evt_2.into(),
+            local_evt_3.into(),
+            local_evt_4.into()
+        ], // all local events that have been broadcast but no
         // events from the loopback
         "NetEventTranslator must not retransmit forwarded event to event bus"
     );

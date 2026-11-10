@@ -219,11 +219,14 @@ Storage schema and gossip/sync wire majors are unchanged.
 
 ## BFV profile cutover
 
-Profiles are metadata-only for now: SS admission is unchanged and synchronized insecure-64/minimum
-remains disabled. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades contracts,
-nodes, and applications together with no active E3s; incompatible local state follows the
-[existing reset policy](#controlled-state-reset-never-directory-deletion). Release artifact
-qualification still applies.
+Nodes snapshot the selected profile and validated chain configuration ID; SS chain admission is
+unchanged and synchronized insecure-64/minimum remains disabled. Storage schema 9, keyshare recovery
+9, and sortition recovery 2 reject the previous request/selection layouts; gossip/sync majors stay
+unchanged because neither event is forwarded. The unreleased protocol 9/generation 2 target remains
+unchanged. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades contracts, nodes,
+and applications together with no active E3s; reset/resync and rollback use the
+[existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.
+Release artifact qualification still applies.
 
 ## Dependency replacement
 

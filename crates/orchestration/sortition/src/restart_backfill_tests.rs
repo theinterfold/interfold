@@ -6,7 +6,7 @@
 
 use super::*;
 use actix::{Actor, Context, Handler, ResponseFuture};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_request::E3Meta;
 use e3_utils::ArcBytes;
 use std::sync::{Arc, Mutex};
@@ -362,7 +362,8 @@ fn startup_reconciles_committees() {
         threshold_m: 1,
         threshold_n: 3,
         seed: Seed([0; 32]),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: BfvProfile::SsInsecure64,
+        crypto_config_id: [0; 32],
         params: ArcBytes::default(),
         error_size: ArcBytes::default(),
     };
@@ -409,7 +410,8 @@ fn startup_recovers_local_selection() {
         threshold_m: 2,
         threshold_n: 3,
         seed: Seed([7; 32]),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: BfvProfile::SsInsecure64,
+        crypto_config_id: [42; 32],
         params: ArcBytes::from_bytes(&[1, 2]),
         error_size: ArcBytes::from_bytes(&[3, 4]),
     };
@@ -418,7 +420,7 @@ fn startup_recovers_local_selection() {
         "0x2222222222222222222222222222222222222222".to_owned(),
         address.to_uppercase(),
     ];
-    let selector = CiphernodeSelectorState {
+    let mut selector = CiphernodeSelectorState {
         e3_cache: HashMap::from([(e3_id.clone(), metadata.clone())]),
         committees: HashMap::from([(e3_id.clone(), Committee::new(members.clone()))]),
         ..Default::default()
@@ -432,6 +434,14 @@ fn startup_recovers_local_selection() {
     assert_eq!(selections[0].committee, members);
     assert_eq!(selections[0].threshold_m, metadata.threshold_m);
     assert_eq!(selections[0].params, metadata.params);
+    assert_eq!(selections[0].params_profile, metadata.params_profile);
+    assert_eq!(selections[0].crypto_config_id, metadata.crypto_config_id);
+
+    selector.e3_cache.get_mut(&e3_id).unwrap().params_profile = BfvProfile::SyncDecInsecure64;
+    assert!(recovered_ciphernode_selections(&selector, address)
+        .unwrap_err()
+        .to_string()
+        .contains("disabled"));
 }
 
 #[test]
@@ -444,7 +454,8 @@ fn startup_rejects_committee_conflicts() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold64,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },

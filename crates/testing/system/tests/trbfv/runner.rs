@@ -516,7 +516,11 @@ async fn publish_e3_request(env: &Env) -> Result<u64> {
             seed: env.seed,
             request_block,
             error_size: env.error_size.clone(),
-            params_preset: env.config.preset.bfv_preset(),
+            params_profile: match env.config.preset {
+                Preset::Insecure => e3_fhe_params::BfvProfile::SsInsecure64,
+                Preset::Secure => e3_fhe_params::BfvProfile::SsSecure8192,
+            },
+            crypto_config_id: [0; 32],
             params: env.encoded_params.clone(),
         },
         0,

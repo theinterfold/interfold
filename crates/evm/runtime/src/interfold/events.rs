@@ -17,7 +17,9 @@ use e3_events::{
     CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
     InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
 };
-use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
+use e3_fhe_params::{
+    current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset, BfvProfile,
+};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
 use num_bigint::BigUint;
@@ -66,6 +68,15 @@ impl E3RequestedWithChainId {
                 expected_config_id
             );
         }
+        // Current contracts bind only SS identities. Do not infer a synchronized profile from
+        // threshold bytes, which the two protocols deliberately share.
+        let params_profile = match params_preset {
+            BfvPreset::InsecureThreshold64 => BfvProfile::SsInsecure64,
+            BfvPreset::SecureThreshold8192 => BfvProfile::SsSecure8192,
+            _ => anyhow::bail!("Unsupported threshold preset {params_preset:?}"),
+        };
+        params_profile.ensure_admission_enabled()?;
+        params_profile.validate_committee(committee_size)?;
 
         // Lambda is secure or insecure depending on the preset's security tier.
         let lambda = params_preset
@@ -95,7 +106,8 @@ impl E3RequestedWithChainId {
         };
 
         Ok(e3_events::E3Requested {
-            params_preset,
+            params_profile,
+            crypto_config_id: self.0.cryptoConfigId.into(),
             params: ArcBytes::from_bytes(&params_bytes),
             threshold_m,
             threshold_n,
@@ -579,7 +591,12 @@ mod tests {
             let converted = E3RequestedWithChainId(event.clone(), 1)
                 .try_into_e3_requested()
                 .unwrap();
-            assert_eq!(converted.params_preset, preset);
+            assert_eq!(converted.params_profile.threshold_preset(), preset);
+            assert_eq!(converted.crypto_config_id, event.cryptoConfigId.0);
+            assert_eq!(
+                converted.params_profile.protocol(),
+                e3_fhe_params::BfvDecryptionProtocol::SecretShared
+            );
 
             let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
             for version in [

@@ -63,9 +63,9 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                 }
             }
             InterfoldEventData::CiphernodeSelected(data) => {
-                self.store_preset(
+                self.store_profile(
                     data.e3_id,
-                    data.params_preset,
+                    data.params_profile,
                     data.threshold_m,
                     data.threshold_n,
                 );

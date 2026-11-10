@@ -22,7 +22,7 @@ use e3_events::{
     InterfoldEventData, Proof, ProofType, ProofVerificationFailed, ProofVerificationPassed,
     Sequenced, SignedProofFailed, SignedProofPayload, TypedEvent,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
 use tracing::{debug, error, info, warn};
@@ -73,8 +73,8 @@ pub struct ProofVerificationActor {
     bus: BusHandle,
     verifier: Recipient<TypedEvent<ZkVerificationRequest>>,
     pending: HashMap<(E3id, u64), PendingVerification>,
-    /// Tracks preset + committee per E3 so we can derive `artifacts_dir` for proof verification.
-    presets: HashMap<E3id, (BfvPreset, CiphernodesCommitteeSize)>,
+    /// Request-time profile and committee select the C0 artifact namespace, including after restart.
+    profiles: HashMap<E3id, (BfvProfile, CiphernodesCommitteeSize)>,
     /// Canonical finalized committee in party-id order. A C0 signer must own the party slot whose
     /// BFV key it advertises; recovering any valid ECDSA address is not sufficient.
     committees: HashMap<E3id, Vec<Address>>,
@@ -95,16 +95,16 @@ impl ProofVerificationActor {
             bus: bus.clone(),
             verifier,
             pending: HashMap::new(),
-            presets: HashMap::new(),
+            profiles: HashMap::new(),
             committees: HashMap::new(),
             recovered: Vec::new(),
             dkg_ended: HashSet::new(),
             effects_enabled: false,
         };
         for (e3_id, meta) in persisted_e3_metadata {
-            actor.store_preset(
+            actor.store_profile(
                 e3_id,
-                meta.params_preset,
+                meta.params_profile,
                 meta.threshold_m,
                 meta.threshold_n,
             );
@@ -154,16 +154,20 @@ impl ProofVerificationActor {
         addr
     }
 
-    fn store_preset(
+    fn store_profile(
         &mut self,
         e3_id: E3id,
-        preset: BfvPreset,
+        profile: BfvProfile,
         threshold_m: usize,
         threshold_n: usize,
     ) {
+        if let Err(error) = profile.ensure_admission_enabled() {
+            error!(%e3_id, %error, "C0 verification disabled for this profile");
+            return;
+        }
         match CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n) {
             Ok(committee) => {
-                self.presets.insert(e3_id, (preset, committee));
+                self.profiles.insert(e3_id, (profile, committee));
             }
             Err(error) => {
                 error!(

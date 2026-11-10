@@ -210,7 +210,7 @@ saved outcome; later authenticated shares may grow it. Retired batches cannot re
 C0 recovery scans the full durable event log for unresolved authenticated inputs and local outcomes,
 not just snapshot suffixes. Continue across filtered-empty/byte-limited pages using physical head
 and one-record reads for skipped positions; only router-quarantined legacy records explain a gap.
-Wrong aggregates, ordering, or other gaps fail startup. Restore party/preset/committee context
+Wrong aggregates, ordering, or other gaps fail startup. Restore party/profile/committee context
 before replay; past-DKG lifecycle rejects old/new C0 work even if document dedup suppresses another
 fetch. Dispatch only after EffectsEnabled. Local verification errors retry from five seconds to a
 60-second cap; request completion cancels them. This recovery is not a durable-general-outbox claim.

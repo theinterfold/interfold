@@ -121,7 +121,7 @@ fn admission(id: &E3id) -> InterfoldEvent {
             e3_id: id.clone(),
             threshold_m: 9,
             threshold_n: 19,
-            params_preset: e3_fhe_params::BfvPreset::SecureThreshold8192,
+            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
             ..Default::default()
         })
         .seq(1)

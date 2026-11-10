@@ -12,7 +12,7 @@ use e3_events::{
     EventBusConfig, EventPublisher, FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer,
     StoreEventRequested, Unsequenced,
 };
-use e3_fhe_params::build_pair_for_preset;
+use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -138,18 +138,31 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         .position(|member| member.eq_ignore_ascii_case(&signer.address().to_string()))
         .expect("signer belongs to restored committee") as u64;
 
-    let persisted_committees = HashMap::from([(e3_id.clone(), Committee::new(committee_members))]);
-    let persisted_e3_metadata = HashMap::from([(
+    let committee = Committee::new(committee_members);
+    let disabled_e3_id = E3id::new("8", 31_337);
+    let persisted_committees = HashMap::from([
+        (e3_id.clone(), committee.clone()),
+        (disabled_e3_id.clone(), committee),
+    ]);
+    let mut persisted_e3_metadata = HashMap::from([(
         e3_id.clone(),
         E3Meta {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: preset,
+            params_profile: BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         },
     )]);
+    persisted_e3_metadata.insert(
+        disabled_e3_id.clone(),
+        E3Meta {
+            params_profile: BfvProfile::SyncDecInsecure64,
+            ..persisted_e3_metadata[&e3_id].clone()
+        },
+    );
     let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
     let verifier = VerificationRecorder {
         sender: observed_tx,
@@ -169,6 +182,13 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         .await
         .expect("event bus barrier");
     bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    // This valid SS key must not be verified under a disabled profile that shares its threshold
+    // parameters. If it dispatches, it reaches the recorder before the admitted request below.
+    bus.publish_without_context(EncryptionKeyReceived {
+        e3_id: disabled_e3_id.clone(),
+        key: signed_c0_key(&signer, party_id, &disabled_e3_id, preset),
+    })
+    .unwrap();
     bus.publish_without_context(EncryptionKeyReceived {
         e3_id: e3_id.clone(),
         key: signed_c0_key(&signer, party_id, &e3_id, preset),
@@ -184,8 +204,7 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         ObservedVerification {
             e3_id,
             party_id,
-            artifacts_dir: preset
-                .artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str()),
+            artifacts_dir: "insecure-64/minimum".into(),
         }
     );
 }
@@ -238,7 +257,8 @@ async fn c0_retries_back_off_and_stop_at_completion() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold64,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },
@@ -348,7 +368,8 @@ async fn cancelled_c0_verification_does_not_retry_accept_or_accuse() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: preset,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },
@@ -419,7 +440,8 @@ async fn c0_inputs_of_an_e3_whose_dkg_ended_before_startup_are_not_verified() {
         threshold_m: 1,
         threshold_n: 3,
         seed: Seed([0; 32]),
-        params_preset: preset,
+        params_profile: BfvProfile::SsInsecure64,
+        crypto_config_id: [0; 32],
         params: ArcBytes::default(),
         error_size: ArcBytes::default(),
     };

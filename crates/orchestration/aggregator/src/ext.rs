@@ -119,7 +119,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
             threshold_n,
             threshold_m,
             seed,
-            params_preset,
+            params_profile,
             committee,
             ..
         } = data.clone();
@@ -174,7 +174,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 fhe,
                 bus: self.bus.clone(),
                 e3_id,
-                params_preset,
+                params_preset: params_profile.threshold_preset(),
                 committee_size,
                 dkg_fold_attestation_context,
                 recovery,
@@ -266,7 +266,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 fhe: fhe.clone(),
                 bus: self.bus.clone(),
                 e3_id: ctx.e3_id.clone(),
-                params_preset: meta.params_preset,
+                params_preset: meta.params_profile.threshold_preset(),
                 committee_size,
                 dkg_fold_attestation_context: ctx
                     .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
@@ -349,7 +349,7 @@ impl ThresholdPlaintextAggregatorExtension {
             eventstore: self.eventstore.clone(),
             repositories: ctx.repositories(),
             e3_id: ctx.e3_id.clone(),
-            params_preset: meta.params_preset,
+            params_preset: meta.params_profile.threshold_preset(),
             committee_size,
             proof_aggregation_enabled: self.proof_aggregation_enabled,
             initial_is_aggregator: load_is_active_aggregator(ctx),
@@ -439,7 +439,7 @@ impl ThresholdPlaintextAggregatorExtension {
                         bus: self.bus.clone(),
                         sortition: self.sortition.clone(),
                         e3_id: e3_id.clone(),
-                        params_preset: meta.params_preset,
+                        params_preset: meta.params_profile.threshold_preset(),
                         committee_size: match CiphernodesCommitteeSize::from_threshold(
                             meta.threshold_m,
                             meta.threshold_n,
@@ -681,7 +681,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 bus: self.bus.clone(),
                 sortition: self.sortition.clone(),
                 e3_id: ctx.e3_id.clone(),
-                params_preset: meta.params_preset,
+                params_preset: meta.params_profile.threshold_preset(),
                 committee_size: CiphernodesCommitteeSize::from_threshold(
                     meta.threshold_m,
                     meta.threshold_n,
@@ -981,7 +981,8 @@ mod tests {
                     threshold_m: 1,
                     threshold_n: 3,
                     seed,
-                    params_preset: preset,
+                    params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+                    crypto_config_id: [0; 32],
                     params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(
                         &params.build_arc(),
                     )),
