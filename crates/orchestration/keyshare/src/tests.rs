@@ -5471,7 +5471,7 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
             es_poly_sum: ready.es_poly_sum,
             d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
             decryption_domain: canonical.domain(Address::ZERO),
-            params_preset: canonical.params_preset,
+            params_profile: canonical.params_profile,
             committee_size: canonical.committee_size,
         },
         redelivery: 0,
@@ -6531,7 +6531,7 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                     es_poly_sum: ready.es_poly_sum.clone(),
                     d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
                     decryption_domain: canonical.domain(Address::ZERO),
-                    params_preset: canonical.params_preset,
+                    params_profile: canonical.params_profile,
                     committee_size: canonical.committee_size,
                 },
                 redelivery: 0,
@@ -6727,7 +6727,7 @@ async fn matching_key_publications_keep_one_pending_decryption_request() -> Resu
     let (recovered_keys, publication) = canonical_key_fixture(&id).await?;
     let canonical = recovered_keys.get(&id).unwrap();
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
-    let params_set = BfvParamSet::from(canonical.params_preset);
+    let params_set = BfvParamSet::from(canonical.params_profile.threshold_preset());
     let params = params_set.build_arc();
     let ciphertext = e3_bfv_client::client::bfv_encrypt(
         vec![1u64],
@@ -6991,7 +6991,7 @@ async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Resul
             es_poly_sum: ready.es_poly_sum,
             d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
             decryption_domain: canonical.domain(Address::repeat_byte(9)),
-            params_preset: canonical.params_preset,
+            params_profile: canonical.params_profile,
             committee_size: canonical.committee_size,
         },
         redelivery: 0,

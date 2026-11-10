@@ -294,7 +294,7 @@ mod tests {
                 c3_slot_indices_b: Vec::new(),
                 c3_total_slots: 0,
                 party_id: 7,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
             correlation_id,
@@ -606,7 +606,7 @@ mod tests {
         let ComputeRequestKind::Zk(ZkRequest::NodeDkgFold(fold)) = request.request else {
             panic!("expected a resumed node fold");
         };
-        assert_eq!(fold.params_preset, meta.params_profile.threshold_preset());
+        assert_eq!(fold.params_profile, meta.params_profile);
         Ok(())
     }
 

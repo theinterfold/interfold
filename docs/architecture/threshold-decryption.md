@@ -16,8 +16,8 @@ commitment saved at publication, and uses e3Id separately to resolve registry-ba
 Keccak of serialized ciphertext and the SAFE commitment are different bindings.
 
 `CanonicalKeyProjection` derives authority only from confirmed chain observations:
-`CommitteeProofPublished` retained as `EvmLogObserved`, the request's preset and committee, and the
-configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
+`CommitteeProofPublished` retained as `EvmLogObserved`, the request's saved profile and committee,
+and the configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
 commitment, and SK/ESM anchors. It updates before domain delivery and rebuilds from the full
 retained log before hydration, including history before snapshot cursors. Chunk history supplies
 commitment-checked bytes. Neither gossip nor registry/head-state RPC populates this authority; the
@@ -28,11 +28,13 @@ projection and its decoded bytes reproduce the commitment. Keep the first matchi
 bytes are bounded candidates, not authority. Ciphertext may wait in `Decrypting` for first canonical
 key admission; repeating an already-retained matching key is a no-op.
 
-Before proof-intent deduplication, repair retained C6 public key, domain, preset, and committee size
-from canonical authority. Before compute dispatch or response reuse, `ComputeEffectGate` checks
-logged C6 requests against it. Missing authority defers admission; a mismatch must not reserve a
-party slot or dedup key that blocks corrected work. Pre-v0.19 state is not repaired: that release
-resets to schema 8.
+Before proof-intent deduplication, reject a C6 profile mismatch before accessing or repairing key
+material. Within the same profile, repair the public key, domain, and committee size from canonical
+authority without changing secret or ciphertext witnesses. Before compute dispatch or response
+reuse, `ComputeEffectGate` checks logged C6 requests against it. Missing authority defers admission;
+a mismatch must not reserve a party slot or dedup key that blocks corrected work. This is not a
+cross-version migration; the [profile cutover](upgrades.md#bfv-profile-cutover) requires
+reset/resync.
 
 ## Shares and exact batches
 

@@ -16,6 +16,19 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&e3_id) {
             return;
         }
+        if let Err(error) = msg
+            .proof_request
+            .params_profile
+            .ensure_admission_enabled()
+            .and_then(|()| {
+                msg.proof_request
+                    .params_profile
+                    .validate_committee(msg.proof_request.committee_size)
+            })
+        {
+            error!(%e3_id, %error, "Unsupported C6 proof profile");
+            return;
+        }
 
         if self
             .canonical_keys

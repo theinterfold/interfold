@@ -456,7 +456,7 @@ impl PublicKeyAggregator {
                     proof_request: PkAggregationProofRequest {
                         keyshare_bytes: keyshare_bytes.clone(),
                         aggregated_pk_bytes: pubkey.clone(),
-                        params_preset: self.params_profile.threshold_preset(),
+                        params_profile: self.params_profile,
                         // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
                         committee_n: circuit_committee_n,
                         committee_h,

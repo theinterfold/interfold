@@ -174,7 +174,7 @@ impl PublicKeyAggregator {
                                 proof_request: PkAggregationProofRequest {
                                     keyshare_bytes,
                                     aggregated_pk_bytes: public_key.clone(),
-                                    params_preset: self.params_profile.threshold_preset(),
+                                    params_profile: self.params_profile,
                                     committee_n: circuit_committee_n,
                                     committee_h: circuit_committee_h,
                                     committee_threshold: self.committee_size.values().threshold,

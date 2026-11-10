@@ -83,6 +83,13 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
     let prover = unavailable_prover(temp.path());
     let cipher = Cipher::from_password("execution-test").await.unwrap();
     let secret = || e3_crypto::SensitiveBytes::from_encrypted(&[]);
+    let proof = || {
+        Proof::new(
+            e3_zk_config::CircuitName::PkBfv,
+            ArcBytes::default(),
+            ArcBytes::default(),
+        )
+    };
     let profile = BfvProfile::SyncDecInsecure64;
     let committee = CiphernodesCommitteeSize::Minimum;
     let kinds = [
@@ -138,6 +145,77 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
         }),
         ZkRequest::ReverifyAccusedProof(VerifyShareProofsRequest {
             party_proofs: Vec::new(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::PkAggregation(PkAggregationProofRequest {
+            keyshare_bytes: Vec::new(),
+            aggregated_pk_bytes: ArcBytes::default(),
+            params_profile: profile,
+            committee_n: committee.values().n,
+            committee_h: committee.values().h,
+            committee_threshold: committee.values().threshold,
+        }),
+        ZkRequest::ThresholdShareDecryption(ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: Vec::new(),
+            aggregated_pk_bytes: ArcBytes::default(),
+            sk_poly_sum: secret(),
+            es_poly_sum: Vec::new(),
+            d_share_bytes: Vec::new(),
+            decryption_domain: e3_committee_hash::DecryptionDomainContext {
+                interfold_address: Default::default(),
+                committee_hash: Default::default(),
+                committee_public_key: Default::default(),
+            },
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::DecryptedSharesAggregation(DecryptedSharesAggregationProofRequest {
+            d_share_polys: Vec::new(),
+            plaintext: Vec::new(),
+            params_profile: profile,
+            threshold_m: committee.values().threshold as u64,
+            threshold_n: committee.values().n as u64,
+            committee_size: committee,
+        }),
+        ZkRequest::NodeDkgFold(NodeDkgFoldRequest {
+            c0_proof: proof(),
+            c1_proof: proof(),
+            c2a_proof: proof(),
+            c2b_proof: proof(),
+            c3a_inner_proofs: Vec::new(),
+            c3b_inner_proofs: Vec::new(),
+            c4a_proof: proof(),
+            c4b_proof: proof(),
+            c3_slot_indices_a: Vec::new(),
+            c3_slot_indices_b: Vec::new(),
+            c3_total_slots: 0,
+            party_id: 0,
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::NodesFoldStep(NodesFoldStepRequest {
+            inner_proof: proof(),
+            prior_accumulator: None,
+            slot_index: 0,
+            total_slots: 0,
+            e3_id: "7".into(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::DkgAggregation(DkgAggregationRequest {
+            node_fold_proofs: Vec::new(),
+            nodes_fold_proof: None,
+            c5_proof: proof(),
+            party_ids: Vec::new(),
+            committee_addresses: Vec::new(),
+            params_profile: profile,
+            committee_size: committee,
+        }),
+        ZkRequest::DecryptionAggregation(DecryptionAggregationRequest {
+            c6_total_slots: 0,
+            jobs: Vec::new(),
+            committee_addresses: Vec::new(),
             params_profile: profile,
             committee_size: committee,
         }),

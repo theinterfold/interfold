@@ -940,7 +940,7 @@ mod tests {
             pk_commitment: commitment,
             committee: committee.clone(),
             honest_committee: honest.clone(),
-            params_preset: preset,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             interfold_address: Address::repeat_byte(9),
             sk_agg_commits: vec![],
