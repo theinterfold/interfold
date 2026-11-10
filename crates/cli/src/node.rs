@@ -161,7 +161,7 @@ async fn reset_data(
         log!(out, "The node has no data. Nothing to reset.");
         return Ok(());
     }
-    node_state::clear(&out, std::slice::from_ref(config), allow_active_e3s)?;
+    node_state::clear(&out, std::slice::from_ref(config), &[], allow_active_e3s)?;
     log!(
         out,
         "The operator and network keys stay. Verify with: interfold wallet get --name {}",

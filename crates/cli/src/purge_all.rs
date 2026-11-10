@@ -23,9 +23,16 @@ pub async fn execute(
         yes,
         "the data of every node in the configuration, and the program cache",
     )?;
-    purge(&out, config, config_file, allow_active_e3s)?;
+    let caches = dir.join(".interfold/caches");
+    purge(
+        &out,
+        config,
+        config_file,
+        std::slice::from_ref(&caches),
+        allow_active_e3s,
+    )?;
     // A missing cache folder is nothing to delete.
-    if dir.join(".interfold/caches").exists() {
+    if caches.exists() {
         crate::program_support::cache_purge().await?;
     }
     Ok(())

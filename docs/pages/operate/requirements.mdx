@@ -128,8 +128,13 @@ on Sepolia. See [Run a Ciphernode](/operate/running#networking) to set peers.
 
 The node does not check its bandwidth. Upload bandwidth is the limit. When the node is in a
 committee, it sends a threshold share of approximately 1.8 MB to each other member during the DKG.
-The node uploads one share at a time. Each upload sends the share to up to 20 peers at the same
-time, and each transfer has 60 seconds to complete.
+Each member asks the node for its share directly. The node serves eight blobs at a time, and the
+other requests wait in the order that they arrived. A request has 120 seconds to complete, and its
+wait is included. When a request fails, the member asks again after the node sends its message
+again: after 30 seconds, then less often, up to every five minutes.
+
+The table comes from a test of the v0.19.0 node, which sent each share to up to 20 peers. The
+current node sends each share once, to its recipient, so it needs less upload than the table shows.
 
 | Upload that the node can use | Result in a test with a committee of 19 nodes                                                                                                                         |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -141,14 +146,11 @@ time, and each transfer has 60 seconds to complete.
 Other traffic on the same connection decreases the upload that the node can use. Examples are
 backups, file synchronization, video calls, and a second node.
 
-For each E3 where the node is in the committee, the node sends approximately 1 GB when it first
-sends its shares, and it receives approximately the same quantity. Until the committee public key is
-published, the node sends each of its documents again approximately every 30 minutes. A node that is
-not in the committee also sends data, because it keeps copies of the shares of other nodes and sends
-them to peers that ask for them.
+A node that is not in the committee of an E3 sends no blobs of that E3: blobs go only to its
+members.
 
-The values come from a test of the v0.19.0 network code: 30 nodes on one host, with documents of the
-size that the secure parameters make. The test did not limit download bandwidth.
+The values in the table come from a test with 30 nodes on one host, with documents of the size that
+the secure parameters make. The test did not limit download bandwidth.
 
 ## RPC endpoints
 

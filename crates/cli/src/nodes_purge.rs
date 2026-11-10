@@ -9,6 +9,7 @@ use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_config::NodeConfig;
 use e3_cli::app_config::load_config;
 use e3_console::{log, Console};
+use std::path::PathBuf;
 
 /// Delete the data of every node in the configuration.
 pub fn execute(
@@ -19,7 +20,7 @@ pub fn execute(
     allow_active_e3s: bool,
 ) -> Result<()> {
     require_confirmation(yes, "the data of every node in the configuration")?;
-    purge(out, config, config_file, allow_active_e3s)
+    purge(out, config, config_file, &[], allow_active_e3s)
 }
 
 /// Refuses unless `--yes` confirms the deletion of `what`.
@@ -34,15 +35,16 @@ pub(crate) fn require_confirmation(yes: bool, what: &str) -> Result<()> {
 }
 
 /// Clears every node the configuration names. A folder that no profile names any more is not
-/// this command's to delete.
+/// this command's to delete. The caller deletes `others` afterwards.
 pub(crate) fn purge(
     out: &Console,
     config: &NodeConfig,
     config_file: Option<String>,
+    others: &[PathBuf],
     allow_active_e3s: bool,
 ) -> Result<()> {
     let nodes = node_configs(config, config_file)?;
-    node_state::clear(out, &nodes, allow_active_e3s)?;
+    node_state::clear(out, &nodes, others, allow_active_e3s)?;
     log!(out, "The operator and network keys stay.");
     Ok(())
 }
@@ -81,7 +83,7 @@ mod tests {
 
     fn purge(config: &NodeConfig, config_file: Option<String>, override_: bool) -> Result<()> {
         let (out, _messages) = Console::channel();
-        run_purge(&out, config, config_file, override_)
+        run_purge(&out, config, config_file, &[], override_)
     }
 
     /// Nodes `cn1` and `cn2` of one configuration, as the first of them sees it.
@@ -190,6 +192,80 @@ mod tests {
             .unwrap()
             .join(LOCK_FILE_NAME)
             .exists());
+        Ok(())
+    }
+
+    /// One node's key can sit in another node's folder. Override or not, it stays.
+    #[tokio::test]
+    async fn a_key_inside_any_folder_that_goes_stops_the_purge_even_with_the_override() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let (nodes, _) = two_nodes(dir.path())?;
+        let key = node_state::dir(&nodes[1]).path().join("key of cn1");
+        let config_file = dir.path().join("other.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n    key_file: {}\n  cn2:\n    network: local\n",
+                key.display()
+            ),
+        )?;
+        let config_file = Some(config_file.to_string_lossy().into_owned());
+        let first = load_config("cn1", config_file.clone(), None)?.node;
+        assert_eq!(first.key_file(), key);
+        let folders = [with_state(&first)?, with_state(&nodes[1])?];
+
+        let error = purge(&first, config_file.clone(), true).unwrap_err();
+        assert!(error.to_string().contains("inside the folder"), "{error:#}");
+        assert!(folders.iter().all(|folder| folder.exists()));
+
+        Ok(())
+    }
+
+    /// `purge-all` deletes the program cache too, which must hold no key either.
+    #[tokio::test]
+    async fn a_key_inside_another_folder_the_command_deletes_stops_the_purge() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (nodes, config_file) = two_nodes(dir.path())?;
+        let folder = with_state(&nodes[0])?;
+        let caches = nodes[0].key_file().parent().unwrap().to_path_buf();
+        let (out, _messages) = Console::channel();
+
+        let error = run_purge(&out, &nodes[0], config_file, &[caches], true).unwrap_err();
+        assert!(error.to_string().contains("inside the folder"), "{error:#}");
+        assert!(folder.exists());
+        Ok(())
+    }
+
+    /// With the override, a node's folder inside another's goes with it, and the rest still go.
+    #[tokio::test]
+    async fn a_node_inside_another_s_folder_does_not_stop_the_rest() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (nodes, _) = two_nodes(dir.path())?;
+        let outer = node_state::dir(&nodes[0]).path().to_path_buf();
+        let config_file = dir.path().join("nested.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\nnodes:\n  cn1:\n    network: local\n  cn2:\n    network: local\n    data_dir: {}\n    key_file: {}\n    db_file: {}\n  cn3:\n    network: local\n",
+                outer.join("nested").display(),
+                dir.path().join("cn2 key").display(),
+                dir.path().join("cn2 db").display(),
+            ),
+        )?;
+        let config_file = Some(config_file.to_string_lossy().into_owned());
+        let load =
+            |name: &str| load_config(name, config_file.clone(), None).map(|config| config.node);
+        let (first, second, third) = (load("cn1")?, load("cn2")?, load("cn3")?);
+        assert!(node_state::dir(&second).path().starts_with(&outer));
+        let folders = [
+            with_state(&first)?,
+            with_state(&second)?,
+            with_state(&third)?,
+        ];
+
+        purge(&first, config_file.clone(), true)?;
+        assert!(folders.iter().all(|folder| !folder.exists()));
         Ok(())
     }
 

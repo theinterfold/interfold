@@ -28,8 +28,14 @@ pub fn dir(config: &NodeConfig) -> NodeDir {
 }
 
 /// Deletes the data of `nodes` and keeps their keys. It works out what stands in the way under
-/// every node's lock before it deletes anything, so a refusal leaves every node as it was.
-pub fn clear(out: &Console, nodes: &[NodeConfig], allow_active_e3s: bool) -> Result<()> {
+/// every node's lock before it deletes anything, so a refusal leaves every node as it was. The
+/// command deletes `others` too, once this returns, so they must hold no key either.
+pub fn clear(
+    out: &Console,
+    nodes: &[NodeConfig],
+    others: &[PathBuf],
+    allow_active_e3s: bool,
+) -> Result<()> {
     let (mut fences, mut plan, mut folders) = (Vec::new(), Plan::default(), Vec::new());
     for node in nodes {
         let dir = dir(node);
@@ -38,32 +44,42 @@ pub fn clear(out: &Console, nodes: &[NodeConfig], allow_active_e3s: bool) -> Res
             continue;
         }
         fences.push(ProcessFence::acquire(&node.db_file(), &node.name())?);
-        let folder = dir.path().to_path_buf();
-        for (name, credential) in [("key", node.key_file()), ("keystore", node.db_file())] {
-            if credential.starts_with(&folder)
-                || canonical(&credential).starts_with(canonical(&folder))
-            {
-                plan.refusals.push(format!(
-                    "the node's {name} at {} is inside the folder this deletes; move it out first",
-                    credential.display()
-                ));
-            }
-        }
         plan.check(&format!("node '{}'", node.name()), &dir);
         // Another node's `data_dir` may sit inside this folder: it is fenced, and stops this.
-        let others = guard(&folder, &mut fences)?;
-        plan.blockers.extend(others.iter().map(|other| {
+        let inside = guard(dir.path(), &mut fences)?;
+        plan.blockers.extend(inside.iter().map(|other| {
             format!(
                 "{} holds the journal of another node, whose E3s this command cannot check; move \
                  it out first",
                 other.display()
             )
         }));
-        folders.push(folder);
+        folders.push(dir.path().to_path_buf());
+    }
+    // Every node's keys against everything that goes: one node's key can sit in another's folder.
+    for (node, root) in nodes
+        .iter()
+        .flat_map(|node| folders.iter().chain(others).map(move |root| (node, root)))
+    {
+        for (name, credential) in [("key", node.key_file()), ("keystore", node.db_file())] {
+            if credential.starts_with(root) || canonical(&credential).starts_with(canonical(root)) {
+                plan.refusals.push(format!(
+                    "the {name} of node '{}' at {} is inside the folder {}, which this deletes; \
+                     move it out first",
+                    node.name(),
+                    credential.display(),
+                    root.display()
+                ));
+            }
+        }
     }
     plan.settle(out, allow_active_e3s)?;
     for folder in folders {
-        std::fs::remove_dir_all(&folder)?;
+        match std::fs::remove_dir_all(&folder) {
+            // It was inside a folder that went first.
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            result => result?,
+        }
         log!(out, "Removed {}", folder.display());
     }
     Ok(())

@@ -722,6 +722,40 @@ mod cases {
         assert!(node.e3(&e3(1)).is_none());
     }
 
+    /// A fetch that failed waits for the sender's re-send, so the evidence is still on its way.
+    #[test]
+    fn a_failed_fetch_of_an_accusation_keeps_a_completed_e3_for_its_re_send() {
+        let mut node = member(ME);
+        node.step(NOW, key_checked(e3(1), 1, true));
+        let announced = peer_message(accusation(2, NOW, 1));
+        node.step(NOW, Input::Announced(announced.clone()));
+        let complete = chain(
+            20,
+            ChainFact::StageChanged {
+                e3: e3(1),
+                stage: Stage::Complete,
+            },
+        );
+        node.step(NOW + 1, complete);
+        let failed = crate::node::FetchFailed {
+            e3: e3(1),
+            sender: announced.sender,
+            kind: announced.body.kind(),
+            id: announced.id(),
+            attempt: 0,
+        };
+        node.step(NOW + 2, Input::FetchFailed(failed));
+        node.step(NOW + 3, Input::Tick);
+        assert!(node.e3(&e3(1)).is_some(), "its re-send can still bring it");
+
+        let effects = node.step(NOW + 4, Input::Announced(announced));
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::FetchBlobs(_))));
+        node.step(NOW + 1 + VALIDITY, Input::Tick);
+        assert!(node.e3(&e3(1)).is_none());
+    }
+
     /// A check still running can end in an accusation, so a completion waits for it: as long as
     /// a vote window at most.
     #[test]

@@ -396,13 +396,13 @@ impl E3 {
     }
 
     /// Whether something that can end in an accusation is still on its way: a check of a member's
-    /// proof, or the fetch of an accusation's proof.
+    /// proof, or the proof of an accusation, also one whose fetch failed and waits for its re-send.
     fn evidence_pending(&self) -> bool {
         self.checks > 0
             || self
                 .fetching
-                .iter()
-                .any(|((_, kind), fetching)| fetching.running && *kind == Kind::Accusation)
+                .keys()
+                .any(|(_, kind)| *kind == Kind::Accusation)
     }
 
     /// The chain completed the E3. Whether it stays for accusation work: open windows, or
