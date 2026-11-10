@@ -7,19 +7,22 @@
 //! Which blob request to answer next. Blobs go only to the members of their E3's committee, each
 //! with as many requests out as an honest node sends one peer, so the line is never longer than
 //! the committees are small. A committee asks for its blobs all at once: past the places in use a
-//! request waits its turn, so a burst slows down instead of failing.
+//! request waits its turn, so a burst slows down instead of failing. A member holds one place at a
+//! time, so the faulty members a committee can tolerate cannot take them all, however slowly they
+//! read.
 
 use crate::fetcher::MAX_ACTIVE_PER_PEER;
 use alloy_primitives::{Address, B256};
 use e3_protocol::{wire::PeerProof, E3Id};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
 };
 
-/// The blobs served at once, from the disk read until the peer has them. A member that stops
-/// reading holds its places only until the request times out.
+/// The blobs served at once, from the disk read until the peer has them. It is more than the most
+/// faulty members a committee can tolerate. A member that stops reading holds its place only until
+/// the request times out.
 const MAX_SERVING: usize = 8;
 
 /// A request for one public blob of an E3, and the requester's word for who it is.
@@ -67,12 +70,19 @@ impl<Id: Copy + Eq + Hash, Job> Serving<Id, Job> {
         Ok(())
     }
 
-    /// The request whose disk read should start, while a place is free.
+    /// The request whose disk read should start while a place is free: the first in line of a
+    /// member that holds no place.
     pub(crate) fn next_turn(&mut self) -> Option<(Id, Job)> {
         if self.reading.len() + self.sending.len() >= MAX_SERVING {
             return None;
         }
-        let Waiting { id, member, job } = self.line.pop_front()?;
+        let served: HashSet<&Address> =
+            self.reading.values().chain(self.sending.values()).collect();
+        let turn = self
+            .line
+            .iter()
+            .position(|waiting| !served.contains(&waiting.member))?;
+        let Waiting { id, member, job } = self.line.remove(turn)?;
         self.reading.insert(id, member);
         Some((id, job))
     }
@@ -136,10 +146,24 @@ mod tests {
         assert!(serving.ask(3, member, ()).is_err());
         assert!(serving.ask(4, address(2), ()).is_ok(), "others still ask");
 
-        assert_eq!(turns(&mut serving), [1, 2, 4]);
+        assert_eq!(turns(&mut serving), [1, 4]);
         serving.read(1);
         serving.end(1);
         assert!(serving.ask(3, member, ()).is_ok());
+        assert_eq!(turns(&mut serving), [2]);
+    }
+
+    /// Five faulty members, the most a committee of nineteen tolerates, ask for all they may and
+    /// never read. An honest member that comes after them still gets a place.
+    #[test]
+    fn members_that_stop_reading_cannot_take_every_place() {
+        let mut serving = Serving::default();
+        for faulty in 1..=5 {
+            assert!(serving.ask(faulty * 10, address(faulty), ()).is_ok());
+            assert!(serving.ask(faulty * 10 + 1, address(faulty), ()).is_ok());
+        }
+        assert!(serving.ask(100, address(6), ()).is_ok());
+        assert_eq!(turns(&mut serving), [10, 20, 30, 40, 50, 100]);
     }
 
     /// A peer that stopped waiting leaves the line, and its share comes back.

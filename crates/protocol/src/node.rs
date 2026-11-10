@@ -735,7 +735,8 @@ pub enum Classified {
 pub struct Admission {
     /// Every operator a chain's registry named: the senders whose messages the network takes.
     pub senders: BTreeSet<Address>,
-    /// The committee of each E3 this node is on: only its members may read the E3's blobs.
+    /// The members of each E3's committee, for the E3s this node is on: only they may read its
+    /// blobs. A member the chain expelled reads no more.
     pub committees: BTreeMap<E3Id, BTreeSet<Address>>,
 }
 
@@ -792,7 +793,8 @@ impl Node {
             committees: self
                 .e3s
                 .iter()
-                .filter_map(|(e3, state)| Some((*e3, state.committee()?.iter().copied().collect())))
+                .filter(|(_, state)| !state.committee().is_empty())
+                .map(|(e3, state)| (*e3, state.committee().clone()))
                 .collect(),
         }
     }
@@ -1550,8 +1552,19 @@ mod tests {
 
         node.step(3, finalized(3, e3(1), members([1, 2])));
         node.step(4, finalized(4, e3(2), vec![address(1), address(2)]));
-        let committee = members([1, 2]).into_iter().collect();
-        assert_eq!(node.admission().committees, [(e3(1), committee)].into());
+        let committee: BTreeSet<Address> = members([1, 2]).into_iter().collect();
+        assert_eq!(
+            node.admission().committees,
+            [(e3(1), committee.clone())].into()
+        );
+
+        let expelled = ChainFact::MemberExpelled {
+            e3: e3(1),
+            member: address(2),
+        };
+        node.step(5, chain(5, expelled));
+        let left = committee.into_iter().filter(|m| *m != address(2)).collect();
+        assert_eq!(node.admission().committees, [(e3(1), left)].into());
     }
 
     #[test]
@@ -2206,7 +2219,7 @@ mod tests {
             (
                 14,
                 alloy_primitives::b256!(
-                    "79cc71f5b0f2e88675ee6c3515eeec4af41f28c2c3811006bf3f5df1a4714024"
+                    "a29eae0a7dc3eef8e59b9354512d8306c4bd2add4c15f16037b35b87bc64637c"
                 )
             ),
             "the persisted encoding changed: bump ENCODING_VERSION, then this fingerprint"

@@ -21,7 +21,7 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, B256};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct E3 {
@@ -50,6 +50,8 @@ pub struct E3 {
     checks: u32,
     /// When a completed E3 stops waiting for evidence still on its way.
     evidence_until: Option<UnixSecs>,
+    /// Who is on the committee now: the chain's list, less the members it expelled since.
+    committee: BTreeSet<Address>,
     ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
@@ -162,6 +164,7 @@ impl E3 {
             seed: None,
             checks: 0,
             evidence_until: None,
+            committee: BTreeSet::new(),
             ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
@@ -274,6 +277,7 @@ impl E3 {
         timing: DkgTiming,
     ) -> Vec<Effect> {
         self.reach(Stage::CommitteeFinalized, timing.deadline);
+        self.committee = members.iter().copied().collect();
         self.slot = members
             .iter()
             .position(|member| *member == self.me)
@@ -440,9 +444,9 @@ impl E3 {
         }
     }
 
-    /// The E3's committee, once the chain has named one with this node on it.
-    pub(crate) fn committee(&self) -> Option<&[Address]> {
-        self.dkg.as_ref().map(Dkg::members)
+    /// The E3's committee now; empty until the chain names one with this node on it.
+    pub(crate) fn committee(&self) -> &BTreeSet<Address> {
+        &self.committee
     }
 
     /// Whether this node takes `message` now; it can tell before it fetches any blob the message
@@ -632,6 +636,7 @@ impl E3 {
     }
 
     pub(crate) fn expel(&mut self, now: UnixSecs, member: Address) -> Vec<Effect> {
+        self.committee.remove(&member);
         let mut effects = Vec::new();
         if let Some(dkg) = self.dkg_mut() {
             effects.extend(dkg.expel(now, member));

@@ -28,6 +28,9 @@ pub(crate) const MAX_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_BLOB_BYTES: u64 = 32 * 1024 * 1024;
 /// A blob's response carries CBOR framing on top of its bytes.
 const RESPONSE_FRAMING: u64 = 64 * 1024;
+/// A request names an E3, a hash and a proof. Anyone can open a stream and send this much before
+/// the node knows who it is.
+const MAX_BLOB_REQUEST_BYTES: u64 = 1024;
 /// How long a blob request may take, its wait for a place included: long enough for a dealer on
 /// the slowest supported uplink to reach the last of a large committee.
 const BLOB_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -152,8 +155,9 @@ fn kademlia(key: &Keypair, protocols: &Protocols) -> kad::Behaviour<MemoryStore>
 }
 
 fn blobs(protocols: &Protocols, messages: bool) -> cbor::Behaviour<BlobRequest, Option<ByteBuf>> {
-    let codec =
-        cbor::codec::Codec::default().set_response_size_maximum(MAX_BLOB_BYTES + RESPONSE_FRAMING);
+    let codec = cbor::codec::Codec::default()
+        .set_request_size_maximum(MAX_BLOB_REQUEST_BYTES)
+        .set_response_size_maximum(MAX_BLOB_BYTES + RESPONSE_FRAMING);
     let support = match messages {
         true => ProtocolSupport::Full,
         false => ProtocolSupport::Outbound,

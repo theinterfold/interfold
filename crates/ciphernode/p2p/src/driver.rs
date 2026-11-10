@@ -17,7 +17,7 @@ use crate::{
     transport::{DialGuard, RecentDials},
     Network, NetworkError,
 };
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use e3_blobs::{BlobStore, MemoryBlobs};
 use e3_protocol::{
     node::{Admission, PeerMessage},
@@ -348,6 +348,7 @@ struct PendingPublish {
 struct Asked {
     e3: E3Id,
     hash: B256,
+    member: Address,
     channel: ResponseChannel<Option<ByteBuf>>,
 }
 
@@ -784,13 +785,7 @@ impl<S: BlobStore> Driver<S> {
             hash,
             requester,
         } = asked;
-        let member = self
-            .admission
-            .borrow()
-            .committees
-            .get(&e3)
-            .is_some_and(|committee| committee.contains(&requester.operator));
-        if !member {
+        if !self.may_read(e3, requester.operator) {
             self.answer_nothing(channel);
             return;
         }
@@ -802,11 +797,25 @@ impl<S: BlobStore> Driver<S> {
             self.refuse(peer);
             return;
         }
-        let asked = Asked { e3, hash, channel };
-        match self.serving.ask(request, requester.operator, asked) {
+        let member = requester.operator;
+        let asked = Asked {
+            e3,
+            hash,
+            member,
+            channel,
+        };
+        match self.serving.ask(request, member, asked) {
             Ok(()) => self.serve_next(),
             Err(Asked { channel, .. }) => self.answer_nothing(channel),
         }
+    }
+
+    fn may_read(&self, e3: E3Id, operator: Address) -> bool {
+        let admission = self.admission.borrow();
+        admission
+            .committees
+            .get(&e3)
+            .is_some_and(|committee| committee.contains(&operator))
     }
 
     fn answer_nothing(&mut self, channel: ResponseChannel<Option<ByteBuf>>) {
@@ -817,13 +826,23 @@ impl<S: BlobStore> Driver<S> {
             .send_response(channel, None);
     }
 
-    /// Starts the disk reads whose turn it is, off this task.
+    /// Starts the disk reads whose turn it is, off this task. A member can lose its seat while it
+    /// waits in line, and then finds nothing.
     fn serve_next(&mut self) {
         while let Some((request, asked)) = self.serving.next_turn() {
-            let Asked { e3, hash, channel } = asked;
+            let Asked {
+                e3,
+                hash,
+                member,
+                channel,
+            } = asked;
+            let readable = self.may_read(e3, member);
             let (blobs, served) = (self.blobs.clone(), self.served_writer.clone());
             tokio::task::spawn_blocking(move || {
-                let bytes = blobs.serve(e3, &hash).map(ByteBuf::from);
+                let bytes = readable
+                    .then(|| blobs.serve(e3, &hash))
+                    .flatten()
+                    .map(ByteBuf::from);
                 let _ = served.send(Served {
                     request,
                     channel,
