@@ -128,9 +128,9 @@ on Sepolia. See [Run a Ciphernode](/operate/running#networking) to set peers.
 
 The node does not check its bandwidth. Upload bandwidth is the limit. When the node is in a
 committee, it sends a threshold share of approximately 1.8 MB to each other member during the DKG.
-Each member asks the node for its share directly. The node serves eight blobs at a time, and the
-other requests wait in the order that they arrived. A request has 120 seconds to complete, and its
-wait is included. When a request fails, the member asks again after the node sends its message
+Each member asks the node for its share directly. The node serves eight blobs at a time, at most one
+for each member, and the other requests wait for a place. A request has 120 seconds to complete, and
+its wait is included. When a request fails, the member asks again after the node sends its message
 again: after 30 seconds, then less often, up to every five minutes.
 
 The table comes from a test of the v0.19.0 node, which sent each share to up to 20 peers. The
