@@ -10,12 +10,13 @@ use crate::{
 };
 use anyhow::*;
 use async_trait::async_trait;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::RepositoriesFactory;
 use e3_events::{
-    DkgFoldAttestationContext, E3Requested, Event, InterfoldEvent, InterfoldEventData, Seed,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    CiphernodeSelected, DkgFoldAttestationContext, E3Requested, Event, InterfoldEvent,
+    InterfoldEventData, Seed, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_fhe_params::{BfvPreset, BfvProfile};
+use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, BfvProfile};
 use e3_utils::utility_types::ArcBytes;
 
 pub const META_KEY: TypedKey<E3Meta> = TypedKey::new("meta");
@@ -35,6 +36,26 @@ pub struct E3Meta {
 }
 
 impl E3Meta {
+    /// Recheck the saved request binding before restored work can use it.
+    pub fn validate_configuration(&self) -> Result<()> {
+        self.params_profile.ensure_admission_enabled()?;
+        let committee =
+            CiphernodesCommitteeSize::from_threshold(self.threshold_m, self.threshold_n)?;
+        let expected_id = self.params_profile.crypto_config_id(committee)?;
+        ensure!(
+            self.crypto_config_id == expected_id.0,
+            "BFV configuration ID does not match profile {} and committee {committee}; expected {expected_id}",
+            self.params_profile
+        );
+        let params = BfvParamSet::from(self.params_profile.threshold_preset()).build();
+        ensure!(
+            self.params[..] == encode_bfv_params(&params)[..],
+            "BFV parameter bytes do not match profile {}",
+            self.params_profile
+        );
+        Ok(())
+    }
+
     pub fn share_enc_preset(&self) -> Result<BfvPreset> {
         Ok(self.params_profile.dkg_preset()?)
     }
@@ -50,6 +71,20 @@ impl From<&E3Requested> for E3Meta {
             crypto_config_id: request.crypto_config_id,
             params: request.params.clone(),
             error_size: request.error_size.clone(),
+        }
+    }
+}
+
+impl From<&CiphernodeSelected> for E3Meta {
+    fn from(selection: &CiphernodeSelected) -> Self {
+        Self {
+            threshold_m: selection.threshold_m,
+            threshold_n: selection.threshold_n,
+            seed: selection.seed,
+            params_profile: selection.params_profile,
+            crypto_config_id: selection.crypto_config_id,
+            params: selection.params.clone(),
+            error_size: selection.error_size.clone(),
         }
     }
 }
@@ -93,7 +128,9 @@ impl E3Extension for E3MetaExtension {
                 .read()
                 .await?
                 .ok_or_else(|| anyhow!("missing metadata for active E3 {}", ctx.e3_id))?;
-            value.params_profile.ensure_admission_enabled()?;
+            value
+                .validate_configuration()
+                .with_context(|| format!("invalid saved BFV configuration for E3 {}", ctx.e3_id))?;
             ctx.set_dependency(META_KEY, value);
         }
 

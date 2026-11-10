@@ -12,12 +12,16 @@ use crate::{
 };
 use actix::Actor;
 use async_trait::async_trait;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{InMemEventLog, InMemSequenceIndex, InMemStore, RepositoriesFactory};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, CommitteeFinalized,
     DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3Failed, E3Requested,
     E3Stage, EffectsEnabled, EventBus, EventSource, EventStore, FailureReason, InterfoldEventData,
     Sequencer, SyncEffect, TestEvent, Unsequenced, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+};
+use e3_fhe_params::{
+    bfv_crypto_config_id, encode_bfv_params, BfvProfile, LEGACY_BFV_CONFIG_VERSION,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -68,6 +72,126 @@ fn test_bus() -> BusHandle {
     let sequencer =
         Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient()).start();
     BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("router-recovery-test")
+}
+
+fn request_configuration(
+    e3_id: E3id,
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+) -> E3Requested {
+    let (params, _) = profile.build_pair().unwrap();
+    let shape = committee.values();
+    E3Requested {
+        e3_id,
+        threshold_m: shape.threshold,
+        threshold_n: shape.n,
+        params_profile: profile,
+        crypto_config_id: profile.crypto_config_id(committee).unwrap().into(),
+        params: e3_utils::ArcBytes::from_bytes(&encode_bfv_params(&params)),
+        ..Default::default()
+    }
+}
+
+fn recovered_selection(request: &E3Requested) -> CiphernodeSelected {
+    CiphernodeSelected {
+        e3_id: request.e3_id.clone(),
+        threshold_m: request.threshold_m,
+        threshold_n: request.threshold_n,
+        seed: request.seed,
+        params_profile: request.params_profile,
+        crypto_config_id: request.crypto_config_id,
+        params: request.params.clone(),
+        error_size: request.error_size.clone(),
+        ..Default::default()
+    }
+}
+
+#[actix::test]
+async fn hydration_rejects_inconsistent_request_configuration_before_starting_recipients(
+) -> Result<()> {
+    let e3_id = E3id::new("12", 31337);
+    let request = request_configuration(
+        e3_id.clone(),
+        BfvProfile::SsInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+    );
+    let valid = E3Meta::from(&request);
+    let mut unknown_id = valid.clone();
+    unknown_id.crypto_config_id = [0; 32];
+    let mut historical_id = valid.clone();
+    historical_id.crypto_config_id =
+        bfv_crypto_config_id(&valid.params, LEGACY_BFV_CONFIG_VERSION).into();
+    let mut another_profile = valid.clone();
+    another_profile.params_profile = BfvProfile::SsSecure8192;
+    let mut another_committee = valid.clone();
+    another_committee.crypto_config_id = BfvProfile::SsInsecure64
+        .crypto_config_id(CiphernodesCommitteeSize::Micro)?
+        .into();
+    let mut unknown_committee = valid.clone();
+    unknown_committee.threshold_m += 1;
+    let mut different_params = valid.clone();
+    different_params.params =
+        e3_utils::ArcBytes::from_bytes(&[&valid.params[..], &[0; 32]].concat());
+
+    for (name, meta, admitted) in [
+        ("valid", valid, true),
+        ("unknown ID", unknown_id, false),
+        ("historical ID", historical_id, false),
+        ("another profile", another_profile, false),
+        ("another committee", another_committee, false),
+        ("unknown committee", unknown_committee, false),
+        ("different parameter bytes", different_params, false),
+    ] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let repositories = store.repositories();
+        let context = repositories.router().repositories().context(&e3_id);
+        context
+            .repositories()
+            .meta(&e3_id)
+            .write_sync(&meta)
+            .await?;
+        context
+            .write_sync(&E3ContextSnapshot {
+                e3_id: e3_id.clone(),
+                recipients: Vec::new(),
+                dependencies: vec!["meta".into()],
+            })
+            .await?;
+        repositories
+            .request_router_checkpoint()
+            .write_sync(&RequestRouterCheckpoint {
+                contexts: vec![e3_id.clone()],
+                ..Default::default()
+            })
+            .await?;
+        let hydrations = Arc::new(AtomicUsize::new(0));
+        let result = E3Router::builder(&test_bus(), store)
+            .with(Box::new(RecoveryExtension {
+                hydrations: hydrations.clone(),
+            }))
+            .build()
+            .await;
+        if admitted {
+            assert!(result.is_ok(), "{name}: {result:?}");
+        } else {
+            let error = result.expect_err(name);
+            assert!(
+                format!("{error:#}").contains(&e3_id.to_string()),
+                "{name}: {error:#}"
+            );
+        }
+        assert_eq!(
+            hydrations.load(Ordering::SeqCst),
+            usize::from(admitted),
+            "{name}"
+        );
+        assert_eq!(
+            context.repositories().meta(&e3_id).read().await?,
+            Some(meta),
+            "{name}"
+        );
+    }
+    Ok(())
 }
 
 #[actix::test]
@@ -164,12 +288,16 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     let aggregate_id = AggregateId::from_chain_id(Some(31337));
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let repositories = store.repositories();
-    let saved_request = E3Requested {
-        e3_id: recovered_e3.clone(),
-        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
-        crypto_config_id: [42; 32],
-        ..Default::default()
-    };
+    let saved_request = request_configuration(
+        recovered_e3.clone(),
+        BfvProfile::SsSecure8192,
+        CiphernodesCommitteeSize::Minimum,
+    );
+    let live_request = request_configuration(
+        live_e3.clone(),
+        saved_request.params_profile,
+        CiphernodesCommitteeSize::Micro,
+    );
     let context_repositories = repositories
         .router()
         .repositories()
@@ -198,6 +326,17 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         })
         .await?;
 
+    let conflicting_request = request_configuration(
+        recovered_e3.clone(),
+        BfvProfile::SsInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+    );
+    E3Router::builder(&test_bus(), store)
+        .with_recovered_selections(vec![recovered_selection(&conflicting_request)])
+        .build()
+        .await
+        .expect_err("a recovered selection must agree with the hydrated request configuration");
+
     let selections = Arc::new(AtomicUsize::new(0));
     let router = E3RouterBuilder {
         bus: test_bus(),
@@ -207,12 +346,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
                 selections: selections.clone(),
             }),
         ],
-        recovered_selections: vec![CiphernodeSelected {
-            e3_id: recovered_e3.clone(),
-            params_profile: saved_request.params_profile,
-            crypto_config_id: saved_request.crypto_config_id,
-            ..Default::default()
-        }],
+        recovered_selections: vec![recovered_selection(&saved_request)],
         recovery_store: recovery_store.clone(),
         store: repositories.router(),
         teardown_grace: Duration::ZERO,
@@ -236,12 +370,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     router
         .send(
             InterfoldEvent::<Unsequenced>::test_event("request")
-                .data(E3Requested {
-                    e3_id: live_e3.clone(),
-                    params_profile: saved_request.params_profile,
-                    crypto_config_id: [93; 32],
-                    ..Default::default()
-                })
+                .data(live_request.clone())
                 .seq(14)
                 .build(),
         )
@@ -267,7 +396,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         .await?
         .unwrap();
     assert_eq!(live_meta.params_profile, saved_request.params_profile);
-    assert_eq!(live_meta.crypto_config_id, [93; 32]);
+    assert_eq!(live_meta.crypto_config_id, live_request.crypto_config_id);
     Ok(())
 }
 
@@ -347,7 +476,7 @@ async fn disabled_profile_rejects_live_and_restored_contexts() -> Result<()> {
         .build()
         .await
         .expect_err("disabled profile must fail hydration");
-    assert!(error.to_string().contains("disabled"));
+    assert!(format!("{error:#}").contains("disabled"));
     Ok(())
 }
 
@@ -665,7 +794,23 @@ async fn a_failed_context_starts_no_protocol_actor_and_a_later_one_learns_of_the
     let seen = Seen::default();
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let repositories = store.repositories();
-    for e3_id in [&active, &failed] {
+    let requests = [&active, &failed].map(|e3_id| {
+        request_configuration(
+            e3_id.clone(),
+            BfvProfile::SsInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+    });
+    for request in &requests {
+        let e3_id = &request.e3_id;
+        repositories
+            .router()
+            .repositories()
+            .context(e3_id)
+            .repositories()
+            .meta(e3_id)
+            .write_sync(&E3Meta::from(request))
+            .await?;
         repositories
             .router()
             .repositories()
@@ -673,7 +818,7 @@ async fn a_failed_context_starts_no_protocol_actor_and_a_later_one_learns_of_the
             .write_sync(&E3ContextSnapshot {
                 e3_id: e3_id.clone(),
                 recipients: Vec::new(),
-                dependencies: Vec::new(),
+                dependencies: vec!["meta".into()],
             })
             .await?;
     }
@@ -689,17 +834,11 @@ async fn a_failed_context_starts_no_protocol_actor_and_a_later_one_learns_of_the
     // Both restored contexts have a local committee, and neither has its protocol actor yet.
     let router = E3RouterBuilder {
         bus: bus.clone(),
-        extensions: vec![Box::new(LateActorExtension { seen: seen.clone() })],
-        recovered_selections: vec![
-            CiphernodeSelected {
-                e3_id: active.clone(),
-                ..Default::default()
-            },
-            CiphernodeSelected {
-                e3_id: failed.clone(),
-                ..Default::default()
-            },
+        extensions: vec![
+            E3MetaExtension::create(),
+            Box::new(LateActorExtension { seen: seen.clone() }),
         ],
+        recovered_selections: requests.iter().map(recovered_selection).collect(),
         recovery_store,
         store: repositories.router(),
         teardown_grace: Duration::ZERO,

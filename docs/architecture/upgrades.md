@@ -234,11 +234,13 @@ target remains unchanged. [#2458](https://github.com/theinterfold/interfold/issu
 contracts, nodes, and applications together with no active E3s; reset/resync and rollback use the
 [existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.
 These unreleased slices share the schema-9 cutover, not compatibility between intermediate builds.
-Replace the linked lifecycle library and Interfold implementation together; the public request ABI
-and contract storage layout are unchanged. The exported crypto metadata format is version 2 and no
-longer presents a threshold-only ID as a current preset identity. Release artifact qualification
-still applies; source changes are not permission to restamp published archives or reuse unqualified
-deployment bindings.
+Recovery identity checks change no persisted encoding or release counter: valid current snapshots
+remain readable, while inconsistent profile/committee/parameter/ID bindings fail closed rather than
+being repaired or relabeled. Replace the linked lifecycle library and Interfold implementation
+together; the public request ABI and contract storage layout are unchanged. The exported crypto
+metadata format is version 2 and no longer presents a threshold-only ID as a current preset
+identity. Release artifact qualification still applies; source changes are not permission to restamp
+published archives or reuse unqualified deployment bindings.
 
 ## Dependency replacement
 
