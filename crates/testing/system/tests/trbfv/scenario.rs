@@ -51,7 +51,8 @@ impl Preset {
     }
 
     /// How long a run waits for the public key and for the plaintext. These bound the harness
-    /// only; protocol deadlines come from the synthetic DKG window.
+    /// only; protocol deadlines come from the synthetic DKG window. [`Scenario::flow_timeouts`]
+    /// may override either.
     pub(super) fn flow_timeouts(self, small_committee: bool) -> (Duration, Duration) {
         let (pubkey, plaintext) = match (self, small_committee) {
             (Preset::Insecure, _) => (5_000, 1_000),
@@ -146,6 +147,16 @@ pub struct Scenario {
     pub dkg_window: Option<Duration>,
     /// Jobs the shared Rayon pool runs at once.
     pub concurrent_jobs: usize,
+    /// Overrides for the preset's public-key and plaintext waits. Only the benchmark sets them,
+    /// for slow or shared hosts; correctness scenarios keep the preset's fixed waits.
+    pub flow_timeouts: FlowTimeouts,
+}
+
+/// Harness wait overrides; `None` keeps the preset's value.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FlowTimeouts {
+    pub pubkey: Option<Duration>,
+    pub plaintext: Option<Duration>,
 }
 
 impl Scenario {
@@ -158,6 +169,7 @@ impl Scenario {
             expect: Expect::online(),
             dkg_window: Some(Duration::from_secs(1200)),
             concurrent_jobs: 1,
+            flow_timeouts: FlowTimeouts::default(),
         }
     }
 
@@ -208,6 +220,7 @@ impl Scenario {
             expect: Expect::online(),
             dkg_window: None,
             concurrent_jobs,
+            flow_timeouts: FlowTimeouts::default(),
         }
     }
 }

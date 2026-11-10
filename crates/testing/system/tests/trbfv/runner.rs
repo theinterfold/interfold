@@ -291,7 +291,12 @@ impl Env {
         let committee_size = active_committee();
         let small_committee = committee_size == e3_committee::CiphernodesCommitteeSize::Small;
         let timeout_env = TimeoutEnvGuard::set(preset.collection_timeouts_secs(small_committee));
-        let (pubkey_timeout, plaintext_timeout) = preset.flow_timeouts(small_committee);
+        let (default_pubkey, default_plaintext) = preset.flow_timeouts(small_committee);
+        let pubkey_timeout = scenario.flow_timeouts.pubkey.unwrap_or(default_pubkey);
+        let plaintext_timeout = scenario
+            .flow_timeouts
+            .plaintext
+            .unwrap_or(default_plaintext);
         // Nodes get this frozen deadline: the scenario has no enabled EVM provider, and
         // production nodes read it from the contract.
         let dkg_window_secs = scenario

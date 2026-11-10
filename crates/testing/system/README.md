@@ -68,7 +68,8 @@ real-proof suites.
 
 `trbfv_scenario_standby_node`, `trbfv_scenario_party_offline_after_c0`,
 `trbfv_scenario_restart_during_c4` and `trbfv_scenario_restart_during_c6` each run a whole E3 with
-real proofs, about nine minutes each, so CI gives each its own leg. The two restart scenarios give
+real proofs, about nine minutes each. CI gives the standby and offline scenarios their own legs. The
+two restart scenarios are `#[ignore]`d and not run in CI; select them with `--ignored`. They give
 the nodes persistent stores, stop a roster member while its C4 or C6 proof is pending, and rebuild
 it from those stores and its identity; the run must still finish with that member publishing its
 share. All four use the committee the local circuits were built for
@@ -82,8 +83,9 @@ E3_CUSTOM_BB=$(which bb) cargo test -p e3-tests --test integration trbfv_scenari
 
 `benchmark_trbfv_actor` is `#[ignore]`d. The [circuit benchmark](../../zk/benchmarks/README.md) runs
 it in release mode with `BENCHMARK_MODE`, `BENCHMARK_MULTITHREAD_JOBS`, `BENCHMARK_SUMMARY_OUTPUT`,
-and `BENCHMARK_FOLDED_OUTPUT`, and parses the JSON it writes; keep those shapes stable. Correctness
-scenarios never read `BENCHMARK_*`.
+and `BENCHMARK_FOLDED_OUTPUT`, and parses the JSON it writes; keep those shapes stable.
+`BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS` and `BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS` lengthen its
+public-key and plaintext waits on slow hosts. Correctness scenarios never read `BENCHMARK_*`.
 
 ## Prerequisites and assurance
 

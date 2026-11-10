@@ -10,12 +10,14 @@
 //!
 //! Environment (set by that tool): `BENCHMARK_MODE` (`insecure`, the default, or `secure`),
 //! `BENCHMARK_MULTITHREAD_JOBS` (Rayon jobs at once, default 1), `BENCHMARK_SUMMARY_OUTPUT` and
-//! `BENCHMARK_FOLDED_OUTPUT` (files to write, each optional).
+//! `BENCHMARK_FOLDED_OUTPUT` (files to write, each optional), and
+//! `BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS` / `BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS` (longer harness
+//! waits for slow or shared hosts; protocol deadlines stay frozen).
 
 use super::nodes::DKG_FOLD_ATTESTATION_VERIFIER;
 use super::run_and_check;
 use super::runner::Observations;
-use super::scenario::{Preset, Scenario};
+use super::scenario::{FlowTimeouts, Preset, Scenario};
 use alloy::primitives::hex;
 use anyhow::Result;
 use e3_events::{hlc::HlcTimestamp, prelude::*, EventSource, InterfoldEvent, InterfoldEventData};
@@ -38,7 +40,14 @@ pub async fn run_from_env() -> Result<()> {
             "BENCHMARK_FOLDED_OUTPUT and BENCHMARK_SUMMARY_OUTPUT name the same file: {folded}"
         );
     }
-    let run = run_and_check(&Scenario::benchmark(preset, jobs)).await?;
+    let scenario = Scenario {
+        flow_timeouts: FlowTimeouts {
+            pubkey: flow_timeout_override("BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS"),
+            plaintext: flow_timeout_override("BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS"),
+        },
+        ..Scenario::benchmark(preset, jobs)
+    };
+    let run = run_and_check(&scenario).await?;
 
     let report = Report::new(&run);
     println!("{}", report.serialize());
@@ -51,6 +60,15 @@ pub async fn run_from_env() -> Result<()> {
         println!("Wrote benchmark summary to {path}");
     }
     Ok(())
+}
+
+/// A positive whole number of seconds from `name`; anything else keeps the preset's wait.
+fn flow_timeout_override(name: &str) -> Option<Duration> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&seconds| seconds > 0)
+        .map(Duration::from_secs)
 }
 
 /// An output file's path with its directory resolved, so `a/../b.json` and `b.json` compare equal.

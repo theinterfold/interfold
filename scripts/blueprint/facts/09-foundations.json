@@ -759,7 +759,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/testing/system/tests/integration.rs@258@struct StoredEvents("
+          "ref": "crates/testing/system/tests/integration.rs@260@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -800,7 +800,7 @@
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@363@.simulate_libp2p()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@368@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
@@ -820,12 +820,12 @@
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/testing/system/tests/trbfv/runner.rs@357@let nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/testing/system/tests/trbfv/runner.rs@362@let nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/testing/system/tests/integration.rs@260@impl actix::Actor for StoredEvents {"
+          "ref": "crates/testing/system/tests/integration.rs@262@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",

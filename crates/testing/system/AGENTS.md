@@ -6,7 +6,8 @@ This is the cross-capability/multi-node harness owner; `src/main.rs` intentional
   reimplemented reducer logic. Reuse the existing ciphernode-system harness and replay loaders.
 - A full-proof scenario asserts outcomes (key, plaintext, accepted roster, no faults), never how
   actors order their events, and never waits for a progress deadline. Add a fault as a named
-  `trbfv_scenario_*` test with its own CI leg, not as an environment switch on an existing one.
+  `trbfv_scenario_*` test, not as an environment switch on an existing one. A scenario CI runs gets
+  its own leg; one CI does not run is `#[ignore]`d with the reason.
 - Keep `tests/trbfv/` split four ways, as private modules: `scenario.rs` holds the fault and the
   expected outcome as data; `runner.rs` executes and returns `Observations`, asserting nothing
   beyond what it needs to keep driving the protocol; `assertions.rs` checks the expectation over the

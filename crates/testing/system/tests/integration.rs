@@ -54,6 +54,7 @@ async fn trbfv_scenario_party_offline_after_c0() -> Result<()> {
 /// Party 1 restarts from its persisted stores while its C4 proof is pending, and shares it.
 #[actix::test]
 #[serial_test::serial]
+#[ignore = "full-proof restart run, not in CI; select it with --ignored"]
 async fn trbfv_scenario_restart_during_c4() -> Result<()> {
     run_and_check(&Scenario::restart_during_c4(1)).await?;
     Ok(())
@@ -62,6 +63,7 @@ async fn trbfv_scenario_restart_during_c4() -> Result<()> {
 /// Party 1 restarts from its persisted stores while its C6 proof is pending, and decrypts.
 #[actix::test]
 #[serial_test::serial]
+#[ignore = "full-proof restart run, not in CI; select it with --ignored"]
 async fn trbfv_scenario_restart_during_c6() -> Result<()> {
     run_and_check(&Scenario::restart_during_c6(1)).await?;
     Ok(())

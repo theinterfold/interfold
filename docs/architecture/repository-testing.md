@@ -70,10 +70,11 @@ operating-system processes. The restart is orderly and in-process: the node stop
 shutdown barrier on stores that closed cleanly, not at an arbitrary point with torn writes. It is
 not arbitrary crash recovery. The only executable restart coverage for an in-flight C4 or C6 proof
 is the full-proof scenarios `trbfv_scenario_restart_during_c4` and
-`trbfv_scenario_restart_during_c6` (two of the four named full-proof scenarios). They restart one
-roster member other than the aggregator at those two points, and nothing else here restarts a node
-at another protocol point. [Network delivery](network-delivery.md) and
-[persistence](persistence-and-replay.md) retain the production gaps those scenarios do not close.
+`trbfv_scenario_restart_during_c6` (two of the four named full-proof scenarios). They are
+`#[ignore]`d and not run in CI. They restart one roster member other than the aggregator at those
+two points, and nothing else here restarts a node at another protocol point.
+[Network delivery](network-delivery.md) and [persistence](persistence-and-replay.md) retain the
+production gaps those scenarios do not close.
 
 ## Proofs and compatibility
 
