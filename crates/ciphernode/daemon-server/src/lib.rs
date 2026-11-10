@@ -117,7 +117,7 @@ where
     // Run the existing logic
     let (status, response_body) = match handler(body).await {
         Ok(output) => ("200 OK", output),
-        Err(e) => ("500 Internal Server Error", e.to_string()),
+        Err(e) => ("500 Internal Server Error", format!("{e:#}")),
     };
 
     let response = format!(

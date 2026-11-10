@@ -269,7 +269,7 @@ pub(crate) async fn retry_until<T, E: Display, F: Future<Output = Result<T, E>>>
         let cutoff = (Instant::now() + limit).min(deadline);
         let last = match tokio::time::timeout_at(cutoff, attempt()).await {
             Ok(Ok(value)) => return Ok(value),
-            Ok(Err(failure)) => failure.to_string(),
+            Ok(Err(failure)) => format!("{failure:#}"),
             Err(_) => "no answer in time".to_string(),
         };
         let wait = backoff.next();

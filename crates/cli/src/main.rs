@@ -121,7 +121,7 @@ async fn run() -> Result<()> {
     handle.flush().await;
 
     if let Err(err) = result {
-        eprintln!("{}", colorize(err, Color::Red));
+        eprintln!("{}", colorize(format!("{err:#}"), Color::Red));
         std::process::exit(1);
     }
     Ok(())

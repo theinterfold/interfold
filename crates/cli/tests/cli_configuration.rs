@@ -140,7 +140,12 @@ fn legacy_program_settings_load_for_nodes_but_cannot_select_a_backend() -> Resul
         std::fs::write(&config, format!("program:\n  {program}\n"))?;
         let output = run(temp.path(), &["config", "get", "name"], &[])?;
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Could not parse configuration"));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("Could not parse configuration: "), "{error}");
+        assert!(
+            error.contains("unknown") || error.contains("backend"),
+            "the cause is shown: {error}"
+        );
     }
     assert!(!temp.path().join(".interfold/caches").exists());
     Ok(())
