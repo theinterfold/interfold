@@ -16,12 +16,17 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&msg.e3_id) {
             return;
         }
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer.
         if let Err(error) = msg
             .params_profile
             .ensure_admission_enabled()
             .and_then(|()| msg.params_profile.validate_committee(msg.committee_size))
         {
-            error!(e3_id = %msg.e3_id, %error, "Unsupported C0 proof generation profile");
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C0 proof generation for E3 {}: {error}", msg.e3_id),
+            );
             return;
         }
         let correlation_id = CorrelationId::new();

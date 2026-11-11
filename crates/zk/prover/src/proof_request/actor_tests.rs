@@ -59,11 +59,10 @@ async fn c0_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() -> 
         actor.handle_encryption_key_pending(TypedEvent::new(event.clone(), test_ctx(event)));
     }
     bus.flush_event_pipeline().await?;
-    let profiles: Vec<_> = history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .into_iter()
-        .filter_map(|event| match event.into_data() {
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let profiles: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
             InterfoldEventData::ComputeRequest(ComputeRequest {
                 request: ComputeRequestKind::Zk(ZkRequest::PkBfv(request)),
                 ..
@@ -76,7 +75,26 @@ async fn c0_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() -> 
         [BfvProfile::SsInsecure64, BfvProfile::SsSecure8192]
     );
     assert_eq!(actor.pending.len(), 2);
+    // The disabled request is reported once and produces nothing else.
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        interfold_errors(&events),
+        [format!(
+            "Skipping C0 proof generation for E3 {}: BFV profile sync-insecure-64 is disabled in this release",
+            E3id::new("3", 1)
+        )]
+    );
     Ok(())
+}
+
+fn interfold_errors(events: &[InterfoldEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[actix::test]
