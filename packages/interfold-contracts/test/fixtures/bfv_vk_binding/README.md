@@ -10,9 +10,9 @@ An insecure Rust benchmark run can export `integration_summary.json`. Run
 directory's `folded_artifacts.json`. The benchmark runner does not overwrite
 committed fixtures automatically.
 
-`BfvVkBindingIntegration` also reads `integration_summary.json` directly when
-present, so local `pnpm evm:test` stays aligned even before you commit the
-synced fixture.
+`BfvVkBindingIntegration` prefers the committed fixture. To verify a fresh
+benchmark run without changing it, use the override below; a local summary is
+otherwise only a fallback when the fixture is absent.
 
 ## Manual override
 
