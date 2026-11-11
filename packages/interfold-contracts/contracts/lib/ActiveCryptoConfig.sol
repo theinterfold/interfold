@@ -72,20 +72,22 @@ library ActiveCryptoConfig {
     ) internal pure returns (bytes32) {
         // Only SS profiles are admitted in this release, even where synchronized threshold bytes match.
         if (paramSet == INSECURE_PARAM_SET) {
-            if (committeeSize == MINIMUM_COMMITTEE_SIZE)
-                return BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID;
-            if (committeeSize == MICRO_COMMITTEE_SIZE)
-                return BfvProtocol.SS_INSECURE_64_MICRO_CONFIG_ID;
-            if (committeeSize == SMALL_COMMITTEE_SIZE)
-                return BfvProtocol.SS_INSECURE_64_SMALL_CONFIG_ID;
+            return
+                _configIdForCommittee(
+                    committeeSize,
+                    BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID,
+                    BfvProtocol.SS_INSECURE_64_MICRO_CONFIG_ID,
+                    BfvProtocol.SS_INSECURE_64_SMALL_CONFIG_ID
+                );
         }
         if (paramSet == SECURE_PARAM_SET) {
-            if (committeeSize == MINIMUM_COMMITTEE_SIZE)
-                return BfvProtocol.SS_SECURE_8192_MINIMUM_CONFIG_ID;
-            if (committeeSize == MICRO_COMMITTEE_SIZE)
-                return BfvProtocol.SS_SECURE_8192_MICRO_CONFIG_ID;
-            if (committeeSize == SMALL_COMMITTEE_SIZE)
-                return BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID;
+            return
+                _configIdForCommittee(
+                    committeeSize,
+                    BfvProtocol.SS_SECURE_8192_MINIMUM_CONFIG_ID,
+                    BfvProtocol.SS_SECURE_8192_MICRO_CONFIG_ID,
+                    BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID
+                );
         }
         revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -157,5 +159,17 @@ library ActiveCryptoConfig {
             : SECURE_PARAM_SET_HASH;
         if (paramSetHash != expectedHash)
             revert IInterfold.UnsupportedCryptoConfig();
+    }
+
+    function _configIdForCommittee(
+        uint8 committeeSize,
+        bytes32 minimumConfigId,
+        bytes32 microConfigId,
+        bytes32 smallConfigId
+    ) private pure returns (bytes32) {
+        if (committeeSize == MINIMUM_COMMITTEE_SIZE) return minimumConfigId;
+        if (committeeSize == MICRO_COMMITTEE_SIZE) return microConfigId;
+        if (committeeSize == SMALL_COMMITTEE_SIZE) return smallConfigId;
+        revert IInterfold.UnsupportedCryptoConfig();
     }
 }
