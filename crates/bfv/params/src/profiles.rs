@@ -228,19 +228,40 @@ impl BfvProfile {
         committee: CiphernodesCommitteeSize,
         crypto_config_id: alloy_primitives::B256,
     ) -> Result<Self, BfvProfileError> {
-        for profile in Self::ALL {
-            if profile.param_set() == param_set
-                && profile.supports_committee(committee)
-                && profile.crypto_config_id(committee)? == crypto_config_id
-            {
-                return Ok(profile);
-            }
-        }
-        Err(BfvProfileError::UnsupportedConfiguration(
-            crypto_config_id.to_string(),
-        ))
+        SUPPORTED_CRYPTO_CONFIG_IDS
+            .iter()
+            .find(|(profile, supported, id)| {
+                profile.param_set() == param_set
+                    && *supported == committee
+                    && *id == crypto_config_id
+            })
+            .map(|(profile, _, _)| *profile)
+            .ok_or_else(|| BfvProfileError::UnsupportedConfiguration(crypto_config_id.to_string()))
     }
 }
+
+/// The request identity of every supported profile/committee pair, in [`BfvProfile::ALL`] order.
+/// Each identity hashes the encoded parameter pair, and building the pair is too slow to repeat for
+/// every request event, so the table is built once.
+#[cfg(feature = "abi-encoding")]
+static SUPPORTED_CRYPTO_CONFIG_IDS: std::sync::LazyLock<
+    Vec<(BfvProfile, CiphernodesCommitteeSize, alloy_primitives::B256)>,
+> = std::sync::LazyLock::new(|| {
+    BfvProfile::ALL
+        .into_iter()
+        .flat_map(|profile| {
+            CiphernodesCommitteeSize::ALL
+                .into_iter()
+                .filter(move |committee| profile.supports_committee(*committee))
+                .map(move |committee| {
+                    let id = profile
+                        .crypto_config_id(committee)
+                        .expect("built-in BFV profile parameters are valid");
+                    (profile, committee, id)
+                })
+        })
+        .collect()
+});
 
 impl FromStr for BfvProfile {
     type Err = BfvProfileError;
