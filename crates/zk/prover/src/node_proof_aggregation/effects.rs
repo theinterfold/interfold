@@ -14,11 +14,16 @@ impl NodeProofAggregator {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
         let profile = msg.proof_request.params_profile;
+        // A profile that this build cannot prove is a local fault. The node abstains: it starts no
+        // fold, publishes no proof and blames no peer.
         if let Err(error) = profile
             .ensure_admission_enabled()
             .and_then(|()| profile.validate_committee(msg.proof_request.committee_size))
         {
-            error!(%e3_id, %error, "Unsupported DKG proof profile");
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping DKG proof aggregation for E3 {e3_id}: {error}"),
+            );
             return;
         }
         if self

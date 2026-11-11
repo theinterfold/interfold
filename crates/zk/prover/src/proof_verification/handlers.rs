@@ -63,12 +63,14 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                 }
             }
             InterfoldEventData::CiphernodeSelected(data) => {
-                self.store_profile(
+                if let Err(error) = self.store_profile(
                     data.e3_id,
                     data.params_profile,
                     data.threshold_m,
                     data.threshold_n,
-                );
+                ) {
+                    self.bus.with_ec(&ec).err(EType::Computation, error);
+                }
             }
             InterfoldEventData::CommitteeFinalized(mut data) => {
                 // The EVM decoder already emits canonical address order, but sorting again keeps

@@ -11,16 +11,17 @@ use actix::{Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, WrapFut
 use alloy::primitives::{keccak256, Bytes};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
+use anyhow::anyhow;
 use e3_events::{
     AggregationProofPending, AggregationProofSigned, BusHandle, ComputeRequest,
     ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, DKGInnerProofReady,
     DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending,
-    DecryptionshareCreated, DkgProofSigned, E3id, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, EventFactory, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, PkAggregationProofPending, PkAggregationProofSigned, PkBfvProofRequest,
-    PkGenerationProofSigned, Proof, ProofPayload, ProofType, ProofVerificationPassed, Sequenced,
-    ShareDecryptionProofPending, SignedProofPayload, ThresholdShareCreated, ThresholdSharePending,
-    TypedEvent, ZkRequest, ZkResponse,
+    DecryptionshareCreated, DkgProofSigned, E3id, EType, EncryptionKeyCreated,
+    EncryptionKeyPending, ErrorDispatcher, EventContext, EventFactory, EventPublisher,
+    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, PkAggregationProofPending,
+    PkAggregationProofSigned, PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload,
+    ProofType, ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
+    ThresholdShareCreated, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
 };
 use e3_utils::{ArcBytes, NotifySync};
 use tracing::{debug, error, info, trace, warn};
