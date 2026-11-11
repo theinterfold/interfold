@@ -8,9 +8,9 @@ use super::*;
 use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
-    hlc_factory::HlcFactory, E3RequestComplete, EffectsEnabled, Event, EventBus, EventBusBarrier,
-    EventBusConfig, EventPublisher, FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer,
-    StoreEventRequested, Unsequenced,
+    hlc_factory::HlcFactory, CiphernodeSelected, E3RequestComplete, EffectsEnabled, Event,
+    EventBus, EventBusBarrier, EventBusConfig, EventPublisher, FlushEventStores, GetEvents,
+    ProofPayload, Seed, Sequencer, StoreEventRequested, Unsequenced,
 };
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_utils::utility_types::ArcBytes;
@@ -206,6 +206,79 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
             party_id,
             artifacts_dir: "insecure-64/minimum".into(),
         }
+    );
+}
+
+/// A live selection under a profile that this build does not admit stores no C0 plan. The node
+/// abstains from the E3's C0 inputs and reports its own fault once, on the error channel.
+#[actix::test]
+async fn disabled_live_profile_reports_one_error_and_verifies_no_c0_input() {
+    let bus = test_bus();
+    let history = bus.history();
+    let e3_id = E3id::new("10", 31_337);
+    let signer = PrivateKeySigner::random();
+    let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
+    let verifier = VerificationRecorder {
+        sender: observed_tx,
+    }
+    .start();
+    let actor = ProofVerificationActor::setup(
+        &bus,
+        verifier.clone().recipient(),
+        HashMap::from([(
+            e3_id.clone(),
+            Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::new(),
+    );
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+    bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 1,
+        threshold_n: 3,
+        params_profile: BfvProfile::SyncDecInsecure64,
+        ..Default::default()
+    })
+    .unwrap();
+    bus.publish_without_context(EncryptionKeyReceived {
+        e3_id: e3_id.clone(),
+        key: signed_c0_key(&signer, 0, &e3_id, BfvPreset::InsecureThreshold64),
+    })
+    .unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+    actor.send(recovery::VerificationBarrier).await.unwrap();
+    verifier.send(recovery::VerificationBarrier).await.unwrap();
+
+    assert!(
+        observed_rx.try_recv().is_err(),
+        "a disabled profile dispatched C0 verification"
+    );
+    let events = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await
+        .unwrap();
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains(&format!("E3 {e3_id}")) && errors[0].contains("sync-insecure-64"),
+        "{errors:?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyCreated(_)
+                | InterfoldEventData::ProofVerificationPassed(_)
+                | InterfoldEventData::ProofVerificationFailed(_)
+                | InterfoldEventData::SignedProofFailed(_)
+        )),
+        "a disabled profile accepted or blamed a peer"
     );
 }
 
