@@ -285,16 +285,20 @@ pub(crate) fn extractor(
         Some(&IInterfold::E3Requested::SIGNATURE_HASH) => {
             let event = IInterfold::E3Requested::decode_log_data(data)
                 .context("failed to decode E3Requested after its topic matched")?;
+            let e3_id = event.e3Id;
             match E3RequestedWithChainId(event, chain_id).try_into_e3_requested() {
                 Ok(payload) => Ok(Some(payload.into())),
                 Err(e) => {
+                    // `{e:#}` keeps the inner cause, such as the configuration ID that no profile
+                    // matches.
                     warn!(
                         chain_id = chain_id,
+                        e3_id = %e3_id,
                         "Skipping E3Requested: this node cannot process it and will NOT participate \
-                         in this E3. This usually indicates a version skew between the ciphernode \
-                         binary and the on-chain contracts (unrecognized BFV preset or committee \
-                         size). Cause: {}",
-                        e
+                         in this E3. The request names a committee size or BFV configuration that \
+                         this release does not know, or a BFV profile that this release disables. \
+                         Unless the profile was disabled on purpose, this indicates version skew \
+                         between the ciphernode binary and the on-chain contracts. Cause: {e:#}"
                     );
                     Ok(None)
                 }
