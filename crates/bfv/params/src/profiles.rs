@@ -177,6 +177,11 @@ impl BfvProfile {
     }
 
     /// Release-level gate only. Chain-specific policy can restrict admission further.
+    ///
+    /// Recovery rechecks this gate for every saved E3 that has not ended, and the node refuses to
+    /// start if one uses a disabled profile. To retire a profile, stop admitting it on chain, wait
+    /// until its E3s end, and only then disable it here. See "Retiring a BFV profile" in
+    /// `docs/architecture/upgrades.md`.
     pub fn admission_enabled(self) -> bool {
         match self {
             Self::SsInsecure64 | Self::SsSecure8192 => true,
