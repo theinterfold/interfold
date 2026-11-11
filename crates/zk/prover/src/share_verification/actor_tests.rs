@@ -67,14 +67,19 @@ async fn disabled_profile_does_not_dispatch_or_classify_a_verification_batch() {
     let e3_event_system::test_support::EventFixture { bus, history, .. } =
         e3_event_system::test_support::EventFixture::new().unwrap();
     let mut actor = ShareVerificationActor::new(&bus, HashMap::new());
+    let e3_id = E3id::new("disabled-profile", 1);
+    let mut expected_errors = Vec::new();
     for kind in [
         VerificationKind::ShareProofs,
         VerificationKind::DecryptionProofs,
         VerificationKind::PkGenerationProofs,
         VerificationKind::ThresholdDecryptionProofs,
     ] {
+        expected_errors.push(format!(
+            "Skipping {kind:?} verification for E3 {e3_id}: BFV profile sync-insecure-64 is disabled in this release"
+        ));
         let dispatch = ShareVerificationDispatched {
-            e3_id: E3id::new("disabled-profile", 1),
+            e3_id: e3_id.clone(),
             kind,
             share_proofs: Vec::new(),
             decryption_proofs: Vec::new(),
@@ -88,12 +93,19 @@ async fn disabled_profile_does_not_dispatch_or_classify_a_verification_batch() {
         bus.flush_event_pipeline().await.unwrap();
         assert!(actor.pending_consistency.is_empty());
         assert!(actor.pending.is_empty());
-        assert!(history
-            .send(GetEvents::<InterfoldEvent>::new())
-            .await
-            .unwrap()
-            .is_empty());
     }
+    // Each refused batch is reported once as a local fault and publishes nothing else.
+    let errors: Vec<_> = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| match event.into_data() {
+            InterfoldEventData::InterfoldError(error) => error.message,
+            other => panic!("a disabled profile published {other:?}"),
+        })
+        .collect();
+    assert_eq!(errors, expected_errors);
 }
 
 #[actix::test]
