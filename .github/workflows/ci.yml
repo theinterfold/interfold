@@ -483,9 +483,10 @@ jobs:
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
-    # Each full-proof `test_trbfv_actor` run takes about nine minutes, so the runs are parallel
-    # legs. The `integration` leg runs the other integration targets in skip-aggregation mode;
-    # the CLI e2e jobs already drive a full E3 in that mode.
+    # Each full-proof `trbfv_scenario_*` run takes about nine minutes, so the runs are parallel
+    # legs: `offline-party` and `standby-node`. The restart scenarios are ignored and stay out of
+    # CI. The `integration` leg runs the other integration targets in skip-aggregation mode; the
+    # CLI e2e jobs already drive a full E3 in that mode.
     strategy:
       matrix:
         leg: [integration, offline-party, standby-node]
@@ -529,8 +530,12 @@ jobs:
         run: |
           chmod +x .ci-noir/bin/bb
           test -f .ci-noir/circuits/insecure-64/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
-          mkdir -p dist/circuits/insecure-64
-          cp -R .ci-noir/circuits/insecure-64/minimum dist/circuits/insecure-64/
+          # The whole tree, with its checksums.json: the fixture installs it through the prover's
+          # admission, which verifies every file against that manifest.
+          test -f .ci-noir/circuits/checksums.json
+          rm -rf dist/circuits
+          mkdir -p dist
+          cp -R .ci-noir/circuits dist/circuits
 
       # A separate test target, so no other step runs it. It fails when a persisted or gossiped
       # layout differs from its fixture. The in-crate locks run with the library tests. Without
@@ -544,30 +549,33 @@ jobs:
         env:
           CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test --test integration -- --nocapture --skip test_trbfv_actor'
+        run: 'cargo test --test integration -- --nocapture --skip trbfv_scenario_'
 
       - name: Run offline DKG integration test with full proofs
         if: matrix.leg == 'offline-party'
         timeout-minutes: 20
         env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+        # `--exact` exits 0 when the name matches nothing, so require the one passed test.
+        run: |
+          set -o pipefail
+          cargo test -p e3-tests --test integration trbfv_scenario_party_offline_after_c0 -- --exact --nocapture | tee "$RUNNER_TEMP/scenario.log"
+          grep -Eq 'test result: ok\. 1 passed' "$RUNNER_TEMP/scenario.log"
 
       - name: Run full-proof DKG integration with standby node
         if: matrix.leg == 'standby-node'
         timeout-minutes: 20
         env:
-          BENCHMARK_MODE: insecure
-          BENCHMARK_DKG_WINDOW_SECS: '1200'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+        # `--exact` exits 0 when the name matches nothing, so require the one passed test.
+        run: |
+          set -o pipefail
+          cargo test -p e3-tests --test integration trbfv_scenario_standby_node -- --exact --nocapture | tee "$RUNNER_TEMP/scenario.log"
+          grep -Eq 'test result: ok\. 1 passed' "$RUNNER_TEMP/scenario.log"
 
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]

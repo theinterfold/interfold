@@ -404,7 +404,7 @@ async function main() {
       .filter(Boolean)
       .join(", ");
     throw new Error(
-      `[benchmarkGasFromRaw] Missing benchmark proofs (${missing}); run test_trbfv_actor successfully first. outputPath=${outputPath}`,
+      `[benchmarkGasFromRaw] Missing benchmark proofs (${missing}); run benchmark_trbfv_actor successfully first. outputPath=${outputPath}`,
     );
   }
 

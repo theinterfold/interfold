@@ -344,7 +344,7 @@ fn integration_launcher_delivers_full_proof_controls_and_structured_export_paths
     let bin = temp.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
     let executable = bin.join("cargo");
-    fs::write(&executable, "#!/bin/sh\n[ \"$1\" = test ] || exit 1\n[ \"$CIPHERNODE_SKIP_PROOF_AGGREGATION\" = false ] || exit 2\n[ \"$BENCHMARK_MODE\" = secure ] || exit 3\n[ \"$BENCHMARK_MULTITHREAD_JOBS\" = 3 ] || exit 4\ncase \" $* \" in *' --release '*test_trbfv_actor*) ;; *) exit 5 ;; esac\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_SUMMARY_OUTPUT\"\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_FOLDED_OUTPUT\"\n").unwrap();
+    fs::write(&executable, "#!/bin/sh\n[ \"$1\" = test ] || exit 1\n[ \"$CIPHERNODE_SKIP_PROOF_AGGREGATION\" = false ] || exit 2\n[ \"$BENCHMARK_MODE\" = secure ] || exit 3\n[ \"$BENCHMARK_MULTITHREAD_JOBS\" = 3 ] || exit 4\ncase \" $* \" in *' --release '*' benchmark_trbfv_actor -- --ignored --exact '*) ;; *) exit 5 ;; esac\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_SUMMARY_OUTPUT\"\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_FOLDED_OUTPUT\"\n").unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
     let output = temp.path().join("outputs with spaces");
     fs::create_dir_all(&output).unwrap();
