@@ -291,6 +291,9 @@ await publicClient.waitForTransactionReceipt({ hash: approveTx })
 const hash = await requestE3(requestParams)
 ```
 
+In release 0.19.0 and earlier, the template requests `paramSet: 0` in place of
+`profile: 'ss-insecure-64'`.
+
 The same step assembles the committee public key from `COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED` events
 with `CommitteePublicKeyAssembler`. It accepts the key only if `validatePublicKeyCommitment` returns
 `true`.
