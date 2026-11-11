@@ -37,16 +37,30 @@ pub struct E3Meta {
 
 impl E3Meta {
     /// Recheck the saved request binding before restored work can use it.
+    ///
+    /// Confirmed-chain ingestion also runs this check on each request that it admits, so the ID is
+    /// looked up in the identity table, and the parameter pair is built only to name the expected
+    /// ID.
     pub fn validate_configuration(&self) -> Result<()> {
         self.params_profile.ensure_admission_enabled()?;
         let committee =
             CiphernodesCommitteeSize::from_threshold(self.threshold_m, self.threshold_n)?;
-        let expected_id = self.params_profile.crypto_config_id(committee)?;
-        ensure!(
-            self.crypto_config_id == expected_id.0,
-            "BFV configuration ID does not match profile {} and committee {committee}; expected {expected_id}",
-            self.params_profile
+        // The lookup can resolve another profile that shares the registry slot, so compare the
+        // resolved profile and not only the success of the lookup.
+        let resolved = BfvProfile::from_crypto_config_id(
+            self.params_profile.param_set(),
+            committee,
+            self.crypto_config_id.into(),
         );
+        if resolved.ok() != Some(self.params_profile) {
+            // Fails with the unsupported-committee error when the profile does not support the
+            // committee.
+            let expected_id = self.params_profile.crypto_config_id(committee)?;
+            bail!(
+                "BFV configuration ID does not match profile {} and committee {committee}; expected {expected_id}",
+                self.params_profile
+            );
+        }
         let params = BfvParamSet::from(self.params_profile.threshold_preset()).build();
         ensure!(
             self.params[..] == encode_bfv_params(&params)[..],

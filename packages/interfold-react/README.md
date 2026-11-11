@@ -23,6 +23,7 @@ managing SDK state, handling contract interactions, and listening to events.
 import React from 'react'
 import { useInterfoldSDK } from '@interfold/react'
 import { CommitteeSize } from '@interfold/sdk'
+import type { E3RequestParams } from '@interfold/sdk'
 
 function MyComponent() {
   const {
@@ -64,7 +65,8 @@ function MyComponent() {
     try {
       if (!sdk) return
       const now = BigInt(Math.floor(Date.now() / 1000))
-      const requestParams = {
+      // Without the annotation, `profile` and the hex fields widen to `string`.
+      const requestParams: E3RequestParams = {
         committeeSize: CommitteeSize.Minimum,
         inputWindow: [now, now + 300n] as const,
         e3Program: '0x...',

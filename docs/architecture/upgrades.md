@@ -242,6 +242,35 @@ metadata format is version 2 and no longer presents a threshold-only ID as a cur
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
 
+The cutover changes these request interfaces. Update their callers together with the contracts:
+
+- The Hardhat task `committee:new` takes `--profile <name>` instead of `--param-set <index>`. It
+  defaults to the profile of `ACTIVE_BFV_PRESET`.
+- In `e3-evm-client`, `InterfoldRead::get_e3_quote` and `InterfoldWrite::request_e3` take
+  `params_profile: BfvProfile` instead of `param_set: u8`.
+- In `@interfold/sdk`, `E3RequestParams` takes `profile` instead of `paramSet`. `getE3Quote` and
+  `requestE3`, including `requestE3` in `@interfold/react`, derive the registry slot and the
+  configuration ID from `profile` and `committeeSize`.
+- In `@interfold/contracts/bfv`, `BFV_PRESETS[preset].configId` is removed. Use
+  `bfvConfiguration(profile, committeeSize).configId`.
+
+### Retiring a BFV profile
+
+A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3
+selected the node. On startup it rechecks that metadata and refuses to start if an E3 uses a profile
+that its release disables. Restored work never runs under a disabled profile, and the node does not
+silently drop work that it still owes. Retire a profile in this order:
+
+1. Deploy contracts whose `ActiveCryptoConfig.configIdForRequest` no longer returns a configuration
+   ID of the profile, so that no new request can use it.
+2. Wait until every E3 of the profile has ended on each chain, with the same upgrade window as a
+   schema raise (see [Identity and active-state guards](#identity-and-active-state-guards)).
+3. Ship the node release in which `BfvProfile::admission_enabled` is false for the profile.
+
+If a node of that release still refuses to start, run the previous release until those E3s end. Do
+not edit or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no
+contract admits it, so this cutover needs no wait.
+
 ## Dependency replacement
 
 There are **no concurrent registry generations**. Each request validates/snapshots one coherent

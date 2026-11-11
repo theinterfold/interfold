@@ -391,7 +391,18 @@ test('the dependency-free committee gate compares binding values, not consumer i
     stale.bfv.presets[0].threshold.degree = BFV_PRESETS['insecure-64'].threshold.degree.toString()
     stale.bfv.profiles[0].configurations[0].cryptoConfigId = `0x${'00'.repeat(32)}`
     writeFileSync(binding, JSON.stringify(stale))
-    assert.throws(check)
+    assert.throws(check, /SS_INSECURE_64_MINIMUM config ID must match/)
+    // A binding that cannot be read, or that drops an admitted configuration, must not leave the
+    // configuration-ID comparison with nothing to compare.
+    const unreadable = JSON.parse(source)
+    delete unreadable.bfv.profiles
+    writeFileSync(binding, JSON.stringify(unreadable))
+    assert.throws(check, /could not read the admitted configurations/)
+    const dropped = JSON.parse(source)
+    const secure = dropped.bfv.profiles.find((profile: { profile: string }) => profile.profile === 'ss-secure-8192')
+    secure.configurations = secure.configurations.filter((configuration: { committee: string }) => configuration.committee !== 'small')
+    writeFileSync(binding, JSON.stringify(dropped))
+    assert.throws(check, /must match the \*_CONFIG_ID constants/)
     writeFileSync(binding, source)
     for (const committee of ['minimum', 'micro', 'small']) {
       const changed = JSON.parse(source)

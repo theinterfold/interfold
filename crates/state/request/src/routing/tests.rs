@@ -127,6 +127,11 @@ async fn hydration_rejects_inconsistent_request_configuration_before_starting_re
     another_committee.crypto_config_id = BfvProfile::SsInsecure64
         .crypto_config_id(CiphernodesCommitteeSize::Micro)?
         .into();
+    // sync-insecure-64 shares registry slot 0 and the minimum committee, so its ID resolves.
+    let mut same_slot_profile = valid.clone();
+    same_slot_profile.crypto_config_id = BfvProfile::SyncDecInsecure64
+        .crypto_config_id(CiphernodesCommitteeSize::Minimum)?
+        .into();
     let mut unknown_committee = valid.clone();
     unknown_committee.threshold_m += 1;
     let mut different_params = valid.clone();
@@ -139,6 +144,7 @@ async fn hydration_rejects_inconsistent_request_configuration_before_starting_re
         ("historical ID", historical_id, false),
         ("another profile", another_profile, false),
         ("another committee", another_committee, false),
+        ("same-slot profile ID", same_slot_profile, false),
         ("unknown committee", unknown_committee, false),
         ("different parameter bytes", different_params, false),
     ] {

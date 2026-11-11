@@ -71,7 +71,7 @@ impl E3RequestedWithChainId {
             }
         };
 
-        Ok(e3_events::E3Requested {
+        let request = e3_events::E3Requested {
             params_profile,
             crypto_config_id: self.0.cryptoConfigId.into(),
             params: ArcBytes::from_bytes(&params_bytes),
@@ -81,7 +81,14 @@ impl E3RequestedWithChainId {
             request_block: self.0.e3.requestBlock.to(),
             error_size,
             e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
-        })
+        };
+        // Recovery runs this check on the saved request before it restores the E3. Running it here
+        // too means the node skips a request that it could not restore, instead of failing on
+        // restart.
+        e3_request::E3Meta::from(&request)
+            .validate_configuration()
+            .with_context(|| format!("Inconsistent crypto configuration for E3 {}", self.0.e3Id))?;
+        Ok(request)
     }
 }
 
@@ -285,16 +292,20 @@ pub(crate) fn extractor(
         Some(&IInterfold::E3Requested::SIGNATURE_HASH) => {
             let event = IInterfold::E3Requested::decode_log_data(data)
                 .context("failed to decode E3Requested after its topic matched")?;
+            let e3_id = event.e3Id;
             match E3RequestedWithChainId(event, chain_id).try_into_e3_requested() {
                 Ok(payload) => Ok(Some(payload.into())),
                 Err(e) => {
+                    // `{e:#}` keeps the inner cause, such as the configuration ID that no profile
+                    // matches.
                     warn!(
                         chain_id = chain_id,
+                        e3_id = %e3_id,
                         "Skipping E3Requested: this node cannot process it and will NOT participate \
-                         in this E3. This usually indicates a version skew between the ciphernode \
-                         binary and the on-chain contracts (unrecognized BFV preset or committee \
-                         size). Cause: {}",
-                        e
+                         in this E3. The request names a committee size or BFV configuration that \
+                         this release does not know, or a BFV profile that this release disables. \
+                         Unless the profile was disabled on purpose, this indicates version skew \
+                         between the ciphernode binary and the on-chain contracts. Cause: {e:#}"
                     );
                     Ok(None)
                 }
@@ -573,6 +584,10 @@ mod tests {
                 continue;
             }
             let converted = result.unwrap();
+            // The node saves this binding and rechecks it before it restores the E3.
+            e3_request::E3Meta::from(&converted)
+                .validate_configuration()
+                .unwrap();
             assert_eq!(converted.params_profile, profile);
             assert_eq!(converted.crypto_config_id, event.cryptoConfigId.0);
             assert_eq!(

@@ -60,11 +60,10 @@ async fn proof_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() 
         request_aggregator_proofs(&mut actor, &e3_id, profile);
     }
     bus.flush_event_pipeline().await?;
-    let profiles: Vec<_> = history
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .into_iter()
-        .filter_map(|event| match event.into_data() {
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let profiles: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
             InterfoldEventData::ComputeRequest(ComputeRequest {
                 request: ComputeRequestKind::Zk(kind),
                 ..
@@ -89,6 +88,61 @@ async fn proof_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() 
     assert_eq!(actor.pending.len(), 2);
     assert_eq!(actor.pending_pk_aggregation.len(), 2);
     assert_eq!(actor.pending_aggregation.len(), 2);
+    // Each disabled request is reported once. The disabled E3 produces nothing else.
+    assert_eq!(events.len(), 9);
+    let disabled_e3_id = E3id::new("3", 1);
+    assert_eq!(
+        interfold_errors(&events),
+        ["C0", "C5", "C7"].map(|circuit| format!(
+            "Skipping {circuit} proof generation for E3 {disabled_e3_id}: BFV profile sync-insecure-64 is disabled in this release"
+        ))
+    );
+    Ok(())
+}
+
+fn interfold_errors(events: &[InterfoldEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// C5 names its committee by (n, h). A pair that names no committee cannot select artifacts, so
+/// the node keeps no C5 work and reports the fault once instead of failing in the executor.
+#[actix::test]
+async fn c5_request_for_an_unknown_committee_is_reported_and_skipped() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("46", 1);
+    let c5 = PkAggregationProofPending {
+        e3_id: e3_id.clone(),
+        proof_request: PkAggregationProofRequest {
+            keyshare_bytes: vec![],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&[1]),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+            committee_n: 4,
+            committee_h: 2,
+            committee_threshold: 1,
+        },
+        public_key: ArcBytes::from_bytes(&[1]),
+        nodes: OrderedSet::new(),
+    };
+    actor.handle_pk_aggregation_proof_pending(TypedEvent::new(c5.clone(), test_ctx(c5)));
+    bus.flush_event_pipeline().await?;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        interfold_errors(&events),
+        [format!(
+            "Skipping C5 proof generation for E3 {e3_id}: Unknown committee size for (n=4, h=2)"
+        )]
+    );
+    assert!(actor.pending_pk_aggregation.is_empty());
+    assert!(actor.pk_aggregation_correlation.is_empty());
     Ok(())
 }
 
@@ -792,7 +846,14 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
     ));
     assert!(actor.pending_share_decryption.is_empty());
     assert!(actor.held_share_decryption.is_empty());
-    assert_no_events(&history).await?;
+    // The disabled request is reported once and requests no proof.
+    let skipped = [format!(
+        "Skipping C6 proof generation for E3 {id}: BFV profile sync-insecure-64 is disabled in this release"
+    )];
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(interfold_errors(&events), skipped);
     let request = |redelivery| {
         let pending = e3_events::ShareDecryptionProofPending {
             redelivery,
@@ -874,10 +935,11 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
     assert_eq!(ids.len(), 4);
     actor.handle_share_decryption_proof_response(&ids[3], vec![proof]);
     assert_eq!(signed_redeliveries().await?, vec![1, 9]);
-    assert!(errors
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .is_empty());
+    // The redeliveries raised no error beyond the reported skip.
+    assert_eq!(
+        interfold_errors(&errors.send(GetEvents::<InterfoldEvent>::new()).await?),
+        skipped
+    );
     Ok(())
 }
 

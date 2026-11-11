@@ -11,13 +11,20 @@ impl ShareVerificationActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
-        // An unsupported local configuration must not produce peer-fault verdicts or evidence.
+        // A profile that this build cannot verify is a local fault. The node abstains: it keeps no
+        // pending work, publishes no verdict and blames no peer.
         if let Err(error) = msg
             .params_profile
             .ensure_admission_enabled()
             .and_then(|()| msg.params_profile.validate_committee(msg.committee_size))
         {
-            error!(%e3_id, %error, "Unsupported share-proof verification profile");
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!(
+                    "Skipping {:?} verification for E3 {e3_id}: {error}",
+                    msg.kind
+                ),
+            );
             return;
         }
 

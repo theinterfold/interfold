@@ -16,8 +16,25 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&e3_id) {
             return;
         }
-        if let Err(error) = msg.proof_request.params_profile.ensure_admission_enabled() {
-            error!(%e3_id, %error, "Unsupported C5 proof profile");
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer. C5 names its committee by (n, h),
+        // which the executor resolves the same way.
+        let profile = msg.proof_request.params_profile;
+        if let Err(error) = profile
+            .ensure_admission_enabled()
+            .map_err(anyhow::Error::from)
+            .and_then(|()| {
+                let committee = CiphernodesCommitteeSize::from_n_h(
+                    msg.proof_request.committee_n,
+                    msg.proof_request.committee_h,
+                )?;
+                profile.validate_committee(committee).map_err(Into::into)
+            })
+        {
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C5 proof generation for E3 {e3_id}: {error}"),
+            );
             return;
         }
 
@@ -110,6 +127,8 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&e3_id) {
             return;
         }
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer.
         if let Err(error) = msg
             .proof_request
             .params_profile
@@ -120,7 +139,10 @@ impl ProofRequestActor {
                     .validate_committee(msg.proof_request.committee_size)
             })
         {
-            error!(%e3_id, %error, "Unsupported C7 proof profile");
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C7 proof generation for E3 {e3_id}: {error}"),
+            );
             return;
         }
 

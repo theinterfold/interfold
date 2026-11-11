@@ -102,7 +102,7 @@ Add a `circuits` directory to the project. The verifier goes in `contracts/verif
 ### Write the input circuit
 
 Create `circuits/binary_input/Nargo.toml`. The library at `v0.18.0` uses the `insecure-64` preset,
-which the template requests (`paramSet: 0`).
+which the template requests (`profile: 'ss-insecure-64'`).
 
 ```toml filename="circuits/binary_input/Nargo.toml"
 [package]

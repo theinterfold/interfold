@@ -16,6 +16,8 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&e3_id) {
             return;
         }
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer.
         if let Err(error) = msg
             .proof_request
             .params_profile
@@ -26,7 +28,10 @@ impl ProofRequestActor {
                     .validate_committee(msg.proof_request.committee_size)
             })
         {
-            error!(%e3_id, %error, "Unsupported C6 proof profile");
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C6 proof generation for E3 {e3_id}: {error}"),
+            );
             return;
         }
 

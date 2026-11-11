@@ -229,12 +229,9 @@ NODE
   fi
 done
 
-while IFS=';' read -r label binding_id; do
-  expected_id=$(sol_bytes32 "${label}_CONFIG_ID")
-  if [[ "$binding_id" != "$expected_id" ]]; then
-    fail "drift: ${label} config ID must match $PROTOCOL_SOL in shared bindings"
-  fi
-done < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" <<'NODE'
+# Capture the reader's output so that a failure stops the check. A process substitution would hide
+# the failure and leave nothing to compare.
+ADMITTED_CONFIGS=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" <<'NODE'
 import { readFileSync } from 'node:fs';
 const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 for (const profile of config.bfv.profiles) {
@@ -245,7 +242,25 @@ for (const profile of config.bfv.profiles) {
   }
 }
 NODE
+) || fail "could not read the admitted configurations from $CRYPTO_CONFIG_JSON"
+
+# Every admitted configuration needs a constant, and every constant an admitted configuration.
+binding_config_names=$(cut -d';' -f1 <<< "$ADMITTED_CONFIGS" | sed '/^$/d; s/$/_CONFIG_ID/' | sort)
+protocol_config_names=$(
+  sed -nE 's/^[[:space:]]*bytes32 internal constant ([A-Z0-9_]+_CONFIG_ID)[[:space:]]*=.*/\1/p' "$PROTOCOL_SOL" \
+    | sort
 )
+if [[ "$binding_config_names" != "$protocol_config_names" ]]; then
+  fail "drift: admitted configurations in $CRYPTO_CONFIG_JSON must match the *_CONFIG_ID constants in $PROTOCOL_SOL"
+fi
+
+while IFS=';' read -r label binding_id; do
+  [[ -n "$label" ]] || continue
+  expected_id=$(sol_bytes32 "${label}_CONFIG_ID")
+  if [[ -z "$binding_id" || "$binding_id" != "$expected_id" ]]; then
+    fail "drift: ${label} config ID must match $PROTOCOL_SOL in shared bindings"
+  fi
+done <<< "$ADMITTED_CONFIGS"
 
 check_utils_route() {
   local symbol="$1"
