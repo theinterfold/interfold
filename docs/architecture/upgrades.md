@@ -240,6 +240,18 @@ longer presents a threshold-only ID as a current preset identity. Release artifa
 still applies; source changes are not permission to restamp published archives or reuse unqualified
 deployment bindings.
 
+The cutover changes these request interfaces. Update their callers together with the contracts:
+
+- The Hardhat task `committee:new` takes `--profile <name>` instead of `--param-set <index>`. It
+  defaults to the profile of `ACTIVE_BFV_PRESET`.
+- In `e3-evm-client`, `InterfoldRead::get_e3_quote` and `InterfoldWrite::request_e3` take
+  `params_profile: BfvProfile` instead of `param_set: u8`.
+- In `@interfold/sdk`, `E3RequestParams` takes `profile` instead of `paramSet`. `getE3Quote` and
+  `requestE3`, including `requestE3` in `@interfold/react`, derive the registry slot and the
+  configuration ID from `profile` and `committeeSize`.
+- In `@interfold/contracts/bfv`, `BFV_PRESETS[preset].configId` is removed. Use
+  `bfvConfiguration(profile, committeeSize).configId`.
+
 ## Dependency replacement
 
 There are **no concurrent registry generations**. Each request validates/snapshots one coherent
