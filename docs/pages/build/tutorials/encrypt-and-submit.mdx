@@ -66,7 +66,7 @@ const sdk = InterfoldSDK.create({
     feeToken: FEE_TOKEN_ADDRESS,
   },
   chain: hardhat,
-  // Must match paramSet 0, which the request in the next step uses.
+  // Must match the ss-insecure-64 profile, which the request in the next step uses.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
 })
 
@@ -97,7 +97,7 @@ const requestParams = {
   committeeSize: 0, // CommitteeSize.Minimum
   inputWindow: await calculateInputWindow(publicClient, 300), // 300-second window
   e3Program: E3_PROGRAM_ADDRESS,
-  paramSet: 0,
+  profile: 'ss-insecure-64' as const,
   computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
 }
 
