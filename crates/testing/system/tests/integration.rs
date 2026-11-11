@@ -184,11 +184,40 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         .send(TakeEvents::<InterfoldEvent>::new(4))
         .await?;
 
+    // The bus dispatches one event at a time and waits until every subscriber has handled it.
+    // The history already holds the events above, so the translator handles this event after
+    // them and gossips it after any of them that it forwards.
+    let sentinel = KeyshareCreated {
+        e3_id: E3id::new("1237", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: "node-3".to_string(),
+        party_id: 2,
+        signed_pk_generation_proof: None,
+    };
+    bus.publish_without_context(sentinel.clone())?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while msgs.lock().await.len() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("the translator did not forward the sentinel event"))?;
+
     assert_eq!(
         *msgs.lock().await,
-        vec![evt_1.clone().into(), evt_2.clone().into()], // notice no local events
+        vec![evt_1.clone().into(), evt_2.clone().into(), sentinel.into()], // notice no local events
         "NetEventTranslator did not transmit correct events to the network"
     );
+
+    // Historical sync uses the same rule: it neither serves these events nor accepts them from a
+    // peer.
+    for event in &history.events[2..] {
+        assert!(
+            !NetEventTranslator::is_forwardable_event(event),
+            "{} must stay local",
+            event.event_type()
+        );
+    }
 
     assert_eq!(
         history
