@@ -10,9 +10,12 @@ An insecure Rust benchmark run can export `integration_summary.json`. Run
 directory's `folded_artifacts.json`. The benchmark runner does not overwrite
 committed fixtures automatically.
 
-`BfvVkBindingIntegration` prefers the committed fixture. To verify a fresh
-benchmark run without changing it, use the override below; a local summary is
-otherwise only a fallback when the fixture is absent.
+`BfvVkBindingIntegration` reads `BFV_VK_BINDING_FOLDED_ARTIFACTS` first, then
+the committed fixture. It reads the benchmark summary at
+`circuits/benchmarks/results_insecure_minimum/integration_summary.json` only
+when the fixture is absent. To verify a fresh benchmark run without changing the
+fixture, set `BFV_VK_BINDING_FOLDED_ARTIFACTS` to the `integration_summary.json`
+of that run. The sync script below rewrites the fixture.
 
 ## Manual override
 
