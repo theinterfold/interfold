@@ -42,7 +42,9 @@ parameter-set index 1 and new secure index 2; never reinterpret old requests.
 Recovery re-derives the profile/committee identity and requires the exact threshold parameter bytes
 before metadata seeds restored work. Recovered local selections must also agree with the hydrated
 request metadata. Inconsistent state fails recovery without rewriting IDs or parameters; this is not
-active-E3 migration or support for incompatible intermediate-build state.
+active-E3 migration or support for incompatible intermediate-build state. Confirmed-chain ingestion
+runs the same check on each request that it admits, so the node skips a request that recovery would
+reject instead of failing on restart.
 
 The request snapshots dependencies, treasury, service/slash work allocation and policy, fee token,
 parameter hash/configuration, verifier addresses, committee root, ticket price, and all timeout
