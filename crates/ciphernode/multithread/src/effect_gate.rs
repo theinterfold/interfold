@@ -1244,7 +1244,7 @@ pub(crate) mod tests {
                 Address::repeat_byte(3),
             ],
             honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             interfold_address: Address::repeat_byte(9),
             sk_agg_commits: vec![],
@@ -1259,7 +1259,7 @@ pub(crate) mod tests {
             es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
             d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
             decryption_domain: key.domain(Address::ZERO),
-            params_preset: key.params_preset,
+            params_profile: key.params_profile,
             committee_size: key.committee_size,
         };
         let target = Recorder::default().start();

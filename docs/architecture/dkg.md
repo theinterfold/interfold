@@ -24,7 +24,7 @@ Owners: [keyshare](../../crates/orchestration/keyshare/src/),
   sender slots use the sender's position in the selected fold rows. A non-prefix H-roster makes
   these indices different.
 - C2a/C2b are singleton proof bundles for each recipient; C3a/C3b use the configured Shamir
-  multiplicities. Derive witness dimensions from the active preset, not incidental vector lengths.
+  multiplicities. Derive witness dimensions from the saved profile, not incidental vector lengths.
 
 ## Exchange and verification boundaries
 

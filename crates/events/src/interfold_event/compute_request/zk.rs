@@ -10,7 +10,7 @@ use derivative::Derivative;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
-use e3_fhe_params::{BfvPreset, BfvProfile};
+use e3_fhe_params::BfvProfile;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,7 @@ pub struct NodeDkgFoldRequest {
     pub c3_slot_indices_b: Vec<u32>,
     pub c3_total_slots: usize,
     pub party_id: u64,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -92,7 +92,7 @@ pub struct NodesFoldStepRequest {
     pub total_slots: usize,
     /// E3 identifier used for job namespacing.
     pub e3_id: String,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -107,7 +107,7 @@ pub struct DkgAggregationRequest {
     pub party_ids: Vec<u64>,
     /// Ordered committee addresses (`topNodes`) for `committee_hash_*` public inputs.
     pub committee_addresses: Vec<Address>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -118,7 +118,7 @@ pub struct DecryptionAggregationRequest {
     pub jobs: Vec<DecryptionAggregationJobRequest>,
     /// Ordered committee addresses (`topNodes`) for `committee_hash_*` public inputs.
     pub committee_addresses: Vec<Address>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -130,8 +130,8 @@ pub struct PkAggregationProofRequest {
     pub keyshare_bytes: Vec<ArcBytes>,
     /// Serialized aggregated PublicKey bytes.
     pub aggregated_pk_bytes: ArcBytes,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Total committee size (N).
     pub committee_n: usize,
     /// Honest committee size (H) — number of shares being aggregated.
@@ -377,8 +377,8 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub d_share_bytes: Vec<ArcBytes>,
     /// Stable E3 context cryptographically bound into every C6 proof.
     pub decryption_domain: DecryptionDomainContext,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -542,8 +542,8 @@ pub struct DecryptedSharesAggregationProofRequest {
     pub d_share_polys: Vec<(u64, Vec<ArcBytes>)>,
     /// Decoded plaintext per ciphertext index.
     pub plaintext: Vec<ArcBytes>,
-    /// BFV preset (parameters for witness / circuit config).
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Threshold required for decryption.
     pub threshold_m: u64,
     /// Committee size (N).

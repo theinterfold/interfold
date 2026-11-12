@@ -99,7 +99,7 @@ fn canonical_key() -> CanonicalPublicKey {
         pk_commitment: [7; 32],
         committee: (0..3).map(|party| test_signer(party).address()).collect(),
         honest_committee: (0..2).map(|party| test_signer(party).address()).collect(),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: test_decryption_domain().interfold_address,
         sk_agg_commits: vec![],
@@ -1007,7 +1007,7 @@ async fn replayed_c7_work_cannot_replace_the_recovered_share_batch() -> Result<(
             plaintext: plaintext.clone(),
             threshold_m: 9,
             threshold_n: 19,
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Small,
         },
     };

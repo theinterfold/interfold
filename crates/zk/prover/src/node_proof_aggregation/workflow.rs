@@ -120,7 +120,7 @@ impl DkgProofCollectionState {
             c3_slot_indices_b: slots_b,
             c3_total_slots,
             party_id: meta.party_id,
-            params_preset: meta.params_profile.threshold_preset(),
+            params_profile: meta.params_profile,
             committee_size: meta.committee_size,
         }
     }

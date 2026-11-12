@@ -239,8 +239,6 @@ impl ThresholdKeyshare {
             .decryption_domain
             .ok_or_else(|| anyhow!("E3 decryption domain not available for C6 proof"))?;
 
-        let threshold_preset = self.params_profile.threshold_preset();
-
         info!("Publishing ShareDecryptionProofPending for C6 proof generation...");
 
         let committee_size = state.committee_size()?;
@@ -260,7 +258,7 @@ impl ThresholdKeyshare {
                 es_poly_sum: decrypting.es_poly_sum,
                 d_share_bytes: d_share_poly.clone(),
                 decryption_domain,
-                params_preset: threshold_preset,
+                params_profile: self.params_profile,
                 committee_size,
             },
             redelivery: 0,

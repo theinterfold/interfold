@@ -12,6 +12,7 @@ use alloy::primitives::{keccak256, Bytes};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
 use anyhow::anyhow;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     AggregationProofPending, AggregationProofSigned, BusHandle, ComputeRequest,
     ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, DKGInnerProofReady,

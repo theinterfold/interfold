@@ -7,7 +7,6 @@
 use crate::backend::ZkBackend;
 use crate::error::ZkError;
 use e3_events::Proof;
-use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use std::fs;
@@ -170,10 +169,6 @@ impl ZkProver {
 
     pub fn circuits_dir(&self, variant: CircuitVariant, artifacts_dir: &str) -> PathBuf {
         self.circuits_dir.join(artifacts_dir).join(variant.as_str())
-    }
-
-    pub fn resolve_artifacts_dir(&self, preset: BfvPreset, committee: &str) -> String {
-        preset.artifacts_dir_for_committee(committee)
     }
 
     pub fn work_dir(&self) -> &PathBuf {
