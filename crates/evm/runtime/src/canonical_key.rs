@@ -156,9 +156,13 @@ impl CanonicalKeyProjection {
                     .remember_ciphertexts(&output.e3_id, &output.ciphertext_output)?;
             }
             InterfoldEventData::E3Requested(request) if chain_fact => {
+                // Chain ingestion admits only the profiles that this release admits. A retained
+                // request of a profile disabled since then gets no authority, so it cannot stop
+                // recovery.
                 if self
                     .interfold_addresses
                     .contains_key(&request.e3_id.chain_id())
+                    && request.params_profile.admission_enabled()
                 {
                     self.requests
                         .entry(request.e3_id.clone())
@@ -326,7 +330,7 @@ impl CanonicalKeyProjection {
                 pk_commitment: commitment,
                 committee,
                 honest_committee,
-                params_preset: request.params_preset,
+                params_profile: request.params_profile,
                 committee_size,
                 interfold_address: self.interfold_addresses[&id.chain_id()],
                 sk_agg_commits: inputs[5 + h..5 + 2 * h].iter().map(|v| v.0).collect(),
@@ -361,7 +365,9 @@ impl CanonicalKeyProjection {
             if &candidate.0 != id {
                 continue;
             }
-            let Some(bytes) = assembly.validated_bytes(candidate.2, key.params_preset) else {
+            let Some(bytes) =
+                assembly.validated_bytes(candidate.2, key.params_profile.threshold_preset())
+            else {
                 continue;
             };
             if assembly.matches_authority(&key.committee, key.pk_commitment) {

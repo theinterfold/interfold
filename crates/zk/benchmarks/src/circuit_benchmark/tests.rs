@@ -525,8 +525,24 @@ fn integration_child_uses_validated_bb_even_when_path_selects_another_binary() {
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let selected = root.join("selected bb");
-    for (path, script) in [(&selected, "#!/bin/sh\nprintf '5.2.0\\n'\n"), (&bin.join("bb"), "#!/bin/sh\nprintf 'wrong-version\\n'\n"), (&bin.join("cargo"), "#!/bin/sh\nversion=$(\"${E3_CUSTOM_BB:-bb}\" --version)\n[ \"$version\" = 5.2.0 ] || exit 7\nprintf '%s' \"$E3_CUSTOM_BB\" > \"$BENCHMARK_SUMMARY_OUTPUT\"\n")] {
-        fs::write(path, script).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    for (path, script) in [
+        (&selected, "#!/bin/sh\nprintf '5.2.0\\n'\n"),
+        (&bin.join("bb"), "#!/bin/sh\nprintf 'wrong-version\\n'\n"),
+        (
+            &bin.join("cargo"),
+            "#!/bin/sh\nversion=$(\"${E3_CUSTOM_BB:-bb}\" --version)\n[ \"$version\" = 5.2.0 ] || exit 7\nprintf '%s' \"$E3_CUSTOM_BB\" > \"$BENCHMARK_SUMMARY_OUTPUT\"\n",
+        ),
+    ] {
+        // A writer child prevents concurrent test spawns from inheriting a writable script FD,
+        // which can make execve fail with ETXTBSY on Linux even after fs::write returns.
+        let written = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$2\" > \"$1\"", "write-fixture"])
+            .arg(path)
+            .arg(script)
+            .status()
+            .unwrap();
+        assert!(written.success());
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let selected = artifacts::bb_binary(Some(&selected)).unwrap();
     let observed = run(Command::new(&selected).arg("--version")).unwrap();

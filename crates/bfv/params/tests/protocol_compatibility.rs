@@ -4,9 +4,8 @@
 
 use alloy_primitives::hex;
 use e3_fhe_params::{
-    bfv_crypto_config_id, bfv_encryption_scheme_id, bfv_parameter_hash,
-    current_bfv_crypto_config_id, decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset,
-    INTERFOLD_BFV_VERSION,
+    bfv_crypto_config_id, bfv_encryption_scheme_id, bfv_parameter_hash, decode_bfv_params,
+    encode_bfv_params, BfvParamSet, BfvPreset, INTERFOLD_BFV_VERSION,
 };
 use serde_json::Value;
 
@@ -41,7 +40,7 @@ fn protocol_domains_preserve_frozen_values() {
 }
 
 #[test]
-fn configuration_identities_preserve_current_and_historical_vectors() {
+fn threshold_only_identities_preserve_historical_vectors() {
     for vector in vectors()["vectors"].as_array().unwrap() {
         let params = hex::decode(vector["encodedParameters"].as_str().unwrap()).unwrap();
         let version = vector["circuitVersion"].as_str().unwrap();
@@ -56,12 +55,6 @@ fn configuration_identities_preserve_current_and_historical_vectors() {
             bfv_crypto_config_id(&params, version).to_string(),
             expected_id
         );
-        if vector["preset"].is_string() {
-            assert_eq!(
-                current_bfv_crypto_config_id(&params).to_string(),
-                expected_id
-            );
-        }
     }
 }
 

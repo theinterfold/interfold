@@ -15,6 +15,12 @@ pub const BFV_ENCRYPTION_SCHEME: &str = "fhe.rs:BFV";
 /// Circuit statement domain used in current BFV configuration identities.
 pub const INTERFOLD_BFV_VERSION: &str = "interfold-bfv-v5";
 
+/// Frozen statement version for historical threshold-only v5 identities, not new admission.
+pub const LEGACY_BFV_CONFIG_VERSION: &str = "interfold-bfv-v5";
+
+/// Encoding domain for protocol-, DKG-, and committee-bound configuration identities.
+pub const BFV_PROFILE_CONFIG_DOMAIN: &str = "interfold:bfv:crypto-config:v1";
+
 /// Insecure preset constants (degree 64) - DO NOT USE IN PRODUCTION
 pub mod insecure_64 {
     pub const DEGREE: usize = 64;
@@ -35,6 +41,13 @@ pub mod insecure_64 {
         pub const MODULI: &[u64] = &[0x000000001fffba01, 0x000000001fffc081];
         pub const ERROR1_VARIANCE: &str = "10";
         pub const VARIANCE: u32 = 10;
+    }
+
+    /// Candidate share-encryption parameters for synchronized decryption, not the SS pair.
+    pub mod synchronized_dkg {
+        pub const PLAINTEXT_MODULUS: u64 = 268434178;
+        pub const MODULI: &[u64] = &[0x000000001ffffb01, 0x000000001ffffd81];
+        pub const ERROR1_VARIANCE: &str = "10";
     }
 }
 

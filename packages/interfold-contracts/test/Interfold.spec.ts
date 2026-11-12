@@ -6,6 +6,11 @@
 import { expect } from "chai";
 
 import {
+  BFV_PROFILES,
+  INTERFOLD_BFV_VERSION,
+  bfvConfiguration,
+} from "../bfv.js";
+import {
   ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
@@ -558,7 +563,10 @@ describe("Interfold", function () {
         ...request,
         inputWindow: await freshInputWindow(),
         paramSet: 2,
-        expectedCryptoConfigId: PRODUCTION_CRYPTO_CONFIG_ID,
+        expectedCryptoConfigId: bfvConfiguration(
+          "ss-secure-8192",
+          Number(request.committeeSize),
+        ).configId,
       };
 
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
@@ -568,7 +576,7 @@ describe("Interfold", function () {
       );
       expect((await interfold.getE3(firstE3Id)).paramSet).to.equal(2);
       expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
-        PRODUCTION_CRYPTO_CONFIG_ID,
+        secureRequest.expectedCryptoConfigId,
       );
     });
 
@@ -596,26 +604,41 @@ describe("Interfold", function () {
 
     it("rejects a circuit configuration that changed after quoting", async function () {
       const { interfold, request } = await loadFixture(setup);
-      await expect(
-        interfold.request({
-          ...request,
-          inputWindow: await freshInputWindow(),
-          expectedCryptoConfigId: ethers.ZeroHash,
-        }),
-      ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
+      for (const expectedCryptoConfigId of [
+        ethers.ZeroHash,
+        bfvConfiguration("ss-insecure-64", 1).configId,
+        BFV_PROFILES["sync-insecure-64"].configurations[0]!.cryptoConfigId,
+      ]) {
+        await expect(
+          interfold.request({
+            ...request,
+            inputWindow: await freshInputWindow(),
+            expectedCryptoConfigId,
+          }),
+        )
+          .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+          .withArgs(expectedCryptoConfigId, ACTIVE_CRYPTO_CONFIG_ID);
+      }
     });
 
     for (const version of [
       "interfold-bfv-v1",
       "interfold-bfv-v2",
       "interfold-bfv-v3",
+      "interfold-bfv-v4",
+      INTERFOLD_BFV_VERSION,
     ]) {
       it(`rejects ${version} configurations for both BFV parameter sets`, async function () {
         const { interfold, request } = await loadFixture(setup);
         await interfold.setParamSet(2, BFV_PARAMS_SECURE);
         for (const [paramSet, params, currentConfigId] of [
           [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
-          [2, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+          [
+            2,
+            BFV_PARAMS_SECURE,
+            bfvConfiguration("ss-secure-8192", Number(request.committeeSize))
+              .configId,
+          ],
         ] as const) {
           const legacyConfigId = ethers.keccak256(
             abiCoder.encode(

@@ -169,7 +169,7 @@ impl ThresholdKeyshare {
 
         let plan = build_shares_generated_plan(
             &self.cipher,
-            self.share_enc_preset,
+            self.params_profile,
             party_id,
             committee_size,
             pk_share,

@@ -19,14 +19,14 @@ impl ShareVerifier {
 
     /// Check that a party supplied the canonical proof-type layout for this protocol phase.
     ///
-    /// C2/C3 counts are derived from the threshold parameter preset. Variable C4b and C6 counts
+    /// C2/C3 counts are derived from the profile's threshold parameters. Variable C4b and C6 counts
     /// are checked against trusted local state by their producers. This trust-boundary check
     /// prevents a signed proof for another phase (or a duplicated singleton proof) from satisfying
     /// the current phase merely because its self-declared [`ProofType`] maps to a valid circuit.
     pub(in crate::workflow::share_verification) fn has_canonical_proof_shape(
         kind: &VerificationKind,
         signed_proofs: &[SignedProofPayload],
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
     ) -> bool {
         match kind {
             VerificationKind::PkGenerationProofs => {
@@ -36,12 +36,8 @@ impl ShareVerifier {
             VerificationKind::ShareProofs => {
                 // Canonical order is C2a, C2b, C3a x L, C3b x L. Each C3 proof encrypts one
                 // modulus row of the threshold-parameter Shamir secret, even though encryption
-                // itself uses the paired DKG parameters. The dispatch currently carries that DKG
-                // preset, so recover its threshold counterpart before deriving L.
-                let threshold_preset = params_preset
-                    .threshold_counterpart()
-                    .unwrap_or(params_preset);
-                let num_share_rows = threshold_preset.metadata().num_moduli;
+                // itself uses the profile's paired DKG parameters.
+                let num_share_rows = params_profile.threshold_preset().metadata().num_moduli;
                 signed_proofs.len() == 2 + (2 * num_share_rows)
                     && signed_proofs[0].payload.proof_type == ProofType::C2aSkShareComputation
                     && signed_proofs[1].payload.proof_type == ProofType::C2bESmShareComputation

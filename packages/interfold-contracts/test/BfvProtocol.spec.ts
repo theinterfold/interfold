@@ -3,6 +3,8 @@ import { expect } from "chai";
 import { readFileSync } from "node:fs";
 
 import {
+  BFV_PROFILES,
+  type BfvProfile,
   CIRCUIT_DIMENSIONS,
   COMMITTEES,
   decryptionAggregatorLayout,
@@ -12,7 +14,7 @@ import { ethers } from "./fixtures/connection";
 const fixture = JSON.parse(
   readFileSync(
     new URL(
-      "../../../crates/bfv/params/tests/fixtures/bfv_protocol.json",
+      "../../../crates/bfv/params/tests/fixtures/bfv_profiles.json",
       import.meta.url,
     ),
     "utf8",
@@ -48,21 +50,34 @@ describe("BFV protocol bindings", function () {
     const harness = await (
       await ethers.getContractFactory("BfvProtocolHarness")
     ).deploy();
-    for (const vector of fixture.vectors.filter(
-      (vector: { preset: string | null }) => vector.preset !== null,
+    for (const vector of fixture.profiles.filter(
+      (vector: { protocol: string }) => vector.protocol === "secret-shared",
     )) {
-      expect(await harness.identity(vector.paramSet)).to.deep.equal([
-        fixture.encryptionSchemeId,
-        ethers.id(vector.circuitVersion),
-        vector.parameterHash,
-        vector.cryptoConfigId,
-      ]);
+      for (const configuration of vector.configurations) {
+        const committee =
+          COMMITTEES[configuration.committee as keyof typeof COMMITTEES];
+        expect(
+          await harness.identity(
+            BFV_PROFILES[vector.profile as BfvProfile].paramSet,
+            committee.committeeSize,
+          ),
+        ).to.deep.equal([
+          fixture.encryptionSchemeId,
+          ethers.id(vector.statementVersion),
+          vector.thresholdParameterHash,
+          configuration.cryptoConfigId,
+        ]);
+      }
     }
-    await expect(harness.identity(1)).to.be.revertedWithCustomError(
+    await expect(harness.identity(1, 0)).to.be.revertedWithCustomError(
       harness,
       "UnsupportedCryptoConfig",
     );
-    await expect(harness.identity(255)).to.be.revertedWithCustomError(
+    await expect(harness.identity(255, 0)).to.be.revertedWithCustomError(
+      harness,
+      "UnsupportedCryptoConfig",
+    );
+    await expect(harness.identity(0, 255)).to.be.revertedWithCustomError(
       harness,
       "UnsupportedCryptoConfig",
     );

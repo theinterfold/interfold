@@ -689,10 +689,6 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
             material.parameter_hash.to_string(),
             vector["parameterHash"].as_str().unwrap()
         );
-        assert_eq!(
-            material.config_id.to_string(),
-            vector["cryptoConfigId"].as_str().unwrap()
-        );
     }
 }
 
@@ -729,7 +725,9 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     let contract = crate::bindings::solidity(&params).unwrap();
     assert!(contract.contains(&format!(
         "{:#x}",
-        params.get(BfvPreset::SecureThreshold8192).config_id
+        e3_fhe_params::BfvProfile::SsSecure8192
+            .crypto_config_id(CiphernodesCommitteeSize::Small)
+            .unwrap()
     )));
     let selection = configuration::prepare_selection(
         root,

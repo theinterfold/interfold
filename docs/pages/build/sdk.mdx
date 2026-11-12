@@ -14,7 +14,9 @@ This page is the reference for the TypeScript SDK (`@interfold/sdk`) and the Rea
 (`@interfold/react`). It is for developers who write an E3 client or a coordination server. It
 covers installation, the client class, requests, the committee public key, encryption, events,
 enums, utilities, and errors. The samples come from the default template (`templates/default`) and
-the SDK README. Every export on this page exists in version 0.18.0.
+the SDK README. Every export on this page except `BfvProfile` exists in version 0.18.0. In release
+0.19.0 and earlier, `E3RequestParams` has `paramSet` in place of `profile`. See
+[Request an E3](#request-an-e3).
 
 ## Packages
 
@@ -165,21 +167,21 @@ const sdk = InterfoldSDK.create({
 
 ## BFV presets
 
-The preset selects the BFV parameters that the client uses to encrypt. It must match the `paramSet`
-of the E3.
+The preset selects the BFV parameters that the client uses to encrypt. It must match the `profile`
+of the E3 request, which also sets the `paramSet` of the E3.
 
-| Preset name             | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
-| ----------------------- | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_64` | 0          | 64          | 3              | Local development and tests     |
-| `SECURE_THRESHOLD_8192` | 2          | 8192        | 3              | Production and secure test runs |
+| Preset name             | Request `profile` | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
+| ----------------------- | ----------------- | ---------- | ----------- | -------------- | ------------------------------- |
+| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 0          | 64          | 3              | Local development and tests     |
+| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 2          | 8192        | 3              | Production and secure test runs |
 
 The insecure preset has no production security. Use it only for tests.
 `ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
 `INSECURE_THRESHOLD_64`.
 
 <Callout type='warning'>
-  The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
-  under the wrong parameters, and the committee cannot decrypt the result.
+  The SDK does not compare the preset with the profile of the E3. A mismatch encrypts inputs under
+  the wrong parameters, and the committee cannot decrypt the result.
 </Callout>
 
 ## Request an E3
@@ -203,7 +205,7 @@ const requestParams = {
   committeeSize: DEFAULT_E3_CONFIG.committeeSize, // CommitteeSize.Minimum
   inputWindow,
   e3Program: E3_PROGRAM_ADDRESS,
-  paramSet: 0, // insecure-64, for local development
+  profile: 'ss-insecure-64' as const, // for local development
   computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
 }
 
@@ -221,16 +223,22 @@ const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 | `committeeSize`         | `number` (`CommitteeSize`)  | Required          |
 | `inputWindow`           | `readonly [bigint, bigint]` | Required          |
 | `e3Program`             | `` `0x${string}` ``         | Required          |
-| `paramSet`              | `number`                    | Required          |
+| `profile`               | `BfvProfile`                | Required          |
 | `computeProviderParams` | `` `0x${string}` ``         | Required          |
 | `customParams`          | `` `0x${string}` ``         | `'0x'`            |
 | `maxFee`                | `bigint`                    | A fresh quote     |
 | `gasLimit`              | `bigint`                    | Estimated by viem |
 
+Release 0.19.0 and earlier do not have `profile`. On these releases, `E3RequestParams` has a
+required `paramSet` field (`number`) in its place, for example `paramSet: 0` for
+`INSECURE_THRESHOLD_64`.
+
 `requestE3` fills the fields that the contract needs and the SDK knows:
 
 - `expectedFeeToken` is the `feeToken` address from the SDK configuration.
-- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 2. Other values fail.
+- `paramSet` and `expectedCryptoConfigId` come from `profile` and `committeeSize`. Only
+  `'ss-insecure-64'` and `'ss-secure-8192'` are accepted. Other profiles fail, including
+  `'sync-insecure-64'`, which this release disables.
 - `committeeSize` must be 0, 1, or 2.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3

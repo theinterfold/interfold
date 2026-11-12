@@ -17,6 +17,7 @@ use alloy::providers::Provider;
 use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data_availability::public_key::{self, ChunkLayout};
 use e3_evm_client::{
     block_listener::BlockListener,
@@ -34,8 +35,8 @@ use e3_evm_contracts::{
     },
 };
 use e3_fhe_params::{
-    bfv_crypto_config_id, bfv_encryption_scheme_id, current_bfv_crypto_config_id,
-    decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset,
+    bfv_crypto_config_id, bfv_encryption_scheme_id, decode_bfv_params, encode_bfv_params,
+    BfvParamSet, BfvPreset, BfvProfile, LEGACY_BFV_CONFIG_VERSION,
 };
 use eyre::eyre;
 use eyre::Result;
@@ -404,12 +405,22 @@ impl<S: DataStore> InterfoldIndexer<S, ReadWrite> {
 
 fn request_bfv_params(
     param_set: u8,
+    committee_size: u8,
     request_config_id: B256,
     historical_params: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     if let Some(preset) = BfvPreset::from_on_chain_param_set(param_set) {
         let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
-        if request_config_id == current_bfv_crypto_config_id(&params) {
+        if let Ok(committee) = CiphernodesCommitteeSize::try_from(committee_size) {
+            if let Ok(profile) =
+                BfvProfile::from_crypto_config_id(param_set, committee, request_config_id)
+            {
+                profile.ensure_admission_enabled()?;
+                return Ok(params);
+            }
+        }
+        // Historical completed requests keep their original threshold-only v5 identity.
+        if request_config_id == bfv_crypto_config_id(&params, LEGACY_BFV_CONFIG_VERSION) {
             return Ok(params);
         }
     }
@@ -450,11 +461,17 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
 
     let e3 = contract.get_e3(event.e3Id).await?;
     let request_crypto_config_id = contract.get_e3_crypto_config_id(event.e3Id).await?;
-    let e3_params = match request_bfv_params(e3.paramSet, request_crypto_config_id, None) {
+    let e3_params = match request_bfv_params(
+        e3.paramSet,
+        e3.committeeSize,
+        request_crypto_config_id,
+        None,
+    ) {
         Err(_) if e3.paramSet == 0 || e3.paramSet == 1 => {
             let historical_params = contract.get_param_set_registry(e3.paramSet).await?;
             request_bfv_params(
                 e3.paramSet,
+                e3.committeeSize,
                 request_crypto_config_id,
                 Some(historical_params.as_ref()),
             )
@@ -1179,10 +1196,11 @@ mod public_key_chunk_tests {
     use alloy::primitives::{keccak256, Address, B256, U256};
     use alloy::sol_types::SolValue;
     use e3_bfv_client::{compute_pk_commitment, validate_pk_commitment};
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_evm_contracts::ICiphernodeRegistry::CommitteePublicKeyChunkPublished;
     use e3_fhe_params::{
-        bfv_crypto_config_id, current_bfv_crypto_config_id, decode_bfv_params, encode_bfv_params,
-        BfvParamSet, BfvPreset,
+        bfv_crypto_config_id, decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset,
+        BfvProfile, LEGACY_BFV_CONFIG_VERSION,
     };
     use fhe::bfv::{PublicKey, SecretKey};
     use fhe_traits::Serialize;
@@ -1206,26 +1224,35 @@ mod public_key_chunk_tests {
             id.to_string(),
             "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
         );
-        assert_eq!(request_bfv_params(0, id, Some(&params)).unwrap(), params);
-        assert!(request_bfv_params(0, id, None).is_err());
-        assert!(request_bfv_params(0, id, Some(&params[..params.len() - 1])).is_err());
-        assert!(request_bfv_params(2, id, Some(&params)).is_err());
+        assert_eq!(request_bfv_params(0, 0, id, Some(&params)).unwrap(), params);
+        assert!(request_bfv_params(0, 0, id, None).is_err());
+        assert!(request_bfv_params(0, 0, id, Some(&params[..params.len() - 1])).is_err());
+        assert!(request_bfv_params(2, 0, id, Some(&params)).is_err());
 
         let mut extended = params.clone();
         extended.extend_from_slice(&[0; 32]);
         let extended_id = bfv_crypto_config_id(&extended, "interfold-bfv-v1");
         assert_eq!(
-            request_bfv_params(0, extended_id, Some(&extended)).unwrap(),
+            request_bfv_params(0, 0, extended_id, Some(&extended)).unwrap(),
             extended
         );
-        assert!(request_bfv_params(0, id, Some(&extended)).is_err());
-        assert!(request_bfv_params(0, extended_id, Some(&params)).is_err());
+        assert!(request_bfv_params(0, 0, id, Some(&extended)).is_err());
+        assert!(request_bfv_params(0, 0, extended_id, Some(&params)).is_err());
 
         let current =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc());
-        let current_id = current_bfv_crypto_config_id(&current);
-        assert_eq!(request_bfv_params(0, current_id, None).unwrap(), current);
-        assert!(request_bfv_params(1, current_id, Some(&current)).is_err());
+        let current_id = BfvProfile::SsInsecure64
+            .crypto_config_id(CiphernodesCommitteeSize::Minimum)
+            .unwrap();
+        assert_eq!(request_bfv_params(0, 0, current_id, None).unwrap(), current);
+        assert!(request_bfv_params(1, 0, current_id, Some(&current)).is_err());
+        let disabled = BfvProfile::SyncDecInsecure64
+            .crypto_config_id(CiphernodesCommitteeSize::Minimum)
+            .unwrap();
+        assert!(request_bfv_params(0, 0, disabled, Some(&current))
+            .unwrap_err()
+            .to_string()
+            .contains("disabled"));
     }
 
     #[test]
@@ -1246,11 +1273,11 @@ mod public_key_chunk_tests {
             .unwrap();
 
         assert_eq!(
-            request_bfv_params(1, config_id, Some(&params)).unwrap(),
+            request_bfv_params(1, 0, config_id, Some(&params)).unwrap(),
             params
         );
-        assert!(request_bfv_params(1, config_id, None).is_err());
-        assert!(request_bfv_params(1, config_id, Some(&params[..params.len() - 1])).is_err());
+        assert!(request_bfv_params(1, 0, config_id, None).is_err());
+        assert!(request_bfv_params(1, 0, config_id, Some(&params[..params.len() - 1])).is_err());
         assert_eq!(
             keccak256(&params).to_string(),
             "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec"
@@ -1279,11 +1306,20 @@ mod public_key_chunk_tests {
     fn current_secure_slot_requires_the_current_configuration_id() {
         let params =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::SecureThreshold8192).build_arc());
-        let id = current_bfv_crypto_config_id(&params);
-
-        assert_eq!(request_bfv_params(2, id, None).unwrap(), params);
-        assert!(request_bfv_params(2, keccak256(b"interfold-bfv-v1"), None).is_err());
-        assert!(request_bfv_params(3, id, None).is_err());
+        for committee in CiphernodesCommitteeSize::ALL {
+            let id = BfvProfile::SsSecure8192
+                .crypto_config_id(committee)
+                .unwrap();
+            assert_eq!(
+                request_bfv_params(2, committee as u8, id, None).unwrap(),
+                params
+            );
+            assert!(request_bfv_params(2, (committee as u8 + 1) % 3, id, None).is_err());
+            assert!(request_bfv_params(3, committee as u8, id, None).is_err());
+        }
+        let legacy_id = bfv_crypto_config_id(&params, LEGACY_BFV_CONFIG_VERSION);
+        assert_eq!(request_bfv_params(2, 0, legacy_id, None).unwrap(), params);
+        assert!(request_bfv_params(2, 0, keccak256(b"interfold-bfv-v1"), None).is_err());
     }
 
     #[tokio::test]
@@ -1415,7 +1451,7 @@ mod public_key_chunk_tests {
                 U256::from(7),
                 bfv_encryption_scheme_id(),
                 2,
-                current_bfv_crypto_config_id(&encode_bfv_params(&params)),
+                BfvProfile::SsSecure8192.crypto_config_id(CiphernodesCommitteeSize::Minimum)?,
             )
             .send()
             .await?

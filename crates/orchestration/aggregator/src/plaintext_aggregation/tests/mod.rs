@@ -13,7 +13,7 @@ use e3_events::{
     ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents, HistoryCollector,
     ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
-use e3_fhe_params::{encode_bfv_params, BfvParamSet, DEFAULT_BFV_PRESET};
+use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_sortition::{
     AggregatorFailoverState, CiphernodeSelector, CiphernodeSelectorState, NodeStateStore,
     SortitionBackend, SortitionParams,
@@ -314,7 +314,7 @@ async fn build_plaintext_aggregator_with_role(
             bus: bus.clone(),
             sortition: start_sortition(&bus),
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             proof_aggregation_enabled,
             initial_is_aggregator,

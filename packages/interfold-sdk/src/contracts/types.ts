@@ -5,6 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { SDKError } from '../utils'
+import type { BfvProfile } from '@interfold/contracts/bfv'
+export type { BfvProfile } from '@interfold/contracts/bfv'
 
 export interface ContractAddresses {
   interfold: `0x${string}`
@@ -58,7 +60,7 @@ export interface E3RequestParams extends RequestParams {
   committeeSize: number
   inputWindow: readonly [bigint, bigint]
   e3Program: `0x${string}`
-  paramSet: number
+  profile: BfvProfile
   computeProviderParams: `0x${string}`
   customParams?: `0x${string}`
   /** Maximum fee token amount accepted. Defaults to a fresh quote. */
