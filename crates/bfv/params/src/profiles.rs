@@ -102,7 +102,7 @@ impl BfvProfile {
         match self {
             Self::SsInsecure64 => BfvPreset::InsecureDkg64.name(),
             Self::SsSecure8192 => BfvPreset::SecureDkg8192.name(),
-            Self::SyncDecInsecure64 => "INSECURE_SYNCHRONIZED_DKG_64",
+            Self::SyncDecInsecure64 => BfvPreset::InsecureSyncDkg64.name(),
         }
     }
 
@@ -110,25 +110,18 @@ impl BfvProfile {
         match self {
             Self::SsInsecure64 => BfvPreset::InsecureDkg64.into(),
             Self::SsSecure8192 => BfvPreset::SecureDkg8192.into(),
-            Self::SyncDecInsecure64 => BfvParamSet {
-                degree: insecure_64::DEGREE,
-                plaintext_modulus: insecure_64::synchronized_dkg::PLAINTEXT_MODULUS,
-                moduli: insecure_64::synchronized_dkg::MODULI,
-                error1_variance: Some(insecure_64::synchronized_dkg::ERROR1_VARIANCE),
-            },
+            Self::SyncDecInsecure64 => BfvPreset::InsecureSyncDkg64.into(),
         }
     }
 
-    /// Existing preset-based DKG execution supports secret sharing only.
+    /// Transport parameters are selected by protocol, not by the shared threshold tuple.
     pub fn dkg_preset(self) -> Result<BfvPreset, BfvProfileError> {
         match self.protocol() {
             BfvDecryptionProtocol::SecretShared => self
                 .threshold_preset()
                 .dkg_counterpart()
                 .ok_or(BfvProfileError::UnsupportedDkgPreset(self.name())),
-            BfvDecryptionProtocol::Synchronized => {
-                Err(BfvProfileError::UnsupportedDkgPreset(self.name()))
-            }
+            BfvDecryptionProtocol::Synchronized => Ok(BfvPreset::InsecureSyncDkg64),
         }
     }
 
@@ -145,6 +138,14 @@ impl BfvProfile {
             dkg.error1_variance,
         )?;
         Ok((threshold, dkg))
+    }
+
+    /// Entropy carried in limb zero of synchronized SK-share plaintexts. Degree 64 is test-only.
+    pub fn prf_key_bits(self) -> Option<usize> {
+        match self {
+            Self::SyncDecInsecure64 => Some(insecure_64::DEGREE.min(256)),
+            Self::SsInsecure64 | Self::SsSecure8192 => None,
+        }
     }
 
     pub fn statement_version(self) -> &'static str {

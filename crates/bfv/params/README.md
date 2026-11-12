@@ -42,8 +42,8 @@ not installation of matching Noir circuits or deployed verifiers.
 Protocol-specific profiles in [`profiles.rs`](src/profiles.rs) select the protocol and paired
 parameters together. A threshold tuple alone cannot identify the protocol: synchronized insecure-64
 reuses the SS threshold parameters but has a distinct DKG tuple. Its definition is restricted to
-minimum committees and remains disabled for admission; native BFV construction and round trips do
-not qualify its DKG packing, circuits, or execution.
+minimum committees and remains disabled for admission. Native packing and decryption tests do not
+establish DKG proof provenance, circuit/verifier compatibility, or actor execution.
 
 For repository code generation, `pnpm build:circuits export-config` exports current parameter pairs,
 search recipes, and protocol hashes alongside committee and circuit metadata. The additional profile
@@ -63,6 +63,8 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 - **`BfvPreset::InsecureThreshold64`** (current `DEFAULT_BFV_PRESET`): Testing-only threshold BFV
   parameters (degree 64)
 - **`BfvPreset::InsecureDkg64`**: Testing-only DKG parameters (degree 64)
+- **`BfvPreset::InsecureSyncDkg64`**: Testing-only synchronized share transport; selected by
+  profile, never substituted for the SS DKG counterpart.
 
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
 and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old

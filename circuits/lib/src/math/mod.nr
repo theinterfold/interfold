@@ -11,3 +11,4 @@ pub mod modulo;
 pub mod commitments;
 pub mod recursive_vk;
 pub mod committee_hash;
+pub mod prf;

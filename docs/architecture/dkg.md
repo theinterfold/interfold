@@ -39,6 +39,17 @@ distinction for both presets.
 Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
 contains one C2a, one C2b, three C3a, and three C3b proofs.
 
+The disabled synchronized insecure-64 profile has a separate native SK-share packing rule. A
+directed 32-byte PRF key uses 64 low little-endian bits; every higher bit is zero. For native
+ascending coefficient j in threshold limb zero, the transport plaintext is
+`share[0][j] + key_bit[j] * q_0`. Other limbs are unchanged. All original residues must be canonical
+under their own threshold modulus. The synchronized DKG plaintext modulus is twice the largest
+threshold modulus; these parameters are not interchangeable with the SS DKG pair. Unpacking rejects
+out-of-range packed coefficients and restores SK residues before aggregation. Native round trips
+exercise the existing encrypted SK-share transport, not a new key-bearing wire field or signature.
+This is not yet the admitted setup protocol: C2/C4 key provenance and the anchored private-key
+binding for synchronized C6 remain to be implemented and reviewed.
+
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CiphernodeSelected` → initialization                | Read `getDeadlines` and the request-frozen timeout configuration at `CommitteeFinalized`. Retry unavailable RPC; do not substitute a local window. Record the encrypted BFV keypair with flushed `DurableIntent` before using or publishing it.                                    |

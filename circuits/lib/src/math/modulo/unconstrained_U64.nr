@@ -6,7 +6,8 @@
 
 //! Unconstrained witnesses for 62-bit modular arithmetic.
 //!
-//! Moduli must be < 2^62; inputs are assumed already reduced (< m).
+//! Moduli must be < 2^62; binary-operation inputs are assumed already reduced (< m).
+//! Full-field reduction instead handles any canonical scalar.
 //! Intermediate products of two 62-bit values are at most 124 bits, safe in u128.
 
 /// Returns floor(n / m).
@@ -14,6 +15,24 @@
 /// n may be a large Field (e.g. lhs*rhs before reduction); cast to u128 for safe division.
 pub unconstrained fn __reduce_witness_u64(n: Field, m: u64) -> u64 {
     (n as u128 / m as u128) as u64
+}
+
+/// Full-field quotient/remainder. Callers must bound both outputs and exclude scalar wrap.
+pub unconstrained fn __reduce_field_witness_u64(n: Field, m: u64) -> (Field, Field) {
+    let bytes = n.to_be_bytes::<32>();
+    let mut quotient: Field = 0;
+    let mut remainder: u128 = 0;
+    for block in 0..4 {
+        let mut limb: u128 = 0;
+        for byte in 0..8 {
+            limb = limb * 256 + bytes[block * 8 + byte] as u128;
+        }
+        // remainder < m < 2^62, so each long-division dividend fits in 126 bits.
+        let dividend = remainder * (1u128 << 64) + limb;
+        quotient = quotient * 2.pow_32(64) + (dividend / m as u128) as Field;
+        remainder = dividend % m as u128;
+    }
+    (quotient, remainder as Field)
 }
 
 /// Returns floor(a*b / m) for use in `mul_mod`.
