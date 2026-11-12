@@ -509,13 +509,18 @@ async fn c0_inputs_of_an_e3_whose_dkg_ended_before_startup_are_not_verified() {
     let signer = PrivateKeySigner::random();
     let (failed, active) = (E3id::new("7", 31_337), E3id::new("8", 31_337));
     let committee = Committee::new(vec![signer.address().to_string()]);
+    let profile = BfvProfile::SsInsecure64;
+    let (params, _) = profile.build_pair().unwrap();
     let meta = E3Meta {
         threshold_m: 1,
         threshold_n: 3,
         seed: Seed([0; 32]),
-        params_profile: BfvProfile::SsInsecure64,
-        crypto_config_id: [0; 32],
-        params: ArcBytes::default(),
+        params_profile: profile,
+        crypto_config_id: profile
+            .crypto_config_id(CiphernodesCommitteeSize::Minimum)
+            .unwrap()
+            .into(),
+        params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&params)),
         error_size: ArcBytes::default(),
     };
     let aggregate = e3_events::AggregateId::new(1);

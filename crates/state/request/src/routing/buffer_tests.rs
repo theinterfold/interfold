@@ -4,7 +4,7 @@ use super::*;
 use crate::{E3ContextSnapshot, EventBufferLimits};
 use actix::{Message, Recipient};
 use e3_data::InMemStore;
-use e3_events::{DecryptionshareCreated, E3Requested, InterfoldEventData, Sequenced};
+use e3_events::{DecryptionshareCreated, InterfoldEventData, Sequenced};
 use e3_utils::utility_types::ArcBytes;
 
 #[path = "capacity_tests.rs"]
@@ -117,13 +117,11 @@ fn router_params(store: &DataStore, recorders: &[Addr<Recorder>]) -> E3RouterPar
 
 fn admission(id: &E3id) -> InterfoldEvent {
     InterfoldEvent::<Sequenced>::test_event("admit")
-        .data(E3Requested {
-            e3_id: id.clone(),
-            threshold_m: 9,
-            threshold_n: 19,
-            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
-            ..Default::default()
-        })
+        .data(request_configuration(
+            id.clone(),
+            BfvProfile::SsSecure8192,
+            CiphernodesCommitteeSize::Small,
+        ))
         .seq(1)
         .build()
 }

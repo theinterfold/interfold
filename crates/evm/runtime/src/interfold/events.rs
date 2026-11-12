@@ -71,7 +71,7 @@ impl E3RequestedWithChainId {
             }
         };
 
-        Ok(e3_events::E3Requested {
+        let request = e3_events::E3Requested {
             params_profile,
             crypto_config_id: self.0.cryptoConfigId.into(),
             params: ArcBytes::from_bytes(&params_bytes),
@@ -81,7 +81,14 @@ impl E3RequestedWithChainId {
             request_block: self.0.e3.requestBlock.to(),
             error_size,
             e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
-        })
+        };
+        // Recovery runs this check on the saved request before it restores the E3. Running it here
+        // too means the node skips a request that it could not restore, instead of failing on
+        // restart.
+        e3_request::E3Meta::from(&request)
+            .validate_configuration()
+            .with_context(|| format!("Inconsistent crypto configuration for E3 {}", self.0.e3Id))?;
+        Ok(request)
     }
 }
 
@@ -577,6 +584,10 @@ mod tests {
                 continue;
             }
             let converted = result.unwrap();
+            // The node saves this binding and rechecks it before it restores the E3.
+            e3_request::E3Meta::from(&converted)
+                .validate_configuration()
+                .unwrap();
             assert_eq!(converted.params_profile, profile);
             assert_eq!(converted.crypto_config_id, event.cryptoConfigId.0);
             assert_eq!(

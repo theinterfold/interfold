@@ -508,6 +508,12 @@ async fn publish_e3_request(env: &Env) -> Result<u64> {
         ticket_price: U256::from(TICKET_PRICE),
         chain_id: CHAIN_ID,
     })?;
+    let params_profile = match env.config.preset {
+        Preset::Insecure => e3_fhe_params::BfvProfile::SsInsecure64,
+        Preset::Secure => e3_fhe_params::BfvProfile::SsSecure8192,
+    };
+    let committee_size =
+        e3_committee::CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n)?;
     env.bus.publish_from_remote(
         E3Requested {
             e3_id: env.e3_id.clone(),
@@ -516,11 +522,8 @@ async fn publish_e3_request(env: &Env) -> Result<u64> {
             seed: env.seed,
             request_block,
             error_size: env.error_size.clone(),
-            params_profile: match env.config.preset {
-                Preset::Insecure => e3_fhe_params::BfvProfile::SsInsecure64,
-                Preset::Secure => e3_fhe_params::BfvProfile::SsSecure8192,
-            },
-            crypto_config_id: [0; 32],
+            params_profile,
+            crypto_config_id: params_profile.crypto_config_id(committee_size)?.into(),
             params: env.encoded_params.clone(),
         },
         0,

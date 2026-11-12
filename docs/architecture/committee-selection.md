@@ -39,9 +39,12 @@ Confirmed-chain ingestion resolves the exact request identity. Synchronized prof
 threshold-only identities are not admitted. [Upgrades](upgrades.md) preserves historical
 parameter-set index 1 and new secure index 2; never reinterpret old requests.
 
-**Recovery validation gap:** metadata hydration rechecks profile admission but trusts the saved
-configuration ID; it does not independently re-derive that binding. This is not support for
-active-E3 migration or resuming incompatible intermediate-build state.
+Recovery re-derives the profile/committee identity and requires the exact threshold parameter bytes
+before metadata seeds restored work. Recovered local selections must also agree with the hydrated
+request metadata. Inconsistent state fails recovery without rewriting IDs or parameters; this is not
+active-E3 migration or support for incompatible intermediate-build state. Confirmed-chain ingestion
+runs the same check on each request that it admits, so the node skips a request that recovery would
+reject instead of failing on restart.
 
 The request snapshots dependencies, treasury, service/slash work allocation and policy, fee token,
 parameter hash/configuration, verifier addresses, committee root, ticket price, and all timeout
