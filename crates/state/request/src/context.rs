@@ -40,6 +40,9 @@ pub struct E3Context {
     /// False while startup replays the event log, until `EffectsEnabled`. An extension that starts
     /// an actor passes it on, so an actor that replay starts holds its effects like a restored one.
     effects_enabled: bool,
+    /// True for a restored context of an E3 that ended before startup. The router completes it at
+    /// `EffectsEnabled`, so its work does not resume.
+    completes_on_restart: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,12 +72,43 @@ impl E3Context {
             recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
             effects_enabled: true,
+            completes_on_restart: false,
         }
+    }
+
+    /// Restore a saved context before startup replays the event log. The router passes
+    /// `completes_on_restart` for an E3 that ended before startup; it completes that context at
+    /// `EffectsEnabled` without resuming its work.
+    pub async fn restore(
+        params: E3ContextParams,
+        snapshot: E3ContextSnapshot,
+        completes_on_restart: bool,
+    ) -> Result<Self> {
+        let mut ctx = Self {
+            e3_id: params.e3_id,
+            repository: params.repository,
+            recipients: init_recipients(&params.extensions),
+            dependencies: HetrogenousMap::new(),
+            effects_enabled: false,
+            completes_on_restart,
+        };
+
+        for extension in params.extensions.iter() {
+            extension.hydrate(&mut ctx, &snapshot).await?;
+        }
+
+        Ok(ctx)
     }
 
     /// Whether the node's effects run: false while startup replays the event log.
     pub fn effects_enabled(&self) -> bool {
         self.effects_enabled
+    }
+
+    /// Whether this is a restored context that the router completes at `EffectsEnabled` without
+    /// resuming its work, because its E3 ended before startup.
+    pub fn completes_on_restart(&self) -> bool {
+        self.completes_on_restart
     }
 
     /// The router sets this when it creates the context and at `EffectsEnabled`.
@@ -179,20 +213,7 @@ impl Snapshot for E3Context {
 impl FromSnapshotWithParams for E3Context {
     type Params = E3ContextParams;
     async fn from_snapshot(params: Self::Params, snapshot: Self::Snapshot) -> Result<Self> {
-        // A restored context exists before startup replays the event log.
-        let mut ctx = Self {
-            e3_id: params.e3_id,
-            repository: params.repository,
-            recipients: init_recipients(&params.extensions),
-            dependencies: HetrogenousMap::new(),
-            effects_enabled: false,
-        };
-
-        for extension in params.extensions.iter() {
-            extension.hydrate(&mut ctx, &snapshot).await?;
-        }
-
-        Ok(ctx)
+        Self::restore(params, snapshot, false).await
     }
 }
 
