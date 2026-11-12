@@ -61,6 +61,8 @@ pub enum BfvPreset {
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
     SecureDkg8192,
+    /// Testing-only synchronized share transport (degree 64), with room for PRF-key bits.
+    InsecureSyncDkg64,
 }
 
 impl BfvPreset {
@@ -295,11 +297,12 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 4] = [
+    pub const ALL: [BfvPreset; 5] = [
         BfvPreset::InsecureThreshold64,
         BfvPreset::InsecureDkg64,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureDkg8192,
+        BfvPreset::InsecureSyncDkg64,
     ];
 
     pub const PAIR_PRESETS: [BfvPreset; 2] = [
@@ -314,6 +317,7 @@ impl BfvPreset {
             "INSECURE_DKG_64" => Ok(Self::InsecureDkg64),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
+            "INSECURE_SYNCHRONIZED_DKG_64" => Ok(Self::InsecureSyncDkg64),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
         }
     }
@@ -324,6 +328,7 @@ impl BfvPreset {
             BfvPreset::InsecureDkg64 => "INSECURE_DKG_64",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
+            BfvPreset::InsecureSyncDkg64 => "INSECURE_SYNCHRONIZED_DKG_64",
         }
     }
 
@@ -380,7 +385,9 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold64 => Some(BfvPreset::InsecureDkg64),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
-            BfvPreset::InsecureDkg64 | BfvPreset::SecureDkg8192 => None,
+            BfvPreset::InsecureDkg64 | BfvPreset::SecureDkg8192 | BfvPreset::InsecureSyncDkg64 => {
+                None
+            }
         }
     }
 
@@ -391,7 +398,9 @@ impl BfvPreset {
     /// Returns `None` when called on a threshold preset.
     pub fn threshold_counterpart(self) -> Option<BfvPreset> {
         match self {
-            BfvPreset::InsecureDkg64 => Some(BfvPreset::InsecureThreshold64),
+            BfvPreset::InsecureDkg64 | BfvPreset::InsecureSyncDkg64 => {
+                Some(BfvPreset::InsecureThreshold64)
+            }
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::InsecureThreshold64 | BfvPreset::SecureThreshold8192 => None,
         }
@@ -435,6 +444,15 @@ impl BfvPreset {
                 parameter_type: ParameterType::DKG,
                 security: SecurityTier::SECURE,
             },
+            BfvPreset::InsecureSyncDkg64 => PresetMetadata {
+                name: self.name(),
+                degree: insecure_64::DEGREE,
+                num_moduli: insecure_64::synchronized_dkg::MODULI.len(),
+                num_parties: insecure_64::NUM_PARTIES,
+                lambda: DEFAULT_INSECURE_LAMBDA,
+                parameter_type: ParameterType::DKG,
+                security: SecurityTier::INSECURE,
+            },
         }
     }
 
@@ -466,8 +484,11 @@ impl BfvPreset {
     }
 
     /// Returns the base directory name for circuit artifacts (e.g. `"insecure-64"`, `"secure-8192"`).
-    /// Threshold and DKG presets at the same degree share the same compiled circuits.
+    /// The synchronized DKG must never fall back to the SS artifact namespace.
     pub fn artifacts_dir(&self) -> String {
+        if *self == Self::InsecureSyncDkg64 {
+            return "sync-insecure-64".into();
+        }
         let meta = self.metadata();
         format!("{}-{}", meta.security.as_config_str(), meta.degree)
     }
@@ -560,6 +581,12 @@ impl From<BfvPreset> for BfvParamSet {
                 moduli: secure_8192::dkg::MODULI,
                 error1_variance: Some(secure_8192::dkg::ERROR1_VARIANCE),
             },
+            BfvPreset::InsecureSyncDkg64 => BfvParamSet {
+                degree: insecure_64::DEGREE,
+                plaintext_modulus: insecure_64::synchronized_dkg::PLAINTEXT_MODULUS,
+                moduli: insecure_64::synchronized_dkg::MODULI,
+                error1_variance: Some(insecure_64::synchronized_dkg::ERROR1_VARIANCE),
+            },
         }
     }
 }
@@ -575,6 +602,49 @@ mod tests {
             let parsed = BfvPreset::from_name(preset.name()).expect("preset should parse");
             assert_eq!(parsed, preset);
         }
+    }
+
+    #[test]
+    fn preset_encodings_are_append_only() {
+        for (index, preset) in BfvPreset::ALL.into_iter().enumerate() {
+            let bytes = (index as u32).to_le_bytes();
+            assert_eq!(bincode::serialize(&preset).unwrap(), bytes);
+            assert_eq!(bincode::deserialize::<BfvPreset>(&bytes).unwrap(), preset);
+        }
+        assert_eq!(
+            &BfvPreset::ALL[..4],
+            &[
+                BfvPreset::InsecureThreshold64,
+                BfvPreset::InsecureDkg64,
+                BfvPreset::SecureThreshold8192,
+                BfvPreset::SecureDkg8192,
+            ]
+        );
+    }
+
+    #[test]
+    fn synchronized_transport_is_not_the_ss_dkg_pair() {
+        let profile = crate::BfvProfile::SyncDecInsecure64;
+        let preset = profile.dkg_preset().unwrap();
+        assert_eq!(preset, BfvPreset::InsecureSyncDkg64);
+        let (threshold, dkg) = profile.build_pair().unwrap();
+        let built = BfvParamSet::from(preset).build_arc();
+        assert_eq!(dkg, built);
+        assert_eq!(
+            dkg.plaintext(),
+            2 * threshold.moduli().iter().max().unwrap()
+        );
+        assert_eq!(profile.prf_key_bits(), Some(64));
+        assert!(!profile.admission_enabled());
+        assert_eq!(preset.artifacts_dir(), "sync-insecure-64");
+        assert_eq!(preset.on_chain_param_set(), None);
+        assert!(preset.build_pair().is_err());
+        assert!(preset.search_config().is_none());
+        assert_eq!(
+            BfvPreset::InsecureThreshold64.dkg_counterpart(),
+            Some(BfvPreset::InsecureDkg64)
+        );
+        assert_eq!(crate::BfvProfile::SsInsecure64.prf_key_bits(), None);
     }
 
     #[test]

@@ -48,15 +48,15 @@ DKG `error1_variance <= 16` keeps `e0_bound = 2 * variance` (20 for both presets
 `q_i/2`; witness generation asserts this. Raising it enters a different uniform-sampler bound and
 requires reconsidering the assumption. C3 and user-data-encryption `k1` are non-centered `[0,t-1]`
 residues; Rust witnesses, Noir equations, and asymmetric quotient bounds must agree. The workspace
-pins fhe.rs **v0.6.0**, with synchronized decryption disabled; do not substitute its synchronized
-partials or local noise for the SS statement. The additive smudging contract is
-`2^(lambda+1) * degree * B_C`, with preset/committee-specific bounds generated from the matching
-Rust sampler. The preset search (`crates/bfv/params/src/search`) sizes `q` with the same smudging
-bound and, for `b == 20`, `b_chi == 1`, and tabulated `d`, a lattice-estimator 128-bit ceiling
-(`search::security`). Other inputs use the formula fallback and print a warning; see
-[`crates/bfv/params/README.md`](../../crates/bfv/params/README.md) for the limitation;
-`search_reproduces_secure_presets` and `search_reproduces_insecure_presets` keep its moduli,
-plaintext moduli, and `ERROR1_VARIANCE` equal to the preset constants.
+pins fhe.rs **v0.6.0**, with both native decryption features compiled but synchronized profile
+admission disabled; do not substitute synchronized partials or local noise for the SS statement. The
+additive smudging contract is `2^(lambda+1) * degree * B_C`, with preset/committee-specific bounds
+generated from the matching Rust sampler. The preset search (`crates/bfv/params/src/search`) sizes
+`q` with the same smudging bound and, for `b == 20`, `b_chi == 1`, and tabulated `d`, a
+lattice-estimator 128-bit ceiling (`search::security`). Other inputs use the formula fallback and
+print a warning; see [`crates/bfv/params/README.md`](../../crates/bfv/params/README.md) for the
+limitation; `search_reproduces_secure_presets` and `search_reproduces_insecure_presets` keep its
+moduli, plaintext moduli, and `ERROR1_VARIANCE` equal to the preset constants.
 
 Every prover-chosen modular quotient needs a bound. Division/rounding are verified with a quotient
 bound plus the unique remainder interval, not trusted because a hint computed them. In particular:
@@ -80,6 +80,27 @@ C4's centered reduction uses one bounded division and a q-wide centered interval
 by H (`AGGREGATION_BIT_CARRY = 8`, H < 256). It avoids assumptions that all moduli straddle the same
 power of two. C5's sum quotient uses `SUM_BIT_CARRY = 8` with H <= 128; its aggregate key still
 needs an explicit bound.
+
+## Native synchronized PRF (admission disabled)
+
+The standalone Rust/Noir conformance vectors pin the v0.6.0 PRF, not the reference branch's
+commitment-based transcript. SAFE uses zero-padded `fhe.rs/trbfv/prf/poseidon2/ctx` and
+`fhe.rs/trbfv/prf/poseidon2/eval` labels. The context absorbs the designated count, sorted one-based
+IDs, level and component count, then each component's CRT/ring dimensions and every native
+power-basis coefficient in ascending order, CRT-major. Synchronized ciphertexts have two components
+at level zero. Keys map from all 32 little-endian bytes modulo the BN254 scalar field. Evaluation
+squeezes one full field element per output coefficient, reduced as a canonical integer under that
+CRT modulus; it does not extract three residues from each field.
+
+Full-field quotient hints must reconstruct an integer in `[0, p-1]`, not just the same scalar-field
+value. At the maximal quotient, the remainder must also be at most `(p-1) % q`; ordinary quotient
+and remainder ranges alone would admit an alias offset by p. Deferring per-peer mask reductions must
+retain accumulator and final-quotient bounds. Neither optimization changes the PRF transcript.
+
+This PRF context does not authenticate the Interfold E3 or DKG key provenance. The current C1–C7
+statements and deployed verifier interfaces remain SS-only; conformance vectors do not establish a
+synchronized proof chain. Full-width-key and secure-width small-ring vectors are interoperability
+coverage, not secure-profile or repeated-decryption qualification.
 
 ## Commitments, packing, and Fiat-Shamir
 

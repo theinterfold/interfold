@@ -11,6 +11,7 @@ anyhow.workspace = true
 bincode.workspace = true
 derivative.workspace = true
 e3-bfv-client.workspace = true
+e3-committee.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 e3-crypto.workspace = true
 e3-utils.workspace = true
@@ -34,3 +35,6 @@ e3-fhe.workspace = true
 e3-events.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+toml.workspace = true
