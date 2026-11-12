@@ -14,7 +14,9 @@ This page is the reference for the TypeScript SDK (`@interfold/sdk`) and the Rea
 (`@interfold/react`). It is for developers who write an E3 client or a coordination server. It
 covers installation, the client class, requests, the committee public key, encryption, events,
 enums, utilities, and errors. The samples come from the default template (`templates/default`) and
-the SDK README. Every export on this page exists in version 0.18.0.
+the SDK README. Every export on this page except `BfvProfile` exists in version 0.18.0. In release
+0.19.0 and earlier, `E3RequestParams` has `paramSet` in place of `profile`. See
+[Request an E3](#request-an-e3).
 
 ## Packages
 
@@ -226,6 +228,10 @@ const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 | `customParams`          | `` `0x${string}` ``         | `'0x'`            |
 | `maxFee`                | `bigint`                    | A fresh quote     |
 | `gasLimit`              | `bigint`                    | Estimated by viem |
+
+Release 0.19.0 and earlier do not have `profile`. On these releases, `E3RequestParams` has a
+required `paramSet` field (`number`) in its place, for example `paramSet: 0` for
+`INSECURE_THRESHOLD_64`.
 
 `requestE3` fills the fields that the contract needs and the SDK knows:
 
