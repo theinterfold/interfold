@@ -238,17 +238,20 @@ mod tests {
             let ternary: Vec<BigInt> = (0..n)
                 .map(|_| BigInt::from(rng.random_range(-1i64..=1)))
                 .collect();
-            let (a, b) = (Polynomial::new(key), Polynomial::new(ternary));
-
-            assert!(
-                ntt_negacyclic_mul(&a, &b, n).is_some(),
-                "N = {n} must take the NTT path"
-            );
-            assert_eq!(
-                negacyclic_mul_exact(&a, &b, n),
-                fold_negacyclic(&a.mul(&b), n),
-                "NTT product disagrees with the quadratic fold at N = {n}"
-            );
+            let a = Polynomial::new(key);
+            // Cover the all-zero ternary draw deterministically rather than relying on the sampler.
+            for coefficients in [vec![BigInt::zero(); n], ternary] {
+                let b = Polynomial::new(coefficients);
+                assert!(
+                    ntt_negacyclic_mul(&a, &b, n).is_some(),
+                    "N = {n} must take the NTT path"
+                );
+                assert_eq!(
+                    negacyclic_mul_exact(&a, &b, n),
+                    reduce_reference(&a.mul(&b), n),
+                    "NTT product disagrees with the quadratic fold at N = {n}"
+                );
+            }
         }
     }
 
