@@ -87,7 +87,7 @@ impl VerificationHarness {
             1,
             300,
             30,
-            BfvPreset::InsecureThreshold64,
+            BfvProfile::SsInsecure64,
         );
         bus.event_bus().send(EventBusBarrier).await.unwrap();
         bus.publish_without_context(EffectsEnabled::new()).unwrap();

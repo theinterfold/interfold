@@ -164,7 +164,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                     fhe: fhe.clone(),
                     bus: bus.clone(),
                     e3_id: e3_id.clone(),
-                    params_preset: BfvPreset::InsecureThreshold64,
+                    params_profile: BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Small,
                     dkg_fold_attestation_context: None,
                     recovery: publickey_repositories
@@ -238,7 +238,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                     bus: bus.clone(),
                     sortition,
                     e3_id: e3_id.clone(),
-                    params_preset: BfvPreset::InsecureThreshold64,
+                    params_profile: BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Small,
                     proof_aggregation_enabled: true,
                     initial_is_aggregator: active,

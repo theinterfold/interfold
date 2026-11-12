@@ -682,7 +682,7 @@ pub(crate) mod tests {
                     sender_party_id: 0,
                     signed_proofs: vec![proof],
                 }],
-                params_preset: BfvPreset::default(),
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Micro,
             }),
             correlation_id,

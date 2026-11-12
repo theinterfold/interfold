@@ -29,10 +29,11 @@ Owners: [keyshare](../../crates/orchestration/keyshare/src/),
 ## Exchange and verification boundaries
 
 Recipient bundles contain one C2a and one C2b plus C3a/C3b per **threshold Shamir row**, not per
-share-encryption/DKG CRT limb. Shape validation normalizes a DKG preset to its threshold counterpart
-before reading row count. Current TrBFV generates one smudging set (Z=1); extending C3b to multiple
-sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not inferred vector
-sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
+share-encryption/DKG CRT limb. Shape validation derives the row count from the request-time
+profile's threshold parameters. Current TrBFV generates one smudging set (Z=1); extending C3b to
+multiple sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not
+inferred vector sizes.
+[Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
 distinction for both presets.
 
 Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
