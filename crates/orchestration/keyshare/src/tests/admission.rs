@@ -177,7 +177,7 @@ impl AdmissionHarness {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: true,

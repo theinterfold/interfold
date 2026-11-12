@@ -32,7 +32,7 @@ pub(crate) struct NodeDkgFoldMeta {
     pub(crate) committee_n: usize,
     pub(crate) committee_h: usize,
     pub(crate) n_moduli: usize,
-    pub(crate) params_preset: e3_fhe_params::BfvPreset,
+    pub(crate) params_profile: e3_fhe_params::BfvProfile,
     pub(crate) committee_size: CiphernodesCommitteeSize,
 }
 
@@ -120,7 +120,7 @@ impl DkgProofCollectionState {
             c3_slot_indices_b: slots_b,
             c3_total_slots,
             party_id: meta.party_id,
-            params_preset: meta.params_preset,
+            params_preset: meta.params_profile.threshold_preset(),
             committee_size: meta.committee_size,
         }
     }
@@ -145,7 +145,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 2,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }
     }

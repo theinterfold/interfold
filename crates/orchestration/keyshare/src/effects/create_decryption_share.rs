@@ -239,15 +239,7 @@ impl ThresholdKeyshare {
             .decryption_domain
             .ok_or_else(|| anyhow!("E3 decryption domain not available for C6 proof"))?;
 
-        let threshold_preset = self
-            .share_enc_preset
-            .threshold_counterpart()
-            .ok_or_else(|| {
-                anyhow!(
-                    "No threshold counterpart for preset {:?}",
-                    self.share_enc_preset
-                )
-            })?;
+        let threshold_preset = self.params_profile.threshold_preset();
 
         info!("Publishing ShareDecryptionProofPending for C6 proof generation...");
 

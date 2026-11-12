@@ -184,7 +184,7 @@ impl ThresholdKeyshare {
             share_proofs: party_proofs_to_verify,
             decryption_proofs: Vec::new(),
             pre_dishonest,
-            params_preset: self.share_enc_preset,
+            params_preset: self.share_enc_preset()?,
             committee_size,
         });
         let dispatch_id = EventId::hash(&dispatch);

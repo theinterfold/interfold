@@ -150,8 +150,8 @@ pub struct ShareComputationProofRequest {
     pub secret_sss_raw: SensitiveBytes,
     /// Which secret type (SecretKey or SmudgingNoise).
     pub dkg_input_type: DkgInputType,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for threshold parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// The size of the committee.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -176,8 +176,8 @@ pub struct ShareEncryptionProofRequest {
     pub e1_rns_raw: SensitiveBytes,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
-    /// Threshold BFV preset (handler derives DKG params via build_pair_for_preset).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the paired DKG parameters and artifacts.
+    pub params_profile: BfvProfile,
     /// Committee size.
     pub committee_size: CiphernodesCommitteeSize,
     /// Recipient index (for correlation tracking).
@@ -226,8 +226,8 @@ pub struct DkgShareDecryptionProofRequest {
     pub own_share_raw: Option<SensitiveBytes>,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for the paired threshold/DKG parameters and artifacts.
+    pub params_profile: BfvProfile,
     /// Committee size for circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -257,8 +257,8 @@ pub struct PkGenerationProofRequest {
     pub eek: SensitiveBytes,
     /// Raw smudging noise polynomial bytes (witness — encrypted at rest).
     pub e_sm: SensitiveBytes,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for threshold parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// The size of the committee
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -283,14 +283,14 @@ impl PkGenerationProofRequest {
         sk: SensitiveBytes,
         eek: SensitiveBytes,
         e_sm: SensitiveBytes,
-        params_preset: BfvPreset,
+        params_profile: BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> Self {
         Self {
             pk0_share: pk0_share.into(),
             sk,
             eek,
-            params_preset,
+            params_profile,
             e_sm,
             committee_size,
         }
