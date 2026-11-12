@@ -19,7 +19,9 @@ Keccak of serialized ciphertext and the SAFE commitment are different bindings.
 `CommitteeProofPublished` retained as `EvmLogObserved`, the request's saved profile and committee,
 and the configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
 commitment, and SK/ESM anchors. It updates before domain delivery and rebuilds from the full
-retained log before hydration, including history before snapshot cursors. Chunk history supplies
+retained log before hydration, including history before snapshot cursors. Like chain ingestion, it
+tracks only requests whose profile this release admits, so the retained requests of a profile that a
+later release disables get no authority and do not stop recovery. Chunk history supplies
 commitment-checked bytes. Neither gossip nor registry/head-state RPC populates this authority; the
 shared router performs no blocking key-authority reads or retry waits.
 

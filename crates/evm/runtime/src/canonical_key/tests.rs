@@ -2,7 +2,7 @@
 
 use super::*;
 use e3_events::{EventConstructorWithTimestamp, Unsequenced};
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{BfvParamSet, BfvPreset, BfvProfile};
 use e3_utils::OrderedSet;
 
 fn event(
@@ -283,5 +283,84 @@ async fn terminal_history_preserves_rosters_for_snapshot_hydration() -> Result<(
         )))
         .await??;
     assert!(keys.get(&ids[0]).is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn recovery_gives_no_authority_to_requests_of_a_disabled_profile() -> Result<()> {
+    use e3_event_system::EventSystem;
+    use e3_events::{AggregateConfig, E3Stage, E3StageChanged};
+    use std::time::Duration;
+    let aggregate = AggregateId::new(1);
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let bus = system.handle()?.enable("disabled-profile-key-history");
+    // The log of a release that disables a profile still holds the requests of its ended E3s.
+    assert!(!BfvProfile::SyncDecInsecure64.admission_enabled());
+    let disabled = E3id::new("86", 1);
+    let admitted = E3id::new("87", 1);
+    let nodes = vec![
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        Address::repeat_byte(3),
+    ];
+    let request = |id: &E3id, params_profile: BfvProfile| E3Requested {
+        e3_id: id.clone(),
+        threshold_m: 1,
+        threshold_n: 3,
+        params_profile,
+        ..Default::default()
+    };
+    for (block, data) in [
+        (
+            1,
+            InterfoldEventData::from(request(&disabled, BfvProfile::SyncDecInsecure64)),
+        ),
+        (
+            2,
+            proof_observation(&disabled, nodes.clone(), [8; 32]).into(),
+        ),
+        (
+            3,
+            E3StageChanged {
+                e3_id: disabled.clone(),
+                previous_stage: E3Stage::CiphertextReady,
+                new_stage: E3Stage::Complete,
+            }
+            .into(),
+        ),
+        (4, request(&admitted, BfvProfile::SsInsecure64).into()),
+        (
+            5,
+            proof_observation(&admitted, nodes.clone(), [9; 32]).into(),
+        ),
+    ] {
+        bus.publish_from_remote(data, 0, Some(block), EventSource::Evm)?;
+    }
+    bus.flush_event_pipeline().await?;
+    let keys = CanonicalPublicKeys::default();
+    let mut projection =
+        CanonicalKeyProjection::new(keys.clone(), HashMap::from([(1, Address::ZERO)]));
+    // A saved context of the ended E3 hydrates without the authority.
+    projection
+        .recover(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            HashSet::from([disabled.clone()]),
+        )
+        .await?;
+    assert!(keys.get(&disabled).is_none());
+    assert_eq!(
+        projection.confirmed_terminal_e3s(),
+        HashSet::from([disabled])
+    );
+    assert_eq!(
+        keys.get(&admitted).expect("admitted authority").committee,
+        nodes
+    );
     Ok(())
 }
