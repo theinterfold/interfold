@@ -1302,6 +1302,14 @@ async fn a_restart_reuses_the_recorded_bfv_key() -> Result<()> {
         published,
         "resume publishes the recorded key"
     );
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .any(|event| {
+            matches!(event.get_data(), InterfoldEventData::EncryptionKeyPending(pending)
+            if pending.e3_id == e3_id && pending.params_profile == selection(&e3_id).params_profile)
+        }));
     Ok(())
 }
 

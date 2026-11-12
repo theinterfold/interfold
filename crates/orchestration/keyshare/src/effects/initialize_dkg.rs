@@ -158,7 +158,7 @@ impl ThresholdKeyshare {
             EncryptionKeyPending {
                 e3_id: state.e3_id.clone(),
                 key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv.clone())),
-                params_preset: self.share_enc_preset,
+                params_profile: data.ciphernode_selected.params_profile,
                 committee_size: state.committee_size()?,
             },
             ec,

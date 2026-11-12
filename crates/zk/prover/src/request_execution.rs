@@ -758,9 +758,19 @@ fn handle_pk_bfv_proof(
     req: PkBfvProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // NOTE: req.params_preset is expected to contain a DKG preset (e.g., InsecureDkg64)
-    // because the proof is for the DKG circuit. This preset is converted to BFV parameters.
-    let params = BfvParamSet::from(req.params_preset).build_arc();
+    // Admission and namespace resolution precede key decoding and artifact/process access.
+    req.params_profile
+        .ensure_admission_enabled()
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+    let artifacts_dir = req
+        .params_profile
+        .artifacts_dir_for_committee(req.committee_size)
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+    let dkg_preset = req
+        .params_profile
+        .dkg_preset()
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+    let params = BfvParamSet::from(dkg_preset).build_arc();
 
     let config = e3_zk_config::dkg::pk::Configs::new(&params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -777,8 +787,6 @@ fn handle_pk_bfv_proof(
     let circuit = PkCircuit;
     let circuit_data = pk_bfv;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {

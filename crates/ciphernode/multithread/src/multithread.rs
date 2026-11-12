@@ -34,7 +34,7 @@ use e3_events::{
 #[cfg(test)]
 use e3_events::{PkBfvProofRequest, VerifyShareProofsRequest};
 #[cfg(test)]
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 #[cfg(test)]
 use e3_trbfv::TrBFVFailure;
 use e3_trbfv::{TrBFVError, TrBFVRequest};
@@ -445,7 +445,7 @@ mod task_group_tests {
         let zk_request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 e3_utils::ArcBytes::default(),
-                BfvPreset::InsecureThreshold64,
+                BfvProfile::SsInsecure64,
                 CiphernodesCommitteeSize::Minimum,
             )),
             e3_events::CorrelationId::new(),

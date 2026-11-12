@@ -17,6 +17,66 @@ fn unavailable_prover(root: &std::path::Path) -> ZkProver {
 }
 
 #[actix::test]
+async fn c0_execution_uses_the_profile_dkg_and_artifact_namespace() {
+    use e3_fhe_params::BfvProfile;
+    use fhe::bfv::SecretKey;
+    use fhe_traits::Serialize as _;
+
+    let temp = tempfile::tempdir().unwrap();
+    let prover = unavailable_prover(temp.path());
+    let cipher = Cipher::from_password("execution-test").await.unwrap();
+    let mut insecure_key = ArcBytes::default();
+    for (profile, directory) in [
+        (BfvProfile::SsInsecure64, "insecure-64/minimum"),
+        (BfvProfile::SsSecure8192, "secure-8192/minimum"),
+    ] {
+        let (_, dkg) = profile.build_pair().unwrap();
+        let mut rng = rand::rng();
+        let secret = SecretKey::random(&dkg, &mut rng);
+        let key = ArcBytes::from_bytes(&PublicKey::new(&secret, &mut rng).to_bytes());
+        if profile == BfvProfile::SsInsecure64 {
+            insecure_key = key.clone();
+        }
+        let request = ComputeRequest::zk(
+            ZkRequest::PkBfv(PkBfvProofRequest::new(
+                key,
+                profile,
+                CiphernodesCommitteeSize::Minimum,
+            )),
+            CorrelationId::new(),
+            E3id::new("7", 31_337),
+        );
+        let error = execute_zk_request(&prover, &cipher, request.clone(), &mut |_| {}).unwrap_err();
+        assert_eq!(error.request(), &request);
+        // A valid DKG key reaches the exact SS artifact path, not a threshold-key decoder or a
+        // fallback namespace. The deliberately absent circuit is a local error, not a proof verdict.
+        assert!(
+            matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message))
+            if message.contains(&format!("{directory}/recursive/dkg/pk/pk.json")))
+        );
+    }
+
+    // Synchronized and SS profiles share threshold parameters. Even with a valid SS key, a
+    // disabled profile must fail before any artifact lookup or prover work.
+    let request = ComputeRequest::zk(
+        ZkRequest::PkBfv(PkBfvProofRequest::new(
+            insecure_key,
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )),
+        CorrelationId::new(),
+        E3id::new("8", 31_337),
+    );
+    let error = execute_zk_request(&prover, &cipher, request.clone(), &mut |_| {}).unwrap_err();
+    assert_eq!(error.request(), &request);
+    assert!(
+        matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(message))
+        if message.contains("sync-insecure-64") && message.contains("disabled"))
+    );
+    assert!(!prover.work_dir().exists());
+}
+
+#[actix::test]
 async fn verification_execution_preserves_correlations_and_error_classification() {
     let temp = tempfile::tempdir().unwrap();
     let prover = unavailable_prover(temp.path());
