@@ -19,8 +19,9 @@ Before accepting a paid request it requires:
 
 - unpaused admission and one coherent reciprocal Interfold/registry/bonding/slashing/refund/ticket
   graph, with matching operator membership;
-- a supported configuration in `ActiveCryptoConfig`: scheme, exact parameter hash, and circuit
-  version, with `[H,N]` snapshotted separately (index zero is H);
+- a supported SS profile/committee configuration in `ActiveCryptoConfig`: identity binds scheme,
+  protocol, exact threshold/DKG byte hashes, committee ordinal and `(N,T,H)`, and statement version;
+  `[H,N]` is also snapshotted separately (index zero is H);
 - a registered deployed program advertising `IE3Program` and `IE3ProgramDataAvailability` via
   bounded ERC-165 calls; failed, short, or false answers reject with `E3ProgramInterfaceMissing`;
 - an ordered future input window and a worst-case lifecycle within `maxDuration` (30-day production
@@ -32,9 +33,15 @@ Before accepting a paid request it requires:
 Mainnet supports secure-8192 at minimum/micro/small; configured launch `minCommitteeSize = 19`
 admits Small only. Sepolia/local also support insecure-64. A route being configured does not itself
 authorize its price-policy committee size. Different tuples, H/N, or verifier thresholds require
-matching artifacts and contracts. Runtime rejects a request or saved E3 whose crypto ID differs from
-its build's expected ID. [Upgrades](upgrades.md) preserves historical parameter-set index 1 and new
-secure index 2; never reinterpret old requests.
+matching artifacts and contracts. Requests and saved contexts must retain the identity bound to
+their selected profile; shared threshold bytes do not authorize profile substitution.
+Confirmed-chain ingestion resolves the exact request identity. Synchronized profiles and older
+threshold-only identities are not admitted. [Upgrades](upgrades.md) preserves historical
+parameter-set index 1 and new secure index 2; never reinterpret old requests.
+
+**Recovery validation gap:** metadata hydration rechecks profile admission but trusts the saved
+configuration ID; it does not independently re-derive that binding. This is not support for
+active-E3 migration or resuming incompatible intermediate-build state.
 
 The request snapshots dependencies, treasury, service/slash work allocation and policy, fee token,
 parameter hash/configuration, verifier addresses, committee root, ticket price, and all timeout

@@ -15,6 +15,9 @@ pub const BFV_ENCRYPTION_SCHEME: &str = "fhe.rs:BFV";
 /// Circuit statement domain used in current BFV configuration identities.
 pub const INTERFOLD_BFV_VERSION: &str = "interfold-bfv-v5";
 
+/// Frozen statement version for historical threshold-only v5 identities, not new admission.
+pub const LEGACY_BFV_CONFIG_VERSION: &str = "interfold-bfv-v5";
+
 /// Encoding domain for protocol-, DKG-, and committee-bound configuration identities.
 pub const BFV_PROFILE_CONFIG_DOMAIN: &str = "interfold:bfv:crypto-config:v1";
 

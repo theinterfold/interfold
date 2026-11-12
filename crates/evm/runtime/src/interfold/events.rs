@@ -17,9 +17,7 @@ use e3_events::{
     CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
     InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
 };
-use e3_fhe_params::{
-    current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset, BfvProfile,
-};
+use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvProfile};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
 use num_bigint::BigUint;
@@ -30,53 +28,21 @@ struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
 impl E3RequestedWithChainId {
     fn try_into_e3_requested(self) -> anyhow::Result<e3_events::E3Requested> {
         // Derive threshold values from committee size enum
-        let committee_size = match self.0.e3.committeeSize {
-            0 => CiphernodesCommitteeSize::Minimum,
-            1 => CiphernodesCommitteeSize::Micro,
-            2 => CiphernodesCommitteeSize::Small,
-            other => anyhow::bail!(
-                "Unsupported committee size enum value {} — this node's binary does not recognize \
-                 it (likely a version skew with the on-chain contracts). Upgrade the ciphernode to \
-                 a version that supports this committee size.",
-                other
-            ),
-        };
+        let committee_size = CiphernodesCommitteeSize::try_from(self.0.e3.committeeSize)?;
         let committee = committee_size.values();
         let threshold_m = committee.threshold;
         let threshold_n = committee.n;
 
-        // Map on-chain ParamSet enum to BfvPreset
-        let param_set_value = self.0.e3.paramSet;
-        let params_preset = BfvPreset::from_on_chain_param_set(param_set_value).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown ParamSet enum value {} — this node's binary does not recognize this BFV \
-                 preset (likely a version skew with the on-chain contracts). Upgrade the ciphernode \
-                 to a version that supports this preset.",
-                param_set_value
-            )
-        })?;
-
-        // Build BFV parameters from the preset
+        let params_profile = BfvProfile::from_crypto_config_id(
+            self.0.e3.paramSet,
+            committee_size,
+            self.0.cryptoConfigId,
+        )
+        .with_context(|| format!("Unsupported crypto configuration for E3 {}", self.0.e3Id))?;
+        params_profile.ensure_admission_enabled()?;
+        let params_preset = params_profile.threshold_preset();
         let params_arc = BfvParamSet::from(params_preset).build_arc();
         let params_bytes = encode_bfv_params(&params_arc);
-        let expected_config_id = current_bfv_crypto_config_id(&params_bytes);
-        if self.0.cryptoConfigId != expected_config_id {
-            anyhow::bail!(
-                "Unsupported crypto configuration {} for E3 {}; this ciphernode was built for {}",
-                self.0.cryptoConfigId,
-                self.0.e3Id,
-                expected_config_id
-            );
-        }
-        // Current contracts bind only SS identities. Do not infer a synchronized profile from
-        // threshold bytes, which the two protocols deliberately share.
-        let params_profile = match params_preset {
-            BfvPreset::InsecureThreshold64 => BfvProfile::SsInsecure64,
-            BfvPreset::SecureThreshold8192 => BfvProfile::SsSecure8192,
-            _ => anyhow::bail!("Unsupported threshold preset {params_preset:?}"),
-        };
-        params_profile.ensure_admission_enabled()?;
-        params_profile.validate_committee(committee_size)?;
 
         // Lambda is secure or insecure depending on the preset's security tier.
         let lambda = params_preset
@@ -319,16 +285,20 @@ pub(crate) fn extractor(
         Some(&IInterfold::E3Requested::SIGNATURE_HASH) => {
             let event = IInterfold::E3Requested::decode_log_data(data)
                 .context("failed to decode E3Requested after its topic matched")?;
+            let e3_id = event.e3Id;
             match E3RequestedWithChainId(event, chain_id).try_into_e3_requested() {
                 Ok(payload) => Ok(Some(payload.into())),
                 Err(e) => {
+                    // `{e:#}` keeps the inner cause, such as the configuration ID that no profile
+                    // matches.
                     warn!(
                         chain_id = chain_id,
+                        e3_id = %e3_id,
                         "Skipping E3Requested: this node cannot process it and will NOT participate \
-                         in this E3. This usually indicates a version skew between the ciphernode \
-                         binary and the on-chain contracts (unrecognized BFV preset or committee \
-                         size). Cause: {}",
-                        e
+                         in this E3. The request names a committee size or BFV configuration that \
+                         this release does not know, or a BFV profile that this release disables. \
+                         Unless the profile was disabled on purpose, this indicates version skew \
+                         between the ciphernode binary and the on-chain contracts. Cause: {e:#}"
                     );
                     Ok(None)
                 }
@@ -552,25 +522,38 @@ mod tests {
     }
 
     #[test]
-    fn preset_config_ids_are_accepted() {
+    fn exact_profile_config_ids_are_required_for_admission() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../bfv/params/tests/fixtures/bfv_protocol.json"
+            "../../../../bfv/params/tests/fixtures/bfv_profiles.json"
         ))
         .unwrap();
-        for vector in fixture["vectors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|vector| vector["preset"].is_string())
+        for (profile, configuration) in
+            fixture["profiles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|vector| {
+                    let profile: BfvProfile = vector["profile"].as_str().unwrap().parse().unwrap();
+                    vector["configurations"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(move |configuration| (profile, configuration))
+                })
         {
-            let param_set = vector["paramSet"].as_u64().unwrap() as u8;
-            let expected_id = vector["cryptoConfigId"].as_str().unwrap();
-            let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
+            let param_set = profile.param_set();
+            let committee: CiphernodesCommitteeSize = configuration["committee"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let expected_id = configuration["cryptoConfigId"].as_str().unwrap();
+            let preset = profile.threshold_preset();
             let event = IInterfold::E3Requested {
                 e3Id: U256::from(param_set),
                 e3: IInterfold::E3 {
                     seed: U256::ZERO,
-                    committeeSize: 0,
+                    committeeSize: committee as u8,
                     requestBlock: U256::ZERO,
                     inputWindow: [U256::ZERO; 2],
                     encryptionSchemeId: B256::ZERO,
@@ -588,10 +571,13 @@ mod tests {
                 cryptoConfigId: expected_id.parse::<B256>().unwrap(),
             };
 
-            let converted = E3RequestedWithChainId(event.clone(), 1)
-                .try_into_e3_requested()
-                .unwrap();
-            assert_eq!(converted.params_profile.threshold_preset(), preset);
+            let result = E3RequestedWithChainId(event.clone(), 1).try_into_e3_requested();
+            if !profile.admission_enabled() {
+                assert!(result.unwrap_err().to_string().contains("disabled"));
+                continue;
+            }
+            let converted = result.unwrap();
+            assert_eq!(converted.params_profile, profile);
             assert_eq!(converted.crypto_config_id, event.cryptoConfigId.0);
             assert_eq!(
                 converted.params_profile.protocol(),
@@ -604,6 +590,7 @@ mod tests {
                 "interfold-bfv-v2",
                 "interfold-bfv-v3",
                 "interfold-bfv-v4",
+                e3_fhe_params::LEGACY_BFV_CONFIG_VERSION,
             ] {
                 let mut legacy_event = event.clone();
                 legacy_event.cryptoConfigId = e3_fhe_params::bfv_crypto_config_id(&params, version);
@@ -614,6 +601,11 @@ mod tests {
                     .to_string()
                     .contains("Unsupported crypto configuration"));
             }
+            let mut wrong_committee = event;
+            wrong_committee.e3.committeeSize = (committee as u8 + 1) % 3;
+            assert!(E3RequestedWithChainId(wrong_committee, 1)
+                .try_into_e3_requested()
+                .is_err());
         }
     }
 
@@ -750,9 +742,9 @@ mod tests {
                 requester: Address::ZERO,
                 ciphertextCommitment: B256::ZERO,
             },
-            cryptoConfigId: current_bfv_crypto_config_id(&encode_bfv_params(
-                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
-            )),
+            cryptoConfigId: BfvProfile::SsInsecure64
+                .crypto_config_id(CiphernodesCommitteeSize::Minimum)
+                .unwrap(),
         };
 
         let converted = E3RequestedWithChainId(event, 100)
@@ -783,9 +775,9 @@ mod tests {
                 requester: Address::ZERO,
                 ciphertextCommitment: B256::ZERO,
             },
-            cryptoConfigId: current_bfv_crypto_config_id(&encode_bfv_params(
-                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
-            )),
+            cryptoConfigId: BfvProfile::SsInsecure64
+                .crypto_config_id(CiphernodesCommitteeSize::Minimum)
+                .unwrap(),
         };
         let log = event.encode_log_data();
 

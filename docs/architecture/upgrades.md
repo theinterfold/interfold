@@ -219,19 +219,38 @@ Storage schema and gossip/sync wire majors are unchanged.
 
 ## BFV profile cutover
 
-Nodes snapshot the selected profile and validated chain configuration ID; SS chain admission is
-unchanged and synchronized insecure-64/minimum remains disabled. C0–C7 generation, recursive
-folding, verification (including accusation re-verification), and canonical-key authority retain
-that profile; workers reject disabled profiles before witness or artifact access. Contract/client
-identity activation remains separate. Storage schema 9, keyshare recovery 9, sortition recovery 2,
-and node-fold recovery 2 reject the previous layouts; gossip/sync majors stay unchanged because the
-changed request, selection, and proof-work payloads are local-only. The unreleased protocol
-9/generation 2 target remains unchanged.
-[#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades contracts, nodes, and
-applications together with no active E3s; reset/resync and rollback use the
+New contract requests require protocol/DKG/committee-bound profile identities, including SS; the
+older threshold-only IDs are not admitted. Clients select a profile and committee, deriving the
+registry slot and ID together. Nodes resolve the exact chain identity and snapshot that profile;
+synchronized insecure-64/minimum remains disabled. C0–C7 generation, recursive folding, verification
+(including accusation re-verification), and canonical-key authority retain that profile; workers
+reject disabled profiles before witness or artifact access. SS parameter bytes, statements, and
+verifier/artifact pair selections are unchanged. Existing chain records are not rewritten;
+application indexers retain frozen threshold-only v5/v1 reads, not active-E3 migration or old-format
+request admission. Storage schema 9, keyshare recovery 9, sortition recovery 2, and node-fold
+recovery 2 reject the previous layouts; gossip/sync majors stay unchanged because the changed
+request, selection, and proof-work payloads are local-only. The unreleased protocol 9/generation 2
+target remains unchanged. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades
+contracts, nodes, and applications together with no active E3s; reset/resync and rollback use the
 [existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.
 These unreleased slices share the schema-9 cutover, not compatibility between intermediate builds.
-Release artifact qualification still applies.
+Replace the linked lifecycle library and Interfold implementation together; the public request ABI
+and contract storage layout are unchanged. The exported crypto metadata format is version 2 and no
+longer presents a threshold-only ID as a current preset identity. Release artifact qualification
+still applies; source changes are not permission to restamp published archives or reuse unqualified
+deployment bindings.
+
+The cutover changes these request interfaces. Update their callers together with the contracts:
+
+- The Hardhat task `committee:new` takes `--profile <name>` instead of `--param-set <index>`. It
+  defaults to the profile of `ACTIVE_BFV_PRESET`.
+- In `e3-evm-client`, `InterfoldRead::get_e3_quote` and `InterfoldWrite::request_e3` take
+  `params_profile: BfvProfile` instead of `param_set: u8`.
+- In `@interfold/sdk`, `E3RequestParams` takes `profile` instead of `paramSet`. `getE3Quote` and
+  `requestE3`, including `requestE3` in `@interfold/react`, derive the registry slot and the
+  configuration ID from `profile` and `committeeSize`.
+- In `@interfold/contracts/bfv`, `BFV_PRESETS[preset].configId` is removed. Use
+  `bfvConfiguration(profile, committeeSize).configId`.
 
 ## Dependency replacement
 

@@ -310,6 +310,7 @@ contract Interfold is
             address(feeToken),
             address(requestParams.expectedFeeToken),
             requestParams.paramSet,
+            uint8(requestParams.committeeSize),
             requestParams.expectedCryptoConfigId,
             requestParams.maxFee,
             quotedFee

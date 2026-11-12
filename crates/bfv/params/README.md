@@ -48,8 +48,8 @@ not qualify its DKG packing, circuits, or execution.
 For repository code generation, `pnpm build:circuits export-config` exports current parameter pairs,
 search recipes, and protocol hashes alongside committee and circuit metadata. The additional profile
 catalogue carries protocol/DKG/committee-bound identities and distinct artifact namespaces. It is
-not the build/release matrix. The existing threshold-only identities remain active until the
-coordinated contract/node/client cutover. Export runs no search or compiler and writes nothing;
+not the build/release matrix. New admission uses those profile identities; threshold-only v5/v1
+identities remain historical indexer inputs. Export runs no search or compiler and writes nothing;
 large integers are decimal strings.
 
 ## Modules

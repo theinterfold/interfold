@@ -29,6 +29,7 @@ import {
   INTERFOLD_BFV_VERSION,
   SUPPORTED_BFV_BUILD_PAIRS,
   bfvPresetForParamSet,
+  bfvConfiguration,
   decryptionAggregatorLayout,
 } from '../../packages/interfold-contracts/bfv'
 import { BFV_PARAMS } from '../../packages/interfold-contracts/scripts/protocol/constants'
@@ -83,7 +84,7 @@ test('deployment routes retain chain policy and order while projecting owner met
       committee: route.committee,
       paramSet: preset.paramSet,
       paramSetHash: preset.paramSetHash,
-      configId: preset.configId,
+      configId: bfvConfiguration(preset.profile, committee.committeeSize).configId,
       committeeSize: committee.committeeSize,
       h: committee.h,
       t: committee.t,
@@ -108,7 +109,6 @@ test('generated parameters retain independent ABI and configuration-ID vectors',
   for (const vector of fixture.vectors.filter((vector: { preset: string | null }) => vector.preset !== null)) {
     const preset = bfvPresetForParamSet(vector.paramSet)
     assert.ok(preset)
-    assert.equal(preset.configId, vector.cryptoConfigId)
     const p = preset.threshold
     const encoded = AbiCoder.defaultAbiCoder().encode(
       ['tuple(uint256,uint256,uint256[],string)'],
@@ -389,9 +389,20 @@ test('the dependency-free committee gate compares binding values, not consumer i
     assert.throws(check)
     writeFileSync(binding, source)
     stale.bfv.presets[0].threshold.degree = BFV_PRESETS['insecure-64'].threshold.degree.toString()
-    stale.bfv.presets[0].cryptoConfigId = `0x${'00'.repeat(32)}`
+    stale.bfv.profiles[0].configurations[0].cryptoConfigId = `0x${'00'.repeat(32)}`
     writeFileSync(binding, JSON.stringify(stale))
-    assert.throws(check)
+    assert.throws(check, /SS_INSECURE_64_MINIMUM config ID must match/)
+    // A binding that cannot be read, or that drops an admitted configuration, must not leave the
+    // configuration-ID comparison with nothing to compare.
+    const unreadable = JSON.parse(source)
+    delete unreadable.bfv.profiles
+    writeFileSync(binding, JSON.stringify(unreadable))
+    assert.throws(check, /could not read the admitted configurations/)
+    const dropped = JSON.parse(source)
+    const secure = dropped.bfv.profiles.find((profile: { profile: string }) => profile.profile === 'ss-secure-8192')
+    secure.configurations = secure.configurations.filter((configuration: { committee: string }) => configuration.committee !== 'small')
+    writeFileSync(binding, JSON.stringify(dropped))
+    assert.throws(check, /must match the \*_CONFIG_ID constants/)
     writeFileSync(binding, source)
     for (const committee of ['minimum', 'micro', 'small']) {
       const changed = JSON.parse(source)
@@ -425,14 +436,15 @@ test('the packed BFV subpath builds browser-targeted bundles, ESM, CJS, and decl
     const installed = join(temp, 'node_modules/@interfold/contracts')
     mkdirSync(installed, { recursive: true })
     execFileSync('tar', ['-xzf', join(temp, archive), '--strip-components=1', '-C', installed])
-    const secure = fixture.vectors.find((v: { name: string }) => v.name === 'current-secure')
-    const check = `if (bfv.bfvPresetForParamSet(${secure.paramSet}).configId !== ${JSON.stringify(secure.cryptoConfigId)}) throw new Error('wrong ID'); if (typeof bfv.bfvPresetForParamSet(${secure.paramSet}).threshold.degree !== 'bigint') throw new Error('lost integer type'); if (bfv.decryptionAggregatorLayout(4).publicInputsLength !== 73) throw new Error('wrong layout');`
+    const profiles = JSON.parse(readFileSync(join(root, 'crates/bfv/params/tests/fixtures/bfv_profiles.json'), 'utf8'))
+    const secure = profiles.profiles.find((v: { profile: string }) => v.profile === 'ss-secure-8192')
+    const check = `if (bfv.bfvConfiguration('ss-secure-8192', 0).configId !== ${JSON.stringify(secure.configurations[0].cryptoConfigId)}) throw new Error('wrong ID'); if (typeof bfv.bfvPresetForParamSet(2).threshold.degree !== 'bigint') throw new Error('lost integer type'); if (bfv.decryptionAggregatorLayout(4).publicInputsLength !== 73) throw new Error('wrong layout');`
     execFileSync(process.execPath, ['--input-type=module', '-e', `import * as bfv from '@interfold/contracts/bfv'; ${check}`], {
       cwd: temp,
       stdio: 'pipe',
     })
     execFileSync(process.execPath, ['-e', `const bfv = require('@interfold/contracts/bfv'); ${check}`], { cwd: temp, stdio: 'pipe' })
-    const consumer = `const degree: bigint = bfv.bfvPresetForParamSet(${secure.paramSet})!.threshold.degree; const id: \`0x\${string}\` | undefined = bfv.bfvPresetForParamSet(${secure.paramSet})?.configId; void degree; void id;
+    const consumer = `const degree: bigint = bfv.bfvPresetForParamSet(2)!.threshold.degree; const id: \`0x\${string}\` = bfv.bfvConfiguration('ss-secure-8192', 0).configId; void degree; void id;
 // @ts-expect-error unknown preset keys are not supported
 bfv.BFV_PRESETS.missing;
 // @ts-expect-error unknown committee keys are not supported
