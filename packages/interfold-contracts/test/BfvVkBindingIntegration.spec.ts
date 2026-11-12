@@ -353,8 +353,10 @@ describe("BfvVkBindingIntegration", function () {
       ) {
         console.warn(
           "Skipping folded proof verify: folded artifact public-input layout is stale. " +
-            "Re-run insecure benchmarks (syncs test/fixtures/bfv_vk_binding/folded_artifacts.json) " +
-            "or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
+            "Re-run the insecure protocol benchmark, then refresh the fixture with " +
+            "circuits/benchmarks/scripts/sync_bfv_vk_binding_fixture.sh <run>/integration_summary.json, " +
+            "or set BFV_VK_BINDING_FOLDED_ARTIFACTS to that summary " +
+            "(see test/fixtures/bfv_vk_binding/README.md).",
         );
         this.skip();
       }
