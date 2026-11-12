@@ -36,13 +36,20 @@ pub struct E3Meta {
 }
 
 impl E3Meta {
-    /// Recheck the saved request binding before restored work can use it.
+    /// Recheck the saved request binding before restored work can use it: this release must admit
+    /// the profile, and the saved identity must match it.
+    pub fn validate_configuration(&self) -> Result<()> {
+        self.params_profile.ensure_admission_enabled()?;
+        self.validate_identity()
+    }
+
+    /// Check that the saved configuration ID and parameter bytes match the profile and committee,
+    /// whether or not this release admits the profile.
     ///
     /// Confirmed-chain ingestion also runs this check on each request that it admits, so the ID is
     /// looked up in the identity table, and the parameter pair is built only to name the expected
     /// ID.
-    pub fn validate_configuration(&self) -> Result<()> {
-        self.params_profile.ensure_admission_enabled()?;
+    pub fn validate_identity(&self) -> Result<()> {
         let committee =
             CiphernodesCommitteeSize::from_threshold(self.threshold_m, self.threshold_n)?;
         // The lookup can resolve another profile that shares the registry slot, so compare the
@@ -142,8 +149,14 @@ impl E3Extension for E3MetaExtension {
                 .read()
                 .await?
                 .ok_or_else(|| anyhow!("missing metadata for active E3 {}", ctx.e3_id))?;
-            value
-                .validate_configuration()
+            // The context of an E3 that ended before startup only completes, so a profile that
+            // this release no longer admits does not stop startup. Any other context resumes work.
+            let validation = if ctx.completes_on_restart() {
+                value.validate_identity()
+            } else {
+                value.validate_configuration()
+            };
+            validation
                 .with_context(|| format!("invalid saved BFV configuration for E3 {}", ctx.e3_id))?;
             ctx.set_dependency(META_KEY, value);
         }

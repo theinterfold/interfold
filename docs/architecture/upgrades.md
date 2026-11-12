@@ -257,9 +257,12 @@ The cutover changes these request interfaces. Update their callers together with
 ### Retiring a BFV profile
 
 A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3
-selected the node. On startup it rechecks that metadata and refuses to start if an E3 uses a profile
-that its release disables. Restored work never runs under a disabled profile, and the node does not
-silently drop work that it still owes. Retire a profile in this order:
+selected the node. On startup it rechecks that metadata and refuses to start if an E3 that still has
+work uses a profile that its release disables. This includes a failed E3 that keeps its context for
+accusation or slashing work. The restored context of an E3 that ended before startup only completes:
+startup still checks its saved configuration ID and parameters, but not whether the release admits
+its profile. Restored work never runs under a disabled profile, and the node does not silently drop
+work that it still owes. Retire a profile in this order:
 
 1. Deploy contracts whose `ActiveCryptoConfig.configIdForRequest` no longer returns a configuration
    ID of the profile, so that no new request can use it.
@@ -267,8 +270,20 @@ silently drop work that it still owes. Retire a profile in this order:
    schema raise (see [Identity and active-state guards](#identity-and-active-state-guards)).
 3. Ship the node release in which `BfvProfile::admission_enabled` is false for the profile.
 
-If a node of that release still refuses to start, run the previous release until those E3s end. Do
-not edit or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no
+Step 3 changes the circuit source hash of every preset/committee pair, although no circuit and no
+configuration ID changes. The hash covers `crates/bfv/params/src`, where the flag lives, and the
+generated `packages/interfold-contracts/crypto-config.json`, which records it. The release workflow
+pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all six pairs
+of `scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push`
+and qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
+Regenerate the sources with `pnpm generate:crypto-config`. The generated `BfvProtocol.sol` then
+drops the `*_CONFIG_ID` constants of the profile, so `ActiveCryptoConfig.sol` must have stopped
+using them in step 1, or the contracts no longer compile. `pnpm check:crypto-config` fails until
+both generated files match the release.
+
+If a node of that release still refuses to start, it still owes work under the profile, such as
+accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not
+edit or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no
 contract admits it, so this cutover needs no wait.
 
 ## Dependency replacement

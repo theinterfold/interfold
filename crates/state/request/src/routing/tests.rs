@@ -486,6 +486,136 @@ async fn disabled_profile_rejects_live_and_restored_contexts() -> Result<()> {
     Ok(())
 }
 
+/// For each restored context: whether it completes on restart, and its request profile.
+type Restored = Arc<std::sync::Mutex<Vec<(bool, Option<BfvProfile>)>>>;
+
+/// Records each restored context after its metadata hydrates.
+struct RestoredMetaProbe {
+    restored: Restored,
+}
+
+#[async_trait]
+impl E3Extension for RestoredMetaProbe {
+    fn on_event(&self, _: &mut E3Context, _: &InterfoldEvent) {}
+
+    async fn hydrate(&self, ctx: &mut E3Context, _: &E3ContextSnapshot) -> Result<()> {
+        let profile = ctx.get_dependency(META_KEY).map(|meta| meta.params_profile);
+        self.restored
+            .lock()
+            .unwrap()
+            .push((ctx.completes_on_restart(), profile));
+        Ok(())
+    }
+}
+
+#[actix::test]
+async fn finished_contexts_of_a_disabled_profile_complete_on_restart() -> Result<()> {
+    let e3_id = E3id::new("31", 31337);
+    // A later release can disable a profile while a node still holds contexts of its E3s.
+    assert!(!BfvProfile::SyncDecInsecure64.admission_enabled());
+    let meta = E3Meta::from(&request_configuration(
+        e3_id.clone(),
+        BfvProfile::SyncDecInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+    ));
+    let mut another_id = meta.clone();
+    another_id.crypto_config_id = [42; 32];
+    let finished = HashSet::from([e3_id.clone()]);
+    let kept_failure = HashMap::from([(e3_id.clone(), E3Stage::CiphertextReady)]);
+    for (name, meta, complete_on_restart, fail_on_restart, error) in [
+        (
+            "finished",
+            meta.clone(),
+            finished.clone(),
+            HashMap::new(),
+            None,
+        ),
+        (
+            "active",
+            meta.clone(),
+            HashSet::new(),
+            HashMap::new(),
+            Some("disabled"),
+        ),
+        (
+            "failed with accusation work",
+            meta,
+            HashSet::new(),
+            kept_failure,
+            Some("disabled"),
+        ),
+        (
+            "finished with another ID",
+            another_id,
+            finished,
+            HashMap::new(),
+            Some("does not match profile"),
+        ),
+    ] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let repositories = store.repositories();
+        let context = repositories.router().repositories().context(&e3_id);
+        context
+            .repositories()
+            .meta(&e3_id)
+            .write_sync(&meta)
+            .await?;
+        context
+            .write_sync(&E3ContextSnapshot {
+                e3_id: e3_id.clone(),
+                recipients: Vec::new(),
+                dependencies: vec!["meta".into()],
+            })
+            .await?;
+        let checkpoints = repositories.request_router_checkpoint();
+        checkpoints
+            .write_sync(&RequestRouterCheckpoint {
+                contexts: vec![e3_id.clone()],
+                ..Default::default()
+            })
+            .await?;
+        let restored = Restored::default();
+        let bus = test_bus();
+        let result = E3Router::builder(&bus, store)
+            .with(Box::new(RestoredMetaProbe {
+                restored: restored.clone(),
+            }))
+            .with_complete_on_restart(complete_on_restart)
+            .with_fail_on_restart(fail_on_restart)
+            .build()
+            .await;
+        if let Some(expected) = error {
+            let error = format!("{:#}", result.expect_err(name));
+            assert!(
+                error.contains(&e3_id.to_string()) && error.contains(expected),
+                "{name}: {error}"
+            );
+            assert!(restored.lock().unwrap().is_empty(), "{name}");
+            continue;
+        }
+        let router = result?;
+        // The context hydrates with its metadata, so the other extensions can restore it.
+        assert_eq!(
+            *restored.lock().unwrap(),
+            vec![(true, Some(BfvProfile::SyncDecInsecure64))]
+        );
+        send_in_order(&router, vec![(EffectsEnabled::new().into(), 1)]).await?;
+        bus.flush_event_pipeline().await?;
+        let completed = async {
+            loop {
+                let checkpoint = checkpoints.read().await?.unwrap_or_default();
+                if checkpoint.completed.contains(&e3_id) {
+                    return Ok(checkpoint);
+                }
+                actix::clock::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        let checkpoint = actix::clock::timeout(Duration::from_secs(5), completed).await??;
+        assert!(checkpoint.contexts.is_empty(), "{name}");
+    }
+    Ok(())
+}
+
 #[actix::test]
 async fn failed_contexts_are_torn_down_after_the_grace() -> Result<()> {
     let (live, restored) = (E3id::new("21", 31337), E3id::new("22", 31337));
