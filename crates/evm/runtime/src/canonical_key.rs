@@ -156,9 +156,13 @@ impl CanonicalKeyProjection {
                     .remember_ciphertexts(&output.e3_id, &output.ciphertext_output)?;
             }
             InterfoldEventData::E3Requested(request) if chain_fact => {
+                // Chain ingestion admits only the profiles that this release admits. A retained
+                // request of a profile disabled since then gets no authority, so it cannot stop
+                // recovery.
                 if self
                     .interfold_addresses
                     .contains_key(&request.e3_id.chain_id())
+                    && request.params_profile.admission_enabled()
                 {
                     self.requests
                         .entry(request.e3_id.clone())
