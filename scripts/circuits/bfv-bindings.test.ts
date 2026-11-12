@@ -419,8 +419,11 @@ test('the packed BFV subpath builds browser-targeted bundles, ESM, CJS, and decl
   const temp = mkdtempSync(join(tmpdir(), 'interfold-bfv-package-'))
   try {
     // Exercise the real package commands without changing the checkout's dist/ or needing Rust.
-    const staged = join(temp, 'source')
-    mkdirSync(staged)
+    // pnpm's package-local bin shims resolve the virtual store relative to the workspace root.
+    const workspace = join(temp, 'source')
+    const staged = join(workspace, 'packages/interfold-contracts')
+    mkdirSync(staged, { recursive: true })
+    symlinkSync(join(root, 'node_modules'), join(workspace, 'node_modules'), 'dir')
     for (const file of ['package.json', 'bfv.ts', 'crypto-config.json']) copyFileSync(join(packageRoot, file), join(staged, file))
     symlinkSync(join(packageRoot, 'node_modules'), join(staged, 'node_modules'), 'dir')
     const tsconfig = join(staged, 'tsconfig.json')
@@ -447,6 +450,8 @@ test('the packed BFV subpath builds browser-targeted bundles, ESM, CJS, and decl
     const consumer = `const degree: bigint = bfv.bfvPresetForParamSet(2)!.threshold.degree; const id: \`0x\${string}\` = bfv.bfvConfiguration('ss-secure-8192', 0).configId; void degree; void id;
 // @ts-expect-error unknown preset keys are not supported
 bfv.BFV_PRESETS.missing;
+// @ts-expect-error unknown profile names are not supported
+bfv.bfvConfiguration('missing', 0);
 // @ts-expect-error unknown committee keys are not supported
 bfv.COMMITTEES.missing;
 // @ts-expect-error public-input names are checked
