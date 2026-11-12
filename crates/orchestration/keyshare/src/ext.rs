@@ -89,6 +89,13 @@ impl E3Extension for ThresholdKeyshareExtension {
                 .err(EType::KeyGeneration, anyhow!(ERROR_KEYSHARE_META_MISSING));
             return;
         };
+        let share_enc_preset = match meta.share_enc_preset() {
+            Ok(preset) => preset,
+            Err(error) => {
+                self.bus.err(EType::KeyGeneration, error);
+                return;
+            }
+        };
         let repo = ctx.repositories().threshold_keyshare(&e3_id);
         let container = repo.send(Some(ThresholdKeyshareState::new(
             e3_id.clone(),
@@ -120,7 +127,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     bus: self.bus.clone(),
                     cipher: self.cipher.clone(),
                     state: container,
-                    share_enc_preset: meta.share_enc_preset(),
+                    share_enc_preset,
                     interfold_address,
                     recovery,
                     recovery_payloads,
@@ -201,7 +208,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset: meta.share_enc_preset(),
+            share_enc_preset: meta.share_enc_preset()?,
             interfold_address,
             recovery,
             recovery_payloads,

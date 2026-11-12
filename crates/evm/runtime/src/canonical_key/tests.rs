@@ -87,7 +87,7 @@ async fn confirmed_observations_admit_publications_in_either_order() -> Result<(
                 e3_id: id.clone(),
                 threshold_m: 1,
                 threshold_n: 3,
-                params_preset: preset,
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 ..Default::default()
             },
             EventSource::Evm,

@@ -5,7 +5,7 @@ process success, a valid witness, and a verified cryptographic statement are dif
 
 - Keep missing VK/process/I/O failures distinct from completed invalid verification; only the latter
   can classify a peer proof as invalid. Retain exact inputs for local retry.
-- Seed finalized party slots and request preset/committee before replay. C0 recovery scans
+- Seed finalized party slots and request profile/committee before replay. C0 recovery scans
   unresolved durable inputs, including snapshot prefixes and filtered pages, then waits for effects.
 - Proof-plan replacement invalidates old correlations; complete signed bundles precede publication.
   C3 multiplicity comes from threshold Shamir rows even when encryption uses the paired DKG preset.

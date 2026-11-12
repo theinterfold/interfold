@@ -53,6 +53,10 @@ pub enum BfvProfileError {
     Preset(#[from] PresetError),
     #[error("Failed to build BFV profile parameters: {0}")]
     InvalidParameters(#[from] fhe::Error),
+    #[error("BFV profile {0} is disabled in this release")]
+    AdmissionDisabled(&'static str),
+    #[error("BFV profile {0} has no supported DKG preset")]
+    UnsupportedDkgPreset(&'static str),
 }
 
 impl BfvProfile {
@@ -113,6 +117,19 @@ impl BfvProfile {
         }
     }
 
+    /// Existing preset-based DKG execution supports secret sharing only.
+    pub fn dkg_preset(self) -> Result<BfvPreset, BfvProfileError> {
+        match self.protocol() {
+            BfvDecryptionProtocol::SecretShared => self
+                .threshold_preset()
+                .dkg_counterpart()
+                .ok_or(BfvProfileError::UnsupportedDkgPreset(self.name())),
+            BfvDecryptionProtocol::Synchronized => {
+                Err(BfvProfileError::UnsupportedDkgPreset(self.name()))
+            }
+        }
+    }
+
     pub fn build_pair(self) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), BfvProfileError> {
         if self.protocol() == BfvDecryptionProtocol::SecretShared {
             return Ok(self.threshold_preset().build_pair()?);
@@ -163,6 +180,13 @@ impl BfvProfile {
             Self::SsInsecure64 | Self::SsSecure8192 => true,
             Self::SyncDecInsecure64 => false,
         }
+    }
+
+    pub fn ensure_admission_enabled(self) -> Result<(), BfvProfileError> {
+        if !self.admission_enabled() {
+            return Err(BfvProfileError::AdmissionDisabled(self.name()));
+        }
+        Ok(())
     }
 
     /// Namespace selection does not establish that the artifacts are built or qualified.

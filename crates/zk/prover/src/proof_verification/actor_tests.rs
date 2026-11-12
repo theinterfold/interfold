@@ -8,11 +8,11 @@ use super::*;
 use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
-    hlc_factory::HlcFactory, E3RequestComplete, EffectsEnabled, Event, EventBus, EventBusBarrier,
-    EventBusConfig, EventPublisher, FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer,
-    StoreEventRequested, Unsequenced,
+    hlc_factory::HlcFactory, CiphernodeSelected, E3RequestComplete, EffectsEnabled, Event,
+    EventBus, EventBusBarrier, EventBusConfig, EventPublisher, FlushEventStores, GetEvents,
+    ProofPayload, Seed, Sequencer, StoreEventRequested, Unsequenced,
 };
-use e3_fhe_params::build_pair_for_preset;
+use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -138,18 +138,31 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         .position(|member| member.eq_ignore_ascii_case(&signer.address().to_string()))
         .expect("signer belongs to restored committee") as u64;
 
-    let persisted_committees = HashMap::from([(e3_id.clone(), Committee::new(committee_members))]);
-    let persisted_e3_metadata = HashMap::from([(
+    let committee = Committee::new(committee_members);
+    let disabled_e3_id = E3id::new("8", 31_337);
+    let persisted_committees = HashMap::from([
+        (e3_id.clone(), committee.clone()),
+        (disabled_e3_id.clone(), committee),
+    ]);
+    let mut persisted_e3_metadata = HashMap::from([(
         e3_id.clone(),
         E3Meta {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: preset,
+            params_profile: BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         },
     )]);
+    persisted_e3_metadata.insert(
+        disabled_e3_id.clone(),
+        E3Meta {
+            params_profile: BfvProfile::SyncDecInsecure64,
+            ..persisted_e3_metadata[&e3_id].clone()
+        },
+    );
     let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
     let verifier = VerificationRecorder {
         sender: observed_tx,
@@ -169,6 +182,13 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         .await
         .expect("event bus barrier");
     bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    // This valid SS key must not be verified under a disabled profile that shares its threshold
+    // parameters. If it dispatches, it reaches the recorder before the admitted request below.
+    bus.publish_without_context(EncryptionKeyReceived {
+        e3_id: disabled_e3_id.clone(),
+        key: signed_c0_key(&signer, party_id, &disabled_e3_id, preset),
+    })
+    .unwrap();
     bus.publish_without_context(EncryptionKeyReceived {
         e3_id: e3_id.clone(),
         key: signed_c0_key(&signer, party_id, &e3_id, preset),
@@ -184,9 +204,81 @@ async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
         ObservedVerification {
             e3_id,
             party_id,
-            artifacts_dir: preset
-                .artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str()),
+            artifacts_dir: "insecure-64/minimum".into(),
         }
+    );
+}
+
+/// A live selection under a profile that this build does not admit stores no C0 plan. The node
+/// abstains from the E3's C0 inputs and reports its own fault once, on the error channel.
+#[actix::test]
+async fn disabled_live_profile_reports_one_error_and_verifies_no_c0_input() {
+    let bus = test_bus();
+    let history = bus.history();
+    let e3_id = E3id::new("10", 31_337);
+    let signer = PrivateKeySigner::random();
+    let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
+    let verifier = VerificationRecorder {
+        sender: observed_tx,
+    }
+    .start();
+    let actor = ProofVerificationActor::setup(
+        &bus,
+        verifier.clone().recipient(),
+        HashMap::from([(
+            e3_id.clone(),
+            Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::new(),
+    );
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+    bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 1,
+        threshold_n: 3,
+        params_profile: BfvProfile::SyncDecInsecure64,
+        ..Default::default()
+    })
+    .unwrap();
+    bus.publish_without_context(EncryptionKeyReceived {
+        e3_id: e3_id.clone(),
+        key: signed_c0_key(&signer, 0, &e3_id, BfvPreset::InsecureThreshold64),
+    })
+    .unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+    actor.send(recovery::VerificationBarrier).await.unwrap();
+    verifier.send(recovery::VerificationBarrier).await.unwrap();
+
+    assert!(
+        observed_rx.try_recv().is_err(),
+        "a disabled profile dispatched C0 verification"
+    );
+    let events = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await
+        .unwrap();
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains(&format!("E3 {e3_id}")) && errors[0].contains("sync-insecure-64"),
+        "{errors:?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyCreated(_)
+                | InterfoldEventData::ProofVerificationPassed(_)
+                | InterfoldEventData::ProofVerificationFailed(_)
+                | InterfoldEventData::SignedProofFailed(_)
+        )),
+        "a disabled profile accepted or blamed a peer"
     );
 }
 
@@ -238,7 +330,8 @@ async fn c0_retries_back_off_and_stop_at_completion() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold64,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },
@@ -348,7 +441,8 @@ async fn cancelled_c0_verification_does_not_retry_accept_or_accuse() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: preset,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },
@@ -419,7 +513,8 @@ async fn c0_inputs_of_an_e3_whose_dkg_ended_before_startup_are_not_verified() {
         threshold_m: 1,
         threshold_n: 3,
         seed: Seed([0; 32]),
-        params_preset: preset,
+        params_profile: BfvProfile::SsInsecure64,
+        crypto_config_id: [0; 32],
         params: ArcBytes::default(),
         error_size: ArcBytes::default(),
     };

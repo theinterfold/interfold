@@ -326,7 +326,7 @@ impl CanonicalKeyProjection {
                 pk_commitment: commitment,
                 committee,
                 honest_committee,
-                params_preset: request.params_preset,
+                params_preset: request.params_profile.threshold_preset(),
                 committee_size,
                 interfold_address: self.interfold_addresses[&id.chain_id()],
                 sk_agg_commits: inputs[5 + h..5 + 2 * h].iter().map(|v| v.0).collect(),

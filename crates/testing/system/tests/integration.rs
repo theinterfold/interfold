@@ -84,7 +84,9 @@ async fn benchmark_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced};
+    use e3_events::{
+        CiphernodeSelected, E3Requested, InterfoldEvent, KeyshareCreated, TakeEvents, Unsequenced,
+    };
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -161,23 +163,61 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         e3_id: E3id::new("1235", 1),
         threshold_m: 2,
         threshold_n: 5,
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
+        crypto_config_id: [42; 32],
         ..CiphernodeSelected::default()
+    };
+    let local_evt_4 = E3Requested {
+        e3_id: local_evt_3.e3_id.clone(),
+        params_profile: local_evt_3.params_profile,
+        crypto_config_id: local_evt_3.crypto_config_id,
+        ..Default::default()
     };
 
     bus.publish_without_context(evt_1.clone())?;
     bus.publish_without_context(evt_2.clone())?;
     bus.publish_without_context(local_evt_3.clone())?; // This is a local event which should not be broadcast to the network
+    bus.publish_without_context(local_evt_4.clone())?;
 
     // check the history of the event bus
     let history = history_collector
-        .send(TakeEvents::<InterfoldEvent>::new(3))
+        .send(TakeEvents::<InterfoldEvent>::new(4))
         .await?;
+
+    // The bus dispatches one event at a time and waits until every subscriber has handled it.
+    // The history already holds the events above, so the translator handles this event after
+    // them and gossips it after any of them that it forwards.
+    let sentinel = KeyshareCreated {
+        e3_id: E3id::new("1237", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: "node-3".to_string(),
+        party_id: 2,
+        signed_pk_generation_proof: None,
+    };
+    bus.publish_without_context(sentinel.clone())?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while msgs.lock().await.len() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("the translator did not forward the sentinel event"))?;
 
     assert_eq!(
         *msgs.lock().await,
-        vec![evt_1.clone().into(), evt_2.clone().into()], // notice no local events
+        vec![evt_1.clone().into(), evt_2.clone().into(), sentinel.into()], // notice no local events
         "NetEventTranslator did not transmit correct events to the network"
     );
+
+    // Historical sync uses the same rule: it neither serves these events nor accepts them from a
+    // peer.
+    for event in &history.events[2..] {
+        assert!(
+            !NetEventTranslator::is_forwardable_event(event),
+            "{} must stay local",
+            event.event_type()
+        );
+    }
 
     assert_eq!(
         history
@@ -185,7 +225,12 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
             .into_iter()
             .map(|e| e.into_data())
             .collect::<Vec<_>>(),
-        vec![evt_1.into(), evt_2.into(), local_evt_3.into()], // all local events that have been broadcast but no
+        vec![
+            evt_1.into(),
+            evt_2.into(),
+            local_evt_3.into(),
+            local_evt_4.into()
+        ], // all local events that have been broadcast but no
         // events from the loopback
         "NetEventTranslator must not retransmit forwarded event to event bus"
     );

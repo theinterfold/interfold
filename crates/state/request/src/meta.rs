@@ -15,7 +15,7 @@ use e3_events::{
     DkgFoldAttestationContext, E3Requested, Event, InterfoldEvent, InterfoldEventData, Seed,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvPreset, BfvProfile};
 use e3_utils::utility_types::ArcBytes;
 
 pub const META_KEY: TypedKey<E3Meta> = TypedKey::new("meta");
@@ -28,18 +28,29 @@ pub struct E3Meta {
     pub threshold_m: usize,
     pub threshold_n: usize,
     pub seed: Seed,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
+    pub crypto_config_id: [u8; 32],
     pub params: ArcBytes,
     pub error_size: ArcBytes,
 }
 
 impl E3Meta {
-    /// Returns the BFV preset for DKG share encryption: the DKG counterpart of the E3's
-    /// threshold preset.
-    pub fn share_enc_preset(&self) -> BfvPreset {
-        self.params_preset
-            .dkg_counterpart()
-            .unwrap_or(self.params_preset)
+    pub fn share_enc_preset(&self) -> Result<BfvPreset> {
+        Ok(self.params_profile.dkg_preset()?)
+    }
+}
+
+impl From<&E3Requested> for E3Meta {
+    fn from(request: &E3Requested) -> Self {
+        Self {
+            threshold_m: request.threshold_m,
+            threshold_n: request.threshold_n,
+            seed: request.seed,
+            params_profile: request.params_profile,
+            crypto_config_id: request.crypto_config_id,
+            params: request.params.clone(),
+            error_size: request.error_size.clone(),
+        }
     }
 }
 
@@ -68,27 +79,9 @@ impl E3Extension for E3MetaExtension {
         let InterfoldEventData::E3Requested(data) = event.get_data() else {
             return;
         };
-        let E3Requested {
-            threshold_m,
-            threshold_n,
-            seed,
-            e3_id,
-            params_preset,
-            params,
-            error_size,
-            ..
-        } = data.clone();
-
         // Meta doesn't implement Checkpoint so we are going to store it manually
-        let meta = E3Meta {
-            threshold_m,
-            threshold_n,
-            seed,
-            params_preset,
-            params,
-            error_size,
-        };
-        ctx.repositories().meta(&e3_id).write(&meta);
+        let meta = E3Meta::from(data);
+        ctx.repositories().meta(&data.e3_id).write(&meta);
         ctx.set_dependency(META_KEY, meta);
     }
 
@@ -100,6 +93,7 @@ impl E3Extension for E3MetaExtension {
                 .read()
                 .await?
                 .ok_or_else(|| anyhow!("missing metadata for active E3 {}", ctx.e3_id))?;
+            value.params_profile.ensure_admission_enabled()?;
             ctx.set_dependency(META_KEY, value);
         }
 

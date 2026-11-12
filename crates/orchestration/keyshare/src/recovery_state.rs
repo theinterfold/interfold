@@ -10,7 +10,7 @@ use e3_events::{
     ShareVerificationComplete, TypedEvent,
 };
 
-pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 8;
+pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 9;
 
 /// This node's BFV encryption keypair for one E3, recorded durably before the node publishes the
 /// public key. Peers encrypt their DKG shares to the published key, so a restart that lost the

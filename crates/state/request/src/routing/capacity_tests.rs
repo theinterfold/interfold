@@ -252,7 +252,7 @@ async fn secure_history(router: &Addr<E3Router>, id: &E3id) -> Result<()> {
             e3_id: id.clone(),
             threshold_m: 9,
             threshold_n: N,
-            params_preset: PRESET,
+            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
             committee,
             ..Default::default()
         },
