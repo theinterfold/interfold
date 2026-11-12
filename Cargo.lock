@@ -4112,6 +4112,7 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "clap",
+ "e3-committee",
  "fhe",
  "fhe-math",
  "fhe-traits",
