@@ -82,11 +82,22 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-/** Prefer the committed fixture; use benchmark output only when the fixture is absent. */
+/**
+ * Use the file that `BFV_VK_BINDING_FOLDED_ARTIFACTS` names, and fail when it is
+ * unusable. Otherwise prefer the committed fixture, and use benchmark output only
+ * when the fixture is unusable.
+ */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const envPath = process.env.BFV_VK_BINDING_FOLDED_ARTIFACTS;
   if (envPath) {
-    return readFoldedArtifactsFromFile(envPath);
+    const override = readFoldedArtifactsFromFile(envPath);
+    if (override === null) {
+      throw new Error(
+        `BFV_VK_BINDING_FOLDED_ARTIFACTS names ${envPath}, which is absent ` +
+          "or holds no valid folded artifacts",
+      );
+    }
+    return override;
   }
   const committed = readFoldedArtifactsFromFile(
     COMMITTED_FOLDED_ARTIFACTS_FIXTURE,
