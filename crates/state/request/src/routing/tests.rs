@@ -878,6 +878,92 @@ async fn a_failed_context_starts_no_protocol_actor_and_a_later_one_learns_of_the
     Ok(())
 }
 
+/// A failed E3 that keeps its context for accusation or slashing work starts no protocol actor from
+/// its recovered selection, but recovery still fails when that selection disagrees with the saved
+/// request metadata or the context has no metadata.
+#[actix::test]
+async fn the_recovered_selection_of_a_failed_e3_must_agree_with_its_metadata() -> Result<()> {
+    let failed = E3id::new("43", 31337);
+    let saved_request = request_configuration(
+        failed.clone(),
+        BfvProfile::SsSecure8192,
+        CiphernodesCommitteeSize::Minimum,
+    );
+    let conflicting_request = request_configuration(
+        failed.clone(),
+        BfvProfile::SsInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+    );
+    let saved_meta = E3Meta::from(&saved_request);
+
+    for (name, saved, selected, error) in [
+        ("consistent", Some(&saved_meta), &saved_request, None),
+        (
+            "conflicting",
+            Some(&saved_meta),
+            &conflicting_request,
+            Some("disagrees with request metadata"),
+        ),
+        (
+            "missing metadata",
+            None,
+            &saved_request,
+            Some("request metadata is missing"),
+        ),
+    ] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let repositories = store.repositories();
+        let context = repositories.router().repositories().context(&failed);
+        let mut dependencies = Vec::new();
+        if let Some(meta) = saved {
+            context
+                .repositories()
+                .meta(&failed)
+                .write_sync(meta)
+                .await?;
+            dependencies.push("meta".into());
+        }
+        context
+            .write_sync(&E3ContextSnapshot {
+                e3_id: failed.clone(),
+                recipients: Vec::new(),
+                dependencies,
+            })
+            .await?;
+        repositories
+            .request_router_checkpoint()
+            .write_sync(&RequestRouterCheckpoint {
+                contexts: vec![failed.clone()],
+                ..Default::default()
+            })
+            .await?;
+        let result = E3Router::builder(&test_bus(), store)
+            .with_recovered_selections(vec![recovered_selection(selected)])
+            .with_fail_on_restart(HashMap::from([(
+                failed.clone(),
+                E3Stage::CommitteeFinalized,
+            )]))
+            .build()
+            .await;
+        match error {
+            None => assert!(result.is_ok(), "{name}: {result:?}"),
+            Some(expected) => {
+                let error = format!("{:#}", result.expect_err(name));
+                assert!(
+                    error.contains(expected) && error.contains(&failed.to_string()),
+                    "{name}: {error}"
+                );
+            }
+        }
+        assert_eq!(
+            context.repositories().meta(&failed).read().await?,
+            saved.cloned(),
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
 /// Restores a protocol actor from its snapshot, as a keyshare with saved state.
 struct RestoredActorExtension {
     seen: Seen,

@@ -123,9 +123,9 @@ impl E3RouterBuilder {
                 "cannot restore local selection for E3 {}: request-router context is missing",
                 selection.e3_id
             );
-            if router.completed.contains(&selection.e3_id)
-                || router.fail_on_restart.contains_key(&selection.e3_id)
-            {
+            // A failed E3 that keeps its context for accusation or slashing work starts no protocol
+            // actor from its selection, but the selection must still agree with its metadata.
+            if router.completed.contains(&selection.e3_id) {
                 continue;
             }
             let meta = router.contexts[&selection.e3_id]
