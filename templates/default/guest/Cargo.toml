@@ -17,6 +17,8 @@ e3-user-program = { path = "../program", features = ["openvm-hashes"] }
 e3-compute-provider = { path = "../../../crates/program/compute-provider" }
 e3-openvm-types = { path = "../../../crates/program/openvm-types" }
 e3-safe = { path = "../../../crates/safe", features = ["openvm"] }
+# fhe.rs pins a separate SAFE source; its guest feature must be enabled on that exact package too.
+fhe-safe = { package = "e3-safe", git = "https://github.com/theinterfold/interfold", rev = "ab6b9c943b6d23eda8d0ba5f2efd9039635acfa4", features = ["openvm"] }
 sha2 = "=0.10.9"
 
 [profile.release]

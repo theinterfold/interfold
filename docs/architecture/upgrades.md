@@ -242,6 +242,12 @@ metadata format is version 2 and no longer presents a threshold-only ID as a cur
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
 
+The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
+data-availability recovery layout lock includes its enum row even though that projection records
+threshold presets, not transport presets. Existing rows/encodings are unchanged; an older binary
+cannot decode a manually stored new variant. This remains part of the unreleased schema-9 cutover,
+with no additional release-counter change or mixed-version/rollback guarantee for new-variant data.
+
 The cutover changes these request interfaces. Update their callers together with the contracts:
 
 - The Hardhat task `committee:new` takes `--profile <name>` instead of `--param-set <index>`. It

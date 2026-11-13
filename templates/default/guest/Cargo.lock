@@ -1176,6 +1176,7 @@ version = "0.1.0"
 dependencies = [
  "e3-compute-provider",
  "e3-openvm-types",
+ "e3-safe 0.20.0-dev.2",
  "e3-safe 0.20.0-dev.3",
  "e3-user-program",
  "openvm",
@@ -1221,6 +1222,10 @@ dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "hex",
+ "num-bigint 0.4.6",
+ "openvm",
+ "openvm-algebra-guest",
+ "serde",
  "sha3 0.10.8",
  "taceo-poseidon2",
 ]
