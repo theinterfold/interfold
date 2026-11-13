@@ -1952,6 +1952,46 @@ mod tests {
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
     }
 
+    /// A late turn's count belongs to its deadline. Calls made at other deadlines in between keep
+    /// it, so a later stage with that deadline counts from when the node found the turn.
+    #[test]
+    fn a_late_turn_keeps_its_count_through_calls_at_other_deadlines() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        let dkg_deadline = 10_100;
+        let finalized = ChainFact::CommitteeFinalized {
+            e3: e3(1),
+            members: members([1, 2]),
+            dkg: DkgTiming {
+                deadline: dkg_deadline,
+                ..TIMING
+            },
+        };
+        node.step(0, chain(11, finalized));
+        let place = place(&[1, 2, ME]);
+        let restarted = 20_000;
+        node.step(restarted, Input::Tick);
+        let compute_deadline = 20_010;
+        let published = ChainFact::KeyPublished {
+            e3: e3(1),
+            committee: members([1, 2]),
+            roster: members([1, 2]),
+            commitment: KEY_COMMITMENT,
+            compute_deadline,
+            anchors: Default::default(),
+        };
+        node.step(restarted + 1 + 30 * place, chain(12, published));
+        let ciphertext = ChainFact::CiphertextReady {
+            e3: e3(1),
+            ciphertext: CIPHERTEXT_DATA,
+            deadline: dkg_deadline,
+        };
+        let now = compute_deadline + 1 + 30 * place;
+        node.step(now, chain(13, ciphertext));
+        let effects = node.step(now, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
     /// A second late restart, before the turn counted from the first came, spaces the turns again.
     #[test]
     fn a_turn_counted_from_a_late_restart_can_be_found_long_past_again() {
@@ -2279,7 +2319,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "00f9cb7783b16968ffde127393713b50cb16ec4d29748081cc9f61113103aaa4"
+                    "5f8042ff6531590ca8f9e909f0e4118d4277e011df8db10555e46e768ac22f2e"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

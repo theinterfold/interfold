@@ -164,19 +164,24 @@ impl Duty {
     }
 }
 
-/// This node's call at a duty, for one deadline. A moved deadline starts a new call.
-///
-/// A later stage with the same deadline owes the call again, and keeps the count of turns: the
-/// contract sets the DKG deadline to the committee deadline plus the DKG window, the same moment
-/// the request's watch waits for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What this node did at a duty so far.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Call {
+    /// The stage and deadline the node last made the call for. A later stage, or a moved
+    /// deadline, owes the call again.
+    made: Option<(Stage, UnixSecs)>,
+    /// The last turn the node found long past.
+    late: Option<Late>,
+}
+
+/// A turn the node found long past, because it was not running when the turn came. The turns for
+/// its deadline count from when the node found it, whatever the stage: the contract sets the DKG
+/// deadline to the committee deadline plus the DKG window, the moment the request's watch waits
+/// for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Late {
     deadline: UnixSecs,
-    /// The turns count from this time: the deadline, or the time the node found its turn long
-    /// past, because it was not running when the turn came.
-    from: UnixSecs,
-    /// The stage the node made the call for.
-    made: Option<Stage>,
+    found: UnixSecs,
 }
 
 /// Nodes that can make the same call take turns, 30 seconds apart from one second after its
@@ -738,9 +743,11 @@ impl E3 {
         self.note_turns_long_past(now);
         let mut effects = Vec::new();
         for duty in Duty::ALL {
-            if let Some((call, stage, _)) = self.pending(duty).filter(|(.., due)| now >= *due) {
-                let made = Some(stage);
-                self.calls.insert(duty, Call { made, ..call });
+            let Some((stage, deadline, _)) = self.owed(duty) else {
+                continue;
+            };
+            if self.due(duty).is_some_and(|due| now >= due) {
+                self.calls.entry(duty).or_default().made = Some((stage, deadline));
                 effects.push(self.submit(duty.transaction()));
             }
         }
@@ -809,9 +816,9 @@ impl E3 {
         Some((self.stage, *deadline))
     }
 
-    /// This node's call at `duty` if it owes one: the record for the current deadline, the stage
-    /// the call is owed for, and the node's place among those that can make it.
-    fn call(&self, duty: Duty) -> Option<(Call, Stage, u64)> {
+    /// The call this node owes at `duty`: the stage and deadline it is owed for, and the node's
+    /// place among those that can make it.
+    fn owed(&self, duty: Duty) -> Option<(Stage, UnixSecs, u64)> {
         let (stage, deadline, place) = match duty {
             Duty::Finalize => match self.selection {
                 Selection::Ticketed(ticket) if self.stage == Stage::Requested => {
@@ -830,37 +837,33 @@ impl E3 {
                 _ => return None,
             },
         };
-        let call = self.calls.get(&duty).copied();
-        let call = call
-            .filter(|call| call.deadline == deadline)
-            .unwrap_or(Call {
-                deadline,
-                from: deadline,
-                made: None,
-            });
-        Some((call, stage, place))
+        let made = self.calls.get(&duty).and_then(|call| call.made);
+        (made != Some((stage, deadline))).then_some((stage, deadline, place))
     }
 
-    /// This node's call at `duty` while it has yet to make it for the current stage, the stage, and
-    /// when its turn comes.
-    fn pending(&self, duty: Duty) -> Option<(Call, Stage, UnixSecs)> {
-        let (call, stage, place) = self.call(duty)?;
-        (call.made != Some(stage)).then(|| (call, stage, turn(call.from, place)))
-    }
-
-    /// When this node's turn at `duty` comes, if it has yet to make the call.
+    /// When this node's turn at `duty` comes, if it owes the call.
     fn due(&self, duty: Duty) -> Option<UnixSecs> {
-        self.pending(duty).map(|(.., due)| due)
+        let (_, deadline, place) = self.owed(duty)?;
+        let late = self.calls.get(&duty).and_then(|call| call.late);
+        let start = match late {
+            Some(late) if late.deadline == deadline => late.found,
+            _ => deadline,
+        };
+        Some(turn(start, place))
     }
 
     /// A turn found long past counts from now: the node was not running when it came.
     fn note_turns_long_past(&mut self, now: UnixSecs) {
         for duty in Duty::ALL {
-            let Some((call, _, due)) = self.pending(duty) else {
+            let (Some((_, deadline, _)), Some(due)) = (self.owed(duty), self.due(duty)) else {
                 continue;
             };
             if now > due + LONG_PAST {
-                self.calls.insert(duty, Call { from: now, ..call });
+                let late = Late {
+                    deadline,
+                    found: now,
+                };
+                self.calls.entry(duty).or_default().late = Some(late);
             }
         }
     }
