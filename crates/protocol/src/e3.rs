@@ -41,18 +41,13 @@ pub struct E3 {
     /// What the request snapshotted for slashing; unknown before the node saw the facts.
     slashing: Option<Slashing>,
     pub request: CommitteeRequest,
-    /// The seed to rank with once the bonding registry says which operators may hold a seat,
-    /// and the time to rank without knowing.
-    selecting: Option<Selecting>,
-    /// The request's seed, for when this node's standing changes before the deadline.
-    seed: Option<CommitteeSeed>,
+    selection: Selection,
     /// Checks of members' proofs that have not answered; one that fails can end in an accusation.
     checks: u32,
     /// When a completed E3 stops waiting for evidence still on its way.
     evidence_until: Option<UnixSecs>,
     /// Who is on the committee now: the chain's list, less the members it expelled since.
     committee: BTreeSet<Address>,
-    ticket: Option<Ticket>,
     resend: Resend,
     /// The deadline of each stage whose failure this node watches, as the contract counts it.
     deadlines: BTreeMap<Stage, UnixSecs>,
@@ -76,10 +71,19 @@ struct Fetching {
     running: bool,
 }
 
+/// Where this node is in the selection of the request's committee.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Selecting {
-    seed: CommitteeSeed,
-    by: UnixSecs,
+enum Selection {
+    /// The registry has not accepted the request's randomness.
+    Unseeded,
+    /// The node ranks with the seed whenever its rank can change: at the seed, at the eligibility
+    /// answer, and when its standing changes before the deadline.
+    Seeded(CommitteeSeed),
+    /// The node waits until `by` for the bonding registry to say which operators may hold a seat,
+    /// then ranks with `seed`. A change in its standing ranks it without the answer meanwhile.
+    Reading { seed: CommitteeSeed, by: UnixSecs },
+    /// The node submitted its ticket.
+    Ticketed(Ticket),
 }
 
 /// The chain failed the E3.
@@ -177,12 +181,10 @@ impl E3 {
             accusations: None,
             slashing,
             request,
-            selecting: None,
-            seed: None,
+            selection: Selection::Unseeded,
             checks: 0,
             evidence_until: None,
             committee: BTreeSet::new(),
-            ticket: None,
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
             slot,
@@ -199,7 +201,9 @@ impl E3 {
     pub(crate) fn seeded(&mut self, seed: CommitteeSeed) {
         let deadline = seed.deadline + self.request.dkg_window;
         self.deadlines.insert(Stage::Requested, deadline);
-        self.seed = Some(seed);
+        if let Selection::Unseeded | Selection::Seeded(_) = self.selection {
+            self.selection = Selection::Seeded(seed);
+        }
     }
 
     /// The chain moved the E3 to `stage`, unless it already moved it past.
@@ -384,30 +388,44 @@ impl E3 {
     /// Whether the node starts to wait for which operators may hold a seat: it ranks with `seed`
     /// once it knows, or at `by` without knowing. A wait under way goes on as it was.
     pub(crate) fn await_eligibility(&mut self, seed: CommitteeSeed, by: UnixSecs) -> bool {
-        let waits = self.selecting.is_none();
+        let waits = matches!(self.selection, Selection::Unseeded | Selection::Seeded(_));
         if waits {
-            self.selecting = Some(Selecting { seed, by });
+            self.selection = Selection::Reading { seed, by };
         }
         waits
     }
 
-    /// The seed to rank with now that the answer came, unless the node ranked without it.
+    /// The seed to rank with now that the answer came, unless the node took a ticket without it.
     pub(crate) fn answered(&mut self) -> Option<CommitteeSeed> {
-        self.selecting.take().map(|selecting| selecting.seed)
+        let Selection::Reading { seed, .. } = self.selection else {
+            return None;
+        };
+        self.selection = Selection::Seeded(seed);
+        Some(seed)
     }
 
     /// The seed to rank with once the answer is late.
     pub(crate) fn unanswered(&mut self, now: UnixSecs) -> Option<CommitteeSeed> {
-        let late = self.selecting.take_if(|selecting| selecting.by <= now);
-        late.map(|selecting| selecting.seed)
+        let Selection::Reading { seed, by } = self.selection else {
+            return None;
+        };
+        if by > now {
+            return None;
+        }
+        self.selection = Selection::Seeded(seed);
+        Some(seed)
     }
 
-    pub(crate) fn ticket(&self) -> Option<u64> {
-        self.ticket.map(|ticket| ticket.number)
+    pub(crate) fn has_ticket(&self) -> bool {
+        matches!(self.selection, Selection::Ticketed(_))
     }
 
-    pub(crate) fn seed(&self) -> Option<CommitteeSeed> {
-        self.seed
+    /// The request's seed while this node holds no ticket, to rank with when its standing changes.
+    pub(crate) fn seed_without_ticket(&self) -> Option<CommitteeSeed> {
+        match self.selection {
+            Selection::Seeded(seed) | Selection::Reading { seed, .. } => Some(seed),
+            Selection::Unseeded | Selection::Ticketed(_) => None,
+        }
     }
 
     pub(crate) fn check_started(&mut self) {
@@ -440,7 +458,7 @@ impl E3 {
         rank: usize,
         deadline: UnixSecs,
     ) -> Vec<Effect> {
-        self.ticket = Some(Ticket {
+        self.selection = Selection::Ticketed(Ticket {
             number,
             rank,
             deadline,
@@ -701,11 +719,15 @@ impl E3 {
         let work = self.running().then(|| {
             let dkg = self.dkg.as_ref().and_then(Dkg::next_deadline);
             let decryption = self.decryption.as_ref().and_then(Decryption::next_deadline);
+            let reading = match self.selection {
+                Selection::Reading { by, .. } => Some(by),
+                _ => None,
+            };
             dkg.into_iter()
                 .chain(decryption)
                 .chain(self.due(Duty::Finalize))
                 .chain(self.due(Duty::MarkFailed))
-                .chain(self.selecting.map(|selecting| selecting.by))
+                .chain(reading)
                 .min()
         });
         let resend = self.resend.next_deadline(|body| match body {
@@ -738,10 +760,12 @@ impl E3 {
     /// This node's call at `duty`, if it owes one, and its place among those that can make it.
     fn call(&self, duty: Duty) -> Option<(Call, u64)> {
         let (stage, deadline, place) = match duty {
-            Duty::Finalize => {
-                let ticket = self.ticket.filter(|_| self.stage == Stage::Requested)?;
-                (Stage::Requested, ticket.deadline, ticket.rank as u64)
-            }
+            Duty::Finalize => match self.selection {
+                Selection::Ticketed(ticket) if self.stage == Stage::Requested => {
+                    (Stage::Requested, ticket.deadline, ticket.rank as u64)
+                }
+                _ => return None,
+            },
             Duty::MarkFailed => {
                 let (stage, deadline) = self.watched()?;
                 (stage, deadline, self.slot?)

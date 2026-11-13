@@ -1033,7 +1033,7 @@ impl Node {
         state.seeded(seed);
         let request = state.request;
         let by = (now + ELIGIBILITY_READ).min(seed.deadline.saturating_sub(TICKET_RESERVE));
-        if request.owner_cap && now < by && state.ticket().is_none() {
+        if request.owner_cap && now < by && !state.has_ticket() {
             if !state.await_eligibility(seed, by) {
                 return Vec::new();
             }
@@ -1063,8 +1063,7 @@ impl Node {
         let open: Vec<(E3Id, CommitteeSeed)> = self
             .e3s
             .iter()
-            .filter(|(_, state)| state.ticket().is_none())
-            .filter_map(|(e3, state)| Some((*e3, state.seed()?)))
+            .filter_map(|(e3, state)| Some((*e3, state.seed_without_ticket()?)))
             .collect();
         open.into_iter()
             .flat_map(|(e3, seed)| self.rank(now, e3, seed, None))
@@ -1089,13 +1088,12 @@ impl Node {
         let active_jobs = self
             .e3s
             .values()
-            .filter(|state| state.ticket().is_some() && state.running())
+            .filter(|state| state.has_ticket() && state.running())
             .count() as u64;
         let Some(state) = self.e3s.get(&e3) else {
             return Vec::new();
         };
-        if state.ticket().is_some() || now >= committee_deadline || state.stage != Stage::Requested
-        {
+        if state.has_ticket() || now >= committee_deadline || state.stage != Stage::Requested {
             return Vec::new();
         }
         let request = state.request;
@@ -2255,7 +2253,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "f536761b5f27ad8c60cf9b06a20806143632191f3e245ae9472ed51b8310fcb7"
+                    "77f1a7bd08246f1cbf410cd6e7b7e9a9db0884830543a8273a4ea9f42fec0bab"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \
