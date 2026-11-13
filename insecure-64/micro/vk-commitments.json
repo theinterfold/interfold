@@ -2,10 +2,10 @@
   "preset": "insecure-64",
   "committee": "micro",
   "commitments": {
-    "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x0714bf5b322c3329c10b368a3abd4a14d7641967af0c6580e90a8d162e47bee0",
+    "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x27faa89b3967e6ce2a6872a5de8e194eaa34b283026b4eb88a5fade6ed55c180",
     "bb-vk-hash/default/threshold/pk_aggregation": "0x0fea4c0757b373b72617df0e0af2b4eb5c85d50d5fc50f35dd8e00769f86e80d",
     "bb-vk-hash/default/threshold/user_data_encryption": "0x1e44efe8fd3e2a5ce05d798b508056b0ceac8a7f4d1ed9291f082f2bfa89a488",
     "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x10929cdf9c09e4755279664db8ecb11a97537af7c13ef2309a2a13cef9e93a44",
-    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x290a75737153f5f00309405b80dc6f95aeec7f9b75495edc90b20cc0fbae102c"
+    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x0ace7adb65ad6f2fd8d97e5bc21ebdd99087c0b6938a9be0fc304d70499ba24b"
   }
 }
