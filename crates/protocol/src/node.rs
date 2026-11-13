@@ -2253,7 +2253,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "77f1a7bd08246f1cbf410cd6e7b7e9a9db0884830543a8273a4ea9f42fec0bab"
+                    "a2c95a8eac073071e3916c7f8b81d45bb87e7a4733126927e641387a5f63618b"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

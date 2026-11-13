@@ -455,6 +455,22 @@ mod cases {
         assert_eq!(slashes, [(address(1), 2)]);
     }
 
+    /// Another member can open the window before this node's own check fails in the same second.
+    /// This node's accusation joins that window and keeps the votes it has.
+    #[test]
+    fn an_accusation_into_a_window_already_open_keeps_its_votes() {
+        let mut node = member(ME);
+        node.step(NOW, accusation(2, NOW, 1));
+        let effects = node.step(NOW, key_failed(e3(1), 1, data_hash(1)));
+        let effects = node.step(NOW, sign(ME, signing(&effects)));
+        let later = node.step(NOW + 30, Input::Tick);
+        let slashes: Vec<_> = slashes(&effects)
+            .into_iter()
+            .chain(slashes(&later))
+            .collect();
+        assert_eq!(slashes, [(address(1), 2)]);
+    }
+
     /// A vote already counted costs nothing: copies of it are not taken again.
     #[test]
     fn a_vote_or_accusation_already_counted_is_not_taken_again() {
