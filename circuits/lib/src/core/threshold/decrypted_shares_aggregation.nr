@@ -151,23 +151,28 @@ fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>
 
     let mut out = [[0 as Field; H]; L];
     for i in 0..H {
-        let mut numerator: Field = 1;
-        let mut denominator: Field = 1;
-        for j in 0..H {
-            if j != i {
-                numerator *= ids[j];
-                let difference = if j > i {
-                    ids[j] - ids[i]
-                } else {
-                    ids[i] - ids[j]
-                };
-                denominator *= difference;
-            }
-        }
         // The product of the other ids carries the sign of the omitted factors.
         let negate = (i % 2) == 1;
         for l in 0..L {
             let q = qis[l];
+            // Reduce after every factor. Unreduced, the products reach `n! / (n - T)!` (about 2^35
+            // for 19 parties), and `numerator * inverse` then has a quotient above `BIT_K` for
+            // narrow moduli, so valid id sets could not be proven. Reduced, each product is under
+            // `q * id`, so every quotient is below the largest id (at most `n_parties`), whatever the
+            // committee size.
+            let mut numerator: Field = 1;
+            let mut denominator: Field = 1;
+            for j in 0..H {
+                if j != i {
+                    numerator = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * ids[j], q);
+                    let difference = if j > i {
+                        ids[j] - ids[i]
+                    } else {
+                        ids[i] - ids[j]
+                    };
+                    denominator = reduce_mod_bounded::<BIT_Q, BIT_K>(denominator * difference, q);
+                }
+            }
             let inverse = inv_mod_bounded::<BIT_Q, BIT_K>(denominator, q);
             let magnitude = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * inverse, q);
             out[l][i] = if negate {
@@ -314,4 +319,55 @@ fn rounded_decode_covers_its_boundaries() {
     assert(rounded_decode::<5, 11>(151, t, q, half) == 2);
     assert(rounded_decode::<5, 11>(250, t, q, half) == 2);
     assert(rounded_decode::<5, 11>(251, t, q, half) == 3);
+}
+
+/// Lagrange coefficients at zero sum to one, so each row must reduce to 1 modulo its `q`.
+fn assert_rows_sum_to_one<let H: u32, let L: u32>(rows: [[Field; H]; L], qis: [Field; L]) {
+    for l in 0..L {
+        let mut sum = 0;
+        for i in 0..H {
+            sum += rows[l][i];
+        }
+        assert(
+            reduce_mod_bounded::<27, 8>(sum, qis[l]) == 1,
+            "Lagrange coefficients must sum to one",
+        );
+    }
+}
+
+/// `L_1(0) = 2 / (2 - 1) = 2` and `L_2(0) = 1 / (1 - 2) = -1 = 6 (mod 7)`: pins the sign handling.
+#[test]
+fn lagrange_coefficients_of_two_parties() {
+    let rows = lagrange_coefficients::<2, 1, 3, 8>([7], [1, 2], 2);
+    assert(rows[0] == [2, 6]);
+}
+
+/// The insecure-64 moduli are 27 bits wide and C7 bounds its quotients to `q_bit + 6 = 33` bits.
+/// The product of the other nine ids of a small-committee set reaches `19! / 10!`, about `2^35`, so
+/// multiplying it unreduced by an inverse overflows that bound. These sets must still prove: the
+/// highest ids, ids spread across the committee, and a larger committee than any shipped today.
+global INSECURE_64_QIS: [Field; 3] = [134217089, 134215681, 134215553];
+
+#[test]
+fn lagrange_coefficients_for_the_highest_small_committee_ids() {
+    let ids: [Field; 10] = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+    let rows = lagrange_coefficients::<10, 3, 27, 33>(INSECURE_64_QIS, ids, 19);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
+}
+
+#[test]
+fn lagrange_coefficients_for_spread_small_committee_ids() {
+    let ids: [Field; 10] = [1, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+    let rows = lagrange_coefficients::<10, 3, 27, 33>(INSECURE_64_QIS, ids, 19);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
+}
+
+#[test]
+fn lagrange_coefficients_for_a_thirty_party_committee() {
+    let mut ids: [Field; 20] = [0; 20];
+    for i in 0..20 {
+        ids[i] = (i + 11) as Field;
+    }
+    let rows = lagrange_coefficients::<20, 3, 27, 33>(INSECURE_64_QIS, ids, 30);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
 }
