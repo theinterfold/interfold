@@ -59,12 +59,9 @@ pub struct E3 {
     /// This node's turn to mark the E3 failed and to settle it: its party ID in the committee,
     /// before that its place among the request's eligible operators.
     slot: Option<u64>,
-    /// The stage, and its deadline, whose failure this node asked for; a stage whose deadline
-    /// moves is watched again.
-    marked: Option<(Stage, UnixSecs)>,
     failure: Option<Failure>,
-    /// The turns this node found long past, which count from when it found them.
-    overdue: BTreeMap<Duty, Overdue>,
+    /// How far this node got with each call it owes.
+    calls: BTreeMap<Duty, Call>,
     /// The message of each kind and sender whose blobs this node fetches. Another message of that
     /// kind from that sender waits until this one is taken, so a member makes the node download
     /// at most one message of each kind.
@@ -91,7 +88,6 @@ struct Failure {
     at: UnixSecs,
     /// Accusations can still need the E3's work until then.
     accusable_until: UnixSecs,
-    settle_sent: bool,
     settled: bool,
     released: bool,
 }
@@ -102,7 +98,6 @@ pub(crate) struct Ticket {
     number: u64,
     rank: usize,
     deadline: UnixSecs,
-    finalize_sent: bool,
 }
 
 /// A call that several nodes can make.
@@ -113,12 +108,34 @@ enum Duty {
     Settle,
 }
 
-/// A node looked at `duty` long after its turn, when it found the `deadline` that its turns count
-/// from long past.
+impl Duty {
+    const ALL: [Duty; 3] = [Duty::Finalize, Duty::MarkFailed, Duty::Settle];
+
+    fn transaction(self) -> Transaction {
+        match self {
+            Duty::Finalize => Transaction::FinalizeCommittee,
+            Duty::MarkFailed => Transaction::MarkFailed,
+            Duty::Settle => Transaction::SettleFailure,
+        }
+    }
+}
+
+/// This node's call at a duty: the stage and deadline it is owed for, and how far the node got. A
+/// later stage, or a moved deadline, owes the call again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Overdue {
+struct Call {
+    stage: Stage,
     deadline: UnixSecs,
-    found: UnixSecs,
+    state: CallState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum CallState {
+    /// The node calls in its turn, which counts from this time: the deadline, or the time the
+    /// node found the turn long past, because it was not running when the turn came.
+    Waiting { from: UnixSecs },
+    /// The node made the call.
+    Made,
 }
 
 /// Nodes that can make the same call take turns, 30 seconds apart from one second after its
@@ -169,9 +186,8 @@ impl E3 {
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
             slot,
-            marked: None,
             failure: None,
-            overdue: BTreeMap::new(),
+            calls: BTreeMap::new(),
             fetching: BTreeMap::new(),
         }
     }
@@ -202,7 +218,6 @@ impl E3 {
         self.failure.get_or_insert(Failure {
             at,
             accusable_until,
-            settle_sent: false,
             settled: false,
             released: false,
         });
@@ -429,7 +444,6 @@ impl E3 {
             number,
             rank,
             deadline,
-            finalize_sent: false,
         });
         vec![self.submit(Transaction::SubmitTicket { ticket: number })]
     }
@@ -653,21 +667,12 @@ impl E3 {
     pub(crate) fn pass_deadlines(&mut self, now: UnixSecs) -> Vec<Effect> {
         self.note_turns_long_past(now);
         let mut effects = Vec::new();
-        if self.due(Duty::Finalize).is_some_and(|due| now >= due) {
-            if let Some(ticket) = &mut self.ticket {
-                ticket.finalize_sent = true;
+        for duty in Duty::ALL {
+            if let Some((call, _)) = self.pending(duty).filter(|(_, due)| now >= *due) {
+                let state = CallState::Made;
+                self.calls.insert(duty, Call { state, ..call });
+                effects.push(self.submit(duty.transaction()));
             }
-            effects.push(self.submit(Transaction::FinalizeCommittee));
-        }
-        if self.due(Duty::MarkFailed).is_some_and(|due| now >= due) {
-            self.marked = self.watched();
-            effects.push(self.submit(Transaction::MarkFailed));
-        }
-        if self.due(Duty::Settle).is_some_and(|due| now >= due) {
-            if let Some(failure) = &mut self.failure {
-                failure.settle_sent = true;
-            }
-            effects.push(self.submit(Transaction::SettleFailure));
         }
         if let Some(dkg) = self.dkg_mut() {
             effects.extend(dkg.pass_deadlines(now));
@@ -730,48 +735,56 @@ impl E3 {
         Some((self.stage, *deadline))
     }
 
-    /// `duty`, if this node owes it: the deadline that its turns count from, and this node's
-    /// place among those that can make the call.
-    fn duty(&self, duty: Duty) -> Option<(UnixSecs, u64)> {
-        match duty {
+    /// This node's call at `duty`, if it owes one, and its place among those that can make it.
+    fn call(&self, duty: Duty) -> Option<(Call, u64)> {
+        let (stage, deadline, place) = match duty {
             Duty::Finalize => {
-                let ticket = self.ticket.filter(|ticket| !ticket.finalize_sent)?;
-                (self.stage == Stage::Requested).then_some((ticket.deadline, ticket.rank as u64))
+                let ticket = self.ticket.filter(|_| self.stage == Stage::Requested)?;
+                (Stage::Requested, ticket.deadline, ticket.rank as u64)
             }
             Duty::MarkFailed => {
-                let watched = self
-                    .watched()
-                    .filter(|watched| self.marked != Some(*watched))?;
-                Some((watched.1, self.slot?))
+                let (stage, deadline) = self.watched()?;
+                (stage, deadline, self.slot?)
             }
             Duty::Settle => {
-                let failure = self
-                    .failure
-                    .filter(|failure| !failure.settle_sent && !failure.settled)?;
-                Some((failure.at, self.slot?))
+                let failure = self.failure.filter(|failure| !failure.settled)?;
+                (Stage::Failed, failure.at, self.slot?)
             }
+        };
+        let call = self.calls.get(&duty).copied();
+        let call = call
+            .filter(|call| (call.stage, call.deadline) == (stage, deadline))
+            .unwrap_or(Call {
+                stage,
+                deadline,
+                state: CallState::Waiting { from: deadline },
+            });
+        Some((call, place))
+    }
+
+    /// This node's call at `duty` while the node has yet to make it, and when its turn comes.
+    fn pending(&self, duty: Duty) -> Option<(Call, UnixSecs)> {
+        let (call, place) = self.call(duty)?;
+        match call.state {
+            CallState::Waiting { from } => Some((call, turn(from, place))),
+            CallState::Made => None,
         }
     }
 
-    /// When this node's turn at `duty` comes.
+    /// When this node's turn at `duty` comes, if it has yet to make the call.
     fn due(&self, duty: Duty) -> Option<UnixSecs> {
-        let (deadline, place) = self.duty(duty)?;
-        let start = match self.overdue.get(&duty) {
-            Some(overdue) if overdue.deadline == deadline => overdue.found,
-            _ => deadline,
-        };
-        Some(turn(start, place))
+        self.pending(duty).map(|(_, due)| due)
     }
 
     /// A turn found long past counts from now: the node was not running when it came.
     fn note_turns_long_past(&mut self, now: UnixSecs) {
-        for duty in [Duty::Finalize, Duty::MarkFailed, Duty::Settle] {
-            let (Some((deadline, _)), Some(due)) = (self.duty(duty), self.due(duty)) else {
+        for duty in Duty::ALL {
+            let Some((call, due)) = self.pending(duty) else {
                 continue;
             };
             if now > due + LONG_PAST {
-                let found = now;
-                self.overdue.insert(duty, Overdue { deadline, found });
+                let state = CallState::Waiting { from: now };
+                self.calls.insert(duty, Call { state, ..call });
             }
         }
     }
