@@ -1283,6 +1283,10 @@ jobs:
         if: matrix.leg == 'suites'
         run: cargo test --locked -p e3-zk-prover --test witness_compatibility -- --include-ignored --nocapture
 
+      - name: Prove isolated synchronized DKG leaves from native encrypted transport
+        if: matrix.leg == 'suites'
+        run: pnpm rust:test:sync-dkg:proofs
+
       - name: Run ZK prover e2e tests
         if: matrix.leg == 'suites'
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1

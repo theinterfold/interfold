@@ -9,3 +9,4 @@ pub mod committee;
 pub mod insecure;
 pub mod secure;
 pub mod protocol;
+pub mod synchronized;

@@ -47,8 +47,12 @@ under their own threshold modulus. The synchronized DKG plaintext modulus is twi
 threshold modulus; these parameters are not interchangeable with the SS DKG pair. Unpacking rejects
 out-of-range packed coefficients and restores SK residues before aggregation. Native round trips
 exercise the existing encrypted SK-share transport, not a new key-bearing wire field or signature.
-This is not yet the admitted setup protocol: C2/C4 key provenance and the anchored private-key
-binding for synchronized C6 remain to be implemented and reviewed.
+The isolated
+[draft C0–C4 leaves](proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted) bind
+packed-message openings and directed-key roots/bundles. This is not the admitted setup protocol:
+authenticated E3 context, recursive provenance joins and the anchored private-key binding for
+synchronized C6 remain to be implemented and reviewed. No key-bearing wire field, actor request or
+saved-state schema is introduced by these leaves.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

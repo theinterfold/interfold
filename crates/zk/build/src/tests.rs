@@ -17,7 +17,7 @@ fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
     for preset in BfvPreset::PAIR_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
             let mut request = request();
-            request.preset = PresetSelection::Single(preset);
+            request.preset = PresetSelection::Single(super::profile(preset_name(preset)).unwrap());
             request.committee = CommitteeSelection::Single(committee);
             let mut selection =
                 configuration::prepare_selection(&root, preset, committee, true).unwrap();
@@ -112,7 +112,7 @@ fn source_refresh_normalizes_matrix_selections_without_touching_artifacts() {
 pub(crate) fn request() -> Request {
     Request {
         operation: Operation::Build,
-        preset: PresetSelection::Single(BfvPreset::InsecureThreshold64),
+        preset: PresetSelection::Single(BfvProfile::SsInsecure64),
         committee: CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum),
         groups: GroupSelection::All,
         circuits: Vec::new(),
@@ -128,7 +128,7 @@ pub(crate) fn request() -> Request {
     }
 }
 
-fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) {
+pub(crate) fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) {
     let path = root.join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
@@ -215,7 +215,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
         .to_string()
         .contains("Hydration requires a complete artifact pair"));
     let mut disabled = request();
-    disabled.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
+    disabled.preset = PresetSelection::Single(BfvProfile::SsSecure8192);
     disabled.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
     assert!(disabled
         .validate(temp.path())
@@ -230,13 +230,8 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
     assert!(!temp.path().join("circuits").exists());
     assert!(!temp.path().join("dist").exists());
     assert_eq!(all.selected_pairs(temp.path()).unwrap(), pairs);
-    for preset in [BfvPreset::InsecureDkg64, BfvPreset::SecureDkg8192] {
-        let mut invalid = request();
-        invalid.preset = PresetSelection::Single(preset);
-        assert!(execute(temp.path(), &invalid)
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported build preset"));
+    for name in ["INSECURE_DKG_64", "SECURE_DKG_8192"] {
+        assert!(name.parse::<PresetSelection>().is_err());
     }
     let mut empty = request();
     empty.groups = GroupSelection::Selected(Vec::new());
@@ -247,7 +242,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
     for options in [
         {
             let mut r = request();
-            r.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
+            r.preset = PresetSelection::Single(BfvProfile::SsSecure8192);
             r.committee = CommitteeSelection::All;
             r
         },
@@ -272,6 +267,218 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
         );
         options.validate(temp.path()).unwrap();
     }
+}
+
+fn sync_request() -> Request {
+    let mut request = request();
+    request.preset = PresetSelection::Single(BfvProfile::SyncDecInsecure64);
+    request.circuits = vec!["pk".into()];
+    request
+}
+
+#[test]
+fn synchronized_definition_does_not_enable_any_live_build_pair_or_admission() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "scripts/circuits/build-pairs.json",
+        fs::read(repo.join("scripts/circuits/build-pairs.json")).unwrap(),
+    );
+    let before = snapshot(temp.path());
+    for operation in [
+        Operation::Build,
+        Operation::Hash,
+        Operation::SyncPreset,
+        Operation::SyncConfig,
+    ] {
+        let mut selected = sync_request();
+        selected.operation = operation;
+        assert!(execute(temp.path(), &selected)
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported preset/committee pair"));
+        assert_eq!(snapshot(temp.path()), before);
+    }
+    let pairs = build_pairs(&repo).unwrap();
+    assert_eq!(
+        pairs.len(),
+        BfvPreset::PAIR_PRESETS.len() * CiphernodesCommitteeSize::ALL.len()
+    );
+    assert!(pairs
+        .iter()
+        .all(|pair| profile(&pair[0]).unwrap().protocol() == BfvDecryptionProtocol::SecretShared));
+    assert!(!BfvProfile::SyncDecInsecure64.admission_enabled());
+}
+
+#[test]
+fn synchronized_policy_is_explicit_partial_and_minimum_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "scripts/circuits/build-pairs.json",
+        r#"[["secure-8192","small"],["sync-insecure-64","minimum"],["insecure-64","micro"]]"#,
+    );
+    let selected = sync_request();
+    selected.validate(root).unwrap();
+    let mut all = request();
+    all.preset = PresetSelection::All;
+    all.committee = CommitteeSelection::All;
+    assert_eq!(
+        all.selected_pairs(root).unwrap(),
+        build_pairs(root).unwrap()
+    );
+    // Neither an incomplete tree nor a current-looking stamp authorizes complete/hydrated sync.
+    assert!(all.validate(root).is_err());
+    for operation in [
+        Operation::SyncConfig,
+        Operation::CheckLayouts,
+        Operation::QualifyVkCommitments,
+    ] {
+        let mut unsupported = selected.clone();
+        unsupported.operation = operation;
+        assert!(execute(root, &unsupported).is_err());
+    }
+    for committee in [
+        CiphernodesCommitteeSize::Micro,
+        CiphernodesCommitteeSize::Small,
+    ] {
+        write(
+            root,
+            "scripts/circuits/build-pairs.json",
+            format!(r#"[["sync-insecure-64","{committee}"]]"#),
+        );
+        assert!(build_pairs(root).is_err());
+    }
+    write(
+        root,
+        "scripts/circuits/build-pairs.json",
+        r#"[["ss-insecure-64","minimum"]]"#,
+    );
+    assert!(
+        build_pairs(root).is_err(),
+        "aliases must not create duplicate artifact namespaces"
+    );
+    assert!(!root.join("circuits").exists());
+    assert!(!root.join("dist").exists());
+}
+
+#[test]
+fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_fall_back() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let selected = sync_request();
+    let mut full = selected.clone();
+    full.circuits.clear();
+    let leaves = artifacts::discover(&repo, &full).unwrap();
+    assert_eq!(
+        leaves.len(),
+        e3_zk_config::CircuitName::SYNCHRONIZED_DKG.len()
+    );
+    for leaf in &leaves {
+        assert!(leaf
+            .path
+            .starts_with(repo.join("circuits/bin/synchronized")));
+        assert_eq!(
+            artifacts::target_dir(&repo, leaf).unwrap(),
+            repo.join("circuits/bin/synchronized")
+                .join(&leaf.group)
+                .join("target")
+        );
+    }
+    full.circuits = vec!["e_sm_share_computation".into()];
+    assert!(artifacts::discover(&repo, &full).is_err());
+    full.circuits = vec!["c6_fold".into()];
+    assert!(artifacts::discover(&repo, &full).is_err());
+    let mut ss = request();
+    ss.circuits = vec!["pk".into()];
+    let leaves = artifacts::discover(&repo, &ss).unwrap();
+    assert_eq!(leaves.len(), 1);
+    assert!(leaves[0].path.starts_with(repo.join("circuits/bin/dkg")));
+
+    let temp = circuit_root_without_tools();
+    let root = temp.path();
+    let before = snapshot(root);
+    let selection = configuration::prepare_profile(
+        root,
+        BfvProfile::SyncDecInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+        false,
+    )
+    .unwrap();
+    assert_eq!(selection.noir.len(), 1);
+    assert!(selection.noir[0]
+        .0
+        .ends_with("configs/synchronized/sync_insecure_64.nr"));
+    assert_eq!(
+        snapshot(root),
+        before,
+        "definition preparation wrote live sources"
+    );
+}
+
+#[test]
+fn synchronized_source_identity_binds_selected_packages_workspaces_and_projected_config() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    identity::tests::seed_sources(root);
+    artifacts::copy_tree(
+        &repo.join("circuits/bin/synchronized"),
+        &root.join("circuits/bin/synchronized"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    let config_path = "circuits/lib/src/configs/synchronized/sync_insecure_64.nr";
+    write(root, config_path, fs::read(repo.join(config_path)).unwrap());
+    let selected = sync_request();
+    let hash = || {
+        identity::source_hash(root, &selected, Some("sync-insecure-64"), Some("minimum")).unwrap()
+    };
+    let original = hash();
+    write(
+        root,
+        "circuits/bin/dkg/pk/Nargo.toml",
+        "[package]\nname = 'pk'\n",
+    );
+    write(
+        root,
+        "circuits/bin/dkg/pk/src/main.nr",
+        "fn main() -> pub Field { 1 }",
+    );
+    assert_eq!(hash(), original, "sync identity discovered SS packages");
+    for path in [
+        "circuits/bin/synchronized/dkg/pk/src/main.nr",
+        "circuits/bin/synchronized/dkg/Nargo.toml",
+        config_path,
+    ] {
+        let bytes = fs::read(root.join(path)).unwrap();
+        write(
+            root,
+            path,
+            [bytes.as_slice(), b"\n// identity change\n"].concat(),
+        );
+        assert_ne!(hash(), original, "unhashed sync owner {path}");
+        write(root, path, bytes);
+    }
+    let config = fs::read_to_string(root.join(config_path)).unwrap();
+    fs::remove_file(root.join(config_path)).unwrap();
+    assert_eq!(
+        identity::source_hash_with_updates(
+            root,
+            &selected,
+            Some("sync-insecure-64"),
+            Some("minimum"),
+            &[(root.join(config_path), config)]
+        )
+        .unwrap(),
+        original
+    );
+    // A selected workspace is required even when all its packages still exist.
+    fs::remove_file(root.join("circuits/bin/synchronized/dkg/Nargo.toml")).unwrap();
+    assert!(
+        identity::source_hash(root, &selected, Some("sync-insecure-64"), Some("minimum")).is_err()
+    );
 }
 
 #[test]
@@ -1282,7 +1489,7 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
     let root = temp.path();
     let pair = root.join("dist/circuits/insecure-64/minimum");
     seed_anchor_keys(&pair);
-    artifacts::refresh_anchors(root, &pair, true).unwrap();
+    artifacts::refresh_anchors(root, &pair, true, BfvProfile::SsInsecure64).unwrap();
     artifacts::checksums(&root.join("dist/circuits")).unwrap();
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
@@ -1293,7 +1500,7 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
         let digest = checksum(&root.join("dist/circuits").join(&relative)).unwrap();
         assert_eq!(manifest["files"][&relative], digest);
     }
-    artifacts::refresh_anchors(root, &pair, false).unwrap();
+    artifacts::refresh_anchors(root, &pair, false, BfvProfile::SsInsecure64).unwrap();
     for name in ["nodes_fold", "c6_fold"] {
         assert!(!pair
             .join(format!(

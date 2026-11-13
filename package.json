@@ -60,6 +60,7 @@
     "ciphernode:remove": "cd packages/interfold-contracts && pnpm ciphernode:remove",
     "rust:test": "cd crates && ./scripts/test.sh",
     "rust:test:proofs": "cargo test --locked -p e3-zk-prover --test fold_accumulators_e2e_tests --test node_fold_correlated_e2e_tests -- --include-ignored --nocapture --test-threads=1",
+    "rust:test:sync-dkg:proofs": "cargo test --locked -p e3-trbfv --test synchronized_dkg -- --include-ignored --nocapture --test-threads=1",
     "rust:test:slashing": "cargo test --locked -p e3-zk-prover --test slashing_integration_tests -- --include-ignored --nocapture --test-threads=1",
     "noir:test": "./scripts/circuits/test.sh",
     "noir:lint": "./scripts/circuits/lint.sh",

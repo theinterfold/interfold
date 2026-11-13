@@ -13,6 +13,7 @@ pub mod field;
 pub mod metadata;
 pub mod output_layout;
 mod parameters;
+pub mod synchronized;
 pub mod threshold;
 
 pub use circuit::{CircuitName, CircuitVariant};

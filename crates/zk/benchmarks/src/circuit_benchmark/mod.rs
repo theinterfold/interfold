@@ -272,7 +272,15 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         let start = std::time::Instant::now();
         let build = e3_zk_build::Request {
             operation: e3_zk_build::Operation::Build,
-            preset: e3_zk_build::PresetSelection::Single(preset),
+            preset: e3_zk_build::PresetSelection::Single(
+                e3_fhe_params::BfvProfile::ALL
+                    .into_iter()
+                    .find(|profile| {
+                        profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared
+                            && profile.threshold_preset() == preset
+                    })
+                    .context("benchmark requires an SS profile")?,
+            ),
             committee: e3_zk_build::CommitteeSelection::Single(committee),
             groups: e3_zk_build::GroupSelection::All,
             circuits: Vec::new(),

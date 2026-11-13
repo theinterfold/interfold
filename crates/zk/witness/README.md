@@ -15,6 +15,15 @@ limbs and returns errors for invalid shapes or inexact quotient division.
 `Inputs::to_json` returns canonical Noir JSON directly. It preserves field names, polynomial
 containers, and unsigned field-element encoding; it does not perform encryption or file writes.
 
+The disabled `synchronized` module prepares C1/C2/C4 private inputs with an exact paired
+`e3_zk_config::synchronized::Configs`. C0/C3 use their existing typed encoders with that
+configuration's transport owner. Supply C4's actual decoded packed plaintexts, directed key bytes
+and authenticated expected commitments; preparation validates shape, packing and openings, not their
+source's authentication. These new private types deliberately have no Debug or general persistence
+derives. Their opaque setup binding and draft root/bundle schema are described under
+[proof contracts](../../../docs/architecture/proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted);
+they do not authorize admission or replace the runtime SS encoders.
+
 C7 reads only the native ascending prefix selected by `config.max_msg_non_zero_coeffs`. It checks
 exactly `T+1` shares, strictly increasing one-based committee IDs, and level-zero contexts. It pads
 short messages and computes commitments over that prefix. Noir performs interpolation and CRT
