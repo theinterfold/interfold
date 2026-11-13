@@ -177,6 +177,8 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
 ) -> Result<AggregateHistory> {
     let aggregate_id = history.aggregate_id;
     let since = history.since;
+    // A failed attempt drops its history; a recovery round fetches it again.
+    let mark = budget.kept();
     let mut sources = 0usize;
     let mut last_error = None;
     let candidates = peers.len().min(MAX_HISTORY_PEERS);
@@ -197,8 +199,12 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
             Ok((events, observed_from)) => {
                 sources += 1;
                 history.vouched |= observed_from.is_some_and(|observed| observed <= since);
-                for event in events {
-                    history.merged.merge(event)?;
+                if let Err(error) = events
+                    .into_iter()
+                    .try_for_each(|event| history.merged.merge(event))
+                {
+                    budget.drop_kept_since(mark);
+                    return Err(error);
                 }
                 if sources == required {
                     break;
@@ -214,6 +220,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
         }
     }
     if sources < required {
+        budget.drop_kept_since(mark);
         let error =
             last_error.unwrap_or_else(|| anyhow::anyhow!("No admitted peer served the history"));
         return Err(error.context(format!(
@@ -251,6 +258,7 @@ pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
         let probe_time = Some(PROBE_TIME.min(remaining / 2));
+        let mark = budget.kept();
         let fetched =
             fetch_validated_history(requester, peer, history, budget, network, probe_time).await;
         let (events, observed_from) = match fetched {
@@ -262,6 +270,7 @@ pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
         };
         let mut merged = history.merged.clone();
         if let Err(error) = events.into_iter().try_for_each(|event| merged.merge(event)) {
+            budget.drop_kept_since(mark);
             warn!(%peer, %aggregate_id, "History from a further peer is not used: {error:#}");
             continue;
         }
@@ -270,8 +279,8 @@ pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
     }
 }
 
-/// One peer's history of the aggregate after `history.since`, validated, and its live-history
-/// time.
+/// One peer's history of the aggregate after `history.since`, validated, with one copy of each
+/// event, and its live-history time.
 async fn fetch_validated_history(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerId,
@@ -280,7 +289,9 @@ async fn fetch_validated_history(
     network: &NetworkPolicy,
     source_time: Option<Duration>,
 ) -> Result<(Vec<InterfoldEvent<Unsequenced>>, Option<u128>)> {
-    let fetched = fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
+    let mark = budget.kept();
+    let mut source = SourceHistory::new(history, network);
+    let fetched = fetch_all_batched_events_with_budget(
         requester,
         PeerTarget::Specific(peer),
         history.aggregate_id,
@@ -288,12 +299,20 @@ async fn fetch_validated_history(
         100,
         budget,
         source_time,
+        |page| source.add_page(page),
     )
-    .await?;
+    .await;
     // The allowance at the end of this source's fetch: a peer ahead of this node within the
     // allowance can store events while the node pages through its history.
-    let events = validate_historical_events(history, fetched.events, network, budget.latest_ts()?)?;
-    Ok((events, fetched.observed_from))
+    let validated = fetched.and_then(|observed_from| {
+        let events = source.finish(budget.latest_ts()?)?;
+        Ok((events, observed_from))
+    });
+    if validated.is_err() {
+        // The node drops a failed source's history.
+        budget.drop_kept_since(mark);
+    }
+    validated
 }
 
 /// Whether the `later` peers can still supply the sources that the node lacks if this peer fails.
@@ -346,26 +365,76 @@ async fn admitted_peers(
 /// Deadline for the swarm to list its admitted peers.
 const ADMITTED_PEERS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Check one peer's history of `history`'s aggregate. Besides each event's own checks, the peer
-/// must serve its events at or after the requested time, at most one event at each timestamp, and
-/// no event at the timestamp of another event that the node stores: the event store holds one
-/// event at a timestamp, and a second one would stop the node.
-pub(in crate::actors::net_sync_manager) fn validate_historical_events(
-    history: &AggregateHistory,
-    events: Vec<InterfoldEvent<Unsequenced>>,
-    network: &NetworkPolicy,
-    latest_ts: u128,
-) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
-    let aggregate_id = history.aggregate_id;
-    let mut timestamps: HashMap<u128, EventId> = HashMap::new();
-    for event in &events {
+/// One peer's history of `history`'s aggregate, checked page by page as it arrives. Besides each
+/// event's own checks, the peer must serve its events at or after the requested time, at most one
+/// event at each timestamp, and no event at the timestamp of another event that the node stores:
+/// the event store holds one event at a timestamp, and a second one would stop the node.
+///
+/// A peer stores an event again each time that the event reaches it after the peer forgot it, and
+/// serves every copy. Every copy is checked, and the source keeps one copy of each event ID.
+pub(in crate::actors::net_sync_manager) struct SourceHistory<'a> {
+    history: &'a AggregateHistory,
+    network: &'a NetworkPolicy,
+    /// The event at each timestamp that the source served.
+    timestamps: HashMap<u128, EventId>,
+    /// The latest event that the source served.
+    latest: Option<(u128, EventId)>,
+    kept: MergedEvents,
+}
+
+impl<'a> SourceHistory<'a> {
+    pub(in crate::actors::net_sync_manager) fn new(
+        history: &'a AggregateHistory,
+        network: &'a NetworkPolicy,
+    ) -> Self {
+        Self {
+            history,
+            network,
+            timestamps: HashMap::new(),
+            latest: None,
+            kept: MergedEvents::default(),
+        }
+    }
+
+    /// Check a page, and keep one copy of each of its events. Returns the bytes of the events that
+    /// neither this source nor the history held before.
+    pub(in crate::actors::net_sync_manager) fn add_page(
+        &mut self,
+        events: Vec<InterfoldEvent<Unsequenced>>,
+    ) -> Result<usize> {
+        let mut added = 0usize;
+        for event in events {
+            self.check(&event)?;
+            let id = event.id();
+            if !self.kept.by_id.contains_key(&id) && !self.history.merged.by_id.contains_key(&id) {
+                let bytes: usize = bincode::serialized_size(&event)
+                    .context("failed to measure a historical sync event")?
+                    .try_into()
+                    .context("historical sync event size does not fit usize")?;
+                added = added
+                    .checked_add(bytes)
+                    .context("historical sync page size overflow")?;
+            }
+            // Events from a peer's history are the network's, whatever source the peer's store
+            // recorded. Only this node's own replay keeps `Local`.
+            self.kept
+                .merge(event.with_source(e3_events::EventSource::Net))?;
+        }
+        Ok(added)
+    }
+
+    fn check(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<()> {
+        let history = self.history;
         if event.ts() < history.since {
             bail!(
                 "historical sync peer returned event {} from before the requested range",
                 event.id()
             );
         }
-        let other = timestamps.entry(event.ts()).or_insert_with(|| event.id());
+        let other = self
+            .timestamps
+            .entry(event.ts())
+            .or_insert_with(|| event.id());
         if *other != event.id() {
             bail!(
                 "historical sync peer returned events {} and {} at the same timestamp",
@@ -384,14 +453,8 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
                 );
             }
         }
-        // The node publishes the history at its latest event time, and refuses a time beyond its
-        // clock-drift allowance. One such event would cost the node the whole history.
-        if event.ts() > latest_ts {
-            bail!(
-                "historical sync peer returned event {} stamped beyond this node's clock-drift \
-                 allowance",
-                event.id()
-            );
+        if self.latest.is_none_or(|(latest, _)| event.ts() > latest) {
+            self.latest = Some((event.ts(), event.id()));
         }
         // The peer supplies the context ID. The merge keeps one event per ID, so a mislabeled
         // event could hide another peer's copy of a different event.
@@ -403,11 +466,11 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
                 payload_id
             );
         }
-        if event.aggregate_id() != aggregate_id {
+        if event.aggregate_id() != history.aggregate_id {
             bail!(
                 "historical sync peer returned event for aggregate {} while fetching {}",
                 event.aggregate_id(),
-                aggregate_id
+                history.aggregate_id
             );
         }
         if !EventTranslationService::is_forwardable_event(event) {
@@ -416,14 +479,28 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
                 event.event_type()
             );
         }
-        network.validate_event(event)?;
+        self.network.validate_event(event)
     }
-    // Events from a peer's history are the network's, whatever source the peer's store recorded.
-    // Only this node's own replay keeps `Local`.
-    Ok(events
-        .into_iter()
-        .map(|event| event.with_source(e3_events::EventSource::Net))
-        .collect())
+
+    /// The kept events in timestamp order. The node publishes the history at its latest event
+    /// time, and refuses a time beyond its clock-drift allowance `latest_ts`: one event that the
+    /// source served beyond it would cost the node the whole history.
+    pub(in crate::actors::net_sync_manager) fn finish(
+        self,
+        latest_ts: u128,
+    ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+        if let Some((ts, id)) = self.latest {
+            if ts > latest_ts {
+                bail!(
+                    "historical sync peer returned event {id} stamped beyond this node's \
+                     clock-drift allowance"
+                );
+            }
+        }
+        let mut events: Vec<_> = self.kept.by_id.into_values().collect();
+        events.sort_by_key(|event| event.ts());
+        Ok(events)
+    }
 }
 
 pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
