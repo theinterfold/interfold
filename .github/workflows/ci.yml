@@ -1172,11 +1172,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # Proves with the same source-matched circuit set that the integration prebuild validated.
-  # Releases additionally require explicit complete-matrix qualification.
+  # Proves with the newest published circuit set without a local SOURCE_HASH match.
+  # Source builds still compile and check their selected pair. Releases verify the complete matrix.
   # The proof suites run in two legs; the correlated node test alone sets the floor.
   zk_prover_e2e:
-    needs: [detect_changes, integration_prebuild]
+    needs: [detect_changes]
     if: needs.detect_changes.outputs.zk == 'true'
     timeout-minutes: 60
     runs-on:
@@ -1238,21 +1238,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download source-aligned ZK fixtures
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: integration-noir-artifacts
-          path: .ci-noir/
+      # Non-release proof suites reuse the published branch tip.
+      - name: Pull the published circuits
+        timeout-minutes: 10
+        run: pnpm store:circuits pull --latest
 
-      - name: Stage the validated circuit set
-        run: |
-          test -f .ci-noir/circuits/checksums.json
-          rm -rf dist/circuits
-          mkdir -p dist
-          cp -R .ci-noir/circuits dist/circuits
-
-      - name: Hydrate the source-matched insecure-64/minimum circuits
-        run: pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built --no-clean-targets
+      - name: Hydrate the insecure-64/minimum circuits
+        run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
 
       - name: Verify circuit artifacts
         run: |

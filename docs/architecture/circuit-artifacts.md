@@ -91,13 +91,11 @@ explicit pair fails before tools or writes.
 
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
-manifests, and required artifacts before publication. Full-proof integration uses a source-matched
-pull or builds its checked-out matrix, retains catalogue/verifier checks, and supplies CI proof
-suites with the same fixtures. Explicit development reuse can use `pull --latest` without a source
-match. `--hydrate-bin-only` requires a stamp and markers, reports a source mismatch, and records the
-original artifact hash in the active stamp. It never rewrites the archived stamp. `--skip-if-built`
-still requires a source match. These development reuse paths do not supply release-level source
-provenance; retain strict release qualification.
+manifests, and required artifacts before publication. Non-release CI/full-proof integration can use
+`pull --latest` without a source match. `--hydrate-bin-only` requires a stamp and markers, reports a
+source mismatch, and records the original artifact hash in the active stamp. It never rewrites the
+archived stamp. `--skip-if-built` still requires a source match. These development reuse paths do
+not supply release-level source provenance; retain strict release qualification.
 
 The expected archive digest ships **with the binary**, never fetched from the archive or endpoint.
 0.18.0's pin is the published GitHub asset digest; other version pins live in versions.json. Release

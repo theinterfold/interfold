@@ -190,7 +190,7 @@ pnpm store:circuits push
 # Pull circuits from git branch (used by releases)
 pnpm store:circuits pull
 
-# Explicit development reuse of the branch tip without a SOURCE_HASH match (not qualification)
+# Pull the branch tip without a SOURCE_HASH match (used by CI and the integration tests)
 pnpm store:circuits pull --latest
 ```
 
@@ -214,12 +214,10 @@ not need a circuit rebuild.
   `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
   branch tip does not replace this match. If no match exists, the command fails before it changes
   local artifacts. `verify-release` still checks every required pair and build stamp. With
-  `--latest`, the command takes the branch tip and does not check `SOURCE_HASH`. This is explicit
-  development reuse, not source qualification. Full-proof integration preparation pulls a matching
-  build or builds the matrix from its checked-out sources, then checks the catalogue and verifiers.
-  CI proof suites consume those same prepared fixtures. `--hydrate-bin-only` also allows a source
-  mismatch, reports it, and retains the original provenance; `--skip-if-built` requires a source
-  match
+  `--latest`, the command takes the branch tip and does not check `SOURCE_HASH`. CI and the
+  integration tests use `--latest` until the circuit drift workflow is designed (#2249). In that
+  period, `--hydrate-bin-only` does not check the stamp's source hash either. It reports a mismatch
+  and continues
 - **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
   use only when intentionally deleting old artifact sets
 - **Restamp**: `pnpm store:circuits restamp --expect-source-hash <previous hash>` rewrites the build
