@@ -11,6 +11,7 @@ pub mod dkg;
 pub mod encoding;
 pub mod errors;
 mod negacyclic;
+pub mod synchronized;
 pub mod threshold;
 mod validation;
 

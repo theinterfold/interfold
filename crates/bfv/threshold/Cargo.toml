@@ -29,6 +29,11 @@ zeroize.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
+e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
+e3-zk-build.workspace = true
+e3-zk-config.workspace = true
+e3-zk-witness.workspace = true
 e3-test-support.workspace = true
 e3-bfv-test-support.workspace = true
 e3-fhe.workspace = true

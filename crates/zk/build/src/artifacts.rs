@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::{
-    configuration, github_output, identity, preset, run, vk_commitments, vk_tree, write_json,
+    configuration, github_output, identity, profile, run, vk_commitments, vk_tree, write_json,
     CommitteeSelection, GroupSelection, Operation, PresetSelection, Request,
 };
 use anyhow::{bail, Context, Result};
+use e3_fhe_params::{BfvDecryptionProtocol, BfvProfile};
+use e3_zk_config::CircuitName;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -31,6 +33,53 @@ pub struct Stamp {
 }
 
 pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
+    let profile = match request.preset {
+        PresetSelection::Single(profile) => profile,
+        PresetSelection::All => BfvProfile::SsInsecure64,
+    };
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        let mut circuits = Vec::new();
+        for role in CircuitName::SYNCHRONIZED_DKG {
+            let name = role.as_str();
+            if !request.groups.groups().contains(&role.group())
+                || (!request.circuits.is_empty()
+                    && !request.circuits.iter().any(|selected| selected == name))
+            {
+                continue;
+            }
+            let path = root
+                .join("circuits/bin")
+                .join(role.source_path(profile).unwrap());
+            let manifest = path.join("Nargo.toml");
+            let value: toml::Value =
+                toml::from_str(&fs::read_to_string(&manifest).with_context(|| {
+                    format!("Missing synchronized circuit {}", manifest.display())
+                })?)?;
+            let package = value
+                .get("package")
+                .and_then(|package| package.get("name"))
+                .and_then(toml::Value::as_str)
+                .context("Nargo package needs a name")?;
+            if package != name {
+                bail!("Synchronized package {package} does not match logical role {name}");
+            }
+            circuits.push(Circuit {
+                name: name.into(),
+                group: role.group().into(),
+                package: package.into(),
+                path,
+            });
+        }
+        if !request.circuits.is_empty()
+            && request
+                .circuits
+                .iter()
+                .any(|name| !circuits.iter().any(|circuit| &circuit.name == name))
+        {
+            bail!("Unsupported synchronized DKG leaf selection");
+        }
+        return Ok(circuits);
+    }
     fn walk(
         path: &Path,
         group: &str,
@@ -96,12 +145,18 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
 }
 
 pub fn target_dir(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
-    let group = root.join("circuits/bin").join(&circuit.group);
-    let manifest = group.join("Nargo.toml");
-    if manifest.exists() {
-        let value: toml::Value = toml::from_str(&fs::read_to_string(manifest)?)?;
-        if value.get("workspace").is_some() && value.get("package").is_none() {
-            return Ok(group.join("target"));
+    let bin = root.join("circuits/bin");
+    for directory in circuit
+        .path
+        .ancestors()
+        .take_while(|path| path.starts_with(&bin))
+    {
+        let manifest = directory.join("Nargo.toml");
+        if manifest.exists() {
+            let value: toml::Value = toml::from_str(&fs::read_to_string(manifest)?)?;
+            if value.get("workspace").is_some() && value.get("package").is_none() {
+                return Ok(directory.join("target"));
+            }
         }
     }
     Ok(circuit.path.join("target"))
@@ -138,14 +193,16 @@ fn remove_dir(path: &Path) -> Result<()> {
 fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
     let mut paths = BTreeSet::new();
     for circuit in circuits {
-        paths.insert(
-            root.join("circuits/bin")
-                .join(&circuit.group)
-                .join("target"),
-        );
+        paths.insert(target_dir(root, circuit)?);
         paths.insert(circuit.path.join("target"));
     }
-    paths.insert(root.join("circuits/bin/target"));
+    if circuits.iter().any(|circuit| {
+        !circuit
+            .path
+            .starts_with(root.join("circuits/bin/synchronized"))
+    }) {
+        paths.insert(root.join("circuits/bin/target"));
+    }
     for path in paths {
         remove_dir(&path)?;
     }
@@ -200,6 +257,9 @@ pub fn hydration_stamp(
     committee: &str,
     current_hash: &str,
 ) -> Result<Stamp> {
+    if profile(preset)?.protocol() == BfvDecryptionProtocol::Synchronized {
+        bail!("Synchronized artifacts are incomplete and cannot be hydrated");
+    }
     let stamp =
         read_stamp(&pair.join(".build-stamp.json"))?.context("Artifact pair has no build stamp")?;
     if stamp.preset != preset || stamp.committee != committee || stamp.source_hash.is_empty() {
@@ -224,6 +284,9 @@ pub fn dist_current(
     committee: &str,
     hash: Option<&str>,
 ) -> Result<bool> {
+    if profile(preset)?.protocol() == BfvDecryptionProtocol::Synchronized {
+        return Ok(false);
+    }
     Ok(
         read_stamp(&pair.join(".build-stamp.json"))?.is_some_and(|stamp| {
             stamp.preset == preset
@@ -236,6 +299,9 @@ pub fn dist_current(
 /// Whether `circuits/bin` holds a complete build stamped for `preset`/`committee`. `hash` is as
 /// for [`dist_current`].
 pub fn bin_current(root: &Path, preset: &str, committee: &str, hash: Option<&str>) -> Result<bool> {
+    if profile(preset)?.protocol() == BfvDecryptionProtocol::Synchronized {
+        return Ok(false);
+    }
     Ok(read_active_stamp(root)?.is_some_and(|stamp| {
         stamp.preset == preset
             && stamp.committee == committee
@@ -261,6 +327,11 @@ fn active_stamp(root: &Path, preset: &str, committee: &str, hash: &str) -> Resul
 }
 
 pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Result<()> {
+    if request.single_profile()?.protocol() == BfvDecryptionProtocol::Synchronized
+        || profile(&stamp.preset)?.protocol() == BfvDecryptionProtocol::Synchronized
+    {
+        bail!("Synchronized artifacts are incomplete and cannot be hydrated");
+    }
     let circuits = discover(root, request)?;
     clean_targets(root, &circuits)?;
     for circuit in circuits {
@@ -295,6 +366,19 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
 }
 
 fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
+    if circuit
+        .path
+        .starts_with(root.join("circuits/bin/synchronized"))
+    {
+        let path = target_dir(root, circuit)?.join(format!("{}.json", circuit.package));
+        if !path.is_file() {
+            bail!(
+                "Compiled synchronized artifact not found: {}",
+                path.display()
+            );
+        }
+        return Ok(path);
+    }
     let group = root.join("circuits/bin").join(&circuit.group);
     let mut current = circuit.path.as_path();
     loop {
@@ -491,14 +575,33 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
     Ok(())
 }
 
-pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
+pub fn refresh_anchors(
+    root: &Path,
+    pair: &Path,
+    complete: bool,
+    profile: BfvProfile,
+) -> Result<()> {
+    let bin = if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        if complete {
+            bail!("Synchronized recursive VK topology is not implemented");
+        }
+        root.join("circuits/bin/synchronized")
+    } else {
+        root.join("circuits/bin")
+    };
     vk_commitments::invalidate(pair)?;
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        let stamp = pair.join(".build-stamp.json");
+        if stamp.exists() {
+            fs::remove_file(stamp)?;
+        }
+    }
     for name in ["nodes_fold", "c6_fold"] {
         for path in [
             pair.join("default/recursive_aggregation")
                 .join(name)
                 .join(format!("{name}.vk_tree_hash")),
-            root.join("circuits/bin/recursive_aggregation")
+            bin.join("recursive_aggregation")
                 .join(name)
                 .join("target")
                 .join(format!("{name}.vk_tree_hash")),
@@ -512,9 +615,7 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
         for (name, bytes) in vk_tree::hashes(pair)? {
             for directory in [
                 pair.join("default/recursive_aggregation").join(name),
-                root.join("circuits/bin/recursive_aggregation")
-                    .join(name)
-                    .join("target"),
+                bin.join("recursive_aggregation").join(name).join("target"),
             ] {
                 fs::create_dir_all(&directory)?;
                 fs::write(directory.join(format!("{name}.vk_tree_hash")), bytes)?;
@@ -573,14 +674,27 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
     // The shared build policy rejects disabled pairs before any tool run or write.
     request.validate(root)?;
     let pairs = request.selected_pairs(root)?;
-    let circuits = discover(root, request)?;
-    if circuits.is_empty() {
-        bail!("No circuits match the build selection");
+    let mut selections = Vec::new();
+    for selected in pairs {
+        let mut selected_request = request.clone();
+        selected_request.preset = PresetSelection::Single(profile(&selected[0])?);
+        selected_request.committee = CommitteeSelection::Single(selected[1].parse()?);
+        let circuits = discover(root, &selected_request)?;
+        if circuits.is_empty() {
+            bail!(
+                "No circuits match the build selection for {}/{}",
+                selected[0],
+                selected[1]
+            );
+        }
+        selections.push((selected, selected_request, circuits));
     }
     // A dry run only reads the selection; it needs no tools and writes nothing.
     if request.dry_run {
-        for circuit in circuits {
-            println!("{}/{}", circuit.group, circuit.name);
+        for (_, _, circuits) in selections {
+            for circuit in circuits {
+                println!("{}/{}", circuit.group, circuit.name);
+            }
         }
         return Ok(());
     }
@@ -588,22 +702,23 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
     let mut built = 0;
     let mut errors = Vec::new();
     let mut first_hash = None;
-    for selected in pairs {
+    for (selected, selected_request, circuits) in selections {
         let preset_name = selected[0].as_str();
         let committee = selected[1].as_str();
+        let selected_profile = selected_request.single_profile()?;
         let pair = output.join(preset_name).join(committee);
         let mut started = false;
         let result = (|| -> Result<()> {
-            let mut selection = configuration::prepare_selection(
+            let mut selection = configuration::prepare_profile(
                 root,
-                preset(preset_name)?,
+                selected_profile,
                 committee.parse()?,
                 request.skip_utils_patch,
             )?;
             selection.format(root)?;
             let hash = identity::source_hash_with_updates(
                 root,
-                request,
+                &selected_request,
                 Some(preset_name),
                 Some(committee),
                 &selection.noir,
@@ -612,7 +727,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 // Hydration copies published artifacts; it runs no compiler and no VK generation.
                 let stamp = hydration_stamp(&pair, preset_name, committee, &hash)?;
                 selection.publish()?;
-                hydrate(root, &pair, request, &stamp)?;
+                hydrate(root, &pair, &selected_request, &stamp)?;
                 first_hash.get_or_insert(stamp.source_hash);
                 return Ok(());
             }
@@ -621,7 +736,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 selection.publish()?;
                 if !bin_current(root, preset_name, committee, Some(&hash))? {
                     let stamp = hydration_stamp(&pair, preset_name, committee, &hash)?;
-                    hydrate(root, &pair, request, &stamp)?;
+                    hydrate(root, &pair, &selected_request, &stamp)?;
                 }
                 println!("Reused {preset_name}/{committee} (source_hash={hash})");
                 return Ok(());
@@ -652,9 +767,12 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 && !request.skip_vk
                 && request.circuits.is_empty()
                 && request.groups.is_complete();
-            refresh_anchors(root, &pair, complete)?;
+            refresh_anchors(root, &pair, complete, selected_profile)?;
             if !failures.is_empty() {
                 bail!("{}", failures.join("\n"));
+            }
+            if selected_profile.protocol() == BfvDecryptionProtocol::Synchronized {
+                return Ok(());
             }
             let stamp = Stamp {
                 preset: preset_name.into(),
@@ -671,7 +789,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
         })();
         if let Err(error) = result {
             if started {
-                if let Err(cleanup) = refresh_anchors(root, &pair, false)
+                if let Err(cleanup) = refresh_anchors(root, &pair, false, selected_profile)
                     .and_then(|_| vk_commitments::invalidate(&pair))
                 {
                     errors.push(format!("{preset_name}/{committee}: failed to invalidate incomplete outputs: {cleanup:#}"));
@@ -770,7 +888,7 @@ mod tests {
     fn request() -> Request {
         Request {
             operation: super::super::Operation::Build,
-            preset: super::super::PresetSelection::Single(BfvPreset::InsecureThreshold64),
+            preset: super::super::PresetSelection::Single(BfvProfile::SsInsecure64),
             committee: super::super::CommitteeSelection::Single(
                 e3_committee::CiphernodesCommitteeSize::Minimum,
             ),
@@ -786,6 +904,240 @@ mod tests {
             hydrate_bin_only: false,
             dry_run: false,
         }
+    }
+
+    #[test]
+    fn synchronized_partial_outputs_never_become_current_or_touch_ss_targets() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        copy_tree(
+            &repo.join("circuits/bin/synchronized"),
+            &root.join("circuits/bin/synchronized"),
+            &["target", "Prover.toml", "Witness.toml"],
+        )
+        .unwrap();
+        let mut selected = request();
+        selected.preset = PresetSelection::Single(BfvProfile::SyncDecInsecure64);
+        selected.circuits = vec!["pk".into()];
+        let circuit = discover(root, &selected).unwrap().remove(0);
+        crate::tests::write(
+            root,
+            "scripts/circuits/build-pairs.json",
+            r#"[["sync-insecure-64","minimum"]]"#,
+        );
+        let before = crate::tests::snapshot(root);
+        let mut dry = selected.clone();
+        dry.preset = PresetSelection::All;
+        dry.committee = CommitteeSelection::All;
+        dry.dry_run = true;
+        build(root, &dry).unwrap();
+        assert_eq!(
+            crate::tests::snapshot(root),
+            before,
+            "wildcard sync dry-run wrote files"
+        );
+        dry.circuits = vec!["c6_fold".into()];
+        assert!(build(root, &dry).is_err());
+        assert_eq!(crate::tests::snapshot(root), before);
+        let manifest = circuit.path.join("Nargo.toml");
+        let original = fs::read(&manifest).unwrap();
+        fs::write(&manifest, "[package]\ntype = 'bin'\n").unwrap();
+        assert!(
+            discover(root, &selected).is_err(),
+            "malformed package must not panic"
+        );
+        fs::write(manifest, original).unwrap();
+        for path in [
+            "circuits/bin/dkg/target/pk.json",
+            "circuits/bin/target/pk.json",
+        ] {
+            crate::tests::write(root, path, "SS artifact must never be selected or removed");
+        }
+        assert!(compiled_path(root, &circuit).is_err());
+        let target = target_dir(root, &circuit).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("pk.json"), "isolated sync artifact").unwrap();
+        assert_eq!(
+            compiled_path(root, &circuit).unwrap(),
+            target.join("pk.json")
+        );
+        clean_targets(root, &[circuit]).unwrap();
+        assert!(!target.exists());
+        assert!(root.join("circuits/bin/dkg/target/pk.json").is_file());
+        assert!(root.join("circuits/bin/target/pk.json").is_file());
+
+        let pair = root.join("dist/circuits/sync-insecure-64/minimum");
+        let stamp = Stamp {
+            preset: "sync-insecure-64".into(),
+            committee: "minimum".into(),
+            source_hash: "stale".into(),
+            built_at: "earlier".into(),
+        };
+        write_json(&pair.join(".build-stamp.json"), &stamp).unwrap();
+        for path in dist_markers(&pair) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "stale SS-shaped marker").unwrap();
+        }
+        assert!(!dist_current(&pair, "sync-insecure-64", "minimum", None).unwrap());
+        assert!(!bin_current(root, "sync-insecure-64", "minimum", None).unwrap());
+        assert!(hydration_stamp(&pair, "sync-insecure-64", "minimum", "stale").is_err());
+        assert!(hydrate(root, &pair, &selected, &stamp).is_err());
+        for name in ["nodes_fold", "c6_fold"] {
+            crate::tests::write(
+                root,
+                &format!("circuits/bin/recursive_aggregation/{name}/target/{name}.vk_tree_hash"),
+                "SS anchor",
+            );
+            crate::tests::write(root, &format!(
+                "circuits/bin/synchronized/recursive_aggregation/{name}/target/{name}.vk_tree_hash"), "stale sync anchor");
+        }
+        crate::tests::write(root, "circuits/bin/.active-preset.json", "SS active stamp");
+        let ss = crate::tests::snapshot(&root.join("circuits/bin/recursive_aggregation"));
+        refresh_anchors(root, &pair, false, BfvProfile::SyncDecInsecure64).unwrap();
+        assert_eq!(
+            crate::tests::snapshot(&root.join("circuits/bin/recursive_aggregation")),
+            ss
+        );
+        assert_eq!(
+            fs::read(root.join("circuits/bin/.active-preset.json")).unwrap(),
+            b"SS active stamp"
+        );
+        assert!(!pair.join(".build-stamp.json").exists());
+        for name in ["nodes_fold", "c6_fold"] {
+            assert!(!pair
+                .join(format!(
+                    "default/recursive_aggregation/{name}/{name}.vk_tree_hash"
+                ))
+                .exists());
+            assert!(!root.join(format!(
+                "circuits/bin/synchronized/recursive_aggregation/{name}/target/{name}.vk_tree_hash")).exists());
+        }
+        assert!(refresh_anchors(root, &pair, true, BfvProfile::SyncDecInsecure64).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires pinned nargo/bb; builds one tiny isolated sync package and exercises failure cleanup"]
+    fn synchronized_partial_build_ignores_stale_stamps_and_cleans_up_on_failure() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        identity::check_tools(&repo, true, true).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        identity::tests::seed_sources(root);
+        copy_tree(
+            &repo.join("circuits/lib"),
+            &root.join("circuits/lib"),
+            &["target", "Prover.toml", "Witness.toml"],
+        )
+        .unwrap();
+        let write = |path: &str, content: &str| crate::tests::write(root, path, content);
+        write(
+            "scripts/circuits/build-pairs.json",
+            r#"[["sync-insecure-64","minimum"]]"#,
+        );
+        write(
+            "circuits/bin/synchronized/dkg/Nargo.toml",
+            "[workspace]\nmembers = ['pk']\n",
+        );
+        write(
+            "circuits/bin/synchronized/dkg/pk/Nargo.toml",
+            "[package]\nname = 'pk'\ntype = 'bin'\nauthors = []\n",
+        );
+        write(
+            "circuits/bin/synchronized/dkg/pk/src/main.nr",
+            "fn main(x: Field) -> pub Field { x }\n",
+        );
+        write("circuits/bin/dkg/target/pk.json", "SS JSON");
+        write("circuits/bin/dkg/target/pk.vk_noir", "SS VK");
+        write("circuits/bin/.active-preset.json", "SS stamp");
+        let ss = crate::tests::snapshot(&root.join("circuits/bin/dkg"));
+        let selectors = [
+            "circuits/lib/src/configs/default/mod.nr",
+            "circuits/lib/src/configs/committee/active.nr",
+        ]
+        .map(|path| fs::read(root.join(path)).unwrap());
+        let mut selected = request();
+        selected.preset = PresetSelection::Single(BfvProfile::SyncDecInsecure64);
+        selected.circuits = vec!["pk".into()];
+        selected.no_clean = true;
+        selected.no_clean_targets = true;
+        selected.skip_if_built = true;
+        let pair = root.join("dist/circuits/sync-insecure-64/minimum");
+        let mut projection = configuration::prepare_profile(
+            root,
+            BfvProfile::SyncDecInsecure64,
+            e3_committee::CiphernodesCommitteeSize::Minimum,
+            true,
+        )
+        .unwrap();
+        projection.format(root).unwrap();
+        let hash =
+            identity::source_hash(root, &selected, Some("sync-insecure-64"), Some("minimum"))
+                .unwrap();
+        assert_eq!(
+            hash,
+            identity::source_hash_with_updates(
+                root,
+                &selected,
+                Some("sync-insecure-64"),
+                Some("minimum"),
+                &projection.noir,
+            )
+            .unwrap(),
+            "sync hash and formatted build projection disagree"
+        );
+        let stale = Stamp {
+            preset: "sync-insecure-64".into(),
+            committee: "minimum".into(),
+            source_hash: hash,
+            built_at: "earlier".into(),
+        };
+        write_json(&pair.join(".build-stamp.json"), &stale).unwrap();
+        for path in dist_markers(&pair) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "stale complete marker").unwrap();
+        }
+        super::super::execute(root, &selected).unwrap();
+        assert!(!pair.join(".build-stamp.json").exists());
+        assert!(
+            pair.join("recursive/dkg/pk/pk.vk").is_file(),
+            "cache skipped fresh compilation"
+        );
+        assert_eq!(crate::tests::snapshot(&root.join("circuits/bin/dkg")), ss);
+        assert_eq!(
+            fs::read(root.join("circuits/bin/.active-preset.json")).unwrap(),
+            b"SS stamp"
+        );
+        for (path, expected) in [
+            "circuits/lib/src/configs/default/mod.nr",
+            "circuits/lib/src/configs/committee/active.nr",
+        ]
+        .into_iter()
+        .zip(selectors)
+        {
+            assert_eq!(fs::read(root.join(path)).unwrap(), expected);
+        }
+        // Compile failure after a build has started must invalidate both anchors and the stale stamp.
+        write_json(&pair.join(".build-stamp.json"), &stale).unwrap();
+        for name in ["nodes_fold", "c6_fold"] {
+            write(&format!("dist/circuits/sync-insecure-64/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash"), "stale");
+            write(&format!("circuits/bin/synchronized/recursive_aggregation/{name}/target/{name}.vk_tree_hash"), "stale");
+        }
+        write(
+            "circuits/bin/synchronized/dkg/pk/src/main.nr",
+            "fn main(x: Field) -> pub Field { missing(x) }\n",
+        );
+        assert!(super::super::execute(root, &selected).is_err());
+        assert!(!pair.join(".build-stamp.json").exists());
+        for name in ["nodes_fold", "c6_fold"] {
+            assert!(!pair
+                .join(format!(
+                    "default/recursive_aggregation/{name}/{name}.vk_tree_hash"
+                ))
+                .exists());
+            assert!(!root.join(format!("circuits/bin/synchronized/recursive_aggregation/{name}/target/{name}.vk_tree_hash")).exists());
+        }
+        assert_eq!(crate::tests::snapshot(&root.join("circuits/bin/dkg")), ss);
     }
 
     #[test]
@@ -876,7 +1228,7 @@ mod tests {
         .unwrap();
         let before = crate::tests::snapshot(root);
         let mut bad_bb = request();
-        bad_bb.preset = super::super::PresetSelection::Single(BfvPreset::SecureThreshold8192);
+        bad_bb.preset = super::super::PresetSelection::Single(BfvProfile::SsSecure8192);
         let error = super::super::execute(root, &bad_bb).unwrap_err();
         assert!(
             error
@@ -893,7 +1245,7 @@ mod tests {
         // Complete stale keys can recreate valid anchors unless the actual build treats the
         // duplicate-group selection as partial. Keep both dist and bin targets uncleared.
         crate::tests::seed_anchor_keys(&pair);
-        refresh_anchors(root, &pair, true).unwrap();
+        refresh_anchors(root, &pair, true, BfvProfile::SsInsecure64).unwrap();
         let mut partial = request();
         partial.groups = super::super::GroupSelection::Selected(vec![
             super::super::Group::Dkg,

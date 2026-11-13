@@ -49,6 +49,12 @@ Use `pnpm build:circuits --help` for flags and the
 build, `sync-sources` normalizes unselected preset declarations while retaining the active pair;
 it does not change compiled artifacts or their stamps.
 
+`PresetSelection::Single` carries a `BfvProfile`; the CLI retains `--preset` and the existing SS
+artifact names. Sync DKG definitions live in separate sources/targets. They remain outside the live
+build policy and cannot hydrate, stamp a complete set, or select deployed bindings. Test policies
+can explicitly select individual sync leaves; no recursive fallback or SS target cleanup is allowed.
+`sync-sources` also regenerates their static configuration without selecting the protocol.
+
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools
 and compile only temporary circuits. Run `pnpm build:circuits check --committee all` for this

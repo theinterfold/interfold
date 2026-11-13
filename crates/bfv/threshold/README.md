@@ -87,3 +87,11 @@ proofs. See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.
 [`tests/synchronized.rs`](tests/synchronized.rs) checks canonical key packing and real encrypted
 SK-share transport from non-prefix dealers to every full-committee recipient. These are native DKG
 transport tests, not synchronized ciphertext-decryption, C6/C7, or complete proof-chain coverage.
+
+`tests/synchronized_dkg.rs` independently generates native encrypted shares and prepares the actual
+sync C0–C4 inputs through `e3-zk-witness`. Its default test needs no proving tools. With pinned
+Nargo/BB, `pnpm rust:test:sync-dkg:proofs` additionally proves the isolated leaves, checks native
+commitment agreement and rejects malformed witnesses/public substitutions. It includes H `[0,2]`,
+self and outside-H recipients. The unauthenticated context/roster and missing recursive-chain limits
+remain explicit in
+[proof contracts](../../../docs/architecture/proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted).

@@ -18,7 +18,7 @@ pub use toolchain::{pinned_noir_version, reports_version};
 
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvDecryptionProtocol, BfvPreset, BfvProfile};
 use std::{
     fmt, fs,
     io::Write,
@@ -48,6 +48,11 @@ pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
         if !valid {
             bail!("Invalid circuit build pair: {pair:?}");
         }
+        let selected = profile(&pair[0])?;
+        if selected.artifacts_namespace() != pair[0] {
+            bail!("Build policy requires the canonical artifact namespace: {pair:?}");
+        }
+        selected.validate_committee(pair[1].parse()?)?;
         if !seen.insert(pair) {
             bail!("Duplicate circuit build pair: {pair:?}");
         }
@@ -120,10 +125,10 @@ impl fmt::Display for Operation {
     }
 }
 
-/// A preset selection: one supported preset, or every supported preset.
+/// Profile selection under the legacy CLI `--preset` spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresetSelection {
-    Single(BfvPreset),
+    Single(BfvProfile),
     All,
 }
 
@@ -133,7 +138,7 @@ impl FromStr for PresetSelection {
         match value {
             "all" => Ok(Self::All),
             other => Ok(Self::Single(
-                preset(other).map_err(|error| error.to_string())?,
+                profile(other).map_err(|error| error.to_string())?,
             )),
         }
     }
@@ -264,14 +269,32 @@ impl Request {
         {
             bail!("Hydration requires a complete artifact pair");
         }
-        self.selected_pairs(root)?;
+        let pairs = self.selected_pairs(root)?;
+        let synchronized = pairs.iter().any(|pair| {
+            profile(&pair[0])
+                .is_ok_and(|profile| profile.protocol() == BfvDecryptionProtocol::Synchronized)
+        });
+        if synchronized
+            && !matches!(
+                self.operation,
+                Operation::Build | Operation::Hash | Operation::SyncPreset
+            )
+        {
+            bail!("Synchronized deployment bindings, recursive artifacts and qualification are not implemented");
+        }
+        if self.operation == Operation::Build
+            && synchronized
+            && (self.hydrate_bin_only || self.circuits.is_empty())
+        {
+            bail!("Synchronized artifacts are incomplete; select explicit DKG leaf circuits, without hydration");
+        }
         Ok(())
     }
     pub fn selected_pairs(&self, root: &Path) -> Result<Vec<[String; 2]>> {
-        if let PresetSelection::Single(preset) = self.preset {
-            if !BfvPreset::PAIR_PRESETS.contains(&preset) {
-                bail!("Unsupported build preset: {preset:?}");
-            }
+        if let (PresetSelection::Single(profile), CommitteeSelection::Single(committee)) =
+            (self.preset, self.committee)
+        {
+            profile.validate_committee(committee)?;
         }
         let pairs: Vec<_> = build_pairs(root)?
             .into_iter()
@@ -295,8 +318,8 @@ impl Request {
             CommitteeSelection::Single(committee) => vec![committee],
         }
     }
-    /// The single selected preset, or an error for `all`.
-    pub fn single_preset(&self) -> Result<BfvPreset> {
+    /// The single selected profile, or an error for `all`.
+    pub fn single_profile(&self) -> Result<BfvProfile> {
         match self.preset {
             PresetSelection::Single(preset) => Ok(preset),
             PresetSelection::All => bail!("Select one supported preset, not all"),
@@ -320,13 +343,13 @@ impl PresetSelection {
     fn matches(self, name: &str) -> bool {
         match self {
             Self::All => true,
-            Self::Single(preset) => preset_name(preset) == name,
+            Self::Single(profile) => profile.artifacts_namespace() == name,
         }
     }
     fn single_name(self) -> Option<&'static str> {
         match self {
             Self::All => None,
-            Self::Single(preset) => Some(preset_name(preset)),
+            Self::Single(profile) => Some(profile.artifacts_namespace()),
         }
     }
 }
@@ -350,7 +373,7 @@ impl fmt::Display for PresetSelection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::All => f.write_str("all"),
-            Self::Single(preset) => f.write_str(preset_name(*preset)),
+            Self::Single(profile) => f.write_str(profile.artifacts_namespace()),
         }
     }
 }
@@ -369,6 +392,13 @@ fn preset(value: &str) -> Result<BfvPreset> {
         "insecure-64" => Ok(BfvPreset::InsecureThreshold64),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
         _ => bail!("Select one supported preset, not {value}"),
+    }
+}
+fn profile(value: &str) -> Result<BfvProfile> {
+    match value {
+        "insecure-64" => Ok(BfvProfile::SsInsecure64),
+        "secure-8192" => Ok(BfvProfile::SsSecure8192),
+        other => other.parse().map_err(anyhow::Error::from),
     }
 }
 fn tier(preset: BfvPreset) -> &'static str {
@@ -454,18 +484,24 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
             github_output(&format!("source_hash={hash}\n"))?;
         }
         Operation::SyncConfig => {
+            let profile = request.single_profile()?;
+            if profile.protocol() != BfvDecryptionProtocol::SecretShared {
+                bail!("Synchronized deployment bindings are not implemented");
+            }
             let params = configuration::OperationParams::both()?;
             configuration::sync_protocol(
                 root,
-                request.single_preset()?,
+                profile.threshold_preset(),
                 request.single_committee()?,
                 request.skip_utils_patch,
                 &params,
             )?
         }
-        Operation::SyncPreset => {
-            configuration::sync_preset(root, request.single_preset()?, request.single_committee()?)?
-        }
+        Operation::SyncPreset => configuration::sync_profile(
+            root,
+            request.single_profile()?,
+            request.single_committee()?,
+        )?,
         Operation::Check => configuration::check(root, request)?,
         Operation::SyncBindings => bindings::sync(root, false)?,
         Operation::CheckBindings => bindings::sync(root, true)?,

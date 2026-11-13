@@ -12,7 +12,7 @@ struct Cli {
     /// Build, check, or synchronize circuit configuration and artifacts.
     #[arg(default_value = "build")]
     command: Operation,
-    /// BFV artifact preset, or all.
+    /// BFV profile artifact namespace, or all (subject to the build policy).
     #[arg(long, default_value = "insecure-64")]
     preset: PresetSelection,
     /// Committee name, or all.
@@ -82,7 +82,7 @@ fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::error::ErrorKind;
-    use e3_fhe_params::BfvPreset;
+    use e3_fhe_params::BfvProfile;
 
     fn parse(args: &[&str]) -> Result<Request, clap::Error> {
         Cli::try_parse_from(std::iter::once("build-circuits").chain(args.iter().copied()))
@@ -95,12 +95,22 @@ mod tests {
         assert_eq!(request.operation, Operation::Build);
         assert_eq!(
             request.preset,
-            PresetSelection::Single(BfvPreset::InsecureThreshold64)
+            PresetSelection::Single(BfvProfile::SsInsecure64)
         );
         assert_eq!(
             request.committee,
             CommitteeSelection::Single(e3_committee::CiphernodesCommitteeSize::Minimum)
         );
+        for (name, profile) in [
+            ("secure-8192", BfvProfile::SsSecure8192),
+            ("ss-insecure-64", BfvProfile::SsInsecure64),
+            ("sync-insecure-64", BfvProfile::SyncDecInsecure64),
+        ] {
+            assert_eq!(
+                parse(&["--preset", name]).unwrap().preset,
+                PresetSelection::Single(profile)
+            );
+        }
         assert_eq!(request.groups, GroupSelection::All);
         let request = parse(&["sync-preset", "--preset", "all"]).unwrap();
         assert_eq!(request.operation, Operation::SyncPreset);

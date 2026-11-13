@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{artifacts, configuration, preset, run, tier, Request};
+use super::{artifacts, configuration, preset, profile, run, tier, Request};
 pub use crate::reports_version;
 use anyhow::{bail, Context, Result};
+use e3_fhe_params::BfvDecryptionProtocol;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::{
@@ -33,6 +34,7 @@ const SOURCE_FILES: &[&str] = &[
     "circuits/lib/src/configs/protocol.nr",
     "circuits/lib/src/configs/committee/mod.nr",
     "circuits/lib/src/configs/default/mod.nr",
+    "circuits/lib/src/configs/synchronized/mod.nr",
     "crates/zk/build/Cargo.toml",
     "scripts/circuits/constants.ts",
     "scripts/circuits/build-pairs.json",
@@ -287,7 +289,12 @@ pub fn source_hash_with_updates(
     let mut hash = Sha256::new();
     hash.update(b"interfold:zk-source:v2\0");
     if let Some(name) = selected_preset {
-        let tier = tier(preset(name)?);
+        let selected = profile(name)?;
+        let tier = if selected.protocol() == BfvDecryptionProtocol::Synchronized {
+            "synchronized"
+        } else {
+            tier(preset(name)?)
+        };
         hash_record(&mut hash, b'p', name, tier.as_bytes());
         hash_dir(
             root,
@@ -309,10 +316,40 @@ pub fn source_hash_with_updates(
             updates,
         )?;
     }
-    let mut circuits = artifacts::discover(root, request)?;
+    let mut selected_request = request.clone();
+    if let Some(name) = selected_preset {
+        selected_request.preset = super::PresetSelection::Single(profile(name)?);
+    }
+    let mut circuits = artifacts::discover(root, &selected_request)?;
     circuits.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut workspaces = std::collections::BTreeSet::new();
     for circuit in circuits {
+        if circuit
+            .path
+            .starts_with(root.join("circuits/bin/synchronized"))
+        {
+            workspaces.insert(
+                circuit
+                    .path
+                    .parent()
+                    .context("Missing circuit workspace")?
+                    .join("Nargo.toml"),
+            );
+        }
         hash_dir(root, &circuit.path, &mut hash, "", false, updates)?;
+    }
+    for path in workspaces {
+        let source = fs::read(&path)
+            .with_context(|| format!("Read required workspace {}", path.display()))?;
+        hash_record(
+            &mut hash,
+            b'f',
+            &path
+                .strip_prefix(root)?
+                .to_string_lossy()
+                .replace('\\', "/"),
+            &source,
+        );
     }
     for path in SOURCE_DIRS {
         hash_dir(root, &root.join(path), &mut hash, "", false, updates)?;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
+use e3_fhe_params::BfvProfile;
 use e3_zk_config::{CircuitName, CircuitVariant};
 
 #[test]
@@ -81,6 +82,37 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
         assert_eq!((circuit.group(), circuit.as_str()), (group, basename));
         assert_eq!(circuit.input_layout().field_count(), Some(inputs));
         assert_eq!(circuit.output_layout().field_count(), outputs);
+        for profile in [BfvProfile::SsInsecure64, BfvProfile::SsSecure8192] {
+            assert_eq!(circuit.source_path(profile).as_deref(), Some(path));
+            assert_eq!(
+                circuit
+                    .output_layout_for_profile(profile)
+                    .unwrap()
+                    .field_count(),
+                outputs
+            );
+        }
+        let synchronized = BfvProfile::SyncDecInsecure64;
+        if CircuitName::SYNCHRONIZED_DKG.contains(&circuit) {
+            assert_eq!(
+                circuit.source_path(synchronized).unwrap(),
+                format!("synchronized/{path}")
+            );
+            let expected = match circuit {
+                CircuitName::PkGeneration | CircuitName::DkgShareDecryption => Some(2),
+                _ => outputs,
+            };
+            assert_eq!(
+                circuit
+                    .output_layout_for_profile(synchronized)
+                    .unwrap()
+                    .field_count(),
+                expected
+            );
+        } else {
+            assert!(circuit.source_path(synchronized).is_none());
+            assert!(circuit.output_layout_for_profile(synchronized).is_none());
+        }
     }
     for (index, (name, text, target)) in [
         ("Default", "default", "noir-recursive-no-zk"),

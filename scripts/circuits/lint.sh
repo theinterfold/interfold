@@ -28,6 +28,8 @@ DIRS=(
   "bin/recursive_aggregation/decryption_aggregator"
   "bin/dkg"
   "bin/threshold"
+  "bin/synchronized/dkg"
+  "bin/synchronized/threshold"
 )
 
 for dir in "${DIRS[@]}"; do
