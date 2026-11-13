@@ -1447,57 +1447,68 @@ mod aggregation_request_tests {
         let (params, _) = params_profile.build_pair().unwrap();
         let zero = fhe_math::rq::Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
         let bytes = ArcBytes::from_bytes(&zero.to_bytes());
-        let req = DecryptedSharesAggregationProofRequest {
-            d_share_polys: (0..10).rev().map(|id| (id, vec![bytes.clone()])).collect(),
-            plaintext: vec![ArcBytes::from_bytes(
-                &e3_bfv_client::encode_vec_u64_to_bytes(&[0]),
-            )],
-            params_profile,
-            threshold_m: committee.threshold as u64,
-            threshold_n: committee.n as u64,
-            committee_size,
-        };
-        let request = ComputeRequest::zk(
-            ZkRequest::DecryptedSharesAggregation(req.clone()),
-            CorrelationId::new(),
-            E3id::new("7", 1),
-        );
-        let work = crate::test_utils::workspace_root()
-            .join(format!("target/small-c7-runtime-{}", std::process::id()));
-        let prover = ZkProver::new(&ZkBackend {
-            base_dir: work.clone(),
-            bb_binary: std::env::var_os("E3_CUSTOM_BB")
-                .expect("set E3_CUSTOM_BB")
-                .into(),
-            circuits_dir: std::env::var_os("E3_TEST_ARTIFACTS_ROOT")
-                .expect("set E3_TEST_ARTIFACTS_ROOT")
-                .into(),
-            work_dir: work,
-            config: Default::default(),
-            using_custom_bb: true,
-            bb_timeout: Duration::from_secs(120),
-        });
-        let response =
-            handle_decrypted_shares_aggregation_proof(&prover, req.clone(), request.clone())
+        // Exercise both ends of the committee: the highest ten coordinates used to overflow C7.
+        for first_id in [0, 9] {
+            let req = DecryptedSharesAggregationProofRequest {
+                d_share_polys: (first_id..first_id + 10)
+                    .rev()
+                    .map(|id| (id, vec![bytes.clone()]))
+                    .collect(),
+                plaintext: vec![ArcBytes::from_bytes(
+                    &e3_bfv_client::encode_vec_u64_to_bytes(&[0]),
+                )],
+                params_profile,
+                threshold_m: committee.threshold as u64,
+                threshold_n: committee.n as u64,
+                committee_size,
+            };
+            let request = ComputeRequest::zk(
+                ZkRequest::DecryptedSharesAggregation(req.clone()),
+                CorrelationId::new(),
+                E3id::new("7", 1),
+            );
+            let work = crate::test_utils::workspace_root().join(format!(
+                "target/small-c7-runtime-{first_id}-{}",
+                std::process::id()
+            ));
+            let prover = ZkProver::new(&ZkBackend {
+                base_dir: work.clone(),
+                bb_binary: std::env::var_os("E3_CUSTOM_BB")
+                    .expect("set E3_CUSTOM_BB")
+                    .into(),
+                circuits_dir: std::env::var_os("E3_TEST_ARTIFACTS_ROOT")
+                    .expect("set E3_TEST_ARTIFACTS_ROOT")
+                    .into(),
+                work_dir: work,
+                config: Default::default(),
+                using_custom_bb: true,
+                bb_timeout: Duration::from_secs(120),
+            });
+            let response =
+                handle_decrypted_shares_aggregation_proof(&prover, req.clone(), request.clone())
+                    .unwrap_or_else(|error| {
+                        panic!("C7 reconstruction starting at runtime party {first_id}: {error:?}")
+                    });
+            assert_eq!(response.correlation_id, request.correlation_id);
+            assert_eq!(response.e3_id, request.e3_id);
+            let ZkResponse::DecryptedSharesAggregation(result) = response.try_into_zk().unwrap()
+            else {
+                panic!("wrong C7 response");
+            };
+            assert_eq!(result.proofs.len(), 1);
+            let artifacts = params_profile
+                .artifacts_dir_for_committee(committee_size)
                 .unwrap();
-        assert_eq!(response.correlation_id, request.correlation_id);
-        assert_eq!(response.e3_id, request.e3_id);
-        let ZkResponse::DecryptedSharesAggregation(result) = response.try_into_zk().unwrap() else {
-            panic!("wrong C7 response");
-        };
-        assert_eq!(result.proofs.len(), 1);
-        let artifacts = params_profile
-            .artifacts_dir_for_committee(committee_size)
-            .unwrap();
-        assert!(DecryptedSharesAggregationCircuit
-            .verify_with_variant(
-                &prover,
-                &result.proofs[0],
-                "small-c7-runtime",
-                0,
-                CircuitVariant::Default,
-                &artifacts
-            )
-            .unwrap());
+            assert!(DecryptedSharesAggregationCircuit
+                .verify_with_variant(
+                    &prover,
+                    &result.proofs[0],
+                    "small-c7-runtime",
+                    0,
+                    CircuitVariant::Default,
+                    &artifacts
+                )
+                .unwrap());
+        }
     }
 }
