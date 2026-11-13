@@ -6,7 +6,7 @@
 
 use super::*;
 use actix::{Actor, Context, Handler, ResponseFuture};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_request::E3Meta;
 use e3_utils::ArcBytes;
 use std::sync::{Arc, Mutex};
@@ -362,7 +362,8 @@ fn startup_reconciles_committees() {
         threshold_m: 1,
         threshold_n: 3,
         seed: Seed([0; 32]),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: BfvProfile::SsInsecure64,
+        crypto_config_id: [0; 32],
         params: ArcBytes::default(),
         error_size: ArcBytes::default(),
     };
@@ -405,20 +406,27 @@ fn startup_reconciles_committees() {
 fn startup_recovers_local_selection() {
     let e3_id = E3id::new("8", 1);
     let address = "0x1111111111111111111111111111111111111111";
+    let profile = BfvProfile::SsInsecure64;
+    let (params, _) = profile.build_pair().unwrap();
     let metadata = E3Meta {
-        threshold_m: 2,
+        threshold_m: 1,
         threshold_n: 3,
         seed: Seed([7; 32]),
-        params_preset: BfvPreset::InsecureThreshold64,
-        params: ArcBytes::from_bytes(&[1, 2]),
+        params_profile: profile,
+        crypto_config_id: profile
+            .crypto_config_id(e3_committee::CiphernodesCommitteeSize::Minimum)
+            .unwrap()
+            .into(),
+        params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&params)),
         error_size: ArcBytes::from_bytes(&[3, 4]),
     };
     // The local node is not first, so its party id comes from its committee slot.
     let members = vec![
         "0x2222222222222222222222222222222222222222".to_owned(),
         address.to_uppercase(),
+        "0x3333333333333333333333333333333333333333".to_owned(),
     ];
-    let selector = CiphernodeSelectorState {
+    let mut selector = CiphernodeSelectorState {
         e3_cache: HashMap::from([(e3_id.clone(), metadata.clone())]),
         committees: HashMap::from([(e3_id.clone(), Committee::new(members.clone()))]),
         ..Default::default()
@@ -432,6 +440,41 @@ fn startup_recovers_local_selection() {
     assert_eq!(selections[0].committee, members);
     assert_eq!(selections[0].threshold_m, metadata.threshold_m);
     assert_eq!(selections[0].params, metadata.params);
+    assert_eq!(selections[0].params_profile, metadata.params_profile);
+    assert_eq!(selections[0].crypto_config_id, metadata.crypto_config_id);
+
+    selector.e3_cache.get_mut(&e3_id).unwrap().params_profile = BfvProfile::SyncDecInsecure64;
+    assert!(recovered_ciphernode_selections(&selector, address)
+        .unwrap_err()
+        .root_cause()
+        .to_string()
+        .contains("disabled"));
+}
+
+#[test]
+fn startup_rejects_selection_with_an_inconsistent_saved_configuration() {
+    let e3_id = E3id::new("10", 1);
+    let address = "0x1111111111111111111111111111111111111111";
+    let profile = BfvProfile::SsInsecure64;
+    let (params, _) = profile.build_pair().unwrap();
+    let metadata = E3Meta {
+        threshold_m: 1,
+        threshold_n: 3,
+        seed: Seed([7; 32]),
+        params_profile: profile,
+        crypto_config_id: [42; 32],
+        params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&params)),
+        error_size: ArcBytes::default(),
+    };
+    let selector = CiphernodeSelectorState {
+        e3_cache: HashMap::from([(e3_id.clone(), metadata.clone())]),
+        committees: HashMap::from([(e3_id.clone(), Committee::new(vec![address.to_owned()]))]),
+        ..Default::default()
+    };
+    let error = recovered_ciphernode_selections(&selector, address)
+        .expect_err("a retained selection must not carry an unchecked configuration ID");
+    assert!(format!("{error:#}").contains(&e3_id.to_string()));
+    assert_eq!(selector.e3_cache.get(&e3_id), Some(&metadata));
 }
 
 #[test]
@@ -444,7 +487,8 @@ fn startup_rejects_committee_conflicts() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold64,
+                params_profile: BfvProfile::SsInsecure64,
+                crypto_config_id: [0; 32],
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },

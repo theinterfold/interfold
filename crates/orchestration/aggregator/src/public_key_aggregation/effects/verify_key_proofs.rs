@@ -113,7 +113,7 @@ impl PublicKeyAggregator {
             return None;
         };
         let dispatch = PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs);
-        let request = dispatch.request(&self.e3_id, self.params_preset, self.committee_size);
+        let request = dispatch.request(&self.e3_id, self.params_profile, self.committee_size);
         Some((request, dispatch.no_proof_parties))
     }
 
@@ -456,7 +456,7 @@ impl PublicKeyAggregator {
                     proof_request: PkAggregationProofRequest {
                         keyshare_bytes: keyshare_bytes.clone(),
                         aggregated_pk_bytes: pubkey.clone(),
-                        params_preset: self.params_preset,
+                        params_profile: self.params_profile,
                         // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
                         committee_n: circuit_committee_n,
                         committee_h,

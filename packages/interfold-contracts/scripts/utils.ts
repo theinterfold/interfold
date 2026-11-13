@@ -20,6 +20,7 @@ import {
   BFV_PRESETS,
   COMMITTEES,
   DECRYPTION_INPUT_INDICES,
+  bfvConfiguration,
   decryptionAggregatorLayout,
 } from "../bfv.js";
 
@@ -135,7 +136,8 @@ function bfvConfig(
     committee,
     paramSet: parameters.paramSet,
     paramSetHash: parameters.paramSetHash,
-    configId: parameters.configId,
+    configId: bfvConfiguration(parameters.profile, members.committeeSize)
+      .configId,
     committeeSize: members.committeeSize,
     h: members.h,
     t: members.t,

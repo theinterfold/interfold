@@ -99,7 +99,7 @@ fn canonical_key() -> CanonicalPublicKey {
         pk_commitment: [7; 32],
         committee: (0..3).map(|party| test_signer(party).address()).collect(),
         honest_committee: (0..2).map(|party| test_signer(party).address()).collect(),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: test_decryption_domain().interfold_address,
         sk_agg_commits: vec![],
@@ -164,7 +164,8 @@ async fn context(store: &DataStore, id: &E3id) -> Result<E3Context> {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::from_bytes(&encode_bfv_params(
                 &BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc(),
             )),
@@ -626,7 +627,7 @@ async fn deferred_plaintext_restart(
             e3_id: id.clone(),
             threshold_m: 1,
             threshold_n: 3,
-            params_preset: key.params_preset,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             ..Default::default()
         },
         1,
@@ -1006,7 +1007,7 @@ async fn replayed_c7_work_cannot_replace_the_recovered_share_batch() -> Result<(
             plaintext: plaintext.clone(),
             threshold_m: 9,
             threshold_n: 19,
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Small,
         },
     };

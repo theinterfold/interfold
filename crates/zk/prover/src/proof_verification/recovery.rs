@@ -132,7 +132,13 @@ pub(crate) async fn recover_pending_verifications(
                             meta.threshold_n,
                         )
                         .is_ok()
-                            && validate_received_key(&input, &signer, meta.params_preset).is_ok()
+                            && meta.params_profile.admission_enabled()
+                            && validate_received_key(
+                                &input,
+                                &signer,
+                                meta.params_profile.threshold_preset(),
+                            )
+                            .is_ok()
                         {
                             pending.insert(key, TypedEvent::new(input, ec));
                         }

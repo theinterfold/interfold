@@ -337,21 +337,21 @@ the template is inside an Interfold repository checkout, where the scripts build
 
 ## Where to change things
 
-| To change                                                   | Edit                                                                                                                                                              |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The FHE computation                                         | `fhe_processor` in `program/src/lib.rs`. See [Hello World](/build/hello-world).                                                                                   |
-| Which inputs the computation uses                           | `policy` in `program/src/lib.rs`. The default policy uses every input.                                                                                            |
-| Input checks and proof verification                         | `publishInput`, `validate`, `verify`, and `verifyDataAvailability` in `contracts/MyProgram.sol`.                                                                  |
-| How the contracts are deployed                              | `deploy/default.ts`. `scripts/deploy-local.ts` calls it after it deploys the protocol with mocks.                                                                 |
-| The committee size, input window, and parameter set         | `handleRequestComputation` in `client/src/pages/steps/RequestComputation.tsx`. It uses `DEFAULT_E3_CONFIG.committeeSize`, a 100-second window, and `paramSet: 0`. |
-| How the client encrypts and publishes inputs                | `client/src/pages/steps/EnterInputs.tsx` and `client/src/utils/input.ts`.                                                                                         |
-| How the client shows the result                             | `client/src/pages/steps/EncryptSubmit.tsx` and `client/src/pages/steps/Results.tsx`.                                                                              |
-| The SDK setup                                               | `client/src/utils/sdk-config.ts` and `client/src/context/WizardContext.tsx` (client), `createPrivateSDK` in `server/index.ts` (server).                           |
-| When the computation starts and how the output is published | `server/index.ts`. The server schedules the job when the input window closes. It skips an E3 with fewer than two inputs.                                          |
-| The program server and its proof                            | `runner/src/main.rs` calls `e3_program_runner::run`. `program-runner dev` is unproved. `program-runner openvm` is the OpenVM service.                             |
-| What the guest proves with                                  | `guest/openvm.toml` (the VM extensions) and the `openvm-hashes` feature of `program/Cargo.toml`. A change gives a new receipt identity.                           |
-| The local ciphernodes                                       | The `nodes` section of `interfold.config.yaml` and `scripts/dev_ciphernodes.sh`. Both files must list the same nodes.                                             |
-| The local chain                                             | The `anvil` command in `scripts/dev_all_concurrently.sh` and `scripts/anvil-automine.mjs`.                                                                        |
+| To change                                                   | Edit                                                                                                                                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The FHE computation                                         | `fhe_processor` in `program/src/lib.rs`. See [Hello World](/build/hello-world).                                                                                                 |
+| Which inputs the computation uses                           | `policy` in `program/src/lib.rs`. The default policy uses every input.                                                                                                          |
+| Input checks and proof verification                         | `publishInput`, `validate`, `verify`, and `verifyDataAvailability` in `contracts/MyProgram.sol`.                                                                                |
+| How the contracts are deployed                              | `deploy/default.ts`. `scripts/deploy-local.ts` calls it after it deploys the protocol with mocks.                                                                               |
+| The committee size, input window, and parameter set         | `handleRequestComputation` in `client/src/pages/steps/RequestComputation.tsx`. It uses `DEFAULT_E3_CONFIG.committeeSize`, a 100-second window, and `profile: 'ss-insecure-64'`. |
+| How the client encrypts and publishes inputs                | `client/src/pages/steps/EnterInputs.tsx` and `client/src/utils/input.ts`.                                                                                                       |
+| How the client shows the result                             | `client/src/pages/steps/EncryptSubmit.tsx` and `client/src/pages/steps/Results.tsx`.                                                                                            |
+| The SDK setup                                               | `client/src/utils/sdk-config.ts` and `client/src/context/WizardContext.tsx` (client), `createPrivateSDK` in `server/index.ts` (server).                                         |
+| When the computation starts and how the output is published | `server/index.ts`. The server schedules the job when the input window closes. It skips an E3 with fewer than two inputs.                                                        |
+| The program server and its proof                            | `runner/src/main.rs` calls `e3_program_runner::run`. `program-runner dev` is unproved. `program-runner openvm` is the OpenVM service.                                           |
+| What the guest proves with                                  | `guest/openvm.toml` (the VM extensions) and the `openvm-hashes` feature of `program/Cargo.toml`. A change gives a new receipt identity.                                         |
+| The local ciphernodes                                       | The `nodes` section of `interfold.config.yaml` and `scripts/dev_ciphernodes.sh`. Both files must list the same nodes.                                                           |
+| The local chain                                             | The `anvil` command in `scripts/dev_all_concurrently.sh` and `scripts/anvil-automine.mjs`.                                                                                      |
 
 ### Change the ciphernode set
 

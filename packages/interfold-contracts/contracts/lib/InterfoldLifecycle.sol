@@ -90,6 +90,7 @@ library InterfoldLifecycle {
         address actualFeeToken,
         address expectedFeeToken,
         uint8 paramSet,
+        uint8 committeeSize,
         bytes32 expectedCryptoConfigId,
         uint256 maxFee,
         uint256 fee
@@ -99,7 +100,10 @@ library InterfoldLifecycle {
                 IERC20(expectedFeeToken),
                 IERC20(actualFeeToken)
             );
-        bytes32 configId = ActiveCryptoConfig.configIdForParamSet(paramSet);
+        bytes32 configId = ActiveCryptoConfig.configIdForRequest(
+            paramSet,
+            committeeSize
+        );
         if (expectedCryptoConfigId != configId)
             revert IInterfold.CryptoConfigChanged(
                 expectedCryptoConfigId,

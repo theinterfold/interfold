@@ -265,8 +265,10 @@ pub(crate) fn integration_command(
             "e3-tests",
             "--test",
             "integration",
-            "test_trbfv_actor",
+            "benchmark_trbfv_actor",
             "--",
+            "--ignored",
+            "--exact",
             "--nocapture",
             "--test-threads=1",
         ])

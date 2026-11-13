@@ -208,7 +208,7 @@ async fn only_an_expulsion_removes_a_voter() -> anyhow::Result<()> {
             1,
             300,
             DEFAULT_ACCUSATION_DEADLINE_SKEW_SECS,
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
+            e3_fhe_params::BfvProfile::SsInsecure64,
         )
         .start();
         let event = |data: InterfoldEventData, seq: u64| {

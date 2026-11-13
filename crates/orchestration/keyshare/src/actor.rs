@@ -26,7 +26,7 @@ use e3_events::{
     ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvPreset, BfvProfile};
 use e3_trbfv::{
     calculate_decryption_key::CalculateDecryptionKeyResponse,
     calculate_decryption_share::{
@@ -133,7 +133,7 @@ pub struct ThresholdKeyshareParams {
     pub bus: BusHandle,
     pub cipher: Arc<Cipher>,
     pub state: Persistable<ThresholdKeyshareState>,
-    pub share_enc_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
@@ -214,7 +214,7 @@ pub struct ThresholdKeyshare {
     bfv_keys: DurableIntent<BfvKeyIntent>,
     /// This node's BFV keypair for the E3, read when the actor starts and set when it records it.
     bfv_key: Option<BfvKeyIntent>,
-    share_enc_preset: BfvPreset,
+    params_profile: BfvProfile,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
@@ -234,6 +234,11 @@ pub struct ThresholdKeyshare {
 }
 
 impl ThresholdKeyshare {
+    fn share_enc_preset(&self) -> Result<BfvPreset> {
+        self.params_profile.ensure_admission_enabled()?;
+        Ok(self.params_profile.dkg_preset()?)
+    }
+
     fn buffer_replayed_compute_response(
         slot: &mut Option<TypedEvent<ComputeResponse>>,
         response: TypedEvent<ComputeResponse>,
@@ -283,7 +288,7 @@ impl ThresholdKeyshare {
             recovery_payloads: params.recovery_payloads,
             bfv_keys: params.bfv_key,
             bfv_key: None,
-            share_enc_preset: params.share_enc_preset,
+            params_profile: params.params_profile,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
             signer: params.signer,

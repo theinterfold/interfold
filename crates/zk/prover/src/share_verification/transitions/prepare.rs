@@ -14,7 +14,7 @@ impl ShareVerifier {
         kind: &VerificationKind,
         label: &str,
         committee: Option<&[Address]>,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> EcdsaValidationOutcome<P> {
         let mut ecdsa_dishonest = HashSet::new();
@@ -84,7 +84,7 @@ impl ShareVerifier {
             }
 
             let proofs = party.signed_proofs();
-            if !Self::has_canonical_proof_shape(kind, &proofs, params_preset) {
+            if !Self::has_canonical_proof_shape(kind, &proofs, params_profile) {
                 info!(
                     "{} party {} supplied a non-canonical proof-type multiplicity/order",
                     label,

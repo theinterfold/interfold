@@ -5,6 +5,7 @@ import type { Signer } from "ethers";
 import {
   deployInterfoldSystem,
   ethers,
+  makeRequest,
   networkHelpers,
   setupOperatorForSortition,
 } from "../fixtures";
@@ -61,9 +62,7 @@ async function request(
     committeeSize,
     inputWindow: [now + 100, now + 10_000] as [number, number],
   };
-  const fee = await sys.interfold.getE3Quote(params);
-  await sys.usdcToken.approve(await sys.interfold.getAddress(), fee);
-  await expect(sys.interfold.request(params))
+  await expect(makeRequest(sys.interfold, sys.usdcToken, params))
     .to.emit(sys.ciphernodeRegistry, "CommitteeBondOwnerCapEnabled")
     .withArgs(e3Id);
   await time.increase(1);
