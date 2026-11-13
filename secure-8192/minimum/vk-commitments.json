@@ -8,6 +8,6 @@
     "bb-vk-hash/default/threshold/user_data_encryption_ct0": "0x25ebaddbef399171c13de5486c8706466844cfc157f55778d573ff03dc9137d3",
     "bb-vk-hash/default/threshold/user_data_encryption_ct1": "0x27a7ae26f2ad3ceaf3554b143b231f1268a31e17e946de100344fa36f68fc627",
     "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x1cfa8948ac801f98dcd19e49e8e96c36327a75e0aef8772a744145024606742c",
-    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x26408408e85d00d2fb8bec42f507fb29e00572a474b4cb96debb2a4e52fe7897"
+    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x2c568097111ecf5fb6122bcb6c6e03c4e6891066978356176d1967218101e1b7"
   }
 }
