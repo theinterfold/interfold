@@ -99,10 +99,10 @@ openings unless every digit fits its slot. A `u64` cast is not enough when `base
 creating circuit's canonical bound because the opening must equal the committed value. It does not
 create a canonical bound where no upstream statement proves one. C1's originating `pk0` and C5's
 unanchored `pk0_agg` need explicit centered bounds. C0 bounds its key, so C3 opens it checked and
-inherits the bound; a malformed key fails its owner's C0, not every dealer's C3. C5's per-party keys
-and C4's received C2 shares likewise inherit through checked openings. C4 normalizes its derived
-aggregate in circuit; it does not need a second opened-witness bound. Run the binding check
-**before** commitment comparison.
+inherits the bound; an out-of-range key fails its owner's C0, not every dealer's C3. C0 does not
+prove correct key generation or possession of a secret key. C5's per-party keys and C4's received C2
+shares likewise inherit through checked openings. C4 normalizes its derived aggregate in circuit; it
+does not need a second opened-witness bound. Run the binding check **before** commitment comparison.
 
 User encryption has no upstream circuit for its key. ct0 opens `pk0` with checked digits, which
 rules out wraparound but not a non-canonical key; the exact centred bound comes from C5 only through
