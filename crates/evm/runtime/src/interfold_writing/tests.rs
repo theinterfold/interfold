@@ -14,7 +14,6 @@ use e3_events::{
     AggregateConfig, AggregateId, CiphertextOutputPublished, EventSource, EventStoreQueryBy,
     EvmEventConfig, EvmEventConfigChain, HistoricalEvmEventsReceived, SeqAgg, Unsequenced,
 };
-use e3_fhe_params::BfvPreset;
 use e3_request::canonical_key::CanonicalPublicKey;
 use e3_utils::ArcBytes;
 use e3_zk_config::CircuitName;
@@ -175,7 +174,7 @@ fn key() -> CanonicalPublicKey {
         pk_commitment: [7; 32],
         committee: vec![Address::repeat_byte(1); 3],
         honest_committee: vec![Address::repeat_byte(1); 2],
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: Address::repeat_byte(9),
         sk_agg_commits: vec![],

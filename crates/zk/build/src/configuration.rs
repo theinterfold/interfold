@@ -4,9 +4,7 @@ use super::{bindings, preset_name, run, tier, Request};
 use alloy_primitives::B256;
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{
-    bfv_parameter_hash, current_bfv_crypto_config_id, encode_bfv_params, BfvPreset,
-};
+use e3_fhe_params::{bfv_parameter_hash, encode_bfv_params, BfvPreset};
 use e3_zk_config::{dkg, threshold};
 use fhe::bfv::BfvParameters;
 use regex::Regex;
@@ -23,7 +21,6 @@ pub struct PresetMaterial {
     pub threshold: Arc<BfvParameters>,
     pub dkg: Arc<BfvParameters>,
     pub parameter_hash: B256,
-    pub config_id: B256,
 }
 
 impl PresetMaterial {
@@ -31,12 +28,10 @@ impl PresetMaterial {
         let (threshold, dkg) = preset.build_pair()?;
         let encoded_params = encode_bfv_params(&threshold);
         let parameter_hash = bfv_parameter_hash(&encoded_params);
-        let config_id = current_bfv_crypto_config_id(&encoded_params);
         Ok(Self {
             threshold,
             dkg,
             parameter_hash,
-            config_id,
         })
     }
 }
@@ -681,9 +676,19 @@ pub fn check_ownership(root: &Path) -> Result<()> {
         metadata.encryption_scheme.to_string(),
         metadata.encryption_scheme_id,
         metadata.circuit_version.to_string(),
+        metadata.profile_config_domain.to_string(),
     ];
     for preset in metadata.presets {
-        forbidden.extend([preset.parameter_hash, preset.crypto_config_id]);
+        forbidden.push(preset.parameter_hash);
+    }
+    for profile in metadata.profiles {
+        forbidden.push(profile.dkg_parameter_hash);
+        forbidden.extend(
+            profile
+                .configurations
+                .into_iter()
+                .map(|config| config.crypto_config_id),
+        );
     }
     let width = Regex::new(&format!(
         r"(?i)(?:const|global|let|static)\s+(?:MAX_MSG_NON_ZERO_COEFFS|MESSAGE_COEFFS_COUNT|messageCoeffsCount|message_coeffs_count|plaintextByteLength|plaintextByteLen)(?:\s*:\s*[A-Za-z0-9_<>]+)?\s*=\s*(?:{}|{})\b",

@@ -113,6 +113,9 @@ chosen by archive contents. Explicit nonempty subsets are available through inst
 repeated `--circuits-configuration` only with `--circuits-archive`. Local archives need the same
 version pin unless explicit `--allow-unpinned-archive`; without that flag a missing pin fails closed
 too. CI candidate fixtures deliberately use that flag/subsets, not production policy.
+`ZkBackend::install_circuits_dir` is the unpinned path for a local circuits tree (a dist directory
+or staged `circuits/bin`) in local builds and tests: it applies the same manifest and
+required-artifact rules, without a release pin.
 
 Readiness requires the default bb executable to report the required version and every recorded
 artifact file to exist. A downloaded bb that cannot run on the host or reports another version fails

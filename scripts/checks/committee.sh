@@ -215,40 +215,52 @@ sol_bytes32() {
 for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192; do
   prefix="${prefix_and_preset%%:*}"
   preset="${prefix_and_preset#*:}"
-  IFS=';' read -r utils_param_hash utils_config_id < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$preset" <<'NODE'
+  utils_param_hash=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$preset" <<'NODE'
 import { readFileSync } from 'node:fs';
 const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const preset = config.bfv.presets.find(preset => preset.preset === process.argv[3]);
 if (!preset) throw new Error(`Missing preset: ${process.argv[3]}`);
-process.stdout.write(`${preset.parameterHash};${preset.cryptoConfigId}\n`);
+process.stdout.write(preset.parameterHash);
 NODE
   )
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
-  sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
-  if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
+  if [[ "$utils_param_hash" != "$sol_param_hash" ]]; then
     fail "drift: $CRYPTO_CONFIG_JSON ${prefix} hashes do not match $PROTOCOL_SOL"
   fi
 done
 
-binding_config_id() {
-  node --input-type=module - "$CRYPTO_CONFIG_JSON" "$1" <<'NODE'
+# Capture the reader's output so that a failure stops the check. A process substitution would hide
+# the failure and leave nothing to compare.
+ADMITTED_CONFIGS=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" <<'NODE'
 import { readFileSync } from 'node:fs';
 const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-const preset = config.bfv.presets.find(preset => preset.paramSet === Number(process.argv[3]));
-if (!preset) throw new Error(`Unsupported BFV parameter set: ${process.argv[3]}`);
-process.stdout.write(preset.cryptoConfigId);
-NODE
+for (const profile of config.bfv.profiles) {
+  for (const configuration of profile.configurations) {
+    if (!configuration.admissionEnabled) continue;
+    const label = `${profile.profile}_${configuration.committee}`.replaceAll('-', '_').toUpperCase();
+    process.stdout.write(`${label};${configuration.cryptoConfigId}\n`);
+  }
 }
+NODE
+) || fail "could not read the admitted configurations from $CRYPTO_CONFIG_JSON"
 
-for prefix_and_param_set in INSECURE:0 SECURE:2; do
-  prefix="${prefix_and_param_set%%:*}"
-  param_set="${prefix_and_param_set##*:}"
-  expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
-  binding_id=$(binding_config_id "$param_set")
-  if [[ "$binding_id" != "$expected_id" ]]; then
-    fail "drift: paramSet=${param_set} config ID must match $PROTOCOL_SOL in shared bindings"
+# Every admitted configuration needs a constant, and every constant an admitted configuration.
+binding_config_names=$(cut -d';' -f1 <<< "$ADMITTED_CONFIGS" | sed '/^$/d; s/$/_CONFIG_ID/' | sort)
+protocol_config_names=$(
+  sed -nE 's/^[[:space:]]*bytes32 internal constant ([A-Z0-9_]+_CONFIG_ID)[[:space:]]*=.*/\1/p' "$PROTOCOL_SOL" \
+    | sort
+)
+if [[ "$binding_config_names" != "$protocol_config_names" ]]; then
+  fail "drift: admitted configurations in $CRYPTO_CONFIG_JSON must match the *_CONFIG_ID constants in $PROTOCOL_SOL"
+fi
+
+while IFS=';' read -r label binding_id; do
+  [[ -n "$label" ]] || continue
+  expected_id=$(sol_bytes32 "${label}_CONFIG_ID")
+  if [[ -z "$binding_id" || "$binding_id" != "$expected_id" ]]; then
+    fail "drift: ${label} config ID must match $PROTOCOL_SOL in shared bindings"
   fi
-done
+done <<< "$ADMITTED_CONFIGS"
 
 check_utils_route() {
   local symbol="$1"

@@ -167,19 +167,19 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
-				<a href="https://github.com/0xjei">
-					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="0xjei"/>
+				<a href="https://github.com/neogiacomo">
+					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
 					<br />
-					<sub><b>Giacomo</b></sub>
+					<sub><b>Giacomo Corrias</b></sub>
 				</a>
 			</td>
 		</tr>
 		<tr>
 			<td align="center">
-				<a href="https://github.com/neogiacomo">
-					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
+				<a href="https://github.com/0xjei">
+					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="0xjei"/>
 					<br />
-					<sub><b>Giacomo Corrias</b></sub>
+					<sub><b>Giacomo</b></sub>
 				</a>
 			</td>
 			<td align="center">

@@ -6,7 +6,7 @@
 
 use crate::{E3id, Seed};
 use actix::Message;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
@@ -19,7 +19,8 @@ pub struct CiphernodeSelected {
     pub threshold_n: usize,
     pub seed: Seed,
     pub error_size: ArcBytes,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
+    pub crypto_config_id: [u8; 32],
     pub params: ArcBytes,
     pub party_id: u64,
     /// Full finalized committee in stable party-ID order.
@@ -31,7 +32,8 @@ impl Default for CiphernodeSelected {
         CiphernodeSelected {
             e3_id: E3id::new("0", 0),
             error_size: ArcBytes::from_bytes(&[]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::from_bytes(&[]),
             party_id: 0,
             committee: Vec::new(),

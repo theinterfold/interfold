@@ -4,7 +4,7 @@ use super::*;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_events::*;
-use e3_fhe_params::{constants::secure_8192, BfvPreset};
+use e3_fhe_params::constants::secure_8192;
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::AsBytesSerde;
 use e3_zk_config::DkgInputType;
@@ -16,7 +16,6 @@ const LIMBS: usize = secure_8192::threshold::MODULI.len();
 const ROW: usize = secure_8192::DEGREE * 8;
 const THRESHOLD_POLY: usize = LIMBS * ROW;
 const DKG_POLY: usize = secure_8192::dkg::MODULI.len() * ROW;
-const PRESET: BfvPreset = BfvPreset::SecureThreshold8192;
 const COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Small;
 
 // Each call owns new, nonzero storage. The extra 64 bytes cover encoding and AEAD headers.
@@ -56,7 +55,7 @@ fn c1() -> PkGenerationProofRequest {
         sensitive(THRESHOLD_POLY),
         sensitive(THRESHOLD_POLY),
         sensitive(THRESHOLD_POLY),
-        PRESET,
+        e3_fhe_params::BfvProfile::SsSecure8192,
         COMMITTEE,
     )
 }
@@ -66,7 +65,7 @@ fn c2(dkg_input_type: DkgInputType) -> ShareComputationProofRequest {
         secret_raw: sensitive(THRESHOLD_POLY),
         secret_sss_raw: sensitive(N * THRESHOLD_POLY + 1024),
         dkg_input_type,
-        params_preset: PRESET,
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
         committee_size: COMMITTEE,
     }
 }
@@ -80,7 +79,7 @@ fn c3(kind: DkgInputType, party: usize, row: usize) -> ShareEncryptionProofReque
         e0_rns_raw: sensitive(DKG_POLY),
         e1_rns_raw: sensitive(DKG_POLY),
         dkg_input_type: kind,
-        params_preset: PRESET,
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
         committee_size: COMMITTEE,
         recipient_party_id: party,
         row_index: row,
@@ -103,7 +102,7 @@ fn c4(kind: DkgInputType) -> DkgShareDecryptionProofRequest {
         own_plaintext_idx: None,
         own_share_raw: None,
         dkg_input_type: kind,
-        params_preset: PRESET,
+        params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
         committee_size: COMMITTEE,
     }
 }
@@ -252,7 +251,7 @@ async fn secure_history(router: &Addr<E3Router>, id: &E3id) -> Result<()> {
             e3_id: id.clone(),
             threshold_m: 9,
             threshold_n: N,
-            params_preset: PRESET,
+            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
             committee,
             ..Default::default()
         },

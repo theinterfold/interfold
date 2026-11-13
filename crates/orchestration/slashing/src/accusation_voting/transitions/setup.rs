@@ -15,7 +15,7 @@ impl AccusationVoting {
         vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
         clock: Arc<dyn Clock>,
     ) -> Self {
         let my_address = signer.address();
@@ -46,7 +46,7 @@ impl AccusationVoting {
             vote_validity_secs,
             accusation_deadline_skew_secs,
             clock,
-            params_preset,
+            params_profile,
             effects_enabled: true,
             deferred_accusations: Vec::new(),
             restored_timeouts: Vec::new(),

@@ -19,17 +19,11 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
-import { bfvPresetForParamSet } from "../bfv.js";
-import { ACTIVE_BFV_PARAM_SET, readDeploymentArgs } from "../scripts/utils";
+import { BFV_PRESETS, type BfvProfile, bfvConfiguration } from "../bfv.js";
+import { ACTIVE_BFV_PRESET, readDeploymentArgs } from "../scripts/utils";
 import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
 import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
-
-function cryptoConfigIdForParamSet(paramSet: number): string {
-  const preset = bfvPresetForParamSet(paramSet);
-  if (preset) return preset.configId;
-  throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
-}
 
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -204,11 +198,11 @@ export const requestCommittee = task(
     type: ArgumentType.INT,
   })
   .addOption({
-    name: "paramSet",
+    name: "profile",
     description:
-      "BFV parameter set (0=insecure-64, 2=secure-8192; default: the set of the active circuit build)",
-    defaultValue: ACTIVE_BFV_PARAM_SET,
-    type: ArgumentType.INT,
+      "BFV profile (ss-insecure-64 or ss-secure-8192; synchronized admission is disabled)",
+    defaultValue: BFV_PRESETS[ACTIVE_BFV_PRESET].profile,
+    type: ArgumentType.STRING,
   })
   .addOption({
     name: "inputWindowStart",
@@ -250,7 +244,7 @@ export const requestCommittee = task(
     default: async (
       {
         committeeSize,
-        paramSet,
+        profile,
         inputWindowStart,
         inputWindowEnd,
         e3Address,
@@ -265,8 +259,10 @@ export const requestCommittee = task(
           "Invalid committee size - expected 0 (Minimum), 1 (Micro), or 2 (Small).",
         );
       }
-      // Throws for an unknown set before the task sends a transaction.
-      const expectedCryptoConfigId = cryptoConfigIdForParamSet(paramSet);
+      const { paramSet, configId: expectedCryptoConfigId } = bfvConfiguration(
+        profile as BfvProfile,
+        committeeSize,
+      );
 
       const connection = await hre.network.connect();
       const { ethers } = connection;

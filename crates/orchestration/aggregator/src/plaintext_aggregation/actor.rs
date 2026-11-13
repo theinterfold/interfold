@@ -27,7 +27,7 @@ use e3_events::{
     ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, TypedEvent,
     VerificationKind, ZkRequest, ZkResponse,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_sortition::{E3CommitteeContainsRequest, E3CommitteeContainsResponse, Sortition};
 use e3_trbfv::{
     calculate_threshold_decryption::CalculateThresholdDecryptionRequest, TrBFVConfig, TrBFVRequest,
@@ -71,7 +71,7 @@ pub struct ThresholdPlaintextAggregator {
     bus: BusHandle,
     sortition: Addr<Sortition>,
     e3_id: E3id,
-    params_preset: BfvPreset,
+    params_profile: BfvProfile,
     committee_size: CiphernodesCommitteeSize,
     proof_aggregation_enabled: bool,
     state: Persistable<ThresholdPlaintextAggregatorState>,
@@ -98,7 +98,7 @@ pub struct ThresholdPlaintextAggregatorParams {
     pub bus: BusHandle,
     pub sortition: Addr<Sortition>,
     pub e3_id: E3id,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
     pub proof_aggregation_enabled: bool,
     pub initial_is_aggregator: bool,
@@ -161,7 +161,7 @@ impl ThresholdPlaintextAggregator {
             bus: params.bus,
             sortition: params.sortition,
             e3_id: params.e3_id,
-            params_preset: params.params_preset,
+            params_profile: params.params_profile,
             committee_size: params.committee_size,
             proof_aggregation_enabled: params.proof_aggregation_enabled,
             state,

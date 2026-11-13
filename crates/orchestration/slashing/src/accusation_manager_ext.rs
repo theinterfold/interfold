@@ -184,7 +184,7 @@ impl AccusationManagerExtension {
             vote_quorum_h,
             vote_validity_secs,
             self.accusation_deadline_skew_secs,
-            meta.params_preset,
+            meta.params_profile,
         );
         let manager = if effects_enabled {
             manager
@@ -250,7 +250,7 @@ mod tests {
         EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource, GetEvents, ProofType,
         Seed, Sequencer, StoreEventRequested, Unsequenced,
     };
-    use e3_fhe_params::BfvPreset;
+    use e3_fhe_params::BfvProfile;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
     use e3_utils::ArcBytes;
     use std::sync::Arc;
@@ -298,7 +298,8 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         }

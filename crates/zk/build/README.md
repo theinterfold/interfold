@@ -15,6 +15,11 @@ hydration. `scripts/circuits/build-pairs.json` owns supported build pairs. Relea
 in the separate runtime release matrix. Hydration accepts a different artifact source hash and
 records the original hash. Release validation remains source-bound.
 
+Test fixtures and local tooling that need circuits without rebuilding call the library's narrow
+operations: `read_active_stamp`, `dist_current`/`bin_current` (stamp and markers, any source hash when
+`None` is passed), `stage_bin` (`circuits/bin` into a pair directory) and `write_checksums`. They
+do not recompute source identity or compile.
+
 The unpublished `e3-zk-benchmarks` crate uses this crate through a normal dependency. Normal dependency
 direction stays `build -> witness -> config`; the configuration library does not import build,
 witness, samples, or runtime orchestration.

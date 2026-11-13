@@ -84,15 +84,17 @@ impl FromSnapshotWithParams for E3Router {
                     )
                 })?;
 
+            let completes_on_restart = params.complete_on_restart.contains(&e3_id);
             contexts.insert(
                 e3_id.clone(),
-                E3Context::from_snapshot(
+                E3Context::restore(
                     E3ContextParams {
                         repository: repositories.context(&e3_id),
                         e3_id: e3_id.clone(),
                         extensions: params.extensions.clone(),
                     },
                     context_snapshot,
+                    completes_on_restart,
                 )
                 .await?,
             );

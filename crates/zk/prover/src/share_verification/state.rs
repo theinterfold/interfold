@@ -78,9 +78,9 @@ pub(crate) struct PendingVerification {
     pub(crate) party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
     /// Parallel to `party_public_signals` — raw `proof.data` per (party, proof_type).
     pub(crate) party_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
-    /// BFV preset for circuit artifact resolution.
+    /// Request-time profile for circuit artifact resolution.
     #[allow(dead_code)]
-    pub(crate) params_preset: e3_fhe_params::BfvPreset,
+    pub(crate) params_profile: e3_fhe_params::BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     #[allow(dead_code)]
     pub(crate) committee_size: CiphernodesCommitteeSize,
@@ -107,8 +107,8 @@ pub(crate) struct PendingConsistencyCheck {
     pub(crate) ecdsa_passed_share_proofs: Vec<PartyProofsToVerify>,
     /// Original ECDSA-passed decryption proofs for ZK dispatch.
     pub(crate) ecdsa_passed_decryption_proofs: Vec<PartyShareDecryptionProofsToVerify>,
-    /// BFV preset for circuit artifact resolution.
-    pub(crate) params_preset: e3_fhe_params::BfvPreset,
+    /// Request-time profile for circuit artifact resolution.
+    pub(crate) params_profile: e3_fhe_params::BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub(crate) committee_size: CiphernodesCommitteeSize,
 }

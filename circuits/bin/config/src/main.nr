@@ -41,9 +41,10 @@ use lib::configs::secure::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC,
+    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC, PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
+    PK_GENERATION_BIT_R, PK_GENERATION_BIT_E_SM_QUOTIENT,
     // share_decryption bounds
-    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS,
+    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS, THRESHOLD_SHARE_DECRYPTION_BIT_R,
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
@@ -452,6 +453,12 @@ fn verify_pk_generation_bounds() {
         let sk: u128 = PK_GENERATION_SK_BOUND as u128;
         let expected_r: u128 = ((n * sk + 2) * qi_bound + eek) / qi;
         assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
+
+        // C1 checks `r` and the e_sm CRT quotients in the window `[-2^BIT, 2^BIT)`, not against
+        // these bounds, so the widths are what must cover them.
+        PK_GENERATION_R_BOUNDS[i].assert_max_bit_size::<PK_GENERATION_BIT_R>();
+        PK_GENERATION_E_SM_QUOTIENT_BOUNDS[i]
+            .assert_max_bit_size::<PK_GENERATION_BIT_E_SM_QUOTIENT>();
     }
 
     verify_e_sm_bound();
@@ -509,6 +516,9 @@ fn verify_share_decryption_bounds() {
             THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i] as u128 == expected_r,
             "SHARE_DECRYPTION_R_BOUNDS mismatch",
         );
+        // C6 checks `r` in the window `[-2^BIT_R, 2^BIT_R)`, so the width must cover the bound.
+        THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i]
+            .assert_max_bit_size::<THRESHOLD_SHARE_DECRYPTION_BIT_R>();
     }
 }
 

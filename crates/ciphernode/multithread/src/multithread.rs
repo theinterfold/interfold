@@ -34,7 +34,7 @@ use e3_events::{
 #[cfg(test)]
 use e3_events::{PkBfvProofRequest, VerifyShareProofsRequest};
 #[cfg(test)]
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 #[cfg(test)]
 use e3_trbfv::TrBFVFailure;
 use e3_trbfv::{TrBFVError, TrBFVRequest};
@@ -265,7 +265,7 @@ mod task_group_tests {
             |kind| ComputeRequest::zk(kind, e3_events::CorrelationId::new(), e3_id.clone());
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
-            params_preset: e3_fhe_params::BfvPreset::default(),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         assert_eq!(
@@ -308,7 +308,7 @@ mod task_group_tests {
         let e3_id = E3id::new("7", 1);
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
-            params_preset: e3_fhe_params::BfvPreset::default(),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         let request = |kind| ComputeRequest::zk(kind, CorrelationId::new(), e3_id.clone());
@@ -390,7 +390,7 @@ mod task_group_tests {
         let request = ComputeRequest::zk(
             ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
                 party_proofs: vec![],
-                params_preset: e3_fhe_params::BfvPreset::default(),
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
             }),
             CorrelationId::new(),
@@ -445,7 +445,7 @@ mod task_group_tests {
         let zk_request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 e3_utils::ArcBytes::default(),
-                BfvPreset::InsecureThreshold64,
+                BfvProfile::SsInsecure64,
                 CiphernodesCommitteeSize::Minimum,
             )),
             e3_events::CorrelationId::new(),

@@ -9,7 +9,7 @@ use crate::utils::total_expected_for;
 use super::*;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
@@ -37,7 +37,7 @@ fn share_computation_req() -> ShareComputationProofRequest {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: BfvPreset::default(),
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
     }
 }
@@ -48,7 +48,7 @@ fn pk_generation_req() -> PkGenerationProofRequest {
         sk: sensitive(),
         eek: sensitive(),
         e_sm: sensitive(),
-        params_preset: BfvPreset::default(),
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
     }
 }
@@ -66,7 +66,7 @@ fn share_encryption_req(
         e0_rns_raw: sensitive(),
         e1_rns_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: BfvPreset::default(),
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
         recipient_party_id,
         row_index,
@@ -83,7 +83,7 @@ fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         own_plaintext_idx: Some(0),
         own_share_raw: Some(sensitive()),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: BfvPreset::default(),
+        params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
     }
 }

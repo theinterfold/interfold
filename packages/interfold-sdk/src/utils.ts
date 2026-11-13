@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { COMMITTEES, bfvPresetForParamSet } from '@interfold/contracts/bfv'
+import { COMMITTEES, bfvConfiguration, type BfvProfile } from '@interfold/contracts/bfv'
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
 import type { CommitteeSize } from './contracts/types'
 import type { BfvParams } from './types'
@@ -85,10 +85,12 @@ export const DEFAULT_E3_CONFIG = {
   payment_amount: '0', // 0 ETH in wei
 } as const
 
-export function cryptoConfigIdForParamSet(paramSet: number): Hash {
-  const preset = bfvPresetForParamSet(paramSet)
-  if (preset) return preset.configId
-  throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
+export function bfvConfigForRequest(profile: BfvProfile, committeeSize: CommitteeSize) {
+  try {
+    return bfvConfiguration(profile, committeeSize)
+  } catch (error) {
+    throw new SDKError(String(error), 'UNSUPPORTED_CRYPTO_CONFIG')
+  }
 }
 
 /**
