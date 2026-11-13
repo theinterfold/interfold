@@ -45,9 +45,12 @@ target-specific, so enabling every feature on a host is not a guest parity check
 
 ## Tests
 
-Run `cargo test --locked -p e3-safe` for transcript/domain/tag vectors, zero-length/multiple
-operations, and accelerated field/permutation comparisons against the reference. No prover is needed
-for these inline tests. For OpenVM execution follow the
-[worker workflow](../program/openvm-prover/README.md). Cross-language commitment requirements live
-in [proof statements](../../docs/architecture/proof-statements.md). [AGENTS.md](AGENTS.md) covers
-permutation and cross-language changes.
+From the repository root, run `cargo test --locked --manifest-path crates/safe/Cargo.toml` for
+transcript/domain/tag vectors, zero-length/multiple operations, and accelerated field/permutation
+comparisons against the reference. No prover is needed for these inline tests. For OpenVM execution
+follow the [worker workflow](../program/openvm-prover/README.md). Cross-language commitment
+requirements live in [proof statements](../../docs/architecture/proof-statements.md).
+[AGENTS.md](AGENTS.md) covers permutation and cross-language changes.
+
+The synchronized fhe.rs feature also brings its pinned upstream `e3-safe`. Select this crate by
+manifest path rather than the now-ambiguous bare `-p e3-safe`; this does not patch the upstream pin.

@@ -55,6 +55,28 @@ fn every_supported_identity_resolves_to_its_own_profile_only() {
 }
 
 #[test]
+fn profile_ids_still_match_the_published_configuration_catalogue() {
+    let catalogue: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../packages/interfold-contracts/crypto-config.json"
+    ))
+    .unwrap();
+    for row in catalogue["bfv"]["profiles"].as_array().unwrap() {
+        let profile: BfvProfile = row["profile"].as_str().unwrap().parse().unwrap();
+        for config in row["configurations"].as_array().unwrap() {
+            let committee = config["committee"].as_str().unwrap().parse().unwrap();
+            assert_eq!(
+                profile.crypto_config_id(committee).unwrap().to_string(),
+                config["cryptoConfigId"].as_str().unwrap()
+            );
+            assert_eq!(
+                profile.admission_enabled(),
+                config["admissionEnabled"].as_bool().unwrap()
+            );
+        }
+    }
+}
+
+#[test]
 fn profile_identity_binds_protocol_dkg_committee_statement_and_original_bytes() {
     let (threshold, dkg) = BfvProfile::SsInsecure64.build_pair().unwrap();
     let (_, synchronized_dkg) = BfvProfile::SyncDecInsecure64.build_pair().unwrap();

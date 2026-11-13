@@ -409,7 +409,7 @@
         }
       ],
       "depends_on": [],
-      "tests": "Unit tests in src/lib.rs and src/poseidon2_accel.rs (16 test attributes). Run: cargo test -p e3-safe.",
+      "tests": "Unit tests in src/lib.rs and src/poseidon2_accel.rs (16 test attributes). Run: cargo test --locked --manifest-path crates/safe/Cargo.toml.",
       "unverified": []
     },
     {

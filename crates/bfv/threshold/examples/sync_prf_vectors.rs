@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Regenerate only public, deterministic conformance data:
+//! `cargo run --locked -p e3-trbfv --example sync_prf_vectors -- --write`.
+//! Without --write, check the frozen vectors in prf.nr against the pinned upstream PRF.
+
+use anyhow::{ensure, Context, Result};
+use e3_fhe_params::{BfvParamSet, BfvPreset, BfvProfile};
+use fhe::{
+    bfv::{BfvParameters, BfvParametersBuilder, Ciphertext},
+    trbfv::{PartyPrfKeyTransport, PartyPrfKeys},
+};
+use fhe_math::rq::{Poly, PowerBasis};
+use ndarray::Array2;
+use std::{fmt::Write, path::PathBuf, sync::Arc};
+
+const VECTORS_START: &str = "// BEGIN GENERATED fhe.rs v0.6.0 PRF conformance tests";
+const VECTORS_END: &str = "// END GENERATED fhe.rs v0.6.0 PRF conformance tests";
+
+fn key_matrix(n: usize, full_width: bool) -> Vec<Vec<[u8; 32]>> {
+    (0..n)
+        .map(|dealer| {
+            (0..n)
+                .map(|recipient| {
+                    let mut key = [0; 32];
+                    for (index, byte) in
+                        key.iter_mut()
+                            .enumerate()
+                            .take(if full_width { 32 } else { 8 })
+                    {
+                        *byte = (37 * (dealer + 1) + 13 * (recipient + 1) + 17 * index) as u8;
+                    }
+                    key
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn ciphertext_coefficients(params: &BfvParameters, variant: usize) -> Vec<Vec<Vec<u64>>> {
+    (0..2)
+        .map(|component| {
+            params
+                .moduli()
+                .iter()
+                .enumerate()
+                .map(|(limb, &q)| {
+                    (0..params.degree())
+                        .map(|coefficient| match (coefficient + variant) % 5 {
+                            0 => 0,
+                            1 => q - 1,
+                            2 => (q - 1) / 2,
+                            3 => q.div_ceil(2),
+                            _ => {
+                                (component as u64 * 71
+                                    + limb as u64 * 19
+                                    + coefficient as u64
+                                    + variant as u64)
+                                    % q
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn native_mask(
+    params: &Arc<BfvParameters>,
+    ids: &[usize],
+    owner: usize,
+    matrix: &[Vec<[u8; 32]>],
+    coefficients: &[Vec<Vec<u64>>],
+) -> Result<Vec<Vec<u64>>> {
+    let ctx = params.context_at_level(0)?;
+    let components = coefficients
+        .iter()
+        .map(|component| {
+            let mut poly = Poly::<PowerBasis>::zero(ctx);
+            poly.set_coefficients(Array2::from_shape_fn(
+                (params.moduli().len(), params.degree()),
+                |(limb, coefficient)| component[limb][coefficient],
+            ));
+            poly.into_ntt()
+        })
+        .collect();
+    let ciphertext = Ciphertext::new(components, params)?;
+    let outgoing = &matrix[owner - 1];
+    let incoming: Vec<_> = matrix.iter().map(|row| row[owner - 1]).collect();
+    let keys = PartyPrfKeys::from_transport(PartyPrfKeyTransport::new(
+        owner,
+        matrix.len(),
+        outgoing.clone(),
+        incoming.clone(),
+    )?)?;
+    // The oracle is fhe.rs's released public API, not an Interfold copy of its transcript.
+    let mask = keys.mask(ids, &ciphertext)?;
+    Ok(mask
+        .coefficients()
+        .rows()
+        .into_iter()
+        .map(|row| row.to_vec())
+        .collect())
+}
+
+fn append_case(
+    output: &mut String,
+    name: &str,
+    params: &Arc<BfvParameters>,
+    ids: &[usize],
+    owner: usize,
+    matrix: &[Vec<[u8; 32]>],
+    coefficients: &[Vec<Vec<u64>>],
+) -> Result<()> {
+    let expected = native_mask(params, ids, owner, matrix, coefficients)?;
+    let outgoing = &matrix[owner - 1];
+    let incoming: Vec<_> = matrix.iter().map(|row| row[owner - 1]).collect();
+    let n = params.degree();
+    let l = params.moduli().len();
+    let parties = matrix.len();
+    writeln!(output, "\n#[test]\nfn fhe_v060_{name}() {{")?;
+    writeln!(
+        output,
+        "    let ciphertext: [[[u64; {n}]; {l}]; 2] = {coefficients:?};"
+    )?;
+    writeln!(
+        output,
+        "    let outgoing: [[u8; 32]; {parties}] = {outgoing:?};"
+    )?;
+    writeln!(
+        output,
+        "    let incoming: [[u8; 32]; {parties}] = {incoming:?};"
+    )?;
+    writeln!(
+        output,
+        "    let actual = decryption_mask::<{n}, {l}, {parties}, {}>(",
+        ids.len()
+    )?;
+    writeln!(
+        output,
+        "        {owner}, {ids:?}, 0, ciphertext, outgoing, incoming, {:?},",
+        params.moduli()
+    )?;
+    writeln!(output, "    );\n    assert(actual == {expected:?});\n}}")?;
+    Ok(())
+}
+
+pub fn render() -> Result<String> {
+    let mut output = String::from(
+        "\n// Generated by crates/bfv/threshold/examples/sync_prf_vectors.rs using fhe.rs v0.6.0.\n\
+         // Public synthetic data only. Secure-width small rings are not secure-profile qualification.\n",
+    );
+    let (params, _) = BfvProfile::SyncDecInsecure64.build_pair()?;
+    let matrix = key_matrix(3, false);
+    append_case(
+        &mut output,
+        "insecure_64_non_prefix",
+        &params,
+        &[1, 3],
+        3,
+        &matrix,
+        &ciphertext_coefficients(&params, 0),
+    )?;
+
+    let small = BfvParametersBuilder::new()
+        .set_degree(8)
+        .set_plaintext_modulus(17)
+        .set_moduli(&[65537, 65521])
+        .build_arc()?;
+    let matrix = key_matrix(5, true);
+    let coefficients = ciphertext_coefficients(&small, 0);
+    for owner in [1, 3, 5] {
+        append_case(
+            &mut output,
+            &format!("full_key_owner_{owner}"),
+            &small,
+            &[1, 3, 5],
+            owner,
+            &matrix,
+            &coefficients,
+        )?;
+    }
+    append_case(
+        &mut output,
+        "different_ciphertext",
+        &small,
+        &[1, 3, 5],
+        3,
+        &matrix,
+        &ciphertext_coefficients(&small, 1),
+    )?;
+    append_case(
+        &mut output,
+        "different_set",
+        &small,
+        &[1, 2, 5],
+        1,
+        &matrix,
+        &coefficients,
+    )?;
+
+    let secure_widths = BfvParamSet::from(BfvPreset::SecureThreshold8192);
+    let small = BfvParametersBuilder::new()
+        .set_degree(8)
+        .set_plaintext_modulus(17)
+        .set_moduli(secure_widths.moduli)
+        .build_arc()?;
+    append_case(
+        &mut output,
+        "secure_width_residues",
+        &small,
+        &[1, 3, 5],
+        3,
+        &matrix,
+        &ciphertext_coefficients(&small, 0),
+    )?;
+    Ok(output)
+}
+
+pub fn destination() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../circuits/lib/src/math/prf.nr")
+}
+
+fn vector_section(source: &str) -> Result<(&str, &str, &str)> {
+    ensure!(
+        source.matches(VECTORS_START).count() == 1 && source.matches(VECTORS_END).count() == 1,
+        "Expected exactly one generated PRF test section"
+    );
+    let (prefix, rest) = source.split_once(VECTORS_START).unwrap();
+    let (vectors, suffix) = rest
+        .split_once(VECTORS_END)
+        .context("Generated PRF test markers are reversed")?;
+    Ok((prefix, vectors, suffix))
+}
+
+fn replace_vectors(source: &str, generated: &str) -> Result<String> {
+    let (prefix, _, suffix) = vector_section(source)?;
+    Ok(format!(
+        "{prefix}{VECTORS_START}{generated}{VECTORS_END}{suffix}"
+    ))
+}
+
+/// Inputs for a separate compiled circuit: none of these values are Noir compile-time constants.
+pub fn private_inputs(secure_width: bool) -> Result<serde_json::Value> {
+    let (params, matrix, ids) = if secure_width {
+        let params = BfvParametersBuilder::new()
+            .set_degree(8)
+            .set_plaintext_modulus(17)
+            .set_moduli(BfvParamSet::from(BfvPreset::SecureThreshold8192).moduli)
+            .build_arc()?;
+        (params, key_matrix(5, true), vec![1, 3, 5])
+    } else {
+        let (params, _) = BfvProfile::SyncDecInsecure64.build_pair()?;
+        (params, key_matrix(3, false), vec![1, 3])
+    };
+    let coefficients = ciphertext_coefficients(&params, 0);
+    let expected = native_mask(&params, &ids, 3, &matrix, &coefficients)?;
+    let incoming: Vec<_> = matrix.iter().map(|row| row[2]).collect();
+    Ok(serde_json::json!({
+        "owner": 3,
+        "ids": ids,
+        "level": 0,
+        "ciphertext": coefficients,
+        "outgoing": matrix[2],
+        "incoming": incoming,
+        "moduli": params.moduli(),
+        "expected": expected,
+    }))
+}
+
+pub fn check() -> Result<()> {
+    let source = std::fs::read_to_string(destination())?;
+    let (_, frozen, _) = vector_section(&source)?;
+    let normalize = |source: &str| {
+        // Noir formatting may add optional trailing commas; preserve all data-separating commas.
+        source
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .replace(",]", "]")
+            .replace(",)", ")")
+    };
+    ensure!(
+        normalize(frozen) == normalize(&render()?),
+        "Frozen Rust/Noir PRF vectors differ; review before regenerating with --write"
+    );
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn main() -> Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        None | Some("--check") => check(),
+        Some("--write") => {
+            let path = destination();
+            let source = std::fs::read_to_string(&path)?;
+            Ok(std::fs::write(path, replace_vectors(&source, &render()?)?)?)
+        }
+        Some(argument) => anyhow::bail!("Unknown argument {argument}; expected --check or --write"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_replacement_preserves_surrounding_source_and_is_idempotent() {
+        let source = format!(
+            "implementation\n{VECTORS_START}\nold tests\n{VECTORS_END}\nhandwritten tests\n"
+        );
+        let updated = replace_vectors(&source, "\nnew tests\n").unwrap();
+        assert_eq!(
+            updated,
+            format!(
+                "implementation\n{VECTORS_START}\nnew tests\n{VECTORS_END}\nhandwritten tests\n"
+            )
+        );
+        assert_eq!(replace_vectors(&updated, "\nnew tests\n").unwrap(), updated);
+    }
+
+    #[test]
+    fn vector_replacement_rejects_missing_duplicate_or_reversed_markers() {
+        for source in [
+            String::new(),
+            VECTORS_START.into(),
+            VECTORS_END.into(),
+            format!("{VECTORS_START}{VECTORS_START}{VECTORS_END}"),
+            format!("{VECTORS_START}{VECTORS_END}{VECTORS_END}"),
+            format!("{VECTORS_END}{VECTORS_START}"),
+        ] {
+            assert!(replace_vectors(&source, "\nnew tests\n").is_err());
+        }
+    }
+}

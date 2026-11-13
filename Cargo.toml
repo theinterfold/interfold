@@ -178,8 +178,8 @@ derivative = "=2.2.0"
 dirs = "=5.0.1"
 dialoguer = "=0.11.0"
 eyre = { version = "=0.6.12" }
-# SS only: the upstream default enables synchronized decryption and its PRF dependencies.
-fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0", default-features = false, features = ["experimental-mbfv"] }
+# Enable both native protocols explicitly; synchronized profile admission remains disabled.
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0", default-features = false, features = ["experimental-mbfv", "synchronized-decryption"] }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0" }
 fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0" }

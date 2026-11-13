@@ -12,6 +12,7 @@ pub mod gen_pk_share_and_sk_sss;
 pub mod helpers;
 mod request_execution;
 pub mod shares;
+pub mod synchronized;
 pub mod trbfv_config;
 pub mod trbfv_request;
 pub use trbfv_config::*;

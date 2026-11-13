@@ -73,10 +73,10 @@ protocol 7 does not satisfy this cutover; the source's compiled values are expli
 from SemVer.
 
 Sampler/smudging/BFV validation and non-centered C3/user-encryption/CRISP k1 scale change witnesses
-and bounds. That cutover used fhe.rs v0.4.2; the workspace now pins fhe.rs v0.6.0, with synchronized
-decryption disabled. Node, client configuration IDs, circuit archives, and OpenVM guest/receipt
-identity must match; v1–v4 requests cannot be treated as v5. Runtime/SDK tooling reject old
-configuration IDs for new requests.
+and bounds. That cutover used fhe.rs v0.4.2; the workspace now pins fhe.rs v0.6.0, with both native
+decryption features compiled but synchronized profile admission disabled. Node, client configuration
+IDs, circuit archives, and OpenVM guest/receipt identity must match; v1–v4 requests cannot be
+treated as v5. Runtime/SDK tooling reject old configuration IDs for new requests.
 
 **Mainnet parameter-set index 1 remains the previous secure tuple.** Register the new secure tuple
 at index **2** in the paused/drained governance batch; never overwrite/reinterpret old E3 records.
@@ -241,6 +241,12 @@ together; the public request ABI and contract storage layout are unchanged. The 
 metadata format is version 2 and no longer presents a threshold-only ID as a current preset
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
+
+The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
+data-availability recovery layout lock includes its enum row even though that projection records
+threshold presets, not transport presets. Existing rows/encodings are unchanged; an older binary
+cannot decode a manually stored new variant. This remains part of the unreleased schema-9 cutover,
+with no additional release-counter change or mixed-version/rollback guarantee for new-variant data.
 
 The cutover changes these request interfaces. Update their callers together with the contracts:
 

@@ -27,6 +27,18 @@ noise owner is consumed by that calculation; persisted copies must not mask anot
 Independent outputs need separately committed/dealt noise and matching proofs. Keep the
 vector-shaped payloads for encoding compatibility, not as authorization to reuse noise for a batch.
 
+The separate `synchronized` primitives are not wired into worker requests or actor admission. Their
+designated IDs are zero-based at this boundary and converted once for fhe.rs. Reconstruction
+requires the exact designated T+1 set; it sums already-weighted shares rather than interpolating.
+The proposed initial selector uses the lowest T+1 canonical IDs of the complete published H-roster;
+calling it does not authenticate that roster or activate the policy.
+
+PRF keys and packed SK shares are secret material. Key objects zeroize on drop and redact Debug, but
+copying their bytes or packing them into an existing share does not make the copies safe to log or
+store unencrypted. Authenticated DKG and proof provenance remain prerequisites for runtime use.
+Successful randomized synchronized outputs must be retained and retransmitted, not resampled on
+restart. These primitives implement no replacement-set or multiple-output policy.
+
 ## Calculation surface
 
 Each public module exposes a typed request/response and its calculation function:
@@ -74,3 +86,14 @@ private share fixtures under `tests/common` and shared
 [ballots](../../testing/bfv-support/README.md). See [DKG](../../../docs/architecture/dkg.md) and
 [threshold decryption](../../../docs/architecture/threshold-decryption.md) for dimensions and
 proofs. See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.
+
+`tests/prf_vectors.rs` checks frozen public vectors in `circuits/lib/src/math/prf.nr` against fhe.rs
+v0.6.0's actual PRF. Run `nargo test` in `circuits/lib` for the constrained side. After reviewing
+intentional transcript changes, regenerate only the marked synthetic test section with
+`cargo run --locked -p e3-trbfv --example sync_prf_vectors -- --write`. This neither rebuilds nor
+publishes circuit artifacts; secure-width small-ring vectors are not secure-profile qualification.
+With pinned nargo/bb, explicitly run
+`cargo test --locked -p e3-trbfv --test prf_vectors private_prf_inputs -- --ignored` for real
+private-input gadget proofs with insecure and secure-width moduli, including
+tampered-key/public-mask rejection in both. The secure-width case uses an insecure small ring. These
+are not C6/C7, recursive, contract, actor end-to-end, or secure-profile proofs.
