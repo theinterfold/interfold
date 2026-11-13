@@ -39,19 +39,30 @@ echo "PREPARING ZK CIRCUITS..."
 echo ""
 
 # The ciphernode generates leaf proofs even when recursive aggregation is skipped.
-# Full-proof runs reuse published artifacts; other runs compile their selected circuits.
+# Full-proof runs reuse source-matched artifacts or build them; other runs compile selected groups.
 rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  # Full-proof tests use published artifacts without requiring a local source-hash match.
-  (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
+  # A PR can change the VK catalogue before its artifacts are published. Never substitute the
+  # branch tip: build this tree instead, retaining the catalogue/verifier checks below.
+  built_matrix=false
+  if ! (cd "$ROOT_DIR" && pnpm store:circuits pull); then
+    echo "No matching published artifacts available; building the source-aligned matrix"
+    (cd "$ROOT_DIR" && pnpm build:circuits --preset all --committee all --skip-if-built)
+    built_matrix=true
+  fi
   (cd "$ROOT_DIR" && pnpm build:circuits \
     --preset insecure-64 \
     --committee minimum \
-    --hydrate-bin-only \
+    --skip-if-built \
     --no-clean-targets)
+  if [[ "$built_matrix" == "true" ]]; then
+    # Matrix builds switch shared selectors and generated bounds; restore the default sources.
+    (cd "$ROOT_DIR" && pnpm generate:crypto-config)
+  fi
   (cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
+  (cd "$ROOT_DIR" && pnpm check:crypto-config --full)
   for preset in insecure-64 secure-8192; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
