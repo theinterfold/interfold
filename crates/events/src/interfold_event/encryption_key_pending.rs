@@ -7,20 +7,20 @@
 use crate::{E3id, EncryptionKey};
 use actix::Message;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
 /// Encryption key pending proof generation and verification.
 ///
-/// This event is emitted by local key generation and consumed by ZkActor.
+/// This event is emitted by local key generation and consumed by ProofRequestActor.
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct EncryptionKeyPending {
     pub e3_id: E3id,
     pub key: Arc<EncryptionKey>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 

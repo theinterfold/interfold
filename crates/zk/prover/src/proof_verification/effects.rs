@@ -6,7 +6,7 @@ use super::*;
 
 impl ProofVerificationActor {
     pub(super) fn clear_e3(&mut self, e3_id: &E3id, ctx: &mut Context<Self>) {
-        self.presets.remove(e3_id);
+        self.profiles.remove(e3_id);
         self.committees.remove(e3_id);
         self.pending.retain(|(pending_e3, _), pending| {
             if pending_e3 != e3_id {
@@ -43,9 +43,9 @@ impl ProofVerificationActor {
             return;
         }
 
-        let Some((preset, committee_size)) = self.presets.get(&msg.e3_id).copied() else {
+        let Some((profile, committee_size)) = self.profiles.get(&msg.e3_id).copied() else {
             error!(
-                "No BfvPreset known for e3_id={} — cannot determine circuit artifacts directory. \
+                "No admitted BFV profile known for e3_id={} — cannot determine circuit artifacts directory. \
                  This can happen if CiphernodeSelected was missed (e.g. after restart). Rejecting key from party {}.",
                 msg.e3_id, msg.key.party_id
             );
@@ -68,19 +68,26 @@ impl ProofVerificationActor {
             );
             return;
         };
-        let validated = match validate_received_key(&msg, &expected_signer, preset) {
-            Ok(validated) => validated,
-            Err(reason) => {
-                error!("{reason}");
-                return;
-            }
-        };
+        let validated =
+            match validate_received_key(&msg, &expected_signer, profile.threshold_preset()) {
+                Ok(validated) => validated,
+                Err(reason) => {
+                    error!("{reason}");
+                    return;
+                }
+            };
         let proof = msg
             .key
             .proof
             .clone()
             .expect("proof present after validation");
-        let artifacts_dir = preset.artifacts_dir_for_committee(committee_size.as_str());
+        let artifacts_dir = match profile.artifacts_dir_for_committee(committee_size) {
+            Ok(directory) => directory,
+            Err(error) => {
+                error!(e3_id = %msg.e3_id, %error, "Unsupported C0 artifact selection");
+                return;
+            }
+        };
 
         let request = TypedEvent::new(
             ZkVerificationRequest {

@@ -11,16 +11,16 @@ use std::collections::{BTreeMap, HashMap};
 
 use actix::{Actor, Addr, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
+use anyhow::anyhow;
 use e3_data::Repositories;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind,
     CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3StageChanged, E3id,
-    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
-    Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest,
-    ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3StageChanged, E3id, EType,
+    ErrorDispatcher, EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
+    InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending,
+    TypedEvent, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
-use e3_fhe_params::build_pair_for_preset;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
@@ -140,13 +140,18 @@ mod tests {
     use alloy::primitives::Address;
     use anyhow::Result;
     use e3_committee::CiphernodesCommitteeSize;
+    use e3_crypto::SensitiveBytes;
     use e3_event_system::test_support::EventFixture;
     use e3_events::{
         ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents, HistoryCollector,
-        NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
+        NodeDkgFoldRequest, PkGenerationProofRequest, ShareComputationProofRequest, TakeEvents,
+        ThresholdShare, Unsequenced, ZkError,
     };
-    use e3_zk_config::CircuitName;
+    use e3_fhe_params::BfvProfile;
+    use e3_trbfv::shares::BfvEncryptedShares;
+    use e3_zk_config::{CircuitName, DkgInputType};
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
         EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -186,6 +191,73 @@ mod tests {
         let mut result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
         assert!(!result.timed_out, "timed out waiting for an event");
         Ok(result.events.pop().expect("expected one event"))
+    }
+
+    fn threshold_share_pending(e3_id: E3id, params_profile: BfvProfile) -> ThresholdSharePending {
+        let sensitive = || SensitiveBytes::from_encrypted(&[]);
+        let share_request = |dkg_input_type| ShareComputationProofRequest {
+            secret_raw: sensitive(),
+            secret_sss_raw: sensitive(),
+            dkg_input_type,
+            params_profile,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        ThresholdSharePending {
+            e3_id,
+            full_share: Arc::new(ThresholdShare {
+                party_id: 0,
+                pk_share: e3_utils::ArcBytes::from_bytes(&[1]),
+                sk_sss: BfvEncryptedShares::default(),
+                esi_sss: vec![],
+            }),
+            proof_request: PkGenerationProofRequest {
+                pk0_share: e3_utils::ArcBytes::from_bytes(&[1]),
+                sk: sensitive(),
+                eek: sensitive(),
+                e_sm: sensitive(),
+                params_profile,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            },
+            sk_share_computation_request: share_request(DkgInputType::SecretKey),
+            e_sm_share_computation_request: share_request(DkgInputType::SmudgingNoise),
+            sk_share_encryption_requests: vec![],
+            e_sm_share_encryption_requests: vec![],
+            recipient_party_ids: vec![0],
+        }
+    }
+
+    /// A fold request under a profile that this build does not admit starts no fold. The node
+    /// reports its own fault once and publishes nothing else.
+    #[actix::test]
+    async fn disabled_profile_reports_one_error_and_starts_no_fold() -> Result<()> {
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
+        let e3_id = E3id::new("45", 1);
+        let pending = threshold_share_pending(e3_id.clone(), BfvProfile::SyncDecInsecure64);
+
+        aggregator
+            .handle_threshold_share_pending(TypedEvent::new(pending.clone(), test_ctx(pending)));
+        bus.flush_event_pipeline().await?;
+
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        let errors: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(
+            errors,
+            [format!(
+                "Skipping DKG proof aggregation for E3 {e3_id}: BFV profile sync-insecure-64 is disabled in this release"
+            )]
+        );
+        assert!(aggregator.states.is_empty());
+        assert!(aggregator.recovery_index.entries.is_empty());
+        Ok(())
     }
 
     #[actix::test]
@@ -264,7 +336,7 @@ mod tests {
                     committee_n: 0,
                     committee_h: 0,
                     n_moduli: 0,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -295,7 +367,7 @@ mod tests {
                 c3_slot_indices_b: Vec::new(),
                 c3_total_slots: 0,
                 party_id: 7,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
             correlation_id,
@@ -356,7 +428,7 @@ mod tests {
                     committee_n: 3,
                     committee_h: 2,
                     n_moduli: 1,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -454,7 +526,7 @@ mod tests {
                 committee_n: 0,
                 committee_h: 0,
                 n_moduli: 0,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+                params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             },
             test_ctx(DKGRecursiveAggregationComplete {
@@ -545,7 +617,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         actor.persist_meta(&e3_id, &meta, &ec)?;
@@ -581,7 +653,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsSecure8192,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =
@@ -604,10 +676,10 @@ mod tests {
             panic!("expected a resumed compute request");
         };
         assert_eq!(request.e3_id, e3_id);
-        assert!(matches!(
-            request.request,
-            ComputeRequestKind::Zk(ZkRequest::NodeDkgFold(_))
-        ));
+        let ComputeRequestKind::Zk(ZkRequest::NodeDkgFold(fold)) = request.request else {
+            panic!("expected a resumed node fold");
+        };
+        assert_eq!(fold.params_profile, meta.params_profile);
         Ok(())
     }
 
@@ -663,7 +735,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =

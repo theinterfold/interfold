@@ -3,7 +3,10 @@
 use crate::configuration::{OperationParams, HEADER};
 use anyhow::{bail, Context, Result};
 use e3_committee::{CiphernodesCommitteeSize, CommitteeMetadata};
-use e3_fhe_params::{BfvPreset, BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION};
+use e3_fhe_params::{
+    bfv_profile_crypto_config_id, encode_bfv_params, BfvPreset, BfvProfile, BFV_ENCRYPTION_SCHEME,
+    INTERFOLD_BFV_VERSION,
+};
 use e3_zk_config::metadata::CircuitDimensions;
 use e3_zk_config::output_layout::DecryptionAggregatorLayout;
 use std::{
@@ -23,7 +26,35 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
         let param_set = preset
             .on_chain_param_set()
             .context("Current parameter-set index")?;
-        text.push_str(&format!("\n    bytes32 internal constant {label}_CONFIG_ID =\n        {:#x};\n    uint8 internal constant {label}_PARAM_SET = {param_set};\n    bytes32 internal constant {label}_PARAM_SET_HASH =\n        {:#x};\n", material.config_id, material.parameter_hash));
+        text.push_str(&format!("\n    uint8 internal constant {label}_PARAM_SET = {param_set};\n    bytes32 internal constant {label}_PARAM_SET_HASH =\n        {:#x};\n", material.parameter_hash));
+    }
+    for profile in BfvProfile::ALL {
+        if !profile.admission_enabled() {
+            continue;
+        }
+        // Admitted Solidity routes currently require the preset-backed SS DKG pair.
+        profile.dkg_preset()?;
+        let material = params.get(profile.threshold_preset());
+        let threshold_bytes = encode_bfv_params(&material.threshold);
+        let dkg_bytes = encode_bfv_params(&material.dkg);
+        for committee in CiphernodesCommitteeSize::ALL {
+            if !profile.supports_committee(committee) {
+                continue;
+            }
+            let label = format!("{}_{}", profile.name(), committee)
+                .replace('-', "_")
+                .to_uppercase();
+            let identity = bfv_profile_crypto_config_id(
+                profile.protocol(),
+                &threshold_bytes,
+                &dkg_bytes,
+                committee,
+                profile.statement_version(),
+            );
+            text.push_str(&format!(
+                "\n    bytes32 internal constant {label}_CONFIG_ID =\n        {identity:#x};\n"
+            ));
+        }
     }
     for committee in CiphernodesCommitteeSize::ALL {
         let record = CommitteeMetadata::from(committee);

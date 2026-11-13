@@ -18,7 +18,6 @@ use e3_events::{
     ShareEncryptionProofRequest, TakeEvents, ThresholdShare, ThresholdSharePending, Unsequenced,
     ZkError,
 };
-use e3_fhe_params::BfvPreset;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::{utility_types::ArcBytes, OrderedSet, MAILBOX_LIMIT_LARGE};
 use e3_zk_config::CircuitName;
@@ -34,6 +33,116 @@ async fn assert_no_events(history: &Addr<HistoryCollector<InterfoldEvent>>) -> R
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
         .is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn proof_dispatch_preserves_admitted_profiles_and_rejects_disabled_work() -> Result<()> {
+    use e3_fhe_params::BfvProfile;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    for (index, profile) in [
+        BfvProfile::SsInsecure64,
+        BfvProfile::SsSecure8192,
+        BfvProfile::SyncDecInsecure64,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let e3_id = E3id::new((index + 1).to_string(), 1);
+        let event = EncryptionKeyPending {
+            e3_id: e3_id.clone(),
+            key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[1]))),
+            params_profile: profile,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        actor.handle_encryption_key_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+        request_aggregator_proofs(&mut actor, &e3_id, profile);
+    }
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let profiles: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(ComputeRequest {
+                request: ComputeRequestKind::Zk(kind),
+                ..
+            }) => match kind {
+                ZkRequest::PkBfv(request) => Some(("C0", request.params_profile)),
+                ZkRequest::PkAggregation(request) => Some(("C5", request.params_profile)),
+                ZkRequest::DecryptedSharesAggregation(request) => {
+                    Some(("C7", request.params_profile))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        profiles,
+        [BfvProfile::SsInsecure64, BfvProfile::SsSecure8192]
+            .into_iter()
+            .flat_map(|profile| ["C0", "C5", "C7"].map(|circuit| (circuit, profile)))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(actor.pending.len(), 2);
+    assert_eq!(actor.pending_pk_aggregation.len(), 2);
+    assert_eq!(actor.pending_aggregation.len(), 2);
+    // Each disabled request is reported once. The disabled E3 produces nothing else.
+    assert_eq!(events.len(), 9);
+    let disabled_e3_id = E3id::new("3", 1);
+    assert_eq!(
+        interfold_errors(&events),
+        ["C0", "C5", "C7"].map(|circuit| format!(
+            "Skipping {circuit} proof generation for E3 {disabled_e3_id}: BFV profile sync-insecure-64 is disabled in this release"
+        ))
+    );
+    Ok(())
+}
+
+fn interfold_errors(events: &[InterfoldEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// C5 names its committee by (n, h). A pair that names no committee cannot select artifacts, so
+/// the node keeps no C5 work and reports the fault once instead of failing in the executor.
+#[actix::test]
+async fn c5_request_for_an_unknown_committee_is_reported_and_skipped() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("46", 1);
+    let c5 = PkAggregationProofPending {
+        e3_id: e3_id.clone(),
+        proof_request: PkAggregationProofRequest {
+            keyshare_bytes: vec![],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&[1]),
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+            committee_n: 4,
+            committee_h: 2,
+            committee_threshold: 1,
+        },
+        public_key: ArcBytes::from_bytes(&[1]),
+        nodes: OrderedSet::new(),
+    };
+    actor.handle_pk_aggregation_proof_pending(TypedEvent::new(c5.clone(), test_ctx(c5)));
+    bus.flush_event_pipeline().await?;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        interfold_errors(&events),
+        [format!(
+            "Skipping C5 proof generation for E3 {e3_id}: Unknown committee size for (n=4, h=2)"
+        )]
+    );
+    assert!(actor.pending_pk_aggregation.is_empty());
+    assert!(actor.pk_aggregation_correlation.is_empty());
     Ok(())
 }
 
@@ -58,7 +167,7 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_fhe_params::BfvProfile::SsInsecure64,
                     e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -137,7 +246,7 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_fhe_params::BfvProfile::SsInsecure64,
                     e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -207,7 +316,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
 
@@ -224,7 +333,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             sk: sensitive(),
             eek: sensitive(),
             e_sm: sensitive(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(DkgInputType::SecretKey),
@@ -266,7 +375,7 @@ fn decryption_share_proofs_pending(e3_id: E3id) -> DecryptionShareProofsPending 
         own_plaintext_idx: None,
         own_share_raw: None,
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     DecryptionShareProofsPending {
@@ -283,19 +392,29 @@ fn request_proofs(actor: &mut ProofRequestActor, e3_id: &E3id) {
     let c0 = EncryptionKeyPending {
         e3_id: e3_id.clone(),
         key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     let c4 = decryption_share_proofs_pending(e3_id.clone());
+    actor.handle_encryption_key_pending(TypedEvent::new(c0.clone(), test_ctx(c0)));
+    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
+    request_aggregator_proofs(actor, e3_id, e3_fhe_params::BfvProfile::SsInsecure64);
+}
+
+fn request_aggregator_proofs(
+    actor: &mut ProofRequestActor,
+    e3_id: &E3id,
+    params_profile: e3_fhe_params::BfvProfile,
+) {
     let c5 = PkAggregationProofPending {
         e3_id: e3_id.clone(),
         proof_request: PkAggregationProofRequest {
             keyshare_bytes: vec![],
             aggregated_pk_bytes: ArcBytes::from_bytes(&[1]),
-            params_preset: BfvPreset::InsecureThreshold64,
-            committee_n: 1,
-            committee_h: 1,
-            committee_threshold: 0,
+            params_profile,
+            committee_n: 3,
+            committee_h: 2,
+            committee_threshold: 1,
         },
         public_key: ArcBytes::from_bytes(&[1]),
         nodes: OrderedSet::new(),
@@ -305,16 +424,14 @@ fn request_proofs(actor: &mut ProofRequestActor, e3_id: &E3id) {
         proof_request: DecryptedSharesAggregationProofRequest {
             d_share_polys: vec![],
             plaintext: vec![],
-            params_preset: BfvPreset::InsecureThreshold64,
-            threshold_m: 0,
-            threshold_n: 1,
+            params_profile,
+            threshold_m: 1,
+            threshold_n: 3,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         plaintext: vec![],
         shares: vec![],
     };
-    actor.handle_encryption_key_pending(TypedEvent::new(c0.clone(), test_ctx(c0)));
-    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
     actor.handle_pk_aggregation_proof_pending(TypedEvent::new(c5.clone(), test_ctx(c5)));
     actor.handle_aggregation_proof_pending(TypedEvent::new(c7.clone(), test_ctx(c7)));
 }
@@ -398,7 +515,7 @@ async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() ->
         e0_rns_raw: SensitiveBytes::from_encrypted(&[]),
         e1_rns_raw: SensitiveBytes::from_encrypted(&[]),
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         recipient_party_id,
         row_index: 0,
@@ -660,7 +777,7 @@ fn c6_fixture(
             Address::repeat_byte(3),
         ],
         honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: Address::repeat_byte(9),
         sk_agg_commits: vec![],
@@ -681,12 +798,33 @@ fn c6_fixture(
             es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
             d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
             decryption_domain: key.domain(Address::ZERO),
-            params_preset: key.params_preset,
+            params_profile: key.params_profile,
             committee_size: key.committee_size,
         },
         redelivery: 0,
     };
     Ok((keys, pending))
+}
+
+#[test]
+fn canonical_c6_repair_rejects_profile_changes_without_mutating_the_request() -> Result<()> {
+    use e3_fhe_params::BfvProfile;
+    let id = E3id::new("84", 1);
+    let (keys, pending) = c6_fixture(&id)?;
+    for profile in [BfvProfile::SsSecure8192, BfvProfile::SyncDecInsecure64] {
+        let mut request = pending.proof_request.clone();
+        request.params_profile = profile;
+        request.aggregated_pk_bytes = ArcBytes::default();
+        let original = request.clone();
+        assert!(keys
+            .repair_request(&id, &mut request)
+            .unwrap_err()
+            .to_string()
+            .contains("profile"));
+        assert_eq!(request, original);
+        assert!(!keys.accepts_request(&id, &request));
+    }
+    Ok(())
 }
 
 #[actix::test]
@@ -700,6 +838,22 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
     let id = E3id::new("84", 1);
     let (keys, pending) = c6_fixture(&id)?;
     actor.canonical_keys = keys;
+    let mut disabled = pending.clone();
+    disabled.proof_request.params_profile = e3_fhe_params::BfvProfile::SyncDecInsecure64;
+    actor.handle_share_decryption_proof_pending(TypedEvent::new(
+        disabled.clone(),
+        test_ctx(disabled),
+    ));
+    assert!(actor.pending_share_decryption.is_empty());
+    assert!(actor.held_share_decryption.is_empty());
+    // The disabled request is reported once and requests no proof.
+    let skipped = [format!(
+        "Skipping C6 proof generation for E3 {id}: BFV profile sync-insecure-64 is disabled in this release"
+    )];
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(interfold_errors(&events), skipped);
     let request = |redelivery| {
         let pending = e3_events::ShareDecryptionProofPending {
             redelivery,
@@ -714,13 +868,14 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
             events
                 .iter()
                 .filter_map(|event| match event.get_data() {
-                    InterfoldEventData::ComputeRequest(data)
-                        if matches!(
-                            data.request,
-                            ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(_))
-                        ) =>
-                    {
-                        Some(data.correlation_id)
+                    InterfoldEventData::ComputeRequest(ComputeRequest {
+                        request:
+                            ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(request)),
+                        correlation_id,
+                        ..
+                    }) => {
+                        assert_eq!(request.params_profile, pending.proof_request.params_profile);
+                        Some(*correlation_id)
                     }
                     _ => None,
                 })
@@ -780,10 +935,11 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
     assert_eq!(ids.len(), 4);
     actor.handle_share_decryption_proof_response(&ids[3], vec![proof]);
     assert_eq!(signed_redeliveries().await?, vec![1, 9]);
-    assert!(errors
-        .send(GetEvents::<InterfoldEvent>::new())
-        .await?
-        .is_empty());
+    // The redeliveries raised no error beyond the reported skip.
+    assert_eq!(
+        interfold_errors(&errors.send(GetEvents::<InterfoldEvent>::new()).await?),
+        skipped
+    );
     Ok(())
 }
 

@@ -16,6 +16,27 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&e3_id) {
             return;
         }
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer. C5 names its committee by (n, h),
+        // which the executor resolves the same way.
+        let profile = msg.proof_request.params_profile;
+        if let Err(error) = profile
+            .ensure_admission_enabled()
+            .map_err(anyhow::Error::from)
+            .and_then(|()| {
+                let committee = CiphernodesCommitteeSize::from_n_h(
+                    msg.proof_request.committee_n,
+                    msg.proof_request.committee_h,
+                )?;
+                profile.validate_committee(committee).map_err(Into::into)
+            })
+        {
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C5 proof generation for E3 {e3_id}: {error}"),
+            );
+            return;
+        }
 
         if self.pending_pk_aggregation.contains_key(&e3_id) {
             warn!(
@@ -104,6 +125,24 @@ impl ProofRequestActor {
         let e3_id = msg.e3_id.clone();
         // Terminal cleanup ran already; a late request must not leave pending work behind.
         if self.finished_e3s.contains(&e3_id) {
+            return;
+        }
+        // A profile that this build cannot prove is a local fault. The node abstains: it keeps no
+        // pending work, publishes no proof and blames no peer.
+        if let Err(error) = msg
+            .proof_request
+            .params_profile
+            .ensure_admission_enabled()
+            .and_then(|()| {
+                msg.proof_request
+                    .params_profile
+                    .validate_committee(msg.proof_request.committee_size)
+            })
+        {
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping C7 proof generation for E3 {e3_id}: {error}"),
+            );
             return;
         }
 

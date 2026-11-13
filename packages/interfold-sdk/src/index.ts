@@ -36,6 +36,7 @@ export type {
   ContractAddresses,
   E3,
   E3RequestParams,
+  BfvProfile,
   CiphertextOutputReference,
   EventListenerConfig,
   EventFilter,

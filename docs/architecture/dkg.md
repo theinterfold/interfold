@@ -24,15 +24,16 @@ Owners: [keyshare](../../crates/orchestration/keyshare/src/),
   sender slots use the sender's position in the selected fold rows. A non-prefix H-roster makes
   these indices different.
 - C2a/C2b are singleton proof bundles for each recipient; C3a/C3b use the configured Shamir
-  multiplicities. Derive witness dimensions from the active preset, not incidental vector lengths.
+  multiplicities. Derive witness dimensions from the saved profile, not incidental vector lengths.
 
 ## Exchange and verification boundaries
 
 Recipient bundles contain one C2a and one C2b plus C3a/C3b per **threshold Shamir row**, not per
-share-encryption/DKG CRT limb. Shape validation normalizes a DKG preset to its threshold counterpart
-before reading row count. Current TrBFV generates one smudging set (Z=1); extending C3b to multiple
-sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not inferred vector
-sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
+share-encryption/DKG CRT limb. Shape validation derives the row count from the request-time
+profile's threshold parameters. Current TrBFV generates one smudging set (Z=1); extending C3b to
+multiple sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not
+inferred vector sizes.
+[Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
 distinction for both presets.
 
 Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
@@ -210,7 +211,7 @@ saved outcome; later authenticated shares may grow it. Retired batches cannot re
 C0 recovery scans the full durable event log for unresolved authenticated inputs and local outcomes,
 not just snapshot suffixes. Continue across filtered-empty/byte-limited pages using physical head
 and one-record reads for skipped positions; only router-quarantined legacy records explain a gap.
-Wrong aggregates, ordering, or other gaps fail startup. Restore party/preset/committee context
+Wrong aggregates, ordering, or other gaps fail startup. Restore party/profile/committee context
 before replay; past-DKG lifecycle rejects old/new C0 work even if document dedup suppresses another
 fetch. Dispatch only after EffectsEnabled. Local verification errors retry from five seconds to a
 60-second cap; request completion cancels them. This recovery is not a durable-general-outbox claim.

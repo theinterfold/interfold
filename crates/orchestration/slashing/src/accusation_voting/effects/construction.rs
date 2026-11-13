@@ -39,7 +39,7 @@ impl AccusationManager {
         circuit_threshold_t: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
     ) -> Self {
         Self::new_with_clock(
             bus,
@@ -50,7 +50,7 @@ impl AccusationManager {
             circuit_threshold_t,
             vote_validity_secs,
             accusation_deadline_skew_secs,
-            params_preset,
+            params_profile,
             Arc::new(SystemClock),
         )
     }
@@ -67,7 +67,7 @@ impl AccusationManager {
         circuit_threshold_t: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
         clock: Arc<dyn Clock>,
     ) -> Self {
         let vote_quorum_h = Self::canonical_vote_quorum(circuit_threshold_t, committee.len());
@@ -81,7 +81,7 @@ impl AccusationManager {
             vote_quorum_h,
             vote_validity_secs,
             accusation_deadline_skew_secs,
-            params_preset,
+            params_profile,
             clock,
         )
     }
@@ -97,7 +97,7 @@ impl AccusationManager {
         vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -111,7 +111,7 @@ impl AccusationManager {
                 vote_quorum_h,
                 vote_validity_secs,
                 accusation_deadline_skew_secs,
-                params_preset,
+                params_profile,
                 clock,
             ),
             timeout_handles: HashMap::new(),
@@ -131,7 +131,7 @@ impl AccusationManager {
         vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
     ) -> Self {
         Self::new_with_clock_and_quorum(
             bus,
@@ -143,7 +143,7 @@ impl AccusationManager {
             vote_quorum_h,
             vote_validity_secs,
             accusation_deadline_skew_secs,
-            params_preset,
+            params_profile,
             Arc::new(SystemClock),
         )
     }
@@ -158,7 +158,7 @@ impl AccusationManager {
         circuit_threshold_t: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
     ) -> Addr<Self> {
         let vote_quorum_h = Self::canonical_vote_quorum(circuit_threshold_t, committee.len());
         Self::setup_with_quorum(
@@ -171,7 +171,7 @@ impl AccusationManager {
             vote_quorum_h,
             vote_validity_secs,
             accusation_deadline_skew_secs,
-            params_preset,
+            params_profile,
         )
     }
 
@@ -186,7 +186,7 @@ impl AccusationManager {
         vote_quorum_h: usize,
         vote_validity_secs: u64,
         accusation_deadline_skew_secs: u64,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
     ) -> Addr<Self> {
         let addr = Self::new_with_quorum(
             bus,
@@ -198,7 +198,7 @@ impl AccusationManager {
             vote_quorum_h,
             vote_validity_secs,
             accusation_deadline_skew_secs,
-            params_preset,
+            params_profile,
         )
         .start();
         bus.subscribe(EventType::ProofVerificationFailed, addr.clone().into());

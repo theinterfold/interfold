@@ -19,6 +19,12 @@ impl Handler<TypedEvent<TicketGenerated>> for Sortition {
 impl Handler<TypedEvent<E3Requested>> for Sortition {
     type Result = ();
     fn handle(&mut self, msg: TypedEvent<E3Requested>, ctx: &mut Self::Context) -> Self::Result {
+        if let Err(error) = msg.params_profile.ensure_admission_enabled() {
+            self.bus
+                .with_ec(msg.get_ctx())
+                .err(EType::Sortition, error.into());
+            return;
+        }
         let e3_id = msg.e3_id.clone();
         if let Err(error) = self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
             recovery.pending_requests.insert(e3_id.clone(), msg.clone());
@@ -79,6 +85,12 @@ impl Sortition {
         msg: TypedEvent<E3Requested>,
         ctx: &mut Context<Self>,
     ) {
+        if let Err(error) = msg.params_profile.ensure_admission_enabled() {
+            self.bus
+                .with_ec(msg.get_ctx())
+                .err(EType::Sortition, error.into());
+            return;
+        }
         let e3_id = msg.e3_id.clone();
         if self.processed_requests.contains(&e3_id) || self.reading_eligibility.contains(&e3_id) {
             return;

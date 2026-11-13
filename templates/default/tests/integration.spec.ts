@@ -243,7 +243,7 @@ describe('Integration', () => {
       committeeSize,
       inputWindow,
       e3Program: contracts.e3Program,
-      paramSet: 0, // ParamSet.InsecureThreshold64
+      profile: 'ss-insecure-64' as const,
       computeProviderParams,
     }
     const quote = await sdk.getE3Quote(requestParams)

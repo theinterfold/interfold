@@ -23,11 +23,13 @@ pub struct Configs<let N: u32, let L: u32> {
     pub e_sm_bound: Field,
     /// Bounds for the per-modulus residues of e_sm: (q_i - 1) / 2
     pub e_sm_limb_bounds: [Field; L],
-    /// Bounds for the CRT quotients of e_sm: (e_sm_bound + (q_i - 1) / 2) / q_i
+    /// Honest bounds on the CRT quotients of e_sm: (e_sm_bound + (q_i - 1) / 2) / q_i. The circuit
+    /// does not check against them: it checks the window `[-2^BIT_E_SM_QUOTIENT, 2^BIT_E_SM_QUOTIENT)`,
+    /// and `bin/config` checks that the width covers these.
     pub e_sm_quotient_bounds: [Field; L],
-    /// Bounds for the `r` polynomials: the mod-q quotients of the identity reduced modulo
-    /// `X^N + 1`. Reducing the identity makes the cyclotomic quotient's term identically zero, so
-    /// the separate `r2` bound is gone and this one covers what `r1` and `r2` carried between them.
+    /// Honest bounds on the `r` polynomials, the mod-q quotients of the identity reduced modulo
+    /// `X^N + 1`. The circuit does not check against them: it checks the window
+    /// `[-2^BIT_R, 2^BIT_R)`, and `bin/config` checks that the width covers these.
     pub r_bounds: [Field; L],
 }
 
@@ -185,8 +187,10 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Check that error polynomial has small coefficients
         self.eek.range_check_2bounds::<BIT_EEK>(self.configs.eek_bound, self.configs.eek_bound);
 
-        // Check that secret key polynomial has small coefficients
-        self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
+        // The secret key is ternary. `c^3 = c` has exactly the roots {-1, 0, 1}, and costs less than
+        // the two-sided range check it replaces.
+        assert(self.configs.sk_bound == 1, "the ternary check needs sk_bound == 1");
+        self.sk.assert_ternary();
 
         // Check the smudging noise over the integers. The residues cannot carry this bound:
         // e_sm_bound exceeds every q_i, so a residue satisfies it for free.
@@ -211,19 +215,18 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
                 self.configs.e_sm_limb_bounds[i],
             );
 
-            self.e_sm_quotients[i].range_check_2bounds::<BIT_E_SM_QUOTIENT>(
-                self.configs.e_sm_quotient_bounds[i],
-                self.configs.e_sm_quotient_bounds[i],
-            );
+            // `e_sm_lifted` and `e_sm[i]` are both exactly bounded, so the CRT equation already
+            // fixes the quotient over the integers. Its bound only has to rule out field wraparound,
+            // which the power-of-two window does with one assert per coefficient.
+            self.e_sm_quotients[i].range_check_signed_power_of_two::<BIT_E_SM_QUOTIENT>();
 
             // The reduced identity is checked at a single point, so every coefficient it reads
-            // needs a real bound for the field equality to imply the integer one. `r` is the only
-            // quotient left to bound; `pk0`, `eek` and `sk` are bounded above, and `a` is the
-            // compile-time CRP.
-            self.r[i].range_check_2bounds::<BIT_R>(
-                self.configs.r_bounds[i],
-                self.configs.r_bounds[i],
-            );
+            // needs a bound for the field equality to imply the integer one. `pk0`, `eek` and `sk`
+            // are exactly bounded above and `a` is the compile-time CRP, so the integer identity
+            // fixes `r`; its bound only has to rule out wraparound. The window
+            // `[-2^BIT_R, 2^BIT_R)` covers `r_bounds` (`BIT_R` is their bit width) and keeps
+            // `q_i * r` far below the field prime, with one assert per coefficient.
+            self.r[i].range_check_signed_power_of_two::<BIT_R>();
         }
     }
 

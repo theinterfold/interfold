@@ -17,7 +17,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
 use e3_events::{DkgShareDecryptionProofRequest, E3id, ThresholdShare};
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{BfvParamSet, BfvProfile};
 use e3_trbfv::{
     calculate_decryption_key::CalculateDecryptionKeyRequest,
     helpers::deserialize_secret_key,
@@ -52,7 +52,7 @@ pub(crate) enum DecryptionKeyPlan {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_decryption_key_plan(
     cipher: &Cipher,
-    share_enc_preset: BfvPreset,
+    params_profile: BfvProfile,
     own_party_id: u64,
     committee_size: CiphernodesCommitteeSize,
     trbfv_config: TrBFVConfig,
@@ -62,6 +62,8 @@ pub(crate) fn build_decryption_key_plan(
     selected_party_ids: &BTreeSet<u64>,
     e3_id: &E3id,
 ) -> Result<DecryptionKeyPlan> {
+    params_profile.ensure_admission_enabled()?;
+    params_profile.validate_committee(committee_size)?;
     let party_id = own_party_id as usize;
     let committee = committee_size.values();
 
@@ -69,7 +71,7 @@ pub(crate) fn build_decryption_key_plan(
         bail!("No pending verification shares");
     }
     let sk_bytes = current.sk_bfv.access(cipher)?;
-    let params = BfvParamSet::from(share_enc_preset).build_arc();
+    let params = BfvParamSet::from(params_profile.dkg_preset()?).build_arc();
     let sk_bfv = deserialize_secret_key(&sk_bytes, &params)?;
     let degree = params.degree();
 
@@ -310,10 +312,6 @@ pub(crate) fn build_decryption_key_plan(
     };
 
     // Build C4 proof requests — stored for sending after CalculateDecryptionKey completes
-    let threshold_preset = share_enc_preset
-        .threshold_counterpart()
-        .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
-
     let sk_request = DkgShareDecryptionProofRequest {
         sk_bfv: current.sk_bfv.clone(),
         honest_ciphertexts_raw: sk_ciphertexts_raw,
@@ -322,7 +320,7 @@ pub(crate) fn build_decryption_key_plan(
         own_plaintext_idx,
         own_share_raw: own_plaintext_idx.map(|_| current.own_sk_share_raw.clone()),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: threshold_preset,
+        params_profile,
         committee_size,
     };
 
@@ -337,7 +335,7 @@ pub(crate) fn build_decryption_key_plan(
             own_plaintext_idx,
             own_share_raw: own_plaintext_idx.map(|_| current.own_esi_shares_raw[esi_idx].clone()),
             dkg_input_type: DkgInputType::SmudgingNoise,
-            params_preset: threshold_preset,
+            params_profile,
             committee_size,
         })
         .collect();

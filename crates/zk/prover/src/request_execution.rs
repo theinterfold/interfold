@@ -44,11 +44,8 @@ use e3_events::{
     VerifyShareProofsRequest, VerifyShareProofsResponse, ZkError as ZkEventError, ZkRequest,
     ZkResponse,
 };
-use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
-use e3_fhe_params::BfvParamSet;
-#[cfg(test)]
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{BfvParamSet, BfvProfile};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_trbfv::helpers::deserialize_secret_key;
@@ -149,9 +146,27 @@ fn handle_pk_aggregation_proof(
     req: PkAggregationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // 1. Build threshold BFV parameters from preset
-    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let committee =
+        CiphernodesCommitteeSize::from_n_h(req.committee_n, req.committee_h).map_err(|e| {
+            make_zk_error(
+                &request,
+                format!(
+                    "unknown committee (n={}, h={}): {e}",
+                    req.committee_n, req.committee_h
+                ),
+            )
+        })?;
+    let artifacts_dir = admitted_profile_artifacts(req.params_profile, committee, &request)?;
+    if req.committee_threshold != committee.values().threshold {
+        return Err(make_zk_error(
+            &request,
+            "C5 request threshold does not match its configured committee".into(),
+        ));
+    }
+    let (threshold_params, _dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     // 2. Create deterministic CRP
     let crp = create_deterministic_crp_from_default_seed(&threshold_params);
@@ -196,26 +211,9 @@ fn handle_pk_aggregation_proof(
     // `verify_honk_proof_non_zk`. The EVM-facing proof for on-chain is `CircuitName::DkgAggregator`.
     let circuit = PkAggregationCircuit;
     let bb_work_id = zk_bb_work_id(&request);
-    let committee =
-        CiphernodesCommitteeSize::from_n_h(req.committee_n, req.committee_h).map_err(|e| {
-            make_zk_error(
-                &request,
-                format!(
-                    "unknown committee (n={}, h={}): {e}",
-                    req.committee_n, req.committee_h
-                ),
-            )
-        })?;
-    if req.committee_threshold != committee.values().threshold {
-        return Err(make_zk_error(
-            &request,
-            "C5 request threshold does not match its configured committee".into(),
-        ));
-    }
     let config =
         e3_zk_config::threshold::pk_aggregation::Configs::new(&threshold_params, committee)
             .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
-    let artifacts_dir = prover.resolve_artifacts_dir(req.params_preset, committee.as_str());
     let proof = circuit
         .prove_with_variant(
             prover,
@@ -246,6 +244,8 @@ fn handle_threshold_share_decryption_proof(
     req: ThresholdShareDecryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     // Match share calculation: one SS output per dealt noise aggregate.
     if req.ciphertext_bytes.len() != 1 {
         return Err(make_zk_error(
@@ -266,9 +266,10 @@ fn handle_threshold_share_decryption_proof(
         ));
     }
 
-    // 1. Build threshold BFV parameters from preset
-    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let (threshold_params, _dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::threshold::share_decryption::Configs::new(&threshold_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -286,8 +287,6 @@ fn handle_threshold_share_decryption_proof(
     let num_indices = req.ciphertext_bytes.len();
     let mut proofs = Vec::with_capacity(num_indices);
     let bb_work_base = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let numeric_e3_id = request.e3_id.clone().try_into().map_err(|e| {
         make_zk_error(
             &request,
@@ -368,8 +367,8 @@ mod threshold_share_decryption_tests {
     #[actix::test]
     async fn c6_validates_the_published_key_before_reading_secret_witnesses() {
         let cipher = Cipher::from_password("test-password").await.unwrap();
-        let preset = BfvPreset::InsecureThreshold64;
-        let (params, _) = preset.build_pair().unwrap();
+        let profile = BfvProfile::SsInsecure64;
+        let (params, _) = profile.build_pair().unwrap();
         let sk = SecretKey::random(&params, &mut rand::rng());
         let valid_pk = PublicKey::new(&sk, &mut rand::rng()).to_bytes();
         // No proof path can be reached: even the valid-key control has an invalid secret polynomial.
@@ -402,7 +401,7 @@ mod threshold_share_decryption_tests {
                     committee_hash: Default::default(),
                     committee_public_key: Default::default(),
                 },
-                params_preset: preset,
+                params_profile: profile,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             };
             let request = ComputeRequest::zk(
@@ -428,7 +427,7 @@ fn handle_node_dkg_fold_proof(
     record_step: &mut dyn FnMut(FoldProveStepTiming),
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     let job_id = zk_bb_work_id(&request);
     let input = NodeDkgFoldInput {
         c0_proof: &req.c0_proof,
@@ -469,7 +468,7 @@ fn handle_nodes_fold_step_proof(
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     let accumulator_proof = generate_nodes_fold_step(
         prover,
         &req.inner_proof,
@@ -497,6 +496,8 @@ fn handle_dkg_aggregation_proof(
     req: DkgAggregationRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     let job_id = zk_bb_work_id(&request);
     let input = DkgAggregationInput {
         node_fold_proofs: &req.node_fold_proofs,
@@ -505,19 +506,13 @@ fn handle_dkg_aggregation_proof(
         party_ids: &req.party_ids,
         committee_addresses: &req.committee_addresses,
     };
-    let proof = prove_dkg_aggregation(
-        prover,
-        &input,
-        &job_id,
-        req.params_preset,
-        req.committee_size,
-    )
-    .map_err(|e| {
-        ComputeRequestError::new(
-            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-            request.clone(),
-        )
-    })?;
+    let proof = prove_dkg_aggregation(prover, &input, &job_id, &artifacts_dir, req.committee_size)
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        })?;
     Ok(ComputeResponse::zk(
         ZkResponse::DkgAggregation(DkgAggregationResponse { proof }),
         request.correlation_id,
@@ -530,6 +525,8 @@ fn handle_decryption_aggregation_proof(
     req: DecryptionAggregationRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     let job_id = zk_bb_work_id(&request);
     let jobs: Vec<DecryptionAggregationJob> = req
         .jobs
@@ -546,8 +543,7 @@ fn handle_decryption_aggregation_proof(
         &jobs,
         &req.committee_addresses,
         &job_id,
-        req.params_preset,
-        req.committee_size,
+        &artifacts_dir,
     )
     .map_err(|e| {
         ComputeRequestError::new(
@@ -568,6 +564,19 @@ fn make_zk_error(request: &ComputeRequest, msg: String) -> ComputeRequestError {
         ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(msg)),
         request.clone(),
     )
+}
+
+fn admitted_profile_artifacts(
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+    request: &ComputeRequest,
+) -> Result<String, ComputeRequestError> {
+    profile
+        .ensure_admission_enabled()
+        .map_err(|e| make_zk_error(request, e.to_string()))?;
+    profile
+        .artifacts_dir_for_committee(committee)
+        .map_err(|e| make_zk_error(request, e.to_string()))
 }
 
 /// Barretenberg work subdirectory under `work_dir`: must be unique for concurrent jobs that share
@@ -591,12 +600,16 @@ fn handle_share_computation_proof(
     req: ShareComputationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     // 1. Build BFV threshold parameters
-    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let (threshold_params, _dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_computation::Configs::new(
-        req.params_preset,
+        req.params_profile.threshold_preset(),
         &threshold_params,
         req.committee_size,
     )
@@ -642,8 +655,6 @@ fn handle_share_computation_proof(
 
     let bb_work = zk_bb_work_id(&request);
     let inner_job_id = format!("{bb_work}_c2_inner");
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
     // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
     let circuit = ShareComputationCircuit;
@@ -678,11 +689,13 @@ fn handle_pk_generation_proof(
     req: PkGenerationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
     // 1. Build BFV parameters from the threshold preset
-    let params = BfvParamSet::from(req.params_preset).build_arc();
+    let params = BfvParamSet::from(req.params_profile.threshold_preset()).build_arc();
 
     let config = e3_zk_config::threshold::pk_generation::Configs::new(
-        req.params_preset,
+        req.params_profile.threshold_preset(),
         &params,
         req.committee_size,
     )
@@ -734,8 +747,6 @@ fn handle_pk_generation_proof(
     // 5. Generate proof via Provable trait
     let circuit = PkGenerationCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
@@ -758,9 +769,14 @@ fn handle_pk_bfv_proof(
     req: PkBfvProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // NOTE: req.params_preset is expected to contain a DKG preset (e.g., InsecureDkg64)
-    // because the proof is for the DKG circuit. This preset is converted to BFV parameters.
-    let params = BfvParamSet::from(req.params_preset).build_arc();
+    // Admission and namespace resolution precede key decoding and artifact/process access.
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let dkg_preset = req
+        .params_profile
+        .dkg_preset()
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+    let params = BfvParamSet::from(dkg_preset).build_arc();
 
     let config = e3_zk_config::dkg::pk::Configs::new(&params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -777,8 +793,6 @@ fn handle_pk_bfv_proof(
     let circuit = PkCircuit;
     let circuit_data = pk_bfv;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {
@@ -801,9 +815,12 @@ fn handle_share_encryption_proof(
     req: ShareEncryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // 1. Build DKG params from threshold preset
-    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let (_threshold_params, dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_encryption::Configs::new(&dkg_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -854,11 +871,9 @@ fn handle_share_encryption_proof(
         e1_rns,
     };
 
-    // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
+    // 6. Generate proof under the same profile's artifact namespace.
     let circuit = ShareEncryptionCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {
@@ -887,8 +902,12 @@ fn handle_dkg_share_decryption_proof(
     req: DkgShareDecryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let (threshold_params, dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::new(&threshold_params, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("circuit configuration: {e}")))?;
@@ -1008,8 +1027,6 @@ fn handle_dkg_share_decryption_proof(
 
     let circuit = ShareDecryptionCircuit;
     let bb_work = zk_bb_work_id(&request);
-    let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let proof = circuit
         .prove(prover, &config, &circuit_data, &bb_work, &artifacts_dir)
         .map_err(|e| {
@@ -1045,9 +1062,9 @@ fn handle_verify_share_proofs(
     req: VerifyShareProofsRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let e3_id_str = request.e3_id.to_string();
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let e3_id_str = request.e3_id.to_string();
 
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
@@ -1118,9 +1135,9 @@ fn handle_verify_share_decryption_proofs(
     req: VerifyShareDecryptionProofsRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    let e3_id_str = request.e3_id.to_string();
     let artifacts_dir =
-        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let e3_id_str = request.e3_id.to_string();
 
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
@@ -1203,9 +1220,12 @@ fn handle_decrypted_shares_aggregation_proof(
     mut req: DecryptedSharesAggregationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // 1. Build threshold BFV parameters from preset
-    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
-        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+    let artifacts_dir =
+        admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    let (threshold_params, _dkg_params) = req
+        .params_profile
+        .build_pair()
+        .map_err(|e| make_zk_error(&request, format!("profile parameters: {e}")))?;
 
     let config = e3_zk_config::threshold::decrypted_shares_aggregation::Configs::new(
         &threshold_params,
@@ -1289,9 +1309,6 @@ fn handle_decrypted_shares_aggregation_proof(
 
         let circuit = DecryptedSharesAggregationCircuit;
         let idx_work_id = format!("{}_c7_{}", zk_bb_work_id(&request), i);
-        let artifacts_dir = req
-            .params_preset
-            .artifacts_dir_for_committee(req.committee_size.as_str());
         let proof = circuit
             .prove_with_variant(
                 prover,
@@ -1344,8 +1361,8 @@ mod aggregation_request_tests {
             using_custom_bb: true,
             bb_timeout: Duration::from_secs(1),
         });
-        let preset = BfvPreset::InsecureThreshold64;
-        let (params, _) = build_pair_for_preset(preset).unwrap();
+        let profile = BfvProfile::SsInsecure64;
+        let (params, _) = profile.build_pair().unwrap();
         let crp = create_deterministic_crp_from_default_seed(&params);
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(7);
         for size in [
@@ -1367,7 +1384,7 @@ mod aggregation_request_tests {
             let mut req = PkAggregationProofRequest {
                 keyshare_bytes,
                 aggregated_pk_bytes: ArcBytes::from_bytes(&public.to_bytes()),
-                params_preset: preset,
+                params_profile: profile,
                 committee_n: committee.n,
                 committee_h: committee.h,
                 committee_threshold: committee.threshold,
@@ -1391,7 +1408,7 @@ mod aggregation_request_tests {
             let req = DecryptedSharesAggregationProofRequest {
                 d_share_polys: vec![],
                 plaintext: vec![],
-                params_preset: preset,
+                params_profile: profile,
                 threshold_m: committee.threshold as u64,
                 threshold_n: committee.n as u64,
                 committee_size: size,
@@ -1426,59 +1443,72 @@ mod aggregation_request_tests {
         let committee = committee_size.values();
         assert_eq!(committee.threshold + 1, 10);
         assert_eq!(committee.h, 14);
-        let params_preset = BfvPreset::InsecureThreshold64;
-        let (params, _) = params_preset.build_pair().unwrap();
+        let params_profile = BfvProfile::SsInsecure64;
+        let (params, _) = params_profile.build_pair().unwrap();
         let zero = fhe_math::rq::Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
         let bytes = ArcBytes::from_bytes(&zero.to_bytes());
-        let req = DecryptedSharesAggregationProofRequest {
-            d_share_polys: (0..10).rev().map(|id| (id, vec![bytes.clone()])).collect(),
-            plaintext: vec![ArcBytes::from_bytes(
-                &e3_bfv_client::encode_vec_u64_to_bytes(&[0]),
-            )],
-            params_preset,
-            threshold_m: committee.threshold as u64,
-            threshold_n: committee.n as u64,
-            committee_size,
-        };
-        let request = ComputeRequest::zk(
-            ZkRequest::DecryptedSharesAggregation(req.clone()),
-            CorrelationId::new(),
-            E3id::new("7", 1),
-        );
-        let work = crate::test_utils::workspace_root()
-            .join(format!("target/small-c7-runtime-{}", std::process::id()));
-        let prover = ZkProver::new(&ZkBackend {
-            base_dir: work.clone(),
-            bb_binary: std::env::var_os("E3_CUSTOM_BB")
-                .expect("set E3_CUSTOM_BB")
-                .into(),
-            circuits_dir: std::env::var_os("E3_TEST_ARTIFACTS_ROOT")
-                .expect("set E3_TEST_ARTIFACTS_ROOT")
-                .into(),
-            work_dir: work,
-            config: Default::default(),
-            using_custom_bb: true,
-            bb_timeout: Duration::from_secs(120),
-        });
-        let response =
-            handle_decrypted_shares_aggregation_proof(&prover, req.clone(), request.clone())
+        // Exercise both ends of the committee: the highest ten coordinates used to overflow C7.
+        for first_id in [0, 9] {
+            let req = DecryptedSharesAggregationProofRequest {
+                d_share_polys: (first_id..first_id + 10)
+                    .rev()
+                    .map(|id| (id, vec![bytes.clone()]))
+                    .collect(),
+                plaintext: vec![ArcBytes::from_bytes(
+                    &e3_bfv_client::encode_vec_u64_to_bytes(&[0]),
+                )],
+                params_profile,
+                threshold_m: committee.threshold as u64,
+                threshold_n: committee.n as u64,
+                committee_size,
+            };
+            let request = ComputeRequest::zk(
+                ZkRequest::DecryptedSharesAggregation(req.clone()),
+                CorrelationId::new(),
+                E3id::new("7", 1),
+            );
+            let work = crate::test_utils::workspace_root().join(format!(
+                "target/small-c7-runtime-{first_id}-{}",
+                std::process::id()
+            ));
+            let prover = ZkProver::new(&ZkBackend {
+                base_dir: work.clone(),
+                bb_binary: std::env::var_os("E3_CUSTOM_BB")
+                    .expect("set E3_CUSTOM_BB")
+                    .into(),
+                circuits_dir: std::env::var_os("E3_TEST_ARTIFACTS_ROOT")
+                    .expect("set E3_TEST_ARTIFACTS_ROOT")
+                    .into(),
+                work_dir: work,
+                config: Default::default(),
+                using_custom_bb: true,
+                bb_timeout: Duration::from_secs(120),
+            });
+            let response =
+                handle_decrypted_shares_aggregation_proof(&prover, req.clone(), request.clone())
+                    .unwrap_or_else(|error| {
+                        panic!("C7 reconstruction starting at runtime party {first_id}: {error:?}")
+                    });
+            assert_eq!(response.correlation_id, request.correlation_id);
+            assert_eq!(response.e3_id, request.e3_id);
+            let ZkResponse::DecryptedSharesAggregation(result) = response.try_into_zk().unwrap()
+            else {
+                panic!("wrong C7 response");
+            };
+            assert_eq!(result.proofs.len(), 1);
+            let artifacts = params_profile
+                .artifacts_dir_for_committee(committee_size)
                 .unwrap();
-        assert_eq!(response.correlation_id, request.correlation_id);
-        assert_eq!(response.e3_id, request.e3_id);
-        let ZkResponse::DecryptedSharesAggregation(result) = response.try_into_zk().unwrap() else {
-            panic!("wrong C7 response");
-        };
-        assert_eq!(result.proofs.len(), 1);
-        let artifacts = params_preset.artifacts_dir_for_committee(committee_size.as_str());
-        assert!(DecryptedSharesAggregationCircuit
-            .verify_with_variant(
-                &prover,
-                &result.proofs[0],
-                "small-c7-runtime",
-                0,
-                CircuitVariant::Default,
-                &artifacts
-            )
-            .unwrap());
+            assert!(DecryptedSharesAggregationCircuit
+                .verify_with_variant(
+                    &prover,
+                    &result.proofs[0],
+                    "small-c7-runtime",
+                    0,
+                    CircuitVariant::Default,
+                    &artifacts
+                )
+                .unwrap());
+        }
     }
 }

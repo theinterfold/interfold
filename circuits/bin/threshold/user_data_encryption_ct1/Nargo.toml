@@ -1,7 +1,0 @@
-[package]
-name = "user_data_encryption_ct1"
-type = "bin"
-authors = [""]
-
-[dependencies]
-lib = { path = "../../../lib" }

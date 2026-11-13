@@ -20,7 +20,8 @@ contract BfvProtocolHarness {
     }
 
     function identity(
-        uint8 paramSet
+        uint8 paramSet,
+        uint8 committeeSize
     )
         external
         pure
@@ -31,7 +32,10 @@ contract BfvProtocolHarness {
             bytes32 configId
         )
     {
-        configId = ActiveCryptoConfig.configIdForParamSet(paramSet);
+        configId = ActiveCryptoConfig.configIdForRequest(
+            paramSet,
+            committeeSize
+        );
         params = paramSet == BfvProtocol.INSECURE_PARAM_SET
             ? BfvProtocol.INSECURE_PARAM_SET_HASH
             : BfvProtocol.SECURE_PARAM_SET_HASH;

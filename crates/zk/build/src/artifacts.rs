@@ -2,7 +2,7 @@
 
 use super::{
     configuration, github_output, identity, preset, run, vk_commitments, vk_tree, write_json,
-    Request,
+    CommitteeSelection, GroupSelection, Operation, PresetSelection, Request,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -216,20 +216,36 @@ pub fn hydration_stamp(
     Ok(stamp)
 }
 
-fn dist_current(pair: &Path, preset: &str, committee: &str, hash: &str) -> Result<bool> {
+/// Whether `pair` holds a complete artifact set stamped for `preset`/`committee`. `hash` is the
+/// source hash the stamp must record; `None` accepts any, as for published artifacts.
+pub fn dist_current(
+    pair: &Path,
+    preset: &str,
+    committee: &str,
+    hash: Option<&str>,
+) -> Result<bool> {
     Ok(
         read_stamp(&pair.join(".build-stamp.json"))?.is_some_and(|stamp| {
-            stamp.preset == preset && stamp.committee == committee && stamp.source_hash == hash
+            stamp.preset == preset
+                && stamp.committee == committee
+                && hash.is_none_or(|hash| stamp.source_hash == hash)
         }) && dist_markers(pair).iter().all(|path| path.is_file()),
     )
 }
 
-fn bin_current(root: &Path, preset: &str, committee: &str, hash: &str) -> Result<bool> {
-    Ok(
-        read_stamp(&root.join("circuits/bin/.active-preset.json"))?.is_some_and(|stamp| {
-            stamp.preset == preset && stamp.committee == committee && stamp.source_hash == hash
-        }) && bin_markers(root).iter().all(|path| path.is_file()),
-    )
+/// Whether `circuits/bin` holds a complete build stamped for `preset`/`committee`. `hash` is as
+/// for [`dist_current`].
+pub fn bin_current(root: &Path, preset: &str, committee: &str, hash: Option<&str>) -> Result<bool> {
+    Ok(read_active_stamp(root)?.is_some_and(|stamp| {
+        stamp.preset == preset
+            && stamp.committee == committee
+            && hash.is_none_or(|hash| stamp.source_hash == hash)
+    }) && bin_markers(root).iter().all(|path| path.is_file()))
+}
+
+/// The stamp of the preset and committee `circuits/bin` was built for, or `None` before any build.
+pub fn read_active_stamp(root: &Path) -> Result<Option<Stamp>> {
+    read_stamp(&root.join("circuits/bin/.active-preset.json"))
 }
 
 fn active_stamp(root: &Path, preset: &str, committee: &str, hash: &str) -> Result<()> {
@@ -378,6 +394,58 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
     }
 }
 
+fn vk_files(extension: &str) -> [(&'static str, String); 2] {
+    [
+        ("vk", extension.to_string()),
+        ("vk_hash", format!("{extension}_hash")),
+    ]
+}
+
+/// Writes the compiled `circuits/bin` artifacts into `pair` in the `dist/circuits/{preset}/{committee}`
+/// layout, the layout `build` publishes, without compiling. Fails on a missing artifact, so check
+/// [`bin_current`] first.
+pub fn stage_bin(root: &Path, pair: &Path) -> Result<()> {
+    let request = Request {
+        operation: Operation::Build,
+        preset: PresetSelection::All,
+        committee: CommitteeSelection::All,
+        groups: GroupSelection::All,
+        circuits: Vec::new(),
+        output: None,
+        skip_vk: false,
+        skip_checksums: false,
+        skip_utils_patch: false,
+        no_clean: false,
+        no_clean_targets: false,
+        skip_if_built: false,
+        hydrate_bin_only: false,
+        dry_run: false,
+    };
+    for circuit in discover(root, &request)? {
+        let compiled = compiled_path(root, &circuit)?;
+        let target = compiled.parent().context("Compiled artifact parent")?;
+        for (variant, _, extension) in variants(&circuit) {
+            let dist = pair.join(variant).join(&circuit.group).join(&circuit.name);
+            fs::create_dir_all(&dist)?;
+            fs::copy(&compiled, dist.join(format!("{}.json", circuit.package)))?;
+            let mut files = vk_files(extension).to_vec();
+            if variant == "default" {
+                // Only the folding circuits carry a VK-tree anchor.
+                let anchor = target.join(format!("{}.vk_tree_hash", circuit.package));
+                if anchor.is_file() {
+                    files.push(("vk_tree_hash", "vk_tree_hash".to_string()));
+                }
+            }
+            for (file, suffix) in files {
+                let source = target.join(format!("{}.{suffix}", circuit.package));
+                fs::copy(&source, dist.join(format!("{}.{file}", circuit.package)))
+                    .with_context(|| format!("Cannot stage {}", source.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> Result<()> {
     run(Command::new("nargo")
         .arg("compile")
@@ -404,15 +472,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             .arg("-o")
             .arg(job.path())
             .args(["-t", verifier_target]))?;
-        for (file, suffix) in [
-            ("vk", extension.to_string()),
-            ("vk_hash", format!("{extension}_hash")),
-        ] {
-            let suffix = if extension == "vk" && file == "vk_hash" {
-                "vk_hash".to_string()
-            } else {
-                suffix
-            };
+        for (file, suffix) in vk_files(extension) {
             let source = job.path().join(file);
             if !source.is_file() {
                 bail!(
@@ -557,9 +617,9 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 return Ok(());
             }
             first_hash.get_or_insert(hash.clone());
-            if request.skip_if_built && dist_current(&pair, preset_name, committee, &hash)? {
+            if request.skip_if_built && dist_current(&pair, preset_name, committee, Some(&hash))? {
                 selection.publish()?;
-                if !bin_current(root, preset_name, committee, &hash)? {
+                if !bin_current(root, preset_name, committee, Some(&hash))? {
                     let stamp = hydration_stamp(&pair, preset_name, committee, &hash)?;
                     hydrate(root, &pair, request, &stamp)?;
                 }

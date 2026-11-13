@@ -27,7 +27,7 @@ use e3_events::{
 };
 use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, OrderedSet, MAILBOX_LIMIT};
 use std::{collections::HashMap, sync::Arc};
@@ -45,7 +45,7 @@ pub struct PublicKeyAggregator {
     e3_id: E3id,
     state: Persistable<PublicKeyAggregatorState>,
     recovery: Persistable<PublicKeyAggregatorRecoveryState>,
-    params_preset: BfvPreset,
+    params_profile: BfvProfile,
     committee_size: CiphernodesCommitteeSize,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     is_aggregator: bool,
@@ -78,7 +78,7 @@ pub struct PublicKeyAggregatorParams {
     pub fhe: Arc<Fhe>,
     pub bus: BusHandle,
     pub e3_id: E3id,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
     pub dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     pub recovery: Persistable<PublicKeyAggregatorRecoveryState>,
@@ -106,7 +106,7 @@ impl PublicKeyAggregator {
             e3_id: params.e3_id,
             state,
             recovery: params.recovery,
-            params_preset: params.params_preset,
+            params_profile: params.params_profile,
             committee_size: params.committee_size,
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             is_aggregator: params.initial_is_aggregator,

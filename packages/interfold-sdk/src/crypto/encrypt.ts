@@ -15,7 +15,7 @@ import {
   compute_pk_commitment,
   get_bfv_params,
 } from '@interfold/wasm'
-import { generateProof } from './user-data-encryption'
+import { generateProof, type CircuitInputs } from './user-data-encryption'
 import type { BfvParams, EncryptedValueAndPublicInputs, ThresholdBfvParamsPresetName, VerifiableEncryptionResult } from './types'
 
 async function resolveParams(presetName: ThresholdBfvParamsPresetName): Promise<BfvParams> {
@@ -27,6 +27,15 @@ async function resolveParams(presetName: ThresholdBfvParamsPresetName): Promise<
     moduli: params.moduli as bigint[],
     error1Variance: params.error1_variance,
   }
+}
+
+// The wasm writes witness values below 2^63 as JSON numbers. JSON.parse rounds those above 2^53, and
+// noir_js rejects them, so quote them first. String tokens are matched whole to leave their digits intact.
+export function parseCircuitInputs(json: string): CircuitInputs {
+  const exact = json.replace(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token) =>
+    /^-?\d+$/.test(token) && !Number.isSafeInteger(Number(token)) ? `"${token}"` : token,
+  )
+  return JSON.parse(exact)
 }
 
 export async function getThresholdBfvParamsSet(presetName: ThresholdBfvParamsPresetName): Promise<BfvParams> {
@@ -71,7 +80,7 @@ export async function encryptNumberAndGenInputs(
     params.plaintextModulus,
     BigUint64Array.from(params.moduli),
   )
-  return { encryptedData, circuitInputs: JSON.parse(circuitInputs) }
+  return { encryptedData, circuitInputs: parseCircuitInputs(circuitInputs) }
 }
 
 export async function encryptNumberAndGenProof(
@@ -97,7 +106,7 @@ export async function encryptVectorAndGenInputs(
     params.plaintextModulus,
     BigUint64Array.from(params.moduli),
   )
-  return { encryptedData, circuitInputs: JSON.parse(circuitInputs) }
+  return { encryptedData, circuitInputs: parseCircuitInputs(circuitInputs) }
 }
 
 export async function encryptVectorAndGenProof(

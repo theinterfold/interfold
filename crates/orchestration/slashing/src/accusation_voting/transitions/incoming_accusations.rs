@@ -123,6 +123,14 @@ impl AccusationVoting {
                     return;
                 }
             };
+            if let Err(error) = self
+                .params_profile
+                .ensure_admission_enabled()
+                .and_then(|()| self.params_profile.validate_committee(committee_size))
+            {
+                warn!(%error, "Cannot re-verify an accused proof under an unsupported profile");
+                return;
+            }
 
             // Create PendingAccusation without our vote — it arrives after ZK completes.
             actions.push(VoteAction::StartTimeout(accusation_id));
@@ -163,7 +171,7 @@ impl AccusationVoting {
             let request = ComputeRequest::zk(
                 ZkRequest::ReverifyAccusedProof(VerifyShareProofsRequest {
                     party_proofs: vec![party_proof],
-                    params_preset: self.params_preset,
+                    params_profile: self.params_profile,
                     committee_size,
                 }),
                 correlation_id,

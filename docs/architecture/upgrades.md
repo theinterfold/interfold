@@ -217,6 +217,75 @@ the governance batch that raises the required protocol version, and upgrade ever
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
 Storage schema and gossip/sync wire majors are unchanged.
 
+## BFV profile cutover
+
+New contract requests require protocol/DKG/committee-bound profile identities, including SS; the
+older threshold-only IDs are not admitted. Clients select a profile and committee, deriving the
+registry slot and ID together. Nodes resolve the exact chain identity and snapshot that profile;
+synchronized insecure-64/minimum remains disabled. C0–C7 generation, recursive folding, verification
+(including accusation re-verification), and canonical-key authority retain that profile; workers
+reject disabled profiles before witness or artifact access. SS parameter bytes, statements, and
+verifier/artifact pair selections are unchanged. Existing chain records are not rewritten;
+application indexers retain frozen threshold-only v5/v1 reads, not active-E3 migration or old-format
+request admission. Storage schema 9, keyshare recovery 9, sortition recovery 2, and node-fold
+recovery 2 reject the previous layouts; gossip/sync majors stay unchanged because the changed
+request, selection, and proof-work payloads are local-only. The unreleased protocol 9/generation 2
+target remains unchanged. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades
+contracts, nodes, and applications together with no active E3s; reset/resync and rollback use the
+[existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.
+These unreleased slices share the schema-9 cutover, not compatibility between intermediate builds.
+Recovery identity checks change no persisted encoding or release counter: valid current snapshots
+remain readable, while inconsistent profile/committee/parameter/ID bindings fail closed rather than
+being repaired or relabeled. Replace the linked lifecycle library and Interfold implementation
+together; the public request ABI and contract storage layout are unchanged. The exported crypto
+metadata format is version 2 and no longer presents a threshold-only ID as a current preset
+identity. Release artifact qualification still applies; source changes are not permission to restamp
+published archives or reuse unqualified deployment bindings.
+
+The cutover changes these request interfaces. Update their callers together with the contracts:
+
+- The Hardhat task `committee:new` takes `--profile <name>` instead of `--param-set <index>`. It
+  defaults to the profile of `ACTIVE_BFV_PRESET`.
+- In `e3-evm-client`, `InterfoldRead::get_e3_quote` and `InterfoldWrite::request_e3` take
+  `params_profile: BfvProfile` instead of `param_set: u8`.
+- In `@interfold/sdk`, `E3RequestParams` takes `profile` instead of `paramSet`. `getE3Quote` and
+  `requestE3`, including `requestE3` in `@interfold/react`, derive the registry slot and the
+  configuration ID from `profile` and `committeeSize`.
+- In `@interfold/contracts/bfv`, `BFV_PRESETS[preset].configId` is removed. Use
+  `bfvConfiguration(profile, committeeSize).configId`.
+
+### Retiring a BFV profile
+
+A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3
+selected the node. On startup it rechecks that metadata and refuses to start if an E3 that still has
+work uses a profile that its release disables. This includes a failed E3 that keeps its context for
+accusation or slashing work. The restored context of an E3 that ended before startup only completes:
+startup still checks its saved configuration ID and parameters, but not whether the release admits
+its profile. Restored work never runs under a disabled profile, and the node does not silently drop
+work that it still owes. Retire a profile in this order:
+
+1. Deploy contracts whose `ActiveCryptoConfig.configIdForRequest` no longer returns a configuration
+   ID of the profile, so that no new request can use it.
+2. Wait until every E3 of the profile has ended on each chain, with the same upgrade window as a
+   schema raise (see [Identity and active-state guards](#identity-and-active-state-guards)).
+3. Ship the node release in which `BfvProfile::admission_enabled` is false for the profile.
+
+Step 3 changes the circuit source hash of every preset/committee pair, although no circuit and no
+configuration ID changes. The hash covers `crates/bfv/params/src`, where the flag lives, and the
+generated `packages/interfold-contracts/crypto-config.json`, which records it. The release workflow
+pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all six pairs
+of `scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push`
+and qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
+Regenerate the sources with `pnpm generate:crypto-config`. The generated `BfvProtocol.sol` then
+drops the `*_CONFIG_ID` constants of the profile, so `ActiveCryptoConfig.sol` must have stopped
+using them in step 1, or the contracts no longer compile. `pnpm check:crypto-config` fails until
+both generated files match the release.
+
+If a node of that release still refuses to start, it still owes work under the profile, such as
+accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not
+edit or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no
+contract admits it, so this cutover needs no wait.
+
 ## Dependency replacement
 
 There are **no concurrent registry generations**. Each request validates/snapshots one coherent
