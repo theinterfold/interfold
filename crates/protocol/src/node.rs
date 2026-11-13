@@ -1806,6 +1806,35 @@ mod tests {
         assert!(submissions(&node.step(7, confirmed(&[1, 2]))).is_empty());
     }
 
+    /// A change in this node's standing ranks it without the answer while the eligibility read is
+    /// out. A rank that gives it no ticket leaves the read to answer.
+    #[test]
+    fn a_rank_without_a_ticket_during_the_eligibility_read_leaves_the_read_to_answer() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 1);
+        // E3 2 takes this node's only ticket, so E3 1 ranks without one until E3 2 fails.
+        node.step(1, requested(1, e3(2)));
+        node.step(2, capped_requested_at(2, e3(1), 1));
+        node.step(5, seed_ready(5, e3(2), 42, 100));
+        let effects = node.step(6, seed_ready(6, e3(1), 42, 100));
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ReadEligibility(_))));
+        let enabled = ChainFact::OperatorEnabled {
+            operator: address(ME),
+            enabled: true,
+        };
+        assert!(submissions(&node.step(7, chain(7, enabled))).is_empty());
+        node.step(
+            8,
+            failure(8, e3(2), FailureReason::CommitteeFormationTimeout),
+        );
+        let ticket = |tx: &Transaction| matches!(tx, Transaction::SubmitTicket { .. });
+        assert!(submissions(&node.step(8, confirmed(&[1, ME])))
+            .iter()
+            .any(ticket));
+    }
+
     /// An operator that is back before the deadline can still take its seat.
     #[test]
     fn a_node_that_comes_back_before_the_deadline_gets_its_ticket() {
@@ -2304,6 +2333,24 @@ mod tests {
         assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
     }
 
+    /// The chain can move a stage on after this node marked it failed; the next stage is watched
+    /// at its own deadline.
+    #[test]
+    fn a_stage_that_moves_on_after_its_mark_is_watched_at_the_next_deadline() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let place = place(&[1, ME]);
+        let first = TIMING.deadline + 1 + 30 * place;
+        let effects = node.step(first, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+        node.step(first, key_published(12, e3(1), members([1]), members([1])));
+        let second = COMPUTE_DEADLINE + 1 + 30 * place;
+        assert!(submissions(&node.step(second - 1, Input::Tick)).is_empty());
+        let effects = node.step(second, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
     #[test]
     fn a_request_whose_randomness_never_comes_is_marked_failed() {
         let mut node = node();
@@ -2424,6 +2471,23 @@ mod tests {
         assert!(node.step(100, key_made(e3(1), own_key(0xee))).is_empty());
         assert!(node.step(100, sign(ME, signing(&effects))).is_empty());
         assert!(node.step(100, key_from(e3(2), 1)).is_empty());
+    }
+
+    /// The chain logs a failed stage apart from the failure. Until the failure comes, the E3 does
+    /// no more work, and it stays.
+    #[test]
+    fn a_failed_stage_without_its_failure_stops_the_work_and_keeps_the_e3() {
+        let mut node = node();
+        node.step(0, requested(10, e3(1)));
+        node.step(0, finalized(11, e3(1), members([1])));
+        let failed = ChainFact::StageChanged {
+            e3: e3(1),
+            stage: Stage::Failed,
+        };
+        node.step(20, chain(20, failed));
+        node.step(10_000, Input::Tick);
+        assert!(node.e3(&e3(1)).is_some());
+        assert!(node.step(10_000, key_made(e3(1), own_key(0xee))).is_empty());
     }
 
     fn owes(node: &Node, effect: &Effect) -> bool {
