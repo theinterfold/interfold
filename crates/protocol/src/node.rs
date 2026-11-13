@@ -964,10 +964,11 @@ impl Node {
             },
             ChainFact::StageChanged { e3, stage } => {
                 match (stage, self.e3s.get_mut(&e3)) {
-                    (Stage::Complete, Some(state)) => match state.stays_after_completion(now) {
-                        true => state.advance(stage),
-                        false => self.end(e3),
-                    },
+                    (Stage::Complete, Some(state)) => {
+                        if !state.complete(now) {
+                            self.end(e3);
+                        }
+                    }
                     (Stage::Complete, None) => {}
                     (stage, Some(state)) => state.advance(stage),
                     (_, None) => {}
@@ -2253,7 +2254,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "a2c95a8eac073071e3916c7f8b81d45bb87e7a4733126927e641387a5f63618b"
+                    "2a2ae67f3430f5cf1b738eafc1dbf7d977b1c64ef119024673eb33ed905f1eb0"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

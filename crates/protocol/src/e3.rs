@@ -44,8 +44,6 @@ pub struct E3 {
     selection: Selection,
     /// Checks of members' proofs that have not answered; one that fails can end in an accusation.
     checks: u32,
-    /// When a completed E3 stops waiting for evidence still on its way.
-    evidence_until: Option<UnixSecs>,
     /// Who is on the committee now: the chain's list, less the members it expelled since.
     committee: BTreeSet<Address>,
     resend: Resend,
@@ -54,7 +52,8 @@ pub struct E3 {
     /// This node's turn to mark the E3 failed and to settle it: its party ID in the committee,
     /// before that its place among the request's eligible operators.
     slot: Option<u64>,
-    failure: Option<Failure>,
+    /// How the chain ended the E3, once it did.
+    end: Option<End>,
     /// How far this node got with each call it owes.
     calls: BTreeMap<Duty, Call>,
     /// The message of each kind and sender whose blobs this node fetches. Another message of that
@@ -84,6 +83,45 @@ enum Selection {
     Reading { seed: CommitteeSeed, by: UnixSecs },
     /// The node submitted its ticket.
     Ticketed(Ticket),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum End {
+    /// With accusations on, evidence still on its way keeps the completed E3 until then: one
+    /// vote window after the completion.
+    Completed {
+        evidence_until: Option<UnixSecs>,
+    },
+    Failed(Failure),
+}
+
+/// Why the node keeps an E3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Keep {
+    /// The chain has not completed or failed the E3.
+    Live,
+    /// An accusation window is open until then.
+    Accusations(UnixSecs),
+    /// Evidence still on its way can end in an accusation until then.
+    Evidence(UnixSecs),
+    /// This node settles the failed E3 in its turn, until the chain has settled it.
+    Settlement,
+    /// Accusations that expel no member can come, and be appealed, even after settlement, until
+    /// governance releases the failed E3's slashing dependencies. They can need the committee's
+    /// work and its blobs.
+    Release,
+    /// Accusations against the failed E3 can come until then.
+    Accusable(UnixSecs),
+}
+
+impl Keep {
+    /// When the reason lapses by itself; a reason without a time waits for the chain.
+    fn until(self) -> Option<UnixSecs> {
+        match self {
+            Keep::Accusations(at) | Keep::Evidence(at) | Keep::Accusable(at) => Some(at),
+            Keep::Live | Keep::Settlement | Keep::Release => None,
+        }
+    }
 }
 
 /// The chain failed the E3.
@@ -183,12 +221,11 @@ impl E3 {
             request,
             selection: Selection::Unseeded,
             checks: 0,
-            evidence_until: None,
             committee: BTreeSet::new(),
             resend: Resend::default(),
             deadlines: BTreeMap::from([(Stage::Requested, committee_deadline)]),
             slot,
-            failure: None,
+            end: None,
             calls: BTreeMap::new(),
             fetching: BTreeMap::new(),
         }
@@ -219,42 +256,67 @@ impl E3 {
 
     pub(crate) fn failed(&mut self, at: UnixSecs, accusable_until: UnixSecs) {
         self.advance(Stage::Failed);
-        self.failure.get_or_insert(Failure {
-            at,
-            accusable_until,
-            settled: false,
-            released: false,
-        });
+        if !matches!(self.end, Some(End::Failed(_))) {
+            self.end = Some(End::Failed(Failure {
+                at,
+                accusable_until,
+                settled: false,
+                released: false,
+            }));
+        }
     }
 
     pub(crate) fn settled(&mut self) {
-        if let Some(failure) = &mut self.failure {
+        if let Some(End::Failed(failure)) = &mut self.end {
             failure.settled = true;
         }
     }
 
     pub(crate) fn released(&mut self) {
-        if let Some(failure) = &mut self.failure {
+        if let Some(End::Failed(failure)) = &mut self.end {
             failure.released = true;
         }
     }
 
-    /// When the node lets a failed E3 go: once accusations cannot need its work, once the chain
-    /// settled it if this node settles it, and, if this node holds a committee's work, once
-    /// governance released the E3's slashing dependencies. Accusations that expel no member can
-    /// come, and be appealed, even after settlement, until that release; they can need the
-    /// committee's work and its blobs.
+    /// The chain completed the E3. Whether the node keeps it for accusation work: open windows,
+    /// or evidence still on its way, which it waits for one vote window at most.
+    pub(crate) fn complete(&mut self, now: UnixSecs) -> bool {
+        let validity = self.accusations.as_ref().map_or(0, Accusations::validity);
+        let evidence_until = (validity > 0).then(|| now.saturating_add(validity));
+        self.end = Some(End::Completed { evidence_until });
+        self.advance(Stage::Complete);
+        !self.keeps().is_empty()
+    }
+
+    /// Why the node keeps the E3.
+    fn keeps(&self) -> Vec<Keep> {
+        let mut keeps = Vec::new();
+        match self.end {
+            None => keeps.push(Keep::Live),
+            Some(End::Completed { evidence_until }) => {
+                let accusations = self.accusations.as_ref().and_then(Accusations::closes_at);
+                keeps.extend(accusations.map(Keep::Accusations));
+                let evidence = evidence_until.filter(|_| self.evidence_pending());
+                keeps.extend(evidence.map(Keep::Evidence));
+            }
+            Some(End::Failed(failure)) => {
+                if self.slot.is_some() && !failure.settled {
+                    keeps.push(Keep::Settlement);
+                }
+                if self.has_work() && !failure.released {
+                    keeps.push(Keep::Release);
+                }
+                keeps.push(Keep::Accusable(failure.accusable_until.max(failure.at)));
+            }
+        }
+        keeps
+    }
+
+    /// When the node lets the E3 go: when the last reason to keep it lapses. A reason that waits
+    /// for the chain keeps it with no end.
     pub(crate) fn ends_at(&self) -> Option<UnixSecs> {
-        let accusations = self.accusations.as_ref().and_then(Accusations::closes_at);
-        if self.stage == Stage::Complete {
-            let evidence = self.evidence_until.filter(|_| self.evidence_pending());
-            return Some(accusations.max(evidence).unwrap_or_default());
-        }
-        let failure = self.failure?;
-        if (self.slot.is_some() && !failure.settled) || (self.has_work() && !failure.released) {
-            return None;
-        }
-        Some(failure.accusable_until.max(failure.at))
+        let mut keeps = self.keeps().into_iter();
+        keeps.try_fold(0, |end, keep| Some(end.max(keep.until()?)))
     }
 
     /// What this node would give up for this E3 if its state were deleted, in words for an
@@ -267,12 +329,13 @@ impl E3 {
         if self.accuses() {
             owed.push("an open accusation window");
         }
-        if let Some(failure) = &self.failure {
-            if self.slot.is_some() && !failure.settled {
-                owed.push("settling the failed E3 on chain");
-            }
-            if self.has_work() && !failure.released {
-                owed.push("the work a late accusation may need, until governance releases it");
+        for keep in self.keeps() {
+            match keep {
+                Keep::Settlement => owed.push("settling the failed E3 on chain"),
+                Keep::Release => {
+                    owed.push("the work a late accusation may need, until governance releases it")
+                }
+                Keep::Live | Keep::Accusations(_) | Keep::Evidence(_) | Keep::Accusable(_) => {}
             }
         }
         owed
@@ -440,16 +503,6 @@ impl E3 {
                 .fetching
                 .keys()
                 .any(|(_, kind)| *kind == Kind::Accusation)
-    }
-
-    /// The chain completed the E3. Whether it stays for accusation work: open windows, or
-    /// evidence still on its way, which it waits for one vote window at most.
-    pub(crate) fn stays_after_completion(&mut self, now: UnixSecs) -> bool {
-        let validity = self.accusations.as_ref().map_or(0, Accusations::validity);
-        if validity > 0 {
-            self.evidence_until = Some(now.saturating_add(validity));
-        }
-        self.accuses() || (validity > 0 && self.evidence_pending())
     }
 
     pub(crate) fn submit_ticket(
@@ -770,10 +823,12 @@ impl E3 {
                 let (stage, deadline) = self.watched()?;
                 (stage, deadline, self.slot?)
             }
-            Duty::Settle => {
-                let failure = self.failure.filter(|failure| !failure.settled)?;
-                (Stage::Failed, failure.at, self.slot?)
-            }
+            Duty::Settle => match self.end {
+                Some(End::Failed(failure)) if !failure.settled => {
+                    (Stage::Failed, failure.at, self.slot?)
+                }
+                _ => return None,
+            },
         };
         let call = self.calls.get(&duty).copied();
         let call = call
