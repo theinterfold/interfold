@@ -1369,16 +1369,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-parity-matrix"
-version = "0.20.0-dev.3"
-dependencies = [
- "num-bigint 0.5.1",
- "num-traits",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "e3-polynomial"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -1430,6 +1420,18 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
+version = "0.20.0-dev.2"
+source = "git+https://github.com/theinterfold/interfold?rev=ab6b9c943b6d23eda8d0ba5f2efd9039635acfa4#ab6b9c943b6d23eda8d0ba5f2efd9039635acfa4"
+dependencies = [
+ "ark-bn254 0.5.0",
+ "ark-ff 0.5.0",
+ "hex",
+ "sha3 0.10.8",
+ "taceo-poseidon2",
+]
+
+[[package]]
+name = "e3-safe"
 version = "0.20.0-dev.3"
 dependencies = [
  "ark-bn254 0.5.0",
@@ -1468,7 +1470,6 @@ dependencies = [
  "ark-ff 0.5.0",
  "e3-committee",
  "e3-fhe-params",
- "e3-parity-matrix",
  "e3-polynomial",
  "e3-polynomial-fhe",
  "fhe",
@@ -1490,7 +1491,7 @@ dependencies = [
  "e3-fhe-params",
  "e3-polynomial",
  "e3-polynomial-fhe",
- "e3-safe",
+ "e3-safe 0.20.0-dev.3",
  "e3-zk-config",
  "fhe",
  "fhe-math",
@@ -1653,8 +1654,10 @@ name = "fhe"
 version = "0.6.0"
 source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
 dependencies = [
+ "ark-ff 0.5.0",
  "bincode",
  "doc-comment",
+ "e3-safe 0.20.0-dev.2",
  "fhe-math",
  "fhe-traits",
  "fhe-util",

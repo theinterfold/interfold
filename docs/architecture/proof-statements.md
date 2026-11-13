@@ -11,7 +11,7 @@ or audit remediation is not completeness evidence.
 
 | Proof   | Statement                                                                                                                                                                                 |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C0      | BFV share-encryption public key is correctly generated.                                                                                                                                   |
+| C0      | BFV share-encryption public key is committed, and every coefficient is centred modulo its `q_i`.                                                                                          |
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
 | C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets.                                                                                                                                 |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
@@ -68,7 +68,10 @@ bound plus the unique remainder interval, not trusted because a hint computed th
   through the primitive's arithmetic first. A remainder interval alone is insufficient.
 - C7 derives u through bounded interpolation and Garner reconstruction, not witnessed `u_global` or
   CRT quotients. Its inverse and reduction hints are bounded. `rounded_decode` constrains quotient
-  and remainder and compares every message coefficient (IF-002/IF-012).
+  and remainder and compares every message coefficient (IF-002/IF-012). Every input to those helpers
+  needs a quotient under `BIT_K` or valid inputs cannot be proven: the Lagrange products are reduced
+  after every factor, so each quotient stays below the largest party id. Unreduced, the product of
+  the other ids reaches `n!/(n-T)!` (about 2^35 at 19 parties).
 - The C7 rounded decode `round(t*u/Q)` with t mapped to zero must remain equivalent to the modular
   reference decode `-Q^-1 * (t*u mod Q) mod t`. Keep the boundary assertions; historical exhaustive
   comparison across 44 parameter pairs is evidence for that reformulation, not every future tuple.
@@ -80,6 +83,13 @@ C4's centered reduction uses one bounded division and a q-wide centered interval
 by H (`AGGREGATION_BIT_CARRY = 8`, H < 256). It avoids assumptions that all moduli straddle the same
 power of two. C5's sum quotient uses `SUM_BIT_CARRY = 8` with H <= 128; its aggregate key still
 needs an explicit bound.
+
+When every other operand of an identity is exactly bounded, the integer identity already fixes its
+quotient; the quotient's bound only has to rule out wraparound. C1's `r` and `e_sm` CRT quotients,
+C6's `r`, and the user-encryption legs' `r` use the window `[-2^BIT, 2^BIT)`, one assert per
+coefficient. Their generated bound arrays then only document the honest range, and `bin/config`
+checks that each `BIT` covers its array. Bound-1 witnesses (C1 `sk`, C3 and user-encryption `u`) use
+`c^3 = c`.
 
 ## Native synchronized PRF (admission disabled)
 
@@ -112,9 +122,19 @@ openings unless every digit fits its slot. A `u64` cast is not enough when `base
 **Injectivity is not canonicality.** `pack_checked` pins `digit < radix`; it transfers an upstream
 creating circuit's canonical bound because the opening must equal the committed value. It does not
 create a canonical bound where no upstream statement proves one. C1's originating `pk0` and C5's
-unanchored `pk0_agg` need explicit centered bounds. C5's per-party keys and C4's received C2 shares
-can inherit them through checked openings. C4 normalizes its derived aggregate in circuit; it does
-not need a second opened-witness bound. Run the binding check **before** commitment comparison.
+unanchored `pk0_agg` need explicit centered bounds. C0 bounds its key, so C3 opens it checked and
+inherits the bound; an out-of-range key fails its owner's C0, not every dealer's C3. C0 does not
+prove correct key generation or possession of a secret key. C5's per-party keys and C4's received C2
+shares likewise inherit through checked openings. C4 normalizes its derived aggregate in circuit; it
+does not need a second opened-witness bound. Run the binding check **before** commitment comparison.
+
+User encryption has no upstream circuit for its key. ct0 opens `pk0` with checked digits, which
+rules out wraparound but not a non-canonical key; the exact centred bound comes from C5 only through
+the committee-key anchor. Any program accepting `user_data_encryption` proofs must compare their
+`pk_commitment` with the committee key, as CRISP does. ct1 hard-codes `pk1` as the CRS that C5
+commits as `pk1_agg`, so only keys on the default-seed CRP, which every committee key is, can be
+proven. Both legs read one `u` witness: ct0 bounds and commits it, and ct1 reuses that commitment
+(`execute_with_u_commitment`), which is sound only with the commitment of the same `u` it reads.
 
 The review class is **every prover-chosen witness entering the sponge**, not only commitments opened
 from another circuit. C2a/C2b, C4, C5, and three C6 openings were the IF-011 class. IF-013
@@ -150,10 +170,10 @@ a missing circuit constraint with a comment claiming another circuit established
 
 ## Rust configuration and preparation
 
-`e3-zk-config` owns static bounds, widths, parity, and public layouts. `Configs::new` retains an
-existing BFV parameter owner; constructors check the ring, CRT basis, and sampler profile. C3 and
-user encryption share derived `k0is` across bounds, rendering, and preparation. Configuration needs
-no witness, sample, secret key, or prover.
+`e3-zk-config` owns static bounds, widths, and public layouts. `Configs::new` retains an existing
+BFV parameter owner; constructors check the ring, CRT basis, and sampler profile. C3 and user
+encryption share derived `k0is` across bounds, rendering, and preparation. Configuration needs no
+witness, sample, secret key, or prover.
 
 `e3-zk-witness` owns production inputs, commitments, preparation, and canonical Noir JSON. Workers
 pass concrete configurations through `Provable::Config`, reusing C6/C7 configurations across
@@ -226,8 +246,8 @@ does not store t.
   trade places. Rebuild the intended preset after a gate sweep; restoring source config does not
   restore `target/` or compiled artifacts and can produce misleading ABI length failures.
 - CRISP browser proving has `srsSize: 2**21`. Crossing 2,097,152 gates stops proving, not merely
-  slows it. Measure ct0 and ballot circuits before shipping added constraints; soundness repairs
-  cannot be dropped to meet the ceiling.
+  slows it. Measure `user_data_encryption` and ballot circuits before shipping added constraints;
+  soundness repairs cannot be dropped to meet the ceiling.
 
 [History](protocol-history.md) retains finding IDs and evidence scope, not current audit assurance.
 The compute path, Rust witnesses, OpenVM guest/prover, and receipt verifiers were not covered by the

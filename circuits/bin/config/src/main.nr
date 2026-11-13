@@ -15,12 +15,11 @@
 /// - CRT moduli products are correctly computed
 /// - Error bounds satisfy security requirements
 /// - Scaling factors have correct multiplicative inverses
-/// - Reed-Solomon parity matrices for Shamir sharing are properly constructed
 /// - BFV and Threshold BFV parameter sets are mutually consistent
 
-use lib::configs::default::{N_PARTIES, T};
+use lib::configs::default::N_PARTIES;
 use lib::configs::secure::dkg::{
-    L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
+    L as DKG_L, L_THRESHOLD, N as DKG_N, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
     Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
     SHARE_ENCRYPTION_ALPHA, SHARE_ENCRYPTION_BETA, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q1,
     SHARE_ENCRYPTION_CT0_R_BOUNDS, SHARE_ENCRYPTION_CT1_R_BOUNDS, SHARE_ENCRYPTION_DELTA,
@@ -41,9 +40,10 @@ use lib::configs::secure::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC,
+    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC, PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
+    PK_GENERATION_BIT_R, PK_GENERATION_BIT_E_SM_QUOTIENT,
     // share_decryption bounds
-    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS,
+    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS, THRESHOLD_SHARE_DECRYPTION_BIT_R,
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
@@ -108,11 +108,9 @@ fn main() {
 /// Checks:
 /// - Q_MOD_T computation (product of CRT moduli mod t)
 /// - Q_MOD_T_CENTERED (centered representation)
-/// - Reed-Solomon parity matrices for Shamir sharing
 fn verify_dkg_derived_values() {
     verify_dkg_q_mod_t();
     verify_dkg_q_mod_t_centered();
-    verify_dkg_parity_matrix();
 }
 
 /// Verifies DKG: Q_MOD_T = (product of QIS) mod t.
@@ -134,52 +132,6 @@ fn verify_dkg_q_mod_t_centered() {
         center(DKG_Q_MOD_T, DKG_PLAINTEXT_MODULUS) == DKG_Q_MOD_T_CENTERED,
         "DKG Q_MOD_T_CENTERED verification failed",
     );
-}
-
-/// Verifies Reed-Solomon parity matrix: H * G^T = 0 (mod q_l) for each modulus.
-///
-/// For Shamir Secret Sharing with threshold T, shares must satisfy the parity check
-/// equation H * shares^T = 0, where H is the parity check matrix. This function
-/// verifies that the precomputed PARITY_MATRIX is correct by checking it against
-/// the Vandermonde generator matrix G.
-///
-/// The generator matrix G is constructed as G[i][j] = j^i mod q_l (Vandermonde structure).
-/// For valid Shamir shares, H * G^T must equal zero for all entries.
-fn verify_dkg_parity_matrix() {
-    // For each CRT modulus
-    for l in 0..L_THRESHOLD {
-        let q_l = QIS_THRESHOLD[l];
-        let m = ModU128::new(q_l);
-
-        // Build generator matrix G (Vandermonde)
-        // G[i][j] = j^i mod q_l
-        // G is (T+1) * (N_PARTIES+1)
-        let mut g: [[Field; N_PARTIES + 1]; T + 1] = [[0; N_PARTIES + 1]; T + 1];
-
-        for j in 0..(N_PARTIES + 1) {
-            let eval_point = j as Field;
-            let mut power: Field = 1;
-            for i in 0..(T + 1) {
-                g[i][j] = power;
-                power = m.mul_mod(power, eval_point);
-            }
-        }
-
-        // Verify H * G^T = 0 (mod q_l)
-        // H is (N_PARTIES - T) * (N_PARTIES + 1)
-        // G^T is (N_PARTIES + 1) * (T + 1)
-        // Result is (N_PARTIES - T) * (T + 1)
-        for row in 0..(N_PARTIES - T) {
-            for col in 0..(T + 1) {
-                let mut sum: Field = 0;
-                for k in 0..(N_PARTIES + 1) {
-                    // H[l][row][k] * G[col][k]
-                    sum = m.add(sum, m.mul_mod(PARITY_MATRIX[l][row][k], g[col][k]));
-                }
-                assert(sum == 0, "Parity matrix verification failed: H · G^T != 0");
-            }
-        }
-    }
 }
 
 // === DKG Bounds ===
@@ -452,6 +404,12 @@ fn verify_pk_generation_bounds() {
         let sk: u128 = PK_GENERATION_SK_BOUND as u128;
         let expected_r: u128 = ((n * sk + 2) * qi_bound + eek) / qi;
         assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
+
+        // C1 checks `r` and the e_sm CRT quotients in the window `[-2^BIT, 2^BIT)`, not against
+        // these bounds, so the widths are what must cover them.
+        PK_GENERATION_R_BOUNDS[i].assert_max_bit_size::<PK_GENERATION_BIT_R>();
+        PK_GENERATION_E_SM_QUOTIENT_BOUNDS[i]
+            .assert_max_bit_size::<PK_GENERATION_BIT_E_SM_QUOTIENT>();
     }
 
     verify_e_sm_bound();
@@ -509,6 +467,9 @@ fn verify_share_decryption_bounds() {
             THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i] as u128 == expected_r,
             "SHARE_DECRYPTION_R_BOUNDS mismatch",
         );
+        // C6 checks `r` in the window `[-2^BIT_R, 2^BIT_R)`, so the width must cover the bound.
+        THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i]
+            .assert_max_bit_size::<THRESHOLD_SHARE_DECRYPTION_BIT_R>();
     }
 }
 

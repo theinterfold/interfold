@@ -35,7 +35,6 @@ members = [
   "crates/net",
   "crates/program/openvm-host",
   "crates/program/openvm-types",
-  "crates/parity-matrix",
   "crates/polynomial",
   "crates/polynomial/fhe-adapter",
   "crates/program/runner",
@@ -145,7 +144,6 @@ e3-zk-config = { version = "0.20.0-dev.3", path = "./crates/zk/config" }
 e3-zk-build = { path = "./crates/zk/build" }
 e3-zk-witness = { version = "0.20.0-dev.3", path = "./crates/zk/witness" }
 e3-zk-samples = { path = "./crates/zk/samples" }
-e3-parity-matrix = { version = "0.20.0-dev.3", path = "./crates/parity-matrix" }
 
 actix = "=0.13.5"
 actix-web = "=4.11.0"
@@ -180,7 +178,7 @@ derivative = "=2.2.0"
 dirs = "=5.0.1"
 dialoguer = "=0.11.0"
 eyre = { version = "=0.6.12" }
-# SS only: the upstream default enables synchronized decryption and its PRF dependencies.
+# Enable both native protocols explicitly; synchronized profile admission remains disabled.
 fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0", default-features = false, features = ["experimental-mbfv", "synchronized-decryption"] }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0" }
 fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.6.0" }

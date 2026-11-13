@@ -95,14 +95,13 @@ Three sizes are supported, mirroring `e3_committee::CiphernodesCommitteeSize`:
 
 [`build-pairs.json`](build-pairs.json) owns permitted pairs. Both Rust and TypeScript read it.
 Wildcards preserve manifest order; unsupported explicit pairs fail before tools or writes. The
-release matrix is a separate required subset. The Rust builder calls `e3-zk-config` to generate
-Reed-Solomon parity matrices; files on disk are derived artifacts, not hand-tuned data.
+release matrix is a separate required subset. The Rust builder calls `e3-zk-config` to generate Noir
+configuration; files on disk are derived artifacts, not hand-tuned data.
 
 The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
-compare `active.nr`, `utils.ts`, and the parity files; a different hydrated cache is only a note.
-Switching committee always goes through `pnpm build:circuits --committee` — never edit `active.nr`,
-`utils.ts`, or any `parity_*.nr` by hand; the check will reject pushes where they drift from what
-the generator would produce.
+compare `active.nr` and `utils.ts`; a different hydrated cache is only a note. Switching committee
+always goes through `pnpm build:circuits --committee` — never edit `active.nr` or `utils.ts` by
+hand; the check will reject pushes where they drift from what the generator would produce.
 
 ### What it does
 
@@ -197,11 +196,13 @@ pnpm store:circuits pull --latest
 ### Source hash
 
 `pnpm build:circuits hash` prints the hash that gates the published artifacts. It covers the Noir
-circuits, the Noir config for the selected preset and committee, the Rust sources that generate the
-C1/C2 bounds and the parity matrices, the circuit build scripts, and the external crate pins in
-`Cargo.lock`. It ignores the generated bound values, Rust `#[cfg(test)]` modules, the workspace
-release version, and the dependency graph between workspace crates. A change outside that set does
-not need a circuit rebuild.
+circuits and the config for the selected preset and committee, shared constants, the pinned nargo
+and bb versions, the Rust configuration, witness and build sources and templates, and the external
+crate pins in `Cargo.lock`. It ignores the generated bound values, Rust `#[cfg(test)]` modules, the
+workspace release version, and the dependency graph between workspace crates. `SOURCE_DIRS` and
+`SOURCE_FILES` in [`identity.rs`](../../crates/zk/build/src/identity.rs) are the exact inputs, and
+[circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes the boundary. A change
+outside those inputs does not need a circuit rebuild.
 
 ### What it does
 

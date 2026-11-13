@@ -8,8 +8,8 @@ use crate::math::commitments::{
     compute_ciphertext_commitment, compute_share_encryption_challenge,
     compute_share_encryption_commitment_from_message,
 };
-use crate::math::commitments::compute_dkg_pk_commitment;
-use crate::math::helpers::{assert_in_range, flatten};
+use crate::math::commitments::{compute_dkg_pk_commitment, compute_dkg_pk_commitment_checked};
+use crate::math::helpers::{assert_in_residue_range, flatten, flatten_exact_width};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
@@ -23,7 +23,8 @@ pub struct Configs<let L: u32> {
     pub qis: [Field; L],
     /// Scaling factors k0[i] satisfying `k0[i] * t == -1 (mod q_i)` for each CRT modulus
     pub k0is: [Field; L],
-    /// Coefficient bounds for public key polynomials per CRT modulus: (q_i - 1) / 2
+    /// Centred bounds per CRT modulus, (q_i - 1) / 2, applied to `ct0is` / `ct1is`. The public key
+    /// has the same bound, but C0 checks it and C3 inherits it through the checked key opening.
     pub pk_bounds: [Field; L],
     /// Coefficient bound for the global error polynomial e0
     pub e0_bound: Field,
@@ -187,10 +188,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Verifies that the DKG public key hashes to the expected commitment from C0.
     ///
     /// Ensures the ciphernode encrypted under the same key they committed to in C0,
-    /// preventing key substitution attacks.
+    /// preventing key substitution attacks. The opening is checked (injective), so the key is the
+    /// one C0 range-checked to its centred window; C3 relies on that bound and does not repeat it.
     fn verify_pk_commitment(self) {
         assert(
-            compute_dkg_pk_commitment::<N, L, BIT_PK>(self.pk0is, self.pk1is)
+            compute_dkg_pk_commitment_checked::<N, L, BIT_PK>(self.pk0is, self.pk1is)
                 == self.expected_pk_commitment,
             "Public key commitment mismatch",
         );
@@ -232,7 +234,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             z.coefficients[j].assert_max_bit_size::<BIT_Z>();
             // Exactly one `z` puts the remainder in `[0, t)`, because any `t` consecutive integers
             // hold one representative of each residue class. That fixes `z` uniquely.
-            assert_in_range::<BIT_MSG>(scaled - t * z.coefficients[j], t);
+            assert_in_residue_range::<BIT_MSG>(scaled - t * z.coefficients[j], t);
         }
 
         z
@@ -333,15 +335,36 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
-        inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
-        inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
-        inputs = flatten::<_, _, BIT_U>(inputs, [self.u]);
+        // Every value below enters already shifted to the non-negative window its range check pins,
+        // packed at exactly that width (`flatten_exact_width`): `e + bound` and `u + bound` in
+        // `[0, 2^(BIT + 1))` (`check_range_bounds`), `Q0[0] + q0_offset` in `[0, 2^BIT_Q0)`,
+        // `Q0[i] - Q0[0] + q0_diff_offset` in `[0, 2^BIT_Q0_DIFF)` and `ct1_r + q1_offset` in
+        // `[0, 2^BIT_Q1)` (`check_scaled_quotient_bounds`). Each packing is therefore injective, and
+        // `Q0[0]` with the differences determines every `Q0[i]`.
+        let c = self.configs;
+        inputs = flatten_exact_width::<N, BIT_E0 + 1, _>(inputs, |j| {
+            self.e0.coefficients[j] + c.e0_bound
+        });
+        inputs = flatten_exact_width::<N, BIT_E1 + 1, _>(inputs, |j| {
+            self.e1.coefficients[j] + c.e1_bound
+        });
+        inputs =
+            flatten_exact_width::<N, BIT_U + 1, _>(inputs, |j| self.u.coefficients[j] + c.u_bound);
         inputs = inputs.push_back(self.expected_message_commitment);
 
-        // `Q0` is bounded by `check_scaled_quotient_bounds` and `ct1_r` with it, so plain packing is
-        // injective for both.
-        inputs = flatten::<_, _, BIT_Q0>(inputs, q0);
-        inputs = flatten::<_, _, BIT_Q1>(inputs, self.ct1_r);
+        inputs =
+            flatten_exact_width::<N, BIT_Q0, _>(inputs, |j| q0[0].coefficients[j] + c.q0_offset);
+        for i in 1..L {
+            inputs = flatten_exact_width::<N, BIT_Q0_DIFF, _>(
+                inputs,
+                |j| q0[i].coefficients[j] - q0[0].coefficients[j] + c.q0_diff_offset,
+            );
+        }
+        for i in 0..L {
+            inputs = flatten_exact_width::<N, BIT_Q1, _>(inputs, |j| {
+                self.ct1_r[i].coefficients[j] + c.q1_offset
+            });
+        }
 
         inputs
     }
@@ -439,7 +462,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// Performs range checks on all secret witness polynomial coefficients.
     fn check_range_bounds(self) {
-        self.u.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
+        // `u` is ternary: `c^3 = c` has exactly the roots {-1, 0, 1}, so `u + u_bound` still fits the
+        // `BIT_U + 1` bits its transcript packing assumes.
+        assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
+        self.u.assert_ternary();
         self.e0.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
         self.e1.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
 
@@ -447,14 +473,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
 
         for i in 0..L {
-            self.pk0is[i].range_check_2bounds::<BIT_PK>(
-                self.configs.pk_bounds[i],
-                self.configs.pk_bounds[i],
-            );
-            self.pk1is[i].range_check_2bounds::<BIT_PK>(
-                self.configs.pk_bounds[i],
-                self.configs.pk_bounds[i],
-            );
+            // The key is bounded by C0 and transferred through the checked opening in
+            // `verify_pk_commitment`.
 
             // `ct0is` / `ct1is` are centered residues mod `q_i`. The reduced identity is checked at
             // one point, so they need a bound for the field equality to imply the integer one; that
