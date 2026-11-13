@@ -192,6 +192,13 @@ impl CiphernodeBuilder {
         Ok((interfold_addresses, dkg_timing_reader))
     }
 
+    /// The compute pool of the configured thread and concurrent-job counts.
+    pub(super) fn default_task_pool(&self) -> TaskPool {
+        let pool_threads = self.threads.unwrap_or(1);
+        let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
+        Multithread::create_taskpool(pool_threads, concurrent_jobs)
+    }
+
     fn start_multithread(
         &self,
         bus: &BusHandle,
@@ -201,11 +208,10 @@ impl CiphernodeBuilder {
         zk_backend: &ZkBackend,
     ) -> (Addr<Multithread>, TaskPool) {
         info!("Setting up multithread actor with ZK prover");
-        let task_pool = self.task_pool.clone().unwrap_or_else(|| {
-            let pool_threads = self.threads.unwrap_or(1);
-            let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
-            Multithread::create_taskpool(pool_threads, concurrent_jobs)
-        });
+        let task_pool = self
+            .task_pool
+            .clone()
+            .unwrap_or_else(|| self.default_task_pool());
         let worker = Multithread::attach_with_zk(
             bus,
             self.rng.clone(),

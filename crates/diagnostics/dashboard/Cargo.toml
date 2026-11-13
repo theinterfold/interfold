@@ -16,8 +16,10 @@ e3-events.workspace = true
 e3-evm.workspace = true
 e3-logger = { workspace = true }
 e3-net.workspace = true
+e3-task-pool.workspace = true
 e3-utils.workspace = true
 futures.workspace = true
+prometheus-client.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

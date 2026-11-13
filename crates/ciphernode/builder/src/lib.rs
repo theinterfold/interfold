@@ -26,6 +26,7 @@ use e3_ciphernode_config::NetworkProfile;
 use e3_crypto::Cipher;
 #[cfg(feature = "test-helpers")]
 use e3_events::AggregateConfig;
+use e3_evm::IngestionStatus;
 use e3_evm_config::ChainConfig;
 #[cfg(feature = "test-helpers")]
 use e3_keyshare::DkgTimingReader;
@@ -63,6 +64,8 @@ pub struct CiphernodeBuilder {
     event_system: EventSystemType,
     /// Directory of the ingestion heartbeat files, one per chain, for a local health check.
     ingestion_heartbeat_dir: Option<PathBuf>,
+    /// The latest ingestion progress of each chain reader, which the handle exposes.
+    ingestion_status: IngestionStatus,
     logging: bool,
     max_buffered_evm_events: usize,
     max_buffered_net_bytes: usize,
@@ -131,6 +134,7 @@ impl CiphernodeBuilder {
             logging: false,
             max_buffered_evm_events: 100_000,
             ingestion_heartbeat_dir: None,
+            ingestion_status: IngestionStatus::default(),
             max_buffered_net_bytes: 256 * 1024 * 1024,
             max_buffered_net_events: 1_024,
             name: None,
