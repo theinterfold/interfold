@@ -200,15 +200,21 @@ impl BfvProfile {
     }
 
     /// Namespace selection does not establish that the artifacts are built or qualified.
+    pub fn artifacts_namespace(self) -> &'static str {
+        match self {
+            Self::SsInsecure64 => "insecure-64",
+            Self::SsSecure8192 => "secure-8192",
+            Self::SyncDecInsecure64 => "sync-insecure-64",
+        }
+    }
+
+    /// Namespace selection does not establish that the artifacts are built or qualified.
     pub fn artifacts_dir_for_committee(
         self,
         committee: CiphernodesCommitteeSize,
     ) -> Result<String, BfvProfileError> {
         self.validate_committee(committee)?;
-        let directory = match self {
-            Self::SsInsecure64 | Self::SsSecure8192 => self.threshold_preset().artifacts_dir(),
-            Self::SyncDecInsecure64 => self.name().into(),
-        };
+        let directory = self.artifacts_namespace();
         Ok(format!("{directory}/{committee}"))
     }
 

@@ -97,3 +97,11 @@ With pinned nargo/bb, explicitly run
 private-input gadget proofs with insecure and secure-width moduli, including
 tampered-key/public-mask rejection in both. The secure-width case uses an insecure small ring. These
 are not C6/C7, recursive, contract, actor end-to-end, or secure-profile proofs.
+
+`tests/synchronized_dkg.rs` independently generates native encrypted shares and prepares the actual
+sync C0–C4 inputs through `e3-zk-witness`. Its default test needs no proving tools. With pinned
+Nargo/BB, `pnpm rust:test:sync-dkg:proofs` additionally proves the isolated leaves, checks native
+commitment agreement and rejects malformed witnesses/public substitutions. It includes H `[0,2]`,
+self and outside-H recipients. The unauthenticated context/roster and missing recursive-chain limits
+remain explicit in
+[proof contracts](../../../docs/architecture/proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted).

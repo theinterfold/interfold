@@ -4,7 +4,9 @@ use super::{bindings, preset_name, run, tier, Request};
 use alloy_primitives::B256;
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{bfv_parameter_hash, encode_bfv_params, BfvPreset};
+use e3_fhe_params::{
+    bfv_parameter_hash, encode_bfv_params, BfvDecryptionProtocol, BfvPreset, BfvProfile,
+};
 use e3_zk_config::{dkg, threshold};
 use fhe::bfv::BfvParameters;
 use regex::Regex;
@@ -51,10 +53,10 @@ impl OperationParams {
         })
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
-        if preset == BfvPreset::InsecureThreshold64 {
-            &self.insecure
-        } else {
-            &self.secure
+        match preset {
+            BfvPreset::InsecureThreshold64 => &self.insecure,
+            BfvPreset::SecureThreshold8192 => &self.secure,
+            _ => unreachable!("SS deployment material requires a threshold preset"),
         }
     }
 }
@@ -245,17 +247,53 @@ pub fn bound_updates(
         .collect()
 }
 
-pub fn sync_preset(
+pub fn sync_profile(
     root: &Path,
-    preset: BfvPreset,
+    profile: BfvProfile,
     committee: CiphernodesCommitteeSize,
 ) -> Result<()> {
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        return publish_changes(formatted_noir_changes(
+            root,
+            &root.join("circuits/lib"),
+            synchronized_sources(root, profile, committee)?,
+        )?);
+    }
+    let preset = profile.threshold_preset();
     let material = PresetMaterial::new(preset)?;
     publish_changes(formatted_noir_changes(
         root,
         &root.join("circuits/lib"),
         preset_updates(root, preset, committee, &material)?,
     )?)
+}
+
+fn synchronized_sources(
+    root: &Path,
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+) -> Result<Vec<(PathBuf, String)>> {
+    let config = e3_zk_config::synchronized::Configs::for_profile(profile, committee)?;
+    Ok(vec![(
+        root.join(config.source_path()),
+        format!("{HEADER}\n{}", config.render()?),
+    )])
+}
+
+pub fn prepare_profile(
+    root: &Path,
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+    skip_utils: bool,
+) -> Result<Selection> {
+    profile.validate_committee(committee)?;
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        return Ok(Selection {
+            noir: synchronized_sources(root, profile, committee)?,
+            protocol: Vec::new(),
+        });
+    }
+    prepare_selection(root, profile.threshold_preset(), committee, skip_utils)
 }
 
 pub fn preset_updates(
@@ -566,6 +604,11 @@ fn all_sources(root: &Path) -> Result<Selection> {
         }
     }
     selection.noir = sources.into_iter().collect();
+    selection.noir.extend(synchronized_sources(
+        root,
+        BfvProfile::SyncDecInsecure64,
+        CiphernodesCommitteeSize::Minimum,
+    )?);
     Ok(selection)
 }
 

@@ -1,0 +1,2 @@
+[workspace]
+members = ["pk", "sk_share_computation", "share_encryption", "share_decryption"]

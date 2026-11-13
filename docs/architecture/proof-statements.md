@@ -26,6 +26,9 @@ final verifiers are mandatory. The runtime `skip_proof_aggregation` setting work
 `test-only-skip-proof-aggregation`; production rejects it. Test placeholders retain roster/domain
 fields but production verifiers reject their proof bytes. There is no request-level bypass.
 
+The table above describes the admitted SS chain. The isolated synchronized leaves below do not
+replace its statements or authorize synchronized execution.
+
 The release workflow puts the proof-skip feature only in
 `interfold-test-only-skip-proof-aggregation-linux-x86_64`. Every release archive checks its compiled
 `rev --features` against its declared build features. The install script and `interfold update`
@@ -107,10 +110,53 @@ value. At the maximal quotient, the remainder must also be at most `(p-1) % q`; 
 and remainder ranges alone would admit an alias offset by p. Deferring per-peer mask reductions must
 retain accumulator and final-quotient bounds. Neither optimization changes the PRF transcript.
 
-This PRF context does not authenticate the Interfold E3 or DKG key provenance. The current C1–C7
-statements and deployed verifier interfaces remain SS-only; conformance vectors do not establish a
-synchronized proof chain. Full-width-key and secure-width small-ring vectors are interoperability
-coverage, not secure-profile or repeated-decryption qualification.
+This PRF context does not authenticate the Interfold E3 or DKG key provenance. The admitted C1–C7
+chain and deployed verifier interfaces remain SS-only; neither conformance vectors nor isolated DKG
+leaves establish a synchronized proof chain. Full-width-key and secure-width small-ring vectors are
+interoperability coverage, not secure-profile or repeated-decryption qualification.
+
+### Isolated synchronized DKG leaves (draft, not admitted)
+
+`circuits/bin/synchronized/` exposes C0–C4 only for `sync-insecure-64/minimum`. C0 and C3 reuse the
+SS arithmetic with the separate transport parameters. C1 proves a bounded threshold-key contribution
+without SS's dealt smudging branch. C2 proves the existing degree-T sharing relation, then commits
+the native packed messages and an N-wide outgoing-key root. C4 opens those packed messages, extracts
+incoming keys, and commits the centered sum of unpacked SK residues plus a bidirectional H-wide key
+bundle. **C4 does not prove a BFV decryption equation.**
+
+Public fields flatten in declaration order; return values follow inputs:
+
+| Leaf | Public inputs                                                                                                  | Public outputs                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| C0   | none                                                                                                           | transport PK commitment                                      |
+| C1   | setup binding `[2]`, zero-based dealer                                                                         | SK, threshold PK commitments                                 |
+| C2   | setup binding `[2]`, dealer, expected SK commitment                                                            | packed message commitments `[N][L_threshold]`, outgoing root |
+| C3   | expected transport PK, packed message commitments                                                              | ciphertext commitment                                        |
+| C4   | setup binding `[2]`, recipient, dealer IDs `[H]`, expected outgoing root, expected messages `[H][L_threshold]` | aggregate SK, key-bundle commitments                         |
+
+The profile ID is the profile/committee crypto-config ID split into high/low 128-bit big-endian
+limbs, compiled into these packages. `SetupBinding = [u128; 2]` is an opaque **caller-supplied**
+context: the leaves only bound it, not derive or authenticate it. The draft `interfold:sync-dkg:v1`
+SAFE domain uses a leading absorbed role (directed key 1, outgoing root 2, bundle 3, C1 challenge
+4). Key commitments absorb all 32 bytes as separate fields, not the PRF's lossy key-to-field map.
+Directed keys bind profile, context, N, key width, dealer and recipient. The root orders all N
+recipients. The bundle binds its owner, aggregate SK, exact sorted H dealer IDs and both key
+directions for each; outgoing keys are indexed by full-committee ID, not roster position. Own
+incoming/outgoing keys must agree. H is not trimmed to the designated T+1 set.
+
+Before runtime use, reviewed recursive joins must authenticate the canonical E3-derived context and
+H-roster, connect C1's SK to C2, C2's exact recipient/CRT message to C3 and C4, C3's key to C0 and
+ciphertext to the signed transport, and the owner's C2 outgoing root to C4. C6 must open the same
+aggregate SK and bundle. A consistent context/dealer substitution can produce a valid isolated leaf
+with different public fields/outputs; it is not evidence of authentication. Canonical context
+derivation, recursive topology, final-verifier enforcement, and any auxiliary/ESM-slot
+interpretation are unimplemented. The root/bundle schema requires protocol review before those
+consumers freeze it.
+
+`pnpm rust:test:sync-dkg:proofs` exercises the actual typed encoders and native encrypted transport,
+including non-prefix H, self/outside-H recipients, real private-input leaf proofs, altered public
+fields and malformed witnesses. It does not qualify recursive, contract, recovery, secure-profile,
+replacement-set or repeated-decryption behavior.
 
 ## Commitments, packing, and Fiat-Shamir
 

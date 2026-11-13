@@ -85,37 +85,6 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
         }
     }
 
-    /// Aggregates all verified shares by summing coefficient-wise across honest parties.
-    ///
-    /// For each CRT modulus and each coefficient position, computes:
-    ///   aggregated[mod_idx][coeff] = sum(decrypted_shares[party_idx][mod_idx][coeff])
-    ///                                  for party_idx in 0..H
-    ///
-    /// No modular reduction is applied here: each share coefficient equals the value C2 committed,
-    /// which C2 bounded to [0, q_l), so the sum stays under `H * q_l` and fits in the circuit field.
-    /// `normalize_aggregated` reduces it to the centered window before committing.
-    ///
-    /// This reflects the threshold key construction: sk = sum(sk_i) for i in H.
-    /// Each ciphernode now holds a share of this sum, used during threshold decryption in P4.
-    fn compute_aggregated_shares(self) -> [Polynomial<N>; L] {
-        let mut sum: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
-
-        for mod_idx in 0..L {
-            let mut coeffs = [0 as Field; N];
-            for coeff_idx in 0..N {
-                let mut total = 0 as Field;
-                for party_idx in 0..H {
-                    total =
-                        total + self.decrypted_shares[party_idx][mod_idx].coefficients[coeff_idx];
-                }
-                coeffs[coeff_idx] = total;
-            }
-            sum[mod_idx] = Polynomial::new(coeffs);
-        }
-
-        sum
-    }
-
     /// Executes the share decryption and aggregation circuit.
     ///
     /// Returns a commitment to the aggregated shares:
@@ -132,24 +101,41 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
         self.verify_commitments();
 
         // Step 2: Sum shares coefficient-wise per CRT limb.
-        let aggregated = self.compute_aggregated_shares();
-
-        // The carry `normalize_aggregated` divides out is at most H; see AGGREGATION_BIT_CARRY.
-        assert(H < 256, "committee exceeds the aggregation carry bound");
-        // `BIT_MSG` is the share width, so it covers `q` and can serve as the canonical range
-        // width below. Both are compile-time constants, so this folds away rather than costing
-        // gates -- it turns that agreement into something the build checks instead of assumes.
-        for mod_idx in 0..L {
-            (moduli[mod_idx] - 1).assert_max_bit_size::<BIT_MSG>();
-        }
-
-        // Step 3: Normalize to match C6's representation: reverse and centre-reduce mod q.
-        let normalized =
-            normalize_aggregated::<N, L, BIT_MSG, AGGREGATION_BIT_CARRY>(aggregated, moduli);
-
-        // Step 4: Publish commitment to the aggregate (C6 input).
-        compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
+        aggregate_canonical_shares::<N, L, H, BIT_MSG, BIT_AGG>(self.decrypted_shares, moduli)
     }
+}
+
+/// The caller must first bind and canonically bound every native-order share to `[0, q_l)`.
+pub fn aggregate_canonical_shares<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32>(
+    shares: [[Polynomial<N>; L]; H],
+    moduli: [Field; L],
+) -> Field {
+    let mut aggregated = [Polynomial::new([0; N]); L];
+    for limb in 0..L {
+        let mut coefficients = [0; N];
+        for coefficient in 0..N {
+            for row in 0..H {
+                coefficients[coefficient] += shares[row][limb].coefficients[coefficient];
+            }
+        }
+        aggregated[limb] = Polynomial::new(coefficients);
+    }
+
+    // The carry `normalize_aggregated` divides out is at most H; see AGGREGATION_BIT_CARRY.
+    assert(H < 256, "committee exceeds the aggregation carry bound");
+    // `BIT_MSG` is the share width, so it covers `q` and can serve as the canonical range
+    // width below. Both are compile-time constants, so this folds away rather than costing
+    // gates -- it turns that agreement into something the build checks instead of assumes.
+    for mod_idx in 0..L {
+        (moduli[mod_idx] - 1).assert_max_bit_size::<BIT_MSG>();
+    }
+
+    // Step 3: Normalize to match C6's representation: reverse and centre-reduce mod q.
+    let normalized =
+        normalize_aggregated::<N, L, BIT_MSG, AGGREGATION_BIT_CARRY>(aggregated, moduli);
+
+    // Step 4: Publish commitment to the aggregate (C6 input).
+    compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
 }
 
 /// Normalize aggregated share polynomials to match C6's Rust witness representation.

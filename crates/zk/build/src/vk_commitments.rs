@@ -257,7 +257,8 @@ mod tests {
     fn seed(root: &Path, output: &Path) -> std::path::PathBuf {
         let pair = output.join("insecure-64/minimum");
         crate::tests::seed_anchor_keys(&pair);
-        artifacts::refresh_anchors(root, &pair, true).unwrap();
+        artifacts::refresh_anchors(root, &pair, true, e3_fhe_params::BfvProfile::SsInsecure64)
+            .unwrap();
         for circuit in LEAVES {
             let name = circuit.rsplit('/').next().unwrap();
             let path = pair
