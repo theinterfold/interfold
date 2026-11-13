@@ -149,10 +149,10 @@ a missing circuit constraint with a comment claiming another circuit established
 
 ## Rust configuration and preparation
 
-`e3-zk-config` owns static bounds, widths, parity, and public layouts. `Configs::new` retains an
-existing BFV parameter owner; constructors check the ring, CRT basis, and sampler profile. C3 and
-user encryption share derived `k0is` across bounds, rendering, and preparation. Configuration needs
-no witness, sample, secret key, or prover.
+`e3-zk-config` owns static bounds, widths, and public layouts. `Configs::new` retains an existing
+BFV parameter owner; constructors check the ring, CRT basis, and sampler profile. C3 and user
+encryption share derived `k0is` across bounds, rendering, and preparation. Configuration needs no
+witness, sample, secret key, or prover.
 
 `e3-zk-witness` owns production inputs, commitments, preparation, and canonical Noir JSON. Workers
 pass concrete configurations through `Provable::Config`, reusing C6/C7 configurations across

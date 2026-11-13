@@ -79,7 +79,6 @@ COPY crates/ciphernode/multithread/Cargo.toml ./ciphernode/multithread/Cargo.tom
 COPY crates/net/Cargo.toml ./net/Cargo.toml
 COPY crates/program/openvm-host/Cargo.toml ./program/openvm-host/Cargo.toml
 COPY crates/program/openvm-types/Cargo.toml ./program/openvm-types/Cargo.toml
-COPY crates/parity-matrix/Cargo.toml ./parity-matrix/Cargo.toml
 COPY crates/zk/prover/Cargo.toml ./zk/prover/Cargo.toml
 COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
 COPY crates/polynomial/fhe-adapter/Cargo.toml ./polynomial/fhe-adapter/Cargo.toml

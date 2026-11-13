@@ -89,7 +89,7 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                            |
 | `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).               |
 | `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                    |
-| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                    |
+| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                      |
 | `benchmarks`                | Timing scripts and reports.                                                                                                                                            |
 
 The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
@@ -239,7 +239,7 @@ Sepolia and local chains accept both sets (`ActiveCryptoConfig.sol`).
 For each pair, the Rust build owner does these steps (`crates/zk/build`):
 
 1. It writes `configs/default/mod.nr` and `configs/committee/active.nr` for the pair.
-2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.
+2. It regenerates the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
    `packages/interfold-contracts/contracts/lib/BfvProtocol.sol`.
 4. It compiles every package in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
@@ -285,7 +285,7 @@ identifies source inputs and is not an archive digest.
 <Callout type="warning">
   The preset and the committee size stay selected after the build, and they change tracked files.
   Always switch them with `pnpm build:circuits --preset <name> --committee <name>`. Do not edit
-  `active.nr`, `utils.ts`, or a `parity_*.nr` file by hand. The pre-push hook runs
+  `active.nr` or `utils.ts` by hand. The pre-push hook runs
   `pnpm check:committee`, which rejects files that disagree. Circuit artifacts and verifiers are
   specific to the pair, so a changed H needs new circuits and new verifiers.
 </Callout>

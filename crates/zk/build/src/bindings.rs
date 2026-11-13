@@ -83,7 +83,7 @@ pub fn noir_sources(root: &Path) -> Vec<(PathBuf, String)> {
         let values = committee.values();
         sources.push((
             root.join(format!("circuits/lib/src/configs/committee/{committee}/mod.nr")),
-            format!("{HEADER}\n{GENERATED}\npub global N_PARTIES: u32 = {};\npub global T: u32 = {};\npub global H: u32 = {};\n\npub mod parity_insecure;\npub mod parity_secure;\n", values.n, values.threshold, values.h),
+            format!("{HEADER}\n{GENERATED}\npub global N_PARTIES: u32 = {};\npub global T: u32 = {};\npub global H: u32 = {};\n", values.n, values.threshold, values.h),
         ));
     }
     sources

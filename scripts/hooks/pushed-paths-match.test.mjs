@@ -96,7 +96,6 @@ test('verifier routing covers compiler inputs without rebuilding for unrelated c
     ['packages/interfold-contracts/contracts/lib/BfvDecryptionLayout.sol', 1],
     ['packages/interfold-contracts/scripts/protocol/constants.ts', 0],
     ['crates/bfv/runtime/src/lib.rs', 0],
-    ['crates/parity-matrix/src/lib.rs', 0],
     ['crates/safe/src/lib.rs', 0],
     ['packages/interfold-sdk/src/utils.ts', 1],
     ['packages/interfold-dashboard/src/lib/adapt.ts', 1],

@@ -4329,17 +4329,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-parity-matrix"
-version = "0.20.0-dev.3"
-dependencies = [
- "num-bigint 0.5.1",
- "num-traits",
- "proptest",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "e3-polynomial"
 version = "0.20.0-dev.3"
 dependencies = [
@@ -4717,7 +4706,6 @@ dependencies = [
  "bincode",
  "e3-committee",
  "e3-fhe-params",
- "e3-parity-matrix",
  "e3-polynomial",
  "e3-polynomial-fhe",
  "fhe",
