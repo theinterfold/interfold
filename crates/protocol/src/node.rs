@@ -1927,6 +1927,31 @@ mod tests {
         assert!(submissions(&node.step(due + 3_600, Input::Tick)).is_empty());
     }
 
+    /// The contract sets the DKG deadline to the committee deadline plus the DKG window: the moment
+    /// the request's watch waits for. A node that found that turn long past, and then reads the
+    /// committee's finalization, keeps counting from when it found the turn.
+    #[test]
+    fn a_turn_found_long_past_keeps_its_count_when_the_committee_is_finalized() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(200, seed_ready(5, e3(1), 42, 100));
+        let restarted = 20_000;
+        node.step(restarted, Input::Tick);
+        let finalized = ChainFact::CommitteeFinalized {
+            e3: e3(1),
+            members: members([1, 2]),
+            dkg: DkgTiming {
+                deadline: 100 + TIMING.window,
+                ..TIMING
+            },
+        };
+        node.step(restarted, chain(6, finalized));
+        let due = restarted + 1 + 30 * place(&[1, 2, ME]);
+        let effects = node.step(due, Input::Tick);
+        assert_eq!(submissions(&effects), vec![Transaction::MarkFailed]);
+    }
+
     /// A second late restart, before the turn counted from the first came, spaces the turns again.
     #[test]
     fn a_turn_counted_from_a_late_restart_can_be_found_long_past_again() {
@@ -2254,7 +2279,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "2a2ae67f3430f5cf1b738eafc1dbf7d977b1c64ef119024673eb33ed905f1eb0"
+                    "00f9cb7783b16968ffde127393713b50cb16ec4d29748081cc9f61113103aaa4"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

@@ -81,7 +81,8 @@ enum Selection {
     /// The node waits until `by` for the bonding registry to say which operators may hold a seat,
     /// then ranks with `seed`. A change in its standing ranks it without the answer meanwhile.
     Reading { seed: CommitteeSeed, by: UnixSecs },
-    /// The node submitted its ticket.
+    /// The node submitted its ticket. An eligibility read still out no longer matters: no rank
+    /// changes a submitted ticket.
     Ticketed(Ticket),
 }
 
@@ -98,7 +99,8 @@ enum End {
 /// Why the node keeps an E3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Keep {
-    /// The chain has not completed or failed the E3.
+    /// This node has not read the chain's completion or failure of the E3. The chain logs a failed
+    /// stage apart from the failure, and the E3 waits here between the two.
     Live,
     /// An accusation window is open until then.
     Accusations(UnixSecs),
@@ -162,22 +164,19 @@ impl Duty {
     }
 }
 
-/// This node's call at a duty: the stage and deadline it is owed for, and how far the node got. A
-/// later stage, or a moved deadline, owes the call again.
+/// This node's call at a duty, for one deadline. A moved deadline starts a new call.
+///
+/// A later stage with the same deadline owes the call again, and keeps the count of turns: the
+/// contract sets the DKG deadline to the committee deadline plus the DKG window, the same moment
+/// the request's watch waits for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Call {
-    stage: Stage,
     deadline: UnixSecs,
-    state: CallState,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum CallState {
-    /// The node calls in its turn, which counts from this time: the deadline, or the time the
-    /// node found the turn long past, because it was not running when the turn came.
-    Waiting { from: UnixSecs },
-    /// The node made the call.
-    Made,
+    /// The turns count from this time: the deadline, or the time the node found its turn long
+    /// past, because it was not running when the turn came.
+    from: UnixSecs,
+    /// The stage the node made the call for.
+    made: Option<Stage>,
 }
 
 /// Nodes that can make the same call take turns, 30 seconds apart from one second after its
@@ -739,9 +738,9 @@ impl E3 {
         self.note_turns_long_past(now);
         let mut effects = Vec::new();
         for duty in Duty::ALL {
-            if let Some((call, _)) = self.pending(duty).filter(|(_, due)| now >= *due) {
-                let state = CallState::Made;
-                self.calls.insert(duty, Call { state, ..call });
+            if let Some((call, stage, _)) = self.pending(duty).filter(|(.., due)| now >= *due) {
+                let made = Some(stage);
+                self.calls.insert(duty, Call { made, ..call });
                 effects.push(self.submit(duty.transaction()));
             }
         }
@@ -810,8 +809,9 @@ impl E3 {
         Some((self.stage, *deadline))
     }
 
-    /// This node's call at `duty`, if it owes one, and its place among those that can make it.
-    fn call(&self, duty: Duty) -> Option<(Call, u64)> {
+    /// This node's call at `duty` if it owes one: the record for the current deadline, the stage
+    /// the call is owed for, and the node's place among those that can make it.
+    fn call(&self, duty: Duty) -> Option<(Call, Stage, u64)> {
         let (stage, deadline, place) = match duty {
             Duty::Finalize => match self.selection {
                 Selection::Ticketed(ticket) if self.stage == Stage::Requested => {
@@ -832,38 +832,35 @@ impl E3 {
         };
         let call = self.calls.get(&duty).copied();
         let call = call
-            .filter(|call| (call.stage, call.deadline) == (stage, deadline))
+            .filter(|call| call.deadline == deadline)
             .unwrap_or(Call {
-                stage,
                 deadline,
-                state: CallState::Waiting { from: deadline },
+                from: deadline,
+                made: None,
             });
-        Some((call, place))
+        Some((call, stage, place))
     }
 
-    /// This node's call at `duty` while the node has yet to make it, and when its turn comes.
-    fn pending(&self, duty: Duty) -> Option<(Call, UnixSecs)> {
-        let (call, place) = self.call(duty)?;
-        match call.state {
-            CallState::Waiting { from } => Some((call, turn(from, place))),
-            CallState::Made => None,
-        }
+    /// This node's call at `duty` while it has yet to make it for the current stage, the stage, and
+    /// when its turn comes.
+    fn pending(&self, duty: Duty) -> Option<(Call, Stage, UnixSecs)> {
+        let (call, stage, place) = self.call(duty)?;
+        (call.made != Some(stage)).then(|| (call, stage, turn(call.from, place)))
     }
 
     /// When this node's turn at `duty` comes, if it has yet to make the call.
     fn due(&self, duty: Duty) -> Option<UnixSecs> {
-        self.pending(duty).map(|(_, due)| due)
+        self.pending(duty).map(|(.., due)| due)
     }
 
     /// A turn found long past counts from now: the node was not running when it came.
     fn note_turns_long_past(&mut self, now: UnixSecs) {
         for duty in Duty::ALL {
-            let Some((call, due)) = self.pending(duty) else {
+            let Some((call, _, due)) = self.pending(duty) else {
                 continue;
             };
             if now > due + LONG_PAST {
-                let state = CallState::Waiting { from: now };
-                self.calls.insert(duty, Call { state, ..call });
+                self.calls.insert(duty, Call { from: now, ..call });
             }
         }
     }
