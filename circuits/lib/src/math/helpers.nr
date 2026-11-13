@@ -242,6 +242,39 @@ pub fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
     (upper - 1 - v).assert_max_bit_size::<BIT>();
 }
 
+/// Appends `value_at(0) .. value_at(A - 1)` packed at exactly `W` bits each: `253 / W` digits per
+/// carrier, big-endian, the last carrier padded with zero digits.
+///
+/// Unlike [`pack`] there is no base offset and no headroom nibble, so the caller must already have
+/// constrained every value to `[0, 2^W)` (typically a shifted value whose range check is exactly
+/// that). Then every digit fits its slot and the packing is injective. Carriers hold at most 253
+/// bits, below the field modulus, so they never wrap.
+///
+/// C3's insecure configs set some widths to 0 because they never take the scaled path that packs
+/// them; the branch is a compile-time constant, so those instances are folded away before unrolling.
+pub fn flatten_exact_width<let A: u32, let W: u32, Env>(
+    mut inputs: [Field],
+    value_at: fn[Env](u32) -> Field,
+) -> [Field] {
+    let group = 253 / W;
+    assert(group >= 2, "exact-width packing needs two digits per carrier");
+    let radix = 2.pow_32(W as Field);
+    let num_chunks = (A + group - 1) / group;
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+        let mut acc = 0;
+        for i in 0..take {
+            acc = acc * radix + value_at(chunk * group + i);
+        }
+        for _ in 0..(group - take) {
+            acc = acc * radix;
+        }
+        inputs = inputs.push_back(acc);
+    }
+    inputs
+}
+
 pub fn compute_safe(domain_separator: [u8; 64], inputs: [Field], io_pattern: [u32; 2]) -> [Field] {
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
     sponge.absorb(inputs);
@@ -446,4 +479,15 @@ fn test_pack_checked_matches_pack_partial_chunk() {
     for i in 0..plain.len() {
         assert(plain[i] == checked[i]);
     }
+}
+
+#[test]
+fn test_flatten_exact_width_packs_without_offsets() {
+    // W = 100: two digits per carrier, three values -> two carriers, the second padded.
+    let values = [5, 7, 9];
+    let out = flatten_exact_width::<3, 100, _>([].as_vector(), |i| values[i]);
+    let r = 2.pow_32(100);
+    assert(out.len() == 2);
+    assert(out[0] == 5 * r + 7);
+    assert(out[1] == 9 * r);
 }
