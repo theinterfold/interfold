@@ -132,9 +132,9 @@ pub fn compute_single_polynomial_commitment<let N: u32, let BIT: u32>(
 }
 
 /// [`compute_single_polynomial_commitment`] with the digit asserts, for a polynomial this circuit
-/// carries no bound for. ct1 commits `u` this way: ct0 range-checks the same `u` to `u_bound` and the
-/// `user_data_encryption` fold asserts the two `u` commitments are equal, so making ct1's packing
-/// injective is what forces its `u` to equal ct0's — the bound transfers instead of being repeated.
+/// carries no bound for: the digit asserts make the packing injective, so an opening of a commitment
+/// another circuit bounded is forced to be that circuit's polynomial. (ct0 and ct1 no longer need it
+/// for `u`: each constrains its `u` to `{-1, 0, 1}`, which already makes the plain packing injective.)
 /// Produces the same value as the plain version for any input the plain version could legitimately
 /// have committed.
 pub fn compute_single_polynomial_commitment_checked<let N: u32, let BIT: u32>(

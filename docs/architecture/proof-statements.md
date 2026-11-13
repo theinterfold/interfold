@@ -81,6 +81,13 @@ by H (`AGGREGATION_BIT_CARRY = 8`, H < 256). It avoids assumptions that all modu
 power of two. C5's sum quotient uses `SUM_BIT_CARRY = 8` with H <= 128; its aggregate key still
 needs an explicit bound.
 
+When every other operand of an identity is exactly bounded, the integer identity already fixes its
+quotient; the quotient's bound only has to rule out wraparound. C1's `r` and `e_sm` CRT quotients,
+C6's `r`, and the user-encryption legs' `r` use the window `[-2^BIT, 2^BIT)`, one assert per
+coefficient. Their generated bound arrays then only document the honest range, and `bin/config`
+checks that each `BIT` covers its array. Bound-1 witnesses (C1 `sk`, C3 and user-encryption `u`) use
+`c^3 = c`.
+
 ## Commitments, packing, and Fiat-Shamir
 
 Packing uses shared carriers `acc = acc * radix + (v + base)`. A digit overflowing its slot can
@@ -92,10 +99,18 @@ openings unless every digit fits its slot. A `u64` cast is not enough when `base
 creating circuit's canonical bound because the opening must equal the committed value. It does not
 create a canonical bound where no upstream statement proves one. C1's originating `pk0` and C5's
 unanchored `pk0_agg` need explicit centered bounds. C0 bounds its key, so C3 opens it checked and
-inherits the bound; a malformed key fails its owner's C0, not every dealer's C3. C5's per-party keys
-and C4's received C2 shares likewise inherit through checked openings. C4 normalizes its derived
-aggregate in circuit; it does not need a second opened-witness bound. Run the binding check
-**before** commitment comparison.
+inherits the bound; an out-of-range key fails its owner's C0, not every dealer's C3. C0 does not
+prove correct key generation or possession of a secret key. C5's per-party keys and C4's received C2
+shares likewise inherit through checked openings. C4 normalizes its derived aggregate in circuit; it
+does not need a second opened-witness bound. Run the binding check **before** commitment comparison.
+
+User encryption has no upstream circuit for its key. ct0 opens `pk0` with checked digits, which
+rules out wraparound but not a non-canonical key; the exact centred bound comes from C5 only through
+the committee-key anchor. Any program accepting `user_data_encryption` proofs must compare their
+`pk_commitment` with the committee key, as CRISP does. ct1 hard-codes `pk1` as the CRS that C5
+commits as `pk1_agg`, so only keys on the default-seed CRP, which every committee key is, can be
+proven. Both legs read one `u` witness: ct0 bounds and commits it, and ct1 reuses that commitment
+(`execute_with_u_commitment`), which is sound only with the commitment of the same `u` it reads.
 
 The review class is **every prover-chosen witness entering the sponge**, not only commitments opened
 from another circuit. C2a/C2b, C4, C5, and three C6 openings were the IF-011 class. IF-013
@@ -207,8 +222,8 @@ does not store t.
   trade places. Rebuild the intended preset after a gate sweep; restoring source config does not
   restore `target/` or compiled artifacts and can produce misleading ABI length failures.
 - CRISP browser proving has `srsSize: 2**21`. Crossing 2,097,152 gates stops proving, not merely
-  slows it. Measure ct0 and ballot circuits before shipping added constraints; soundness repairs
-  cannot be dropped to meet the ceiling.
+  slows it. Measure `user_data_encryption` and ballot circuits before shipping added constraints;
+  soundness repairs cannot be dropped to meet the ceiling.
 
 [History](protocol-history.md) retains finding IDs and evidence scope, not current audit assurance.
 The compute path, Rust witnesses, OpenVM guest/prover, and receipt verifiers were not covered by the

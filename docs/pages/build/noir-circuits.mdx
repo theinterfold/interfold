@@ -58,8 +58,6 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.File name='Nargo.toml' />
         <FileTree.Folder name='pk_generation' />
         <FileTree.Folder name='pk_aggregation' />
-        <FileTree.Folder name='user_data_encryption_ct0' />
-        <FileTree.Folder name='user_data_encryption_ct1' />
         <FileTree.Folder name='user_data_encryption' />
         <FileTree.Folder name='share_decryption' />
         <FileTree.Folder name='decrypted_shares_aggregation' />
@@ -83,16 +81,16 @@ All binary packages depend on one shared library. The Nargo package name of the 
   </FileTree.Folder>
 </FileTree>
 
-| Directory                   | Contents                                                                                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                                                                                |
-| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.                                                                           |
-| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                                                                |
-| `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                                                                                           |
-| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption_ct0` and `user_data_encryption_ct1` with their wrapper `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7). |
-| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                                                                   |
-| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                                                                                   |
-| `benchmarks`                | Timing scripts and reports.                                                                                                                                                                                                           |
+| Directory                   | Contents                                                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                 |
+| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.            |
+| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files. |
+| `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                            |
+| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).               |
+| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                    |
+| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                    |
+| `benchmarks`                | Timing scripts and reports.                                                                                                                                            |
 
 The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
 example, `CircuitName::PkBfv` is `pk`, and `CircuitName::DkgAggregator` is `dkg_aggregator`. The
@@ -365,8 +363,8 @@ the BFV preset. The fold circuit accepts the key hashes of both presets.
 The [custom circuits tutorial](/build/tutorials/custom-zk-circuits) follows these steps for a new
 circuit.
 
-The SDK function `generateProof()` proves only the three user-data-encryption circuits. It embeds
-artifacts built for `insecure-64` with `minimum`. See the [SDK](/build/sdk) page.
+The SDK function `generateProof()` proves only the `user_data_encryption` circuit, in one proof. It
+embeds artifacts built for `insecure-64` with `minimum`. See the [SDK](/build/sdk) page.
 
 ## Use circuits/lib in another Noir project
 

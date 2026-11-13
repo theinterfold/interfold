@@ -100,9 +100,9 @@ proof. Its numeric value is the `proofType` that slashing evidence uses. The `Ci
 | C6  | `C6ThresholdShareDecryption` (9)    | `ThresholdShareDecryption`   | `threshold/share_decryption`             | P4    | A partial decryption uses the C4 secret key and smudging noise shares.         |
 | C7  | `C7DecryptedSharesAggregation` (10) | `DecryptedSharesAggregation` | `threshold/decrypted_shares_aggregation` | P4    | Lagrange interpolation, CRT reconstruction, and decoding give the plaintext.   |
 
-P3 uses the user-data encryption packages `threshold/user_data_encryption_ct0`,
-`threshold/user_data_encryption_ct1`, and the wrapper `threshold/user_data_encryption`. They have no
-`ProofType` because data providers, not ciphernodes, make these proofs.
+P3 uses the user-data encryption package `threshold/user_data_encryption`, which proves both parts
+of the ciphertext in one circuit. P3 has no `ProofType` because data providers, not ciphernodes,
+make this proof.
 
 ### Recursive aggregation circuits
 
@@ -408,11 +408,14 @@ value is the `pkCommitment` that the registry stores.
 
 ## P3: User encryption
 
-Data providers encrypt inputs to the threshold public key with the user-data encryption circuits,
-which follow the [Greco](https://blog.theinterfold.com/enclave-cryptography-greco-fhe-zk/) design.
-The `ct0` and `ct1` proofs share a `u_commitment`. The wrapper `user_data_encryption` outputs
-`(pk_commitment, ct_commitment, k1_commitment)`. An E3 program binds the input proof to the key. For
-example, CRISP passes the on-chain `committeePublicKey` commitment as a public input.
+Data providers encrypt inputs to the threshold public key with the user-data encryption circuit,
+which follows the [Greco](https://blog.theinterfold.com/enclave-cryptography-greco-fhe-zk/) design.
+The circuit `user_data_encryption` proves `ct0` and `ct1` in one proof. Both parts use the same `u`
+witness. The `ct0` part bounds `u` to `{-1, 0, 1}` and commits to it, and the `ct1` part uses that
+commitment in its own transcript. The second key part $pk_1$ is the circuit-constant CRP, as in C5.
+The circuit outputs `(pk_commitment, ct_commitment, k1_commitment)`, which are its three public
+inputs. An E3 program binds the input proof to the key. For example, CRISP passes the on-chain
+`committeePublicKey` commitment as a public input.
 
 The compute provider runs the E3 program over the ciphertexts. `publishCiphertextOutput` then stores
 the output hash and its SAFE ciphertext commitment on-chain.
