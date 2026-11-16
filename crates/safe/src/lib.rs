@@ -312,20 +312,16 @@ pub fn squeeze_one_after_absorb(
 pub fn bb_poseidon2_hash(inputs: &[Field]) -> Field {
     let mut state = [Field::zero(); STATE_SIZE];
     state[RATE] = Field::from(shl64(inputs.len() as u64));
-    let mut cache: Vec<Field> = Vec::with_capacity(RATE);
-    for input in inputs {
-        if cache.len() == RATE {
-            for (i, value) in cache.drain(..).enumerate() {
-                state[i] += value;
-            }
-            state = poseidon2_permutation(&state);
+    if inputs.is_empty() {
+        return poseidon2_permutation(&state)[0];
+    }
+    for chunk in inputs.chunks(RATE) {
+        for (word, value) in state.iter_mut().zip(chunk) {
+            *word += value;
         }
-        cache.push(*input);
+        state = poseidon2_permutation(&state);
     }
-    for (i, value) in cache.drain(..).enumerate() {
-        state[i] += value;
-    }
-    poseidon2_permutation(&state)[0]
+    state[0]
 }
 
 /// `value << 64` as a field element.
@@ -486,17 +482,11 @@ mod tests {
         use ark_ff::PrimeField;
         let vk = include_bytes!("../tests/fixtures/bb6_recursive_vk.bin");
         let fields: Vec<Field> = vk.chunks(32).map(Field::from_be_bytes_mod_order).collect();
-        let expected = Field::from_be_bytes_mod_order(&hex_literal(
-            "2b0a92d88671342e419d05d86a9b4fade028de6018637531fb8185429af2a787",
-        ));
+        let expected = Field::from_be_bytes_mod_order(
+            &hex::decode("2b0a92d88671342e419d05d86a9b4fade028de6018637531fb8185429af2a787")
+                .unwrap(),
+        );
         assert_eq!(bb_poseidon2_hash(&fields), expected);
-    }
-
-    fn hex_literal(hex: &str) -> Vec<u8> {
-        (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect()
     }
 
     /// Helper function to create a field element from a u64 value
