@@ -233,4 +233,18 @@ mod tests {
         assert_eq!(failure.await?, "append failed");
         Ok(())
     }
+
+    #[actix::test]
+    async fn projection_pipeline_failure_reaches_the_cli_exit_watch() -> Result<()> {
+        let system = e3_event_system::EventSystem::new().with_fresh_bus();
+        let mut health = system.failure_receiver();
+        let bus = system.handle()?.enable("projection-health");
+        bus.fail_event_pipeline("unsupported synchronized authority version");
+        assert_eq!(
+            wait_for_persistence_failure(&mut health).await?,
+            "unsupported synchronized authority version"
+        );
+        bus.publish_shutdown_and_wait().await?;
+        Ok(())
+    }
 }

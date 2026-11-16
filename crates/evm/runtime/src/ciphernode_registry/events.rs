@@ -6,7 +6,7 @@
 
 //! Pure translation of `CiphernodeRegistry.sol` logs into `InterfoldEventData`.
 
-use crate::contracts::ICiphernodeRegistry;
+use crate::contracts::{ICiphernodeRegistry, ISynchronizedDkgPublication};
 use alloy::{
     primitives::{keccak256, LogData, B256, U256},
     sol_types::{SolEvent, SolValue},
@@ -15,7 +15,8 @@ use e3_events::{
     CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed,
     CommitteePublicKeyChunkPublished, CommitteePublished, CommitteeViabilityUpdated,
     DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, InterfoldEventData,
-    Seed, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    Seed, SynchronizedDkgContext, SynchronizedDkgContextEstablished,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION, SYNCHRONIZED_DKG_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::ArcBytes;
 use tracing::{error, info, trace};
@@ -393,6 +394,28 @@ pub(crate) fn extractor(
             };
             Some(DkgFoldAttestationContextEstablishedWithChainId(event, chain_id).into())
         }
+        Some(&ISynchronizedDkgPublication::SynchronizedDkgContextEstablished::SIGNATURE_HASH) => {
+            let Ok(event) =
+                ISynchronizedDkgPublication::SynchronizedDkgContextEstablished::decode_log_data(
+                    data,
+                )
+            else {
+                error!("Invalid synchronized DKG request context log");
+                return None;
+            };
+            Some(
+                SynchronizedDkgContextEstablished {
+                    schema_version: SYNCHRONIZED_DKG_CONTEXT_SCHEMA_VERSION,
+                    e3_id: E3id::new(event.e3Id.to_string(), chain_id),
+                    context: SynchronizedDkgContext {
+                        registry: event.registry,
+                        verifying_contract: event.verifier,
+                        crypto_config_id: event.cryptoConfigId.0,
+                    },
+                }
+                .into(),
+            )
+        }
         Some(&ICiphernodeRegistry::CommitteeFormationFailed::SIGNATURE_HASH) => {
             let Ok(mut event) =
                 ICiphernodeRegistry::CommitteeFormationFailed::decode_log_data(data)
@@ -607,6 +630,27 @@ mod tests {
                 verifying_contract: Address::repeat_byte(0x55),
             }
         );
+    }
+
+    #[test]
+    fn synchronized_context_decoder_keeps_the_full_request_and_distinct_domain() {
+        let event = ISynchronizedDkgPublication::SynchronizedDkgContextEstablished {
+            e3Id: (U256::from(1) << 200) + U256::from(9),
+            registry: Address::repeat_byte(0x44),
+            verifier: Address::repeat_byte(0x66),
+            cryptoConfigId: B256::repeat_byte(0x77),
+        };
+        let log = event.encode_log_data();
+        let Some(InterfoldEventData::SynchronizedDkgContextEstablished(context)) =
+            extractor(&log, log.topics(), 31337)
+        else {
+            panic!("lost synchronized request context");
+        };
+        assert_eq!(context.e3_id, E3id::new(event.e3Id.to_string(), 31337));
+        assert_eq!(context.context.verifying_contract, event.verifier);
+        assert_eq!(context.context.registry, event.registry);
+        assert_eq!(context.context.crypto_config_id, event.cryptoConfigId.0);
+        assert!(extractor(&LogData::empty(), log.topics(), 31337).is_none());
     }
 
     #[test]

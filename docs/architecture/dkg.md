@@ -86,12 +86,25 @@ context/roster; it does not establish their chain/signature authority. The isola
 joins H recipient setups to the aggregate key and a common dealer-batch anchor, with native and
 Solidity verification against independent expectations, including reopened runtime artifacts. The
 separate [registry authority](proof-statements.md#synchronized-registry-authority-unactivated) now
-requires every selected recipient's consent and stores distinct SK/key-bundle anchors. It is
-unactivated: native authority ingestion, full-node synchronized startup and synchronized C6 remain
-absent. The capability replay fixture below does not enable production admission. Synchronized
-runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
-root/bundle/batch schemas, attestation domain and setup derivation require human protocol review
-before consumers freeze them.
+requires every selected recipient's consent and stores distinct SK/key-bundle anchors. Its
+request-time context event freezes the synchronized wrapper, not the SS attestation verifier. Native
+ingestion joins confirmed request/context, full-authority and publication-proof observations in the
+existing shared canonical-key projection, including retained history before snapshot cursors. The
+authority is typed separately from SS anchors; it permits dormant DKG byte validation, not
+decryption-domain repair or profile admission.
+
+The keyshare consent helper requires an independently aggregated native PK, verified recipient setup
+and recovered sealed material. Its read-only #2050 handoff joins the recipient's setup to confirmed
+batch/threshold-key authority and checked PK bytes, reopens its sealed keys and checks their bundle.
+An outside-H recipient uses its own verified setup for the same batch; it does not acquire an H
+publication-consent slot. A setup DTO alone is not a proof verdict: callers must admit the local
+worker source/correlation and cryptographic result before either helper.
+
+This remains unactivated: guarded dealer/recipient/C5/consent/publication actor and writer phases,
+full-node synchronized startup and synchronized C6 are absent. The capability replay fixture below
+does not enable production admission. Synchronized runtime folding/publication and decryption paths
+still refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and
+setup derivation require human protocol review before consumers freeze them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -275,7 +288,10 @@ outside-H recipient, provisional C4 retirement and authenticated replacement aft
 explicit real-proof variant proves C4 from the restored request, then joins reopened signed
 contributions, sealed material and native PK-share bytes through C5/publication verification in Rust
 and Solidity. Selected C4 artifacts come from peers' reopened snapshots; the outside-H recipient
-uses its disk-restored C4 request and the verified publication's key/batch authority.
+uses its disk-restored C4 request and the verified publication's key/batch authority. Native H
+signatures then publish the real proof to a locally deployed registry. The fixture checks authority
+and PK-chunk readback, reopens the decoded confirmed journal and validates all N sealed setup
+handoffs. Its finalized selection and lifecycle controller remain test harnesses.
 
 The complementary
 [replay fixture](../../crates/orchestration/keyshare/src/tests/synchronized/recovery/replay.rs)
@@ -284,8 +300,8 @@ hydrated keyshare actor. It checks authenticated replacement/deduplication, decr
 sequence, stale boot-control filtering, no pre-enable effects and persisted inputs after an
 acknowledged snapshot drain/reopen. Historical EVM/network adapters return empty history. These are
 capability-level, orderly recovery checks below disabled production hydration/compute admission, not
-whole-node startup, network delivery, hard-crash durability or live registry publication. See the
-[test commands](../../crates/orchestration/keyshare/README.md#tests).
+whole-node startup, network delivery, hard-crash durability or guarded production publication. See
+the [test commands](../../crates/orchestration/keyshare/README.md#tests).
 
 Dealer identity binds public statement (E3, proof type, circuit, signals), not randomized proof
 bytes. Replacing a proof plan invalidates all old correlations first. C2/C3 verification outcomes

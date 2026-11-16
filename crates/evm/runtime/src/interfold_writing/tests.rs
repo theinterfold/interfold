@@ -177,8 +177,10 @@ fn key() -> CanonicalPublicKey {
         params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: Address::repeat_byte(9),
-        sk_agg_commits: vec![],
-        esm_agg_commits: vec![],
+        dkg_anchors: e3_request::canonical_key::CanonicalDkgAnchors::SecretShared {
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        },
     }
 }
 

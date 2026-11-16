@@ -79,10 +79,13 @@ The disabled synchronized DKG definition has separate
 [keyshare actor/store recovery coverage](../../crates/orchestration/keyshare/README.md#tests),
 including an explicit real-proof variant selected in CI. It reopens three Sled stores and actors,
 then joins their recovered contributions and sealed material through C5/publication verification in
-Rust and Solidity. A complementary ordinary test drives production startup sync from reopened commit
-logs into a manually hydrated keyshare actor, with empty historical EVM/network adapters. Private
-checkpoint/compute drivers remain below disabled admission; neither fixture establishes
-whole-ciphernode startup, real network delivery, hard-crash durability or live registry publication.
+Rust and Solidity, publishes the real proof with native H consents to a local registry, and rebuilds
+its shared authority from a reopened decoded journal for the sealed setup handoff. The committee
+selection and lifecycle controller are test harnesses, not an admitted production request. A
+complementary ordinary test drives production startup sync from reopened commit logs into a manually
+hydrated keyshare actor, with empty historical EVM/network adapters. Private checkpoint/compute
+drivers remain below disabled admission; neither fixture establishes whole-ciphernode startup, real
+network delivery, hard-crash durability or guarded production publication orchestration.
 
 ## Proofs and compatibility
 

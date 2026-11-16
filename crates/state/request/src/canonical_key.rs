@@ -13,6 +13,18 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+mod synchronized;
+pub use synchronized::SynchronizedDkgAuthority;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalDkgAnchors {
+    SecretShared {
+        sk_agg_commits: Vec<[u8; 32]>,
+        esm_agg_commits: Vec<[u8; 32]>,
+    },
+    Synchronized(SynchronizedDkgAuthority),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalPublicKey {
     pub pk_commitment: [u8; 32],
@@ -21,13 +33,17 @@ pub struct CanonicalPublicKey {
     pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
     pub interfold_address: Address,
-    pub sk_agg_commits: Vec<[u8; 32]>,
-    pub esm_agg_commits: Vec<[u8; 32]>,
+    pub dkg_anchors: CanonicalDkgAnchors,
 }
 
 impl CanonicalPublicKey {
     pub fn validate_key(&self, bytes: &[u8]) -> Result<()> {
         self.params_profile.ensure_admission_enabled()?;
+        self.validate_dkg_key(bytes)
+    }
+
+    /// Byte/commitment validation for dormant setup authority; this does not admit runtime work.
+    pub fn validate_dkg_key(&self, bytes: &[u8]) -> Result<()> {
         self.params_profile
             .validate_committee(self.committee_size)?;
         let params = BfvParamSet::from(self.params_profile.threshold_preset());
@@ -61,6 +77,7 @@ struct CanonicalKeyState {
     authority: HashMap<E3id, CanonicalPublicKey>,
     bytes: HashMap<E3id, ArcBytes>,
     ciphertext_hashes: HashMap<E3id, Vec<B256>>,
+    synchronized_contexts: HashMap<E3id, e3_events::SynchronizedDkgContext>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -79,6 +96,31 @@ impl CanonicalPublicKeys {
     pub fn insert(&self, id: E3id, key: CanonicalPublicKey) -> Result<()> {
         key.params_profile.ensure_admission_enabled()?;
         key.params_profile.validate_committee(key.committee_size)?;
+        ensure!(
+            matches!(key.dkg_anchors, CanonicalDkgAnchors::SecretShared { .. }),
+            "SS key authority cannot contain synchronized anchors"
+        );
+        self.insert_authority(id, key)
+    }
+
+    /// Called by the confirmed-history projection. Dormant DKG facts do not authorize C6/effects.
+    pub fn insert_synchronized_dkg_authority(
+        &self,
+        id: E3id,
+        key: CanonicalPublicKey,
+    ) -> Result<()> {
+        let CanonicalDkgAnchors::Synchronized(authority) = &key.dkg_anchors else {
+            anyhow::bail!("synchronized authority requires distinct setup anchors");
+        };
+        ensure!(
+            self.synchronized_context(&id) == Some(authority.context),
+            "synchronized authority has no matching frozen chain context"
+        );
+        authority.validate(&id, &key)?;
+        self.insert_authority(id, key)
+    }
+
+    fn insert_authority(&self, id: E3id, key: CanonicalPublicKey) -> Result<()> {
         let mut keys = self.0.write().expect("canonical key lock");
         if let Some(existing) = keys.authority.get(&id) {
             ensure!(
@@ -96,6 +138,7 @@ impl CanonicalPublicKeys {
         keys.authority.remove(id);
         keys.bytes.remove(id);
         keys.ciphertext_hashes.remove(id);
+        keys.synchronized_contexts.remove(id);
     }
 
     /// Retain ciphertext bindings from the confirmed output ingestion path.
@@ -119,6 +162,7 @@ impl CanonicalPublicKeys {
     ) -> Option<Vec<e3_committee_hash::DecryptionDomainLimbs>> {
         let keys = self.0.read().expect("canonical key lock");
         let key = keys.authority.get(id)?;
+        key.params_profile.ensure_admission_enabled().ok()?;
         let hashes = keys.ciphertext_hashes.get(id)?;
         let e3_id = id.clone().try_into().ok()?;
         Some(
@@ -150,10 +194,17 @@ impl CanonicalPublicKeys {
     }
 
     pub fn remember_key(&self, id: &E3id, bytes: ArcBytes) -> Result<()> {
-        let key = self
-            .get(id)
-            .ok_or_else(|| anyhow::anyhow!("chain public-key context is unavailable"))?;
-        key.validate_key(&bytes)?;
+        self.get(id)
+            .ok_or_else(|| anyhow::anyhow!("chain public-key context is unavailable"))?
+            .params_profile
+            .ensure_admission_enabled()?;
+        self.remember_dkg_key(id, bytes)
+    }
+
+    pub fn remember_dkg_key(&self, id: &E3id, bytes: ArcBytes) -> Result<()> {
+        self.get(id)
+            .ok_or_else(|| anyhow::anyhow!("chain public-key context is unavailable"))?
+            .validate_dkg_key(&bytes)?;
         self.0
             .write()
             .expect("canonical key lock")

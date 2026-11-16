@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { expect } from "chai";
-import type { TypedDataDomain } from "ethers";
+import type {
+  ContractTransactionReceipt,
+  LogDescription,
+  TypedDataDomain,
+} from "ethers";
 import { readFileSync } from "node:fs";
 
 import {
@@ -32,6 +36,7 @@ describe("Synchronized DKG registry authority", function () {
       "PoseidonT3",
       "RegistrySortitionLib",
       "DkgPublicationLib",
+      "SynchronizedDkgSeedLib",
     ]) {
       const library = await ethers.deployContract(name);
       libraries[name] = await library.getAddress();
@@ -58,7 +63,11 @@ describe("Synchronized DKG registry authority", function () {
       .sort((a, b) =>
         a.address.toLowerCase().localeCompare(b.address.toLowerCase()),
       );
-    const nodes = signers.map((signer) => signer.address);
+    const nodes = signers.map((signer) => signer.address) as [
+      string,
+      string,
+      string,
+    ];
     const e3Id = (1n << 200n) + 8n;
     await controller.configure(
       e3Id,
@@ -66,7 +75,9 @@ describe("Synchronized DKG registry authority", function () {
       await wrapper.getAddress(),
       config,
     );
-    await registry.seed(e3Id, await controller.getAddress(), nodes);
+    const contextReceipt: ContractTransactionReceipt | null = await (
+      await registry.seed(e3Id, await controller.getAddress(), nodes)
+    ).wait();
     const { chainId } = await ethers.provider.getNetwork();
     const binding = await wrapper.setupBinding(e3Id, nodes);
     const ids = [0, 2];
@@ -98,10 +109,36 @@ describe("Synchronized DKG registry authority", function () {
       e3Id,
       ids,
       fields,
+      contextReceipt,
     };
   }
 
   type Fixture = Awaited<ReturnType<typeof setup>>;
+
+  it("establishes the distinct request-frozen synchronized signing domain", async () => {
+    const f = await networkHelpers.loadFixture(setup);
+    const events = f.contextReceipt!.logs.map((log): LogDescription | null => {
+      try {
+        return f.registry.interface.parseLog(log);
+      } catch {
+        return null;
+      }
+    });
+    const context = events.find(
+      (event) => event?.name === "SynchronizedDkgContextEstablished",
+    )!;
+    expect(context.args).to.deep.equal([
+      f.e3Id,
+      await f.registry.getAddress(),
+      await f.wrapper.getAddress(),
+      config,
+    ]);
+    expect(
+      events.some(
+        (event) => event?.name === "DkgFoldAttestationContextEstablished",
+      ),
+    ).to.equal(false);
+  });
 
   async function publication(
     f: Fixture,

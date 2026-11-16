@@ -16,6 +16,8 @@ use e3_trbfv::{
 use e3_zk_prover::{synchronized as adapters, ZkProver};
 use std::path::Path;
 
+#[path = "recovery/chain.rs"]
+mod chain;
 #[path = "recovery/publication.rs"]
 mod publication;
 #[path = "recovery/replay.rs"]
@@ -513,7 +515,7 @@ impl Node {
             bus,
             cipher: cipher(owner).await?,
             params_profile: PROFILE,
-            interfold_address: Address::repeat_byte(0x11),
+            interfold_address: setup.interfold,
             signer: setup.signers[owner].clone(),
             bfv_key,
             effects_enabled: false,
@@ -580,7 +582,18 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
     for owner in 0..3 {
         ciphers.push(cipher(owner).await?);
     }
-    let mut setup = Setup::with_ciphers(ciphers).await?;
+    let chain = if prover.is_some() {
+        Some(chain::Chain::start().await?)
+    } else {
+        None
+    };
+    let mut setup = Setup::with_ciphers_at(
+        ciphers,
+        chain
+            .as_ref()
+            .map_or(Address::repeat_byte(0x11), |chain| chain.controller),
+    )
+    .await?;
     let artifacts = artifacts(&mut setup, prover).await?;
     let mut plans = calculations(&setup)?;
     let mut successful = plans.clone();
@@ -652,7 +665,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     let roster = DkgCoordination::sign(
         e3.clone(),
-        Address::repeat_byte(0x11),
+        setup.interfold,
         0,
         DkgCoordinationKind::Roster,
         dealers,
@@ -779,13 +792,13 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
         ensure!(material.dealer_ids == DEALERS.iter().map(|&id| id as u32).collect::<Vec<_>>());
         material.validate(
             &setup.selected[owner],
-            Address::repeat_byte(0x11),
+            setup.interfold,
             &*cipher(owner).await?,
         )?;
         ensure!(material
             .validate(
                 &setup.selected[owner],
-                Address::repeat_byte(0x11),
+                setup.interfold,
                 &*cipher((owner + 1) % 3).await?
             )
             .is_err());
@@ -944,7 +957,17 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
         recovered.push((saved, state));
     }
     let qualified = match prover {
-        Some(prover) => publication::qualify(&recovered, &accepted_c4, prover, temp.path()).await,
+        Some(prover) => {
+            publication::qualify(
+                &recovered,
+                &accepted_c4,
+                prover,
+                temp.path(),
+                chain.as_ref().context("missing qualification chain")?,
+                &setup.signers,
+            )
+            .await
+        }
         None => Ok(()),
     };
     let stopped = stop(nodes).await;
@@ -972,7 +995,7 @@ async fn synchronized_disk_reopen_restores_actor_work_and_releases_rejected_slot
 }
 
 #[actix::test]
-#[ignore = "requires pinned nargo/bb, solc 0.8.28 and pnpm; restored runtime plans through real publication verification"]
+#[ignore = "requires pinned nargo/bb, solc 0.8.28, Anvil, pnpm and built contract artifacts; restored setup through real registry publication"]
 async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs() -> Result<()> {
     let (directory, prover) = real_prover(&CircuitName::SYNCHRONIZED_DKG)?;
     if let Err(error) = exercise(Some(&prover)).await {

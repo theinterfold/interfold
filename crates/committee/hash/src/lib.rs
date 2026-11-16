@@ -41,9 +41,8 @@ pub struct DkgSetupContext {
 }
 
 impl DkgSetupContext {
-    /// Split the complete, domain-separated request identity into injective 128-bit limbs.
-    pub fn binding(self, chain_id: u64, e3_id: U256) -> [u128; 2] {
-        let hash = keccak256(
+    pub fn hash(self, chain_id: u64, e3_id: U256) -> B256 {
+        keccak256(
             (
                 keccak256("interfold:sync-dkg-setup:v1"),
                 U256::from(chain_id),
@@ -53,7 +52,12 @@ impl DkgSetupContext {
                 self.crypto_config_id,
             )
                 .abi_encode(),
-        );
+        )
+    }
+
+    /// Split the complete, domain-separated request identity into injective 128-bit limbs.
+    pub fn binding(self, chain_id: u64, e3_id: U256) -> [u128; 2] {
+        let hash = self.hash(chain_id, e3_id);
         [
             u128::from_be_bytes(hash[..16].try_into().expect("16-byte high limb")),
             u128::from_be_bytes(hash[16..].try_into().expect("16-byte low limb")),

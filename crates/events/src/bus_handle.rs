@@ -112,6 +112,12 @@ impl BusHandle<Disabled> {
 }
 
 impl BusHandle<Enabled> {
+    /// Fail closed when an infrastructure projection cannot interpret an admitted durable fact.
+    /// Uses the same admission fence and node health signal as storage/fanout failures.
+    pub fn fail_event_pipeline(&self, reason: impl Into<String>) {
+        self.admission.fail(reason.into());
+    }
+
     /// Return a HistoryCollector for examining events that have passed through on the events bus
     pub fn history(&self) -> Addr<HistoryCollector<InterfoldEvent<Sequenced>>> {
         EventBus::<InterfoldEvent<Sequenced>>::history(&self.event_bus)

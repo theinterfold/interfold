@@ -20,8 +20,10 @@ Keccak of serialized ciphertext and the SAFE commitment are different bindings.
 and the configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
 commitment, and SK/ESM anchors. It updates before domain delivery and rebuilds from the full
 retained log before hydration, including history before snapshot cursors. Like chain ingestion, it
-tracks only requests whose profile this release admits, so the retained requests of a profile that a
-later release disables get no authority and do not stop recovery. Chunk history supplies
+admits decryption authority only for enabled profiles. The draft synchronized profile has a separate
+read-only DKG setup projection, requiring its confirmed signing context/authority/proof join; this
+does not admit C6, decryption domains, ordinary key publication or public-input repair. Invalid
+historical disabled requests acquire no authority and do not stop recovery. Chunk history supplies
 commitment-checked bytes. Neither gossip nor registry/head-state RPC populates this authority; the
 shared router performs no blocking key-authority reads or retry waits.
 

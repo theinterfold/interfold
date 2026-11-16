@@ -11,6 +11,9 @@ use e3_events::{CiphernodeSelected, E3id, SynchronizedProofContext};
 use e3_fhe_params::BfvDecryptionProtocol;
 use e3_trbfv::synchronized::SealedPrfKeys;
 
+mod publication;
+pub use publication::ConfirmedSynchronizedDkgSetup;
+
 pub fn decode_statement(
     config: &e3_zk_config::synchronized::Configs,
     binding: [u128; 2],

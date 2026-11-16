@@ -74,6 +74,35 @@ prepared("SynchronizedDkgPublication real proof", function () {
         (error: { severity: string }) => error.severity === "error",
       ),
     ).to.deep.equal([]);
+    // Retain this exact temporary verifier for the Rust recovered-setup/registry campaign.
+    fs.writeFileSync(
+      path.join(path.dirname(fixturePath!), "SynchronizedHonk.json"),
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(output.contracts["SynchronizedHonk.sol"]).map(
+            ([name, value]) => {
+              const compiled = value as {
+                abi: unknown;
+                evm: {
+                  bytecode: { object: string; linkReferences: unknown };
+                  deployedBytecode: { object: string };
+                };
+              };
+              return [
+                name,
+                {
+                  contractName: name,
+                  abi: compiled.abi,
+                  bytecode: `0x${compiled.evm.bytecode.object}`,
+                  deployedBytecode: `0x${compiled.evm.deployedBytecode.object}`,
+                  linkReferences: compiled.evm.bytecode.linkReferences,
+                },
+              ];
+            },
+          ),
+        ),
+      ),
+    );
     const [signer] = await ethers.getSigners();
     const deployed = new Map<string, string>();
     async function deploy(
