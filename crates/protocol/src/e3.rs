@@ -483,6 +483,11 @@ impl E3 {
         Some(seed)
     }
 
+    /// Whether this node takes part in the E3: it holds a ticket, or a seat on the committee.
+    pub(crate) fn takes_part(&self) -> bool {
+        self.has_ticket() || self.dkg.is_some()
+    }
+
     pub(crate) fn has_ticket(&self) -> bool {
         matches!(self.selection, Selection::Ticketed(_))
     }

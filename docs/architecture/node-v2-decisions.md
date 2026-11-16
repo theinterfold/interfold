@@ -418,10 +418,11 @@ Each rule is checkable in review.
   not a replay of old inputs. No conversion exists yet, and a crash leaves a journal tail that only
   the binary that wrote it can replay. `interfold start --drain` makes a node take no new E3: it
   submits no ticket and asks for no eligibility, the E3s it holds go on, and the log says when none
-  runs. The setting is a journaled input, so a replay ranks as the first run did. Draining starts at
-  once; a start without it takes E3s again after the first catch-up and ranks the requests still
-  open then, so ranking reads the chain as it is now. A committee needs many candidates (mainnet's
-  floor is 19 members), so draining many nodes at once can leave requests without a committee.
+  it takes part in runs. The setting is a journaled input, so a replay ranks as the first run did.
+  Draining starts at once; a start without it takes E3s again after the first catch-up and ranks the
+  requests still open then, so ranking reads the chain as it is now. A committee needs many
+  candidates (mainnet's floor is 19 members), so draining many nodes at once can leave requests
+  without a committee.
 
 - **D62. The machine reads no availability layer's coordinates.** The chain names a ciphertext by
   its hash and a locator in the availability layer's own encoding, and only that layer's reader

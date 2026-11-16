@@ -832,10 +832,12 @@ impl Node {
         self.draining
     }
 
-    /// Whether the node takes no new E3 and none it holds still runs on chain: it can stop for an
-    /// upgrade. Failed E3s it holds can still wait for settlement or governance's release.
+    /// Whether the node takes no new E3 and none it takes part in still runs on chain: it can stop
+    /// for an upgrade. Requests it only watches, and failed E3s it holds for settlement or
+    /// governance's release, do not count.
     pub fn drained(&self) -> bool {
-        self.draining && self.e3s.values().all(|state| !state.running())
+        let busy = |state: &E3| state.running() && state.takes_part();
+        self.draining && !self.e3s.values().any(busy)
     }
 
     /// How many operators the registry of `chain_id` lists, by the logs this node applied.
@@ -1895,6 +1897,25 @@ mod tests {
     fn draining_holds_for_the_deadlines_of_its_own_step() {
         let (mut node, _) = capped_request();
         assert!(submissions(&node.step(26, Input::Drain(true))).is_empty());
+    }
+
+    /// A draining node is drained once no E3 it takes part in runs. A request it only watches does
+    /// not count, nor a failed E3 it still holds.
+    #[test]
+    fn a_draining_node_is_drained_when_no_e3_it_takes_part_in_runs() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, requested(1, e3(1)));
+        node.step(5, seed_ready(5, e3(1), 42, 100));
+        node.step(6, Input::Drain(true));
+        node.step(7, requested(7, e3(2)));
+        assert!(!node.drained());
+        node.step(
+            8,
+            failure(8, e3(1), FailureReason::CommitteeFormationTimeout),
+        );
+        assert!(node.e3(&e3(1)).is_some() && node.e3(&e3(2)).is_some());
+        assert!(node.drained());
     }
 
     /// A node that stops draining takes a seat in a request that still has time for its ticket.

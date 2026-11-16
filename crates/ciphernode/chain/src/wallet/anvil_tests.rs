@@ -173,3 +173,51 @@ async fn a_new_call_after_a_restart_does_not_take_a_kept_nonce() {
     assert_eq!(kept.0, 1);
     assert_eq!(kept.1.map(|(nonce, _)| nonce), Some(0));
 }
+
+/// A chain node that keeps the abandoned transaction in its pool takes the empty one as its
+/// replacement, so the nonce goes to the account's transfer to itself.
+#[tokio::test]
+async fn a_kept_abandoned_transaction_is_replaced_by_the_empty_one() {
+    use alloy::consensus::Transaction as _;
+    let anvil = Anvil::new().arg("--no-mining").spawn();
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let account = signer.address();
+    let provider = ProviderBuilder::new()
+        .wallet(EthereumWallet::from(signer))
+        .connect_http(anvil.endpoint_url());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unmined.json");
+    let wallet = Arc::new(Wallet::new(provider.clone(), anvil.chain_id(), 0, path).unwrap());
+    let sending = tokio::spawn({
+        let wallet = wallet.clone();
+        async move { wallet.send(&call(1), 100_000).await }
+    });
+    while provider
+        .get_transaction_count(account)
+        .pending()
+        .await
+        .unwrap()
+        == 0
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    sending.abort();
+    let _ = sending.await;
+
+    for _ in 0..2 {
+        wallet.free_abandoned().await.unwrap();
+    }
+    provider.evm_mine(None).await.unwrap();
+    let block = provider
+        .get_block_by_number(1.into())
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+    let mined: Vec<_> = block
+        .transactions
+        .txns()
+        .map(|tx| (tx.nonce(), tx.to()))
+        .collect();
+    assert_eq!(mined, [(0, Some(account))]);
+}

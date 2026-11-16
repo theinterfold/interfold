@@ -394,7 +394,9 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<(), RpcError>>,
 {
-    let mut every = tokio::time::interval(FREE_NONCES_EVERY);
+    // The first look comes a minute in, when work dispatched at the start drives its calls.
+    let first = tokio::time::Instant::now() + FREE_NONCES_EVERY;
+    let mut every = tokio::time::interval_at(first, FREE_NONCES_EVERY);
     loop {
         every.tick().await;
         if let Err(error) = free().await {
