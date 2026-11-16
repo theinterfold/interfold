@@ -270,7 +270,7 @@ REQUEST_OUTPUT=$(cd "$ROOT_DIR" && pnpm committee:new \
   --input-window-start "$INPUT_WINDOW_START" \
   --input-window-end "$INPUT_WINDOW_END" \
   --committee-size "${V2_COMMITTEE_SIZE:-0}" \
-  --param-set 0)
+  --profile ss-insecure-64)
 printf '%s\n' "$REQUEST_OUTPUT"
 E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 
