@@ -11,7 +11,7 @@ or audit remediation is not completeness evidence.
 
 | Proof   | Statement                                                                                                                                                                                 |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C0      | BFV share-encryption public key is committed, and every coefficient is centred modulo its `q_i`.                                                                                          |
+| C0      | BFV share-encryption public key is committed, and every coefficient is centred modulo its `q_i`. Key generation is deliberately not proven; see the note below.                           |
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
 | C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets.                                                                                                                                 |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
@@ -19,6 +19,16 @@ or audit remediation is not completeness evidence.
 | C5      | Aggregate PK derives from exactly the H canonical dealer shares.                                                                                                                          |
 | C6      | The decryption share derives from the anchored SK/ESM and ciphertext, in one canonical E3 domain. Full `d` enters Fiat-Shamir; the C7-facing commitment binds the configured native tail. |
 | C7      | Exactly T+1 distinct ordered shares reconstruct every claimed message coefficient, including zeros.                                                                                       |
+
+**C0 does not prove key generation.** A party can publish a bounded key it holds no secret for, such
+as a copy of another party's key or zero. That key only receives the shares dealt to its owner:
+dealers draw fresh encryption randomness per recipient and limb, C4 aggregates plaintext shares
+pinned to C2 commitments rather than decrypting in-circuit, and accusations come only from failed
+proofs or cross-proof commitment mismatches, never from a recipient failing to decrypt. A bad key
+therefore exposes or loses only its owner's shares, which a corrupt party could publish or withhold
+anyway. If encryption randomness is ever shared across recipients or recipients can blame dealers
+for undecryptable shares, C0 must prove `pk0 = -pk1 * s + e` with `s` and `e` bounded as key
+generation samples them; the equation alone holds for `s = 0`, `e = pk0`.
 
 [DKG](dkg.md) defines identities, multiplicity, and roster links;
 [threshold decryption](threshold-decryption.md) defines the domain and final verifier checks. Both
