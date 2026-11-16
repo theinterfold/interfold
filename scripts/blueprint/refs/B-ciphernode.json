@@ -160,9 +160,9 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/multithread/src/multithread.rs@526@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      "crates/ciphernode/multithread/src/multithread.rs@856@fn handle_compute_request(",
-      "crates/ciphernode/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+      "crates/ciphernode/multithread/src/multithread.rs@566@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
+      "crates/ciphernode/multithread/src/multithread.rs@904@fn handle_compute_request(",
+      "crates/ciphernode/multithread/src/multithread.rs@714@bus.publish(value, ctx)?;"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ComputeRequest>> for Multithread {",

@@ -205,7 +205,7 @@
         {
           "name": "per-job witness and proof files in the bb work dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/prover.rs@291@let job_dir = self"
+          "ref": "crates/zk/prover/src/prover.rs@309@let job_dir = self"
         },
         {
           "name": "node-fold inner proofs and fold metadata in Repositories",
@@ -232,7 +232,7 @@
         {
           "name": "ZkProver",
           "what": "runs bb prove and bb verify as subprocesses with a wall-clock cap",
-          "ref": "crates/zk/prover/src/prover.rs@143@pub struct ZkProver"
+          "ref": "crates/zk/prover/src/prover.rs@153@pub struct ZkProver"
         },
         {
           "name": "Provable",
@@ -290,7 +290,7 @@
         },
         {
           "why": "the exact bb prove arguments",
-          "ref": "crates/zk/prover/src/prover.rs@313@let mut args = vec!["
+          "ref": "crates/zk/prover/src/prover.rs@331@let mut args = vec!["
         },
         {
           "why": "protocol request adaptation, witness decryption and prover execution without actor scheduling",
