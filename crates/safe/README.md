@@ -37,6 +37,11 @@ or incomplete `finish()` panic. `compute_tag` binds the pattern and domain. The 
 three and capacity one. Field conversion and domain choice belong to each commitment statement, not
 to implicit normalization here.
 
+A commitment can span several proofs. `initial_state`, `absorb_from` and `squeeze_one_after_absorb`
+carry `(state, absorb_pos)` between the pieces of one ABSORB, matching Noir `lib::math::safe`; any
+split gives the digest of one `absorb` of the whole stream. They do not count elements against the
+pattern, so the caller must absorb exactly the pattern's ABSORB total.
+
 ## Native and guest builds
 
 Default builds use the native Poseidon2 implementation. The `openvm` feature enables guest
