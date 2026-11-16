@@ -213,7 +213,10 @@ describe("Synchronized DKG registry authority", function () {
           f.e3Id,
           await publication(f, { [name]: value }),
         ),
-      ).to.be.revert(ethers);
+      ).to.be.revertedWithCustomError(
+        f.registry,
+        "InvalidSynchronizedDkgPublication",
+      );
       await unchanged(f);
       await f.registry.publishSynchronizedCommittee(
         f.e3Id,
@@ -235,7 +238,10 @@ describe("Synchronized DKG registry authority", function () {
           f.e3Id,
           await publication(f, {}, domain),
         ),
-      ).to.be.revert(ethers);
+      ).to.be.revertedWithCustomError(
+        f.registry,
+        "InvalidSynchronizedDkgPublication",
+      );
       await unchanged(f);
     });
   }
@@ -254,7 +260,10 @@ describe("Synchronized DKG registry authority", function () {
           ...candidate,
           signatures,
         }),
-      ).to.be.revert(ethers);
+      ).to.be.revertedWithCustomError(
+        f.registry,
+        "InvalidSynchronizedDkgPublication",
+      );
       await unchanged(f);
     }
   });
@@ -276,12 +285,15 @@ describe("Synchronized DKG registry authority", function () {
     await f.circuit.setReturnValue(false);
     await expect(
       f.registry.publishSynchronizedCommittee(f.e3Id, candidate),
-    ).to.be.revert(ethers);
+    ).to.be.revertedWithCustomError(f.wrapper, "InvalidPublication");
     await f.circuit.setReturnValue(true);
     await f.registry.exclude(f.e3Id, f.nodes[2]!);
     await expect(
       f.registry.publishSynchronizedCommittee(f.e3Id, candidate),
-    ).to.be.revert(ethers);
+    ).to.be.revertedWithCustomError(
+      f.registry,
+      "InvalidSynchronizedDkgPublication",
+    );
     await unchanged(f);
   });
 
@@ -296,7 +308,10 @@ describe("Synchronized DKG registry authority", function () {
     );
     await expect(
       f.registry.publishSynchronizedCommittee(f.e3Id, candidate),
-    ).to.be.revert(ethers);
+    ).to.be.revertedWithCustomError(
+      f.registry,
+      "InvalidSynchronizedDkgPublication",
+    );
     await f.controller.configure(
       f.e3Id,
       await f.registry.getAddress(),
@@ -335,7 +350,10 @@ describe("Synchronized DKG registry authority", function () {
     );
     await expect(
       f.registry.publishSynchronizedCommittee(f.e3Id, candidate),
-    ).to.be.revert(ethers);
+    ).to.be.revertedWithCustomError(
+      f.registry,
+      "InvalidSynchronizedDkgPublication",
+    );
     await unchanged(f);
     await f.registry.publishSynchronizedCommittee(
       f.e3Id,
@@ -363,7 +381,7 @@ describe("Synchronized DKG registry authority", function () {
           n,
           h,
         ]),
-      ).to.be.revert(ethers);
+      ).to.be.revertedWithCustomError(f.wrapper, "InvalidConfiguration");
     }
   });
 
