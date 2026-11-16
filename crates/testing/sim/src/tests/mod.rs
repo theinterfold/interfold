@@ -16,8 +16,8 @@ use crate::{Faults, Jobs, MockJobs, Sim};
 use alloy_primitives::{Address, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
-    node::{ChainFact, CommitteeSeed},
     node::CryptoParams,
+    node::{ChainFact, CommitteeSeed},
     testing::{address, e3, ATTESTATION, COMMITTEE_DEADLINE, INTERFOLD, REQUEST, TIMING},
 };
 

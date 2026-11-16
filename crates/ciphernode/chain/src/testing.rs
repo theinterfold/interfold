@@ -7,9 +7,9 @@
 use crate::{Contracts, RawLog};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_evm_contracts::IInterfold;
 use e3_protocol::node::LogPosition;
-use e3_committee::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashSet};
 
 pub const CONFIG: B256 = B256::repeat_byte(0xcc);
