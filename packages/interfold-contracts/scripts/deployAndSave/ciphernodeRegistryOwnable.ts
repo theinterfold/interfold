@@ -74,6 +74,12 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
   const registrySortitionLib = await registrySortitionLibFactory.deploy();
   await registrySortitionLib.waitForDeployment();
   const registrySortitionLibAddress = await registrySortitionLib.getAddress();
+  const dkgPublicationLib = await ethers.deployContract(
+    "DkgPublicationLib",
+    signer,
+  );
+  await dkgPublicationLib.waitForDeployment();
+  const dkgPublicationLibAddress = await dkgPublicationLib.getAddress();
 
   const ciphernodeRegistryFactory = await ethers.getContractFactory(
     CiphernodeRegistryOwnableFactory.abi,
@@ -82,6 +88,8 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
         poseidonT3Address,
       "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
         registrySortitionLibAddress,
+      "project/contracts/lib/DkgPublicationLib.sol:DkgPublicationLib":
+        dkgPublicationLibAddress,
     }),
     signer,
   );
@@ -125,6 +133,7 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
       libraries: {
         PoseidonT3: poseidonT3Address,
         RegistrySortitionLib: registrySortitionLibAddress,
+        DkgPublicationLib: dkgPublicationLibAddress,
       },
       blockNumber,
       address: proxyAddress,
@@ -135,6 +144,11 @@ export const deployAndSaveCiphernodeRegistryOwnable = async ({
   storeDeploymentArgs(
     { address: registrySortitionLibAddress, blockNumber },
     "RegistrySortitionLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: dkgPublicationLibAddress, blockNumber },
+    "DkgPublicationLib",
     chain,
   );
 
@@ -187,6 +201,12 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
   const registrySortitionLib = await registrySortitionLibFactory.deploy();
   await registrySortitionLib.waitForDeployment();
   const registrySortitionLibAddress = await registrySortitionLib.getAddress();
+  const dkgPublicationLib = await ethers.deployContract(
+    "DkgPublicationLib",
+    signer,
+  );
+  await dkgPublicationLib.waitForDeployment();
+  const dkgPublicationLibAddress = await dkgPublicationLib.getAddress();
 
   const ciphernodeRegistryFactory = await ethers.getContractFactory(
     CiphernodeRegistryOwnableFactory.abi,
@@ -195,6 +215,8 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
         poseidonT3Address,
       "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
         registrySortitionLibAddress,
+      "project/contracts/lib/DkgPublicationLib.sol:DkgPublicationLib":
+        dkgPublicationLibAddress,
     }),
     signer,
   );
@@ -246,6 +268,7 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
         ...preDeployedArgs.libraries,
         PoseidonT3: poseidonT3Address,
         RegistrySortitionLib: registrySortitionLibAddress,
+        DkgPublicationLib: dkgPublicationLibAddress,
       },
     },
     "CiphernodeRegistryOwnable",
@@ -255,6 +278,11 @@ export const upgradeAndSaveCiphernodeRegistryOwnable = async ({
   storeDeploymentArgs(
     { address: registrySortitionLibAddress, blockNumber },
     "RegistrySortitionLib",
+    chain,
+  );
+  storeDeploymentArgs(
+    { address: dkgPublicationLibAddress, blockNumber },
+    "DkgPublicationLib",
     chain,
   );
 

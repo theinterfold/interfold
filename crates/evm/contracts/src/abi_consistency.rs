@@ -2,7 +2,7 @@
 
 use crate::{
     IBondingRegistry, ICiphernodeRegistry, IERC20Metadata, IInterfold, IInterfoldTicketToken,
-    INodeReleaseRegistry, IRandomnessProvider, ISlashingManager,
+    INodeReleaseRegistry, IRandomnessProvider, ISlashingManager, ISynchronizedDkgPublication,
 };
 use alloy_json_abi::JsonAbi;
 use serde_json::{json, Value};
@@ -177,6 +177,11 @@ fn assert_subset(bindings: JsonAbi, contract: &str, forwarded: &[(&str, &str)]) 
 #[test]
 fn declared_bindings_match_solidity() {
     assert_subset(
+        ISynchronizedDkgPublication::abi::contract(),
+        "registry/CiphernodeRegistryOwnable.sol/CiphernodeRegistryOwnable.json",
+        &[],
+    );
+    assert_subset(
         IInterfold::abi::contract(),
         "Interfold.sol/Interfold.json",
         &[(
@@ -189,6 +194,10 @@ fn declared_bindings_match_solidity() {
         ICiphernodeRegistry::abi::contract(),
         "registry/CiphernodeRegistryOwnable.sol/CiphernodeRegistryOwnable.json",
         &[
+            (
+                "InvalidProof",
+                "interfaces/IPkVerifier.sol/IPkVerifier.json",
+            ),
             (
                 "DomainBindingMismatch",
                 "interfaces/IPkVerifier.sol/IPkVerifier.json",

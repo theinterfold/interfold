@@ -149,6 +149,8 @@ describe("CiphernodeRegistryOwnable", function () {
       const sortitionDeployment = await sortitionFactory.deploy();
       await sortitionDeployment.waitForDeployment();
       const sortitionAddress = await sortitionDeployment.getAddress();
+      const dkgPublication = await ethers.deployContract("DkgPublicationLib");
+      await dkgPublication.waitForDeployment();
       // The default signer deploys the proxy, so `msg.sender` in `initialize` differs from `_owner`.
       const [deployer, owner] = await ethers.getSigners();
       if (!deployer || !owner) throw new Error("Bad getSigners() output");
@@ -159,6 +161,7 @@ describe("CiphernodeRegistryOwnable", function () {
           libraries: {
             PoseidonT3: poseidonAddress,
             RegistrySortitionLib: sortitionAddress,
+            DkgPublicationLib: await dkgPublication.getAddress(),
           },
         },
       );

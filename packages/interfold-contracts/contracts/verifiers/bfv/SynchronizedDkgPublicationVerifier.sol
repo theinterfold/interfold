@@ -3,10 +3,11 @@ pragma solidity 0.8.28;
 
 import { ICircuitVerifier } from "../../interfaces/ICircuitVerifier.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
+import { BfvProtocol } from "../../lib/BfvProtocol.sol";
 
 /**
- * @notice Draft synchronized setup verifier, deliberately not an IPkVerifier route.
- * @dev The caller must supply request-frozen committee/roster and admitted batch/key authority.
+ * @notice Synchronized setup verifier, deliberately not an IPkVerifier/SS route.
+ * @dev The registry supplies request-frozen facts and checks selected-recipient publication consent.
  * This stateless boundary neither authenticates those facts nor publishes/stores a committee.
  * SK and key-bundle anchors are distinct; no ESM field or attestation is reinterpreted.
  */
@@ -37,11 +38,11 @@ contract SynchronizedDkgPublicationVerifier {
         if (
             verifier.code.length == 0 ||
             deployment == address(0) ||
-            configId == bytes32(0) ||
+            configId != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
             treeHash == bytes32(0) ||
             c5Hash == bytes32(0) ||
-            committeeH == 0 ||
-            committeeH >= committeeN
+            committeeH != BfvProtocol.MINIMUM_H ||
+            committeeN != BfvProtocol.MINIMUM_N
         ) revert InvalidConfiguration();
         CIRCUIT_VERIFIER = ICircuitVerifier(verifier);
         INTERFOLD = deployment;
@@ -62,7 +63,15 @@ contract SynchronizedDkgPublicationVerifier {
         bytes32 pkCommitment,
         bytes32 dealerBatch,
         bytes calldata proof
-    ) external view returns (bytes32[] memory sk, bytes32[] memory bundles) {
+    )
+        external
+        view
+        returns (
+            bytes32[] memory sk,
+            bytes32[] memory bundles,
+            bytes32[] memory thresholdKeys
+        )
+    {
         (bytes memory raw, bytes32[] memory inputs) = abi.decode(
             proof,
             (bytes, bytes32[])
@@ -87,6 +96,7 @@ contract SynchronizedDkgPublicationVerifier {
         ) revert InvalidPublication();
         sk = new bytes32[](H);
         bundles = new bytes32[](H);
+        thresholdKeys = new bytes32[](H);
         for (uint256 i = 0; i < H; ++i) {
             if (
                 dealers[i] >= N ||
@@ -95,8 +105,23 @@ contract SynchronizedDkgPublicationVerifier {
             ) revert InvalidPublication();
             sk[i] = inputs[5 + 2 * H + i];
             bundles[i] = inputs[5 + 3 * H + i];
+            thresholdKeys[i] = inputs[5 + H + i];
         }
         if (!CIRCUIT_VERIFIER.verify(raw, inputs)) revert InvalidPublication();
+    }
+
+    /// @notice Request context signed by each selected recipient before registry publication.
+    function setupBinding(
+        uint256 e3Id,
+        address[] calldata committee
+    ) external view returns (bytes32) {
+        if (committee.length != N) revert InvalidPublication();
+        return _setupBinding(e3Id, committee);
+    }
+
+    /// @notice Honest-party metadata for request-time verifier configuration checks.
+    function h() external view returns (uint256) {
+        return H;
     }
 
     function _setupBinding(

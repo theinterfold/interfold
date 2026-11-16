@@ -13,6 +13,8 @@ const RELEASE_CONTRACTS = [
   "Interfold",
   "BondingRegistry",
   "CiphernodeRegistryOwnable",
+  "DkgPublicationLib",
+  "SynchronizedDkgPublicationVerifier",
   "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
   "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
 ] as const;

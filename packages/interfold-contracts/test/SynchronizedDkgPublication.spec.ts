@@ -33,6 +33,7 @@ prepared("SynchronizedDkgPublication real proof", function () {
       "contracts/verifiers/bfv/SynchronizedDkgPublicationVerifier.sol",
       "contracts/interfaces/ICircuitVerifier.sol",
       "contracts/lib/CommitteeHashLib.sol",
+      "contracts/lib/BfvProtocol.sol",
       "contracts/verifiers/bfv/BfvPkVerifier.sol",
       "contracts/interfaces/IPkVerifier.sol",
     ];
@@ -150,6 +151,12 @@ prepared("SynchronizedDkgPublication real proof", function () {
     const accepted = await call();
     expect([...accepted[0]]).to.deep.equal(fixture.sk_commitments);
     expect([...accepted[1]]).to.deep.equal(fixture.key_bundles);
+    expect([...accepted[2]]).to.deep.equal(
+      fixture.public_inputs.slice(
+        5 + fixture.dealers.length,
+        5 + 2 * fixture.dealers.length,
+      ),
+    );
     const ss = await deploy(
       "contracts/verifiers/bfv/BfvPkVerifier.sol",
       "BfvPkVerifier",
@@ -228,29 +235,29 @@ prepared("SynchronizedDkgPublication real proof", function () {
     await expect(
       call(encode(fixture.public_inputs, ethers.hexlify(corrupted))),
     ).to.be.revert(ethers);
-    for (const slot of [1, 2]) {
-      const other = [...configuration];
-      other[slot] =
-        slot === 1
-          ? "0x1212121212121212121212121212121212121212"
-          : ethers.toBeHex(123, 32);
-      const changed = await deploy(
-        wrapperFile,
-        "SynchronizedDkgPublicationVerifier",
-        other,
-      );
-      await expect(
-        changed
-          .getFunction("verify")
-          .staticCall(
-            fixture.e3_id,
-            fixture.committee,
-            fixture.dealers,
-            fixture.pk_commitment,
-            fixture.dealer_batch,
-            encode(fixture.public_inputs),
-          ),
-      ).to.be.revert(ethers);
-    }
+    const wrongConfig = [...configuration];
+    wrongConfig[2] = ethers.toBeHex(123, 32);
+    await expect(
+      deploy(wrapperFile, "SynchronizedDkgPublicationVerifier", wrongConfig),
+    ).to.be.revert(ethers);
+    const other = [...configuration];
+    other[1] = "0x1212121212121212121212121212121212121212";
+    const changed = await deploy(
+      wrapperFile,
+      "SynchronizedDkgPublicationVerifier",
+      other,
+    );
+    await expect(
+      changed
+        .getFunction("verify")
+        .staticCall(
+          fixture.e3_id,
+          fixture.committee,
+          fixture.dealers,
+          fixture.pk_commitment,
+          fixture.dealer_batch,
+          encode(fixture.public_inputs),
+        ),
+    ).to.be.revert(ethers);
   });
 });

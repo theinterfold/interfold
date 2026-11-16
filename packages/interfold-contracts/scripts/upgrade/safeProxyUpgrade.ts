@@ -65,6 +65,7 @@ interface UpgradePlan {
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
+  dkgPublicationLibrary?: string;
   operator: string;
   protocolOwner: string;
   safe?: string;
@@ -143,6 +144,7 @@ export async function proposeProxyUpgrade(
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     sortitionLibrary: deployed.sortitionLibrary,
+    dkgPublicationLibrary: deployed.dkgPublicationLibrary,
     operator: operatorAddress,
     protocolOwner: config.protocolOwner,
     safe: config.safe,
@@ -278,6 +280,7 @@ export async function deployUpgradeImplementation(
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
+  dkgPublicationLibrary?: string;
   refundClaimLibrary?: string;
 }> {
   if (target === "interfold") {
@@ -314,6 +317,9 @@ export async function deployUpgradeImplementation(
     const sortition = await sortitionFactory.deploy();
     await sortition.waitForDeployment();
     const sortitionLibrary = await deployedAddress(sortition);
+    const publication = await ethers.deployContract("DkgPublicationLib");
+    await publication.waitForDeployment();
+    const dkgPublicationLibrary = await deployedAddress(publication);
     const factory = await ethers.getContractFactory(
       RegistryFactory.abi,
       RegistryFactory.linkBytecode({
@@ -321,6 +327,8 @@ export async function deployUpgradeImplementation(
           deployment.poseidonT3,
         "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
           sortitionLibrary,
+        "project/contracts/lib/DkgPublicationLib.sol:DkgPublicationLib":
+          dkgPublicationLibrary,
       }),
       operator,
     );
@@ -329,6 +337,7 @@ export async function deployUpgradeImplementation(
     return {
       implementation: await deployedAddress(implementation),
       sortitionLibrary,
+      dkgPublicationLibrary,
     };
   }
 
@@ -457,6 +466,7 @@ Protocol upgrade prepared
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   sortitionLibrary: ${plan.sortitionLibrary ?? "(not applicable)"}
+  dkgPublicationLibrary: ${plan.dkgPublicationLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}
   protocol owner:  ${plan.protocolOwner}
   governance batch:${plan.safeTransactions}

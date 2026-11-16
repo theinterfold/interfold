@@ -26,6 +26,7 @@ STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
+ACTIVE_PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
 RAN_STAMP_CHECK=false
 RAN_GENERATED_CHECK=false
 
@@ -36,7 +37,8 @@ fail() {
 
 for required_file in \
   "$CRYPTO_CONFIG_JSON" \
-  "$PROTOCOL_SOL"; do
+  "$PROTOCOL_SOL" \
+  "$ACTIVE_PROTOCOL_SOL"; do
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
@@ -231,36 +233,46 @@ done
 
 # Capture the reader's output so that a failure stops the check. A process substitution would hide
 # the failure and leave nothing to compare.
-ADMITTED_CONFIGS=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" <<'NODE'
+PROFILE_CONFIGS=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" <<'NODE'
 import { readFileSync } from 'node:fs';
 const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 for (const profile of config.bfv.profiles) {
   for (const configuration of profile.configurations) {
-    if (!configuration.admissionEnabled) continue;
+    if (typeof configuration.admissionEnabled !== 'boolean') throw new Error('Missing admission decision');
     const label = `${profile.profile}_${configuration.committee}`.replaceAll('-', '_').toUpperCase();
-    process.stdout.write(`${label};${configuration.cryptoConfigId}\n`);
+    process.stdout.write(`${label};${configuration.cryptoConfigId};${configuration.admissionEnabled}\n`);
   }
 }
 NODE
-) || fail "could not read the admitted configurations from $CRYPTO_CONFIG_JSON"
+) || fail "could not read the profile configurations from $CRYPTO_CONFIG_JSON"
 
-# Every admitted configuration needs a constant, and every constant an admitted configuration.
-binding_config_names=$(cut -d';' -f1 <<< "$ADMITTED_CONFIGS" | sed '/^$/d; s/$/_CONFIG_ID/' | sort)
+# Identity is not admission: disabled profiles also need exact identities at qualification boundaries.
+binding_config_names=$(cut -d';' -f1 <<< "$PROFILE_CONFIGS" | sed '/^$/d; s/$/_CONFIG_ID/' | sort)
 protocol_config_names=$(
   sed -nE 's/^[[:space:]]*bytes32 internal constant ([A-Z0-9_]+_CONFIG_ID)[[:space:]]*=.*/\1/p' "$PROTOCOL_SOL" \
     | sort
 )
 if [[ "$binding_config_names" != "$protocol_config_names" ]]; then
-  fail "drift: admitted configurations in $CRYPTO_CONFIG_JSON must match the *_CONFIG_ID constants in $PROTOCOL_SOL"
+  fail "drift: profile configurations in $CRYPTO_CONFIG_JSON must match the *_CONFIG_ID constants in $PROTOCOL_SOL"
 fi
 
-while IFS=';' read -r label binding_id; do
+# Keep the admission check separate and exact: request configuration must reference all and only
+# admitted identities. The full contract/native tests, not this static gate, establish behavior.
+admitted_config_names=$(awk -F';' '$3 == "true" { print $1 "_CONFIG_ID" }' <<< "$PROFILE_CONFIGS" | sort)
+request_config_names=$(
+  sed -nE 's/.*BfvProtocol\.([A-Z0-9_]+_CONFIG_ID).*/\1/p' "$ACTIVE_PROTOCOL_SOL" | sort -u
+)
+if [[ "$admitted_config_names" != "$request_config_names" ]]; then
+  fail "drift: admitted configurations must match the request configuration identities in $ACTIVE_PROTOCOL_SOL"
+fi
+
+while IFS=';' read -r label binding_id admission_enabled; do
   [[ -n "$label" ]] || continue
   expected_id=$(sol_bytes32 "${label}_CONFIG_ID")
   if [[ -z "$binding_id" || "$binding_id" != "$expected_id" ]]; then
     fail "drift: ${label} config ID must match $PROTOCOL_SOL in shared bindings"
   fi
-done <<< "$ADMITTED_CONFIGS"
+done <<< "$PROFILE_CONFIGS"
 
 check_utils_route() {
   local symbol="$1"

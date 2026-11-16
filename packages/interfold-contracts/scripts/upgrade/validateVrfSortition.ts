@@ -62,6 +62,13 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   ] as const) {
     await requireContract(ethers.provider, target, label);
   }
+  if (plan.dkgPublicationLibrary) {
+    await requireContract(
+      ethers.provider,
+      plan.dkgPublicationLibrary,
+      "DKG publication library",
+    );
+  }
 
   assertEqual(
     "registry implementation",
@@ -201,6 +208,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   writeJson(deploymentFile, {
     ...deployment,
     registrySortitionLib: plan.sortitionLibrary,
+    dkgPublicationLib: plan.dkgPublicationLibrary,
     ciphernodeRegistryImplementation: plan.registryImplementation,
     interfoldImplementation: plan.interfoldImplementation,
     interfoldLifecycle: plan.lifecycleLibrary,

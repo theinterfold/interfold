@@ -76,6 +76,9 @@ export async function deployProtocolContracts(
   const registrySortition = await registrySortitionFactory.deploy();
   await registrySortition.waitForDeployment();
   const registrySortitionLib = await deployedAddress(registrySortition);
+  const publication = await ethers.deployContract("DkgPublicationLib");
+  await publication.waitForDeployment();
+  const dkgPublicationLib = await deployedAddress(publication);
 
   const registryFactory = await ethers.getContractFactory(
     RegistryFactory.abi,
@@ -83,6 +86,8 @@ export async function deployProtocolContracts(
       "npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3": poseidonT3,
       "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
         registrySortitionLib,
+      "project/contracts/lib/DkgPublicationLib.sol:DkgPublicationLib":
+        dkgPublicationLib,
     }),
     operator,
   );
@@ -259,6 +264,7 @@ export async function deployProtocolContracts(
       slashingEvidenceLib,
       poseidonT3,
       registrySortitionLib,
+      dkgPublicationLib,
       ...randomness,
       ciphernodeRegistry: registryProxy.proxy,
       ciphernodeRegistryImplementation,

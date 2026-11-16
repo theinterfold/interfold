@@ -53,11 +53,16 @@ examples.
 
 ## To deploy
 
-The draft `SynchronizedDkgPublicationVerifier` is **not** a deployment route: it
-is a stateless qualification boundary, not an `IPkVerifier` implementation or
-registry/attestation integration. Its SK/key-bundle outputs must not replace the
-SS registry's ESM anchors. Protocol review and separate rollout decisions remain
-required.
+The draft `SynchronizedDkgPublicationVerifier` is **not** a deployment route or
+an `IPkVerifier` implementation. Its separate registry entry requires H
+recipient signatures and stores versioned SK/key-bundle authority, never SS ESM
+anchors. Synchronized admission remains disabled; do not register this wrapper
+as the SS PK-verifier default. Native authority/recovery wiring, human protocol
+review and separate rollout decisions remain required.
+
+Registry implementations now link `DkgPublicationLib` as well as the existing
+sortition/Poseidon libraries. Preparation scripts record that library address;
+this change does not deploy or activate a synchronized verifier.
 
 From the repository root,
 `E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:publication` prepares real

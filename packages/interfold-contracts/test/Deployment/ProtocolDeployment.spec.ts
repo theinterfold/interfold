@@ -6,7 +6,7 @@
 import { expect } from "chai";
 import { ethers as ethersLib } from "ethers";
 import fs from "fs";
-import { network } from "hardhat";
+import { artifacts, network } from "hardhat";
 import os from "os";
 import path from "path";
 
@@ -319,6 +319,7 @@ describe("Protocol deployment", function () {
       registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
       registryImplementation: "0x0000000000000000000000000000000000000011",
       sortitionLibrary: "0x0000000000000000000000000000000000000012",
+      dkgPublicationLibrary: "0x0000000000000000000000000000000000000024",
       interfoldProxy: deployment.interfold,
       interfoldProxyAdmin: deployment.interfoldProxyAdmin,
       interfoldImplementation: "0x0000000000000000000000000000000000000013",
@@ -375,6 +376,7 @@ describe("Protocol deployment", function () {
     const validatedDeployment = {
       ...deployment,
       registrySortitionLib: plan.sortitionLibrary,
+      dkgPublicationLib: plan.dkgPublicationLibrary,
       ciphernodeRegistryImplementation: plan.registryImplementation,
       interfoldImplementation: plan.interfoldImplementation,
       interfoldLifecycle: plan.lifecycleLibrary,
@@ -391,6 +393,20 @@ describe("Protocol deployment", function () {
     };
     expect(() =>
       assertValidatedVrfDeploymentMatchesPlan(validatedDeployment, plan),
+    ).not.to.throw();
+    for (const dkgPublicationLib of [undefined, ethersLib.ZeroAddress]) {
+      expect(() =>
+        assertValidatedVrfDeploymentMatchesPlan(
+          { ...validatedDeployment, dkgPublicationLib },
+          plan,
+        ),
+      ).to.throw("deployment DKG publication library");
+    }
+    expect(() =>
+      assertValidatedVrfDeploymentMatchesPlan(
+        { ...validatedDeployment, dkgPublicationLib: undefined },
+        { ...plan, dkgPublicationLibrary: undefined },
+      ),
     ).not.to.throw();
     expect(() =>
       assertValidatedVrfDeploymentMatchesPlan(
@@ -985,6 +1001,25 @@ describe("Protocol deployment", function () {
     };
 
     const result = await deployProtocolContracts(ethers, operator, config);
+    const publicationLibrary = result.contracts.dkgPublicationLib!;
+    expect(await ethers.provider.getCode(publicationLibrary)).not.to.equal(
+      "0x",
+    );
+    const registryArtifact = await artifacts.readArtifact(
+      "CiphernodeRegistryOwnable",
+    );
+    const references = Object.values(
+      registryArtifact.deployedLinkReferences,
+    ).flatMap((libraries) => libraries.DkgPublicationLib ?? []);
+    expect(references.length).to.be.greaterThan(0);
+    const implementationCode = await ethers.provider.getCode(
+      result.contracts.ciphernodeRegistryImplementation,
+    );
+    for (const { start, length } of references) {
+      expect(
+        `0x${implementationCode.slice(2 + 2 * start, 2 + 2 * (start + length))}`,
+      ).to.equal(publicationLibrary.toLowerCase());
+    }
     const ticket = await ethers.getContractAt(
       "InterfoldTicketToken",
       result.contracts.ticketToken,
@@ -1215,6 +1250,10 @@ describe("Protocol deployment", function () {
       const records = JSON.parse(
         fs.readFileSync("deployed_contracts.json", "utf8"),
       )[chain];
+      expect(records.DkgPublicationLib.address).to.equal(publicationLibrary);
+      expect(
+        records.CiphernodeRegistryOwnable.libraries.DkgPublicationLib,
+      ).to.equal(publicationLibrary);
 
       const pkRoutes = routes.bfvVerifierRoutes.map(
         (route) => route.pkVerifier,

@@ -264,10 +264,30 @@ publication wrapper use isolated sync namespaces, while all SS layouts, deployed
 event/snapshot encodings and release counters remain unchanged by this addition. Removing these
 unadmitted definitions requires no production reset because the production guards cannot write their
 work. This is not approval to deploy an intermediate binary or to reuse schema-9 data on rollback.
-The stateless draft Solidity verifier is not wired to `IPkVerifier`, registry storage, attestations
-or deployment manifests. Human review must approve the batch/context encoding and a separate
-SK/key-bundle authority schema, artifact/version pins, rollout and rollback before that integration;
-the SS ESM anchor cannot be repurposed.
+The stateless draft Solidity verifier is not an `IPkVerifier` route and remains absent from
+deployment manifests. Its disabled request identity now has a separate registry publication entry,
+EIP-712 consent domain and versioned SK/key-bundle authority; the SS ESM anchor is not repurposed.
+
+The authority extension appends one mapping after the registry's existing storage, consuming one
+reserved gap slot without moving the gap's end. There is no initializer/reinitializer or baseline
+replacement. Legacy SS selectors, events, anchor semantics and `IInterfold`/`ICiphernodeRegistry`
+ERC-165 IDs remain unchanged. Existing SS publications return version zero from the new getter; no
+historical record is migrated. The draft wrapper's return tuple adds threshold-key anchors without
+changing proof bytes or public fields; earlier experimental wrapper consumers must update together.
+No deployed synchronized wrapper is supported.
+
+This slice adds only contract ABI/storage and unused Rust ABI declarations: no node event/snapshot
+encoding, gossip/sync major or additional protocol/generation counter change. It does not relax the
+unreleased schema-9 drain/reset decision above or qualify mixed intermediate nodes. Native
+authority/recovery encodings require their own compatibility decision. Synchronized admission stays
+off, so old SS nodes do not consume new synchronized publications in a supported deployment. New
+registry implementations must link `DkgPublicationLib`; new deployment/upgrade records retain that
+address while pre-extension records remain readable. No deployment record is rewritten here.
+Rollback of this unactivated extension preserves legacy SS storage and uses the reviewed prior
+implementation; once synchronized records can exist, rollback needs a separate drain/backup and
+consumer decision rather than ignoring them. Human review must approve the signed encoding,
+authority schema, artifact pins and governance rollout/rollback before deployment. Implementation
+direction approval and passing tests are not that review.
 
 The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
 data-availability recovery layout lock includes its enum row even though that projection records
