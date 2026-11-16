@@ -45,3 +45,4 @@ e3-zk-build.workspace = true
 e3-polynomial.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true

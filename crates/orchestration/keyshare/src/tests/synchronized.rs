@@ -37,12 +37,16 @@ use num_bigint::BigInt;
 use rand::SeedableRng;
 use std::collections::BTreeMap;
 
+#[path = "synchronized/recovery.rs"]
+mod recovery;
+
 const PROFILE: BfvProfile = BfvProfile::SyncDecInsecure64;
 const COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Minimum;
 const DEALERS: [u64; 2] = [0, 2];
 
 struct Setup {
     cipher: Arc<Cipher>,
+    ciphers: Vec<Arc<Cipher>>,
     config: Configs,
     selected: Vec<CiphernodeSelected>,
     signers: Vec<PrivateKeySigner>,
@@ -51,6 +55,7 @@ struct Setup {
     sk_bfv: Vec<SensitiveBytes>,
     c2: BTreeMap<u64, SignedProofPayload>,
     responses: Vec<GenPkShareAndSkSssResponse>,
+    encryption_keys: Vec<Arc<EncryptionKey>>,
 }
 
 fn signed(
@@ -80,8 +85,16 @@ fn scalar(value: impl Into<BigInt>) -> Result<[u8; 32]> {
 impl Setup {
     async fn new() -> Result<Self> {
         let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        Self::with_ciphers(vec![cipher; 3]).await
+    }
+
+    async fn with_ciphers(ciphers: Vec<Arc<Cipher>>) -> Result<Self> {
+        ensure!(ciphers.len() == 3);
+        let cipher = ciphers[0].clone();
         let config = Configs::for_profile(PROFILE, COMMITTEE)?;
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(245603);
+        let mut rngs: Vec<_> = (0..3)
+            .map(|owner| rand_chacha::ChaCha20Rng::seed_from_u64(245603 + owner))
+            .collect();
         let mut signers: Vec<_> = (0..3).map(|_| PrivateKeySigner::random()).collect();
         signers.sort_by_key(|signer| signer.address());
         let committee: Vec<_> = signers
@@ -101,8 +114,9 @@ impl Setup {
                 ..Default::default()
             })
             .collect();
-        let secrets: Vec<_> = (0..3)
-            .map(|_| SecretKey::random(&config.transport, &mut rng))
+        let secrets: Vec<_> = rngs
+            .iter_mut()
+            .map(|rng| SecretKey::random(&config.transport, rng))
             .collect();
         let public: Vec<_> = secrets
             .iter()
@@ -110,22 +124,27 @@ impl Setup {
             .map(|(id, secret)| {
                 Arc::new(EncryptionKey::new(
                     id as u64,
-                    ArcBytes::from_bytes(&PublicKey::new(secret, &mut rng).to_bytes()),
+                    ArcBytes::from_bytes(&PublicKey::new(secret, &mut rngs[id]).to_bytes()),
                 ))
             })
             .collect();
         let sk_bfv = secrets
             .iter()
-            .map(|secret| SensitiveBytes::new(serialize_secret_key(secret)?, &cipher))
+            .enumerate()
+            .map(|(owner, secret)| {
+                SensitiveBytes::new(serialize_secret_key(secret)?, &ciphers[owner])
+            })
             .collect::<Result<Vec<_>>>()?;
         let mut material = Vec::new();
         let mut pending = Vec::new();
         let mut responses = Vec::new();
         for selection in &selected {
+            let owner = selection.party_id as usize;
+            let cipher = &ciphers[owner];
             let context = proof_context(selection, Address::repeat_byte(0x11))?;
             let output = gen_pk_share_and_sk_sss(
-                &mut rng,
-                &cipher,
+                &mut rngs[owner],
+                cipher,
                 GenPkShareAndSkSssRequest {
                     trbfv_config: TrBFVConfig::new(selection.params.clone(), 3, 1),
                     crp: ArcBytes::from_bytes(
@@ -156,14 +175,14 @@ impl Setup {
                 key_bundle: None,
                 c2_statements: Default::default(),
             };
-            saved.validate(selection, Address::repeat_byte(0x11), &cipher)?;
+            saved.validate(selection, Address::repeat_byte(0x11), cipher)?;
             let plan = build_shares_generated_plan(
-                &cipher,
+                cipher,
                 PROFILE,
                 selection.party_id,
                 COMMITTEE,
                 output.pk_share,
-                output.sk_sss.decrypt(&cipher)?,
+                output.sk_sss.decrypt(cipher)?,
                 vec![],
                 None,
                 ProofRequestData {
@@ -187,12 +206,13 @@ impl Setup {
                 own_sk_share_raw: plan.own_sk_share_raw,
                 own_esi_shares_raw: plan.own_esi_shares_raw,
             };
-            saved.validate_pending(selection, &event, &cipher)?;
+            saved.validate_pending(selection, &event, cipher)?;
             material.push(saved);
             pending.push(event);
         }
         let mut setup = Self {
             cipher,
+            ciphers,
             config,
             selected,
             signers,
@@ -200,6 +220,7 @@ impl Setup {
             pending,
             sk_bfv,
             responses,
+            encryption_keys: public,
             c2: BTreeMap::new(),
         };
         for owner in 0..3 {
@@ -207,7 +228,7 @@ impl Setup {
                 &setup.config,
                 &setup.pending[owner].sk_share_computation_request,
                 &setup.selected[owner].e3_id,
-                &setup.cipher,
+                &setup.ciphers[owner],
             )?;
             let binding =
                 setup_binding(&setup.material[owner].context, &setup.selected[owner].e3_id)?;
@@ -221,14 +242,14 @@ impl Setup {
                 &setup.pending[owner]
                     .sk_share_computation_request
                     .secret_sss_raw
-                    .access(&setup.cipher)?,
+                    .access(&setup.ciphers[owner])?,
             )?;
             let keys = setup.material[owner].outgoing_keys.open(
                 PROFILE,
                 binding,
                 owner as u32,
                 3,
-                &setup.cipher,
+                &setup.ciphers[owner],
             )?;
             for (recipient, key) in keys.iter().enumerate() {
                 let packed = pack_key(PROFILE, &shares.extract_party_share(recipient)?, key)?;
@@ -271,7 +292,7 @@ impl Setup {
             signed_e_sm_share_encryption_proofs: vec![],
         };
         build_decryption_key_plan(
-            &self.cipher,
+            &self.ciphers[owner],
             PROFILE,
             owner as u64,
             COMMITTEE,
@@ -292,18 +313,20 @@ impl Setup {
 
     fn c3_data(
         &self,
+        owner: usize,
         request: &ShareEncryptionProofRequest,
     ) -> Result<e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData> {
         let params = &self.config.transport;
-        let row: Vec<u64> = bincode::deserialize(&request.share_row_raw.access(&self.cipher)?)?;
+        let cipher = &self.ciphers[owner];
+        let row: Vec<u64> = bincode::deserialize(&request.share_row_raw.access(cipher)?)?;
         Ok(
             e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData {
                 plaintext: Plaintext::try_encode(&row, Encoding::poly(), params)?,
                 ciphertext: Ciphertext::from_bytes(&request.ciphertext_raw, params)?,
                 public_key: PublicKey::from_bytes(&request.recipient_pk_raw, params)?,
-                u_rns: try_poly_ntt_from_bytes(&request.u_rns_raw.access(&self.cipher)?, params)?,
-                e0_rns: try_poly_ntt_from_bytes(&request.e0_rns_raw.access(&self.cipher)?, params)?,
-                e1_rns: try_poly_ntt_from_bytes(&request.e1_rns_raw.access(&self.cipher)?, params)?,
+                u_rns: try_poly_ntt_from_bytes(&request.u_rns_raw.access(cipher)?, params)?,
+                e0_rns: try_poly_ntt_from_bytes(&request.e0_rns_raw.access(cipher)?, params)?,
+                e1_rns: try_poly_ntt_from_bytes(&request.e1_rns_raw.access(cipher)?, params)?,
             },
         )
     }
@@ -317,7 +340,7 @@ impl Setup {
             .map(|request| {
                 let inputs = e3_zk_witness::dkg::share_encryption::Inputs::compute(
                     &self.config.share_encryption,
-                    &self.c3_data(request)?,
+                    &self.c3_data(dealer, request)?,
                 )?;
                 signed(
                     self,
@@ -1053,10 +1076,8 @@ fn prove_prepared<C: e3_zk_prover::Provable>(
     Ok(proof)
 }
 
-#[actix::test]
-#[ignore = "requires pinned nargo and E3_CUSTOM_BB; proves production sync DKG preparation, not recursive/runtime admission"]
-async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Result<()> {
-    use e3_zk_prover::{synchronized as adapters, BBPath, ZkBackend, ZkProver};
+fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_prover::ZkProver)> {
+    use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1087,13 +1108,8 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
     ));
     let directory = tempfile::tempdir()?;
     let artifact_root = directory.path().join("artifacts");
-    // Compile only the four affected leaves into private temporary artifacts, with no restamping.
-    for circuit in [
-        CircuitName::PkGeneration,
-        CircuitName::SkShareComputation,
-        CircuitName::ShareEncryption,
-        CircuitName::DkgShareDecryption,
-    ] {
+    // Explicit proof variants in private temporary artifacts, not an installable archive.
+    for circuit in circuits {
         let package = directory.path().join(circuit.as_str());
         fs::create_dir_all(package.join("src"))?;
         fs::write(package.join("Nargo.toml"), format!(
@@ -1132,6 +1148,19 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
         artifact_root,
         directory.path().join("work"),
     ));
+    Ok((directory, prover))
+}
+
+#[actix::test]
+#[ignore = "requires pinned nargo and E3_CUSTOM_BB; proves production sync DKG preparation, not recursive/runtime admission"]
+async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Result<()> {
+    use e3_zk_prover::synchronized as adapters;
+    let (_directory, prover) = real_prover(&[
+        CircuitName::PkGeneration,
+        CircuitName::SkShareComputation,
+        CircuitName::ShareEncryption,
+        CircuitName::DkgShareDecryption,
+    ])?;
     let mut setup = Setup::new().await?;
     for owner in 0..3 {
         let e3 = &setup.selected[owner].e3_id;
@@ -1191,7 +1220,7 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
         &e3_zk_prover::ShareEncryptionCircuit,
         &prover,
         &setup.config.share_encryption,
-        &setup.c3_data(encryption)?,
+        &setup.c3_data(0, encryption)?,
         0,
     )?;
     for owner in 0..3 {

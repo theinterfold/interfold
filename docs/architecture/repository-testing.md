@@ -68,13 +68,19 @@ pending proof request through startup replay.
 This exercises node actors without real QUIC, discovery, peer-held DHT persistence, or separate
 operating-system processes. The restart is orderly and in-process: the node stops through its
 shutdown barrier on stores that closed cleanly, not at an arbitrary point with torn writes. It is
-not arbitrary crash recovery. The only executable restart coverage for an in-flight C4 or C6 proof
-is the full-proof scenarios `trbfv_scenario_restart_during_c4` and
-`trbfv_scenario_restart_during_c6` (two of the four named full-proof scenarios). They are
-`#[ignore]`d and not run in CI. They restart one roster member other than the aggregator at those
-two points, and nothing else here restarts a node at another protocol point.
+not arbitrary crash recovery. Full-node restart coverage for an in-flight C4 or C6 proof is in the
+full-proof scenarios `trbfv_scenario_restart_during_c4` and `trbfv_scenario_restart_during_c6` (two
+of the four named full-proof scenarios). They are `#[ignore]`d and not run in CI. They restart one
+roster member other than the aggregator at those two points, not at arbitrary protocol points.
 [Network delivery](network-delivery.md) and [persistence](persistence-and-replay.md) retain the
 production gaps those scenarios do not close.
+
+The disabled synchronized DKG definition has separate
+[keyshare actor/store recovery coverage](../../crates/orchestration/keyshare/README.md#tests),
+including an explicit real-proof variant selected in CI. It reopens three Sled stores and actors,
+not whole ciphernode runtimes or durable event logs. Private checkpoint/compute drivers remain below
+disabled production admission; they do not establish admitted synchronized startup or end-to-end
+publication.
 
 ## Proofs and compatibility
 
