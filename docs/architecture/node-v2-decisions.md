@@ -440,7 +440,9 @@ Each rule is checkable in review.
   circuit folder. A start refuses a held E3 under a profile the release no longer runs while the E3
   has not ended, even one the node only watches, which can still give it a ticket, or while it still
   has crypto or accusation work after its end: run the release that runs the profile until the E3
-  ends. Settling a failed E3 needs no profile.
+  ends. Settling a failed E3 needs no profile. The check reads the saved state before the first
+  input, because a refused start must not leave a journal tail that only it can replay; so an E3
+  that ended while the node was offline needs one run of the previous release to read that end.
 
 ## Problems in the earlier node, with the fix above them
 

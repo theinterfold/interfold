@@ -127,8 +127,8 @@ pub enum NodeError {
         start_block: u64,
     },
     #[error(
-        "E3 {e3} still has work under a BFV profile that this release does not run ({reason}). Run \
-         the release that runs it until the E3 ends, then upgrade"
+        "E3 {e3} has not ended, or still has work, under a BFV profile that this release does not \
+         run ({reason}). Run the release that runs it until it reads the E3's end, then upgrade"
     )]
     RetiredProfile { e3: E3Id, reason: String },
 }

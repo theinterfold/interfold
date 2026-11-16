@@ -259,13 +259,15 @@ The cutover changes these request interfaces. Update their callers together with
 
 ### Retiring a BFV profile
 
-A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3
-selected the node. On startup it rechecks that metadata and refuses to start if an E3 that still has
-work uses a profile that its release disables. This includes a failed E3 that keeps its context for
-accusation or slashing work. The restored context of an E3 that ended before startup only completes:
-startup still checks its saved configuration ID and parameters, but not whether the release admits
-its profile. Restored work never runs under a disabled profile, and the node does not silently drop
-work that it still owes. Retire a profile in this order:
+A node keeps every E3 that it sees until that E3 ends, whether or not the E3 selected the node. On
+startup, before it applies any input, it refuses to start if a saved E3 uses a profile that its
+release disables and the E3 has not ended, or still has crypto or accusation work after its end. A
+request that the node only watches counts too, because it can still give the node a ticket. A failed
+E3 that waits only for its settlement on chain does not count, because settling needs no profile.
+The check reads the saved state, not the chain: an E3 that ended while the node was offline counts
+until a release that runs the profile has read its end. Restored work never runs under a disabled
+profile, and the node does not silently drop work that it still owes. Retire a profile in this
+order:
 
 1. Deploy contracts whose `ActiveCryptoConfig.configIdForRequest` no longer returns a configuration
    ID of the profile, so that no new request can use it.
@@ -284,10 +286,11 @@ drops the `*_CONFIG_ID` constants of the profile, so `ActiveCryptoConfig.sol` mu
 using them in step 1, or the contracts no longer compile. `pnpm check:crypto-config` fails until
 both generated files match the release.
 
-If a node of that release still refuses to start, it still owes work under the profile, such as
-accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not
-edit or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no
-contract admits it, so this cutover needs no wait.
+If a node of that release still refuses to start, its saved state still has an E3 of the profile
+that has not ended or that has accusation work, such as an E3 that ended while the node was offline.
+Run the previous release until it has read the end and the work is done, then upgrade. Do not edit
+or delete saved state to pass the check. sync-insecure-64 is disabled from the start and no contract
+admits it, so this cutover needs no wait.
 
 ## Dependency replacement
 
