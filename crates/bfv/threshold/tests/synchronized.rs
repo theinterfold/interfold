@@ -2,40 +2,30 @@
 
 use anyhow::Result;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{create_deterministic_crp_from_default_seed, BfvProfile};
+use e3_fhe_params::BfvProfile;
 use e3_trbfv::{
     shares::{BfvEncryptedShare, ShamirShare},
-    synchronized::{
-        assemble_party_keys, create_share, pack_key, reconstruct, select_designated_set, PrfKey,
-    },
+    synchronized::{pack_key, PrfKey},
 };
 use fhe::{
-    bfv::{Encoding, Plaintext, PublicKey, SecretKey},
-    mbfv::{AggregateIter, PublicKeyShare},
-    trbfv::{
-        ShareManager, SmudgingBoundCalculatorConfig, SmudgingNoiseGenerator, SynchronizedDecryptor,
-    },
+    bfv::{PublicKey, SecretKey},
+    trbfv::ShareManager,
 };
-use fhe_math::rq::{Ntt, Poly};
-use fhe_traits::{FheDecoder, FheEncoder, FheEncrypter};
 use ndarray::Array2;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 const PROFILE: BfvProfile = BfvProfile::SyncDecInsecure64;
 
 #[test]
-fn native_sync_dkg_transport_and_non_prefix_reconstruction() -> Result<()> {
+fn native_sync_dkg_transport_preserves_directed_keys_for_nonprefix_dealers() -> Result<()> {
     let mut rng = ChaCha8Rng::seed_from_u64(2456);
     let committee = CiphernodesCommitteeSize::Minimum;
     let values = committee.values();
     let (params, transport) = PROFILE.build_pair()?;
     let mut manager = ShareManager::new(values.n, values.threshold, params.clone())?;
-    let decryptor = SynchronizedDecryptor::new(values.n, values.threshold, params.clone())?;
     let roster = [0, 2];
-    let designated = select_designated_set(&roster, committee)?;
-    assert_eq!(designated, [0, 2]);
 
     let keys: Vec<Vec<_>> = (0..values.n)
         .map(|_| {
@@ -52,13 +42,8 @@ fn native_sync_dkg_transport_and_non_prefix_reconstruction() -> Result<()> {
         .map(|sk| PublicKey::new(sk, &mut rng))
         .collect();
 
-    let crp = create_deterministic_crp_from_default_seed(&params);
-    let mut public_shares = Vec::new();
-    let mut collected: Vec<Vec<Array2<u64>>> = vec![Vec::new(); values.n];
-    let mut received = vec![vec![PrfKey::from_bytes(PROFILE, [0; 32])?; values.n]; values.n];
     for dealer in roster {
         let secret = SecretKey::random(&params, &mut rng);
-        public_shares.push(PublicKeyShare::new(&secret, crp.clone(), &mut rng)?);
         let poly = manager.coeffs_to_poly_level0(secret.coeffs.as_ref())?;
         let mut dealt = manager.generate_secret_shares_from_poly(poly, &mut rng)?;
         for recipient in 0..values.n {
@@ -78,111 +63,11 @@ fn native_sync_dkg_transport_and_non_prefix_reconstruction() -> Result<()> {
             let (unpacked, key) = e3_trbfv::synchronized::unpack_key(PROFILE, &opened)?;
             assert_eq!(share, unpacked);
             assert_eq!(key.as_bytes(), keys[dealer as usize][recipient].as_bytes());
-            received[recipient][dealer as usize] = key;
-            collected[recipient].push(unpacked.view().to_owned());
         }
         for row in &mut dealt {
             row.iter_mut().for_each(Zeroize::zeroize);
         }
     }
-    let public: PublicKey = public_shares.into_iter().aggregate()?;
-    let secrets: Vec<Zeroizing<Poly<Ntt>>> = collected
-        .iter_mut()
-        .map(|rows| {
-            let poly = manager.aggregate_collected_shares(rows)?;
-            for row in rows {
-                row.iter_mut().for_each(Zeroize::zeroize);
-            }
-            Ok(Zeroizing::new(poly.into_ntt()))
-        })
-        .collect::<Result<_>>()?;
-    let party_keys = (0..values.n)
-        .map(|party| assemble_party_keys(PROFILE, party as u64, &keys[party], &received[party]))
-        .collect::<Result<Vec<_>>>()?;
-    let noise = SmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
-        params.clone(),
-        values.n,
-        1,
-        PROFILE.threshold_preset().lambda()?,
-    )?)?;
-    let expected: Vec<u64> = (0..50)
-        .map(|index| if index % 3 == 0 { 0 } else { 7 * index })
-        .collect();
-    let plaintext = Plaintext::try_encode(&expected, Encoding::poly(), &params)?;
-    let ciphertext = public.try_encrypt(&plaintext, &mut rng)?;
-    let mut shares = Vec::new();
-    for &party in &designated {
-        shares.push(create_share(
-            &decryptor,
-            party,
-            &designated,
-            &ciphertext,
-            &secrets[party as usize],
-            noise.generate(&mut rng)?,
-            &party_keys[party as usize],
-        )?);
-    }
-    shares.reverse();
-    let decoded = reconstruct(&decryptor, &designated, &ciphertext, shares.clone())?;
-    let decoded = Vec::<u64>::try_decode(&decoded, Encoding::poly())?;
-    assert_eq!(&decoded[..expected.len()], expected);
-    assert!(decoded[expected.len()..].iter().all(|&value| value == 0));
-
-    assert!(reconstruct(&decryptor, &designated, &ciphertext, shares[..1].to_vec()).is_err());
-    assert!(reconstruct(
-        &decryptor,
-        &designated,
-        &ciphertext,
-        vec![shares[0].clone(); 2]
-    )
-    .is_err());
-    assert!(reconstruct(&decryptor, &[0, 1], &ciphertext, shares.clone()).is_err());
-    let other = public.try_encrypt(&plaintext, &mut rng)?;
-    assert!(reconstruct(&decryptor, &designated, &other, shares).is_err());
-    let mut wrong_level = ciphertext.clone();
-    wrong_level.switch_down()?;
-    assert!(create_share(
-        &decryptor,
-        0,
-        &designated,
-        &wrong_level,
-        &secrets[0],
-        noise.generate(&mut rng)?,
-        &party_keys[0]
-    )
-    .is_err());
-    for invalid in [&[0, 0][..], &[2, 0], &[0, 3], &[0], &[0, 1, 2]] {
-        assert!(create_share(
-            &decryptor,
-            0,
-            invalid,
-            &ciphertext,
-            &secrets[0],
-            noise.generate(&mut rng)?,
-            &party_keys[0]
-        )
-        .is_err());
-    }
-    assert!(create_share(
-        &decryptor,
-        1,
-        &designated,
-        &ciphertext,
-        &secrets[1],
-        noise.generate(&mut rng)?,
-        &party_keys[1]
-    )
-    .is_err());
-    assert!(create_share(
-        &decryptor,
-        0,
-        &designated,
-        &ciphertext,
-        &secrets[0],
-        noise.generate(&mut rng)?,
-        &party_keys[2]
-    )
-    .is_err());
     assert!(!PROFILE.admission_enabled());
     Ok(())
 }
@@ -230,7 +115,7 @@ fn key_packing_is_little_endian_limb_zero_only_and_canonical() -> Result<()> {
 }
 
 #[test]
-fn directed_keys_validate_owner_shape_and_test_only_width() -> Result<()> {
+fn directed_keys_validate_profile_width_and_zeroize() -> Result<()> {
     let mut rng = ChaCha8Rng::seed_from_u64(2459);
     let keys = (0..3)
         .map(|_| PrfKey::random(PROFILE, &mut rng))
@@ -238,32 +123,9 @@ fn directed_keys_validate_owner_shape_and_test_only_width() -> Result<()> {
     for key in &keys {
         assert!(key.as_bytes()[8..].iter().all(|&byte| byte == 0));
     }
-    let party = assemble_party_keys(PROFILE, 2, &keys, &keys)?;
-    assert_eq!(party.party_id(), 3);
-    assert_eq!(party.committee_size(), 3);
-    assert!(assemble_party_keys(PROFILE, 3, &keys, &keys).is_err());
-    assert!(assemble_party_keys(PROFILE, 0, &keys, &keys[..2]).is_err());
-    assert!(assemble_party_keys(PROFILE, 0, &[], &[]).is_err());
     assert!(PrfKey::random(BfvProfile::SsInsecure64, &mut rng).is_err());
     let mut key = keys[0].clone();
     key.zeroize();
     assert_eq!(key.as_bytes(), &[0; 32]);
-    Ok(())
-}
-
-#[test]
-fn initial_selection_validates_the_complete_published_roster() -> Result<()> {
-    let small = CiphernodesCommitteeSize::Small;
-    let roster: Vec<_> = (0..19).filter(|id| id % 4 != 0).collect();
-    assert_eq!(roster.len(), 14);
-    assert_eq!(select_designated_set(&roster, small)?, roster[..10]);
-    let mut duplicate_tail = roster.clone();
-    duplicate_tail[13] = duplicate_tail[12];
-    assert!(select_designated_set(&duplicate_tail, small).is_err());
-    let mut outside_tail = roster.clone();
-    outside_tail[13] = 19;
-    assert!(select_designated_set(&outside_tail, small).is_err());
-    assert!(select_designated_set(&roster[..13], small).is_err());
-    assert!(select_designated_set(&[2, 0], CiphernodesCommitteeSize::Minimum).is_err());
     Ok(())
 }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use crate::{shares::ShamirShare, PartyId};
+use crate::shares::ShamirShare;
 use anyhow::{ensure, Context, Result};
 use e3_fhe_params::{BfvParamSet, BfvProfile};
-use fhe::trbfv::{PartyPrfKeyTransport, PartyPrfKeys, PRF_KEY_LEN};
+use fhe::trbfv::PRF_KEY_LEN;
 use rand::{CryptoRng, RngCore};
 use std::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -125,31 +125,4 @@ pub fn unpack_key(profile: BfvProfile, packed: &ShamirShare) -> Result<(ShamirSh
         key.0[j / 8] |= (bit as u8) << (j % 8);
     }
     Ok((ShamirShare::new(data), key))
-}
-
-/// `outgoing[j] = k_{i,j}` and `incoming[j] = k_{j,i}`, indexed by full-committee runtime ID.
-/// Matching dealer/recipient provenance is established by authenticated DKG, not by this constructor.
-pub fn assemble_party_keys(
-    profile: BfvProfile,
-    party_id: PartyId,
-    outgoing: &[PrfKey],
-    incoming: &[PrfKey],
-) -> Result<PartyPrfKeys> {
-    let owner = usize::try_from(party_id).context("Party ID exceeds native index width")?;
-    let n = outgoing.len();
-    ensure!(
-        owner < n && incoming.len() == n,
-        "Invalid directed PRF-key dimensions"
-    );
-    for key in outgoing.iter().chain(incoming) {
-        key.validate(profile)?;
-    }
-    // Check metadata before transferring raw-byte copies to the upstream zeroizing owner.
-    let transport = PartyPrfKeyTransport::new(
-        owner + 1,
-        n,
-        outgoing.iter().map(|key| key.0).collect(),
-        incoming.iter().map(|key| key.0).collect(),
-    )?;
-    Ok(PartyPrfKeys::from_transport(transport)?)
 }
