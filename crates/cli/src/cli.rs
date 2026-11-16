@@ -235,9 +235,11 @@ impl Cli {
         }
 
         match self.command {
-            Commands::Start { peers, bootstrap } => {
-                start::execute(config, peers, bootstrap).await?
-            }
+            Commands::Start {
+                peers,
+                bootstrap,
+                drain,
+            } => start::execute(config, peers, bootstrap, drain).await?,
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
@@ -323,6 +325,13 @@ pub enum Commands {
                     work, proofs, transactions, or the prover's memory requirement"
         )]
         bootstrap: bool,
+        #[arg(
+            long,
+            conflicts_with = "bootstrap",
+            help = "Take no new E3s, and finish the ones the node holds, so it can stop for an \
+                    upgrade; the log says when no E3 runs. A start without it takes E3s again"
+        )]
+        drain: bool,
     },
 
     /// Print the config env
@@ -811,7 +820,17 @@ mod tests {
             Commands::Start {
                 bootstrap: true,
                 ref peers,
+                ..
             } if peers.len() == 1
         ));
+    }
+
+    /// A node that drains still does its committee work, so a bootstrap peer cannot drain.
+    #[test]
+    fn start_can_drain_a_full_node_only() {
+        let cli = Cli::parse_from(["interfold", "start", "--drain"]);
+        assert!(matches!(cli.command, Commands::Start { drain: true, .. }));
+        let both = Cli::try_parse_from(["interfold", "start", "--drain", "--bootstrap"]);
+        assert!(both.is_err());
     }
 }

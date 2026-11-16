@@ -62,4 +62,9 @@ impl Store for MemoryStore {
         self.inner().outbox.remove(&key);
         Ok(())
     }
+
+    fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError> {
+        self.inner().snapshot = Some((seq, snapshot));
+        Ok(())
+    }
 }

@@ -47,6 +47,7 @@ pub(crate) struct Board {
 struct Machine {
     active: bool,
     enabled: bool,
+    draining: bool,
     e3s: Vec<HeldE3>,
 }
 
@@ -66,6 +67,7 @@ struct Status {
     peers: usize,
     active: bool,
     enabled: bool,
+    draining: bool,
     e3s: Vec<HeldE3>,
     notes: Vec<Entry>,
 }
@@ -107,6 +109,7 @@ impl Board {
         *self.lock() = Machine {
             active,
             enabled,
+            draining: node.draining(),
             e3s,
         };
     }
@@ -125,6 +128,7 @@ impl Board {
             peers: self.peers.load(Ordering::Relaxed),
             active: machine.active,
             enabled: machine.enabled,
+            draining: machine.draining,
             e3s: machine.e3s,
             notes,
         }
@@ -260,7 +264,8 @@ fn page(status: &Status) -> String {
          <tr><th>Chain</th><td>{chain}, read to block {read_to} of {head}</td></tr>\
          <tr><th>Peers connected</th><td>{peers}</td></tr>\
          <tr><th>Active</th><td>{active}</td></tr>\
-         <tr><th>Listed by the registry</th><td>{enabled}</td></tr></table>\
+         <tr><th>Listed by the registry</th><td>{enabled}</td></tr>\
+         <tr><th>Takes new E3s</th><td>{taking}</td></tr></table>\
          <h2>E3s this node holds: {count}</h2><table><tr><th>E3</th><th>Stage</th>\
          <th>What it still owes</th></tr>{held}</table>\
          <h2>Recent notes</h2><table><tr><th>#</th><th>Time</th><th>E3</th><th>What happened</th>\
@@ -272,6 +277,7 @@ fn page(status: &Status) -> String {
         peers = status.peers,
         active = yes(status.active),
         enabled = yes(status.enabled),
+        taking = yes(!status.draining),
         count = status.e3s.len(),
     )
 }

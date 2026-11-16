@@ -520,6 +520,9 @@ pub enum Input {
     /// passed, so a late wake-up changes nothing.
     Tick,
     Eligibility(Eligibility),
+    /// The operator's choice whether the node takes new E3s. It is an input, so a replay ranks
+    /// committees as the first run did.
+    Drain(bool),
 }
 
 impl From<Tick> for Input {
@@ -756,6 +759,8 @@ pub struct Node {
     managers: BTreeMap<u64, BTreeSet<Address>>,
     /// Each chain's current slashing manager, which a request now snapshots.
     slashing: BTreeMap<u64, Address>,
+    /// The node takes no new E3: it submits no ticket, and the E3s it holds go on to their end.
+    draining: bool,
 }
 
 impl Node {
@@ -771,6 +776,7 @@ impl Node {
             providers: BTreeMap::new(),
             managers: BTreeMap::new(),
             slashing: BTreeMap::new(),
+            draining: false,
         }
     }
 
@@ -819,6 +825,17 @@ impl Node {
         self.registries
             .get(&chain_id)
             .map_or((false, false), |registry| registry.standing(self.me))
+    }
+
+    /// Whether the node takes no new E3.
+    pub fn draining(&self) -> bool {
+        self.draining
+    }
+
+    /// Whether the node takes no new E3 and none it holds still runs on chain: it can stop for an
+    /// upgrade. Failed E3s it holds can still wait for settlement or governance's release.
+    pub fn drained(&self) -> bool {
+        self.draining && self.e3s.values().all(|state| !state.running())
     }
 
     /// How many operators the registry of `chain_id` lists, by the logs this node applied.
@@ -1034,7 +1051,7 @@ impl Node {
         state.seeded(seed);
         let request = state.request;
         let by = (now + ELIGIBILITY_READ).min(seed.deadline.saturating_sub(TICKET_RESERVE));
-        if request.owner_cap && now < by && !state.has_ticket() {
+        if request.owner_cap && now < by && !state.has_ticket() && !self.draining {
             if !state.await_eligibility(seed, by) {
                 return Vec::new();
             }
@@ -1055,12 +1072,17 @@ impl Node {
     }
 
     /// This node's registry standing changed: a request it could not take a ticket in can have
-    /// room for it now, until its deadline. Others ranked it without this node, so it asks no
-    /// shortlist and the contract decides.
+    /// room for it now.
     fn select_again_if_me(&mut self, now: UnixSecs, operator: Address) -> Vec<Effect> {
         if operator != self.me {
             return Vec::new();
         }
+        self.rank_open(now)
+    }
+
+    /// Ranks this node again in each request it holds no ticket for, until its deadline. Others
+    /// ranked them without this node, so it asks no shortlist and the contract decides.
+    fn rank_open(&mut self, now: UnixSecs) -> Vec<Effect> {
         let open: Vec<(E3Id, CommitteeSeed)> = self
             .e3s
             .iter()
@@ -1082,6 +1104,9 @@ impl Node {
         seed: CommitteeSeed,
         confirmed: Option<&BTreeSet<Address>>,
     ) -> Vec<Effect> {
+        if self.draining {
+            return Vec::new();
+        }
         let CommitteeSeed {
             seed,
             deadline: committee_deadline,
@@ -1304,6 +1329,13 @@ impl Machine for Node {
                 Some(seed) => self.rank(now, answer.e3, seed, answer.eligible.as_ref()),
                 None => Vec::new(),
             },
+            Input::Drain(draining) => {
+                self.draining = draining;
+                match draining {
+                    true => Vec::new(),
+                    false => self.rank_open(now),
+                }
+            }
         };
         self.count_checks(&applied);
         effects.extend(applied);
@@ -1834,6 +1866,43 @@ mod tests {
             .any(ticket));
     }
 
+    /// A draining node takes no new E3: no ticket, and no eligibility read for one.
+    #[test]
+    fn a_draining_node_submits_no_ticket_and_reads_no_eligibility() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, Input::Drain(true));
+        node.step(1, requested(1, e3(1)));
+        node.step(2, capped_requested_at(2, e3(2), 1));
+        let mut effects = node.step(5, seed_ready(5, e3(1), 42, 100));
+        effects.extend(node.step(5, seed_ready(6, e3(2), 42, 100)));
+        let enabled = ChainFact::OperatorEnabled {
+            operator: address(ME),
+            enabled: true,
+        };
+        effects.extend(node.step(6, chain(7, enabled)));
+        assert!(submissions(&effects).is_empty());
+        assert!(!effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ReadEligibility(_))));
+    }
+
+    /// A node that stops draining takes a seat in a request that still has time for its ticket.
+    #[test]
+    fn a_node_that_stops_draining_takes_a_seat_still_open() {
+        let mut node = node();
+        registered(&mut node, &[1, 2, ME], 10);
+        node.step(1, Input::Drain(true));
+        node.step(1, requested(1, e3(1)));
+        node.step(5, seed_ready(5, e3(1), 42, 100));
+        let effects = node.step(6, Input::Drain(false));
+        let (_, ticket) = rank(&[1, 2, ME], 42, false).unwrap();
+        assert_eq!(
+            submissions(&effects),
+            vec![Transaction::SubmitTicket { ticket }]
+        );
+    }
+
     /// An operator that is back before the deadline can still take its seat.
     #[test]
     fn a_node_that_comes_back_before_the_deadline_gets_its_ticket() {
@@ -2314,12 +2383,13 @@ mod tests {
         });
         journal.extend(bincode::serialize(&read).unwrap());
         journal.extend(bincode::serialize(&confirmed(&[1])).unwrap());
+        journal.extend(bincode::serialize(&Input::Drain(true)).unwrap());
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
                 1,
                 alloy_primitives::b256!(
-                    "5f8042ff6531590ca8f9e909f0e4118d4277e011df8db10555e46e768ac22f2e"
+                    "46924dccbb4bf2d33de03309ac0f0223c998c240237c6437ed9e8833bbb3c8bf"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

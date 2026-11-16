@@ -55,6 +55,8 @@ pub trait Store {
     fn read(&self) -> Result<Stored, StoreError>;
     fn commit(&mut self, step: Step) -> Result<(), StoreError>;
     fn acknowledge(&mut self, key: EffectKey) -> Result<(), StoreError>;
+    /// Keeps `snapshot` as the state after step `seq`, the last one committed.
+    fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -223,6 +225,19 @@ impl<M: Machine, S: Store> Engine<M, S> {
         Ok(self.store.acknowledge(key)?)
     }
 
+    /// Snapshots the state after the last step, so the store holds no journal entry past its
+    /// snapshot: only the snapshot and the outbox describe the node. A clean stop leaves the store
+    /// so, and a later release that changes their encoding needs to convert only those two.
+    pub fn checkpoint(&mut self) -> Result<(), Error> {
+        if self.steps_since_snapshot == 0 {
+            return Ok(());
+        }
+        let snapshot = bincode::serialize(&self.machine)?;
+        self.store.checkpoint(self.next_seq - 1, snapshot)?;
+        self.steps_since_snapshot = 0;
+        Ok(())
+    }
+
     pub fn machine(&self) -> &M {
         &self.machine
     }
@@ -319,6 +334,29 @@ mod tests {
         assert!(restore(stored, Tally::default()).is_err());
     }
 
+    /// After a checkpoint the store holds the state in its snapshot alone, with the effects still
+    /// pending.
+    #[test]
+    fn a_checkpoint_leaves_no_journal_past_the_snapshot() {
+        let store = MemoryStore::default();
+        let (engine, _) = Engine::open(store.clone(), Tally::default(), 100).unwrap();
+        let (mut engine, pending) = apply_all(engine, &[(10, 1), (20, 2), (30, 3)]);
+        engine.acknowledge(pending[0].key).unwrap();
+        engine.checkpoint().unwrap();
+        drop(engine);
+
+        let stored = store.read().unwrap();
+        assert_eq!(stored.snapshot.as_ref().map(|(seq, _)| *seq), Some(3));
+        assert!(stored.journal.is_empty());
+        let (restarted, pending) = Engine::open(store, Tally::default(), 100).unwrap();
+        assert_eq!(restarted.machine().total, 6);
+        let left: Vec<u64> = pending.into_iter().map(|p| p.effect).collect();
+        assert_eq!(left, [3, 6]);
+        let (mut restarted, _) = restarted.apply(40, TallyInput::Add(4)).unwrap();
+        restarted.checkpoint().unwrap();
+        assert_eq!(restarted.machine().total, 10);
+    }
+
     #[test]
     fn a_restart_restores_the_state_and_the_unacknowledged_effects() {
         let store = MemoryStore::default();
@@ -375,6 +413,10 @@ mod tests {
 
         fn acknowledge(&mut self, key: EffectKey) -> Result<(), StoreError> {
             self.inner.acknowledge(key)
+        }
+
+        fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError> {
+            self.inner.checkpoint(seq, snapshot)
         }
     }
 

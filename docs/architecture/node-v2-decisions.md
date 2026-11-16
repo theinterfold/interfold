@@ -409,6 +409,16 @@ Each rule is checkable in review.
   find undriven is replaced by an empty transaction to the account itself at replacement fees. The
   wallet keeps its unmined sends by nonce, so a replaced call and its replacement cannot collide.
 
+- **D61. A clean stop leaves a snapshot, and a node can drain.** On a clean stop the engine
+  snapshots the state after the last step, so the store holds that snapshot and the outbox, and no
+  journal past it. A later release that changes their encoding then needs one conversion of the two,
+  not a replay of old inputs. No conversion exists yet, and a crash leaves a journal tail that only
+  the binary that wrote it can replay. `interfold start --drain` makes a node take no new E3: it
+  submits no ticket and asks for no eligibility, the E3s it holds go on, and the log says when none
+  runs. The setting is a journaled input, so a replay ranks as the first run did, and a start
+  without it ranks the requests still open. A committee needs many candidates (mainnet's floor is 19
+  members), so draining many nodes at once can leave requests without a committee.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

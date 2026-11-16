@@ -80,6 +80,7 @@ pub async fn config(config: &NodeConfig, fence: ProcessFence) -> Result<Config> 
         proving: proving(config),
         reserved_threads: config.multithread_reserve_threads(),
         status_port: config.dashboard_port(),
+        drain: false,
         network: network(config, identity, contracts.interfold.address()?),
         operator,
         cipher,

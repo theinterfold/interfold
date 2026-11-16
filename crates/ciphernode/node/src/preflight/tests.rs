@@ -202,6 +202,7 @@ async fn config(url: String, dir: &Path) -> Config {
             peers: Vec::new(),
         },
         status_port: None,
+        drain: false,
     }
 }
 

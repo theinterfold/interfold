@@ -32,7 +32,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, task::JoinSet, time::Instant};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// How long a failed chain read waits before it runs again.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -67,6 +67,8 @@ pub struct Settings {
     /// How long the reader may go without a successful read before it has first caught up.
     pub startup_timeout: Duration,
     pub snapshot_every: u64,
+    /// The node takes no new E3, so it can stop for an upgrade once the E3s it runs end.
+    pub drain: bool,
     /// Where the read-only status page is served, if anywhere.
     pub status_port: Option<u16>,
     /// Jobs that hold a thread at once; the others wait without one.
@@ -232,8 +234,24 @@ where
     let hold_full = Limited::new(REFUSED_LOG);
     let mut board_update = tokio::time::interval(BOARD_UPDATE);
     tokio::pin!(stop);
+    let drain = settings.drain;
     let outcome = async {
+        if engine.machine().draining() != drain {
+            let (next, pending) = engine.apply(now(), Input::Drain(drain))?;
+            engine = next;
+            queue.extend(effects.dispatch(pending));
+        }
+        let mut drained = false;
         loop {
+            let machine = engine.machine();
+            if machine.drained() && !drained {
+                info!(
+                    held = machine.held().count(),
+                    "draining, and no E3 runs: the node can stop for an upgrade; ended E3s it \
+                     still holds wait for settlement or governance's release"
+                );
+            }
+            drained = machine.drained();
             let event = match queue.pop_front() {
                 Some(event) => event,
                 None => tokio::select! {
@@ -267,7 +285,7 @@ where
                         continue;
                     }
                     ended = essential.join_next() => return Err(ended_task(ended)),
-                    () = &mut stop => return Ok(()),
+                    () = &mut stop => return Ok(engine),
                 },
             };
             let (input, answers) = match event {
@@ -346,7 +364,10 @@ where
     effects.stop_all();
     effects.stopped(JOB_STOP_LIMIT).await;
     effects.network.close().await;
-    outcome
+    // A clean stop leaves the state in one snapshot beside the outbox, which is all a later release
+    // has to read.
+    outcome?.checkpoint()?;
+    Ok(())
 }
 
 /// An essential task ended while the node runs: the process should end, so its supervisor can

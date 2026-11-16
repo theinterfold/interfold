@@ -17,7 +17,12 @@ use tokio::signal::unix::{signal, SignalKind};
 use tracing::{info, instrument};
 
 #[instrument(skip_all)]
-pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
+pub async fn execute(
+    mut config: NodeConfig,
+    peers: Vec<String>,
+    bootstrap: bool,
+    drain: bool,
+) -> Result<()> {
     // Register signal listeners immediately at startup
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -45,7 +50,8 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             .context("the node stopped");
     }
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
-    let node = node_v2::config(&config, fence).await?;
+    let mut node = node_v2::config(&config, fence).await?;
+    node.drain = drain;
     info!(
         "LAUNCHING CIPHERNODE: ({}/{})",
         config.name(),

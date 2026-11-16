@@ -174,6 +174,7 @@ async fn parts(
         poll_interval: Duration::from_millis(10),
         startup_timeout: STARTUP,
         snapshot_every: 100,
+        drain: false,
         status_port: None,
         job_slots: 1,
         proof_slots: 1,
@@ -249,6 +250,42 @@ async fn recovered_work_waits_for_the_first_catch_up() {
         let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
         assert_eq!(stored.outbox.len(), left);
     }
+}
+
+/// The drain setting reaches the machine as a journaled input, and a later start without it
+/// takes it back.
+#[tokio::test]
+async fn the_drain_setting_reaches_the_machine() {
+    let dir = tempfile::tempdir().unwrap();
+    for drain in [true, false] {
+        let (mut settings, parts, _peers) = parts(dir.path(), Chain::default()).await;
+        let operator = parts.operator.address();
+        settings.drain = drain;
+        let stop = tokio::time::sleep(Duration::from_millis(50));
+        run(settings, parts, stop).await.unwrap();
+        let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
+        let machine = e3_engine::restore(stored, Node::new(operator)).unwrap();
+        assert_eq!(machine.draining(), drain);
+    }
+}
+
+/// A clean stop leaves the state in a snapshot and no journal past it; work still owed stays.
+#[tokio::test]
+async fn a_clean_stop_leaves_a_snapshot_and_the_outbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let behind = Chain {
+        head: 5,
+        logs_fail: true,
+        ..Chain::default()
+    };
+    let (settings, mut parts, _peers) = parts(dir.path(), behind).await;
+    parts.journal.commit(left_in_the_outbox()).unwrap();
+    let stop = tokio::time::sleep(Duration::from_millis(100));
+    run(settings, parts, stop).await.unwrap();
+    let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
+    assert_eq!(stored.snapshot.map(|(seq, _)| seq), Some(1));
+    assert!(stored.journal.is_empty());
+    assert_eq!(stored.outbox.len(), 1);
 }
 
 /// A node that lost its reader must end, so its supervisor can restart it.

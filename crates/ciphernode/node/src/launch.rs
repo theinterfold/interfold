@@ -65,6 +65,8 @@ pub struct Config {
     pub network: Network,
     /// Serves a read-only status page on this port of this machine.
     pub status_port: Option<u16>,
+    /// Takes no new E3, so the node can stop for an upgrade once the E3s it runs end.
+    pub drain: bool,
 }
 
 /// Where the node reads ciphertexts.
@@ -229,6 +231,7 @@ async fn start(
         poll_interval: config.poll_interval,
         startup_timeout: config.startup_timeout,
         snapshot_every: 100,
+        drain: config.drain,
         status_port: config.status_port,
         job_slots: threads,
         proof_slots,

@@ -8,7 +8,9 @@
 //! Every commit is one fsynced redb transaction.
 
 use e3_engine::{EffectKey, Step, Store, StoreError, Stored};
-use redb::{Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{
+    Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction,
+};
 use std::path::Path;
 
 const JOURNAL: TableDefinition<u64, &[u8]> = TableDefinition::new("journal");
@@ -50,8 +52,8 @@ impl Journal {
 
     fn commit_step(&self, step: Step) -> Result<(), redb::Error> {
         let txn = self.db.begin_write()?;
-        let mut journal = txn.open_table(JOURNAL)?;
-        journal.insert(step.seq, step.entry.as_slice())?;
+        txn.open_table(JOURNAL)?
+            .insert(step.seq, step.entry.as_slice())?;
         let mut outbox = txn.open_table(OUTBOX)?;
         for (key, bytes) in &step.effects {
             outbox.insert((key.seq, key.index), bytes.as_slice())?;
@@ -61,13 +63,15 @@ impl Journal {
         }
         drop(outbox);
         if let Some(snapshot) = &step.snapshot {
-            let mut snapshots = txn.open_table(SNAPSHOT)?;
-            snapshots.retain(|_, _| false)?;
-            snapshots.insert(step.seq, snapshot.as_slice())?;
-            // The snapshot holds every step up to it, so no restart reads those entries again.
-            journal.retain_in(..=step.seq, |_, _| false)?;
+            keep_snapshot(&txn, step.seq, snapshot)?;
         }
-        drop(journal);
+        txn.commit()?;
+        Ok(())
+    }
+
+    fn checkpoint_at(&self, seq: u64, snapshot: &[u8]) -> Result<(), redb::Error> {
+        let txn = self.db.begin_write()?;
+        keep_snapshot(&txn, seq, snapshot)?;
         txn.commit()?;
         Ok(())
     }
@@ -78,6 +82,16 @@ impl Journal {
         txn.commit()?;
         Ok(())
     }
+}
+
+/// Keeps `snapshot`, the state after step `seq`, as the only one. It holds every step up to it, so
+/// no restart reads those journal entries again.
+fn keep_snapshot(txn: &WriteTransaction, seq: u64, snapshot: &[u8]) -> Result<(), redb::Error> {
+    let mut snapshots = txn.open_table(SNAPSHOT)?;
+    snapshots.retain(|_, _| false)?;
+    snapshots.insert(seq, snapshot)?;
+    txn.open_table(JOURNAL)?.retain_in(..=seq, |_, _| false)?;
+    Ok(())
 }
 
 fn read_tables(db: &impl ReadableDatabase) -> Result<Stored, redb::Error> {
@@ -122,6 +136,10 @@ impl Store for Journal {
 
     fn acknowledge(&mut self, key: EffectKey) -> Result<(), StoreError> {
         self.remove_effect(key).map_err(store_error)
+    }
+
+    fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError> {
+        self.checkpoint_at(seq, &snapshot).map_err(store_error)
     }
 }
 
@@ -179,6 +197,37 @@ mod tests {
             stored.outbox,
             vec![(key(2, 0), b"y".to_vec()), (key(3, 0), b"z".to_vec())]
         );
+    }
+
+    /// A checkpoint makes the snapshot the whole state: no journal entry stays, and the pending
+    /// effects do.
+    #[test]
+    fn a_checkpoint_leaves_the_snapshot_and_the_outbox_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.redb");
+        let mut journal = Journal::open(&path).unwrap();
+        for seq in 1..=3 {
+            journal
+                .commit(Step {
+                    seq,
+                    entry: vec![seq as u8],
+                    effects: vec![(key(seq, 0), vec![seq as u8])],
+                    snapshot: None,
+                    answers: None,
+                })
+                .unwrap();
+        }
+        journal.checkpoint(3, b"state at 3".to_vec()).unwrap();
+        let txn = journal.db.begin_read().unwrap();
+        let entries = txn.open_table(JOURNAL).unwrap().iter().unwrap().count();
+        drop(txn);
+        assert_eq!(entries, 0);
+        drop(journal);
+
+        let stored = Journal::open(&path).unwrap().read().unwrap();
+        assert_eq!(stored.snapshot, Some((3, b"state at 3".to_vec())));
+        assert!(stored.journal.is_empty());
+        assert_eq!(stored.outbox.len(), 3);
     }
 
     #[test]
