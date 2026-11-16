@@ -186,12 +186,13 @@ impl Multithread {
     }
 }
 
-/// Light jobs that may share the slot one full job takes.
-const LIGHT_JOBS_PER_SLOT: u32 = 4;
+/// Light jobs that run at once. Together they take the whole pool: all admission units and all
+/// threads, split evenly.
+const LIGHT_JOBS_AT_ONCE: u32 = 4;
 
 /// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
 /// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
-/// batch faster than one at a time on every thread. Every other job takes a whole slot and every
+/// batch faster than one at a time on every thread. Every other job takes one slot and every
 /// thread, as before.
 fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
     let light = matches!(
@@ -201,13 +202,13 @@ fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usi
     weight(light, pool.capacity_units(), pool.threads())
 }
 
-/// A light job takes a quarter of all admission units, so at most four run at once, and a
-/// quarter of the threads.
+/// A light job takes a quarter of the pool's admission units, so at most four run at once and
+/// nothing else is admitted beside them, and a quarter of the threads.
 fn weight(light: bool, capacity_units: u32, threads: usize) -> (u32, Option<usize>) {
     if light {
         (
-            (capacity_units / LIGHT_JOBS_PER_SLOT).max(1),
-            Some((threads / LIGHT_JOBS_PER_SLOT as usize).max(1)),
+            (capacity_units / LIGHT_JOBS_AT_ONCE).max(1),
+            Some((threads / LIGHT_JOBS_AT_ONCE as usize).max(1)),
         )
     } else {
         (e3_task_pool::SLOT_UNITS, None)

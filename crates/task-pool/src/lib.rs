@@ -21,8 +21,8 @@ pub fn scoped_task_group(scope: &str, key: impl std::fmt::Display) -> String {
     format!("{scope}:{key}")
 }
 
-/// Admission units one full task takes. A light task takes fewer, so several can share the slot
-/// one full task would use (see [`TaskPool::spawn_cancellable_in_group`]).
+/// Admission units one full task takes. The pool holds `SLOT_UNITS` per concurrent task; a task
+/// spawned with [`TaskPool::spawn_cancellable_in_group`] takes any number of units.
 pub const SLOT_UNITS: u32 = 4;
 
 /// A bounded executor for CPU-bound tasks backed by a Rayon thread pool.
@@ -105,9 +105,9 @@ impl TaskPool {
     /// Add caller-owned cancellation of one attempt without cancelling its whole group.
     /// Like group cancellation, this does not preempt an executing native closure.
     ///
-    /// The task takes `units` of the [`SLOT_UNITS`] a full task takes, so up to
-    /// `SLOT_UNITS / units` such tasks share one slot. The caller sizes the task's own threads and
-    /// memory to that share.
+    /// The task takes `units` of the pool's [`Self::capacity_units`] instead of the
+    /// [`SLOT_UNITS`] of a full task. The caller sizes the task's own threads and memory to that
+    /// share.
     pub async fn spawn_cancellable_in_group<OP, T: Debug + Send + 'static>(
         &self,
         group: String,

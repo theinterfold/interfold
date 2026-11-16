@@ -7,9 +7,9 @@ crate knows nothing about E3s, event replay, cryptography, actors, or prover mem
 to share its semaphore and worker threads; constructing another pool creates another resource
 budget. `spawn` executes ordinary work; `spawn_in_group` also checks cancellation before admission
 and before the queued closure starts. `spawn_cancellable_in_group` adds a caller-owned cancellation
-for one attempt and admits a task that takes `units` of the `SLOT_UNITS` a full task takes, so
-several light tasks share one slot; the caller sizes their threads and memory to that share.
-`cancel_group` permanently cancels that caller-defined group, and `wait_for_retry` makes retry waits
+for one attempt and admits a task that takes `units` of the pool's `capacity_units()` instead of the
+`SLOT_UNITS` of a full task; the caller sizes its threads and memory to that share. `cancel_group`
+permanently cancels that caller-defined group, and `wait_for_retry` makes retry waits
 interruptible. Running closures are not preempted.
 
 The caller owns group identity, retry classification, result correlation, terminal filtering, and

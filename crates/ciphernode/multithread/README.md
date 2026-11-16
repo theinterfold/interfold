@@ -28,8 +28,9 @@ result (or `TaskPoolError`). Timed logs describe elapsed work; they are not hard
 executing Rayon closures.
 
 C3 share-encryption proofs are light jobs: a node proves them as one batch of small proofs, so at
-most four run at once, each on a quarter of the pool's threads (`HARDWARE_CONCURRENCY` for bb), in
-the admission that one full job would take. Every other job takes a full slot and every thread.
+most four run at once, each with a quarter of the pool's admission and a quarter of its threads
+(`HARDWARE_CONCURRENCY` for bb). Four of them fill the pool, so nothing else runs beside them. Every
+other job takes one slot and every thread.
 
 The pool types are re-exported here for existing callers; `e3-task-pool` owns their implementation.
 Prover-specific memory budgets remain in this runtime, not in the generic executor.
