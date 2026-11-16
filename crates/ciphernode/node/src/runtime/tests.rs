@@ -251,15 +251,15 @@ async fn recovered_work_waits_for_the_first_catch_up() {
     }
 }
 
-/// A release that no longer runs an E3's BFV profile refuses to start while the node owes work in
-/// that E3: a seat on its committee, or a ticket before the committee is final.
+/// A release that no longer runs an E3's BFV profile refuses to start while that E3 runs: saved
+/// before its seed, with a ticket, or with a seat on its committee.
 #[tokio::test]
 async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
     use e3_protocol::{
         node::{ChainEvent, ChainFact, CommitteeSeed, LogPosition},
         testing::{chain, e3, finalized, requested},
     };
-    for seated in [true, false] {
+    for stage in 0..3 {
         let dir = tempfile::tempdir().unwrap();
         let (settings, first, _peers) = parts(dir.path(), Chain::default()).await;
         let signer = first.operator.clone();
@@ -302,8 +302,10 @@ async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
             seed: U256::from(42),
             deadline: 100,
         };
-        inputs.push(chain(11, ChainFact::SeedReady { e3: e3(1), seed }));
-        if seated {
+        if stage >= 1 {
+            inputs.push(chain(11, ChainFact::SeedReady { e3: e3(1), seed }));
+        }
+        if stage == 2 {
             let members = vec![operator, Address::repeat_byte(1)];
             inputs.push(finalized(12, e3(1), members));
         }
@@ -313,10 +315,7 @@ async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
             for input in inputs {
                 engine = engine.apply(5, input).unwrap().0;
             }
-            assert!(engine
-                .machine()
-                .e3(&e3(1))
-                .is_some_and(|state| state.takes_part()));
+            assert!(engine.machine().owes(&e3(1), Scope::Live));
         }
         let (_, mut second, _peers) = parts(dir.path(), Chain::default()).await;
         second.operator = signer;

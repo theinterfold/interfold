@@ -385,13 +385,13 @@ where
     Ok(())
 }
 
-/// The first E3 this node owes work in under a BFV profile this release does not run, and why: its
-/// jobs could not run here. That is an E3 with work, or a running one the node holds a ticket or a
-/// seat in; a request it only watches needs no job.
+/// The first E3 under a BFV profile this release does not run that has not ended, or that still
+/// owes work after its end, and why. Even a request the node only watches can give it a ticket, and
+/// then jobs that could not run here; a profile retires only once all its E3s have ended.
 fn retired_profile(machine: &Node) -> Option<(E3Id, String)> {
     machine.held().find_map(|e3| {
         let state = machine.e3(e3)?;
-        let owed = state.has_work() || (machine.owes(e3, Scope::Live) && state.takes_part());
+        let owed = machine.owes(e3, Scope::Live) || !state.owes().is_empty();
         let refused = e3_jobs::profile(&state.params).err()?;
         owed.then(|| (*e3, refused.to_string()))
     })

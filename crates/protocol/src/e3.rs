@@ -484,7 +484,7 @@ impl E3 {
     }
 
     /// Whether this node takes part in the E3: it holds a ticket, or a seat on the committee.
-    pub fn takes_part(&self) -> bool {
+    pub(crate) fn takes_part(&self) -> bool {
         self.has_ticket() || self.dkg.is_some()
     }
 

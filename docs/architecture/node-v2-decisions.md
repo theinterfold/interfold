@@ -437,8 +437,9 @@ Each rule is checkable in review.
   parameter set, so the parameter set does not name the profile. The machine keeps each request's
   configuration ID, the chain reader takes only the (parameter set, committee size, ID) triples this
   release admits, and the job runner finds the profile by its ID for the BFV parameters and the
-  circuit folder. A start refuses a held E3 that still has work under a profile the release no
-  longer runs: run the release that runs it until the E3 ends.
+  circuit folder. A start refuses a held E3 under a profile the release no longer runs while the E3
+  has not ended, even one the node only watches, which can still give it a ticket, or while it still
+  owes work after its end: run the release that runs the profile until the E3 ends.
 
 ## Problems in the earlier node, with the fix above them
 
