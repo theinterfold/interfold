@@ -238,11 +238,9 @@ where
     let drain = settings.drain;
     let outcome = async {
         // Draining starts at once. Taking E3s again waits for the first catch-up, so ranking reads
-        // the chain as it is now.
+        // the chain as it is now. Both go through the queue, so each step ends as every step does.
         if drain && !engine.machine().draining() {
-            let (next, pending) = engine.apply(now(), Input::Drain(true))?;
-            engine = next;
-            queue.extend(effects.dispatch(pending));
+            queue.push_back(Event::Input(Input::Drain(true)));
         }
         let mut drained = false;
         loop {
@@ -325,9 +323,7 @@ where
                     }
                     queue.extend(effects.dispatch(owed));
                     if !drain && engine.machine().draining() {
-                        let (next, pending) = engine.apply(now(), Input::Drain(false))?;
-                        engine = next;
-                        queue.extend(effects.dispatch(pending));
+                        queue.push_back(Event::Input(Input::Drain(false)));
                     }
                     // The recovered calls go out again from here, so a call no one sends now is one
                     // the node no longer owes.
