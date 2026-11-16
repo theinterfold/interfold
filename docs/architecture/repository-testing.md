@@ -78,9 +78,11 @@ production gaps those scenarios do not close.
 The disabled synchronized DKG definition has separate
 [keyshare actor/store recovery coverage](../../crates/orchestration/keyshare/README.md#tests),
 including an explicit real-proof variant selected in CI. It reopens three Sled stores and actors,
-not whole ciphernode runtimes or durable event logs. Private checkpoint/compute drivers remain below
-disabled production admission; they do not establish admitted synchronized startup or end-to-end
-publication.
+then joins their recovered contributions and sealed material through C5/publication verification in
+Rust and Solidity. A complementary ordinary test drives production startup sync from reopened commit
+logs into a manually hydrated keyshare actor, with empty historical EVM/network adapters. Private
+checkpoint/compute drivers remain below disabled admission; neither fixture establishes
+whole-ciphernode startup, real network delivery, hard-crash durability or live registry publication.
 
 ## Proofs and compatibility
 

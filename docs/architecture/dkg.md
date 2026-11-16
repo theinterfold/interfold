@@ -84,8 +84,9 @@ This is not a complete admitted setup protocol. The explicit proof API verifies 
 context/roster; it does not establish their chain/signature authority. The isolated
 [C5/publication boundary](proof-statements.md#draft-synchronized-c5publication-boundary-not-admitted)
 joins H recipient setups to the aggregate key and a common dealer-batch anchor, with native and
-Solidity verification against independent expectations. Registry publication/attestations, full-node
-synchronized startup/replay and synchronized C6 remain absent. Synchronized runtime
+Solidity verification against independent expectations, including reopened runtime artifacts.
+Registry publication/attestations, full-node synchronized startup and synchronized C6 remain absent.
+The capability replay fixture below does not enable production admission. Synchronized runtime
 folding/publication and decryption paths still refuse the SS implementations. The joins,
 root/bundle/batch schemas and setup derivation require human protocol review before consumers freeze
 them.
@@ -269,9 +270,19 @@ The private
 stops, flushes and physically reopens three independent stores and keyshare actors with fresh
 password-derived ciphers. It checks exact reissued work and saved artifacts, H `[0,2]` including an
 outside-H recipient, provisional C4 retirement and authenticated replacement after restart. Its
-explicit real-proof variant verifies C0–C4 and proves C4 from the restored request. This is orderly
-actor/store recovery below disabled production hydration/compute admission, not durable-log replay,
-full-node restart, hard-crash durability or publication acceptance. See the
+explicit real-proof variant proves C4 from the restored request, then joins reopened signed
+contributions, sealed material and native PK-share bytes through C5/publication verification in Rust
+and Solidity. Selected C4 artifacts come from peers' reopened snapshots; the outside-H recipient
+uses its disk-restored C4 request and the verified publication's key/batch authority.
+
+The complementary
+[replay fixture](../../crates/orchestration/keyshare/src/tests/synchronized/recovery/replay.rs)
+reopens a commit-log suffix through `EventSystem` and production startup sync into one manually
+hydrated keyshare actor. It checks authenticated replacement/deduplication, decreasing-HLC aggregate
+sequence, stale boot-control filtering, no pre-enable effects and persisted inputs after an
+acknowledged snapshot drain/reopen. Historical EVM/network adapters return empty history. These are
+capability-level, orderly recovery checks below disabled production hydration/compute admission, not
+whole-node startup, network delivery, hard-crash durability or live registry publication. See the
 [test commands](../../crates/orchestration/keyshare/README.md#tests).
 
 Dealer identity binds public statement (E3, proof type, circuit, signals), not randomized proof

@@ -1112,36 +1112,45 @@ fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_pro
     for circuit in circuits {
         let package = directory.path().join(circuit.as_str());
         fs::create_dir_all(package.join("src"))?;
-        fs::write(package.join("Nargo.toml"), format!(
-            "[package]\nname=\"sync_runtime_leaf\"\ntype=\"bin\"\nauthors=[]\n[dependencies]\nlib={{path={:?}}}\n",
-            root.join("circuits/lib")
-        ))?;
-        fs::copy(
-            root.join("circuits/bin")
-                .join(
-                    circuit
-                        .source_path(PROFILE)
-                        .context("missing sync source")?,
-                )
-                .join("src/main.nr"),
-            package.join("src/main.nr"),
-        )?;
+        let source = root.join("circuits/bin").join(
+            circuit
+                .source_path(PROFILE)
+                .context("missing sync source")?,
+        );
+        let mut manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(source.join("Nargo.toml"))?)?;
+        manifest["package"]["name"] = toml::Value::String("sync_runtime_leaf".into());
+        manifest["dependencies"]["lib"]["path"] =
+            toml::Value::String(root.join("circuits/lib").to_string_lossy().into());
+        fs::write(package.join("Nargo.toml"), toml::to_string(&manifest)?)?;
+        fs::copy(source.join("src/main.nr"), package.join("src/main.nr"))?;
         run(Command::new("nargo").arg("compile").current_dir(&package))?;
+        // Explicit variants for this private qualification, not a release/staging variant table.
+        let variant = match circuit {
+            CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::PkAggregation => {
+                e3_zk_config::CircuitVariant::Default
+            }
+            CircuitName::DkgAggregator => e3_zk_config::CircuitVariant::Evm,
+            _ => e3_zk_config::CircuitVariant::Recursive,
+        };
         let target = artifact_root
-            .join("sync-insecure-64/minimum/recursive")
+            .join(PROFILE.artifacts_dir_for_committee(COMMITTEE)?)
+            .join(variant.as_str())
             .join(circuit.dir_path());
         fs::create_dir_all(&target)?;
         let json = target.join(format!("{}.json", circuit.as_str()));
         fs::copy(package.join("target/sync_runtime_leaf.json"), &json)?;
         run(Command::new(&bb)
-            .args(["write_vk", "-t", "noir-recursive", "-b"])
+            .args(["write_vk", "-t", variant.verifier_target(), "-b"])
             .arg(&json)
             .arg("-o")
             .arg(package.join("keys")))?;
-        fs::copy(
-            package.join("keys/vk"),
-            target.join(format!("{}.vk", circuit.as_str())),
-        )?;
+        for suffix in ["vk", "vk_hash"] {
+            fs::copy(
+                package.join("keys").join(suffix),
+                target.join(format!("{}.{suffix}", circuit.as_str())),
+            )?;
+        }
     }
     let prover = ZkProver::new(&ZkBackend::new(
         BBPath::Custom(bb),

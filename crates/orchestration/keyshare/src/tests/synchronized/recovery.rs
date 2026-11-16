@@ -2,7 +2,8 @@
 
 //! Physical Sled reopen and real actor mailboxes/effects, below disabled profile admission.
 //! Checkpoints come from production native planning. No production enable switch, chain reader,
-//! network transport, ProofRequestActor, or durable event-log replay is simulated as present.
+//! network transport or ProofRequestActor is simulated as present. The replay child separately
+//! drives startup sync from a durable log; the real-proof child joins reopened artifacts to C5.
 
 use super::*;
 use actix::{ActorContext, ActorFutureExt, Message, ResponseActFuture, WrapFuture};
@@ -15,8 +16,13 @@ use e3_trbfv::{
 use e3_zk_prover::{synchronized as adapters, ZkProver};
 use std::path::Path;
 
+#[path = "recovery/publication.rs"]
+mod publication;
+#[path = "recovery/replay.rs"]
+mod replay;
+
 // These are this crate's only Sled fixtures. Close all three stores before evicting the process
-// cache; serialize the two variants so one cannot evict the other's still-open database handles.
+// cache; serialize the variants so one cannot evict the other's still-open database handles.
 static DISK_RECOVERY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn cipher(owner: usize) -> Result<Arc<Cipher>> {
@@ -472,6 +478,26 @@ impl Node {
                 })
                 .await?;
         }
+        Self::restore(store, bus, history, owner, setup).await
+    }
+
+    async fn restore(
+        store: DataStore,
+        bus: BusHandle,
+        history: Addr<HistoryCollector<InterfoldEvent>>,
+        owner: usize,
+        setup: &Setup,
+    ) -> Result<Self> {
+        let repositories = store.repositories();
+        let selection = &setup.selected[owner];
+        let e3 = &selection.e3_id;
+        let root_repo = repositories.threshold_keyshare_recovery(e3);
+        let state_repo = repositories.threshold_keyshare(e3);
+        let bfv_key = repositories.threshold_keyshare_bfv_key(e3);
+        let expected_key = BfvKeyIntent {
+            sk_bfv: setup.sk_bfv[owner].clone(),
+            pk_bfv: setup.encryption_keys[owner].pk_bfv.clone(),
+        };
         let recovery = root_repo.load().await?;
         let payloads = ThresholdKeyshareRecoveryPayloads::load(
             repositories.threshold_keyshare_recovery_payloads(e3),
@@ -851,6 +877,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
     stop(nodes).await?;
 
     let nodes = open(temp.path(), &setup).await?;
+    let mut recovered = Vec::new();
     for (owner, node) in nodes.iter().enumerate() {
         let saved = node.root(e3).await?;
         ensure!(saved.dkg_roster.as_ref() == Some(&roster));
@@ -858,8 +885,11 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
             .decryption_key_shares
             .get(&(peers[owner] as u64))
             .is_some_and(|value| **value == accepted_c4[peers[owner]]));
-        let material = saved.synchronized.context("lost C4 key material")?;
-        ensure!(material == successful[owner].material);
+        let material = saved
+            .synchronized
+            .as_ref()
+            .context("lost C4 key material")?;
+        ensure!(material == &successful[owner].material);
         let binding = setup_binding(&material.context, e3)?;
         let incoming = material
             .incoming_keys
@@ -874,7 +904,10 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
                 3,
                 &*cipher(dealer as usize).await?,
             )?;
-            ensure!(incoming[row].as_bytes() == outgoing[owner].as_bytes());
+            ensure!(
+                incoming[row].as_bytes() == outgoing[owner].as_bytes(),
+                "restored directed keys disagree for dealer {dealer}, recipient {owner}"
+            );
         }
         let state = node
             .repositories
@@ -908,8 +941,27 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
             .send(GetEvents::<InterfoldEvent>::new())
             .await?
             .is_empty());
+        recovered.push((saved, state));
     }
-    stop(nodes).await?;
+    let qualified = match prover {
+        Some(prover) => publication::qualify(&recovered, &accepted_c4, prover, temp.path()).await,
+        None => Ok(()),
+    };
+    let stopped = stop(nodes).await;
+    if let Err(error) = qualified {
+        let evidence = temp.keep();
+        let error = error.context(format!(
+            "Recovered publication fixture retained at {}",
+            evidence.display(),
+        ));
+        return Err(match stopped {
+            Ok(()) => error,
+            Err(stop_error) => {
+                error.context(format!("fixture shutdown also failed: {stop_error:#}"))
+            }
+        });
+    }
+    stopped?;
     ensure!(!PROFILE.admission_enabled());
     Ok(())
 }
@@ -920,8 +972,15 @@ async fn synchronized_disk_reopen_restores_actor_work_and_releases_rejected_slot
 }
 
 #[actix::test]
-#[ignore = "requires pinned nargo/bb; 30 real proofs and physical actor/store reopen below disabled admission"]
+#[ignore = "requires pinned nargo/bb, solc 0.8.28 and pnpm; restored runtime plans through real publication verification"]
 async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs() -> Result<()> {
-    let (_directory, prover) = real_prover(&CircuitName::SYNCHRONIZED_DKG_LEAVES)?;
-    exercise(Some(&prover)).await
+    let (directory, prover) = real_prover(&CircuitName::SYNCHRONIZED_DKG)?;
+    if let Err(error) = exercise(Some(&prover)).await {
+        let evidence = directory.keep();
+        return Err(error.context(format!(
+            "Proof artifacts retained at {}",
+            evidence.display()
+        )));
+    }
+    Ok(())
 }

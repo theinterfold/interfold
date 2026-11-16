@@ -68,21 +68,31 @@ preparation, while runtime admission stays disabled:
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo test --locked -p e3-keyshare --lib synchronized
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_prepared_runtime_requests_prove_with_real_crypto -- --ignored
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:recovery
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:qualification
 ```
 
-The proof commands require pinned nargo/bb and build only the affected leaves in temporary
-directories. The second verifies ten real C1/C2/C3/C4 proofs. The recovery command also verifies 30
-C0–C4 proofs across three independent keyshare actors/stores, including C4 from disk-restored,
-reissued private inputs. It tests orderly stop/flush/cache eviction/reopen, exact saved work and
-proof artifacts, non-prefix H `[0,2]`, self/outside-H recipients, and authenticated rejection
-followed by valid replacement. Its ordinary variant uses synthetic signed proof statements, not
-valid proofs. The provisional rejection fixture is synthetic in both variants; the real-proof
-variant proves and verifies the accepted C0–C4 artifacts.
+The proof commands require pinned nargo/bb and stage explicit variants in temporary directories,
+preserving source dependency pins. The second verifies ten real C1/C2/C3/C4 proofs. The recovery
+command verifies 37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient
+joins, C5 and publication from their reopened signed artifacts, sealed keys and native PK-share
+bytes. It requires `pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH;
+generated Honk/Solidity acceptance and substitution rejection are mandatory, not skipped when
+unavailable. It tests orderly stop/flush/cache eviction/reopen, exact saved work, non-prefix H
+`[0,2]`, self/outside-H recipients and authenticated replacement. Its ordinary variant and
+provisional negatives use synthetic signed statements, not valid proofs.
+
+The qualification command selects all synchronized keyshare cases, including recovery and a
+complementary ordinary durable-log replay test. That test reopens actual commit logs through
+`EventSystem` and production startup sync, preserves aggregate sequence despite decreasing HLC,
+filters stale boot controls and records authenticated replacements without effects until this boot's
+fresh enable signal. Snapshot persistence assertions follow an acknowledged drain; event-log flush
+alone does not drain buffered snapshots.
 
 These private fixtures load checkpoints through production repositories/payloads below the disabled
-extension-hydration and generation/calculation dispatch guards. They are not full node startup,
-durable event-log replay, network delivery, process-crash durability, synchronized
-publication/contract acceptance, secure-profile qualification or repeated-decryption assurance.
+extension-hydration and generation/calculation dispatch guards. Replay supplies empty historical
+EVM/network adapters; real proofs are driven explicitly, not by production proof workers. Neither
+fixture establishes whole-node startup, live registry publication/attestations, network delivery,
+process-crash durability, secure-profile qualification or repeated-decryption assurance.
 
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,

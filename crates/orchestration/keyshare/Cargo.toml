@@ -41,8 +41,11 @@ num-bigint = { workspace = true }
 e3-zk-prover = { workspace = true }
 e3-evm.workspace = true
 e3-event-system.workspace = true
+e3-sync.workspace = true
 e3-zk-build.workspace = true
 e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+toml.workspace = true

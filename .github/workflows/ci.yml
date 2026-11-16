@@ -1292,9 +1292,9 @@ jobs:
         if: matrix.leg == 'sync-dkg-proofs'
         run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
 
-      - name: Verify synchronized DKG actor recovery with disk-restored proof inputs
+      - name: Qualify synchronized DKG replay and recovered-runtime publication proofs
         if: matrix.leg == 'sync-dkg-recovery'
-        run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:recovery
+        run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:qualification
 
       - name: Run ZK prover e2e tests
         if: matrix.leg == 'suites'
