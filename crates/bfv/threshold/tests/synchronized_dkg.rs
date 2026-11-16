@@ -127,7 +127,7 @@ impl Fixture {
                 share_computation::Data {
                     secret: secret_crt,
                     secret_sss: shares.iter().map(|row| row.mapv(BigInt::from)).collect(),
-                    outgoing_keys: outgoing[dealer].clone(),
+                    outgoing_keys: outgoing[dealer].clone().into(),
                 },
             )?;
             let sk_commitment = e3_zk_witness::compute_share_computation_sk_commitment(
@@ -251,9 +251,9 @@ impl Fixture {
                 dealer_ids: DEALERS.to_vec(),
                 expected_outgoing_root: roots[recipient].clone(),
                 expected_commitments: message_commitments[recipient].clone(),
-                packed_shares: messages[recipient].clone(),
-                outgoing_keys: outgoing[recipient].clone(),
-                incoming_keys: received_keys[recipient].clone(),
+                packed_shares: messages[recipient].clone().into(),
+                outgoing_keys: outgoing[recipient].clone().into(),
+                incoming_keys: received_keys[recipient].clone().into(),
             };
             let inputs = share_decryption::Inputs::compute(&config, BINDING, copy_opening(&data))?;
             leaves.push(Leaf {

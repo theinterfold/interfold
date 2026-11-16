@@ -6,6 +6,7 @@ use crate::{compute_share_encryption_commitment_from_message, WitnessError};
 use e3_polynomial::Polynomial;
 use e3_zk_config::synchronized::Configs;
 use num_bigint::BigInt;
+use zeroize::Zeroizing;
 
 pub struct Data {
     pub recipient_id: u32,
@@ -14,9 +15,9 @@ pub struct Data {
     pub expected_outgoing_root: BigInt,
     pub expected_commitments: Vec<Vec<BigInt>>,
     /// Exact native-order decoded transport plaintexts, not reconstructed or resampled messages.
-    pub packed_shares: Vec<Vec<Vec<u64>>>,
-    pub outgoing_keys: Vec<KeyBytes>,
-    pub incoming_keys: Vec<KeyBytes>,
+    pub packed_shares: Zeroizing<Vec<Vec<Vec<u64>>>>,
+    pub outgoing_keys: Zeroizing<Vec<KeyBytes>>,
+    pub incoming_keys: Zeroizing<Vec<KeyBytes>>,
 }
 
 pub struct Inputs {
@@ -59,7 +60,7 @@ impl Inputs {
                 "outgoing keys do not open the authenticated C2 root",
             ));
         }
-        for (&dealer, incoming) in data.dealer_ids.iter().zip(&data.incoming_keys) {
+        for (&dealer, incoming) in data.dealer_ids.iter().zip(data.incoming_keys.iter()) {
             if dealer == data.recipient_id && incoming != &data.outgoing_keys[dealer as usize] {
                 return Err(invalid("own PRF key directions differ"));
             }
@@ -130,8 +131,8 @@ impl Inputs {
             "expected_outgoing_root": self.data.expected_outgoing_root.to_string(),
             "expected_commitments": bigint_2d_to_json_values(&self.data.expected_commitments),
             "packed_shares": packed,
-            "outgoing_keys": self.data.outgoing_keys,
-            "incoming_keys": self.data.incoming_keys,
+            "outgoing_keys": self.data.outgoing_keys.as_slice(),
+            "incoming_keys": self.data.incoming_keys.as_slice(),
         })
     }
 }

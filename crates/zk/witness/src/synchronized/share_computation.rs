@@ -8,18 +8,19 @@ use e3_polynomial::CrtPolynomial;
 use e3_zk_config::{synchronized::Configs, DkgInputType};
 use ndarray::Array2;
 use num_bigint::BigInt;
+use zeroize::Zeroizing;
 
 pub struct Data {
     pub secret: CrtPolynomial,
     pub secret_sss: Vec<Array2<BigInt>>,
-    pub outgoing_keys: Vec<KeyBytes>,
+    pub outgoing_keys: Zeroizing<Vec<KeyBytes>>,
 }
 
 pub struct Inputs {
     pub setup_binding: SetupBinding,
     pub dealer_id: u32,
     sharing: SharingInputs,
-    outgoing_keys: Vec<KeyBytes>,
+    outgoing_keys: Zeroizing<Vec<KeyBytes>>,
 }
 
 impl Inputs {
@@ -58,7 +59,7 @@ impl Inputs {
             "expected_secret_commitment": self.sharing.expected_secret_commitment.to_string(),
             "sk_secret": poly_coefficients_to_toml_json(self.sharing.secret_crt.limb(0).coefficients()),
             "y": bigint_3d_to_json_values(&self.sharing.y),
-            "outgoing_keys": self.outgoing_keys,
+            "outgoing_keys": self.outgoing_keys.as_slice(),
         })
     }
 }

@@ -52,11 +52,11 @@ impl Configs {
         let key_bits = profile
             .prf_key_bits()
             .ok_or_else(|| invalid("profile has no PRF key width"))?;
-        let largest_q = threshold.moduli().iter().copied().max().unwrap();
+        let packing_q = threshold.moduli()[0];
         if key_bits > threshold.degree()
             || key_bits > 256
             || key_bits % 8 != 0
-            || largest_q.checked_mul(2) != Some(transport.plaintext())
+            || packing_q.checked_mul(2) != Some(transport.plaintext())
         {
             return Err(invalid(
                 "synchronized keys do not fit the configured transport",

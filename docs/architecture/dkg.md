@@ -43,11 +43,11 @@ The disabled synchronized insecure-64 profile has a separate native SK-share pac
 directed 32-byte PRF key uses 64 low little-endian bits; every higher bit is zero. For native
 ascending coefficient j in threshold limb zero, the transport plaintext is
 `share[0][j] + key_bit[j] * q_0`. Other limbs are unchanged. All original residues must be canonical
-under their own threshold modulus. The synchronized DKG plaintext modulus is twice the largest
-threshold modulus; these parameters are not interchangeable with the SS DKG pair. Unpacking rejects
-out-of-range packed coefficients and restores SK residues before aggregation. Native round trips
-exercise the existing encrypted SK-share transport, not a new key-bearing wire field or signature.
-The isolated
+under their own threshold modulus. The synchronized DKG plaintext modulus is twice `q_0`, the
+packing limb's modulus; these parameters are not interchangeable with the SS DKG pair. Unpacking
+rejects out-of-range packed coefficients and restores SK residues before aggregation. Native round
+trips exercise the existing encrypted SK-share transport, not a new key-bearing wire field or
+signature. The isolated
 [draft C0–C4 leaves](proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted) bind
 packed-message openings and directed-key roots/bundles. This is not the admitted setup protocol:
 authenticated E3 context, recursive provenance joins and the anchored private-key binding for
