@@ -173,9 +173,9 @@ function system({ units, tag }) {
         both: true,
         label: 'events in · transactions out',
         refs: [
-          'crates/ciphernode/chain/src/decode.rs@194@I::E3Requested::SIGNATURE_HASH',
-          'crates/ciphernode/chain/src/writer.rs@245@Registry::submitTicketCall',
-          'crates/ciphernode/chain/src/writer.rs@299@IInterfold::publishPlaintextOutputCall',
+          'crates/ciphernode/chain/src/decode.rs@195@I::E3Requested::SIGNATURE_HASH',
+          'crates/ciphernode/chain/src/writer.rs@330@Registry::submitTicketCall',
+          'crates/ciphernode/chain/src/writer.rs@392@IInterfold::publishPlaintextOutputCall',
         ],
       },
       { from: 'node', to: 'peers', fs: 'b', ts: 't', both: true, label: 'libp2p: gossipsub · Kademlia · blobs', refs: ev('A23') },
@@ -503,7 +503,7 @@ function contracts() {
         lt: 0.78,
         refs: [
           'packages/interfold-contracts/contracts/Interfold.sol@441@function publishPlaintextOutput(',
-          'crates/ciphernode/chain/src/writer.rs@299@IInterfold::publishPlaintextOutputCall',
+          'crates/ciphernode/chain/src/writer.rs@392@IInterfold::publishPlaintextOutputCall',
         ],
       },
       {
@@ -926,7 +926,7 @@ function ciphernode() {
         fs: 'r',
         ts: 'l',
         label: 'ciphertexts',
-        refs: [H('crates/data-availability/src/lib.rs', 62, 'async fn retrieve(&self, reference: &DataReference)')],
+        refs: [H('crates/data-availability/src/lib.rs', 61, 'async fn retrieve(&self, reference: &DataReference)')],
       },
       { from: 'peers', to: 'p2p', fs: 'r', ts: 'l', both: true, label: 'gossip\nblobs', refs: ev('A23') },
       {

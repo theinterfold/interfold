@@ -3,8 +3,8 @@
     "id": "B1",
     "supported": true,
     "refs": [
-      "crates/cli/src/start.rs@58@e3_node::launch::launch(node, stop)",
-      "crates/ciphernode/node/src/launch.rs@139@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
+      "crates/cli/src/start.rs@64@e3_node::launch::launch(node, stop)",
+      "crates/ciphernode/node/src/launch.rs@138@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
     ],
     "line_text": [
       "e3_node::launch::launch(node, stop)",
@@ -23,9 +23,9 @@
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/ciphernode/chain/src/writer.rs@245@let data = Registry::submitTicketCall {",
-      "crates/ciphernode/chain/src/writer.rs@299@let data = IInterfold::publishPlaintextOutputCall {",
-      "crates/ciphernode/chain/src/writer.rs@340@let data = ISlashingManager::proposeSlashCall {",
+      "crates/ciphernode/chain/src/writer.rs@330@let data = Registry::submitTicketCall {",
+      "crates/ciphernode/chain/src/writer.rs@392@let data = IInterfold::publishPlaintextOutputCall {",
+      "crates/ciphernode/chain/src/writer.rs@433@let data = ISlashingManager::proposeSlashCall {",
       "crates/ciphernode/chain/src/link.rs@63@pub async fn connect(&self) -> Result<RpcClient, RpcError> {"
     ],
     "line_text": [
@@ -41,8 +41,8 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/chain/src/rpc.rs@59@.subscribe_logs(&filter)",
-      "crates/ciphernode/chain/src/reader.rs@220@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
-      "crates/ciphernode/chain/src/decode.rs@194@I::E3Requested::SIGNATURE_HASH => {"
+      "crates/ciphernode/chain/src/reader.rs@228@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {",
+      "crates/ciphernode/chain/src/decode.rs@195@I::E3Requested::SIGNATURE_HASH => {"
     ],
     "line_text": [
       ".subscribe_logs(&filter)",
@@ -55,8 +55,8 @@
     "id": "B5",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@403@async fn read_chain<R: Rpc>(",
-      "crates/ciphernode/node/src/runtime.rs@423@events.send(Event::Input(Input::Chain(fact)))"
+      "crates/ciphernode/node/src/runtime.rs@514@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@538@events.send(Event::Input(Input::Chain(fact)))"
     ],
     "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
     "note": "The chain reader's task sends each fact to the event loop as an input."
@@ -64,7 +64,7 @@
   {
     "id": "B6",
     "supported": true,
-    "refs": ["crates/ciphernode/node/src/runtime.rs@219@message = inbox.next() => {"],
+    "refs": ["crates/ciphernode/node/src/runtime.rs@260@message = inbox.next() => {"],
     "line_text": ["message = inbox.next() => {"],
     "note": "Admitted peer messages reach the event loop as inputs."
   },
@@ -73,7 +73,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/engine/src/lib.rs@165@pub fn apply(self, now: UnixSecs, input: M::Input)",
-      "crates/protocol/src/node.rs@1242@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+      "crates/protocol/src/node.rs@1307@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
       "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
@@ -85,8 +85,8 @@
     "id": "B8",
     "supported": true,
     "refs": [
-      "crates/ciphernode/engine/src/lib.rs@207@self.store.commit(Step {",
-      "crates/state/journal/src/lib.rs@119@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
+      "crates/ciphernode/engine/src/lib.rs@209@self.store.commit(Step {",
+      "crates/state/journal/src/lib.rs@133@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
     ],
     "line_text": ["self.store.commit(Step {", "fn commit(&mut self, step: Step) -> Result<(), StoreError> {"],
     "note": "Each step commits the input, the outbox changes and, at intervals, a snapshot in one redb transaction."
@@ -95,8 +95,8 @@
     "id": "B9",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@140@Engine::open(parts.journal, genesis, settings.snapshot_every)",
-      "crates/ciphernode/node/src/runtime.rs@285@queue.extend(effects.dispatch(pending));"
+      "crates/ciphernode/node/src/runtime.rs@164@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@352@queue.extend(effects.dispatch(pending));"
     ],
     "line_text": [
       "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",

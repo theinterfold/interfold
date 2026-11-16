@@ -28,7 +28,6 @@ pub use avail_locator::AvailLocator;
 /// any network request.
 pub const MAX_OBJECT_BYTES: usize = 1024 * 1024;
 
-/// Stable coordinates recorded by the Ethereum application after receipt verification.
 /// Bytes the chain names by their Keccak-256 hash, and where an availability layer holds them, in
 /// that layer's own encoding: empty for a layer that finds bytes by their hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
