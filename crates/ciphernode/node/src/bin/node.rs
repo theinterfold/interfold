@@ -103,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
             peers: config.network.peers,
         },
         status_port: None,
+        drain: false,
     };
     launch(config, stop).await
 }
