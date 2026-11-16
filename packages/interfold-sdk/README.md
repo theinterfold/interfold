@@ -25,6 +25,7 @@ pnpm add @interfold/sdk
 
 ```typescript
 import { CommitteeSize, InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
+import type { E3RequestParams } from '@interfold/sdk'
 import { createPublicClient, createWalletClient, http, custom } from 'viem'
 import { sepolia } from 'viem/chains'
 
@@ -64,11 +65,12 @@ sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED, (event) =
 
 // Interact with contracts
 const now = BigInt(Math.floor(Date.now() / 1000))
-const requestParams = {
+// Without the annotation, `profile` and the hex fields widen to `string`.
+const requestParams: E3RequestParams = {
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
-  paramSet: 0, // Insecure64 for development
+  profile: 'ss-insecure-64', // Development only
   computeProviderParams: '0x...',
   customParams: '0x...',
 }
@@ -347,7 +349,7 @@ await sdk.requestE3({
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [bigint, bigint],
   e3Program: `0x${string}`,
-  paramSet: 0,
+  profile: 'ss-insecure-64',
   computeProviderParams: `0x${string}`,
   customParams: '0x',
   maxFee: amount,
@@ -500,6 +502,11 @@ on-chain `paramSet` index registered in the Interfold contract:
 | Local development | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
 | Sepolia testnet   | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
 | Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                          |
+
+New requests select `profile: 'ss-insecure-64'` or `profile: 'ss-secure-8192'` together with
+`committeeSize`. The SDK derives the registry slot and protocol/DKG/committee-bound configuration
+ID; do not supply a separate parameter-set or protocol selector. `sync-insecure-64` remains
+disabled.
 
 Use the preset that the target E3 selects. This package includes proof artifacts only for
 `'INSECURE_THRESHOLD_64'`. For secure proof generation, use matching application artifacts such as

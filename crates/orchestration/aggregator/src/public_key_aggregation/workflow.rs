@@ -20,7 +20,7 @@ use e3_events::{
     SignedProofPayload, VerificationKind,
 };
 use e3_fhe::Fhe;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_utils::{ArcBytes, OrderedSet};
 use e3_zk_config::CircuitName;
 use e3_zk_prover::extract_node_fold_agg_commits;

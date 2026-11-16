@@ -199,7 +199,7 @@ fn a_restored_accusation_keeps_its_votes_and_its_timeout() {
         2,
         VALIDITY,
         SKEW,
-        e3_fhe_params::BfvPreset::default(),
+        e3_fhe_params::BfvProfile::SsInsecure64,
         Arc::new(FixedClock(NOW + 100)),
     );
     after.hold_accusations_until_effects();

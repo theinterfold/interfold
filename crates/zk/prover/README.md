@@ -39,10 +39,14 @@ operator-managed binary. Application composition translates resolved paths and t
 setting into this backend-owned choice. `check_status().await` reports setup state;
 `ensure_installed().await` prepares required tools/artifacts and may download/install them.
 Version/checksum requirements come from [versions.json](versions.json). `with_bb_timeout` bounds
-each proving process.
+each proving process. `install_circuits_dir(dir, configurations)` installs a local circuits tree (a
+dist directory or a staged `circuits/bin`) under the archive admission rules, copying it. It is
+unpinned: it checks the tree against the tree's own `checksums.json`, not against a release pin, and
+records the configured circuits version. Only local builds and tests call it.
 
-`ZkProver::new(&backend)` executes proof generation and verification. Select the matching artifact
-directory with `resolve_artifacts_dir(preset, committee)` and use the explicit variant methods where
+`ZkProver::new(&backend)` executes proof generation and verification. Check the request profile with
+`BfvProfile::ensure_admission_enabled()`, then select the matching artifact directory with
+`BfvProfile::artifacts_dir_for_committee(committee)`, and use the explicit variant methods where
 needed. Verification returns `Result<bool, ZkError>`: infrastructure failure is distinct from
 completed invalid verification. `CompiledCircuit`, `WitnessGenerator`, and `input_map` expose
 compiled-circuit loading and witness generation (using `noirc_abi::InputMap`) without defining

@@ -147,7 +147,7 @@ pub(crate) struct AccusationVoting {
     pub(super) vote_validity_secs: u64,
     pub(super) accusation_deadline_skew_secs: u64,
     pub(super) clock: Arc<dyn Clock>,
-    pub(super) params_preset: e3_fhe_params::BfvPreset,
+    pub(super) params_profile: e3_fhe_params::BfvProfile,
     /// Off while startup replays the event log: a replayed local failure must not sign a new
     /// accusation with a vote window from the current clock.
     pub(super) effects_enabled: bool,

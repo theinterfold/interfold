@@ -20,7 +20,8 @@ use crate::domain::node_dkg_fold::NodeDkgFoldMeta;
 
 use super::NodeProofAggregator;
 
-const RECOVERY_VERSION: u32 = 1;
+// Version 2 retains profiles in fold metadata and its stored C3 work plans.
+const RECOVERY_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct NodeProofRecoveryEntry {
@@ -136,6 +137,10 @@ impl NodeProofRecovery {
                     .with_context(|| {
                         format!("missing persisted DKG fold metadata for E3 {e3_id}")
                     })?;
+                value.params_profile.ensure_admission_enabled()?;
+                value
+                    .params_profile
+                    .validate_committee(value.committee_size)?;
                 meta.insert(e3_id.clone(), value);
             }
             let mut by_seq = BTreeMap::new();
@@ -276,6 +281,29 @@ impl NodeProofAggregator {
         entry.last_ec = Some(ec.clone());
         index_repository(repositories).write_with_context(&index, ec)?;
         self.recovery_index = index;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[actix::test]
+    async fn released_recovery_version_is_rejected() -> Result<()> {
+        let repositories = Repositories::in_mem();
+        index_repository(&repositories)
+            .write_sync(&NodeProofRecoveryIndex {
+                version: 1,
+                ..Default::default()
+            })
+            .await?;
+        let error = NodeProofRecovery::load(&repositories, &HashSet::new())
+            .await
+            .expect_err("released fold metadata must not be reinterpreted as profile-aware work");
+        assert!(error
+            .to_string()
+            .contains("unsupported node DKG fold recovery version 1"));
         Ok(())
     }
 }

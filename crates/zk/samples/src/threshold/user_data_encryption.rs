@@ -6,22 +6,27 @@
 
 //! Sample data generation for user data encryption circuit.
 //!
-//! The sample contains a random BFV key pair and plaintext; the public key and plaintext are used as input
-//! for codegen and tests.
+//! The sample contains a random BFV key pair on the protocol CRS and a plaintext; the public key and
+//! plaintext are used as input for codegen and tests.
 
-use e3_zk_witness::{threshold::user_data_encryption::UserDataEncryptionCircuitData, WitnessError};
-use fhe::bfv::{BfvParameters, Encoding, Plaintext, PublicKey, SecretKey};
+use e3_zk_witness::{
+    threshold::user_data_encryption::{public_key_on_protocol_crs, UserDataEncryptionCircuitData},
+    WitnessError,
+};
+use fhe::bfv::{BfvParameters, Encoding, Plaintext, SecretKey};
 use fhe_traits::FheEncoder;
 use std::sync::Arc;
 
-/// Generates a random secret key, public key, and plaintext for the given BFV parameters.
+/// Generates a random secret key, a public key on the protocol CRS, and a plaintext for the given BFV parameters.
 pub fn generate(
     threshold_params: &Arc<BfvParameters>,
 ) -> Result<UserDataEncryptionCircuitData, WitnessError> {
     let mut rng = rand::rng();
 
     let secret_key = SecretKey::random(threshold_params, &mut rng);
-    let public_key = PublicKey::new(&secret_key, &mut rng);
+    // ct1 hard-codes the protocol CRS as `pk1`, so the sample key must be built on it.
+    let public_key = public_key_on_protocol_crs(threshold_params, &secret_key, &mut rng)
+        .map_err(|e| WitnessError::Sample(format!("Failed to build public key: {:?}", e)))?;
 
     let plaintext = Plaintext::try_encode(&[1u64], Encoding::poly(), threshold_params)
         .map_err(|e| WitnessError::Sample(format!("Failed to encode plaintext: {:?}", e)))?;

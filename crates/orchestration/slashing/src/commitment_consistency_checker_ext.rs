@@ -68,7 +68,7 @@ impl CommitmentConsistencyCheckerExtension {
 
         info!("Starting CommitmentConsistencyChecker for E3 {}", e3_id);
 
-        let links = (self.links_factory)(meta.params_preset);
+        let links = (self.links_factory)(meta.params_profile.threshold_preset());
         let committee_h =
             CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)
                 .with_context(|| {
@@ -164,7 +164,8 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+            crypto_config_id: [0; 32],
             params: ArcBytes::from_bytes(&[]),
             error_size: ArcBytes::from_bytes(&[]),
         }

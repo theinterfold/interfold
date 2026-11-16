@@ -21,8 +21,3 @@ pub global N_PARTIES: u32 = crate::configs::committee::minimum::N_PARTIES;
 pub global T: u32 = crate::configs::committee::minimum::T;
 /// Honest-party count expected during the DKG (`H <= N_PARTIES`).
 pub global H: u32 = crate::configs::committee::minimum::H;
-
-/// Parity matrices for the secret-sharing scheme, sized for the active committee.
-/// `configs::{insecure,secure}::dkg` re-exports the relevant one as `PARITY_MATRIX`.
-pub use crate::configs::committee::minimum::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;
-pub use crate::configs::committee::minimum::parity_secure::PARITY_MATRIX as PARITY_MATRIX_SECURE;

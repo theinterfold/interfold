@@ -14,8 +14,6 @@ use fhe::bfv::{BfvParameters, SecretKey};
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-pub mod parity;
-use parity::parity_matrix_constant_string;
 
 pub const METADATA: CircuitMetadata = CircuitMetadata {
     name: "share-computation",
@@ -71,13 +69,8 @@ impl Configs {
     pub fn render(&self) -> Result<String, ConfigError> {
         let configs = self;
         let preset = self.preset;
-        let committee = self.committee;
-        let threshold_params = &self.params;
         let config_name = preset.metadata().security.as_config_str();
         let bits = &configs.bits;
-        let committee = committee.values();
-        let parity_matrix_str =
-            parity_matrix_constant_string(threshold_params, committee.n, committee.threshold)?;
         let prefix = METADATA.prefix;
         let configs = format!(
             r#"
@@ -85,7 +78,6 @@ pub use crate::configs::{}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}
 
 pub global N: u32 = {};
 
-{}
 /************************************
 -------------------------------------
 share_computation_sk (CIRCUIT 2a)
@@ -115,7 +107,6 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
 "#,
             config_name,
             configs.params.degree(),
-            parity_matrix_str,
             prefix,
             bits.bit_share,
             prefix,

@@ -72,7 +72,7 @@ impl ThresholdKeyshare {
             Some(key) => key,
             None => {
                 let BfvKeypairMaterial { sk_bfv, pk_bfv } =
-                    generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+                    generate_bfv_keypair(&self.share_enc_preset()?, &self.cipher)?;
                 BfvKeyIntent { sk_bfv, pk_bfv }
             }
         };
@@ -158,7 +158,7 @@ impl ThresholdKeyshare {
             EncryptionKeyPending {
                 e3_id: state.e3_id.clone(),
                 key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv.clone())),
-                params_preset: self.share_enc_preset,
+                params_profile: data.ciphernode_selected.params_profile,
                 committee_size: state.committee_size()?,
             },
             ec,
@@ -280,10 +280,7 @@ impl ThresholdKeyshare {
             &create_deterministic_crp_from_default_seed(&trbfv_config.params()).to_bytes(),
         );
 
-        let threshold_preset = self
-            .share_enc_preset
-            .threshold_counterpart()
-            .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", self.share_enc_preset))?;
+        let threshold_preset = self.params_profile.threshold_preset();
         let defaults = threshold_preset
             .search_defaults()
             .ok_or_else(|| anyhow!("No search defaults for {:?}", threshold_preset))?;

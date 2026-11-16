@@ -22,6 +22,51 @@ use e3_sync::SyncRepositoryFactory;
 use e3_utils::actix::channel;
 use std::collections::HashSet;
 
+fn request_metadata() -> E3Meta {
+    let profile = BfvProfile::SsInsecure64;
+    let (params, _) = profile.build_pair().unwrap();
+    E3Meta {
+        threshold_m: 1,
+        threshold_n: 3,
+        seed: Seed([0; 32]),
+        params_profile: profile,
+        crypto_config_id: profile
+            .crypto_config_id(e3_committee::CiphernodesCommitteeSize::Minimum)
+            .unwrap()
+            .into(),
+        params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&params)),
+        error_size: ArcBytes::default(),
+    }
+}
+
+#[actix::test]
+async fn global_proof_recovery_rejects_inconsistent_request_metadata() -> anyhow::Result<()> {
+    let system = EventSystem::in_mem().with_fresh_bus();
+    let bus = system.handle()?.enable("global-profile-recovery");
+    bus.flush_event_pipeline().await?;
+    let repositories = system.store()?.repositories();
+    let e3_id = E3id::new("9", 31_337);
+    let mut metadata = request_metadata();
+    metadata.crypto_config_id = [42; 32];
+    let mut recovery = ZkActorRecovery::new(
+        HashMap::new(),
+        HashMap::from([(e3_id.clone(), metadata)]),
+        HashMap::new(),
+    );
+    let error = recovery
+        .hydrate(
+            &repositories,
+            &HashMap::new(),
+            &system.eventstore_reader()?.seq(),
+            &[],
+        )
+        .await
+        .expect_err("global proof recovery must not trust an unchecked configuration ID");
+    assert!(format!("{error:#}").contains(&e3_id.to_string()));
+    system.store()?.shutdown().await?;
+    Ok(())
+}
+
 pub(super) async fn check_c0_restart(
     backend: &ZkBackend,
     vk: &std::path::Path,
@@ -108,11 +153,7 @@ pub(super) async fn check_c0_restart(
                 repositories.finalized_committees().write_sync(&committees).await.unwrap();
                 repositories.ciphernode_selector().write_sync(&CiphernodeSelectorState {
                     committees,
-                    e3_cache: HashMap::from([(e3_id.clone(), E3Meta {
-                        threshold_m: 1, threshold_n: 3, seed: Seed([0; 32]),
-                        params_preset: BfvPreset::InsecureThreshold64,
-                        params: ArcBytes::default(), error_size: ArcBytes::default(),
-                    })]),
+                    e3_cache: HashMap::from([(e3_id.clone(), request_metadata())]),
                     ..Default::default()
                 }).await.unwrap();
             }
@@ -125,7 +166,7 @@ pub(super) async fn check_c0_restart(
             let history = bus.history();
             let actors = setup_zk_actors(&bus, &backend, observer.clone(), HashMap::new(), recovery, false, repositories.clone(), e3_task_pool::TaskPool::new(1, 1), "restart-test".to_owned());
             let accusations = AccusationManager::setup(&bus, e3_id.clone(), observer,
-                Address::repeat_byte(9), members, 1, 300, 30, BfvPreset::InsecureThreshold64);
+                Address::repeat_byte(9), members, 1, 300, 30, BfvProfile::SsInsecure64);
             EventConverter::setup(&bus);
             let recovered_documents = recover_document_state(&reader, &aggregates, &HashSet::from([e3_id.clone()])).await.unwrap();
             let hash = ContentHash::from_content(&document.value);

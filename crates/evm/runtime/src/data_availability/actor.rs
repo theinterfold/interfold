@@ -393,7 +393,8 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
         );
         match event {
             InterfoldEventData::E3Requested(event) => {
-                self.presets.insert(event.e3_id, event.params_preset);
+                self.presets
+                    .insert(event.e3_id, event.params_profile.threshold_preset());
                 self.try_publish_keys();
             }
             InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {

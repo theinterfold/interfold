@@ -10,7 +10,7 @@ use derivative::Derivative;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,7 @@ pub struct NodeDkgFoldRequest {
     pub c3_slot_indices_b: Vec<u32>,
     pub c3_total_slots: usize,
     pub party_id: u64,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -92,7 +92,7 @@ pub struct NodesFoldStepRequest {
     pub total_slots: usize,
     /// E3 identifier used for job namespacing.
     pub e3_id: String,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -107,7 +107,7 @@ pub struct DkgAggregationRequest {
     pub party_ids: Vec<u64>,
     /// Ordered committee addresses (`topNodes`) for `committee_hash_*` public inputs.
     pub committee_addresses: Vec<Address>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -118,7 +118,7 @@ pub struct DecryptionAggregationRequest {
     pub jobs: Vec<DecryptionAggregationJobRequest>,
     /// Ordered committee addresses (`topNodes`) for `committee_hash_*` public inputs.
     pub committee_addresses: Vec<Address>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -130,8 +130,8 @@ pub struct PkAggregationProofRequest {
     pub keyshare_bytes: Vec<ArcBytes>,
     /// Serialized aggregated PublicKey bytes.
     pub aggregated_pk_bytes: ArcBytes,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Total committee size (N).
     pub committee_n: usize,
     /// Honest committee size (H) — number of shares being aggregated.
@@ -150,8 +150,8 @@ pub struct ShareComputationProofRequest {
     pub secret_sss_raw: SensitiveBytes,
     /// Which secret type (SecretKey or SmudgingNoise).
     pub dkg_input_type: DkgInputType,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for threshold parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// The size of the committee.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -176,8 +176,8 @@ pub struct ShareEncryptionProofRequest {
     pub e1_rns_raw: SensitiveBytes,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
-    /// Threshold BFV preset (handler derives DKG params via build_pair_for_preset).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the paired DKG parameters and artifacts.
+    pub params_profile: BfvProfile,
     /// Committee size.
     pub committee_size: CiphernodesCommitteeSize,
     /// Recipient index (for correlation tracking).
@@ -226,8 +226,8 @@ pub struct DkgShareDecryptionProofRequest {
     pub own_share_raw: Option<SensitiveBytes>,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for the paired threshold/DKG parameters and artifacts.
+    pub params_profile: BfvProfile,
     /// Committee size for circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -239,7 +239,8 @@ pub struct PkBfvProofRequest {
     /// The BFV public key bytes.
     #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
     pub pk_bfv: ArcBytes,
-    pub params_preset: BfvPreset,
+    /// Request-time profile; threshold bytes alone cannot select the DKG statement.
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
 }
 
@@ -256,8 +257,8 @@ pub struct PkGenerationProofRequest {
     pub eek: SensitiveBytes,
     /// Raw smudging noise polynomial bytes (witness — encrypted at rest).
     pub e_sm: SensitiveBytes,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for threshold parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// The size of the committee
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -265,12 +266,12 @@ pub struct PkGenerationProofRequest {
 impl PkBfvProofRequest {
     pub fn new(
         pk_bfv: impl Into<ArcBytes>,
-        params_preset: BfvPreset,
+        params_profile: BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> Self {
         Self {
             pk_bfv: pk_bfv.into(),
-            params_preset,
+            params_profile,
             committee_size,
         }
     }
@@ -282,14 +283,14 @@ impl PkGenerationProofRequest {
         sk: SensitiveBytes,
         eek: SensitiveBytes,
         e_sm: SensitiveBytes,
-        params_preset: BfvPreset,
+        params_profile: BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> Self {
         Self {
             pk0_share: pk0_share.into(),
             sk,
             eek,
-            params_preset,
+            params_profile,
             e_sm,
             committee_size,
         }
@@ -376,8 +377,8 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub d_share_bytes: Vec<ArcBytes>,
     /// Stable E3 context cryptographically bound into every C6 proof.
     pub decryption_domain: DecryptionDomainContext,
-    /// BFV preset for parameter resolution.
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -463,8 +464,8 @@ impl PkGenerationProofResponse {
 pub struct VerifyShareProofsRequest {
     /// Proofs grouped by sender party_id.
     pub party_proofs: Vec<PartyProofsToVerify>,
-    /// BFV preset for parameter resolution (determines circuit artifact directory).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the circuit artifact namespace.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -507,8 +508,8 @@ pub struct PartyVerificationResult {
 pub struct VerifyShareDecryptionProofsRequest {
     /// C4 proofs grouped by sender party_id.
     pub party_proofs: Vec<PartyShareDecryptionProofsToVerify>,
-    /// BFV preset for parameter resolution (determines circuit artifact directory).
-    pub params_preset: BfvPreset,
+    /// Request-time profile selects the circuit artifact namespace.
+    pub params_profile: BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -541,8 +542,8 @@ pub struct DecryptedSharesAggregationProofRequest {
     pub d_share_polys: Vec<(u64, Vec<ArcBytes>)>,
     /// Decoded plaintext per ciphertext index.
     pub plaintext: Vec<ArcBytes>,
-    /// BFV preset (parameters for witness / circuit config).
-    pub params_preset: BfvPreset,
+    /// Request-time profile for parameters and artifact resolution.
+    pub params_profile: BfvProfile,
     /// Threshold required for decryption.
     pub threshold_m: u64,
     /// Committee size (N).

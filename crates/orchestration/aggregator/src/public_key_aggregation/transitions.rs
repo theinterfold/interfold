@@ -17,7 +17,7 @@ impl C1Dispatch {
     pub(crate) fn request(
         &self,
         e3_id: &E3id,
-        params_preset: BfvPreset,
+        params_profile: BfvProfile,
         committee_size: CiphernodesCommitteeSize,
     ) -> ShareVerificationDispatched {
         ShareVerificationDispatched {
@@ -26,7 +26,7 @@ impl C1Dispatch {
             share_proofs: self.party_proofs.clone(),
             decryption_proofs: vec![],
             pre_dishonest: self.no_proof_parties.iter().copied().collect(),
-            params_preset,
+            params_profile,
             committee_size,
         }
     }

@@ -70,12 +70,12 @@ canonical builder (`pnpm build:circuits`).
 
 ## Protocol, gas, replay, and report
 
-`protocol` runs the existing release-profile `e3-tests` integration scenario with full proof
-aggregation. `gas` adds the existing Hardhat verifier replay tool. `run` includes these stages
-unless `--leaf-only` or `--witness-only` is set. The driver copies no protocol workflow and
-implements no EVM: it sets export paths and concurrency controls, then reads structured JSON
-exports. The integration child receives the runner's validated canonical BB path through
-`E3_CUSTOM_BB`, never a PATH lookup; run metadata records that path and version.
+`protocol` runs the `e3-tests` integration target's ignored `benchmark_trbfv_actor` entry in the
+release profile with full proof aggregation. `gas` adds the existing Hardhat verifier replay tool.
+`run` includes these stages unless `--leaf-only` or `--witness-only` is set. The driver copies no
+protocol workflow and implements no EVM: it sets export paths and concurrency controls, then reads
+structured JSON exports. The integration child receives the runner's validated canonical BB path
+through `E3_CUSTOM_BB`, never a PATH lookup; run metadata records that path and version.
 
 Install workspace dependencies with `pnpm install --frozen-lockfile`. Select a complete archived
 node pair before gas collection. Run benchmarks serially: they change shared Noir selectors.

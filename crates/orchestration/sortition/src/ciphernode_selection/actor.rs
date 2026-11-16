@@ -38,18 +38,6 @@ use tracing::{error, info, warn};
 #[path = "handlers.rs"]
 mod handlers;
 
-/// Build an `E3Meta` from an `E3Requested` event's fields.
-fn e3_meta_from(req: &E3Requested) -> E3Meta {
-    E3Meta {
-        seed: req.seed,
-        threshold_n: req.threshold_n,
-        threshold_m: req.threshold_m,
-        params_preset: req.params_preset,
-        params: req.params.clone(),
-        error_size: req.error_size.clone(),
-    }
-}
-
 fn selector_phase_for_stage(stage: &E3Stage, dkg_roster_selected: bool) -> Option<AggregatorPhase> {
     if *stage == E3Stage::CommitteeFinalized && dkg_roster_selected {
         Some(AggregatorPhase::PublicKey)

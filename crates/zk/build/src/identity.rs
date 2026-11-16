@@ -24,7 +24,6 @@ const SOURCE_DIRS: &[&str] = &[
     "crates/bfv/runtime/src",
     "crates/polynomial/src",
     "crates/polynomial/fhe-adapter/src",
-    "crates/parity-matrix/src",
     "crates/safe/src",
 ];
 const SOURCE_FILES: &[&str] = &[

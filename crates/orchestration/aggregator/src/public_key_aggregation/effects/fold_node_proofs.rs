@@ -61,7 +61,7 @@ impl PublicKeyAggregator {
                     slot_index: next_slot,
                     total_slots,
                     e3_id: self.e3_id.to_string(),
-                    params_preset: self.params_preset,
+                    params_profile: self.params_profile,
                     committee_size: self.committee_size,
                 }),
                 corr,

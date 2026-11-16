@@ -66,7 +66,7 @@ const sdk = InterfoldSDK.create({
     feeToken: FEE_TOKEN_ADDRESS,
   },
   chain: hardhat,
-  // Must match paramSet 0, which the request in the next step uses.
+  // Must match the ss-insecure-64 profile, which the request in the next step uses.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
 })
 
@@ -83,6 +83,9 @@ The result is a client that can read, write, and watch events.
 
 Quote the fee, approve it, and send the request. Then read the E3 ID from the `E3Requested` log.
 
+Release 0.19.0 and earlier do not have the `profile` request field. With such a release, write
+`paramSet: 0` in its place. See [SDK](/build/sdk#request-an-e3).
+
 ```ts
 import {
   DEFAULT_COMPUTE_PROVIDER_PARAMS,
@@ -97,7 +100,7 @@ const requestParams = {
   committeeSize: 0, // CommitteeSize.Minimum
   inputWindow: await calculateInputWindow(publicClient, 300), // 300-second window
   e3Program: E3_PROGRAM_ADDRESS,
-  paramSet: 0,
+  profile: 'ss-insecure-64' as const,
   computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
 }
 

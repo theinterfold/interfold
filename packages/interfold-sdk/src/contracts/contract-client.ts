@@ -22,7 +22,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { CiphernodeRegistryOwnable__factory, Interfold__factory, InterfoldToken__factory } from '@interfold/contracts/types'
 import type { CiphertextOutputReference, ContractAddresses, E3, E3RequestParams, E3Stage, FailureReason } from './types'
 import { validateCommitteeSize } from './types'
-import { SDKError, cryptoConfigIdForParamSet, isValidAddress } from '../utils'
+import { SDKError, bfvConfigForRequest, isValidAddress } from '../utils'
 
 export interface ContractClientConfig {
   publicClient: PublicClient
@@ -146,8 +146,8 @@ export class ContractClient {
       }
 
       const committeeSize = validateCommitteeSize(params.committeeSize)
+      const configuration = bfvConfigForRequest(params.profile, committeeSize)
       const maxFee = params.maxFee ?? (await this.getE3Quote(params))
-      const expectedCryptoConfigId = cryptoConfigIdForParamSet(params.paramSet)
 
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
@@ -158,11 +158,11 @@ export class ContractClient {
             committeeSize,
             inputWindow: params.inputWindow,
             e3Program: params.e3Program,
-            paramSet: params.paramSet,
+            paramSet: configuration.paramSet,
             computeProviderParams: params.computeProviderParams,
             customParams: params.customParams || '0x',
             expectedFeeToken: this.contracts.feeToken,
-            expectedCryptoConfigId,
+            expectedCryptoConfigId: configuration.configId,
             maxFee,
           },
         ],
@@ -259,7 +259,7 @@ export class ContractClient {
   public async getE3Quote(requestParams: E3RequestParams): Promise<bigint> {
     try {
       const committeeSize = validateCommitteeSize(requestParams.committeeSize)
-      const expectedCryptoConfigId = cryptoConfigIdForParamSet(requestParams.paramSet)
+      const configuration = bfvConfigForRequest(requestParams.profile, committeeSize)
 
       return this.publicClient.readContract({
         address: this.contracts.interfold,
@@ -270,11 +270,11 @@ export class ContractClient {
             committeeSize,
             inputWindow: requestParams.inputWindow,
             e3Program: requestParams.e3Program,
-            paramSet: requestParams.paramSet,
+            paramSet: configuration.paramSet,
             computeProviderParams: requestParams.computeProviderParams,
             customParams: requestParams.customParams || '0x',
             expectedFeeToken: this.contracts.feeToken,
-            expectedCryptoConfigId,
+            expectedCryptoConfigId: configuration.configId,
             maxFee: requestParams.maxFee ?? 0n,
           },
         ],

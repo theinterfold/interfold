@@ -81,11 +81,12 @@ impl Handler<TypedEvent<E3Requested>> for CiphernodeSelector {
             return;
         }
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            msg.params_profile.ensure_admission_enabled()?;
             self.state.try_mutate(msg.get_ctx(), |mut state| {
                 state
                     .e3_cache
                     .entry(msg.e3_id.clone())
-                    .or_insert_with(|| e3_meta_from(&msg));
+                    .or_insert_with(|| E3Meta::from(&*msg));
                 Ok(state)
             })
         })
@@ -104,6 +105,7 @@ impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelecto
             return;
         }
         trap(EType::Sortition, &self.bus.with_ec(data.get_ctx()), || {
+            data.params_profile.ensure_admission_enabled()?;
             self.state.try_mutate(data.get_ctx(), |mut state| {
                 info!(
                     "Mutating selector state: appending data: {:?}",
@@ -111,7 +113,7 @@ impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelecto
                 );
                 state
                     .e3_cache
-                    .insert(data.e3_id.clone(), e3_meta_from(&data));
+                    .insert(data.e3_id.clone(), E3Meta::from(&**data));
                 Ok(state)
             })?;
 
@@ -207,6 +209,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                         msg.e3_id
                     );
                 };
+                e3_meta.params_profile.ensure_admission_enabled()?;
 
                 let committee = Committee::new(msg.committee.clone());
                 let local_party_id = committee.party_id_for(&self.address);
@@ -236,7 +239,8 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                             threshold_m: e3_meta.threshold_m,
                             threshold_n: e3_meta.threshold_n,
                             error_size: e3_meta.error_size.clone(),
-                            params_preset: e3_meta.params_preset,
+                            params_profile: e3_meta.params_profile,
+                            crypto_config_id: e3_meta.crypto_config_id,
                             params: e3_meta.params.clone(),
                             seed: e3_meta.seed,
                             committee: msg.committee.clone(),

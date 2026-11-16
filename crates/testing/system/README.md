@@ -20,13 +20,14 @@ cargo build --locked -p e3-tests --bin fake_encrypt --bin pack_e3_params
 
 ## Map
 
-| Location                                                                 | Responsibility                                                           |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| [`tests/ciphernode_system/`](tests/ciphernode_system)                    | Multi-node builder/handle harness, histories, and network helpers.       |
-| [`tests/integration.rs`](tests/integration.rs)                           | Cross-capability scenarios and optional expensive proof/benchmark flows. |
-| [`tests/large_work_plan_recovery.rs`](tests/large_work_plan_recovery.rs) | Reopen large proof plans and dispatch missing work.                      |
-| [`tests/layout_lock.rs`](tests/layout_lock.rs)                           | Runtime encoding roots and repository/event samples.                     |
-| [`src/main.rs`](src/main.rs)                                             | Empty executable, not a test runner.                                     |
+| Location                                                                 | Responsibility                                                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| [`tests/ciphernode_system/`](tests/ciphernode_system)                    | Multi-node builder/handle harness, histories, and network helpers.   |
+| [`tests/integration.rs`](tests/integration.rs)                           | Named full-proof scenarios, the benchmark entry, and P2P forwarding. |
+| [`tests/trbfv/`](tests/trbfv)                                            | Scenario, runner, assertions, node factory, benchmark exports.       |
+| [`tests/large_work_plan_recovery.rs`](tests/large_work_plan_recovery.rs) | Reopen large proof plans and dispatch missing work.                  |
+| [`tests/layout_lock.rs`](tests/layout_lock.rs)                           | Runtime encoding roots and repository/event samples.                 |
+| [`src/main.rs`](src/main.rs)                                             | Empty executable, not a test runner.                                 |
 
 Scenarios compose real actors with isolated buses/stores and selectable transport/worker
 substitutes. They publish histories, observe outcomes, and for recovery reopen saved state. Which
@@ -34,8 +35,18 @@ parts are mocked or ignored is specific to the scenario, not guaranteed by the p
 
 ## Tests: choose a target
 
-- [integration.rs](tests/integration.rs): end-to-end key/plaintext flows, routing, restart, and
-  multi-node scenarios using [ciphernode_system](tests/ciphernode_system/mod.rs).
+- [integration.rs](tests/integration.rs): one `trbfv_scenario_*` test per full-proof scenario, each
+  a whole E3 on real ciphernodes through [ciphernode_system](tests/ciphernode_system/mod.rs), plus
+  P2P forwarding tests. A scenario asserts outcomes only: the key, the plaintext, the accepted DKG
+  roster, and the absence of faults. It does not assert how actors order their events, and it does
+  not wait for a progress deadline.
+- [trbfv/](tests/trbfv): the private modules behind those tests. `scenario.rs` holds a `Scenario`:
+  the injected `Fault` and the `Expect`ed outcome, as data. `runner.rs` builds the nodes, executes
+  the phases, injects the fault, and returns the `Observations`; it asserts nothing about the
+  outcome. `assertions.rs` evaluates the expectation over the observations, with no live node.
+  `benchmark.rs` formats and exports the same observations. An outcome over observations the runner
+  already returns is an `Expect` field in `scenario.rs` and its check in `assertions.rs`; one that
+  needs a new reading or wait adds that observation to `runner.rs`.
 - [large_work_plan_recovery.rs](tests/large_work_plan_recovery.rs): persisted large-work-plan
   recovery scenarios.
 - [layout_lock.rs](tests/layout_lock.rs): listed persisted/wire serde roots, repository value types,
@@ -52,6 +63,29 @@ cargo test --locked -p e3-tests --test integration -- --list
 Select a named scenario from the list rather than launching every expensive integration or ignored
 proof benchmark. [Root package scripts](../../../package.json) provide the broader integration and
 real-proof suites.
+
+## Full-proof scenarios
+
+`trbfv_scenario_standby_node`, `trbfv_scenario_party_offline_after_c0`,
+`trbfv_scenario_restart_during_c4` and `trbfv_scenario_restart_during_c6` each run a whole E3 with
+real proofs, about nine minutes each. CI gives the standby and offline scenarios their own legs. The
+two restart scenarios are `#[ignore]`d and not run in CI; select them with `--ignored`. They give
+the nodes persistent stores, stop a roster member while its C4 or C6 proof is pending, and rebuild
+it from those stores and its identity; the run must still finish with that member publishing its
+share. All four use the committee the local circuits were built for
+(`circuits/bin/.active-preset.json`, `minimum` when it is absent) and read only proof-system and
+timeout settings from the environment: `E3_CUSTOM_BB`, `CIPHERNODE_SKIP_PROOF_AGGREGATION`, and the
+`E3_*_COLLECTION_TIMEOUT_SECS` collector timeouts.
+
+```sh
+E3_CUSTOM_BB=$(which bb) cargo test -p e3-tests --test integration trbfv_scenario_standby_node -- --exact --nocapture
+```
+
+`benchmark_trbfv_actor` is `#[ignore]`d. The [circuit benchmark](../../zk/benchmarks/README.md) runs
+it in release mode with `BENCHMARK_MODE`, `BENCHMARK_MULTITHREAD_JOBS`, `BENCHMARK_SUMMARY_OUTPUT`,
+and `BENCHMARK_FOLDED_OUTPUT`, and parses the JSON it writes; keep those shapes stable.
+`BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS` and `BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS` lengthen its
+public-key and plaintext waits on slow hosts. Correctness scenarios never read `BENCHMARK_*`.
 
 ## Prerequisites and assurance
 

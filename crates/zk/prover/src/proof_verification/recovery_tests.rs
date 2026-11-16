@@ -71,7 +71,8 @@ impl VerificationHarness {
                     threshold_m: 1,
                     threshold_n: 3,
                     seed: Seed([0; 32]),
-                    params_preset: BfvPreset::InsecureThreshold64,
+                    params_profile: BfvProfile::SsInsecure64,
+                    crypto_config_id: [0; 32],
                     params: ArcBytes::default(),
                     error_size: ArcBytes::default(),
                 },
@@ -86,7 +87,7 @@ impl VerificationHarness {
             1,
             300,
             30,
-            BfvPreset::InsecureThreshold64,
+            BfvProfile::SsInsecure64,
         );
         bus.event_bus().send(EventBusBarrier).await.unwrap();
         bus.publish_without_context(EffectsEnabled::new()).unwrap();

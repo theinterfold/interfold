@@ -15,7 +15,7 @@ use crate::{
     COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION, SORTITION_RECOVERY_SCHEMA_VERSION,
 };
 use actix::Recipient;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use e3_committee::Committee;
 use e3_data::Repositories;
 use e3_events::{
@@ -599,13 +599,16 @@ pub fn recovered_ciphernode_selections(
             .e3_cache
             .get(e3_id)
             .ok_or_else(|| anyhow::anyhow!("persisted committee {e3_id} has no E3 metadata"))?;
+        meta.validate_configuration()
+            .with_context(|| format!("invalid saved BFV configuration for E3 {e3_id}"))?;
         selections.push(CiphernodeSelected {
             e3_id: e3_id.clone(),
             threshold_m: meta.threshold_m,
             threshold_n: meta.threshold_n,
             seed: meta.seed,
             error_size: meta.error_size.clone(),
-            params_preset: meta.params_preset,
+            params_profile: meta.params_profile,
+            crypto_config_id: meta.crypto_config_id,
             params: meta.params.clone(),
             party_id,
             committee: committee.members().to_vec(),

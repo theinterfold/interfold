@@ -10,17 +10,31 @@ library BfvProtocol {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v5");
 
-    bytes32 internal constant INSECURE_CONFIG_ID =
-        0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
         0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e;
 
-    bytes32 internal constant SECURE_CONFIG_ID =
-        0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa;
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317;
+
+    bytes32 internal constant SS_INSECURE_64_MINIMUM_CONFIG_ID =
+        0x5fec4d6a3c71793e00e8a04a6762d260587ea165b332309d92a6bfd72fcf3e92;
+
+    bytes32 internal constant SS_INSECURE_64_MICRO_CONFIG_ID =
+        0x447075ed6fac1de9c55bbd9a361bba8c870effc1d1af6924f96802d37e905343;
+
+    bytes32 internal constant SS_INSECURE_64_SMALL_CONFIG_ID =
+        0xe05dc026e537ba9f61d06760554e54841a7c1516ab643cad440bdbcc0d8789c1;
+
+    bytes32 internal constant SS_SECURE_8192_MINIMUM_CONFIG_ID =
+        0x86c32bb95b830c20bec1e9eb4773bb1be0b139cf3117c46a7d708a36e7d399ce;
+
+    bytes32 internal constant SS_SECURE_8192_MICRO_CONFIG_ID =
+        0x02f42e1af8a22b1776eda846dce9ae90577cd6b1bdd3b4bb33c5ef4d9730fa59;
+
+    bytes32 internal constant SS_SECURE_8192_SMALL_CONFIG_ID =
+        0xdf63ace029f44b127e6295f4652ed95ceb10ac543c49507b2e85b3cabc806980;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;

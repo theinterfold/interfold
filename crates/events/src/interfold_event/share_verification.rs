@@ -43,8 +43,8 @@ pub struct ShareVerificationDispatched {
     /// Parties already identified as dishonest before verification
     /// (e.g., missing/incomplete proofs). Merged into the final result.
     pub pre_dishonest: BTreeSet<u64>,
-    /// BFV preset for circuit artifact resolution.
-    pub params_preset: e3_fhe_params::BfvPreset,
+    /// Request-time profile for proof shape and circuit artifact resolution.
+    pub params_profile: e3_fhe_params::BfvProfile,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
 }

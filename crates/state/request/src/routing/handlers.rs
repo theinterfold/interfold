@@ -40,6 +40,8 @@ impl E3Router {
                 continue;
             }
 
+            selection.params_profile.ensure_admission_enabled()?;
+
             let e3_id = selection.e3_id.clone();
             let event = self.bus.event_from(selection, None)?;
             let sequence = self
@@ -118,6 +120,17 @@ impl Handler<InterfoldEvent> for E3Router {
                 return result.and(checkpoint_result);
             }
             let event_context = msg.get_ctx().clone();
+            let profile = match msg.get_data() {
+                InterfoldEventData::E3Requested(data) => Some(data.params_profile),
+                InterfoldEventData::CiphernodeSelected(data) => Some(data.params_profile),
+                _ => None,
+            };
+            if let Some(profile) = profile {
+                if let Err(error) = profile.ensure_admission_enabled() {
+                    self.checkpoint_with_context(&event_context)?;
+                    return Err(error.into());
+                }
+            }
             let result = match RequestRouter::route_with_context(
                 &msg,
                 &self.completed,

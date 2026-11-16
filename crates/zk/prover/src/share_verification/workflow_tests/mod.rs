@@ -7,7 +7,7 @@
 use super::*;
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{Proof, ProofPayload, ProofType};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 
 fn signer() -> PrivateKeySigner {
     PrivateKeySigner::random()

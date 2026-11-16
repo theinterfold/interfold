@@ -99,7 +99,7 @@ pub struct Sortition {
     committee_deadlines: HashMap<E3id, u64>,
 }
 
-pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 1;
+pub const SORTITION_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SortitionRecoveryState {

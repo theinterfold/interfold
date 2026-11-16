@@ -63,15 +63,13 @@ aggregation is enabled.
 
 ### Threshold (`bin/threshold/`)
 
-| Path                           | ID         | `CircuitName`                | Role                                              |
-| ------------------------------ | ---------- | ---------------------------- | ------------------------------------------------- |
-| `pk_generation`                | C1         | `PkGeneration`               | Threshold public-key contribution                 |
-| `pk_aggregation`               | C5         | `PkAggregation`              | Aggregate contributions into threshold public key |
-| `user_data_encryption_ct0`     | P3         | —                            | User ciphertext (first leg)                       |
-| `user_data_encryption_ct1`     | P3         | —                            | User ciphertext (second leg)                      |
-| `user_data_encryption`         | P3 wrapper | —                            | Wrapper: ct0, ct1, shared randomness              |
-| `share_decryption`             | C6         | `ThresholdShareDecryption`   | Partial decryption share                          |
-| `decrypted_shares_aggregation` | C7         | `DecryptedSharesAggregation` | Combine shares; CRT; decode                       |
+| Path                           | ID  | `CircuitName`                | Role                                              |
+| ------------------------------ | --- | ---------------------------- | ------------------------------------------------- |
+| `pk_generation`                | C1  | `PkGeneration`               | Threshold public-key contribution                 |
+| `pk_aggregation`               | C5  | `PkAggregation`              | Aggregate contributions into threshold public key |
+| `user_data_encryption`         | P3  | —                            | User ciphertext: both legs over one `u`           |
+| `share_decryption`             | C6  | `ThresholdShareDecryption`   | Partial decryption share                          |
+| `decrypted_shares_aggregation` | C7  | `DecryptedSharesAggregation` | Combine shares; CRT; decode                       |
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
@@ -87,9 +85,9 @@ For recursive trust and public-input bindings, see
 
 ### Configuration
 
-| Path     | Role                                                                    |
-| -------- | ----------------------------------------------------------------------- |
-| `config` | Validates secure preset constants (CRT moduli, bounds, parity matrices) |
+| Path     | Role                                                   |
+| -------- | ------------------------------------------------------ |
+| `config` | Validates secure preset constants (CRT moduli, bounds) |
 
 ## Build and test
 

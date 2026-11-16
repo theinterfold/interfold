@@ -4,18 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::bail;
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
-use e3_events::Event;
-use e3_events::{GetEvents, InterfoldEvent, ResetHistory, TakeEvents};
+use e3_events::{Event, GetEvents, InterfoldEvent};
 mod libp2p_mock;
 use libp2p_mock::Libp2pMock;
-use std::time::Instant;
-use std::{future::Future, ops::Deref, pin::Pin, time::Duration};
-use tokio::time::timeout;
-use tracing::info;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
+use std::{future::Future, ops::Deref, pin::Pin};
 
 // This type allows us to store various dynamic async callbacks
 type SetupFn<'a> =
@@ -96,6 +92,7 @@ impl<'a> CiphernodeSystemBuilder<'a> {
         Ok(CiphernodeSystem {
             nodes,
             network_mock,
+            before_restart: HashMap::new(),
         })
     }
 }
@@ -114,10 +111,16 @@ async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) -> Libp2pMock {
 pub struct CiphernodeSystem {
     nodes: Vec<CiphernodeHandle>,
     network_mock: Option<Libp2pMock>,
+    /// What each restarted node logged before it stopped. A restarted node's history collector
+    /// starts empty, so [`CiphernodeSystem::get_history`] joins the two.
+    before_restart: HashMap<usize, Vec<InterfoldEvent>>,
 }
 
 impl CiphernodeSystem {
-    pub async fn restart_node<F>(&mut self, index: usize, rebuild: F) -> Result<()>
+    /// Stops node `index` and replaces it with the node `rebuild` assembles from the stopped
+    /// node's persisted state. The network holds gossip addressed to the node meanwhile and hands
+    /// it to the replacement. Returns everything the stopped node logged.
+    pub async fn restart_node<F>(&mut self, index: usize, rebuild: F) -> Result<CiphernodeHistory>
     where
         F: Future<Output = Result<CiphernodeHandle>>,
     {
@@ -126,12 +129,18 @@ impl CiphernodeSystem {
         }
         let old = self.nodes.remove(index);
         let old_peer_id = old.peer_id;
+        let old_history = old.history();
         if let Some(mock) = &self.network_mock {
             mock.disconnect_node_for_restart(old_peer_id).await;
         }
         old.shutdown(Duration::from_secs(30))
             .await
             .context("ciphernode shutdown before restart failed")?;
+        // Read after the shutdown barrier, which is the last thing the stopped node logs.
+        let logged = match old_history {
+            Some(history) => history.send(GetEvents::new()).await?,
+            None => vec![],
+        };
         let replacement = rebuild
             .await
             .context("ciphernode rebuild after restart failed")?;
@@ -144,7 +153,15 @@ impl CiphernodeSystem {
             .await;
         }
         self.nodes.insert(index, replacement);
-        Ok(())
+        let earlier = self.before_restart.entry(index).or_default();
+        let known: HashSet<_> = earlier.iter().map(Event::delivery_id).collect();
+        let new: Vec<_> = logged
+            .iter()
+            .filter(|event| !known.contains(&event.delivery_id()))
+            .cloned()
+            .collect();
+        earlier.extend(new);
+        Ok(CiphernodeHistory(earlier.clone()))
     }
 
     pub async fn disconnect_node(&self, index: usize) -> Result<()> {
@@ -165,150 +182,20 @@ impl CiphernodeSystem {
             return Ok(CiphernodeHistory(vec![]));
         };
 
-        let history = if let Some(history) = node.history() {
+        let mut history = if let Some(history) = node.history() {
             history.send(GetEvents::new()).await?
         } else {
             vec![]
         };
+        // An event delivered again after a restart has the same delivery ID; keep one copy, as
+        // the bus does within one run.
+        if let Some(earlier) = self.before_restart.get(&index) {
+            let known: HashSet<_> = earlier.iter().map(Event::delivery_id).collect();
+            history.retain(|event| !known.contains(&event.delivery_id()));
+            history.splice(0..0, earlier.iter().cloned());
+        }
 
         Ok(CiphernodeHistory(history))
-    }
-
-    /// expect events to fire with the default timeout 1000sec per event
-    pub async fn expect_events(&self, expected: &[&str]) -> Result<CiphernodeHistory> {
-        let h = self
-            .take_history_with_timeouts(
-                0,
-                expected.len(),
-                Some(Duration::from_secs(1000)),
-                Some(Duration::from_secs(1000)),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("FAILURE: {expected:?} : {e}"))?;
-
-        println!(">> {:?} == {:?}", h.event_types(), expected.to_vec());
-        h.expect(expected.to_vec());
-        Ok(h)
-    }
-
-    pub async fn take_history_with_timeouts(
-        &self,
-        index: usize,
-        count: usize,
-        total_to: Option<Duration>,
-        event_to: Option<Duration>,
-    ) -> Result<CiphernodeHistory> {
-        let start = Instant::now();
-        let Some(node) = self.nodes.get(index) else {
-            bail!("No node found");
-        };
-
-        let Some(history) = node.history() else {
-            return Ok(CiphernodeHistory(vec![]));
-        };
-
-        let history = timeout(
-            total_to.unwrap_or(Duration::from_secs(u64::MAX)), // No timeout
-            history.send(TakeEvents::with_per_evt_timeout(
-                count,
-                event_to.unwrap_or(Duration::from_secs(u64::MAX)),
-            )),
-        )
-        .await
-        .context(format!(
-            "Could not take {} events from node {}",
-            count, index
-        ))??;
-
-        if history.timed_out {
-            bail!(
-                "Take History timed out after {:?} was trying to take {} events. Returned {:?}",
-                start.elapsed(),
-                count,
-                history
-            );
-        };
-        info!(
-            "take took {:?} for count={}, total_timeout={:?}, per_evt_timeout={:?}",
-            start.elapsed(),
-            count,
-            total_to,
-            event_to
-        );
-        Ok(CiphernodeHistory(history.events))
-    }
-
-    /// Collect events until one whose [`InterfoldEvent::event_type`] equals `last_event_type`
-    /// (inclusive). Use when the pubkey flow ends with `PublicKeyAggregated` but a fixed
-    /// `take_history_with_timeouts` count can stop too early while gossip duplicates inflate the multiset.
-    pub async fn take_history_until_last_event(
-        &self,
-        index: usize,
-        last_event_type: &str,
-        total_to: Option<Duration>,
-        event_to: Option<Duration>,
-    ) -> Result<CiphernodeHistory> {
-        let start = Instant::now();
-        let total_to = total_to.unwrap_or(Duration::from_secs(u64::MAX));
-        let event_to = event_to.unwrap_or(Duration::from_secs(u64::MAX));
-        let mut collected = Vec::new();
-
-        loop {
-            let remaining = total_to.saturating_sub(start.elapsed());
-            if remaining.is_zero() {
-                bail!(
-                    "take_history_until_last_event({last_event_type}) timed out after {:?}; got {} events: {:?}",
-                    start.elapsed(),
-                    collected.len(),
-                    CiphernodeHistory(collected.clone()).event_types()
-                );
-            }
-            let call_to = event_to.min(remaining);
-            let batch = self
-                .take_history_with_timeouts(index, 1, Some(call_to), Some(call_to))
-                .await?;
-            for event in batch.0 {
-                let is_last = event.event_type() == last_event_type;
-                collected.push(event);
-                if is_last {
-                    info!(
-                        "take_history_until_last_event({last_event_type}) took {:?} ({} events)",
-                        start.elapsed(),
-                        collected.len()
-                    );
-                    return Ok(CiphernodeHistory(collected));
-                }
-            }
-        }
-    }
-
-    pub async fn flush_all_history(&self, millis: u64) -> Result<()> {
-        let nodes = &self.nodes;
-        for node in nodes.iter() {
-            let Some(history) = node.history() else {
-                break;
-            };
-            loop {
-                println!("IN FLUSH LOOP...");
-                let nhs = history.send(TakeEvents::new(1));
-                let tr = timeout(Duration::from_millis(millis), nhs).await;
-                match tr {
-                    Ok(Ok(result)) if result.timed_out => {
-                        println!("PER-EVENT TIMEOUT, BREAKING LOOP...");
-                        break;
-                    }
-                    Err(_) => {
-                        println!("OUTER TIMEOUT, BREAKING LOOP...");
-                        break;
-                    }
-                    _ => {
-                        // Got events, keep draining
-                    }
-                }
-            }
-            history.send(ResetHistory).await?;
-        }
-        Ok(())
     }
 }
 
@@ -326,10 +213,6 @@ pub struct CiphernodeHistory(Vec<InterfoldEvent>);
 impl CiphernodeHistory {
     pub fn event_types(&self) -> Vec<String> {
         self.0.iter().map(|e| e.event_type()).collect()
-    }
-
-    pub fn expect(&self, event_types: Vec<&str>) {
-        assert_eq!(self.event_types(), event_types);
     }
 }
 

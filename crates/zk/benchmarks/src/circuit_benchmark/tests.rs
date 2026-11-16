@@ -11,29 +11,27 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 12);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 11);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 11);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 10);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
         .is_err());
     assert_eq!(
         config
-            .select(
-                "secure",
-                &[
-                    "threshold/user_data_encryption_ct0".into(),
-                    "threshold/user_data_encryption_ct1".into()
-                ]
-            )
+            .select("secure", &["threshold/user_data_encryption".into()])
             .unwrap(),
-        [Case::Ct0, Case::Ct1]
+        [Case::Ude]
     );
+    // The legs are proven inside one circuit; there is no standalone leg to select.
+    assert!(config
+        .select("secure", &["threshold/user_data_encryption_ct0".into()])
+        .is_err());
 }
 
 #[test]
 fn unmeasured_and_failed_stages_are_distinct_and_calldata_uses_actual_bytes() {
-    let mut record = Record::new(Case::Ct1, "secure", e3_zk_config::CircuitVariant::Recursive);
+    let mut record = Record::new(Case::Ude, "secure", e3_zk_config::CircuitVariant::Recursive);
     let before = serde_json::to_value(&record).unwrap();
     assert!(before["execution"]["time_seconds"].is_null());
     assert!(before["proof_size_bytes"].is_null());
@@ -118,19 +116,20 @@ fn failed_external_command_preserves_logs_and_is_not_a_successful_measurement() 
 }
 
 #[test]
-fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper() {
+fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_legs() {
     let mut current = Record::new(
-        Case::Ct0,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
     current.proof_generation.time_seconds = Some(0.0);
     current.proof_generation.success = Some(true);
     current.proof_bytes(&[1, 2, 3], &[0; 32]);
-    let historical = serde_json::json!({"circuit_name":"user_data_encryption_ct1","circuit_path":"circuits/bin/threshold/user_data_encryption_ct1","execution":{"success":true,"time_seconds":2.0},"proof_generation":{"success":true,"time_seconds":7.5,"proof_size_bytes":11},"verification":{"success":true,"time_seconds":0.125,"public_inputs_size_bytes":32}});
+    let historical_leg = |leg: &str, prove: f64, proof: u64| serde_json::json!({"circuit_name":format!("user_data_encryption_{leg}"),"circuit_path":format!("circuits/bin/threshold/user_data_encryption_{leg}"),"execution":{"success":true,"time_seconds":2.0},"proof_generation":{"success":true,"time_seconds":prove,"proof_size_bytes":proof},"verification":{"success":true,"time_seconds":0.125,"public_inputs_size_bytes":32}});
     let leaves = vec![
         report::parse_leaf(serde_json::to_value(current).unwrap()).unwrap(),
-        report::parse_leaf(historical).unwrap(),
+        report::parse_leaf(historical_leg("ct0", 1.5, 3)).unwrap(),
+        report::parse_leaf(historical_leg("ct1", 7.5, 11)).unwrap(),
     ];
     let data = report::Data {
         leaves,
@@ -141,8 +140,9 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper
     };
     let rendered = report::render(&data).unwrap();
     assert!(rendered.contains("production_bb_adapter_wall") && rendered.contains("isolated_nargo"));
-    assert!(rendered.contains("proof bytes: 14") && rendered.contains("prove time: 7.500000"));
-    assert!(rendered.contains("| Π_user | N/A | N/A | 123 | N/A | N/A |"));
+    assert!(rendered.contains("proof bytes: 14") && rendered.contains("prove time: 9.000000"));
+    // Π_user takes the one-circuit UDE leaf's sizes, never a historical leg's.
+    assert!(rendered.contains("| Π_user | 3 | 32 | 123 |"));
     assert_eq!(
         rendered
             .matches("| ude | production_encryption_and_preparation_wall | 0.250000 | true |")
@@ -154,7 +154,7 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper
 #[test]
 fn report_excludes_failed_schema_two_phase_durations() {
     let mut failed = Record::new(
-        Case::Ct0,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
@@ -171,7 +171,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
     }
     failed.error = Some("phase failed".into());
     let mut successful = Record::new(
-        Case::Ct1,
+        Case::Named(e3_zk_config::CircuitName::PkGeneration),
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
@@ -190,9 +190,8 @@ fn report_excludes_failed_schema_two_phase_durations() {
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();
-    assert!(rendered.contains("| threshold/user_data_encryption_ct0 | external_bb_prove_wall | N/A | N/A | N/A | N/A | N/A | N/A | failed |"));
-    assert!(rendered.contains("prove time: N/A s; verify time: N/A s."));
-    assert!(rendered.contains("| threshold/user_data_encryption_ct1 | external_bb_prove_wall | N/A | N/A | N/A | N/A | 0.000000 | 1.000000 | verified |"));
+    assert!(rendered.contains("| threshold/user_data_encryption | external_bb_prove_wall | N/A | N/A | N/A | N/A | N/A | N/A | failed |"));
+    assert!(rendered.contains("| threshold/pk_generation | production_bb_adapter_wall | N/A | N/A | N/A | N/A | 0.000000 | 1.000000 | verified |"));
 }
 
 #[test]
@@ -201,7 +200,7 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
     let saved = temp.path().join("saved");
     fs::create_dir_all(saved.join("raw")).unwrap();
     let record = Record::new(
-        Case::Ct1,
+        Case::Ude,
         "insecure",
         e3_zk_config::CircuitVariant::Recursive,
     );
@@ -344,7 +343,7 @@ fn integration_launcher_delivers_full_proof_controls_and_structured_export_paths
     let bin = temp.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
     let executable = bin.join("cargo");
-    fs::write(&executable, "#!/bin/sh\n[ \"$1\" = test ] || exit 1\n[ \"$CIPHERNODE_SKIP_PROOF_AGGREGATION\" = false ] || exit 2\n[ \"$BENCHMARK_MODE\" = secure ] || exit 3\n[ \"$BENCHMARK_MULTITHREAD_JOBS\" = 3 ] || exit 4\ncase \" $* \" in *' --release '*test_trbfv_actor*) ;; *) exit 5 ;; esac\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_SUMMARY_OUTPUT\"\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_FOLDED_OUTPUT\"\n").unwrap();
+    fs::write(&executable, "#!/bin/sh\n[ \"$1\" = test ] || exit 1\n[ \"$CIPHERNODE_SKIP_PROOF_AGGREGATION\" = false ] || exit 2\n[ \"$BENCHMARK_MODE\" = secure ] || exit 3\n[ \"$BENCHMARK_MULTITHREAD_JOBS\" = 3 ] || exit 4\ncase \" $* \" in *' --release '*' benchmark_trbfv_actor -- --ignored --exact '*) ;; *) exit 5 ;; esac\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_SUMMARY_OUTPUT\"\nprintf '{\"synthetic_transport_fixture\":true}' > \"$BENCHMARK_FOLDED_OUTPUT\"\n").unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
     let output = temp.path().join("outputs with spaces");
     fs::create_dir_all(&output).unwrap();
@@ -525,8 +524,24 @@ fn integration_child_uses_validated_bb_even_when_path_selects_another_binary() {
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let selected = root.join("selected bb");
-    for (path, script) in [(&selected, "#!/bin/sh\nprintf '5.2.0\\n'\n"), (&bin.join("bb"), "#!/bin/sh\nprintf 'wrong-version\\n'\n"), (&bin.join("cargo"), "#!/bin/sh\nversion=$(\"${E3_CUSTOM_BB:-bb}\" --version)\n[ \"$version\" = 5.2.0 ] || exit 7\nprintf '%s' \"$E3_CUSTOM_BB\" > \"$BENCHMARK_SUMMARY_OUTPUT\"\n")] {
-        fs::write(path, script).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    for (path, script) in [
+        (&selected, "#!/bin/sh\nprintf '5.2.0\\n'\n"),
+        (&bin.join("bb"), "#!/bin/sh\nprintf 'wrong-version\\n'\n"),
+        (
+            &bin.join("cargo"),
+            "#!/bin/sh\nversion=$(\"${E3_CUSTOM_BB:-bb}\" --version)\n[ \"$version\" = 5.2.0 ] || exit 7\nprintf '%s' \"$E3_CUSTOM_BB\" > \"$BENCHMARK_SUMMARY_OUTPUT\"\n",
+        ),
+    ] {
+        // A writer child prevents concurrent test spawns from inheriting a writable script FD,
+        // which can make execve fail with ETXTBSY on Linux even after fs::write returns.
+        let written = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$2\" > \"$1\"", "write-fixture"])
+            .arg(path)
+            .arg(script)
+            .status()
+            .unwrap();
+        assert!(written.success());
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let selected = artifacts::bb_binary(Some(&selected)).unwrap();
     let observed = run(Command::new(&selected).arg("--version")).unwrap();

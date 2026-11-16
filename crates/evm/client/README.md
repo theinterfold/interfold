@@ -32,6 +32,10 @@ client. `InterfoldContract::new(http_rpc_url, private_key, contract_address).awa
 signing client. Import `InterfoldRead` / `InterfoldWrite` for their operations; the factory also
 exposes explicitly named `create_read` and `create_write` constructors.
 
+Quote and request helpers take a `BfvProfile` and committee. They derive the registry slot and
+configuration ID, rejecting disabled profiles before RPC work; threshold-only IDs are historical
+indexing inputs, not new-request identities.
+
 ## Listen and catch up
 
 `event_listener::EventListener::new(provider, filter)` accepts an Alloy provider and log filter.

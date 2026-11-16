@@ -6,10 +6,11 @@
 // Pure helpers (no deploys). Compose with `deployInterfoldSystem`.
 import type { ContractTransactionResponse, Signer } from "ethers";
 
+import { bfvConfiguration, bfvPresetForParamSet } from "../../bfv.js";
 import type { IInterfold, Interfold } from "../../types/contracts/Interfold";
 import type { MockUSDC } from "../../types/contracts/test/MockStableToken.sol/MockUSDC";
 import { ethers, networkHelpers } from "./connection";
-import { ACTIVE_CRYPTO_CONFIG_ID, COMMITTEE_SIZE_MINIMUM } from "./constants";
+import { COMMITTEE_SIZE_MINIMUM } from "./constants";
 import { buildMockDkgAttestationFixtureData } from "./dkgAttestation";
 
 const { time } = networkHelpers;
@@ -166,7 +167,10 @@ export const makeRequest = async (
   const quoteParams = {
     ...requestParams,
     expectedFeeToken: await usdcToken.getAddress(),
-    expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+    expectedCryptoConfigId: bfvConfiguration(
+      bfvPresetForParamSet(Number(requestParams.paramSet))!.profile,
+      Number(requestParams.committeeSize),
+    ).configId,
     maxFee: 0,
   };
   const fee = await interfold.getE3Quote(quoteParams);

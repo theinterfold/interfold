@@ -89,6 +89,10 @@ impl E3Extension for ThresholdKeyshareExtension {
                 .err(EType::KeyGeneration, anyhow!(ERROR_KEYSHARE_META_MISSING));
             return;
         };
+        if let Err(error) = meta.share_enc_preset() {
+            self.bus.err(EType::KeyGeneration, error);
+            return;
+        }
         let repo = ctx.repositories().threshold_keyshare(&e3_id);
         let container = repo.send(Some(ThresholdKeyshareState::new(
             e3_id.clone(),
@@ -120,7 +124,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     bus: self.bus.clone(),
                     cipher: self.cipher.clone(),
                     state: container,
-                    share_enc_preset: meta.share_enc_preset(),
+                    params_profile: meta.params_profile,
                     interfold_address,
                     recovery,
                     recovery_payloads,
@@ -181,10 +185,11 @@ impl E3Extension for ThresholdKeyshareExtension {
         )
         .await?;
 
-        // Derive DKG preset from persisted E3Meta
+        // Validate the persisted profile before starting the DKG actor.
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             return Err(anyhow!(ERROR_KEYSHARE_META_MISSING));
         };
+        meta.share_enc_preset()?;
         let interfold_address = self
             .interfold_addresses
             .get(&snapshot.e3_id.chain_id())
@@ -201,7 +206,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset: meta.share_enc_preset(),
+            params_profile: meta.params_profile,
             interfold_address,
             recovery,
             recovery_payloads,

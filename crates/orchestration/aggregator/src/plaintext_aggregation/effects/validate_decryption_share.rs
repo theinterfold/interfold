@@ -74,7 +74,7 @@ impl ThresholdPlaintextAggregator {
             return Ok(false);
         }
 
-        let Ok(verifier) = C6ShareVerifier::new(self.params_preset) else {
+        let Ok(verifier) = C6ShareVerifier::new(self.params_profile.threshold_preset()) else {
             warn!("Could not prepare the share commitment check");
             return Ok(false);
         };
@@ -85,7 +85,8 @@ impl ThresholdPlaintextAggregator {
         match &mut self.pending.ciphertext_commitments {
             Some(commitments) => Ok(commitments),
             cache @ None => {
-                let (params, _) = e3_fhe_params::build_pair_for_preset(self.params_preset)?;
+                let (params, _) =
+                    e3_fhe_params::build_pair_for_preset(self.params_profile.threshold_preset())?;
                 let commitments = ciphertexts
                     .iter()
                     .map(|ciphertext| {

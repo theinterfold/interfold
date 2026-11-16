@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_E_SM_BIT_SECRET,
+    L_THRESHOLD, N, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_E_SM_BIT_SECRET,
     SHARE_COMPUTATION_E_SM_CONFIGS,
 };
 use lib::configs::default::{N_PARTIES, T};
@@ -22,7 +22,6 @@ fn main(
         expected_secret_commitment,
         e_sm_secret,
         y,
-        PARITY_MATRIX,
     );
 
     share_computation_e_sm.execute()

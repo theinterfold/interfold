@@ -22,7 +22,7 @@ use e3_events::{
     EncryptionKey, PkGenerationProofRequest, ShareComputationProofRequest,
     ShareEncryptionProofRequest, ThresholdShare,
 };
-use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+use e3_fhe_params::BfvProfile;
 use e3_trbfv::shares::{BfvEncryptedShares, SharedSecret};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
@@ -62,7 +62,7 @@ pub(crate) struct SharesGeneratedPlan {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_shares_generated_plan(
     cipher: &Cipher,
-    share_enc_preset: BfvPreset,
+    params_profile: BfvProfile,
     party_id: u64,
     committee_size: CiphernodesCommitteeSize,
     pk_share: ArcBytes,
@@ -72,16 +72,15 @@ pub(crate) fn build_shares_generated_plan(
     proof_request_data: ProofRequestData,
     collected_encryption_keys: &[Arc<EncryptionKey>],
 ) -> Result<SharesGeneratedPlan> {
+    params_profile.ensure_admission_enabled()?;
+    params_profile.validate_committee(committee_size)?;
     let committee = committee_size.values();
 
     // Read the BFV public keys collected by the C0 cutoff from persisted state.
     let encryption_keys = collected_encryption_keys;
 
     // Convert to BFV public keys using DKG params
-    let threshold_preset = share_enc_preset
-        .threshold_counterpart()
-        .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
-    let (_, params) = build_pair_for_preset(threshold_preset)?;
+    let (_, params) = params_profile.build_pair()?;
     let (recipient_pks, recipient_party_ids) =
         recipient_keys_for_c3(encryption_keys, party_id, committee.n, committee.h, &params)?;
     let recipient_share_indices: Vec<usize> = (0..recipient_pks.len()).collect();
@@ -173,7 +172,7 @@ pub(crate) fn build_shares_generated_plan(
         proof_request_data.sk_raw.clone(),
         proof_request_data.eek_raw.clone(),
         e_sm_raw.clone(),
-        threshold_preset,
+        params_profile,
         committee_size,
     );
 
@@ -182,7 +181,7 @@ pub(crate) fn build_shares_generated_plan(
         secret_raw: proof_request_data.sk_raw.clone(),
         secret_sss_raw: sk_sss_raw,
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: threshold_preset,
+        params_profile,
         committee_size,
     };
 
@@ -194,7 +193,7 @@ pub(crate) fn build_shares_generated_plan(
             .next()
             .ok_or_else(|| anyhow!("esi_sss_raw is empty — expected at least one entry"))?,
         dkg_input_type: DkgInputType::SmudgingNoise,
-        params_preset: threshold_preset,
+        params_profile,
         committee_size,
     };
 
@@ -220,7 +219,7 @@ pub(crate) fn build_shares_generated_plan(
                 e0_rns_raw: SensitiveBytes::new(witness.e0_rns.to_bytes(), cipher)?,
                 e1_rns_raw: SensitiveBytes::new(witness.e1_rns.to_bytes(), cipher)?,
                 dkg_input_type: DkgInputType::SecretKey,
-                params_preset: threshold_preset,
+                params_profile,
                 committee_size,
                 recipient_party_id,
                 row_index: row_idx,
@@ -252,7 +251,7 @@ pub(crate) fn build_shares_generated_plan(
                     e0_rns_raw: SensitiveBytes::new(witness.e0_rns.to_bytes(), cipher)?,
                     e1_rns_raw: SensitiveBytes::new(witness.e1_rns.to_bytes(), cipher)?,
                     dkg_input_type: DkgInputType::SmudgingNoise,
-                    params_preset: threshold_preset,
+                    params_profile,
                     committee_size,
                     recipient_party_id,
                     row_index: row_idx,
@@ -351,7 +350,7 @@ fn recipient_keys_for_c3(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_fhe_params::BfvParamSet;
+    use e3_fhe_params::{build_pair_for_preset, BfvParamSet, BfvPreset};
     use fhe::bfv::SecretKey;
     use ndarray::Array2;
 
@@ -387,7 +386,7 @@ mod tests {
         let sensitive = SensitiveBytes::new(vec![1], &cipher)?;
         let plan = build_shares_generated_plan(
             &cipher,
-            BfvPreset::InsecureDkg64,
+            BfvProfile::SsInsecure64,
             2,
             CiphernodesCommitteeSize::Minimum,
             ArcBytes::from_bytes(&[7]),
@@ -406,6 +405,20 @@ mod tests {
         assert_eq!(plan.full_share.num_parties(), 3);
         assert_eq!(plan.sk_share_encryption_requests.len(), 2 * l);
         assert_eq!(plan.e_sm_share_encryption_requests.len(), 2 * l);
+        assert_eq!(plan.proof_request.params_profile, BfvProfile::SsInsecure64);
+        assert_eq!(
+            plan.sk_share_computation_request.params_profile,
+            plan.proof_request.params_profile
+        );
+        assert_eq!(
+            plan.e_sm_share_computation_request.params_profile,
+            plan.proof_request.params_profile
+        );
+        assert!(plan
+            .sk_share_encryption_requests
+            .iter()
+            .chain(&plan.e_sm_share_encryption_requests)
+            .all(|request| request.params_profile == plan.proof_request.params_profile));
         assert_eq!(
             plan.sk_share_encryption_requests
                 .iter()

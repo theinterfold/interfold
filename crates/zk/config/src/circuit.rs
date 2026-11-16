@@ -74,11 +74,13 @@ pub enum CircuitName {
     DecryptedSharesAggregation,
     /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
     C3Fold,
-    /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
+    /// First step of a [`CircuitName::C3Fold`] chain: proves the first leaf and starts the accumulator
+    /// (same ABI; it verifies no accumulator).
     C3FoldKernel,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
-    /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
+    /// First step of a [`CircuitName::C6Fold`] chain: proves the first leaf and starts the accumulator
+    /// (same ABI; it verifies no accumulator).
     C6FoldKernel,
     /// Ad-hoc recursive aggregation: C2a + C2b.
     C2abFold,
@@ -90,7 +92,8 @@ pub enum CircuitName {
     NodeFold,
     /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
     NodesFold,
-    /// Bootstrap circuit for [`CircuitName::NodesFold`] genesis accumulator proof (same ABI, no acc verify).
+    /// First step of a [`CircuitName::NodesFold`] chain: proves the first node proof and starts the
+    /// accumulator (same ABI; it verifies no accumulator).
     NodesFoldKernel,
     /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
     DkgAggregator,

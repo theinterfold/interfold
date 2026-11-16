@@ -15,14 +15,15 @@ use std::time::Duration;
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, Recipient, SpawnHandle};
 use alloy::primitives::{keccak256, Address, Bytes};
 use alloy::sol_types::SolValue;
+use anyhow::anyhow;
 use e3_committee::{CiphernodesCommitteeSize, Committee};
 use e3_events::{
-    BusHandle, E3id, EncryptionKey, EncryptionKeyCreated, EncryptionKeyReceived, EventContext,
-    EventContextAccessors, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, Proof, ProofType, ProofVerificationFailed, ProofVerificationPassed,
-    Sequenced, SignedProofFailed, SignedProofPayload, TypedEvent,
+    BusHandle, E3id, EType, EncryptionKey, EncryptionKeyCreated, EncryptionKeyReceived,
+    ErrorDispatcher, EventContext, EventContextAccessors, EventPublisher, EventSubscriber,
+    EventType, InterfoldEvent, InterfoldEventData, Proof, ProofType, ProofVerificationFailed,
+    ProofVerificationPassed, Sequenced, SignedProofFailed, SignedProofPayload, TypedEvent,
 };
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
 use tracing::{debug, error, info, warn};
@@ -73,8 +74,8 @@ pub struct ProofVerificationActor {
     bus: BusHandle,
     verifier: Recipient<TypedEvent<ZkVerificationRequest>>,
     pending: HashMap<(E3id, u64), PendingVerification>,
-    /// Tracks preset + committee per E3 so we can derive `artifacts_dir` for proof verification.
-    presets: HashMap<E3id, (BfvPreset, CiphernodesCommitteeSize)>,
+    /// Request-time profile and committee select the C0 artifact namespace, including after restart.
+    profiles: HashMap<E3id, (BfvProfile, CiphernodesCommitteeSize)>,
     /// Canonical finalized committee in party-id order. A C0 signer must own the party slot whose
     /// BFV key it advertises; recovering any valid ECDSA address is not sufficient.
     committees: HashMap<E3id, Vec<Address>>,
@@ -95,19 +96,21 @@ impl ProofVerificationActor {
             bus: bus.clone(),
             verifier,
             pending: HashMap::new(),
-            presets: HashMap::new(),
+            profiles: HashMap::new(),
             committees: HashMap::new(),
             recovered: Vec::new(),
             dkg_ended: HashSet::new(),
             effects_enabled: false,
         };
         for (e3_id, meta) in persisted_e3_metadata {
-            actor.store_preset(
+            if let Err(error) = actor.store_profile(
                 e3_id,
-                meta.params_preset,
+                meta.params_profile,
                 meta.threshold_m,
                 meta.threshold_n,
-            );
+            ) {
+                error!("{error}");
+            }
         }
         for (e3_id, committee) in persisted_committees {
             actor.store_committee(e3_id, committee.members());
@@ -154,27 +157,22 @@ impl ProofVerificationActor {
         addr
     }
 
-    fn store_preset(
+    /// Keeps the profile that selects the E3's C0 artifacts. Without one, the actor abstains from
+    /// the E3's C0 inputs: it publishes no verdict and blames no peer for its own configuration.
+    fn store_profile(
         &mut self,
         e3_id: E3id,
-        preset: BfvPreset,
+        profile: BfvProfile,
         threshold_m: usize,
         threshold_n: usize,
-    ) {
-        match CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n) {
-            Ok(committee) => {
-                self.presets.insert(e3_id, (preset, committee));
-            }
-            Err(error) => {
-                error!(
-                    %e3_id,
-                    threshold_m,
-                    threshold_n,
-                    %error,
-                    "ProofVerificationActor: unrecognised committee; C0 keys will be rejected"
-                );
-            }
-        }
+    ) -> anyhow::Result<()> {
+        let committee = profile
+            .ensure_admission_enabled()
+            .map_err(anyhow::Error::from)
+            .and_then(|()| CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n))
+            .map_err(|error| anyhow!("Skipping C0 verification for E3 {e3_id}: {error}"))?;
+        self.profiles.insert(e3_id, (profile, committee));
+        Ok(())
     }
 
     fn store_committee(&mut self, e3_id: E3id, members: &[String]) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import config from "./crypto-config.json";
 
-if (config.formatVersion !== 1) {
+if (config.formatVersion !== 2) {
   throw new Error(
     `Unsupported crypto configuration format: ${config.formatVersion}`,
   );
@@ -28,7 +28,6 @@ function preset(name: string) {
   return {
     paramSet: preset.paramSet,
     paramSetHash: preset.parameterHash as `0x${string}`,
-    configId: preset.cryptoConfigId as `0x${string}`,
     threshold: parameters(preset.threshold),
     dkg: parameters(preset.dkg),
     search: preset.search,
@@ -36,9 +35,28 @@ function preset(name: string) {
 }
 
 export const BFV_PRESETS = {
-  "insecure-64": preset("insecure-64"),
-  "secure-8192": preset("secure-8192"),
+  "insecure-64": {
+    ...preset("insecure-64"),
+    profile: "ss-insecure-64" as const,
+  },
+  "secure-8192": {
+    ...preset("secure-8192"),
+    profile: "ss-secure-8192" as const,
+  },
 };
+
+function profile(name: string) {
+  const profile = config.bfv.profiles.find((entry) => entry.profile === name);
+  if (!profile) throw new Error(`Missing BFV profile: ${name}`);
+  return profile;
+}
+
+export const BFV_PROFILES = {
+  "ss-insecure-64": profile("ss-insecure-64"),
+  "ss-secure-8192": profile("ss-secure-8192"),
+  "sync-insecure-64": profile("sync-insecure-64"),
+};
+export type BfvProfile = keyof typeof BFV_PROFILES;
 
 const { decryptionAggregator, ...dimensions } = config.zk;
 export const CIRCUIT_DIMENSIONS = dimensions;
@@ -91,6 +109,31 @@ export const COMMITTEES = {
   small: committee("small"),
 };
 export const SUPPORTED_BFV_BUILD_PAIRS = config.buildPairs;
+
+/** Select one admitted profile/committee, deriving both the registry slot and identity. */
+export function bfvConfiguration(profile: BfvProfile, committeeSize: number) {
+  const selected = BFV_PROFILES[profile];
+  if (!selected) throw new Error(`Unsupported BFV profile: ${profile}`);
+  const committee = Object.values(COMMITTEES).find(
+    (entry) => entry.committeeSize === committeeSize,
+  );
+  const configuration = selected.configurations.find(
+    (entry) => entry.committee === committee?.name,
+  );
+  if (!configuration)
+    throw new Error(
+      `Unsupported BFV profile/committee: ${profile}/${committeeSize}`,
+    );
+  if (!configuration.admissionEnabled)
+    throw new Error(`BFV profile ${profile} is disabled in this release`);
+  return {
+    profile,
+    protocol: selected.protocol,
+    paramSet: selected.paramSet,
+    configId: configuration.cryptoConfigId as `0x${string}`,
+    artifactsDir: configuration.artifactsDir,
+  };
+}
 
 export function bfvPresetForParamSet(paramSet: number) {
   return Object.values(BFV_PRESETS).find(

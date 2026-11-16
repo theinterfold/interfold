@@ -19,7 +19,6 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use alloy::primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::Proof;
-use e3_fhe_params::BfvPreset;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -450,7 +449,7 @@ pub fn prove_dkg_aggregation(
     prover: &ZkProver,
     input: &DkgAggregationInput,
     e3_id: &str,
-    preset: BfvPreset,
+    artifacts_dir: &str,
     committee: CiphernodesCommitteeSize,
 ) -> Result<Proof, ZkError> {
     validate_dkg_aggregation_shape(
@@ -459,8 +458,6 @@ pub fn prove_dkg_aggregation(
         input.committee_addresses.len(),
         committee,
     )?;
-    let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
-    let artifacts_dir = artifacts_dir.as_str();
     let h = input.node_fold_proofs.len();
     let nodes_fold_proof = if let Some(precomputed) = input.nodes_fold_proof {
         precomputed.clone()
@@ -573,11 +570,8 @@ pub fn prove_decryption_aggregation_jobs(
     jobs: &[DecryptionAggregationJob],
     committee_addresses: &[Address],
     e3_id: &str,
-    preset: BfvPreset,
-    committee: CiphernodesCommitteeSize,
+    artifacts_dir: &str,
 ) -> Result<Vec<Proof>, ZkError> {
-    let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
-    let artifacts_dir = artifacts_dir.as_str();
     // VKs and the compiled circuit are job-independent: load once, reuse per ciphertext.
     let c6_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),

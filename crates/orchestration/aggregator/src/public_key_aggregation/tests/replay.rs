@@ -112,7 +112,7 @@ impl ReplayedAggregator {
             .unzip();
         PublicKeyAggregation::plan_c1_dispatch(&submission_order, &c1_proofs).request(
             &self.e3_id,
-            BfvPreset::InsecureThreshold64,
+            BfvProfile::SsInsecure64,
             CiphernodesCommitteeSize::Minimum,
         )
     }
@@ -158,7 +158,8 @@ async fn replay_selection() -> Result<ReplayedAggregator> {
         threshold_n: committee_size.n,
         seed,
         error_size: ArcBytes::from_bytes(&[]),
-        params_preset: BfvPreset::InsecureThreshold64,
+        params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
+        crypto_config_id: [0; 32],
         params: ArcBytes::from_bytes(&[]),
         party_id: 0,
         committee: committee.clone(),

@@ -59,7 +59,7 @@ impl ShareVerificationActor {
                 let req = ComputeRequest::zk(
                     ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
                         party_proofs: passed,
-                        params_preset: pending.params_preset,
+                        params_profile: pending.params_profile,
                         committee_size: pending.committee_size,
                     }),
                     zk_correlation_id,
@@ -84,7 +84,7 @@ impl ShareVerificationActor {
                 let req = ComputeRequest::zk(
                     ZkRequest::VerifyShareDecryptionProofs(VerifyShareDecryptionProofsRequest {
                         party_proofs: passed,
-                        params_preset: pending.params_preset,
+                        params_profile: pending.params_profile,
                         committee_size: pending.committee_size,
                     }),
                     zk_correlation_id,
@@ -133,7 +133,7 @@ impl ShareVerificationActor {
                 party_proof_hashes,
                 party_public_signals,
                 party_proof_data,
-                params_preset: pending.params_preset,
+                params_profile: pending.params_profile,
                 committee_size: pending.committee_size,
             },
         );

@@ -6,7 +6,7 @@ use alloy::primitives::{keccak256, Address, B256};
 use anyhow::{ensure, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{E3id, PublicKeyAggregated, ThresholdShareDecryptionProofRequest};
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{BfvParamSet, BfvProfile};
 use e3_utils::ArcBytes;
 use std::{
     collections::HashMap,
@@ -18,7 +18,7 @@ pub struct CanonicalPublicKey {
     pub pk_commitment: [u8; 32],
     pub committee: Vec<Address>,
     pub honest_committee: Vec<Address>,
-    pub params_preset: BfvPreset,
+    pub params_profile: BfvProfile,
     pub committee_size: CiphernodesCommitteeSize,
     pub interfold_address: Address,
     pub sk_agg_commits: Vec<[u8; 32]>,
@@ -27,7 +27,10 @@ pub struct CanonicalPublicKey {
 
 impl CanonicalPublicKey {
     pub fn validate_key(&self, bytes: &[u8]) -> Result<()> {
-        let params = BfvParamSet::from(self.params_preset);
+        self.params_profile.ensure_admission_enabled()?;
+        self.params_profile
+            .validate_committee(self.committee_size)?;
+        let params = BfvParamSet::from(self.params_profile.threshold_preset());
         e3_bfv_client::validate_pk_commitment(
             bytes,
             self.pk_commitment,
@@ -74,6 +77,8 @@ impl CanonicalPublicKeys {
     }
 
     pub fn insert(&self, id: E3id, key: CanonicalPublicKey) -> Result<()> {
+        key.params_profile.ensure_admission_enabled()?;
+        key.params_profile.validate_committee(key.committee_size)?;
         let mut keys = self.0.write().expect("canonical key lock");
         if let Some(existing) = keys.authority.get(&id) {
             ensure!(
@@ -158,7 +163,7 @@ impl CanonicalPublicKeys {
         Ok(())
     }
 
-    /// Rebuild only the public inputs. Retain the exact secret and ciphertext witnesses.
+    /// Repair public inputs only within the saved profile; retain secret and ciphertext witnesses.
     pub fn repair_request(
         &self,
         id: &E3id,
@@ -167,13 +172,16 @@ impl CanonicalPublicKeys {
         let key = self
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("chain public-key context is unavailable"))?;
+        ensure!(
+            request.params_profile == key.params_profile,
+            "C6 request profile does not match chain public-key context"
+        );
         let bytes = self
             .public_key(id)
             .unwrap_or_else(|| request.aggregated_pk_bytes.clone());
         key.validate_key(&bytes)?;
         request.aggregated_pk_bytes = bytes;
         request.decryption_domain = key.domain(key.interfold_address);
-        request.params_preset = key.params_preset;
         request.committee_size = key.committee_size;
         Ok(())
     }
@@ -185,7 +193,7 @@ impl CanonicalPublicKeys {
     ) -> bool {
         self.get(id).is_some_and(|key| {
             request.decryption_domain == key.domain(key.interfold_address)
-                && request.params_preset == key.params_preset
+                && request.params_profile == key.params_profile
                 && request.committee_size == key.committee_size
                 && key.validate_key(&request.aggregated_pk_bytes).is_ok()
         })

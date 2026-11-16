@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Shared test constants. Importable by every spec file.
-import { BFV_ENCRYPTION_SCHEME_ID, INTERFOLD_BFV_VERSION } from "../../bfv.js";
+import { BFV_ENCRYPTION_SCHEME_ID, bfvConfiguration } from "../../bfv.js";
 import { BFV_PARAMS } from "../../scripts/protocol/constants";
 import { ethers } from "./connection";
 
@@ -61,28 +61,16 @@ export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure64);
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
 
 /** Circuit, BFV parameters, and verifier generation used by this build. */
-export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
-  abiCoder.encode(
-    ["bytes32", "bytes32", "bytes32"],
-    [
-      ENCRYPTION_SCHEME_ID,
-      ethers.keccak256(BFV_PARAMS_DEFAULT),
-      ethers.id(INTERFOLD_BFV_VERSION),
-    ],
-  ),
-);
+export const ACTIVE_CRYPTO_CONFIG_ID = bfvConfiguration(
+  "ss-insecure-64",
+  0,
+).configId;
 
 /** Production default circuit configuration exposed by `activeCryptoConfigId()`. */
-export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
-  abiCoder.encode(
-    ["bytes32", "bytes32", "bytes32"],
-    [
-      ENCRYPTION_SCHEME_ID,
-      ethers.keccak256(BFV_PARAMS_SECURE),
-      ethers.id(INTERFOLD_BFV_VERSION),
-    ],
-  ),
-);
+export const PRODUCTION_CRYPTO_CONFIG_ID = bfvConfiguration(
+  "ss-secure-8192",
+  2,
+).configId;
 
 // ── Timeout configs ──────────────────────────────────────────────────────────
 /** 1h / 1h / 1h — used by short-lifecycle tests. */

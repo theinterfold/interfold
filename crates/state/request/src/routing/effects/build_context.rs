@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
+use crate::{E3Meta, META_KEY};
 use e3_events::CiphernodeSelected;
 
 /// Builder for [`E3Router`].
@@ -120,6 +121,24 @@ impl E3RouterBuilder {
                 router.completed.contains(&selection.e3_id)
                     || router.contexts.contains_key(&selection.e3_id),
                 "cannot restore local selection for E3 {}: request-router context is missing",
+                selection.e3_id
+            );
+            // A failed E3 that keeps its context for accusation or slashing work starts no protocol
+            // actor from its selection, but the selection must still agree with its metadata.
+            if router.completed.contains(&selection.e3_id) {
+                continue;
+            }
+            let meta = router.contexts[&selection.e3_id]
+                .get_dependency(META_KEY)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "cannot restore local selection for E3 {}: request metadata is missing",
+                        selection.e3_id
+                    )
+                })?;
+            ensure!(
+                *meta == E3Meta::from(selection),
+                "recovered local selection disagrees with request metadata for E3 {}",
                 selection.e3_id
             );
         }

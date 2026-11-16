@@ -8,7 +8,7 @@
 
 use actix::{Actor, Addr, Recipient};
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_committee::Committee;
 use e3_data::Repositories;
 use e3_events::{
@@ -75,6 +75,10 @@ impl ZkActorRecovery {
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
         aggregates: &[AggregateId],
     ) -> Result<()> {
+        for (e3_id, meta) in &self.e3_metadata {
+            meta.validate_configuration()
+                .with_context(|| format!("invalid saved BFV configuration for E3 {e3_id}"))?;
+        }
         self.dkg_ended = lifecycle_stages
             .iter()
             .filter(|(_, stage)| crate::domain::proof_verification::dkg_has_ended(stage))

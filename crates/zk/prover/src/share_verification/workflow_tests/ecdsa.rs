@@ -133,7 +133,7 @@ fn prepare_rejects_one_signer_relabelled_across_other_party_slots() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
-        BfvPreset::InsecureDkg64,
+        BfvProfile::SsInsecure64,
         CiphernodesCommitteeSize::Minimum,
     );
 

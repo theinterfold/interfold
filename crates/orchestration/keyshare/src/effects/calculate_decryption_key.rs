@@ -46,7 +46,7 @@ impl ThresholdKeyshare {
 
         let plan = build_decryption_key_plan(
             &self.cipher,
-            self.share_enc_preset,
+            self.params_profile,
             state.party_id,
             state.committee_size()?,
             trbfv_config,

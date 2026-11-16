@@ -18,7 +18,7 @@ impl ShareVerificationActor {
         party_proofs: Vec<P>,
         pre_dishonest: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
-        params_preset: e3_fhe_params::BfvPreset,
+        params_profile: e3_fhe_params::BfvProfile,
         committee_size: e3_committee::CiphernodesCommitteeSize,
         store_passed_proofs: impl FnOnce(&mut PendingConsistencyCheck, Vec<P>),
     ) {
@@ -35,7 +35,7 @@ impl ShareVerificationActor {
             &kind,
             label,
             committee,
-            params_preset,
+            params_profile,
             committee_size,
         );
 
@@ -71,7 +71,7 @@ impl ShareVerificationActor {
             party_proof_data: outcome.party_proof_data,
             ecdsa_passed_share_proofs: Vec::new(),
             ecdsa_passed_decryption_proofs: Vec::new(),
-            params_preset,
+            params_profile,
             committee_size,
         };
         store_passed_proofs(&mut pending, outcome.ecdsa_passed_parties);

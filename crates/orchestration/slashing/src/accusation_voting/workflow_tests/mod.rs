@@ -59,7 +59,7 @@ fn voting_with(
         vote_quorum_h,
         VALIDITY,
         SKEW,
-        e3_fhe_params::BfvPreset::default(),
+        e3_fhe_params::BfvProfile::SsInsecure64,
         Arc::new(FixedClock(NOW)),
     )
 }

@@ -93,6 +93,8 @@ impl Bits {
         let q_bit = d_native_bit;
         // Reduction quotients: the widest reduced input is the interpolation sum, under `H * q^2`,
         // so its quotient is under `H * q`. Six spare bits cover any committee up to 64 parties.
+        // The Lagrange products are reduced after every factor, so their quotients stay below the
+        // largest party id, which is far below this bound.
         let k_bit = q_bit + 6;
         let t_bit = calculate_bit_width(&BigUint::from(threshold_params.plaintext()));
         let q_total_bit = calculate_bit_width(ctx.modulus());

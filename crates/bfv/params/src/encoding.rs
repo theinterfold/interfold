@@ -19,7 +19,11 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 #[cfg(feature = "abi-encoding")]
 use alloy_primitives::{keccak256, B256, U256};
 
-use crate::constants::{BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION};
+use crate::{
+    constants::{BFV_ENCRYPTION_SCHEME, BFV_PROFILE_CONFIG_DOMAIN},
+    BfvDecryptionProtocol,
+};
+use e3_committee::CiphernodesCommitteeSize;
 
 #[derive(ThisError, Debug)]
 pub enum EncodingError {
@@ -72,7 +76,7 @@ pub fn bfv_encryption_scheme_id() -> B256 {
     keccak256(BFV_ENCRYPTION_SCHEME.as_bytes())
 }
 
-/// Derive a configuration identity without decoding or normalizing registry bytes.
+/// Verify a historical threshold-only identity without normalizing registry bytes.
 ///
 /// The version is explicit so historical indexers can verify their frozen domain.
 /// This function does not decide whether a configuration is supported.
@@ -85,9 +89,32 @@ pub fn bfv_crypto_config_id(encoded_params: &[u8], circuit_version: &str) -> B25
     keccak256(value.abi_encode())
 }
 
-/// Derive a configuration identity using the current circuit statement domain.
-pub fn current_bfv_crypto_config_id(encoded_params: &[u8]) -> B256 {
-    bfv_crypto_config_id(encoded_params, INTERFOLD_BFV_VERSION)
+/// Hash the versioned profile ABI tuple without normalizing either parameter encoding.
+///
+/// Fields are `(domain, scheme, protocol, thresholdHash, dkgHash, committeeSize, N, T, H,
+/// statementVersion)`, with bytes32 hashes, uint8 committee size, and uint32 dimensions.
+/// Identity derivation does not decide support or admission; use the profile boundary for that.
+pub fn bfv_profile_crypto_config_id(
+    protocol: BfvDecryptionProtocol,
+    encoded_threshold_params: &[u8],
+    encoded_dkg_params: &[u8],
+    committee: CiphernodesCommitteeSize,
+    statement_version: &str,
+) -> B256 {
+    let shape = committee.values();
+    let value = DynSolValue::Tuple(vec![
+        DynSolValue::FixedBytes(keccak256(BFV_PROFILE_CONFIG_DOMAIN.as_bytes()), 32),
+        DynSolValue::FixedBytes(bfv_encryption_scheme_id(), 32),
+        DynSolValue::FixedBytes(keccak256(protocol.name().as_bytes()), 32),
+        DynSolValue::FixedBytes(bfv_parameter_hash(encoded_threshold_params), 32),
+        DynSolValue::FixedBytes(bfv_parameter_hash(encoded_dkg_params), 32),
+        DynSolValue::Uint(U256::from(committee as u8), 8),
+        DynSolValue::Uint(U256::from(shape.n), 32),
+        DynSolValue::Uint(U256::from(shape.threshold), 32),
+        DynSolValue::Uint(U256::from(shape.h), 32),
+        DynSolValue::FixedBytes(keccak256(statement_version.as_bytes()), 32),
+    ]);
+    keccak256(value.abi_encode())
 }
 
 /// Decodes BFV parameters from ABI-encoded bytes.

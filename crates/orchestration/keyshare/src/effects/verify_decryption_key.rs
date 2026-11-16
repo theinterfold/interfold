@@ -237,7 +237,7 @@ impl ThresholdKeyshare {
                 share_proofs: Vec::new(),
                 decryption_proofs: party_proofs,
                 pre_dishonest,
-                params_preset: self.share_enc_preset,
+                params_profile: self.params_profile,
                 committee_size,
             },
             ec,

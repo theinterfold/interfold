@@ -344,6 +344,56 @@ impl ZkBackend {
             ));
         }
 
+        self.install_staged_circuits(staging_dir, staged_circuits, version_info, configurations)
+            .await
+    }
+
+    /// Install a local circuits tree, as the release archive would have extracted it, for an
+    /// explicit subset of supported preset/committee pairs. The tree is admitted by the same rules
+    /// as a release archive: its `checksums.json` must list every file, match the files, and cover
+    /// every required artifact. `dir` is copied, never moved. It carries no release pin: only for
+    /// local builds and tests.
+    pub async fn install_circuits_dir(
+        &self,
+        dir: &Path,
+        configurations: &[(&str, &str)],
+    ) -> Result<(), ZkError> {
+        fs::create_dir_all(&self.base_dir).await?;
+
+        let staging_dir = tempfile::Builder::new()
+            .prefix(".circuits-install-")
+            .tempdir_in(&self.base_dir)?;
+        let staged_circuits = staging_dir.path().join("payload").join("circuits");
+        let (source, target) = (dir.to_owned(), staged_circuits.clone());
+        tokio::task::spawn_blocking(move || copy_circuits_dir(&source, &target))
+            .await
+            .map_err(|error| ZkError::IoError(std::io::Error::other(error)))??;
+
+        let mut version_info = self.load_version_info().await;
+        self.install_staged_circuits(
+            staging_dir,
+            staged_circuits,
+            &mut version_info,
+            configurations,
+        )
+        .await?;
+        info!(
+            "installed circuits v{} from {}",
+            self.config.required_circuits_version,
+            dir.display()
+        );
+        Ok(())
+    }
+
+    /// Verify the staged tree, then swap it and its `version.json` in, restoring the previous
+    /// installation if either swap fails.
+    async fn install_staged_circuits(
+        &self,
+        staging_dir: tempfile::TempDir,
+        staged_circuits: PathBuf,
+        version_info: &mut VersionInfo,
+        configurations: &[(&str, &str)],
+    ) -> Result<(), ZkError> {
         let circuit_infos = verify_circuits_dir(&staged_circuits, configurations).await?;
 
         let mut installed_version = version_info.clone();
@@ -468,6 +518,25 @@ fn validate_circuit_archive_entry(path: &Path, entry_type: tar::EntryType) -> Re
         )));
     }
 
+    Ok(())
+}
+
+/// Copy a local circuits tree, accepting what an archive may carry: regular files and directories.
+fn copy_circuits_dir(source: &Path, target: &Path) -> Result<(), ZkError> {
+    for entry in WalkDir::new(source) {
+        let entry = entry.map_err(|error| ZkError::IoError(error.into()))?;
+        let destination = target.join(entry.path().strip_prefix(source).unwrap());
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&destination)?;
+        } else if entry.file_type().is_file() {
+            std::fs::copy(entry.path(), &destination)?;
+        } else {
+            return Err(ZkError::InvalidInput(format!(
+                "circuit directory entry must be a regular file or directory: {}",
+                entry.path().display()
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -849,6 +918,68 @@ mod tests {
             fs::read(backend.circuits_dir.join("installed.txt")).unwrap(),
             b"installed"
         );
+    }
+
+    fn write_circuits_dir(root: &Path, circuit: &[u8]) {
+        for path in fixture_artifacts() {
+            write_file(root, &path, circuit);
+        }
+        let manifest = serde_json::to_vec(&ChecksumManifest {
+            algorithm: "sha256".into(),
+            generated: "test".into(),
+            files: fixture_manifest(circuit),
+        })
+        .unwrap();
+        write_file(root, "checksums.json", &manifest);
+    }
+
+    #[tokio::test]
+    async fn local_directory_is_verified_and_copied() {
+        let temp = TempDir::new().unwrap();
+        let backend = test_backend(&temp);
+        let source = temp.path().join("source");
+        write_circuits_dir(&source, b"circuit");
+
+        backend
+            .install_circuits_dir(&source, &supported_configurations())
+            .await
+            .unwrap();
+
+        assert!(source.join("checksums.json").is_file());
+        assert_eq!(
+            fs::read(
+                backend
+                    .circuits_dir
+                    .join("insecure-64/minimum/default/dkg/pk/pk.json")
+            )
+            .unwrap(),
+            b"circuit"
+        );
+        let version = backend.load_version_info().await;
+        assert!(version.circuits_match("candidate"));
+        assert!(backend.circuits_files_exist(&version));
+    }
+
+    #[tokio::test]
+    async fn local_directory_with_a_tampered_artifact_keeps_the_installation() {
+        let temp = TempDir::new().unwrap();
+        let backend = test_backend(&temp);
+        let previous_version = seed_installation(&backend).await;
+        let source = temp.path().join("source");
+        write_circuits_dir(&source, b"circuit");
+        write_file(
+            &source,
+            "insecure-64/minimum/default/dkg/pk/pk.json",
+            b"tampered",
+        );
+
+        let error = backend
+            .install_circuits_dir(&source, &supported_configurations())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ZkError::ChecksumMismatch { .. }), "{error}");
+        assert_installation_unchanged(&backend, &previous_version);
     }
 
     #[tokio::test]

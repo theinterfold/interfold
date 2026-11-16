@@ -202,7 +202,7 @@ impl PublicKeyAggregator {
                         );
                         return Ok(());
                     };
-                    let meta = self.params_preset.metadata();
+                    let meta = self.params_profile.threshold_preset().metadata();
                     let committee_n = *circuit_committee_n;
                     let committee_h = *circuit_committee_h;
                     let n_moduli = meta.num_moduli;
