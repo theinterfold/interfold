@@ -3,6 +3,7 @@
 //! Encrypted-request preparation for the isolated synchronized DKG leaves. These adapters do not
 //! admit the profile or authenticate caller-supplied chain context.
 
+pub mod execution;
 pub mod provenance;
 pub mod publication;
 

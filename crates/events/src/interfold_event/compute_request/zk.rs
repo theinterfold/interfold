@@ -51,6 +51,8 @@ pub enum ZkRequest {
     /// runs after the E3 fails, until the request completes. Its response is
     /// `ZkResponse::VerifyShareProofs`.
     ReverifyAccusedProof(VerifyShareProofsRequest),
+    /// Separate synchronized dealer/recipient/publication graph, never SS/ESM folding.
+    SynchronizedDkg(Box<super::SynchronizedDkgProofRequest>),
 }
 
 /// Inputs for a single ciphertext index inside [`ZkRequest::DecryptionAggregation`].
@@ -354,6 +356,7 @@ pub enum ZkResponse {
     DkgAggregation(DkgAggregationResponse),
     /// Output of [`ZkRequest::DecryptionAggregation`].
     DecryptionAggregation(DecryptionAggregationResponse),
+    SynchronizedDkg(super::SynchronizedDkgProofResponse),
 }
 
 /// Response from [`ZkRequest::NodeDkgFold`].

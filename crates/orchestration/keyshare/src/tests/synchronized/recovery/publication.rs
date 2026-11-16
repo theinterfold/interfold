@@ -4,9 +4,14 @@
 //! sample. This remains below disabled hydration/worker/publication admission.
 
 use super::*;
+use e3_events::{
+    SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedDkgProofResponse,
+    SynchronizedPublicationExpectation, SynchronizedSetupAnchors,
+};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::CircuitVariant;
+use e3_zk_prover::synchronized::execution::execute_definition;
 use e3_zk_prover::synchronized::{provenance::*, publication::*};
 use e3_zk_witness::{
     synchronized::provenance::{dealer_batch, Child},
@@ -199,18 +204,21 @@ pub(super) async fn qualify(
             .map(|proof| authenticated(selection, id, ProofType::C3aSkShareEncryption, proof))
             .collect::<Result<Vec<_>>>()?;
         let local = material[id as usize].context.clone();
-        let proof = prove_dealer(
-            prover,
-            &config,
-            &local,
-            e3,
-            &DealerJoin {
-                c1: &c1,
-                c2: &c2[id as usize],
-                c3: &c3,
+        let request = SynchronizedDkgProofRequest {
+            params_profile: PROFILE,
+            committee_size: COMMITTEE,
+            context: local,
+            job: SynchronizedDkgProofJob::Dealer {
+                c1,
+                c2: c2[id as usize].clone(),
+                c3,
             },
-            &format!("restored-dealer-{id}"),
-        )?;
+        };
+        let SynchronizedDkgProofResponse::Dealer { proof } =
+            execute_definition(prover, e3, &request, &format!("restored-dealer-{id}"))?
+        else {
+            anyhow::bail!("wrong synchronized dealer response");
+        };
         ensure!(prover.verify_fold_proof(&proof, "restored-dealer", id as u64, &namespace)?);
         nodes.push(proof);
     }
@@ -253,20 +261,35 @@ pub(super) async fn qualify(
     let mut recipients = Vec::new();
     let mut setups = Vec::new();
     for owner in 0..recovered.len() {
-        let proof = prove_recipient(
-            prover,
-            &config,
-            &material[owner].context,
-            e3,
-            &RecipientJoin {
-                dealer_ids: &ids,
-                c0: &c0[owner],
-                own_c2: &c2[owner],
-                c4: &c4[owner],
-                nodes: &nodes,
+        let request = SynchronizedDkgProofRequest {
+            params_profile: PROFILE,
+            committee_size: COMMITTEE,
+            context: material[owner].context.clone(),
+            job: SynchronizedDkgProofJob::Recipient {
+                c0: c0[owner].clone(),
+                own_c2: c2[owner].clone(),
+                c4: c4[owner].clone(),
+                dealers: nodes.clone(),
+                expected: SynchronizedSetupAnchors {
+                    binding,
+                    recipient: owner as u32,
+                    dealers: ids.clone(),
+                    threshold_keys: keys.clone(),
+                    dealer_batch: batch,
+                    sk_commitment: sk[owner],
+                    key_bundle: bundles[owner],
+                },
             },
-            &format!("restored-recipient-{owner}"),
-        )?;
+        };
+        // Exercise the typed local request contract without enabling the production profile gate.
+        let request = bincode::deserialize(&bincode::serialize(&request)?)?;
+        let SynchronizedDkgProofResponse::Recipient {
+            proof,
+            setup: result,
+        } = execute_definition(prover, e3, &request, &format!("restored-recipient-{owner}"))?
+        else {
+            anyhow::bail!("wrong synchronized recipient response");
+        };
         let setup = verify_recipient(
             prover,
             &config,
@@ -283,7 +306,8 @@ pub(super) async fn qualify(
             "restored-recipient",
         )?
         .context("recovered recipient setup rejected")?;
-        setups.push(e3_events::SynchronizedSetupAnchors::from(&setup));
+        ensure!(result == SynchronizedSetupAnchors::from(&setup));
+        setups.push(result);
         recipients.push(proof);
     }
     let c5 = prove_c5(prover, &config, &data, "restored-c5")?;
@@ -298,10 +322,30 @@ pub(super) async fn qualify(
         c5: &c5,
     };
     let prepared = prepare_publication(prover, &config, &context, e3, &join)?;
-    let publication =
-        prove_publication(prover, &config, &context, e3, &join, "restored-publication")?;
     let selected_sk: Vec<_> = ids.iter().map(|&id| sk[id as usize]).collect();
     let selected_bundles: Vec<_> = ids.iter().map(|&id| bundles[id as usize]).collect();
+    let request = SynchronizedDkgProofRequest {
+        params_profile: PROFILE,
+        committee_size: COMMITTEE,
+        context: context.clone(),
+        job: SynchronizedDkgProofJob::Publication {
+            recipients: selected_recipients,
+            c5,
+            expected: SynchronizedPublicationExpectation {
+                dealers: ids.clone(),
+                threshold_keys: keys.clone(),
+                dealer_batch: batch,
+                sk_commitments: selected_sk.clone(),
+                key_bundles: selected_bundles.clone(),
+                public_key: ArcBytes::from_bytes(&public_key.to_bytes()),
+            },
+        },
+    };
+    let SynchronizedDkgProofResponse::Publication { proof: publication } =
+        execute_definition(prover, e3, &request, "restored-publication")?
+    else {
+        anyhow::bail!("wrong synchronized publication response");
+    };
     let verified = verify_publication(
         prover,
         &config,

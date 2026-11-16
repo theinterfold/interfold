@@ -60,14 +60,24 @@ from the node's existing bounded executor. Signature admission remains upstream,
 witness computation/encoding remains in `zk/witness`.
 
 `synchronized::provenance` is an explicit **disabled-definition** API for dealer and per-recipient
-DKG joins, separate from worker dispatch and SS folding. Callers supply authenticated children,
-canonical request context and the accepted H-roster. Preparation uses the witness owner; proving
-uses the profile's isolated artifacts. Verification checks the full descendant VK pin and exact
+DKG joins, separate from SS folding. Callers supply authenticated children, canonical request
+context and the accepted H-roster. Preparation uses the witness owner; proving uses the profile's
+isolated artifacts. Verification checks the full descendant VK pin and exact
 context/recipient/roster before returning aggregate-SK/key-bundle commitments. It requires matching
 previously admitted C4, dealer-batch and selected threshold-key anchors, not expected values taken
 from the candidate proof. `synchronized::publication` adds bounded C5 and a separate EVM wrapper
 over H recipient proofs, preserving that batch and the SK/key-bundle handoff. Both APIs require
 canonical caller-supplied authority; neither enables worker dispatch, registry publication or C6.
+
+`synchronized::execution::execute_definition` executes typed local dealer, recipient and publication
+jobs through those same owners, returning only verified proofs/setup anchors. It is shared by the
+runtime adapter and isolated real-proof qualification, not an admission API. Runtime dispatch
+rejects disabled profiles before configuration, witness, artifact or process access; it never
+substitutes the SS graph. Expected anchors/native PK must come from independently admitted inputs,
+not the candidate's outputs. Actors must still authenticate children, admit the exact local response
+source/correlation and persist phase progress. Runtime generation/verification errors retain the
+original request for retry, never a peer-invalid verdict. Guarded producer actors and the registry
+writer are not implemented by this worker boundary.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

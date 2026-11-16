@@ -4271,6 +4271,7 @@ dependencies = [
  "anyhow",
  "e3-bfv-client",
  "e3-committee",
+ "e3-committee-hash",
  "e3-crypto",
  "e3-events",
  "e3-fhe-params",

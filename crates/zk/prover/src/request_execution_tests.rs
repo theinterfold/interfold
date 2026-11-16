@@ -17,6 +17,173 @@ fn unavailable_prover(root: &std::path::Path) -> ZkProver {
 }
 
 #[actix::test]
+async fn synchronized_join_work_is_disabled_before_artifacts_and_never_uses_ss_folding() {
+    use e3_events::{
+        SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedProofContext,
+        SynchronizedPublicationExpectation, SynchronizedSetupAnchors,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let prover = unavailable_prover(temp.path());
+    let cipher = Cipher::from_password("sync-join-execution").await.unwrap();
+    let context = SynchronizedProofContext {
+        party_id: 0,
+        setup: e3_committee_hash::DkgSetupContext {
+            interfold_address: alloy::primitives::Address::repeat_byte(1),
+            committee_hash: [2; 32].into(),
+            crypto_config_id: [3; 32].into(),
+        },
+    };
+    let proof = Proof::new(
+        e3_zk_config::CircuitName::PkBfv,
+        ArcBytes::default(),
+        ArcBytes::default(),
+    );
+    for job in [
+        SynchronizedDkgProofJob::Dealer {
+            c1: proof.clone(),
+            c2: proof.clone(),
+            c3: vec![],
+        },
+        SynchronizedDkgProofJob::Recipient {
+            c0: proof.clone(),
+            own_c2: proof.clone(),
+            c4: proof.clone(),
+            dealers: vec![],
+            expected: SynchronizedSetupAnchors {
+                binding: [0; 2],
+                recipient: 0,
+                dealers: vec![0, 2],
+                threshold_keys: vec![],
+                dealer_batch: [0; 32],
+                sk_commitment: [0; 32],
+                key_bundle: [0; 32],
+            },
+        },
+        SynchronizedDkgProofJob::Publication {
+            recipients: vec![],
+            c5: proof,
+            expected: SynchronizedPublicationExpectation {
+                dealers: vec![0, 2],
+                threshold_keys: vec![],
+                dealer_batch: [0; 32],
+                sk_commitments: vec![],
+                key_bundles: vec![],
+                public_key: ArcBytes::default(),
+            },
+        },
+    ] {
+        for profile in [BfvProfile::SyncDecInsecure64, BfvProfile::SsInsecure64] {
+            let request = ComputeRequest::zk(
+                ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+                    params_profile: profile,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                    context: context.clone(),
+                    job: job.clone(),
+                })),
+                CorrelationId::new(),
+                E3id::new("9", 31337),
+            );
+            let error =
+                execute_zk_request(&prover, &cipher, request.clone(), &mut |_| {}).unwrap_err();
+            assert_eq!(error.request(), &request);
+            match (profile, error.get_err()) {
+                (
+                    BfvProfile::SyncDecInsecure64,
+                    ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(message)),
+                ) => {
+                    assert!(message.contains("disabled"));
+                }
+                (
+                    BfvProfile::SsInsecure64,
+                    ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(message)),
+                ) => {
+                    assert!(message.contains("requires a synchronized profile"));
+                }
+                other => panic!("wrong local join-work rejection: {other:?}"),
+            }
+            assert!(!prover.work_dir().exists());
+        }
+    }
+}
+
+#[test]
+fn synchronized_definition_rejects_unbound_expectations_and_retains_missing_vk_errors() {
+    use crate::synchronized::execution::execute_definition;
+    use e3_events::{
+        SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedProofContext,
+        SynchronizedSetupAnchors,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let prover = unavailable_prover(temp.path());
+    let profile = BfvProfile::SyncDecInsecure64;
+    let committee = CiphernodesCommitteeSize::Minimum;
+    let id = E3id::new("9", 31337);
+    let context = SynchronizedProofContext {
+        party_id: 1,
+        setup: e3_committee_hash::DkgSetupContext {
+            interfold_address: alloy::primitives::Address::repeat_byte(1),
+            committee_hash: [2; 32].into(),
+            crypto_config_id: profile.crypto_config_id(committee).unwrap(),
+        },
+    };
+    let expected = SynchronizedSetupAnchors {
+        binding: context
+            .setup
+            .binding(id.chain_id(), id.clone().try_into().unwrap()),
+        recipient: context.party_id,
+        dealers: vec![0, 2],
+        threshold_keys: vec![[3; 32], [4; 32]],
+        dealer_batch: [5; 32],
+        sk_commitment: [6; 32],
+        key_bundle: [7; 32],
+    };
+    let request = |expected| {
+        let proof = Proof::new(
+            e3_zk_config::CircuitName::PkBfv,
+            ArcBytes::default(),
+            ArcBytes::default(),
+        );
+        SynchronizedDkgProofRequest {
+            params_profile: profile,
+            committee_size: committee,
+            context: context.clone(),
+            job: SynchronizedDkgProofJob::Recipient {
+                c0: proof.clone(),
+                own_c2: proof.clone(),
+                c4: proof,
+                dealers: vec![],
+                expected,
+            },
+        }
+    };
+    for change_owner in [false, true] {
+        let mut changed = expected.clone();
+        if change_owner {
+            changed.recipient = 0;
+        } else {
+            changed.binding[0] ^= 1;
+        }
+        let error =
+            execute_definition(&prover, &id, &request(changed), "unbound-recipient").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "recipient expectations belong to another setup or owner"
+        );
+    }
+    // Once the independent context matches, an unavailable VK remains an infrastructure error,
+    // not a successful response carrying a peer-invalid verdict.
+    let error =
+        execute_definition(&prover, &id, &request(expected), "missing-recipient-vk").unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<crate::ZkError>(),
+        Some(crate::ZkError::CircuitNotFound(message))
+            if message.contains(&profile.artifacts_dir_for_committee(committee).unwrap())
+                && message.contains("dkg/pk/pk.vk")
+    ));
+    assert!(!prover.work_dir().exists());
+}
+
+#[actix::test]
 async fn c0_execution_uses_the_profile_dkg_and_artifact_namespace() {
     use e3_fhe_params::BfvProfile;
     use fhe::bfv::SecretKey;

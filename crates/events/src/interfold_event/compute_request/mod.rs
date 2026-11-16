@@ -4,8 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod synchronized;
 mod zk;
 
+pub use synchronized::*;
 pub use zk::*;
 
 use core::fmt;
@@ -96,6 +98,7 @@ impl fmt::Display for ComputeRequest {
                 ZkRequest::DkgAggregation(_) => "ZkDkgAggregation",
                 ZkRequest::DecryptionAggregation(_) => "ZkDecryptionAggregation",
                 ZkRequest::ReverifyAccusedProof(_) => "ZkReverifyAccusedProof",
+                ZkRequest::SynchronizedDkg(_) => "ZkSynchronizedDkg",
             },
         };
         write!(f, "{}", s)

@@ -284,18 +284,29 @@ cutover**, with no additional counter change, active-state migration or supporte
 between intermediate builds. Drain/reset/resync and rollback retain the backup/reset requirements
 above; do not open new-variant journals with the previous binary.
 
-The signing/setup DTOs have no production event/snapshot callers yet. `CanonicalPublicKey` and its
-typed SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
-layouts. Full-authority observations retain the existing lossless raw-log payload. The new typed
-chain-context event is excluded from peer forwarding, so gossip/sync majors and existing SS network
-bytes remain unchanged; introducing peer consent/setup messages needs a separate wire decision.
-Synchronized admission stays off. New registry implementations must link `DkgPublicationLib`; new
-deployment/upgrade records retain that address while pre-extension records remain readable. No
-deployment record is rewritten here. Rollback of this unactivated extension preserves legacy SS
-storage and uses the reviewed prior implementation; once synchronized records can exist, rollback
-needs a separate drain/backup and consumer decision rather than ignoring them. Human review must
-approve the signed encoding, authority schema, artifact pins and governance rollout/rollback before
-deployment. Implementation direction approval and passing tests are not that review.
+The local worker follow-up appends `ZkRequest::SynchronizedDkg` and `ZkResponse::SynchronizedDkg`
+without changing earlier discriminants. The jobs carry public child proofs, independent setup
+expectations and native PK bytes; recipient responses also carry setup anchors. These nested layouts
+can appear in durable compute requests, responses and errors, even though synchronized production
+admission is still disabled. Existing SS encodings remain readable; an older binary cannot decode
+the new variants. They share the **unreleased schema-9/protocol-9/generation-2 cutover**, not a new
+counter bump, migration or rolling intermediate upgrade. Rollback uses the prior backup or
+controlled reset/resync, never an older binary on a new-variant journal. Explicit definition
+qualification does not enable production admission or qualify old-intermediate replay.
+
+Signing DTOs remain without production event/snapshot callers. `CanonicalPublicKey` and its typed
+SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
+layouts. Full-authority observations retain the existing lossless raw-log payload. Local compute
+requests/responses/errors and the new typed chain-context event are excluded from peer forwarding,
+so gossip/sync majors and existing SS network bytes remain unchanged; introducing peer consent/setup
+messages needs a separate wire decision. Synchronized admission stays off. New registry
+implementations must link `DkgPublicationLib`; new deployment/upgrade records retain that address
+while pre-extension records remain readable. No deployment record is rewritten here. Rollback of
+this unactivated extension preserves legacy SS storage and uses the reviewed prior implementation;
+once synchronized records can exist, rollback needs a separate drain/backup and consumer decision
+rather than ignoring them. Human review must approve the signed encoding, authority schema, artifact
+pins and governance rollout/rollback before deployment. Implementation direction approval and
+passing tests are not that review.
 
 The request-time context event binds the synchronized wrapper rather than the SS fold-attestation
 verifier; it adds no storage slot or initializer. SS requests retain their previous context event.
