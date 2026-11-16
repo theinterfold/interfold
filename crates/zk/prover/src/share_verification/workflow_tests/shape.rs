@@ -7,6 +7,51 @@
 use super::*;
 
 #[test]
+fn synchronized_setup_has_no_ss_smudging_lane() {
+    let signer = signer();
+    let e3 = e3();
+    let profile = BfvProfile::SyncDecInsecure64;
+    let mut shares = vec![signed_proof(
+        &signer,
+        &e3,
+        ProofType::C2aSkShareComputation,
+        2,
+    )];
+    for _ in 0..3 {
+        shares.push(signed_proof(
+            &signer,
+            &e3,
+            ProofType::C3aSkShareEncryption,
+            4,
+        ));
+    }
+    assert!(ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &shares,
+        profile,
+    ));
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &signed_share_bundle(&signer, &e3, 3),
+        profile,
+    ));
+    let c4 = signed_proof(&signer, &e3, ProofType::C4aSkShareDecryption, 6);
+    assert!(ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::DecryptionProofs,
+        std::slice::from_ref(&c4),
+        profile,
+    ));
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::DecryptionProofs,
+        &[
+            c4,
+            signed_proof(&signer, &e3, ProofType::C4bESmShareDecryption, 7)
+        ],
+        profile,
+    ));
+}
+
+#[test]
 fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     let s = signer();
     let e3 = e3();

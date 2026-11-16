@@ -9,6 +9,7 @@ use crate::{
     ThresholdShare,
 };
 use actix::Message;
+use e3_crypto::SensitiveBytes;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use std::sync::Arc;
@@ -24,7 +25,7 @@ pub struct ThresholdSharePending {
     /// The proof request for C2a (SkShareComputation)
     pub sk_share_computation_request: ShareComputationProofRequest,
     /// The proof request for C2b (ESmShareComputation)
-    pub e_sm_share_computation_request: ShareComputationProofRequest,
+    pub e_sm_share_computation_request: Option<ShareComputationProofRequest>,
     /// C3a: SK share encryption proof requests (one per recipient per modulus row)
     pub sk_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
     /// C3b: E_SM share encryption proof requests (per ESI, per recipient, per modulus row)
@@ -33,6 +34,9 @@ pub struct ThresholdSharePending {
     /// `full_share` retains N-wide recipient slots for C3 proofs.
     /// Placeholder ciphertexts for absent recipients are not delivered.
     pub recipient_party_ids: Vec<u64>,
+    /// Retained with the randomized work plan so a restart can finish the phase without reencryption.
+    pub own_sk_share_raw: SensitiveBytes,
+    pub own_esi_shares_raw: Vec<SensitiveBytes>,
 }
 
 impl Display for ThresholdSharePending {

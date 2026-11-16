@@ -12,6 +12,7 @@ impl ThresholdKeyshare {
         dishonest_parties: Option<HashSet<u64>>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        self.params_profile.ensure_admission_enabled()?;
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let trbfv_config = state.get_trbfv_config();
@@ -43,6 +44,27 @@ impl ThresholdKeyshare {
                     .ok_or_else(|| anyhow!("verified DKG dealer has no stored share"))
             })
             .collect::<Result<Vec<_>>>()?;
+        let mut c2_proofs = std::collections::BTreeMap::new();
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            for &dealer in selected_party_ids {
+                if dealer == state.party_id {
+                    continue;
+                }
+                let proof = self
+                    .recovery_payloads
+                    .share(dealer)
+                    .and_then(|message| message.signed_c2a_proof.clone())
+                    .ok_or_else(|| anyhow!("verified synchronized dealer has no saved C2"))?;
+                c2_proofs.insert(dealer, proof);
+            }
+            c2_proofs.insert(
+                state.party_id,
+                current
+                    .signed_sk_share_computation_proof
+                    .clone()
+                    .ok_or_else(|| anyhow!("synchronized owner has no completed C2 root"))?,
+            );
+        }
 
         let plan = build_decryption_key_plan(
             &self.cipher,
@@ -55,6 +77,8 @@ impl ThresholdKeyshare {
             dishonest_parties,
             selected_party_ids,
             e3_id,
+            recovery.synchronized.as_ref(),
+            &c2_proofs,
         )?;
 
         match plan {
@@ -74,7 +98,29 @@ impl ThresholdKeyshare {
                 sk_request,
                 esm_requests,
                 honest_party_ids,
+                synchronized,
             } => {
+                if let Some(material) = synchronized {
+                    self.recovery.try_mutate(&ec, |mut recovery| {
+                        if let Some(existing) = recovery
+                            .synchronized
+                            .as_ref()
+                            .filter(|saved| saved.incoming_keys.is_some())
+                        {
+                            anyhow::ensure!(
+                                existing.context == material.context
+                                    && existing.dealer_ids == material.dealer_ids
+                                    && existing.sk_commitment == material.sk_commitment
+                                    && existing.key_bundle == material.key_bundle,
+                                "synchronized C4 recovery changed its fixed keys or roster"
+                            );
+                        } else {
+                            recovery.synchronized = Some(material);
+                        }
+                        recovery.last_ec = Some(ec.clone());
+                        Ok(recovery)
+                    })?;
+                }
                 // Persist the selected set before dispatch. Restart reissues the
                 // calculation from the durable verification batch.
                 let event = ComputeRequest::trbfv(
@@ -109,6 +155,33 @@ impl ThresholdKeyshare {
             .context("Error extracting data from compute process")?;
 
         let (sk_poly_sum, es_poly_sum) = (output.sk_poly_sum, output.es_poly_sum);
+        if let Some(material) = &self.recovery.try_get()?.synchronized {
+            anyhow::ensure!(
+                es_poly_sum.is_empty(),
+                "synchronized aggregate returned SS smudging material"
+            );
+            let config = e3_zk_config::synchronized::Configs::for_profile(
+                self.params_profile,
+                self.state.try_get()?.committee_size()?,
+            )?;
+            let polynomial = e3_trbfv::helpers::try_poly_from_sensitive_bytes(
+                sk_poly_sum.clone(),
+                config.threshold.clone(),
+                &self.cipher,
+            )?;
+            let normalized = e3_zk_witness::encoding::fhe_poly_to_crt_centered(
+                &polynomial,
+                config.threshold.moduli(),
+            )?;
+            let commitment = e3_zk_witness::compute_aggregated_shares_commitment(
+                &normalized,
+                config.aggregate_bit,
+            );
+            anyhow::ensure!(
+                material.sk_commitment == Some(crate::synchronized::commitment_field(&commitment)?),
+                "synchronized aggregate does not match its C4 anchor"
+            );
+        }
 
         // Keep C4 inputs until the recovery record and phase transition succeed.
         let (sk_request, esm_requests) = self
@@ -117,6 +190,7 @@ impl ThresholdKeyshare {
             .clone()
             .ok_or_else(|| anyhow!("No pending share decryption data — CalculateDecryptionKey responded before proof requests were built"))?;
 
+        self.discard_unanchored_synchronized_c4(&ec)?;
         // Keep early shares until they are handed to the collector.
         let early_shares = self
             .pending

@@ -139,7 +139,32 @@ impl ThresholdKeyshare {
 
     /// 4. SharesGenerated - Encrypt shares with BFV and publish
     pub fn handle_shares_generated(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
+        self.params_profile.ensure_admission_enabled()?;
         let state = self.state.try_get()?;
+        if let Some(pending) = self.recovery_payloads.pending().cloned() {
+            anyhow::ensure!(
+                pending.e3_id == state.e3_id
+                    && pending.full_share.party_id == state.party_id
+                    && pending.proof_request.params_profile == self.params_profile
+                    && pending.proof_request.committee_size == state.committee_size()?,
+                "saved randomized DKG plan differs from this request"
+            );
+            if let Some(material) = &self.recovery.try_get()?.synchronized {
+                let selected = self
+                    .recovery
+                    .try_get()?
+                    .ciphernode_selected
+                    .ok_or_else(|| anyhow!("saved DKG plan has no selection"))?;
+                material.validate_pending(&selected, &pending, &self.cipher)?;
+            }
+            self.pending.own_dkg_shares = Some((
+                pending.own_sk_share_raw.clone(),
+                pending.own_esi_shares_raw.clone(),
+            ));
+            let (pending, original_ec) = pending.into_components();
+            self.bus.publish(pending, original_ec)?;
+            return Ok(());
+        }
         let committee_size = state.committee_size()?;
         let ThresholdKeyshareState {
             state:
@@ -147,7 +172,7 @@ impl ThresholdKeyshare {
                     pk_share: Some(pk_share),
                     sk_sss: Some(sk_sss),
                     esi_sss: Some(esi_sss),
-                    e_sm_raw: Some(e_sm_raw),
+                    e_sm_raw,
                     proof_request_data: Some(proof_request_data),
                     collected_encryption_keys,
                     ..
@@ -178,10 +203,15 @@ impl ThresholdKeyshare {
             e_sm_raw,
             proof_request_data,
             &collected_encryption_keys,
+            &e3_id,
+            self.recovery.try_get()?.synchronized.as_ref(),
         )?;
 
         // Cache own plaintext share rows for the AggregatingDecryptionKey transition.
-        self.pending.own_dkg_shares = Some((plan.own_sk_share_raw, plan.own_esi_shares_raw));
+        self.pending.own_dkg_shares = Some((
+            plan.own_sk_share_raw.clone(),
+            plan.own_esi_shares_raw.clone(),
+        ));
 
         info!("Publishing ThresholdSharePending for E3 {}", e3_id);
 
@@ -195,6 +225,8 @@ impl ThresholdKeyshare {
             sk_share_encryption_requests: plan.sk_share_encryption_requests,
             e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
             recipient_party_ids: plan.recipient_party_ids,
+            own_sk_share_raw: plan.own_sk_share_raw,
+            own_esi_shares_raw: plan.own_esi_shares_raw,
         };
         let pending = TypedEvent::new(event.clone(), ec.clone());
         let payload_ref = self.recovery_payloads.write_pending(&pending, &ec)?;

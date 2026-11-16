@@ -243,6 +243,20 @@ metadata format is version 2 and no longer presents a threshold-only ID as a cur
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
 
+The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
+`ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
+synchronized context, sealed keys and public provenance). These positional layouts also share the
+**unreleased schema-9/keyshare-recovery-9 cutover**; there is no supported rolling upgrade or replay
+between intermediate slice builds, no migration, and no additional protocol/generation bump beyond
+the already planned 9/2 target. A deployment of an intermediate build must drain and reset/resync;
+rollback needs the pre-upgrade backup or controlled reset, never opening new state with an older
+binary. This decision requires human review before merge/release, not fixture approval alone.
+Gossip/sync majors remain unchanged: changed request/work/recovery payloads are local-only, existing
+SS network bundle bytes and cryptographic statements are unchanged, and synchronized admission is
+still disabled. No deployed synchronized verifier is supported; the existing SS verifier selection
+remains unchanged. Neither old-intermediate-data replay nor a mixed-intermediate-version fleet is
+qualified. Layout tests cover current encoding, not those compatibility guarantees.
+
 The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
 data-availability recovery layout lock includes its enum row even though that projection records
 threshold presets, not transport presets. Existing rows/encodings are unchanged; an older binary

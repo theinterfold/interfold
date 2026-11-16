@@ -14,6 +14,17 @@ impl ProofRequestActor {
         if self.finished_e3s.contains(&msg.e3_id) {
             return;
         }
+        let profile = msg.sk_request.params_profile;
+        if let Err(error) = profile
+            .ensure_admission_enabled()
+            .and_then(|()| profile.validate_committee(msg.sk_request.committee_size))
+        {
+            self.bus.with_ec(msg.get_ctx()).err(
+                EType::Computation,
+                anyhow!("Skipping C4 proof work for E3 {}: {error}", msg.e3_id),
+            );
+            return;
+        }
         // C4 seqs follow C0-C3, whose count `ThresholdSharePending` sets; it releases this hold.
         // Without proof aggregation the seqs are unused, so the request does not wait.
         let c4_base_seq = match self.node_agg_meta.get(&msg.e3_id) {

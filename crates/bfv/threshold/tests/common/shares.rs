@@ -78,6 +78,7 @@ pub fn generate_shares_hash_map(
                     crp: ArcBytes::from_bytes(&crp.to_bytes()),
                     lambda: BfvPreset::InsecureThreshold64.lambda_config(),
                     num_ciphertexts: 1,
+                    synchronized: None,
                 },
             )
         }?;
@@ -89,7 +90,7 @@ pub fn generate_shares_hash_map(
                 cipher,
                 GenEsiSssRequest {
                     trbfv_config: trbfv_config.clone(),
-                    e_sm_raw: e_sm_raw.clone(),
+                    e_sm_raw: e_sm_raw.clone().unwrap(),
                 },
             )?
         };

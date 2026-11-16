@@ -62,6 +62,7 @@ fn c1() -> PkGenerationProofRequest {
 
 fn c2(dkg_input_type: DkgInputType) -> ShareComputationProofRequest {
     ShareComputationProofRequest {
+        synchronized: None,
         secret_raw: sensitive(THRESHOLD_POLY),
         secret_sss_raw: sensitive(N * THRESHOLD_POLY + 1024),
         dkg_input_type,
@@ -95,6 +96,7 @@ fn c3_batch(kind: DkgInputType) -> Vec<ShareEncryptionProofRequest> {
 
 fn c4(kind: DkgInputType) -> DkgShareDecryptionProofRequest {
     DkgShareDecryptionProofRequest {
+        synchronized: None,
         sk_bfv: sensitive(DKG_POLY),
         honest_ciphertexts_raw: (0..H * LIMBS).map(|_| bytes(2 * DKG_POLY)).collect(),
         num_honest_parties: H,
@@ -267,10 +269,12 @@ async fn secure_history(router: &Addr<E3Router>, id: &E3id) -> Result<()> {
             full_share: threshold_share(0, &(1..N).collect::<Vec<_>>()),
             proof_request: c1(),
             sk_share_computation_request: c2(SecretKey),
-            e_sm_share_computation_request: c2(SmudgingNoise),
+            e_sm_share_computation_request: Some(c2(SmudgingNoise)),
             sk_share_encryption_requests: c3_batch(SecretKey),
             e_sm_share_encryption_requests: c3_batch(SmudgingNoise),
             recipient_party_ids: (0..N as u64).collect(),
+            own_sk_share_raw: sensitive(THRESHOLD_POLY),
+            own_esi_shares_raw: vec![sensitive(THRESHOLD_POLY)],
         },
     )
     .await;
@@ -629,10 +633,12 @@ async fn deferred_share_collections_release_spare_capacity() -> Result<()> {
             full_share: share,
             proof_request: c1(),
             sk_share_computation_request: c2(DkgInputType::SecretKey),
-            e_sm_share_computation_request: c2(DkgInputType::SmudgingNoise),
+            e_sm_share_computation_request: Some(c2(DkgInputType::SmudgingNoise)),
             sk_share_encryption_requests: vec![],
             e_sm_share_encryption_requests: vec![],
             recipient_party_ids: vec![],
+            own_sk_share_raw: sensitive(THRESHOLD_POLY),
+            own_esi_shares_raw: vec![sensitive(THRESHOLD_POLY)],
         },
     )
     .await;

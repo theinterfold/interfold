@@ -39,6 +39,7 @@ fn share_computation_req() -> ShareComputationProofRequest {
         dkg_input_type: DkgInputType::SecretKey,
         params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
+        synchronized: None,
     }
 }
 
@@ -47,9 +48,10 @@ fn pk_generation_req() -> PkGenerationProofRequest {
         pk0_share: ArcBytes::from_bytes(&[]),
         sk: sensitive(),
         eek: sensitive(),
-        e_sm: sensitive(),
+        e_sm: Some(sensitive()),
         params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
+        synchronized: None,
     }
 }
 
@@ -85,6 +87,7 @@ fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         dkg_input_type: DkgInputType::SecretKey,
         params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Micro,
+        synchronized: None,
     }
 }
 
@@ -104,6 +107,7 @@ fn pending(sk: usize, esm: usize) -> PendingThresholdProofs {
         sk,
         esm,
         vec![1, 2, 3],
+        BfvProfile::SsInsecure64,
     )
 }
 
@@ -193,6 +197,7 @@ fn node_agg_meta_seq_helpers() {
     let meta = NodeAggregationMeta {
         party_id: 0,
         total_expected: total_expected_for(2, 1),
+        c4_proofs: 2,
     };
     // c4_base_seq sits just after C0..C3 = total_expected - 2.
     assert_eq!(meta.c4_base_seq(), 4 + 2 + 1);
@@ -204,10 +209,11 @@ fn threshold_plan_assigns_canonical_seqs() {
     let plan = plan_threshold_dispatch(
         pk_generation_req(),
         share_computation_req(),
-        share_computation_req(),
+        Some(share_computation_req()),
         vec![enc(2, 0, 0), enc(3, 0, 0)],
         vec![enc(2, 0, 0)],
-    );
+    )
+    .unwrap();
     let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
     assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
     assert!(matches!(plan[0].kind, ThresholdProofKind::PkGeneration));
@@ -235,4 +241,57 @@ fn decryption_plan_assigns_offset_seqs() {
         plan[1].kind,
         DecryptionProofKind::SmudgingNoise { esi_idx: 0 }
     ));
+}
+
+#[test]
+fn synchronized_dispatch_has_no_dummy_smudging_work_or_sequence_holes() {
+    let profile = BfvProfile::SyncDecInsecure64;
+    let mut c1 = pk_generation_req();
+    c1.params_profile = profile;
+    c1.e_sm = None;
+    let c2 = share_computation_req();
+    let plan = plan_threshold_dispatch(
+        c1.clone(),
+        c2.clone(),
+        None,
+        (0..6).map(|row| share_encryption_req(2, row, 0)).collect(),
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(
+        plan.iter().map(|item| item.seq).collect::<Vec<_>>(),
+        (1..=8).collect::<Vec<_>>()
+    );
+    let total = crate::utils::total_expected_for_profile(profile, 6, 0);
+    let meta = NodeAggregationMeta {
+        party_id: 0,
+        total_expected: total,
+        c4_proofs: 1,
+    };
+    assert_eq!(meta.c4_base_seq(), 9);
+    assert_eq!(total, 10);
+    assert!(plan_threshold_dispatch(c1, c2.clone(), Some(c2), vec![], vec![]).is_err());
+    let mut pending = PendingThresholdProofs::new(
+        E3id::new("1", 1),
+        full_share(),
+        ec(),
+        6,
+        0,
+        vec![0, 2],
+        profile,
+    );
+    pending.store_proof(&ThresholdProofKind::PkGeneration, proof(1));
+    pending.store_proof(&ThresholdProofKind::SkShareComputation, proof(2));
+    for row_index in 0..6 {
+        assert!(!pending.is_complete());
+        pending.store_proof(
+            &ThresholdProofKind::SkShareEncryption {
+                recipient_party_id: 2,
+                row_index,
+            },
+            proof(3),
+        );
+    }
+    assert!(pending.is_complete());
+    assert_eq!(pending.total_received(), 8);
 }

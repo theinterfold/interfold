@@ -34,13 +34,15 @@ impl ProofRequestActor {
         };
 
         // Sign C2b (ESmShareComputation)
-        let Some(signed_c2b) = self.sign_proof(
-            e3_id,
-            ProofType::C2bESmShareComputation,
-            pending.e_sm_share_computation_proof.expect("checked"),
-        ) else {
-            error!("Failed to sign the local C2b proof; pending work is preserved");
-            return false;
+        let signed_c2b = if let Some(proof) = pending.e_sm_share_computation_proof {
+            let Some(signed) = self.sign_proof(e3_id, ProofType::C2bESmShareComputation, proof)
+            else {
+                error!("Failed to sign the local C2b proof; pending work is preserved");
+                return false;
+            };
+            Some(signed)
+        } else {
+            None
         };
 
         let Some(signed_c3a_map) = self.sign_and_group_proofs(
@@ -97,15 +99,17 @@ impl ProofRequestActor {
             error!("Failed to publish SkDkgProofSigned: {err}");
         }
 
-        if let Err(err) = self.bus.publish(
-            DkgProofSigned {
-                e3_id: e3_id.clone(),
-                party_id,
-                signed_proof: signed_c2b.clone(),
-            },
-            ec.clone(),
-        ) {
-            error!("Failed to publish ESmDkgProofSigned: {err}");
+        if let Some(signed_c2b) = &signed_c2b {
+            if let Err(err) = self.bus.publish(
+                DkgProofSigned {
+                    e3_id: e3_id.clone(),
+                    party_id,
+                    signed_proof: signed_c2b.clone(),
+                },
+                ec.clone(),
+            ) {
+                error!("Failed to publish ESmDkgProofSigned: {err}");
+            }
         }
 
         // Publish C3a signed proofs (reuse already-signed proofs from signed_c3a_map)
@@ -162,7 +166,7 @@ impl ProofRequestActor {
                         target_party_id: real_party_id,
                         external: false,
                         signed_c2a_proof: Some(signed_c2a.clone()),
-                        signed_c2b_proof: Some(signed_c2b.clone()),
+                        signed_c2b_proof: signed_c2b.clone(),
                         signed_c3a_proofs: c3a_proofs,
                         signed_c3b_proofs: c3b_proofs,
                     };

@@ -53,6 +53,44 @@ pub(crate) fn dealer_identity(
     })
 }
 
+pub(crate) fn dealer_identity_for_profile(
+    profile: e3_fhe_params::BfvProfile,
+    e3_id: &E3id,
+    party_id: u64,
+    pk_share: &ArcBytes,
+    c2a: &SignedProofPayload,
+    c2b: Option<&SignedProofPayload>,
+) -> Result<DkgDealer> {
+    if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared {
+        return dealer_identity(
+            e3_id,
+            party_id,
+            pk_share,
+            c2a,
+            c2b.ok_or_else(|| anyhow::anyhow!("SS dealer has no C2b"))?,
+        );
+    }
+    ensure!(
+        c2b.is_none()
+            && c2a.payload.e3_id == *e3_id
+            && c2a.payload.proof_type == ProofType::C2aSkShareComputation
+            && c2a.payload.proof.circuit == e3_zk_config::CircuitName::SkShareComputation,
+        "synchronized dealer must have exactly its C2 statement"
+    );
+    Ok(DkgDealer {
+        party_id,
+        contribution_hash: keccak256(
+            (
+                keccak256("interfold:sync-dkg-dealer:v1"),
+                keccak256(&**pk_share),
+                c2a.payload.statement_digest()?,
+            )
+                .abi_encode(),
+        )
+        .into(),
+    })
+}
+
 /// Whether the share batch `candidate` grows the recorded batch `previous`: without their expelled
 /// dealers, `candidate` holds every dealer of `previous` and at least one more. A dealer expelled
 /// after `previous` was recorded therefore does not block a larger batch, and an expelled dealer in

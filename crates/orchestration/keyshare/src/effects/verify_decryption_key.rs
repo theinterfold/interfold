@@ -5,6 +5,59 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    /// Early authenticated C4 messages are provisional until the complete accepted C2 batch exists.
+    /// An invalid provisional message must not reserve its owner's slot across restart.
+    pub(in crate::actors::threshold_keyshare) fn discard_unanchored_synchronized_c4(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self.params_profile.protocol() != e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            return Ok(());
+        }
+        let recovery = self.recovery.try_get()?;
+        let Some(material) = recovery
+            .synchronized
+            .as_ref()
+            .filter(|saved| saved.incoming_keys.is_some())
+        else {
+            return Ok(());
+        };
+        let selected = recovery
+            .ciphernode_selected
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing synchronized C4 selection"))?;
+        let roster = self.state.try_get()?.honest_parties;
+        let invalid: HashSet<_> = recovery
+            .decryption_key_shares
+            .iter()
+            .filter_map(|(&party, message)| {
+                crate::synchronized::validate_c4_message(
+                    selected,
+                    self.interfold_address,
+                    message,
+                    roster.as_ref(),
+                    Some(material),
+                )
+                .is_err()
+                .then_some(party)
+            })
+            .collect();
+        if invalid.is_empty() {
+            return Ok(());
+        }
+        self.recovery.try_mutate(ec, |mut recovery| {
+            recovery
+                .decryption_key_shares
+                .retain(|party, _| !invalid.contains(party));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        if let Some(early) = self.pending.c4_verification_shares.as_mut() {
+            early.retain(|party, _| !invalid.contains(party));
+        }
+        Ok(())
+    }
+
     /// Route a C4 share. A peer's share passes `validation::admit_peer_decryption_key_share`, is
     /// saved for recovery, and goes to early buffering or to the C4 collector. This node's own share
     /// can complete C4 directly when it is the only honest party.
@@ -73,6 +126,25 @@ impl ThresholdKeyshare {
             }
             return;
         }
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let result = recovery
+                .ciphernode_selected
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing synchronized C4 committee"))
+                .and_then(|selected| {
+                    crate::synchronized::validate_c4_message(
+                        selected,
+                        self.interfold_address,
+                        &data,
+                        state.honest_parties.as_ref(),
+                        recovery.synchronized.as_ref(),
+                    )
+                });
+            if let Err(error) = result {
+                warn!(%error, "Dropping synchronized C4 before reserving its owner slot");
+                return;
+            }
+        }
         let recovered_event = TypedEvent::new(data.clone(), ec.clone());
         if let Err(err) = self.record_decryption_key_share(&recovered_event) {
             error!("Failed to persist DecryptionKeyShared recovery input: {err}");
@@ -120,6 +192,32 @@ impl ThresholdKeyshare {
         {
             return;
         }
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let result = self.recovery.try_get().and_then(|recovery| {
+                let selected = recovery
+                    .ciphernode_selected
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("missing synchronized C4 committee"))?;
+                anyhow::ensure!(
+                    recovery
+                        .synchronized
+                        .as_ref()
+                        .is_some_and(|material| material.incoming_keys.is_some()),
+                    "own C4 has no prepared key provenance"
+                );
+                crate::synchronized::validate_c4_message(
+                    selected,
+                    self.interfold_address,
+                    &data,
+                    state.honest_parties.as_ref(),
+                    recovery.synchronized.as_ref(),
+                )
+            });
+            if let Err(error) = result {
+                warn!(%error, "Rejecting own synchronized C4 that does not open saved material");
+                return;
+            }
+        }
         let others = state
             .honest_parties
             .as_ref()
@@ -146,6 +244,29 @@ impl ThresholdKeyshare {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let ready: ReadyForDecryption = state.clone().try_into()?;
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let recovery = self.recovery.try_get()?;
+            anyhow::ensure!(
+                recovery
+                    .synchronized
+                    .as_ref()
+                    .is_some_and(|saved| saved.incoming_keys.is_some()),
+                "synchronized C4 collection has no complete accepted C2 provenance"
+            );
+            let selected = recovery
+                .ciphernode_selected
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing synchronized C4 committee"))?;
+            for share in collected_shares.values() {
+                crate::synchronized::validate_c4_message(
+                    selected,
+                    self.interfold_address,
+                    share,
+                    state.honest_parties.as_ref(),
+                    recovery.synchronized.as_ref(),
+                )?;
+            }
+        }
 
         info!(
             "All DecryptionKeyShared collected for E3 {} ({} shares)",

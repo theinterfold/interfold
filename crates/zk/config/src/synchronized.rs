@@ -11,6 +11,8 @@ use e3_fhe_params::{
 use fhe::bfv::BfvParameters;
 use std::sync::Arc;
 
+pub mod public_signals;
+
 #[derive(Clone, Debug)]
 pub struct Configs {
     pub profile: BfvProfile,

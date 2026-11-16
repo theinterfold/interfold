@@ -60,6 +60,21 @@ Run `cargo test --locked -p e3-keyshare` after the
 includes EVM/prover build steps. Actor/mock coverage is separate from matching real-proof
 acceptance.
 
+The [`synchronized` child module](src/tests/synchronized.rs) reuses the actor/recovery fixtures in
+[`tests.rs`](src/tests.rs). It exercises production generation, encrypted work plans and prover
+preparation, while runtime admission stays disabled:
+
+```sh
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo test --locked -p e3-keyshare --lib synchronized
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_prepared_runtime_requests_prove_with_real_crypto -- --ignored
+```
+
+The second command requires pinned nargo/bb and builds only the affected leaves in temporary
+directories. It verifies ten real C1/C2/C3/C4 proofs, not the missing recursive/runtime/contract
+chain. Native tests cover non-prefix H `[0,2]`, self/outside-H recipients, encrypted material and
+exact work-plan reload, substitutions, and authenticated rejection without slot consumption. They do
+not establish full disk-crash durability, secure-profile or repeated-decryption safety.
+
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,
 state-transition, and payload-digest cases sit beside their pure modules. For complete

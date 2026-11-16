@@ -8,9 +8,10 @@ use crate::{Proof, SignedProofPayload};
 use alloy::primitives::Address;
 use derivative::Derivative;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_committee_hash::DecryptionDomainContext;
+use e3_committee_hash::{DecryptionDomainContext, DkgSetupContext};
 use e3_crypto::SensitiveBytes;
 use e3_fhe_params::BfvProfile;
+use e3_trbfv::synchronized::SealedPrfKeys;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
 use serde::{Deserialize, Serialize};
@@ -154,6 +155,28 @@ pub struct ShareComputationProofRequest {
     pub params_profile: BfvProfile,
     /// The size of the committee.
     pub committee_size: CiphernodesCommitteeSize,
+    pub synchronized: Option<SynchronizedShareComputation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SynchronizedProofContext {
+    pub setup: DkgSetupContext,
+    pub party_id: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SynchronizedShareComputation {
+    pub context: SynchronizedProofContext,
+    pub outgoing_keys: SealedPrfKeys,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SynchronizedShareDecryption {
+    pub context: SynchronizedProofContext,
+    pub dealer_ids: Vec<u32>,
+    pub expected_outgoing_root: [u8; 32],
+    pub expected_commitments: Vec<Vec<[u8; 32]>>,
+    pub outgoing_keys: SealedPrfKeys,
 }
 
 /// Request to generate a proof for share encryption (C3a or C3b).
@@ -230,6 +253,7 @@ pub struct DkgShareDecryptionProofRequest {
     pub params_profile: BfvProfile,
     /// Committee size for circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    pub synchronized: Option<SynchronizedShareDecryption>,
 }
 
 /// Request to generate a proof for BFV public key generation (C0).
@@ -256,11 +280,12 @@ pub struct PkGenerationProofRequest {
     /// Raw error polynomial bytes (witness — encrypted at rest).
     pub eek: SensitiveBytes,
     /// Raw smudging noise polynomial bytes (witness — encrypted at rest).
-    pub e_sm: SensitiveBytes,
+    pub e_sm: Option<SensitiveBytes>,
     /// Request-time profile for threshold parameters and artifact resolution.
     pub params_profile: BfvProfile,
     /// The size of the committee
     pub committee_size: CiphernodesCommitteeSize,
+    pub synchronized: Option<SynchronizedProofContext>,
 }
 
 impl PkBfvProofRequest {
@@ -291,8 +316,9 @@ impl PkGenerationProofRequest {
             sk,
             eek,
             params_profile,
-            e_sm,
+            e_sm: Some(e_sm),
             committee_size,
+            synchronized: None,
         }
     }
 }

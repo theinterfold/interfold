@@ -253,6 +253,16 @@ lifetime alone does not justify ephemeral state. Additive backfill creates missi
 records, never overwrites existing ones. Missing required/unsupported active recovery records fail
 startup.
 
+DKG's pending work payload includes encrypted own-share rows as well as the exact randomized
+fan-out/proof requests; recovery reuses the plan rather than reencrypting it. The disabled
+synchronized profile also saves request/owner-bound encrypted PRF keys and compact verified C2
+public statements. Neither raw keys nor raw own shares enter ordinary snapshots. Its inner sealed
+encoding is version 1 and binds profile, two setup limbs, owner and ordered key bytes; the normal
+layout lock sees only the encrypted wrapper. Wrong context/profile/owner or altered authenticated
+ciphertext fails before key use. These are part of the
+[unreleased BFV profile storage cutover](upgrades.md#bfv-profile-cutover), not an old-data
+migration.
+
 Shutdown's barrier covers delivery of persisted Shutdown to current subscribers, event flush, open
 snapshot drain, and backing-store flush. It does not own every detached task; process exit can
 cancel unowned work. Node deadline is 60 seconds (30-second fanout plus flush margin); swarm/Docker

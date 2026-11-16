@@ -98,6 +98,8 @@ impl ThresholdKeyshare {
             // so we must check that all expected proofs are present.
             let is_complete = proofs.signed_c2a_proof.is_some()
                 && proofs.signed_c2b_proof.is_some()
+                    == (self.params_profile.protocol()
+                        == e3_fhe_params::BfvDecryptionProtocol::SecretShared)
                 && proofs.signed_c3a_proofs.len() == expected_c3a
                 && proofs.signed_c3b_proofs.len() == expected_c3b
                 && share.esi_sss.len() == expected_num_esi;
@@ -136,7 +138,7 @@ impl ThresholdKeyshare {
             let mut signed_proofs = Vec::new();
             // SAFETY: is_complete guarantees c2a and c2b are Some
             signed_proofs.push(proofs.signed_c2a_proof.clone().unwrap());
-            signed_proofs.push(proofs.signed_c2b_proof.clone().unwrap());
+            signed_proofs.extend(proofs.signed_c2b_proof.iter().cloned());
             signed_proofs.extend(proofs.signed_c3a_proofs.iter().cloned());
             signed_proofs.extend(proofs.signed_c3b_proofs.iter().cloned());
 

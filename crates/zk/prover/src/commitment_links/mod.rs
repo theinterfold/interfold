@@ -17,8 +17,10 @@ pub mod c2_to_c4;
 pub mod c4a_to_c6;
 pub mod c4b_to_c6;
 pub mod c6_to_c7;
+mod synchronized;
 
-use e3_fhe_params::BfvPreset;
+use e3_committee::CiphernodesCommitteeSize;
+use e3_fhe_params::{BfvDecryptionProtocol, BfvProfile};
 pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 
 /// Returns the default set of commitment links to register.
@@ -32,9 +34,16 @@ pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 /// that C4 consumes as `expected_commitments`. Since C2→C3 already ensures
 /// C3 encrypts the correct share, C2→C4 closes the remaining gap (preventing
 /// a party from using different commitments in C4 than they computed in C2).
-pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
-    let l = preset.metadata().num_moduli;
-    vec![
+pub fn default_links(
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+) -> anyhow::Result<Vec<Box<dyn CommitmentLink>>> {
+    profile.validate_committee(committee)?;
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        return synchronized::links(profile, committee);
+    }
+    let l = profile.threshold_preset().metadata().num_moduli;
+    Ok(vec![
         Box::new(c0_to_c3::C3aToC0PkCommitmentLink),
         Box::new(c0_to_c3::C3bToC0PkCommitmentLink),
         Box::new(c1_to_c2::C1ToC2aSkCommitmentLink),
@@ -47,5 +56,5 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
         Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
         Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),
-    ]
+    ])
 }

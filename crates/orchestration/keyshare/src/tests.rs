@@ -4,6 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! Actor histories and recovery tests. This module also provides the shared fixtures used by its
+//! `admission` and `synchronized` child modules in `tests/`.
+
 use super::*;
 use crate::actors::decryption_key_shared_collector::{
     DecryptionKeySharedCollectionFailed, DecryptionKeySharedCollectionTimeout,
@@ -44,6 +47,9 @@ use e3_utils::OrderedSet;
 use e3_zk_config::CircuitName;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+#[path = "tests/synchronized.rs"]
+mod synchronized;
 
 #[actix::test]
 async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
@@ -1740,7 +1746,8 @@ fn gen_pk_response(cipher: &Cipher, e3_id: &E3id, seq: u64) -> Result<TypedEvent
                 pk0_share_raw: ArcBytes::from_bytes(&[4]),
                 sk_raw: SensitiveBytes::new([5], cipher)?,
                 eek_raw: SensitiveBytes::new([6], cipher)?,
-                e_sm_raw: SensitiveBytes::new([7], cipher)?,
+                e_sm_raw: Some(SensitiveBytes::new([7], cipher)?),
+                outgoing_keys: None,
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -4310,6 +4317,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
     // phase transitions, failure delivery, and snapshot recovery use the production actor paths.
     let current: AggregatingDecryptionKey = actor.state.try_get()?.try_into()?;
     let sk_request = DkgShareDecryptionProofRequest {
+        synchronized: None,
         sk_bfv: current.sk_bfv,
         honest_ciphertexts_raw: vec![ArcBytes::from_bytes(&[1])],
         num_honest_parties: 2,
@@ -4321,6 +4329,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
+        synchronized: None,
         dkg_input_type: e3_zk_config::DkgInputType::SmudgingNoise,
         own_share_raw: Some(current.own_esi_shares_raw[0].clone()),
         ..sk_request.clone()
@@ -5539,6 +5548,7 @@ async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
         party_id: 0,
         node: Address::ZERO.to_string(),
         sk_request: DkgShareDecryptionProofRequest {
+            synchronized: None,
             sk_bfv: SensitiveBytes::from_encrypted(&[2]),
             honest_ciphertexts_raw: Vec::new(),
             num_honest_parties: 2,

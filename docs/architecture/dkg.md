@@ -28,8 +28,8 @@ Owners: [keyshare](../../crates/orchestration/keyshare/src/),
 
 ## Exchange and verification boundaries
 
-Recipient bundles contain one C2a and one C2b plus C3a/C3b per **threshold Shamir row**, not per
-share-encryption/DKG CRT limb. Shape validation derives the row count from the request-time
+Admitted SS recipient bundles contain one C2a and one C2b plus C3a/C3b per **threshold Shamir row**,
+not per share-encryption/DKG CRT limb. Shape validation derives the row count from the request-time
 profile's threshold parameters. Current TrBFV generates one smudging set (Z=1); extending C3b to
 multiple sets needs coordinated producer, validator, NodeFold, wire, and circuit changes, not
 inferred vector sizes.
@@ -49,10 +49,31 @@ rejects out-of-range packed coefficients and restores SK residues before aggrega
 trips exercise the existing encrypted SK-share transport, not a new key-bearing wire field or
 signature. The isolated
 [draft C0–C4 leaves](proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted) bind
-packed-message openings and directed-key roots/bundles. This is not the admitted setup protocol:
-authenticated E3 context, recursive provenance joins and the anchored private-key binding for
-synchronized C6 remain to be implemented and reviewed. No key-bearing wire field, actor request or
-saved-state schema is introduced by these leaves.
+packed-message openings and directed-key roots/bundles. Native generation, encrypted proof-request
+preparation and keyshare planning now carry those keys without an SS smudging lane: synchronized
+recipient bundles have one C2a and three C3a proofs; C4 has one SK proof. Keys stay in the existing
+encrypted share plaintext, not a new public wire field. Admission remains disabled.
+
+The draft setup context is
+`keccak256(abi.encode(keccak256("interfold:sync-dkg-setup:v1"), uint256(chainId), interfold, fullE3Id, committeeHash, cryptoConfigId))`,
+split into high/low 128-bit big-endian limbs without reduction. Selection supplies the complete
+canonical committee and exact profile parameters/configuration ID; the node supplies its configured
+chain deployment. This derivation and the synchronized dealer-identity domain
+`interfold:sync-dkg-dealer:v1` are **unratified protocol interfaces**, not deployed contract
+bindings.
+
+Synchronized intake authenticates the complete dealer bundle before retention, then checks its C2
+context/owner, exact recipient/CRT C3 message commitments and ciphertext commitments. Local planning
+decrypts the actual transport plaintexts, opens every selected C2 message, and saves the
+incoming/outgoing keys with the aggregate-SK and bidirectional-bundle anchors. Same-owner commitment
+links connect C1→C2, C3→C2 and C4→owner-C2 under exact synchronized public layouts. C4 checks every
+dealer row against the complete saved verified C2 batch: the SS C2→C4 check's cross-party blame and
+partial-cache semantics are not reused. Missing provenance is a local failure, not an accusation.
+
+This is not a complete admitted setup protocol. Reviewed recursive provenance joins, final-verifier
+enforcement, and synchronized C6 remain absent; synchronized node-fold and decryption paths
+explicitly refuse the SS implementations. The root/bundle schemas and setup derivation require
+protocol review before those consumers freeze them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -216,6 +237,17 @@ idempotent, conflicting responses fail closed. Failed attempts can retry only be
 success. A lost BFV secret cannot be repaired by generating and advertising a second key; recovery
 abstains when history reveals the earlier key. A pre-existing key already published before that
 history arrives remains a risk.
+
+The saved randomized threshold-share work plan also retains encrypted own-share rows. A restart
+reuses its exact ciphertexts, witnesses and local rows instead of rerunning BFV fan-out.
+Synchronized recovery seals directed keys with profile, setup binding and owner inside authenticated
+local encryption; H-ordered incoming keys and N-ordered outgoing keys open the saved bundle and
+owner's C2 root. It retains compact C2 public statements after the large transport payloads retire.
+Context/key/roster substitutions and conflicting successful native responses fail closed. Early C4
+records are provisional until the complete C2 batch is available; recheck and discard invalid ones
+before collector admission so they cannot reserve a recovered slot against a valid replacement.
+These records still use the existing snapshot/payload write boundaries, not a new durable-flush
+guarantee.
 
 Dealer identity binds public statement (E3, proof type, circuit, signals), not randomized proof
 bytes. Replacing a proof plan invalidates all old correlations first. C2/C3 verification outcomes

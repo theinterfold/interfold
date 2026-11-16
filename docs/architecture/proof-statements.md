@@ -161,14 +161,23 @@ H-roster, connect C1's SK to C2, C2's exact recipient/CRT message to C3 and C4, 
 ciphertext to the signed transport, and the owner's C2 outgoing root to C4. C6 must open the same
 aggregate SK and bundle. A consistent context/dealer substitution can produce a valid isolated leaf
 with different public fields/outputs; it is not evidence of authentication. Canonical context
-derivation, recursive topology, final-verifier enforcement, and any auxiliary/ESM-slot
-interpretation are unimplemented. The root/bundle schema requires protocol review before those
-consumers freeze it.
+derivation now has a [draft native owner](dkg.md#exchange-and-verification-boundaries), and keyshare
+checks signed transport and complete C2-batch openings. That is not recursive enforcement: recursive
+topology, final-verifier enforcement, and synchronized C6 are unimplemented. No dummy ESM statements
+stand in for these missing consumers. The root/bundle schema and setup derivation require protocol
+review before those consumers freeze them.
 
 `pnpm rust:test:sync-dkg:proofs` exercises the actual typed encoders and native encrypted transport,
 including non-prefix H, self/outside-H recipients, real private-input leaf proofs, altered public
 fields and malformed witnesses. It does not qualify recursive, contract, recovery, secure-profile,
 replacement-set or repeated-decryption behavior.
+
+The [keyshare preparation proof test](../../crates/orchestration/keyshare/README.md#tests)
+additionally starts from production native generation and encrypted runtime work plans, exercises
+the C1/C2/C4 request adapters, and verifies their leaf proofs, including self/outside-H recipients.
+Native keyshare tests cover saved key/bundle validation, exact work-plan reload and authenticated
+rejection before slot reservation. Neither suite is a complete crash-recovery or
+recursive/runtime/contract qualification of synchronized execution.
 
 ## Commitments, packing, and Fiat-Shamir
 

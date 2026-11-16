@@ -44,6 +44,7 @@ pub(crate) enum DecryptionKeyPlan {
         sk_request: DkgShareDecryptionProofRequest,
         esm_requests: Vec<DkgShareDecryptionProofRequest>,
         honest_party_ids: BTreeSet<u64>,
+        synchronized: Option<crate::synchronized::SynchronizedDkgRecovery>,
     },
 }
 
@@ -61,9 +62,41 @@ pub(crate) fn build_decryption_key_plan(
     dishonest_parties: Option<HashSet<u64>>,
     selected_party_ids: &BTreeSet<u64>,
     e3_id: &E3id,
+    synchronized: Option<&crate::synchronized::SynchronizedDkgRecovery>,
+    authenticated_c2: &std::collections::BTreeMap<u64, e3_events::SignedProofPayload>,
 ) -> Result<DecryptionKeyPlan> {
-    params_profile.ensure_admission_enabled()?;
     params_profile.validate_committee(committee_size)?;
+    if params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+        let material = synchronized.context("synchronized DKG has no saved directed keys")?;
+        anyhow::ensure!(
+            material.context.party_id as u64 == own_party_id,
+            "saved directed keys have another owner"
+        );
+        if selected_party_ids.iter().any(|party| {
+            dishonest_parties
+                .as_ref()
+                .is_some_and(|excluded| excluded.contains(party))
+        }) {
+            return Ok(DecryptionKeyPlan::Insufficient);
+        }
+        let config =
+            e3_zk_config::synchronized::Configs::for_profile(params_profile, committee_size)?;
+        return crate::synchronized_decryption::plan_decryption(
+            cipher,
+            &config,
+            trbfv_config,
+            current,
+            &shares,
+            selected_party_ids,
+            authenticated_c2,
+            material,
+            e3_id,
+        );
+    }
+    anyhow::ensure!(
+        synchronized.is_none(),
+        "SS cannot aggregate synchronized key material"
+    );
     let party_id = own_party_id as usize;
     let committee = committee_size.values();
 
@@ -322,6 +355,7 @@ pub(crate) fn build_decryption_key_plan(
         dkg_input_type: DkgInputType::SecretKey,
         params_profile,
         committee_size,
+        synchronized: None,
     };
 
     let esm_requests: Vec<DkgShareDecryptionProofRequest> = esi_ciphertexts_raw
@@ -337,6 +371,7 @@ pub(crate) fn build_decryption_key_plan(
             dkg_input_type: DkgInputType::SmudgingNoise,
             params_profile,
             committee_size,
+            synchronized: None,
         })
         .collect();
 
@@ -345,5 +380,6 @@ pub(crate) fn build_decryption_key_plan(
         sk_request,
         esm_requests,
         honest_party_ids,
+        synchronized: None,
     })
 }

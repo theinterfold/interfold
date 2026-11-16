@@ -64,11 +64,12 @@ use crate::domain::timeout_policy::{
     resolve_threshold_share_schedule, resolve_timeout, DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
-    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
-    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
-    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, ProofRequestData,
-    ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
+    batch_grows, build_decryption_key_plan, build_shares_generated_plan,
+    dealer_identity_for_profile, dispatch_verifies_batch, generate_bfv_keypair,
+    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
+    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
+    ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]

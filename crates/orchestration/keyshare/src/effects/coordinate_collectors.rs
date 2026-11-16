@@ -419,6 +419,21 @@ impl ThresholdKeyshare {
             );
             return Ok(());
         }
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let selected = self
+                .recovery
+                .try_get()?
+                .ciphernode_selected
+                .ok_or_else(|| anyhow!("synchronized share intake has no canonical committee"))?;
+            if let Err(error) = crate::synchronized::validate_received_share(
+                &selected,
+                self.interfold_address,
+                &msg,
+            ) {
+                warn!(%error, "Dropping a synchronized dealer bundle before reserving its slot");
+                return Ok(());
+            }
+        }
         self.record_threshold_share(&msg)?;
         // One clock reading decides both whether the share is late and the collector's timing.
         let now = crate::domain::timeout_policy::now_unix_secs();

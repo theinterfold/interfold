@@ -44,7 +44,7 @@ pub(crate) struct SharesGeneratedPlan {
     /// C2a (SkShareComputation) proof request.
     pub sk_share_computation_request: ShareComputationProofRequest,
     /// C2b (ESmShareComputation) proof request.
-    pub e_sm_share_computation_request: ShareComputationProofRequest,
+    pub e_sm_share_computation_request: Option<ShareComputationProofRequest>,
     /// C3a (SK share encryption) proof requests.
     pub sk_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
     /// C3b (E_SM share encryption) proof requests.
@@ -68,13 +68,25 @@ pub(crate) fn build_shares_generated_plan(
     pk_share: ArcBytes,
     decrypted_sk_sss: SharedSecret,
     decrypted_esi_sss: Vec<SharedSecret>,
-    e_sm_raw: SensitiveBytes,
+    e_sm_raw: Option<SensitiveBytes>,
     proof_request_data: ProofRequestData,
     collected_encryption_keys: &[Arc<EncryptionKey>],
+    e3_id: &e3_events::E3id,
+    synchronized: Option<&crate::synchronized::SynchronizedDkgRecovery>,
 ) -> Result<SharesGeneratedPlan> {
-    params_profile.ensure_admission_enabled()?;
     params_profile.validate_committee(committee_size)?;
     let committee = committee_size.values();
+    let is_sync = params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized;
+    anyhow::ensure!(
+        is_sync == synchronized.is_some()
+            && is_sync == e_sm_raw.is_none()
+            && (!is_sync || decrypted_esi_sss.is_empty()),
+        "DKG material does not match its protocol"
+    );
+    let sync_request = synchronized.map(|material| e3_events::SynchronizedShareComputation {
+        context: material.context.clone(),
+        outgoing_keys: material.outgoing_keys.clone(),
+    });
 
     // Read the BFV public keys collected by the C0 cutoff from persisted state.
     let encryption_keys = collected_encryption_keys;
@@ -102,7 +114,33 @@ pub(crate) fn build_shares_generated_plan(
         .collect::<Result<_>>()?;
 
     // Cache own plaintext share rows for C4 (no self-encryption); stored encrypted at rest.
-    let own_sk_shamir = decrypted_sk_sss.extract_party_share(party_id as usize)?;
+    // Pack only the transport copy. C2 still opens the original Shamir polynomial.
+    let transport_sk_sss = if let Some(material) = synchronized {
+        let binding = crate::synchronized::setup_binding(&material.context, e3_id)?;
+        anyhow::ensure!(
+            material.context.party_id as u64 == party_id,
+            "directed-key owner differs from dealer"
+        );
+        let keys = material.outgoing_keys.open(
+            params_profile,
+            binding,
+            party_id.try_into()?,
+            committee.n,
+            cipher,
+        )?;
+        let mut limbs = decrypted_sk_sss.moduli_data().clone();
+        for (recipient, key) in keys.iter().enumerate() {
+            let share = decrypted_sk_sss.extract_party_share(recipient)?;
+            let packed = e3_trbfv::synchronized::pack_key(params_profile, &share, key)?;
+            for (limb, matrix) in limbs.iter_mut().enumerate() {
+                matrix.row_mut(recipient).assign(&packed.row(limb));
+            }
+        }
+        SharedSecret::new(limbs)
+    } else {
+        decrypted_sk_sss.clone()
+    };
+    let own_sk_shamir = transport_sk_sss.extract_party_share(party_id as usize)?;
     let own_sk_rows: Vec<Vec<u64>> = own_sk_shamir
         .rows()
         .into_iter()
@@ -134,7 +172,7 @@ pub(crate) fn build_shares_generated_plan(
     let mut rng = UnwrapErr(OsRng);
     let (encrypted_sk_sss, sk_witnesses) =
         BfvEncryptedShares::encrypt_all_extended_for_share_indices(
-            &decrypted_sk_sss,
+            &transport_sk_sss,
             &recipient_pks,
             &recipient_share_indices,
             &params,
@@ -167,14 +205,15 @@ pub(crate) fn build_shares_generated_plan(
     };
 
     // Build C1 request (PkGenerationProof)
-    let proof_request = PkGenerationProofRequest::new(
-        proof_request_data.pk0_share_raw.clone(),
-        proof_request_data.sk_raw.clone(),
-        proof_request_data.eek_raw.clone(),
-        e_sm_raw.clone(),
+    let proof_request = PkGenerationProofRequest {
+        pk0_share: proof_request_data.pk0_share_raw.clone(),
+        sk: proof_request_data.sk_raw.clone(),
+        eek: proof_request_data.eek_raw.clone(),
+        e_sm: e_sm_raw.clone(),
         params_profile,
         committee_size,
-    );
+        synchronized: synchronized.map(|material| material.context.clone()),
+    };
 
     // Build C2a request (SkShareComputation)
     let sk_share_computation_request = ShareComputationProofRequest {
@@ -183,18 +222,24 @@ pub(crate) fn build_shares_generated_plan(
         dkg_input_type: DkgInputType::SecretKey,
         params_profile,
         committee_size,
+        synchronized: sync_request,
     };
 
     // Build C2b request (ESmShareComputation)
-    let e_sm_share_computation_request = ShareComputationProofRequest {
-        secret_raw: e_sm_raw.clone(),
-        secret_sss_raw: esi_sss_raw
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("esi_sss_raw is empty — expected at least one entry"))?,
-        dkg_input_type: DkgInputType::SmudgingNoise,
-        params_profile,
-        committee_size,
+    let e_sm_share_computation_request = if let Some(e_sm_raw) = e_sm_raw {
+        Some(ShareComputationProofRequest {
+            secret_raw: e_sm_raw,
+            secret_sss_raw: esi_sss_raw
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("esi_sss_raw is empty — expected at least one entry"))?,
+            dkg_input_type: DkgInputType::SmudgingNoise,
+            params_profile,
+            committee_size,
+            synchronized: None,
+        })
+    } else {
+        None
     };
 
     // Build C3a proof requests (SK share encryption) from witnesses.
@@ -261,10 +306,12 @@ pub(crate) fn build_shares_generated_plan(
         }
     }
 
-    let total_proofs =
-        3 + sk_share_encryption_requests.len() + e_sm_share_encryption_requests.len();
+    let total_proofs = 2
+        + usize::from(e_sm_share_computation_request.is_some())
+        + sk_share_encryption_requests.len()
+        + e_sm_share_encryption_requests.len();
     info!(
-        "Built share-generation plan ({} proofs: C1, C2a, C2b + {} C3a + {} C3b)",
+        "Built share-generation plan ({} proofs, {} C3a, {} C3b)",
         total_proofs,
         sk_share_encryption_requests.len(),
         e_sm_share_encryption_requests.len()
@@ -392,13 +439,15 @@ mod tests {
             ArcBytes::from_bytes(&[7]),
             secret.clone(),
             vec![secret.clone()],
-            sensitive.clone(),
+            Some(sensitive.clone()),
             ProofRequestData {
                 pk0_share_raw: ArcBytes::from_bytes(&[7]),
                 sk_raw: sensitive.clone(),
                 eek_raw: sensitive,
             },
             &keys,
+            &e3_events::E3id::new("7", 1),
+            None,
         )?;
 
         assert_eq!(plan.recipient_party_ids, vec![0, 2]);
@@ -411,7 +460,10 @@ mod tests {
             plan.proof_request.params_profile
         );
         assert_eq!(
-            plan.e_sm_share_computation_request.params_profile,
+            plan.e_sm_share_computation_request
+                .as_ref()
+                .unwrap()
+                .params_profile,
             plan.proof_request.params_profile
         );
         assert!(plan
