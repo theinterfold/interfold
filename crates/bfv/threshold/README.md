@@ -91,9 +91,14 @@ transport tests, not synchronized ciphertext-decryption, C6/C7, or complete proo
 `tests/synchronized_dkg.rs` independently generates native encrypted shares and prepares the actual
 sync C0–C4 inputs through `e3-zk-witness`. Its default test needs no proving tools. With pinned
 Nargo/BB, `pnpm rust:test:sync-dkg:proofs` additionally proves leaves and draft dealer/recipient
-joins through the production prover API, checks native commitment agreement and rejects malformed
-witnesses/public substitutions and independently verified but mismatched children. It includes H
-`[0,2]`, self and outside-H recipients, nonzero-CRT key substitution and a uniformly substituted
-valid descendant VK tree. Canonical context/roster authority, C5/contract publication and persistent
-actor restart remain outside this suite; see
+joins and isolated C5/publication through the production prover API, checks native commitment
+agreement and rejects malformed witnesses/public substitutions and independently verified but
+mismatched children. It includes H `[0,2]`, self and outside-H recipients, nonzero-CRT key
+substitution and a uniformly substituted valid descendant VK tree. Its publication scenario also
+verifies the final EVM proof through a freshly generated Solidity verifier and the draft
+context-bound wrapper, using native expected anchors. It needs pnpm/workspace dependencies and solc
+0.8.28 as well as pinned Nargo/BB. `pnpm rust:test:sync-dkg:publication` selects that scenario
+alone; it creates only temporary proof and verifier artifacts. Ordinary contract tests skip its
+missing fixture rather than substituting mocks. Canonical context/roster authority, registry
+publication/attestations and persistent actor restart remain outside this suite; see
 [proof contracts](../../../docs/architecture/proof-statements.md#draft-synchronized-provenance-joins-not-admitted).

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { VerifierGenerator } from './verifiers'
+import { verifySynchronizedPublication } from './verify-sync-publication'
 
 // `check:verifiers` must fail when a requested circuit is not discovered, instead of checking less.
 test('verifier generation rejects a requested circuit it cannot find', async (t) => {
@@ -89,4 +90,58 @@ test('verifier write/check retain selector correction, VK validation, naming and
   for (const parameter of ['$N', '$LOG_N', '$NUM_PUBLIC_INPUTS']) assert.ok(output.includes(parameter))
   await new VerifierGenerator(root, { ...options, check: true }).generate()
   assert.equal(readFileSync(path, 'utf8'), output)
+})
+
+test('sync qualification renders only the explicit VK and propagates the prepared contract runner status', (t) => {
+  const root = fixture(t)
+  const prepared = join(root, 'temporary publication')
+  mkdirSync(prepared)
+  const vk = join(prepared, 'explicit.vk')
+  writeFileSync(vk, 'synthetic qualification key')
+  const input = join(prepared, 'publication.json')
+  writeFileSync(input, JSON.stringify({ vk }))
+  const canonical = join(root, 'packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol')
+  mkdirSync(dirname(canonical), { recursive: true })
+  writeFileSync(canonical, 'untouched canonical verifier')
+  writeFileSync(
+    join(root, 'bin/bb'),
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+require('node:assert/strict').deepEqual(args.slice(0, 3), ['write_solidity_verifier', '-k', ${JSON.stringify(vk)}])
+fs.copyFileSync(${JSON.stringify(join(root, 'raw.sol'))}, args[args.indexOf('-o') + 1])
+`,
+    { mode: 0o755 },
+  )
+  writeFileSync(
+    join(root, 'bin/pnpm'),
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+if (args[1] === 'prettier') process.stdout.write(fs.readFileSync(0, 'utf8'))
+else {
+  fs.writeFileSync(${JSON.stringify(join(root, 'runner.json'))}, JSON.stringify({
+    args, cwd: process.cwd(),
+    fixture: process.env.E3_SYNC_PUBLICATION_FIXTURE,
+    source: process.env.E3_SYNC_PUBLICATION_VERIFIER_SOURCE,
+  }))
+  process.exit(Number(fs.readFileSync(${JSON.stringify(join(root, 'status'))}, 'utf8')))
+}
+`,
+    { mode: 0o755 },
+  )
+  for (const status of [0, 23]) {
+    writeFileSync(join(root, 'status'), String(status))
+    assert.equal(verifySynchronizedPublication(root, input), status)
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'runner.json'), 'utf8')), {
+      args: ['exec', 'hardhat', 'test', 'mocha', '--no-compile', 'test/SynchronizedDkgPublication.spec.ts'],
+      cwd: realpathSync(join(root, 'packages/interfold-contracts')),
+      fixture: input,
+      source: join(prepared, 'SynchronizedHonk.sol'),
+    })
+    assert.match(readFileSync(join(prepared, 'SynchronizedHonk.sol'), 'utf8'), /contract DkgAggregatorVerifier/)
+    assert.equal(readFileSync(canonical, 'utf8'), 'untouched canonical verifier')
+  }
+  writeFileSync(input, '{invalid')
+  assert.throws(() => verifySynchronizedPublication(root, input), SyntaxError)
 })

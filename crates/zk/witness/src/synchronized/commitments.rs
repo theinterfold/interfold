@@ -20,7 +20,7 @@ const DOMAIN: [u8; 64] = {
     output
 };
 
-fn prefix(role: u64, config: &Configs, binding: SetupBinding) -> Vec<Fr> {
+pub(super) fn prefix(role: u64, config: &Configs, binding: SetupBinding) -> Vec<Fr> {
     vec![
         Fr::from(role),
         Fr::from(config.profile_id[0]),
@@ -32,7 +32,7 @@ fn prefix(role: u64, config: &Configs, binding: SetupBinding) -> Vec<Fr> {
     ]
 }
 
-fn commit(payload: Vec<Fr>) -> BigInt {
+pub(super) fn commit(payload: Vec<Fr>) -> BigInt {
     let pattern = [0x80000000 | payload.len() as u32, 1];
     let digest = compute_commitments(payload, DOMAIN, pattern)[0];
     BigInt::from_bytes_le(Sign::Plus, &digest.into_bigint().to_bytes_le())

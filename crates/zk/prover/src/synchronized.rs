@@ -4,6 +4,7 @@
 //! admit the profile or authenticate caller-supplied chain context.
 
 pub mod provenance;
+pub mod publication;
 
 use crate::{Provable, ZkError};
 use anyhow::{ensure, Context, Result};

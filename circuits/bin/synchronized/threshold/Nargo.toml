@@ -1,2 +1,2 @@
 [workspace]
-members = ["pk_generation"]
+members = ["pk_generation", "pk_aggregation"]

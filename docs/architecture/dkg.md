@@ -81,10 +81,14 @@ without SS smudging proofs. Recipients outside H prove their own C2 root without
 proofs or changing the accepted dealer roster.
 
 This is not a complete admitted setup protocol. The explicit proof API verifies a supplied canonical
-context/roster; it does not establish their chain/signature authority. Final C5/publication
-enforcement, full-node synchronized startup/replay and synchronized C6 remain absent. Synchronized
-runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
-root/bundle schemas and setup derivation require human protocol review before consumers freeze them.
+context/roster; it does not establish their chain/signature authority. The isolated
+[C5/publication boundary](proof-statements.md#draft-synchronized-c5publication-boundary-not-admitted)
+joins H recipient setups to the aggregate key and a common dealer-batch anchor, with native and
+Solidity verification against independent expectations. Registry publication/attestations, full-node
+synchronized startup/replay and synchronized C6 remain absent. Synchronized runtime
+folding/publication and decryption paths still refuse the SS implementations. The joins,
+root/bundle/batch schemas and setup derivation require human protocol review before consumers freeze
+them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

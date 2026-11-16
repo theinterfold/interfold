@@ -3,7 +3,36 @@
 //! Draft DKG joins. A recipient proof opens one canonical caller-supplied setup/H-roster; neither
 //! this module nor C4 authenticates chain selection or proves a BFV decryption equation.
 
-use super::commitments::assert_context;
+use super::commitments::{assert_context, commit};
+
+/// Commit the complete ordered dealer statements, including every C2/C3 recipient/CRT slot.
+/// Matching threshold PKs alone would allow different valid randomized C2 batches per recipient.
+pub fn dealer_batch<let N: u32, let L: u32, let H: u32>(
+    profile: [Field; 2],
+    setup_binding: [Field; 2],
+    key_bits: u32,
+    nodes: [[Field; 6 + N + 2 * N * L]; H],
+) -> Field {
+    assert_context(profile, setup_binding);
+    let mut payload = [
+        5,
+        profile[0],
+        profile[1],
+        setup_binding[0],
+        setup_binding[1],
+        N as Field,
+        key_bits as Field,
+        H as Field,
+        L as Field,
+    ]
+        .as_vector();
+    for row in nodes {
+        for value in row {
+            payload = payload.push_back(value);
+        }
+    }
+    commit(payload)
+}
 
 /// Join one dealer's C1/C2 and its complete non-self C3 fan-out, in recipient/CRT order.
 pub fn join_dealer<let N: u32, let L: u32>(

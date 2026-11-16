@@ -5,3 +5,4 @@ pub mod pk_generation;
 pub mod share_computation;
 pub mod share_decryption;
 pub mod provenance;
+pub mod publication;

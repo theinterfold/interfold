@@ -42,6 +42,7 @@ pub struct RecipientJoin<'a> {
 pub struct ExpectedSetup<'a> {
     pub dealers: &'a [u32],
     pub threshold_keys: &'a [Field],
+    pub dealer_batch: Field,
     pub sk_commitment: Field,
     pub key_bundle: Field,
 }
@@ -53,6 +54,7 @@ pub struct SetupCommitments {
     recipient: u32,
     dealers: Vec<u32>,
     threshold_keys: Vec<Field>,
+    dealer_batch: Field,
     sk_commitment: Field,
     key_bundle: Field,
 }
@@ -78,12 +80,16 @@ impl SetupCommitments {
         self.sk_commitment
     }
 
+    pub fn dealer_batch(&self) -> Field {
+        self.dealer_batch
+    }
+
     pub fn key_bundle(&self) -> Field {
         self.key_bundle
     }
 }
 
-struct Keys {
+pub(super) struct Keys {
     c0: VkArtifacts,
     c1: VkArtifacts,
     c2: VkArtifacts,
@@ -93,7 +99,7 @@ struct Keys {
 }
 
 impl Keys {
-    fn load(prover: &ZkProver, config: &Configs) -> Result<Self> {
+    pub(super) fn load(prover: &ZkProver, config: &Configs) -> Result<Self> {
         let directory = config
             .profile
             .artifacts_dir_for_committee(config.committee)?;
@@ -109,7 +115,7 @@ impl Keys {
         })
     }
 
-    fn as_inputs(&self) -> VerificationKeys<'_> {
+    pub(super) fn as_inputs(&self) -> VerificationKeys<'_> {
         fn key(vk: &VkArtifacts) -> VerificationKey<'_> {
             VerificationKey {
                 fields: vk.verification_key_bytes.as_slice(),
@@ -127,7 +133,7 @@ impl Keys {
     }
 }
 
-fn child(proof: &Proof) -> Child<'_> {
+pub(super) fn child(proof: &Proof) -> Child<'_> {
     Child {
         circuit: proof.circuit,
         proof: proof.data.as_ref(),
@@ -177,24 +183,25 @@ pub fn prepare_recipient(
     )?)
 }
 
-fn prove(
+pub(super) fn prove(
     prover: &ZkProver,
     config: &Configs,
     circuit: CircuitName,
     input: Value,
     job: &str,
+    variant: CircuitVariant,
 ) -> Result<Proof> {
     let directory = config
         .profile
         .artifacts_dir_for_committee(config.committee)?;
     let path = prover
-        .circuits_dir(CircuitVariant::Default, &directory)
+        .circuits_dir(variant, &directory)
         .join(circuit.dir_path())
         .join(format!("{}.json", circuit.as_str()));
     let compiled = CompiledCircuit::from_file(&path)?;
     let witness =
         WitnessGenerator::new().generate_witness(&compiled, inputs_json_to_input_map(&input)?)?;
-    Ok(prover.generate_recursive_aggregation_bin_proof(circuit, &witness, job, &directory)?)
+    Ok(prover.generate_proof_with_variant(circuit, &witness, job, variant, &directory)?)
 }
 
 pub fn prove_dealer(
@@ -211,6 +218,7 @@ pub fn prove_dealer(
         CircuitName::NodeFold,
         prepare_dealer(prover, config, context, e3_id, input)?,
         job,
+        CircuitVariant::Default,
     )
 }
 
@@ -228,6 +236,7 @@ pub fn prove_recipient(
         CircuitName::NodesFold,
         prepare_recipient(prover, config, context, e3_id, input)?,
         job,
+        CircuitVariant::Default,
     )
 }
 
@@ -256,6 +265,7 @@ pub fn verify_recipient(
         || public.dealers().as_deref() != Some(expected.dealers)
         || public.tree_hash() != Some(tree)
         || public.threshold_keys() != Some(expected.threshold_keys)
+        || public.dealer_batch() != Some(expected.dealer_batch)
         || public.sk_commitment() != Some(expected.sk_commitment)
         || public.key_bundle() != Some(expected.key_bundle)
     {
@@ -275,6 +285,7 @@ pub fn verify_recipient(
             .threshold_keys()
             .context("missing setup threshold keys")?
             .to_vec(),
+        dealer_batch: expected.dealer_batch,
         sk_commitment: public
             .sk_commitment()
             .context("missing setup SK commitment")?,

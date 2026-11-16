@@ -257,6 +257,18 @@ still disabled. No deployed synchronized verifier is supported; the existing SS 
 remains unchanged. Neither old-intermediate-data replay nor a mixed-intermediate-version fleet is
 qualified. Layout tests cover current encoding, not those compatibility guarantees.
 
+The next disabled publication definition adds a dealer-batch commitment to the recipient proof: its
+draft IO changes from 6/4 to 6/5. Earlier experimental recipient proofs/VKs are incompatible and
+must be regenerated; there is no migration or mixed-intermediate proof acceptance. C5 and the new
+publication wrapper use isolated sync namespaces, while all SS layouts, deployed verifiers,
+event/snapshot encodings and release counters remain unchanged by this addition. Removing these
+unadmitted definitions requires no production reset because the production guards cannot write their
+work. This is not approval to deploy an intermediate binary or to reuse schema-9 data on rollback.
+The stateless draft Solidity verifier is not wired to `IPkVerifier`, registry storage, attestations
+or deployment manifests. Human review must approve the batch/context encoding and a separate
+SK/key-bundle authority schema, artifact/version pins, rollout and rollback before that integration;
+the SS ESM anchor cannot be repurposed.
+
 The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
 data-availability recovery layout lock includes its enum row even though that projection records
 threshold presets, not transport presets. Existing rows/encodings are unchanged; an older binary

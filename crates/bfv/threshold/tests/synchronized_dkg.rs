@@ -24,7 +24,7 @@ use e3_zk_witness::{
 };
 use fhe::{
     bfv::{Encoding, Plaintext, PublicKey, SecretKey},
-    mbfv::PublicKeyShare,
+    mbfv::{Aggregate as _, PublicKeyShare},
     trbfv::ShareManager,
 };
 use fhe_traits::FheEncoder;
@@ -57,6 +57,7 @@ struct Fixture {
     leaves: Vec<Leaf>,
     openings: Vec<share_decryption::Data>,
     recipient_public: Vec<PublicKey>,
+    threshold_shares: Vec<PublicKeyShare>,
 }
 
 impl Fixture {
@@ -112,10 +113,12 @@ impl Fixture {
         let mut received_keys = vec![Vec::new(); values.n];
         let mut residues = vec![Vec::new(); values.n];
         let crp = create_deterministic_crp_from_default_seed(&config.threshold);
+        let mut threshold_shares = Vec::new();
         for dealer in 0..values.n {
             let secret = SecretKey::random(&config.threshold, &mut rng);
             let (public, intermediates) =
                 PublicKeyShare::new_with_intermediates(&secret, crp.clone(), &mut rng)?;
+            threshold_shares.push(public.clone());
             let generation = pk_generation::Inputs::compute(
                 &config,
                 binding,
@@ -283,6 +286,7 @@ impl Fixture {
             leaves,
             openings,
             recipient_public,
+            threshold_shares,
         })
     }
 }

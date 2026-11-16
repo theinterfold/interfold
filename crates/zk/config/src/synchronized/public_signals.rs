@@ -52,6 +52,7 @@ impl PublicSignals {
                 | CircuitName::DkgShareDecryption
                 | CircuitName::NodeFold
                 | CircuitName::NodesFold
+                | CircuitName::DkgAggregator
         ) {
             let start = result.identity_start();
             for field in &result.fields[start..start + 2] {
@@ -59,13 +60,15 @@ impl PublicSignals {
                     return Err(invalid());
                 }
             }
-            if result.party_id().is_none_or(|id| id as usize >= result.n) {
+            if circuit != CircuitName::DkgAggregator
+                && result.party_id().is_none_or(|id| id as usize >= result.n)
+            {
                 return Err(invalid());
             }
         }
         if matches!(
             circuit,
-            CircuitName::DkgShareDecryption | CircuitName::NodesFold
+            CircuitName::DkgShareDecryption | CircuitName::NodesFold | CircuitName::DkgAggregator
         ) {
             let dealers = result.dealers().ok_or_else(invalid)?;
             if dealers.iter().any(|&dealer| dealer as usize >= result.n)
@@ -78,7 +81,9 @@ impl PublicSignals {
     }
 
     pub fn binding(&self) -> Option<[u128; 2]> {
-        self.party_id()?;
+        if self.circuit != CircuitName::DkgAggregator {
+            self.party_id()?;
+        }
         let start = self.identity_start();
         Some([
             u128::from_be_bytes(self.fields[start][16..].try_into().unwrap()),
@@ -127,6 +132,7 @@ impl PublicSignals {
             CircuitName::PkGeneration => Some(self.fields[4]),
             CircuitName::PkBfv | CircuitName::ShareEncryption => Some(self.fields[0]),
             CircuitName::NodeFold => Some(self.fields[4]),
+            CircuitName::PkAggregation | CircuitName::DkgAggregator => self.fields.last().copied(),
             _ => None,
         }
     }
@@ -156,6 +162,7 @@ impl PublicSignals {
         let start = match self.circuit {
             CircuitName::DkgShareDecryption => 3,
             CircuitName::NodesFold => 4,
+            CircuitName::DkgAggregator => 4,
             _ => return None,
         };
         self.fields[start..start + self.h]
@@ -176,6 +183,7 @@ impl PublicSignals {
         match self.circuit {
             CircuitName::NodeFold => Some(self.fields[3]),
             CircuitName::NodesFold => Some(self.fields[0]),
+            CircuitName::DkgAggregator => Some(self.fields[0]),
             _ => None,
         }
     }
@@ -191,11 +199,42 @@ impl PublicSignals {
     }
 
     pub fn threshold_keys(&self) -> Option<&[Field]> {
-        (self.circuit == CircuitName::NodesFold).then(|| &self.fields[4 + self.h..4 + 2 * self.h])
+        match self.circuit {
+            CircuitName::NodesFold => Some(&self.fields[4 + self.h..4 + 2 * self.h]),
+            CircuitName::PkAggregation => Some(&self.fields[..self.h]),
+            CircuitName::DkgAggregator => Some(&self.fields[5 + self.h..5 + 2 * self.h]),
+            _ => None,
+        }
+    }
+
+    pub fn dealer_batch(&self) -> Option<Field> {
+        match self.circuit {
+            CircuitName::NodesFold => Some(self.fields[4 + 2 * self.h]),
+            CircuitName::DkgAggregator => Some(self.fields[4 + self.h]),
+            _ => None,
+        }
+    }
+
+    pub fn c5_key_hash(&self) -> Option<Field> {
+        (self.circuit == CircuitName::DkgAggregator).then(|| self.fields[1])
+    }
+
+    pub fn recipient_sk_commitments(&self) -> Option<&[Field]> {
+        (self.circuit == CircuitName::DkgAggregator)
+            .then(|| &self.fields[5 + 2 * self.h..5 + 3 * self.h])
+    }
+
+    pub fn recipient_key_bundles(&self) -> Option<&[Field]> {
+        (self.circuit == CircuitName::DkgAggregator)
+            .then(|| &self.fields[5 + 3 * self.h..5 + 4 * self.h])
     }
 
     fn identity_start(&self) -> usize {
-        usize::from(self.circuit == CircuitName::NodesFold)
+        match self.circuit {
+            CircuitName::NodesFold => 1,
+            CircuitName::DkgAggregator => 2,
+            _ => 0,
+        }
     }
 }
 
@@ -222,9 +261,11 @@ mod tests {
             let mut bytes = vec![0; count * 32];
             if matches!(
                 circuit,
-                CircuitName::DkgShareDecryption | CircuitName::NodesFold
+                CircuitName::DkgShareDecryption
+                    | CircuitName::NodesFold
+                    | CircuitName::DkgAggregator
             ) {
-                let start = if circuit == CircuitName::NodesFold {
+                let start = if circuit != CircuitName::DkgShareDecryption {
                     4
                 } else {
                     3
@@ -245,6 +286,9 @@ mod tests {
                 let mut large_context = bytes.clone();
                 large_context[start * 32 + 15] = 1;
                 assert!(PublicSignals::decode(&config, circuit, &large_context).is_err());
+            }
+            if public.party_id().is_some() {
+                let start = public.identity_start();
                 let mut outside = bytes.clone();
                 outside[(start + 2) * 32 + 31] = 3;
                 assert!(PublicSignals::decode(&config, circuit, &outside).is_err());
@@ -253,10 +297,12 @@ mod tests {
             }
             if matches!(
                 circuit,
-                CircuitName::DkgShareDecryption | CircuitName::NodesFold
+                CircuitName::DkgShareDecryption
+                    | CircuitName::NodesFold
+                    | CircuitName::DkgAggregator
             ) {
                 assert_eq!(public.dealers(), Some(vec![0, 2]));
-                let start = if circuit == CircuitName::NodesFold {
+                let start = if circuit != CircuitName::DkgShareDecryption {
                     4
                 } else {
                     3

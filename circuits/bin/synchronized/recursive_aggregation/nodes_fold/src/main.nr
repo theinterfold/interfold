@@ -6,8 +6,10 @@ use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
     verify_honk_proof_non_zk,
 };
-use lib::configs::synchronized::sync_insecure_64::{H, L_THRESHOLD, N_PARTIES};
-use lib::core::synchronized::provenance::join_recipient;
+use lib::configs::synchronized::sync_insecure_64::{
+    H, L_THRESHOLD, N_PARTIES, PRF_KEY_BITS, PROFILE_ID,
+};
+use lib::core::synchronized::provenance::{dealer_batch, join_recipient};
 use lib::math::commitments::compute_vk_hash;
 
 global C2_LEN: u32 = 5 + N_PARTIES * L_THRESHOLD;
@@ -35,7 +37,7 @@ fn main(
     setup_binding: pub [Field; 2],
     recipient_id: pub u32,
     dealer_ids: pub [u32; H],
-) -> pub ([Field; H], Field, Field) {
+) -> pub ([Field; H], Field, Field, Field) {
     verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);
     verify_honk_proof(c2_vk, c2_proof, c2_public, c2_key_hash);
     verify_honk_proof(c4_vk, c4_proof, c4_public, c4_key_hash);
@@ -54,5 +56,11 @@ fn main(
     let tree = compute_vk_hash([node_key_hash, node_tree, c0_key_hash, c2_key_hash, c4_key_hash]
         .as_vector());
     assert(tree == expected_tree_hash, "Unanchored DKG descendant VK");
-    (threshold_keys, sk, bundle)
+    let batch = dealer_batch::<N_PARTIES, L_THRESHOLD, H>(
+        PROFILE_ID,
+        setup_binding,
+        PRF_KEY_BITS,
+        node_public,
+    );
+    (threshold_keys, batch, sk, bundle)
 }
