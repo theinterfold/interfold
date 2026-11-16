@@ -45,6 +45,7 @@ pub struct NodeProofAggregator {
     recovery_repositories: Option<Repositories>,
     recovery_index: NodeProofRecoveryIndex,
     dealer: dealer::DealerCollection,
+    recipient: recipient::RecipientCollection,
 }
 
 impl NodeProofAggregator {
@@ -68,6 +69,7 @@ impl NodeProofAggregator {
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
             dealer: dealer::DealerCollection::default(),
+            recipient: recipient::RecipientCollection::default(),
         }
     }
 
@@ -105,6 +107,7 @@ impl NodeProofAggregator {
         repositories: Repositories,
         recovery: NodeProofRecovery,
         dealer: dealer::DealerCollection,
+        recipient: recipient::RecipientCollection,
     ) -> Addr<Self> {
         let mut actor = Self::new(
             bus,
@@ -115,6 +118,7 @@ impl NodeProofAggregator {
         )
         .with_recovery(repositories, recovery);
         actor.dealer = dealer;
+        actor.recipient = recipient;
         let addr = actor.start();
         bus.subscribe(EventType::E3Requested, addr.clone().into());
         bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
@@ -123,6 +127,14 @@ impl NodeProofAggregator {
             addr.clone().into(),
         );
         bus.subscribe(EventType::ThresholdSharePending, addr.clone().into());
+        bus.subscribe(
+            EventType::SynchronizedRecipientInputsReady,
+            addr.clone().into(),
+        );
+        bus.subscribe(
+            EventType::SynchronizedDkgProofPublished,
+            addr.clone().into(),
+        );
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
@@ -140,6 +152,8 @@ pub(crate) mod dealer;
 mod effects;
 #[path = "handlers.rs"]
 mod handlers;
+#[path = "recipient.rs"]
+pub(crate) mod recipient;
 #[path = "recovery.rs"]
 pub(crate) mod recovery;
 

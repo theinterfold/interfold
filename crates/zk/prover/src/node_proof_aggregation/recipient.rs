@@ -1,0 +1,556 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Recipient phase of the node collector. Peer authorship precedes slot admission; only native
+//! keyshare intent fixes the roster. Exclusive flushed records fence all dispatch/publication.
+
+use super::NodeProofAggregator;
+use crate::synchronized::recipient::RecipientPlan;
+use actix::{ActorFutureExt, AsyncContext, Context, WrapFuture};
+use alloy::primitives::Address;
+use anyhow::{ensure, Context as _, Result};
+use e3_committee::CiphernodesCommitteeSize;
+use e3_data::{Repositories, Repository};
+use e3_events::*;
+use e3_fhe_params::BfvDecryptionProtocol;
+use e3_request::E3Meta;
+use e3_zk_config::{
+    synchronized::{public_signals::PublicSignals, Configs},
+    CircuitName,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct RecipientRecord {
+    version: u8,
+    plan: Option<RecipientPlan>,
+    leaves: BTreeMap<usize, DKGInnerProofReady>,
+    dealers: BTreeMap<u32, SynchronizedDkgProofPublished>,
+    completed: Option<SynchronizedRecipientProofReady>,
+    ec: EventContext<Sequenced>,
+}
+
+#[derive(Default)]
+pub(crate) struct RecipientCollection {
+    pub records: HashMap<E3id, RecipientRecord>,
+    in_flight: HashMap<E3id, ComputeRequest>,
+    published: HashSet<E3id>,
+}
+
+pub(crate) fn repository(repositories: &Repositories, id: &E3id) -> Repository<RecipientRecord> {
+    Repository::new(
+        repositories
+            .store
+            .scope(StoreKeys::synchronized_dkg_recipient(id)),
+    )
+}
+
+pub(crate) async fn recover(
+    repositories: &Repositories,
+    metadata: &HashMap<E3id, E3Meta>,
+    ended: &HashSet<E3id>,
+) -> Result<HashMap<E3id, RecipientRecord>> {
+    let mut records = HashMap::new();
+    for (id, meta) in metadata {
+        if meta.params_profile.protocol() != BfvDecryptionProtocol::Synchronized {
+            continue;
+        }
+        let store = e3_data::DataStore::from(repository(repositories, id));
+        if ended.contains(id) {
+            store.remove_sync().await?;
+        } else if let Some(record) = store.read_checked::<RecipientRecord>().await? {
+            meta.validate_configuration()?;
+            record.validate()?;
+            if let Some(plan) = &record.plan {
+                ensure!(
+                    plan.inputs.e3_id == *id
+                        && plan.inputs.params_profile == meta.params_profile
+                        && plan.inputs.committee_size
+                            == CiphernodesCommitteeSize::from_threshold(
+                                meta.threshold_m,
+                                meta.threshold_n
+                            )?,
+                    "saved recipient plan differs from canonical request"
+                );
+            }
+            ensure!(
+                record.leaves.values().all(|leaf| leaf.e3_id == *id)
+                    && record.dealers.values().all(|dealer| dealer.e3_id == *id),
+                "saved recipient inputs belong to another request"
+            );
+            records.insert(id.clone(), record);
+        }
+    }
+    Ok(records)
+}
+
+impl RecipientCollection {
+    pub(crate) fn from_records(records: HashMap<E3id, RecipientRecord>) -> Self {
+        Self {
+            records,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn inner_proofs(&self) -> HashMap<E3id, BTreeMap<usize, Proof>> {
+        self.records
+            .iter()
+            .map(|(id, record)| {
+                (
+                    id.clone(),
+                    record
+                        .leaves
+                        .iter()
+                        .map(|(&seq, leaf)| (seq, leaf.proof.clone()))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+}
+
+impl NodeProofAggregator {
+    pub(super) fn route_synchronized(
+        &mut self,
+        data: &InterfoldEventData,
+        ec: &EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) -> bool {
+        let dealer = self.route_dealer(data, ec, ctx);
+        let recipient = self.route_recipient(data, ec, ctx);
+        dealer || recipient
+    }
+
+    fn route_recipient(
+        &mut self,
+        data: &InterfoldEventData,
+        ec: &EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) -> bool {
+        if matches!(data, InterfoldEventData::EffectsEnabled(_))
+            && ec.source() == EventSource::Local
+        {
+            for id in self.recipient.records.keys().cloned().collect::<Vec<_>>() {
+                self.persist_recipient(&id, ctx);
+            }
+        }
+        let Some(id) = data.get_e3_id() else {
+            return false;
+        };
+        let Some(meta) = self.dealer.metadata.get(&id) else {
+            return false;
+        };
+        if meta.params_profile.protocol() != BfvDecryptionProtocol::Synchronized {
+            return false;
+        }
+        if self.dealer.ended.contains(&id) {
+            self.recipient.records.remove(&id);
+            self.recipient.in_flight.remove(&id);
+            self.recipient.published.remove(&id);
+            if let Some(repositories) = &self.recovery_repositories {
+                let store = e3_data::DataStore::from(repository(repositories, &id));
+                ctx.wait(
+                    async move { store.remove_sync().await }
+                        .into_actor(self)
+                        .map(|result, _, _| {
+                            if let Err(error) = result {
+                                tracing::error!(%error, "recipient retirement failed");
+                            }
+                        }),
+                );
+            }
+            return true;
+        }
+        if !matches!(
+            data,
+            InterfoldEventData::SynchronizedRecipientInputsReady(_)
+                | InterfoldEventData::SynchronizedDkgProofPublished(_)
+                | InterfoldEventData::DKGInnerProofReady(_)
+                | InterfoldEventData::ComputeResponse(_)
+                | InterfoldEventData::ComputeRequestError(_)
+        ) {
+            return false;
+        }
+        if meta.validate_configuration().is_err() {
+            return true;
+        }
+        if let Err(error) = self.accept_recipient_input(data, ec) {
+            tracing::debug!(%id, %error, "synchronized recipient input rejected");
+            return true;
+        }
+        self.persist_recipient(&id, ctx);
+        true
+    }
+
+    fn validate_recipient_authority(&self, plan: &RecipientPlan) -> Result<()> {
+        let input = &plan.inputs;
+        self.validate_synchronized_authority(
+            &input.e3_id,
+            input.params_profile,
+            input.committee_size,
+            &input.context,
+        )
+    }
+
+    fn authenticate_dealer(&self, message: &SynchronizedDkgProofPublished) -> Result<()> {
+        ensure!(
+            message.role == SynchronizedDkgProofRole::Dealer,
+            "not a dealer join"
+        );
+        let meta = self
+            .dealer
+            .metadata
+            .get(&message.e3_id)
+            .context("missing request")?;
+        let committee = self
+            .dealer
+            .committees
+            .get(&message.e3_id)
+            .context("missing committee")?;
+        let members = committee
+            .members()
+            .iter()
+            .map(|member| member.parse::<Address>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let size = CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)?;
+        ensure!(
+            members.len() == size.values().n
+                && members.windows(2).all(|pair| pair[0] < pair[1])
+                && message.context.setup.committee_hash
+                    == e3_committee_hash::hash_committee_addresses(&members)
+                && message.context.setup.crypto_config_id.as_slice() == meta.crypto_config_id
+                && members.get(message.context.party_id as usize)
+                    == Some(&message.recover_address()?),
+            "dealer signer does not own this canonical committee slot"
+        );
+        let config = Configs::for_profile(meta.params_profile, size)?;
+        let binding =
+            crate::synchronized::request_binding(&config, &message.context, &message.e3_id)?;
+        let public = PublicSignals::decode(
+            &config,
+            CircuitName::NodeFold,
+            &message.proof.public_signals,
+        )?;
+        ensure!(
+            public.binding() == Some(binding)
+                && public.party_id() == Some(message.context.party_id),
+            "dealer statement identity differs"
+        );
+        Ok(())
+    }
+
+    fn accept_recipient_input(
+        &mut self,
+        data: &InterfoldEventData,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let id = data.get_e3_id().context("missing recipient E3")?;
+        ensure!(!self.dealer.ended.contains(&id), "recipient DKG has ended");
+        let peer = matches!(data, InterfoldEventData::SynchronizedDkgProofPublished(_));
+        ensure!(
+            peer || ec.source() == EventSource::Local,
+            "recipient intent/result must be local"
+        );
+        if self
+            .recipient
+            .records
+            .get(&id)
+            .is_some_and(|r| r.completed.is_some())
+        {
+            return Ok(());
+        }
+        match data {
+            InterfoldEventData::SynchronizedRecipientInputsReady(input) => {
+                let plan = RecipientPlan::new(input.clone())?;
+                self.validate_recipient_authority(&plan)?;
+                let record = self
+                    .recipient
+                    .records
+                    .entry(id)
+                    .or_insert_with(|| RecipientRecord::new(ec.clone()));
+                ensure!(
+                    record.plan.as_ref().is_none_or(|old| old == &plan),
+                    "native C4 roster is already fixed"
+                );
+                // Early rows have authorship but no authority to choose the native setup/roster.
+                record
+                    .dealers
+                    .retain(|_, dealer| plan.validate_dealer(dealer).is_ok());
+                record
+                    .leaves
+                    .retain(|_, leaf| plan.validate_leaf(leaf).is_ok());
+                record.plan = Some(plan);
+                record.ec = ec.clone();
+            }
+            InterfoldEventData::SynchronizedDkgProofPublished(message) => {
+                if message.role != SynchronizedDkgProofRole::Dealer {
+                    return Ok(());
+                }
+                self.authenticate_dealer(message)?;
+                let record = self
+                    .recipient
+                    .records
+                    .entry(id)
+                    .or_insert_with(|| RecipientRecord::new(ec.clone()));
+                if let Some(plan) = &record.plan {
+                    plan.validate_dealer(message)?;
+                }
+                if let Some(old) = record.dealers.get(&message.context.party_id) {
+                    if old.context == message.context
+                        && old.proof.public_signals == message.proof.public_signals
+                    {
+                        return Ok(()); // Original successful randomized bytes survive redelivery.
+                    }
+                    ensure!(
+                        record.plan.is_none(),
+                        "conflicting authenticated dealer join"
+                    );
+                }
+                record
+                    .dealers
+                    .insert(message.context.party_id, message.clone());
+                record.ec = ec.clone();
+            }
+            InterfoldEventData::DKGInnerProofReady(leaf) => {
+                if !matches!(
+                    leaf.proof.circuit,
+                    CircuitName::PkBfv
+                        | CircuitName::SkShareComputation
+                        | CircuitName::DkgShareDecryption
+                ) {
+                    return Ok(());
+                }
+                let committee = self
+                    .dealer
+                    .committees
+                    .get(&id)
+                    .context("missing local committee")?;
+                ensure!(
+                    committee.party_id_for(&self.signer.address().to_string())
+                        == Some(leaf.party_id),
+                    "recipient leaf belongs to another owner"
+                );
+                let meta = &self.dealer.metadata[&id];
+                let size =
+                    CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)?;
+                let config = Configs::for_profile(meta.params_profile, size)?;
+                let seq =
+                    crate::synchronized::recipient::leaf_sequence(&config, leaf.proof.circuit)?;
+                ensure!(leaf.seq == seq, "wrong recipient leaf slot");
+                let public =
+                    PublicSignals::decode(&config, leaf.proof.circuit, &leaf.proof.public_signals)?;
+                if leaf.proof.circuit != CircuitName::PkBfv {
+                    ensure!(
+                        public.party_id().map(u64::from) == Some(leaf.party_id),
+                        "recipient public owner differs"
+                    );
+                }
+                let record = self
+                    .recipient
+                    .records
+                    .entry(id)
+                    .or_insert_with(|| RecipientRecord::new(ec.clone()));
+                if let Some(plan) = &record.plan {
+                    plan.validate_leaf(leaf)?;
+                }
+                if let Some(old) = record.leaves.get(&leaf.seq) {
+                    ensure!(
+                        old.proof.public_signals == leaf.proof.public_signals,
+                        "conflicting local recipient leaf"
+                    );
+                    return Ok(());
+                }
+                record.leaves.insert(leaf.seq, leaf.clone());
+                record.ec = ec.clone();
+            }
+            InterfoldEventData::ComputeResponse(response) => {
+                let Some(request) = self.recipient.in_flight.get(&id) else {
+                    return Ok(());
+                };
+                ensure!(
+                    response.correlation_id == request.correlation_id,
+                    "stale recipient response"
+                );
+                let ComputeResponseKind::Zk(ZkResponse::SynchronizedDkg(
+                    SynchronizedDkgProofResponse::Recipient { proof, setup },
+                )) = &response.response
+                else {
+                    anyhow::bail!("unexpected recipient response");
+                };
+                let record = self
+                    .recipient
+                    .records
+                    .get_mut(&id)
+                    .context("missing recipient record")?;
+                let plan = record.plan.as_ref().context("missing recipient plan")?;
+                let ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work)) = &request.request
+                else {
+                    anyhow::bail!("unexpected recipient request");
+                };
+                plan.validate_result(work, proof, setup)?;
+                record.completed = Some(SynchronizedRecipientProofReady {
+                    e3_id: id.clone(),
+                    context: plan.inputs.context.clone(),
+                    proof: proof.clone(),
+                    setup: setup.clone(),
+                });
+                record.ec = ec.clone();
+                self.recipient.in_flight.remove(&id);
+            }
+            InterfoldEventData::ComputeRequestError(error) => {
+                if let Some(request) = self.recipient.in_flight.get(&id) {
+                    ensure!(
+                        error.request() == request,
+                        "recipient error has another request"
+                    );
+                    tracing::error!(%id, %error, "recipient worker failed locally; exact retry request retained");
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn persist_recipient(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        if !self.dealer.effects || self.dealer.ended.contains(id) {
+            return;
+        }
+        if self
+            .dealer
+            .metadata
+            .get(id)
+            .is_none_or(|meta| meta.validate_configuration().is_err())
+        {
+            return;
+        }
+        let Some(record) = self.recipient.records.get(id).cloned() else {
+            return;
+        };
+        if let Err(error) = self.validate_recipient_record(id, &record) {
+            tracing::error!(%id, %error, "saved recipient input rejected");
+            return;
+        }
+        self.flush_recipient_record(id, record, ctx);
+    }
+
+    fn validate_recipient_record(&self, id: &E3id, record: &RecipientRecord) -> Result<()> {
+        record.validate()?;
+        if let Some(plan) = &record.plan {
+            ensure!(&plan.inputs.e3_id == id, "recipient record E3 differs");
+            self.validate_recipient_authority(plan)?;
+        }
+        for dealer in record.dealers.values() {
+            ensure!(&dealer.e3_id == id, "dealer record E3 differs");
+            self.authenticate_dealer(dealer)?;
+        }
+        Ok(())
+    }
+
+    fn flush_recipient_record(
+        &mut self,
+        id: &E3id,
+        record: RecipientRecord,
+        ctx: &mut Context<Self>,
+    ) {
+        let Some(repositories) = &self.recovery_repositories else {
+            return;
+        };
+        let repository = repository(repositories, id);
+        let id = id.clone();
+        ctx.wait(async move { repository.write_sync(&record).await }.into_actor(self).map(move |result, actor, _| {
+            match result {
+                Ok(()) => {
+                    if let Err(error) = actor.publish_recipient_work(&id) {
+                        tracing::error!(%id, %error, "recipient publication failed; inputs retained");
+                    }
+                }
+                Err(error) => tracing::error!(%id, %error, "recipient flush failed; effects withheld"),
+            }
+        }));
+    }
+
+    fn publish_recipient_work(&mut self, id: &E3id) -> Result<()> {
+        if !self.dealer.effects || self.dealer.ended.contains(id) {
+            return Ok(());
+        }
+        let Some(record) = self.recipient.records.get(id) else {
+            return Ok(());
+        };
+        if let Some(output) = &record.completed {
+            if !self.recipient.published.contains(id) {
+                let signed = SynchronizedDkgProofPublished::sign(
+                    id.clone(),
+                    output.context.clone(),
+                    SynchronizedDkgProofRole::Recipient,
+                    output.proof.clone(),
+                    &self.signer,
+                )?;
+                self.bus.publish(output.clone(), record.ec.clone())?;
+                self.bus.publish(signed, record.ec.clone())?;
+                self.recipient.published.insert(id.clone());
+            }
+        } else if !self.recipient.in_flight.contains_key(id) {
+            let Some(plan) = &record.plan else {
+                return Ok(());
+            };
+            if let Some(work) = plan.request(&record.leaves, &record.dealers)? {
+                let request = ComputeRequest::zk(
+                    ZkRequest::SynchronizedDkg(Box::new(work)),
+                    CorrelationId::new(),
+                    id.clone(),
+                );
+                self.bus.publish(request.clone(), record.ec.clone())?;
+                self.recipient.in_flight.insert(id.clone(), request);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl RecipientRecord {
+    fn new(ec: EventContext<Sequenced>) -> Self {
+        Self {
+            version: 1,
+            plan: None,
+            leaves: BTreeMap::new(),
+            dealers: BTreeMap::new(),
+            completed: None,
+            ec,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(self.version == 1, "unsupported recipient recovery version");
+        for (&seq, leaf) in &self.leaves {
+            ensure!(seq == leaf.seq, "saved recipient slot differs");
+        }
+        for (&id, dealer) in &self.dealers {
+            ensure!(id == dealer.context.party_id, "saved dealer slot differs");
+        }
+        if let Some(plan) = &self.plan {
+            RecipientPlan::new(plan.inputs.clone())?;
+            let work = plan.request(&self.leaves, &self.dealers)?;
+            if let Some(output) = &self.completed {
+                ensure!(
+                    output.e3_id == plan.inputs.e3_id && output.context == plan.inputs.context,
+                    "saved recipient result identity differs"
+                );
+                plan.validate_result(
+                    &work.context("completed recipient has missing inputs")?,
+                    &output.proof,
+                    &output.setup,
+                )?;
+            }
+        } else {
+            ensure!(
+                self.completed.is_none(),
+                "recipient result without native intent"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "recipient_tests.rs"]
+mod tests;

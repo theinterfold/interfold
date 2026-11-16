@@ -48,7 +48,7 @@ pub(crate) struct DealerCollection {
     published: HashSet<E3id>,
     pending: HashMap<E3id, PendingPublication>,
     publication_retries: HashMap<E3id, actix::SpawnHandle>,
-    effects: bool,
+    pub(super) effects: bool,
 }
 
 struct PendingPublication {
@@ -271,6 +271,16 @@ impl NodeProofAggregator {
     }
 
     fn validate_dealer_authority(&self, id: &E3id, plan: &DealerPlan) -> Result<()> {
+        self.validate_synchronized_authority(id, plan.profile, plan.committee, &plan.context)
+    }
+
+    pub(super) fn validate_synchronized_authority(
+        &self,
+        id: &E3id,
+        profile: e3_fhe_params::BfvProfile,
+        size: CiphernodesCommitteeSize,
+        context: &e3_events::SynchronizedProofContext,
+    ) -> Result<()> {
         let meta = self
             .dealer
             .metadata
@@ -287,17 +297,17 @@ impl NodeProofAggregator {
             .map(|member| member.parse::<Address>())
             .collect::<Result<Vec<_>, _>>()?;
         ensure!(
-            plan.profile == meta.params_profile
-                && plan.committee
+            profile == meta.params_profile
+                && size
                     == CiphernodesCommitteeSize::from_threshold(
                         meta.threshold_m,
                         meta.threshold_n
                     )?
-                && plan.context.setup.crypto_config_id.as_slice() == meta.crypto_config_id
-                && members.len() == plan.committee.values().n
+                && context.setup.crypto_config_id.as_slice() == meta.crypto_config_id
+                && members.len() == size.values().n
                 && members.windows(2).all(|pair| pair[0] < pair[1])
-                && members.get(plan.context.party_id as usize) == Some(&self.signer.address())
-                && plan.context.setup.committee_hash
+                && members.get(context.party_id as usize) == Some(&self.signer.address())
+                && context.setup.committee_hash
                     == e3_committee_hash::hash_committee_addresses(&members),
             "dealer plan differs from canonical request/committee/local owner"
         );
@@ -545,9 +555,22 @@ impl NodeProofAggregator {
         };
         if let Some(output) = &record.completed {
             if !self.dealer.published.contains(id) {
+                let signed = match e3_events::SynchronizedDkgProofPublished::sign(
+                    id.clone(),
+                    output.context.clone(),
+                    e3_events::SynchronizedDkgProofRole::Dealer,
+                    output.proof.clone(),
+                    &self.signer,
+                ) {
+                    Ok(signed) => signed,
+                    Err(error) => {
+                        tracing::error!(%id, %error, "dealer output signing failed");
+                        return true;
+                    }
+                };
                 self.dealer.pending.insert(
                     id.clone(),
-                    PendingPublication::new([output.clone().into()], &record.ec),
+                    PendingPublication::new([output.clone().into(), signed.into()], &record.ec),
                 );
             }
         } else if !self.dealer.in_flight.contains_key(id) {
@@ -594,7 +617,7 @@ impl NodeProofAggregator {
             if let InterfoldEventData::ComputeRequest(request) = event {
                 self.dealer.in_flight.insert(id.clone(), request.clone());
             }
-            if matches!(event, InterfoldEventData::SynchronizedDealerProofReady(_)) {
+            if matches!(event, InterfoldEventData::SynchronizedDkgProofPublished(_)) {
                 self.dealer.published.insert(id.clone());
             }
             pending.events.pop_front();

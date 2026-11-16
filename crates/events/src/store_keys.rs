@@ -81,6 +81,10 @@ impl StoreKeys {
         format!("//synchronized_dkg/dealer/v1/{e3_id}")
     }
 
+    pub fn synchronized_dkg_recipient(e3_id: &E3id) -> String {
+        format!("//synchronized_dkg/recipient/v1/{e3_id}")
+    }
+
     pub fn node_dkg_inner_proof(e3_id: &E3id, seq: usize) -> String {
         format!("//node_dkg_fold/proofs/{e3_id}/{seq}")
     }

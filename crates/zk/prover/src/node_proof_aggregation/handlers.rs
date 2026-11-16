@@ -14,7 +14,7 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if self.route_dealer(&data, &ec, ctx) {
+        if self.route_synchronized(&data, &ec, ctx) {
             return;
         }
         match data {
@@ -75,7 +75,7 @@ impl Handler<TypedEvent<ThresholdSharePending>> for NodeProofAggregator {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+        if !self.route_synchronized(&data.clone().into(), &ec, ctx) {
             self.handle_threshold_share_pending(TypedEvent::new(data, ec));
         }
     }
@@ -90,7 +90,7 @@ impl Handler<TypedEvent<DKGInnerProofReady>> for NodeProofAggregator {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+        if !self.route_synchronized(&data.clone().into(), &ec, ctx) {
             self.handle_inner_proof_ready(TypedEvent::new(data, ec));
         }
     }
@@ -105,7 +105,7 @@ impl Handler<TypedEvent<ComputeResponse>> for NodeProofAggregator {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+        if !self.route_synchronized(&data.clone().into(), &ec, ctx) {
             self.handle_compute_response(TypedEvent::new(data, ec));
         }
     }
@@ -120,7 +120,7 @@ impl Handler<TypedEvent<ComputeRequestError>> for NodeProofAggregator {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+        if !self.route_synchronized(&data.clone().into(), &ec, ctx) {
             self.handle_compute_request_error(TypedEvent::new(data, ec));
         }
     }

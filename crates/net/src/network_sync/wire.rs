@@ -309,20 +309,20 @@ mod tests {
     use e3_ciphernode_config::NetworkProfile;
     use e3_events::AggregateId;
 
-    // The locked wire bytes for gossip wire 5 and sync wire 4.
+    // The locked wire bytes for gossip wire 6 and sync wire 5.
     const GOSSIP_LEN: usize = 390;
-    const GOSSIP_DIGEST: &str = "98f658a6f46e26ceeef0858fde1eecf4254f3a047b95f4156f8f7ee12dbe3d1f";
+    const GOSSIP_DIGEST: &str = "58e1c8b3e268657b73e9782890b95309ea9725d30fa66b041884b1c16fc2ecfc";
     const FETCH_LEN: usize = 82;
-    const FETCH_DIGEST: &str = "bfb226a144e0c1dacd6678ee09cc7e51e2da8ba3f2da8fd4f8e926a473963122";
+    const FETCH_DIGEST: &str = "3f79eeac430a9527c4703230064fa10039bd2ceb0f36f9d29782272f473840e0";
     const BATCH_LEN: usize = 314;
-    const BATCH_DIGEST: &str = "6dfc97c4029940cdccdb2d348c17a8161bd959eb29b3371088c1ff19f5aede7b";
+    const BATCH_DIGEST: &str = "791aaea600f1eb91345539f6fd84d3e2c8843325faa2597900f5891c131a4aaa";
     const REQUEST_FRAME: (usize, &str) = (
         119,
-        "f97998b7e97afffc2e11ce5e778227070f0a41044c69be6a093cfd9aadc8789e",
+        "57a0b91cc5cdd47396a8e13ad9fdf9a74b19605cc563b6d22478de678d16c9d7",
     );
     const OK_FRAME: (usize, &str) = (
         88,
-        "65f5ad420e77fcc16887e1700ec8024bc77d6971697dabb001a550315c6dae0f",
+        "354224a89f8673e5112fd6c97c2084a40bbdffd2106a844352ada0be92800036",
     );
     const BAD_REQUEST_FRAME: (usize, &str) = (
         24,
@@ -430,6 +430,107 @@ mod tests {
     }
 
     #[test]
+    fn synchronized_join_round_trips_both_peer_channels_without_local_verdict_authority(
+    ) -> Result<()> {
+        use e3_events::*;
+        use e3_utils::ArcBytes;
+        let policy = NetworkPolicy::local_unrestricted();
+        for role in [
+            SynchronizedDkgProofRole::Dealer,
+            SynchronizedDkgProofRole::Recipient,
+        ] {
+            // Transport checks encodings/admission, not committee signatures or proof validity.
+            let message = SynchronizedDkgProofPublished {
+                e3_id: E3id::new("2459", 1),
+                context: SynchronizedProofContext {
+                    party_id: 1,
+                    setup: serde_json::from_value(serde_json::json!({
+                        "interfold_address": "0x1111111111111111111111111111111111111111",
+                        "committee_hash": format!("0x{}", "22".repeat(32)),
+                        "crypto_config_id": vec![3;32],
+                    }))?,
+                },
+                role,
+                proof: Proof::new(
+                    role.circuit(),
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&[2]),
+                ),
+                signature: ArcBytes::from_bytes(&[7; 65]),
+            };
+            let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                message.clone().into(),
+                None,
+                1,
+                None,
+                EventSource::Local,
+            );
+            let gossip: GossipData = event.clone().into_sequenced(1).try_into()?;
+            assert_eq!(
+                decode_gossip(&encode_gossip(&gossip, &policy, None)?, &policy, Utc::now())?,
+                gossip
+            );
+            let batch = EventBatch {
+                events: vec![event],
+                next: BatchCursor::Next(9),
+                aggregate_id: AggregateId::new(1),
+                observed_from: Some(1),
+            };
+            let bytes: Vec<u8> = batch.try_into()?;
+            let decoded: EventBatch<InterfoldEvent<Unsequenced>> = bytes.try_into()?;
+            policy.validate_peer_event(&decoded.events[0])?;
+            assert_eq!(
+                decoded.events[0].get_data(),
+                &InterfoldEventData::from(message.clone())
+            );
+            let local = SynchronizedDealerProofReady {
+                e3_id: message.e3_id,
+                context: message.context,
+                proof: message.proof,
+            };
+            let local = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                local.into(),
+                None,
+                1,
+                None,
+                EventSource::Local,
+            );
+            assert!(policy
+                .validate_peer_event(&local)
+                .unwrap_err()
+                .to_string()
+                .contains("not a forwardable protocol event"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn previous_gossip_and_sync_majors_are_rejected_before_payload_decoding() -> Result<()> {
+        let policy = NetworkPolicy::local_unrestricted();
+        let bytes = encode_gossip(&forwardable_gossip(), &policy, None)?;
+        let mut old: GossipWireEnvelope = bincode::deserialize(&bytes)?;
+        old.schema_version = 5;
+        old.payload = vec![255]; // Even malformed payloads stop at the version boundary.
+        assert!(
+            decode_gossip(&bincode::serialize(&old)?, &policy, Utc::now())
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported gossip schema version 5")
+        );
+        let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64)?;
+        let mut old: SyncWireEnvelope = bincode::deserialize(&bytes)?;
+        old.schema_version = 4;
+        old.payload = vec![255];
+        assert!(
+            decode_sync::<u64>(&bincode::serialize(&old)?, SyncMessageKind::FetchEvents)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported sync schema version 4")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn gossip_redelivery_changes_transport_bytes_but_not_protocol_data() {
         let policy = NetworkPolicy::local_unrestricted();
         let expected = forwardable_gossip();
@@ -478,11 +579,27 @@ mod tests {
     fn wire_message_bytes_are_locked() {
         let policy = NetworkPolicy::local_unrestricted();
         let gossip = encode_gossip(&forwardable_gossip(), &policy, Some([7; 16])).unwrap();
+        let mut prior = gossip.clone();
+        prior[4..6].copy_from_slice(&5u16.to_le_bytes());
+        assert_locked_bytes(
+            "unchanged SS gossip payload",
+            &prior,
+            GOSSIP_LEN,
+            "98f658a6f46e26ceeef0858fde1eecf4254f3a047b95f4156f8f7ee12dbe3d1f",
+        );
         assert_locked_bytes("gossip event envelope", &gossip, GOSSIP_LEN, GOSSIP_DIGEST);
 
         let fetch: Vec<u8> = FetchEventsSince::new(AggregateId::new(3), 5, 7)
             .try_into()
             .unwrap();
+        let mut prior = fetch.clone();
+        prior[4..6].copy_from_slice(&4u16.to_le_bytes());
+        assert_locked_bytes(
+            "unchanged FetchEvents payload",
+            &prior,
+            FETCH_LEN,
+            "bfb226a144e0c1dacd6678ee09cc7e51e2da8ba3f2da8fd4f8e926a473963122",
+        );
         assert_locked_bytes("FetchEvents", &fetch, FETCH_LEN, FETCH_DIGEST);
 
         let batch: Vec<u8> = EventBatch {
@@ -493,6 +610,14 @@ mod tests {
         }
         .try_into()
         .unwrap();
+        let mut prior = batch.clone();
+        prior[4..6].copy_from_slice(&4u16.to_le_bytes());
+        assert_locked_bytes(
+            "unchanged SS EventBatch payload",
+            &prior,
+            BATCH_LEN,
+            "6dfc97c4029940cdccdb2d348c17a8161bd959eb29b3371088c1ff19f5aede7b",
+        );
         assert_locked_bytes("EventBatch", &batch, BATCH_LEN, BATCH_DIGEST);
     }
 

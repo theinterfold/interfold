@@ -302,15 +302,37 @@ key. Restart allocates a fresh compute correlation and retains original proof by
 share the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. Existing event
 discriminants and SS recovery records remain unchanged; previous binaries cannot decode the new
 event, and rollback requires the prior backup or reset/resync. This local output is excluded from
-peer forwarding, so gossip/sync majors remain 5/4. No circuit, verifier or contract encoding
-changes.
+peer forwarding; that slice kept gossip/sync majors at 5/4. It changed no circuit, verifier or
+contract encoding.
 
-Signing DTOs remain without production event/snapshot callers. `CanonicalPublicKey` and its typed
+The recipient follow-up appends local native-intent/setup-result events and a signed peer join
+event, and adds an exclusive version-1 recipient record under
+`//synchronized_dkg/recipient/v1/{e3_id}`. Existing discriminants, SS payloads and prior record
+layouts are unchanged. New events/records share the **unreleased schema-9/protocol-9/generation-2
+drain/reset cutover**, without another counter bump or supported rolling intermediate upgrade. Old
+binaries cannot decode the appended variants; rollback requires the prior backup or controlled
+reset/resync, never old binaries on new journals. The record retains public proofs, native
+expectations and authenticated dealer inputs, not plaintext keys. Its acknowledged flush precedes
+dispatch and both local/peer result publication.
+
+Peer join delivery changes **gossip/sync majors from 5/4 to 6/5**. The shared forwarding allowlist
+admits only the signed peer event; native intents and local worker/setup verdicts remain local.
+Prior envelope versions are rejected before decoding payloads, and protocol names select the new
+channels. No mixed-version delivery or fallback is supported, including for unchanged SS payloads.
+The new EIP-712 `InterfoldSynchronizedDkgProof` domain is version `1`, bound to chain ID and
+controller, not the publication-consent wrapper. Its `SynchronizedDkgProof` statement binds
+`uint256 e3Id`, `bytes32 committeeHash`, `bytes32 cryptoConfigId`, `uint256 partyId`, `uint8 role`
+(dealer 0, recipient 1), `bytes32 proofHash` and `bytes32 publicSignalsHash`, in that order. The
+role fixes the join circuit; both byte hashes use Keccak-256. This does not extend `ProofType`,
+on-chain slash reasons or the separate H-consent domain. Review of this encoding and cutover remains
+required.
+
+Consent DTOs remain without production event/snapshot callers. `CanonicalPublicKey` and its typed
 SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
 layouts. Full-authority observations retain the existing lossless raw-log payload. Local compute
 requests/responses/errors and the new typed chain-context event are excluded from peer forwarding,
-so gossip/sync majors and existing SS network bytes remain unchanged; introducing peer consent/setup
-messages needs a separate wire decision. Synchronized admission stays off. New registry
+and existing SS payload bytes remain unchanged. Peer join/setup transport uses the cutover above;
+peer publication consent still needs integration. Synchronized admission stays off. New registry
 implementations must link `DkgPublicationLib`; new deployment/upgrade records retain that address
 while pre-extension records remain readable. No deployment record is rewritten here. Rollback of
 this unactivated extension preserves legacy SS storage and uses the reviewed prior implementation;

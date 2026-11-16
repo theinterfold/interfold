@@ -852,15 +852,20 @@ async fn synchronized_dealer_completed_result_is_flushed_before_republication() 
     let events = resumed_history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?;
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0].get_data(), &InterfoldEventData::from(expected));
+    let InterfoldEventData::SynchronizedDkgProofPublished(signed) = events[1].get_data() else {
+        panic!("missing authenticated dealer output");
+    };
+    assert_eq!(signed.recover_address()?, restarted.signer.address());
+    assert_eq!(signed.role, SynchronizedDkgProofRole::Dealer);
     bus.flush_event_pipeline().await?;
     assert_eq!(
         history
             .send(GetEvents::<InterfoldEvent>::new())
             .await?
             .len(),
-        1
+        2
     );
     Ok(())
 }

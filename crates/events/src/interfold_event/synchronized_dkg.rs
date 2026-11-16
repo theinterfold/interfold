@@ -14,6 +14,9 @@ use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
+mod proof;
+pub use proof::*;
+
 pub const SYNCHRONIZED_DKG_CONTEXT_SCHEMA_VERSION: u8 = 1;
 
 /// Facts frozen by the controller/registry when the request is made, not a peer's proposed domain.

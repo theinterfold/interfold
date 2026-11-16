@@ -15,6 +15,12 @@ chain-independent aggregate zero cannot arrive through peer history. Validate be
 admission. Most protocol payloads still lack explicit per-type schema versions; later domain
 admission checks signatures/committee statements.
 
+Synchronized join envelopes use the same gossip/history forwarding policy. Transport authenticates
+delivery, not an E3 dealer slot: the recipient owner verifies the separate join signature against
+canonical committee membership before retaining the row. Native recipient intent and local setup
+verdicts are excluded from both peer channels. See [DKG](dkg.md) for roster/proof authority and
+[upgrades](upgrades.md) for the 6/5 wire cutover; synchronized runtime admission remains disabled.
+
 Bound inbound connections before admission. One IPv4 address or IPv6 /56 holds at most **8** pending
 or established inbound connections; loopback is exempt. At most **16** inbound connections wait for
 Identify; a new one over that closes the oldest waiting connection of the address group with the

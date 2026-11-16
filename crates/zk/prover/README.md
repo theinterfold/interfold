@@ -87,8 +87,12 @@ per provisional slot can be reconstructed from retained journal inputs; the qual
 its original bytes. An unchanged input only redrives a write that still needs acknowledgment.
 Refused flushed effects retain their exact payload/correlation and causation for a coalesced
 publication retry with capped backoff, cancelled on retirement. The local dealer output is not a
-peer-authenticated setup or consent. Recipient/publication producers and the registry writer remain
-absent; synchronized admission stays disabled.
+recipient setup or consent. Its signed peer envelope feeds the same collector's recipient phase.
+`synchronized::recipient::RecipientPlan` consumes native keyshare's fixed C4 intent, local
+C0/own-C2/C4 and authenticated H dealer joins, including for outside-H recipients. It checks
+statement consistency; the actor owns signature/source/correlation admission and durable effects,
+and the executor owns proof verification. Consent/publication producers and the registry writer
+remain absent; synchronized admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

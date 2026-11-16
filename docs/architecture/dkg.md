@@ -100,11 +100,11 @@ An outside-H recipient uses its own verified setup for the same batch; it does n
 publication-consent slot. A setup DTO alone is not a proof verdict: callers must admit the local
 worker source/correlation and cryptographic result before either helper.
 
-This remains unactivated: guarded recipient/C5/consent/publication actor and writer phases,
-full-node synchronized startup and synchronized C6 are absent. The capability replay fixture below
-does not enable production admission. Synchronized runtime folding/publication and decryption paths
-still refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and
-setup derivation require human protocol review before consumers freeze them.
+This remains unactivated: guarded C5/consent/publication actor and writer phases, full-node
+synchronized startup and synchronized C6 are absent. The capability replay fixture below does not
+enable production admission. Synchronized runtime folding/publication and decryption paths still
+refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and setup
+derivation require human protocol review before consumers freeze them.
 
 Typed local dealer/recipient/publication work uses a separate synchronized executor, not SS fold
 requests. Runtime admission rejects the disabled profile before touching proof artifacts; isolated
@@ -117,10 +117,26 @@ finalized committee/local owner, local source and canonical non-self C3 order, t
 without waiting for C4. Its exclusive flushed record fences work dispatch and local output
 publication; replay waits for current-boot effects, restart preserves randomized proof bytes and
 replaces compute correlations, and confirmed key publication retires the phase. Local generation
-errors retain the exact request rather than accusing peers. `SynchronizedDealerProofReady` is local
-provenance only: authenticated peer delivery and recipient collection remain absent. Admission stays
-disabled; the explicit collection definition and real-proof qualification do not admit production
-effects.
+errors retain the exact request rather than accusing peers.
+
+Dealer and recipient joins have a separate signed peer envelope, not an extension of the on-chain
+fault-attribution roles. Its `InterfoldSynchronizedDkgProof` EIP-712 domain (version `1`) binds the
+chain and Interfold controller; the statement binds the full uint256 E3 ID, committee hash,
+configuration, party, role and hashes of both proof and public-signal bytes. Dealer/recipient roles
+map exclusively to their respective join circuits. Low-S and canonical 27/28 parity are required.
+The exact encoding and wire cutover are described in [upgrades](upgrades.md).
+
+The same node collector owns recipient collection. It authenticates dealer authorship against the
+finalized committee before reserving a bounded slot. Early authenticated rows cannot choose a
+roster: native keyshare's C4 intent supplies the fixed H roster, verified C2 provenance,
+transport-key and SK/bundle anchors. Incompatible early rows are discarded when that intent arrives.
+C0, own C2 and C4 must come from local planned slots; all N recipients, including outside H, join
+exactly those H dealers. Its exclusive record flushes before work or output, preserves original
+proof bytes, replaces restart correlations, and retires at canonical DKG termination. A peer setup
+is never a local recipient verdict. Only the correlated local worker result produces the local setup
+event and signed peer setup. Downstream consent/publication producers still need to consume these
+outputs. Admission stays disabled; below-admission actor tests and real-proof qualification do not
+admit production effects.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

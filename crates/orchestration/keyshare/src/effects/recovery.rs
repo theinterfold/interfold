@@ -656,6 +656,7 @@ impl ThresholdKeyshare {
                     self.bus.publish(pending, pending_ec)?;
                 }
                 if let Some(pending) = recovery.decryption_share_proofs_pending.clone() {
+                    self.publish_synchronized_recipient_inputs(ec.clone())?;
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
                 }
