@@ -252,14 +252,15 @@ async fn recovered_work_waits_for_the_first_catch_up() {
 }
 
 /// A release that no longer runs an E3's BFV profile refuses to start while that E3 runs: saved
-/// before its seed, with a ticket, or with a seat on its committee.
+/// before its seed, with a ticket, or with a seat on its committee. A failed E3 that waits only
+/// for its settlement on chain needs no profile, so the node starts.
 #[tokio::test]
 async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
     use e3_protocol::{
-        node::{ChainEvent, ChainFact, CommitteeSeed, LogPosition},
+        node::{ChainEvent, ChainFact, CommitteeSeed, FailureReason, LogPosition},
         testing::{chain, e3, finalized, requested},
     };
-    for stage in 0..3 {
+    for stage in 0..4 {
         let dir = tempfile::tempdir().unwrap();
         let (settings, first, _peers) = parts(dir.path(), Chain::default()).await;
         let signer = first.operator.clone();
@@ -309,20 +310,37 @@ async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
             let members = vec![operator, Address::repeat_byte(1)];
             inputs.push(finalized(12, e3(1), members));
         }
+        let settles = stage == 3;
+        if settles {
+            let reason = FailureReason::CommitteeFormationTimeout;
+            inputs.push(chain(12, ChainFact::Failed { e3: e3(1), reason }));
+        }
         {
             let journal = Journal::open(dir.path().join("journal.redb")).unwrap();
             let (mut engine, _) = Engine::open(journal, Node::new(operator), 100).unwrap();
             for input in inputs {
                 engine = engine.apply(5, input).unwrap().0;
             }
-            assert!(engine.machine().owes(&e3(1), Scope::Live));
+            let machine = engine.machine();
+            let state = machine.e3(&e3(1)).unwrap();
+            assert_eq!(machine.owes(&e3(1), Scope::Live), !settles);
+            assert_eq!(state.owes() == ["settling the failed E3 on chain"], settles);
         }
         let (_, mut second, _peers) = parts(dir.path(), Chain::default()).await;
         second.operator = signer;
-        let started = run(settings, second, pending());
+        let stop = tokio::time::sleep(Duration::from_millis(50));
+        let started = run(settings, second, stop);
         let ended = tokio::time::timeout(Duration::from_secs(60), started).await;
-        let ended = ended.expect("the start stops at once").unwrap_err();
-        assert!(matches!(ended, NodeError::RetiredProfile { .. }), "{ended}");
+        let ended = ended.expect("the start ends at once, or at its stop");
+        if settles {
+            ended.unwrap();
+        } else {
+            let refused = ended.unwrap_err();
+            assert!(
+                matches!(refused, NodeError::RetiredProfile { .. }),
+                "{refused}"
+            );
+        }
     }
 }
 

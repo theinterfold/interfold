@@ -386,12 +386,13 @@ where
 }
 
 /// The first E3 under a BFV profile this release does not run that has not ended, or that still
-/// owes work after its end, and why. Even a request the node only watches can give it a ticket, and
-/// then jobs that could not run here; a profile retires only once all its E3s have ended.
+/// has crypto or accusation work after its end, and why. Even a request the node only watches can
+/// give it a ticket, and then jobs that could not run here; a profile retires only once all its E3s
+/// have ended. Settling a failed E3 is a chain call, which needs no profile.
 fn retired_profile(machine: &Node) -> Option<(E3Id, String)> {
     machine.held().find_map(|e3| {
         let state = machine.e3(e3)?;
-        let owed = machine.owes(e3, Scope::Live) || !state.owes().is_empty();
+        let owed = machine.owes(e3, Scope::Live) || state.has_work();
         let refused = e3_jobs::profile(&state.params).err()?;
         owed.then(|| (*e3, refused.to_string()))
     })

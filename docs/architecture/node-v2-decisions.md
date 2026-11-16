@@ -439,7 +439,8 @@ Each rule is checkable in review.
   release admits, and the job runner finds the profile by its ID for the BFV parameters and the
   circuit folder. A start refuses a held E3 under a profile the release no longer runs while the E3
   has not ended, even one the node only watches, which can still give it a ticket, or while it still
-  owes work after its end: run the release that runs the profile until the E3 ends.
+  has crypto or accusation work after its end: run the release that runs the profile until the E3
+  ends. Settling a failed E3 needs no profile.
 
 ## Problems in the earlier node, with the fix above them
 
