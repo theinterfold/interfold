@@ -251,29 +251,80 @@ async fn recovered_work_waits_for_the_first_catch_up() {
     }
 }
 
-/// A release that no longer runs an E3's BFV profile refuses to start while that E3 has work.
+/// A release that no longer runs an E3's BFV profile refuses to start while the node owes work in
+/// that E3: a seat on its committee, or a ticket before the committee is final.
 #[tokio::test]
 async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
-    use e3_protocol::testing::{e3, finalized, requested};
-    let dir = tempfile::tempdir().unwrap();
-    let (settings, first, _peers) = parts(dir.path(), Chain::default()).await;
-    let signer = first.operator.clone();
-    let operator = signer.address();
-    drop(first);
-    {
-        let journal = Journal::open(dir.path().join("journal.redb")).unwrap();
-        let (engine, _) = Engine::open(journal, Node::new(operator), 100).unwrap();
+    use e3_protocol::{
+        node::{ChainEvent, ChainFact, CommitteeSeed, LogPosition},
+        testing::{chain, e3, finalized, requested},
+    };
+    for seated in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, first, _peers) = parts(dir.path(), Chain::default()).await;
+        let signer = first.operator.clone();
+        let operator = signer.address();
+        drop(first);
+        // The operator's registry entry, so it can hold a ticket.
+        let registered = [
+            ChainFact::OperatorActive {
+                operator,
+                active: true,
+            },
+            ChainFact::TicketBalance {
+                operator,
+                balance: U256::from(10),
+            },
+            ChainFact::BondOwner {
+                operator,
+                owner: operator,
+            },
+            ChainFact::OperatorEnabled {
+                operator,
+                enabled: true,
+            },
+        ];
+        // At time 0, so the request's registry read at its time minus one sees it.
+        let mut inputs: Vec<Input> = (0..)
+            .zip(registered)
+            .map(|(log_index, fact)| {
+                let at = LogPosition {
+                    chain_id: 1,
+                    block: 0,
+                    log_index,
+                };
+                Input::Chain(ChainEvent { at, time: 0, fact })
+            })
+            .collect();
         // The test request names a crypto configuration that no release runs.
-        let (engine, _) = engine.apply(0, requested(10, e3(1))).unwrap();
-        let members = vec![operator, Address::repeat_byte(1)];
-        engine.apply(0, finalized(11, e3(1), members)).unwrap();
+        inputs.push(requested(10, e3(1)));
+        let seed = CommitteeSeed {
+            seed: U256::from(42),
+            deadline: 100,
+        };
+        inputs.push(chain(11, ChainFact::SeedReady { e3: e3(1), seed }));
+        if seated {
+            let members = vec![operator, Address::repeat_byte(1)];
+            inputs.push(finalized(12, e3(1), members));
+        }
+        {
+            let journal = Journal::open(dir.path().join("journal.redb")).unwrap();
+            let (mut engine, _) = Engine::open(journal, Node::new(operator), 100).unwrap();
+            for input in inputs {
+                engine = engine.apply(5, input).unwrap().0;
+            }
+            assert!(engine
+                .machine()
+                .e3(&e3(1))
+                .is_some_and(|state| state.takes_part()));
+        }
+        let (_, mut second, _peers) = parts(dir.path(), Chain::default()).await;
+        second.operator = signer;
+        let started = run(settings, second, pending());
+        let ended = tokio::time::timeout(Duration::from_secs(60), started).await;
+        let ended = ended.expect("the start stops at once").unwrap_err();
+        assert!(matches!(ended, NodeError::RetiredProfile { .. }), "{ended}");
     }
-    let (_, mut second, _peers) = parts(dir.path(), Chain::default()).await;
-    second.operator = signer;
-    let started = run(settings, second, pending());
-    let ended = tokio::time::timeout(Duration::from_secs(60), started).await;
-    let ended = ended.expect("the start stops at once").unwrap_err();
-    assert!(matches!(ended, NodeError::RetiredProfile { .. }), "{ended}");
 }
 
 /// The drain setting reaches the machine as a journaled input. A later start without it takes E3s

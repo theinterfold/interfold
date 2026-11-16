@@ -911,8 +911,14 @@ impl<B: Blobs> Jobs<'_, B> {
             );
         };
         let fold = proofs::load(&self.blobs, fold, CircuitName::NodeFold)?;
+        // Slot 0 goes into the kernel on its own, so the accumulator of slot 1 is a kernel proof,
+        // which the step verifies with the kernel's key. Every later accumulator is a fold step's.
+        let previous = match slot {
+            1 => CircuitName::NodesFoldKernel,
+            _ => CircuitName::NodesFold,
+        };
         let accumulator = accumulator
-            .map(|proof| proofs::load(&self.blobs, proof, CircuitName::NodesFold))
+            .map(|proof| proofs::load(&self.blobs, proof, previous))
             .transpose()?;
         let (work, artifacts) = (
             self.work(&format!("roster-fold-{slot}")),

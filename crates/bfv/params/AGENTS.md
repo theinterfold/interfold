@@ -10,8 +10,9 @@ in witness callers. This crate owns each profile's admission gate and its config
 - The degree-64 insecure variants reuse degree-512 discriminants under schema 8. Preserve the
   [testnet reset boundary](../../../docs/architecture/upgrades.md#insecure-testnet-preset-reset);
   matching serialized discriminants do not prove matching parameter meaning.
-- Keep the `BfvProfile` variant order and serde names. Event logs and saved state encode the
-  variant, and the [runtime layout lock](../../testing/system/tests/layout_lock.rs) pins both.
+- Keep the `BfvProfile` variant order and serde names. The node saves each E3's configuration ID,
+  not the variant, and resolves the profile from it on restart, so never change a released profile's
+  configuration ID.
 - Admission is separate from identity. `crypto_config_id` and `from_crypto_config_id` resolve every
   supported profile, including a disabled one, and callers check `ensure_admission_enabled`
   themselves. Disabling a profile keeps its configuration IDs, which recovery still checks for saved

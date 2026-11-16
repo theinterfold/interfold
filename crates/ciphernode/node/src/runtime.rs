@@ -20,7 +20,7 @@ use e3_jobs::JobRunner;
 use e3_journal::Journal;
 use e3_p2p::{Inbox, Network};
 use e3_protocol::{
-    node::{Classified, Input, Node},
+    node::{Classified, Input, Node, Scope},
     E3Id, UnixSecs,
 };
 use e3_utils::limited::Limited;
@@ -385,13 +385,15 @@ where
     Ok(())
 }
 
-/// The first E3 with work under a BFV profile this release does not run, and why: its jobs could
-/// not run here.
+/// The first E3 this node owes work in under a BFV profile this release does not run, and why: its
+/// jobs could not run here. That is an E3 with work, or a running one the node holds a ticket or a
+/// seat in; a request it only watches needs no job.
 fn retired_profile(machine: &Node) -> Option<(E3Id, String)> {
     machine.held().find_map(|e3| {
         let state = machine.e3(e3)?;
+        let owed = state.has_work() || (machine.owes(e3, Scope::Live) && state.takes_part());
         let refused = e3_jobs::profile(&state.params).err()?;
-        state.has_work().then(|| (*e3, refused.to_string()))
+        owed.then(|| (*e3, refused.to_string()))
     })
 }
 

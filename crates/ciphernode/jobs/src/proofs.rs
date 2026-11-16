@@ -111,7 +111,6 @@ impl Prover<'_> {
         self.stop_if_cancelled()?;
         self.outcome(self.zk.verify_proof(proof, work, 0, artifacts))
     }
-
 }
 
 /// A failing proof stays the verdict: `bound` runs only once every proof holds.
