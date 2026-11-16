@@ -19,14 +19,14 @@
         {
           "name": "each E3's stage, committee, DKG and decryption work, inside Node",
           "where": "memory",
-          "ref": "crates/protocol/src/node.rs@734@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@747@pub struct Node {"
         }
       ],
       "key_types": [
         {
           "name": "Node",
           "what": "the whole node's protocol state for one operator",
-          "ref": "crates/protocol/src/node.rs@734@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@747@pub struct Node {"
         },
         {
           "name": "Machine",
@@ -41,7 +41,7 @@
         {
           "name": "Effect",
           "what": "what the node asks its adapters to do: send, publish, run a job, fetch",
-          "ref": "crates/protocol/src/node.rs@640@pub enum Effect {"
+          "ref": "crates/protocol/src/node.rs@643@pub enum Effect {"
         },
         {
           "name": "ChainFact",
@@ -53,7 +53,7 @@
           "what": "an operator-signed message from another member",
           "ref": "crates/protocol/src/node.rs@255@pub struct PeerMessage {"
         },
-        { "name": "DkgWork", "what": "the DKG jobs the machine asks for", "ref": "crates/protocol/src/dkg/mod.rs@191@pub enum DkgWork {" },
+        { "name": "DkgWork", "what": "the DKG jobs the machine asks for", "ref": "crates/protocol/src/dkg/mod.rs@193@pub enum DkgWork {" },
         {
           "name": "ZkProof",
           "what": "a proof and its public inputs, as the verifiers take them",
@@ -62,7 +62,7 @@
         {
           "name": "Envelope",
           "what": "the signed wire form of a peer message",
-          "ref": "crates/protocol/src/wire.rs@20@pub struct Envelope {"
+          "ref": "crates/protocol/src/wire.rs@50@pub struct Envelope {"
         }
       ],
       "read_first": [
@@ -72,7 +72,7 @@
         },
         {
           "why": "the machine: one step per input, returning the effects",
-          "ref": "crates/protocol/src/node.rs@1242@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+          "ref": "crates/protocol/src/node.rs@1307@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
         },
         { "why": "every kind of input", "ref": "crates/protocol/src/node.rs@509@pub enum Input {" }
       ],
@@ -103,7 +103,7 @@
         {
           "name": "Engine",
           "what": "the machine with its store; apply returns the next engine and the new effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@138@pub struct Engine<M: Machine, S: Store> {"
+          "ref": "crates/ciphernode/engine/src/lib.rs@140@pub struct Engine<M: Machine, S: Store> {"
         },
         {
           "name": "Store",
@@ -130,7 +130,7 @@
       "read_first": [
         {
           "why": "open: replay the journal from the latest snapshot and return the pending effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@149@pub fn open(store: S, genesis: M, snapshot_every: u64)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@151@pub fn open(store: S, genesis: M, snapshot_every: u64)"
         },
         {
           "why": "apply: one input, one commit, the new effects",
@@ -138,7 +138,7 @@
         },
         {
           "why": "acknowledge: an effect is done and leaves the outbox",
-          "ref": "crates/ciphernode/engine/src/lib.rs@222@pub fn acknowledge(&mut self, key: EffectKey)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@224@pub fn acknowledge(&mut self, key: EffectKey)"
         }
       ],
       "rust_patterns": [],
@@ -161,34 +161,34 @@
         {
           "name": "journal: the entries after the latest snapshot, in input order; a snapshot commit prunes the entries it covers",
           "where": "disk",
-          "ref": "crates/state/journal/src/lib.rs@14@TableDefinition::new(\"journal\")"
+          "ref": "crates/state/journal/src/lib.rs@16@TableDefinition::new(\"journal\")"
         },
         {
           "name": "the latest snapshot of the machine",
           "where": "disk",
-          "ref": "crates/state/journal/src/lib.rs@15@TableDefinition::new(\"snapshot\")"
+          "ref": "crates/state/journal/src/lib.rs@17@TableDefinition::new(\"snapshot\")"
         },
         {
           "name": "outbox: effects not yet acknowledged",
           "where": "disk",
-          "ref": "crates/state/journal/src/lib.rs@16@TableDefinition::new(\"outbox\")"
+          "ref": "crates/state/journal/src/lib.rs@18@TableDefinition::new(\"outbox\")"
         }
       ],
       "key_types": [
         {
           "name": "Journal",
           "what": "a redb database that implements the engine's Store",
-          "ref": "crates/state/journal/src/lib.rs@18@pub struct Journal {"
+          "ref": "crates/state/journal/src/lib.rs@20@pub struct Journal {"
         }
       ],
       "read_first": [
         {
           "why": "open the redb file and its tables",
-          "ref": "crates/state/journal/src/lib.rs@23@pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {"
+          "ref": "crates/state/journal/src/lib.rs@25@pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {"
         },
         {
           "why": "commit: one write transaction per step",
-          "ref": "crates/state/journal/src/lib.rs@119@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
+          "ref": "crates/state/journal/src/lib.rs@133@fn commit(&mut self, step: Step) -> Result<(), StoreError> {"
         }
       ],
       "rust_patterns": [],
@@ -260,14 +260,14 @@
         {
           "name": "sends the chain has not mined, kept across restarts in unmined.json",
           "where": "disk",
-          "ref": "crates/ciphernode/chain/src/wallet.rs@57@struct Unmined {"
+          "ref": "crates/ciphernode/chain/src/wallet.rs@78@struct Unmined {"
         }
       ],
       "key_types": [
         {
           "name": "Reader",
           "what": "turns confirmed logs into chain facts, in order",
-          "ref": "crates/ciphernode/chain/src/reader.rs@151@pub struct Reader<R> {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@154@pub struct Reader<R> {"
         },
         {
           "name": "Rpc",
@@ -282,37 +282,37 @@
         {
           "name": "Contracts",
           "what": "the contracts whose logs the reader decodes",
-          "ref": "crates/ciphernode/chain/src/decode.rs@22@pub struct Contracts {"
+          "ref": "crates/ciphernode/chain/src/decode.rs@23@pub struct Contracts {"
         },
         {
           "name": "Writer",
           "what": "turns submissions into calls, with retries and stage checks",
-          "ref": "crates/ciphernode/chain/src/writer.rs@109@pub struct Writer<A, B> {"
+          "ref": "crates/ciphernode/chain/src/writer.rs@150@pub struct Writer<A, B> {"
         },
         {
           "name": "Account",
           "what": "estimates and sends a call from the operator's account",
-          "ref": "crates/ciphernode/chain/src/writer.rs@90@pub trait Account {"
+          "ref": "crates/ciphernode/chain/src/writer.rs@120@pub trait Account {"
         },
         {
           "name": "Wallet",
           "what": "Account over an alloy wallet provider, sending over HTTP",
-          "ref": "crates/ciphernode/chain/src/wallet.rs@33@pub struct Wallet<P> {"
+          "ref": "crates/ciphernode/chain/src/wallet.rs@39@pub struct Wallet<P> {"
         },
         {
           "name": "Call",
           "what": "one contract call the writer sends",
-          "ref": "crates/ciphernode/chain/src/writer.rs@67@pub struct Call {"
+          "ref": "crates/ciphernode/chain/src/writer.rs@70@pub struct Call {"
         }
       ],
       "read_first": [
         {
           "why": "poll: the facts of the next confirmed blocks",
-          "ref": "crates/ciphernode/chain/src/reader.rs@220@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@228@pub async fn poll(&mut self) -> Result<Vec<ChainEvent>, ReadError> {"
         },
         {
           "why": "wait: until the RPC node announces a log, or a poll is due",
-          "ref": "crates/ciphernode/chain/src/reader.rs@298@pub async fn wait(&mut self) {"
+          "ref": "crates/ciphernode/chain/src/reader.rs@306@pub async fn wait(&mut self) {"
         },
         {
           "why": "announce: the log subscription that wakes the reader",
@@ -320,11 +320,11 @@
         },
         {
           "why": "decode: logs into facts and the contract reads they need",
-          "ref": "crates/ciphernode/chain/src/decode.rs@139@pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog])"
+          "ref": "crates/ciphernode/chain/src/decode.rs@140@pub(crate) fn decode(contracts: &Contracts, logs: &[RawLog])"
         },
         {
           "why": "the writer of the operator's submissions",
-          "ref": "crates/ciphernode/chain/src/writer.rs@125@pub fn new(account: A, blobs: B, contracts: Contracts) -> Self {"
+          "ref": "crates/ciphernode/chain/src/writer.rs@166@pub fn new(account: A, blobs: B, contracts: Contracts) -> Self {"
         }
       ],
       "rust_patterns": [],
@@ -348,9 +348,9 @@
         {
           "name": "Network",
           "what": "what the node needs from the network: publish, fetch and admit operators",
-          "ref": "crates/ciphernode/p2p/src/lib.rs@28@pub trait Network: Send + Sync + 'static {"
+          "ref": "crates/ciphernode/p2p/src/lib.rs@31@pub trait Network: Send + Sync + 'static {"
         },
-        { "name": "P2p", "what": "the libp2p implementation over QUIC", "ref": "crates/ciphernode/p2p/src/driver.rs@102@pub struct P2p {" },
+        { "name": "P2p", "what": "the libp2p implementation over QUIC", "ref": "crates/ciphernode/p2p/src/driver.rs@118@pub struct P2p {" },
         {
           "name": "P2pConfig",
           "what": "identity, network ID, listen addresses and peers",
@@ -363,10 +363,10 @@
         }
       ],
       "read_first": [
-        { "why": "start the network for a node", "ref": "crates/ciphernode/p2p/src/driver.rs@120@pub async fn start(" },
+        { "why": "start the network for a node", "ref": "crates/ciphernode/p2p/src/driver.rs@136@pub async fn start(" },
         {
           "why": "a bootstrap node: lookups only, no messages",
-          "ref": "crates/ciphernode/p2p/src/driver.rs@130@pub async fn bootstrap(config: P2pConfig) -> Result<(Self, Inbox), P2pError> {"
+          "ref": "crates/ciphernode/p2p/src/driver.rs@150@pub async fn bootstrap(config: P2pConfig) -> Result<(Self, Inbox), P2pError> {"
         }
       ],
       "rust_patterns": [],
@@ -456,17 +456,17 @@
         {
           "name": "journal.redb: the journal, snapshot and outbox",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@165@Journal::open(config.data_dir.join(\"journal.redb\"))"
+          "ref": "crates/ciphernode/node/src/launch.rs@164@Journal::open(config.data_dir.join(\"journal.redb\"))"
         },
         {
           "name": "blobs folder",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@195@FileBlobs::open(config.data_dir.join(\"blobs\"))"
+          "ref": "crates/ciphernode/node/src/launch.rs@200@FileBlobs::open(config.data_dir.join(\"blobs\"))"
         },
         {
           "name": "unmined.json: sends the chain has not mined",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@173@config.data_dir.join(\"unmined.json\")"
+          "ref": "crates/ciphernode/node/src/launch.rs@172@config.data_dir.join(\"unmined.json\")"
         },
         {
           "name": "ingestion heartbeat for the health check",
@@ -476,41 +476,41 @@
         {
           "name": "listening addresses",
           "where": "disk",
-          "ref": "crates/ciphernode/node/src/launch.rs@213@config.data_dir.join(\"listening\")"
+          "ref": "crates/ciphernode/node/src/launch.rs@225@config.data_dir.join(\"listening\")"
         }
       ],
       "key_types": [
         {
           "name": "Config",
           "what": "everything a node needs to start",
-          "ref": "crates/ciphernode/node/src/launch.rs@36@pub struct Config {"
+          "ref": "crates/ciphernode/node/src/launch.rs@35@pub struct Config {"
         },
         {
           "name": "Settings",
           "what": "the operator's settings the runtime uses",
-          "ref": "crates/ciphernode/node/src/runtime.rs@58@pub struct Settings {"
+          "ref": "crates/ciphernode/node/src/runtime.rs@61@pub struct Settings {"
         },
         {
           "name": "Parts",
           "what": "the adapters the runtime drives",
-          "ref": "crates/ciphernode/node/src/runtime.rs@77@pub struct Parts<R, A, N, B> {"
+          "ref": "crates/ciphernode/node/src/runtime.rs@82@pub struct Parts<R, A, N, B> {"
         },
-        { "name": "NodeError", "what": "why a node stops", "ref": "crates/ciphernode/node/src/runtime.rs@97@pub enum NodeError {" }
+        { "name": "NodeError", "what": "why a node stops", "ref": "crates/ciphernode/node/src/runtime.rs@102@pub enum NodeError {" }
       ],
       "read_first": [
         {
           "why": "launch: build the adapters and run the node",
-          "ref": "crates/ciphernode/node/src/launch.rs@139@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
+          "ref": "crates/ciphernode/node/src/launch.rs@138@pub async fn launch(config: Config, stop: impl Future<Output = ()>) -> anyhow::Result<()> {"
         },
         {
           "why": "run: the event loop",
-          "ref": "crates/ciphernode/node/src/runtime.rs@127@pub async fn run<R, A, N, B>("
+          "ref": "crates/ciphernode/node/src/runtime.rs@151@pub async fn run<R, A, N, B>("
         },
         {
           "why": "one step: apply an input and dispatch its effects",
-          "ref": "crates/ciphernode/node/src/runtime.rs@254@let (next, pending) = engine.apply(now(), input)?;"
+          "ref": "crates/ciphernode/node/src/runtime.rs@343@engine.apply(now(), input)?"
         },
-        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@403@async fn read_chain<R: Rpc>(" },
+        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@514@async fn read_chain<R: Rpc>(" },
         {
           "why": "how many proofs run at once",
           "ref": "crates/ciphernode/node/src/memory.rs@45@pub(crate) fn capacity(requested: usize, reserved: usize) -> Result<Capacity, HostTooSmall> {"

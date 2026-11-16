@@ -49,7 +49,7 @@
   {
     "id": "A6",
     "supported": true,
-    "refs": ["crates/data-availability/src/avail.rs@119@submit_data(bytes)"],
+    "refs": ["crates/data-availability/src/avail.rs@106@submit_data(bytes)"],
     "line_text": ["let tx = client.tx().data_availability().submit_data(bytes);"],
     "note": "The Avail publisher in e3-data-availability submits the bytes to Avail with submit_data."
   },
@@ -147,7 +147,7 @@
     "supported": true,
     "refs": [
       "crates/cli/src/cli.rs@242@start::execute(config, peers, bootstrap, drain)",
-      "crates/cli/src/start.rs@58@e3_node::launch::launch(node, stop)"
+      "crates/cli/src/start.rs@64@e3_node::launch::launch(node, stop)"
     ],
     "line_text": ["start::execute(config, peers, bootstrap).await?", "e3_node::launch::launch(node, stop)"],
     "note": "The Start subcommand calls start::execute, which maps the configuration and runs e3_node::launch::launch."
@@ -198,10 +198,10 @@
     "id": "A23",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/behaviour.rs@53@pub(crate) gossipsub: Gossipsub,",
-      "crates/ciphernode/p2p/src/behaviour.rs@55@pub(crate) kademlia: kad::Behaviour<MemoryStore>,",
+      "crates/ciphernode/p2p/src/behaviour.rs@57@pub(crate) gossipsub: Gossipsub,",
+      "crates/ciphernode/p2p/src/behaviour.rs@59@pub(crate) kademlia: kad::Behaviour<MemoryStore>,",
       "crates/ciphernode/p2p/src/behaviour.rs@61@pub(crate) blobs: cbor::Behaviour<BlobRequest, Option<ByteBuf>>,",
-      "crates/ciphernode/p2p/src/driver.rs@153@libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),"
+      "crates/ciphernode/p2p/src/driver.rs@172@libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),"
     ],
     "line_text": [
       "pub(crate) gossipsub: Gossipsub,",
