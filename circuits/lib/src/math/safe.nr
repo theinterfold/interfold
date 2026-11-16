@@ -231,10 +231,12 @@ pub fn initial_state<let L: u32>(
 
 /// Continues one ABSORB from a carried `(state, absorb_pos)` and returns the new pair.
 ///
-/// The absorb loop reads nothing but the state and the absorb position, and `compute_tag` merges
-/// consecutive ABSORB words, so absorbing a stream piece by piece from the carried pair gives the
-/// same sponge as one [`SafeSponge::absorb`] of the whole stream. This lets a commitment span
-/// several proofs. The IO pattern is not checked here; [`squeeze_one_after_absorb`] checks it.
+/// The absorb loop reads nothing but the state and the absorb position, so absorbing a stream piece
+/// by piece from the carried pair gives the same sponge as one [`SafeSponge::absorb`] of the whole
+/// stream. This lets a commitment span
+/// several proofs. Nothing here checks the IO pattern or counts elements, and
+/// [`squeeze_one_after_absorb`] checks only the ABSORB flag, so the caller must absorb exactly the
+/// pattern's ABSORB total.
 pub fn absorb_from(
     state: [Field; STATE_SIZE],
     absorb_pos: u32,
