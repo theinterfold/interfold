@@ -593,10 +593,10 @@ function circuits() {
         y: 480,
         w: 320,
         h: 80,
-        title: 'c3_fold → c3ab_fold',
+        title: 'C3 Chonk → c3ab_fold',
         lines: ['every C3, then sk and e_sm'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c3_fold/src/main.nr@42@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs`,
+        ref: `${CIR}/chonk/c3_chonk_app/src/main.nr@27@verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k]`,
       },
       {
         id: 'c4ab',

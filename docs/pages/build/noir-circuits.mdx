@@ -66,10 +66,17 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.Folder name='share_decryption' />
         <FileTree.Folder name='decrypted_shares_aggregation' />
       </FileTree.Folder>
+      <FileTree.Folder name='chonk'>
+        <FileTree.File name='Nargo.toml' />
+        <FileTree.Folder name='c3_chonk_app' />
+        <FileTree.Folder name='c3_chonk_init_kernel' />
+        <FileTree.Folder name='c3_chonk_tail_kernel' />
+        <FileTree.Folder name='c3_chonk_hiding_kernel' />
+      </FileTree.Folder>
       <FileTree.Folder name='recursive_aggregation'>
         <FileTree.Folder name='c2ab_fold' />
-        <FileTree.Folder name='c3_fold' />
-        <FileTree.Folder name='c3_fold_kernel' />
+        <FileTree.Folder name='c3_chonk_tube' />
+        <FileTree.Folder name='c3_chonk_accumulate' />
         <FileTree.Folder name='c3ab_fold' />
         <FileTree.Folder name='c4ab_fold' />
         <FileTree.Folder name='c6_fold' />
@@ -85,16 +92,17 @@ All binary packages depend on one shared library. The Nargo package name of the 
   </FileTree.Folder>
 </FileTree>
 
-| Directory                   | Contents                                                                                                                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                                  |
-| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.                             |
-| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                  |
+| Directory                   | Contents                                                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                 |
+| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.            |
+| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files. |
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4), and the C2 chunk circuits those two verify. |
-| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).                                |
-| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                     |
-| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                                       |
-| `benchmarks`                | Timing scripts and reports.                                                                                                                                                             |
+| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).               |
+| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 Chonk stacks.                                                                                                     |
+| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                    |
+| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                      |
+| `benchmarks`                | Timing scripts and reports.                                                                                                                                            |
 
 The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
 example, `CircuitName::PkBfv` is `pk`, and `CircuitName::DkgAggregator` is `dkg_aggregator`. The
@@ -111,16 +119,22 @@ proofs go on-chain.
   label='DKG proof aggregation'
   steps={[
     { label: 'Inner proofs', icon: 'circuit', sub: 'C0 to C4 for each ciphernode.' },
-    { label: 'Step folds', icon: 'layers', sub: 'c2ab_fold, c3_fold, c3ab_fold, c4ab_fold.' },
+    {
+      label: 'Step folds',
+      icon: 'layers',
+      sub: 'c2ab_fold, the C3 Chonk chains, c3ab_fold, c4ab_fold.',
+    },
     { label: 'node_fold', icon: 'node', sub: 'One fold for each ciphernode.' },
     { label: 'nodes_fold', icon: 'network', sub: 'Folds the node_fold proofs of the committee.' },
     { label: 'dkg_aggregator', icon: 'contract', sub: 'Adds C5. Verified on-chain.' },
   ]}
 />
 
-The decryption path is shorter. The C6 proofs of the committee go through `c6_fold`, and
-`decryption_aggregator` adds C7. The `*_kernel` packages make the first proof of each sequential
-fold (`c3_fold`, `c6_fold`, `nodes_fold`).
+C3 runs over Chonk: `c3_chonk_app` verifies a batch of C3 proofs and three kernels close the stack,
+`c3_chonk_tube` verifies the stack's Chonk proof, `c3_chonk_accumulate` merges the tubes, and
+`c3ab_fold` closes the chain. The decryption path is shorter. The C6 proofs of the committee go
+through `c6_fold`, and `decryption_aggregator` adds C7. The `*_kernel` packages make the first proof
+of each sequential fold (`c6_fold`, `nodes_fold`).
 
 The Solidity verifiers for the two aggregators are committed to the repository as
 `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol`. `BfvPkVerifier` and
@@ -246,11 +260,13 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 2. It regenerates the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
    `packages/interfold-contracts/contracts/lib/BfvProtocol.sol`.
-4. It compiles every package in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
-   `nargo compile`.
+4. It compiles every package in `bin/dkg`, `bin/threshold`, `bin/chonk`, and
+   `bin/recursive_aggregation` with `nargo compile`.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
    `noir-recursive-no-zk`, and `noir-recursive` keys. Each fold circuit gets a
-   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key.
+   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key. The C3 Chonk app and
+   kernels get `--scheme chonk` keys with a Poseidon2 key hash, and `c3_chonk_tube` and
+   `c3_chonk_accumulate` get `noir-rollup-no-zk` keys.
 6. It copies the artifacts to `dist/circuits/<preset>/<committee>/`, with one directory for each
    variant (`default`, `recursive`, `evm`). Then it writes `SHA256SUMS` and `checksums.json`.
 

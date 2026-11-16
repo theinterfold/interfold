@@ -16,7 +16,8 @@ fi
 # leave the tests reading artifacts that do not match the current toolchain.
 required_artifacts=(
     ./circuits/bin/.active-preset.json
-    ./circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json
+    ./circuits/bin/chonk/target/c3_chonk_app.json
+    ./circuits/bin/recursive_aggregation/c3_chonk_tube/target/c3_chonk_tube.json
     ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json
     ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json
 )
