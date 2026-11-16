@@ -17,6 +17,8 @@ use std::path::Path;
 pub struct VkArtifacts {
     pub verification_key: Vec<String>,
     pub key_hash: String,
+    pub verification_key_bytes: Vec<u8>,
+    pub key_hash_bytes: [u8; 32],
 }
 
 fn load_vk_from_dir(circuit_dir: &Path, circuit_name: &str) -> Result<VkArtifacts, ZkError> {
@@ -26,15 +28,22 @@ fn load_vk_from_dir(circuit_dir: &Path, circuit_name: &str) -> Result<VkArtifact
     let vk_bytes = fs::read(&vk_path)
         .map_err(|e| ZkError::CircuitNotFound(format!("{}: {}", vk_path.display(), e)))?;
     let verification_key = bytes_to_field_strings(&vk_bytes)?;
-    let key_hash = load_hash(&vk_hash_path)?;
+    let key_hash_bytes = load_hash_bytes(&vk_hash_path)?;
+    let key_hash = format!("0x{}", hex::encode(key_hash_bytes));
 
     Ok(VkArtifacts {
         verification_key,
         key_hash,
+        verification_key_bytes: vk_bytes,
+        key_hash_bytes,
     })
 }
 
 fn load_hash(path: &Path) -> Result<String, ZkError> {
+    Ok(format!("0x{}", hex::encode(load_hash_bytes(path)?)))
+}
+
+fn load_hash_bytes(path: &Path) -> Result<[u8; 32], ZkError> {
     let bytes = fs::read(path)
         .map_err(|e| ZkError::CircuitNotFound(format!("{}: {}", path.display(), e)))?;
     if bytes.len() != 32 {
@@ -44,7 +53,7 @@ fn load_hash(path: &Path) -> Result<String, ZkError> {
             bytes.len()
         )));
     }
-    Ok(format!("0x{}", hex::encode(bytes)))
+    Ok(bytes.try_into().expect("checked hash width"))
 }
 
 /// Load the complete recursive VK-tree anchor for a final aggregator witness.

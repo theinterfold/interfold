@@ -91,19 +91,25 @@ explicit pair fails before tools or writes.
 
 The builder's legacy `--preset` option now selects a protocol profile; SS retains its existing
 `insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
-separate `circuits/bin/synchronized/{dkg,threshold}` sources/targets and generated static
-configuration, never SS JSON/VK fallback. The live six-pair build/release policy still excludes it.
-Explicitly seeded test policies may build its DKG leaves only: no complete stamp, active SS stamp
-update, recursive anchors, hydration or source-cache reuse. Partial/failed sync work invalidates
-only its own anchors/metadata. `sync-sources`/source checks include this definition without changing
-SS selectors or enabling admission.
+separate `circuits/bin/synchronized/{dkg,threshold,recursive_aggregation}` sources/targets and
+generated static configuration, never SS JSON/VK fallback. The live six-pair build/release policy
+still excludes it. Explicitly seeded test policies may build its DKG leaves and draft provenance
+joins only: no complete stamp, active SS stamp update, recursive anchors, hydration or source-cache
+reuse. Partial/failed sync work invalidates only its own anchors/metadata. `sync-sources`/source
+checks include this definition without changing SS selectors or enabling admission.
 
-These isolated leaves introduce no durable/wire enum or deployed verifier migration. Existing SS
-artifacts retain their original provenance; added source owners intentionally change source hashes,
-not the published stamps. Sync rollout, version counters and rollback for any future persisted
-state/verifiers need separate human decisions. While admission and runtime wiring remain absent,
-removing these definitions requires no replay/reset migration; this is not a rolling-upgrade
+These disabled definitions introduce no durable/wire enum or deployed verifier migration. Existing
+SS artifacts retain their original provenance; added source owners intentionally change source
+hashes, not the published stamps. Sync rollout, version counters and rollback for any future
+persisted state/verifiers need separate human decisions. While admission and runtime wiring remain
+absent, removing these definitions requires no replay/reset migration; this is not a rolling-upgrade
 decision for a future sync release.
+
+The draft recipient setup verifier derives its full descendant pin from the selected local keys; it
+does not accept a received NodeFold VK hash as that pin. This does not make a partial sync tree
+installable or release-qualified. There is still no synchronized C5/publication wrapper, release
+manifest, deployed route or hydration path; the existing six SS pairs and their anchors are
+unchanged.
 
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,

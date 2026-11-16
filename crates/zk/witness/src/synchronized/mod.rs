@@ -5,6 +5,7 @@
 
 pub mod commitments;
 pub mod pk_generation;
+pub mod provenance;
 pub mod share_computation;
 pub mod share_decryption;
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Exact public layouts of the isolated synchronized DKG leaves, excluding Honk protocol fields.
+//! Exact public layouts of synchronized DKG definitions, excluding Honk protocol fields.
 
 use super::Configs;
 use crate::{field::get_zkp_modulus, CircuitName, ConfigError};
@@ -50,8 +50,11 @@ impl PublicSignals {
             CircuitName::PkGeneration
                 | CircuitName::SkShareComputation
                 | CircuitName::DkgShareDecryption
+                | CircuitName::NodeFold
+                | CircuitName::NodesFold
         ) {
-            for field in &result.fields[..2] {
+            let start = result.identity_start();
+            for field in &result.fields[start..start + 2] {
                 if field[..16] != [0; 16] {
                     return Err(invalid());
                 }
@@ -60,7 +63,10 @@ impl PublicSignals {
                 return Err(invalid());
             }
         }
-        if circuit == CircuitName::DkgShareDecryption {
+        if matches!(
+            circuit,
+            CircuitName::DkgShareDecryption | CircuitName::NodesFold
+        ) {
             let dealers = result.dealers().ok_or_else(invalid)?;
             if dealers.iter().any(|&dealer| dealer as usize >= result.n)
                 || dealers.windows(2).any(|pair| pair[0] >= pair[1])
@@ -73,15 +79,21 @@ impl PublicSignals {
 
     pub fn binding(&self) -> Option<[u128; 2]> {
         self.party_id()?;
+        let start = self.identity_start();
         Some([
-            u128::from_be_bytes(self.fields[0][16..].try_into().unwrap()),
-            u128::from_be_bytes(self.fields[1][16..].try_into().unwrap()),
+            u128::from_be_bytes(self.fields[start][16..].try_into().unwrap()),
+            u128::from_be_bytes(self.fields[start + 1][16..].try_into().unwrap()),
         ])
+    }
+
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
     }
 
     pub fn identity_fields(&self) -> Option<[Field; 3]> {
         self.party_id()?;
-        Some(self.fields[..3].try_into().unwrap())
+        let start = self.identity_start();
+        Some(self.fields[start..start + 3].try_into().unwrap())
     }
 
     pub fn ciphertext_commitment(&self) -> Option<Field> {
@@ -94,8 +106,10 @@ impl PublicSignals {
             CircuitName::PkGeneration
                 | CircuitName::SkShareComputation
                 | CircuitName::DkgShareDecryption
+                | CircuitName::NodeFold
+                | CircuitName::NodesFold
         )
-        .then(|| decode_id(&self.fields[2]))
+        .then(|| decode_id(&self.fields[self.identity_start() + 2]))
         .flatten()
     }
 
@@ -103,6 +117,7 @@ impl PublicSignals {
         match self.circuit {
             CircuitName::PkGeneration | CircuitName::SkShareComputation => Some(self.fields[3]),
             CircuitName::DkgShareDecryption => Some(self.fields[self.fields.len() - 2]),
+            CircuitName::NodesFold => Some(self.fields[self.fields.len() - 2]),
             _ => None,
         }
     }
@@ -111,6 +126,7 @@ impl PublicSignals {
         match self.circuit {
             CircuitName::PkGeneration => Some(self.fields[4]),
             CircuitName::PkBfv | CircuitName::ShareEncryption => Some(self.fields[0]),
+            CircuitName::NodeFold => Some(self.fields[4]),
             _ => None,
         }
     }
@@ -119,6 +135,7 @@ impl PublicSignals {
         match self.circuit {
             CircuitName::SkShareComputation => self.fields.last().copied(),
             CircuitName::DkgShareDecryption => Some(self.fields[3 + self.h]),
+            CircuitName::NodeFold => Some(self.fields[5]),
             _ => None,
         }
     }
@@ -130,19 +147,55 @@ impl PublicSignals {
                 Some(&self.fields[4 + self.h..4 + self.h + self.h * self.l])
             }
             CircuitName::ShareEncryption => Some(&self.fields[1..2]),
+            CircuitName::NodeFold => Some(&self.fields[6..6 + self.n * self.l]),
             _ => None,
         }
     }
 
     pub fn dealers(&self) -> Option<Vec<u32>> {
-        if self.circuit != CircuitName::DkgShareDecryption {
-            return None;
-        }
-        self.fields[3..3 + self.h].iter().map(decode_id).collect()
+        let start = match self.circuit {
+            CircuitName::DkgShareDecryption => 3,
+            CircuitName::NodesFold => 4,
+            _ => return None,
+        };
+        self.fields[start..start + self.h]
+            .iter()
+            .map(decode_id)
+            .collect()
     }
 
     pub fn key_bundle(&self) -> Option<Field> {
-        (self.circuit == CircuitName::DkgShareDecryption).then(|| *self.fields.last().unwrap())
+        matches!(
+            self.circuit,
+            CircuitName::DkgShareDecryption | CircuitName::NodesFold
+        )
+        .then(|| *self.fields.last().unwrap())
+    }
+
+    pub fn tree_hash(&self) -> Option<Field> {
+        match self.circuit {
+            CircuitName::NodeFold => Some(self.fields[3]),
+            CircuitName::NodesFold => Some(self.fields[0]),
+            _ => None,
+        }
+    }
+
+    pub fn recipient_keys(&self) -> Option<&[Field]> {
+        (self.circuit == CircuitName::NodeFold)
+            .then(|| &self.fields[6 + self.n * self.l..6 + self.n * self.l + self.n])
+    }
+
+    pub fn ciphertext_commitments(&self) -> Option<&[Field]> {
+        (self.circuit == CircuitName::NodeFold)
+            .then(|| &self.fields[6 + self.n * self.l + self.n..])
+    }
+
+    pub fn threshold_keys(&self) -> Option<&[Field]> {
+        (self.circuit == CircuitName::NodesFold).then(|| &self.fields[4 + self.h..4 + 2 * self.h])
+    }
+
+    fn identity_start(&self) -> usize {
+        usize::from(self.circuit == CircuitName::NodesFold)
     }
 }
 
@@ -167,8 +220,16 @@ mod tests {
             let count =
                 config.public_inputs(circuit).unwrap() + config.public_outputs(circuit).unwrap();
             let mut bytes = vec![0; count * 32];
-            if circuit == CircuitName::DkgShareDecryption {
-                bytes[4 * 32 + 31] = 2; // Non-prefix H=[0,2].
+            if matches!(
+                circuit,
+                CircuitName::DkgShareDecryption | CircuitName::NodesFold
+            ) {
+                let start = if circuit == CircuitName::NodesFold {
+                    4
+                } else {
+                    3
+                };
+                bytes[(start + 1) * 32 + 31] = 2; // Non-prefix H=[0,2].
             }
             let public = PublicSignals::decode(&config, circuit, &bytes).unwrap();
             assert!(PublicSignals::decode(&config, circuit, &bytes[..bytes.len() - 1]).is_err());
@@ -180,16 +241,27 @@ mod tests {
             noncanonical[..32].copy_from_slice(&modulus);
             assert!(PublicSignals::decode(&config, circuit, &noncanonical).is_err());
             if public.binding().is_some() {
+                let start = public.identity_start();
                 let mut large_context = bytes.clone();
-                large_context[15] = 1;
+                large_context[start * 32 + 15] = 1;
                 assert!(PublicSignals::decode(&config, circuit, &large_context).is_err());
                 let mut outside = bytes.clone();
-                outside[2 * 32 + 31] = 3;
+                outside[(start + 2) * 32 + 31] = 3;
+                assert!(PublicSignals::decode(&config, circuit, &outside).is_err());
+                outside[(start + 2) * 32] = 1;
                 assert!(PublicSignals::decode(&config, circuit, &outside).is_err());
             }
-            if circuit == CircuitName::DkgShareDecryption {
+            if matches!(
+                circuit,
+                CircuitName::DkgShareDecryption | CircuitName::NodesFold
+            ) {
                 assert_eq!(public.dealers(), Some(vec![0, 2]));
-                bytes[4 * 32 + 31] = 0;
+                let start = if circuit == CircuitName::NodesFold {
+                    4
+                } else {
+                    3
+                };
+                bytes[(start + 1) * 32 + 31] = 0;
                 assert!(PublicSignals::decode(&config, circuit, &bytes).is_err());
             }
         }

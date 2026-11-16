@@ -76,7 +76,7 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
                 .iter()
                 .any(|name| !circuits.iter().any(|circuit| &circuit.name == name))
         {
-            bail!("Unsupported synchronized DKG leaf selection");
+            bail!("Unsupported synchronized DKG definition selection");
         }
         return Ok(circuits);
     }
@@ -583,7 +583,7 @@ pub fn refresh_anchors(
 ) -> Result<()> {
     let bin = if profile.protocol() == BfvDecryptionProtocol::Synchronized {
         if complete {
-            bail!("Synchronized recursive VK topology is not implemented");
+            bail!("Synchronized publication/decryption artifacts are incomplete");
         }
         root.join("circuits/bin/synchronized")
     } else {

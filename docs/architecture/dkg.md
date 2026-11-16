@@ -69,14 +69,23 @@ incoming/outgoing keys with the aggregate-SK and bidirectional-bundle anchors. S
 links connect C1→C2, C3→C2 and C4→owner-C2 under exact synchronized public layouts. C4 checks every
 dealer row against the complete saved verified C2 batch: the SS C2→C4 check's cross-party blame and
 partial-cache semantics are not reused. Missing provenance is a local failure, not an accusation.
-Pre-slot rejection is not a verified dishonest-peer verdict. A rejected saved C4 input releases its
-slot and restarts collection with the valid retained inputs; a partial batch cannot authorize an H
-verdict.
+The generic C3→C2 membership link is supplemented by exact recipient/CRT indexing at intake and in
+the dealer join. Pre-slot rejection is not a verified dishonest-peer verdict. A rejected saved C4
+input releases its slot and restarts collection with the valid retained inputs; a partial batch
+cannot authorize an H verdict.
 
-This is not a complete admitted setup protocol. Reviewed recursive provenance joins, final-verifier
-enforcement, and synchronized C6 remain absent; synchronized node-fold and decryption paths
-explicitly refuse the SS implementations. The root/bundle schemas and setup derivation require
-protocol review before those consumers freeze them.
+The disabled definitions now include separate dealer and per-recipient
+[provenance joins](proof-statements.md#draft-synchronized-provenance-joins-not-admitted). They bind
+all H contributions to each recipient's C0/C4 and expose the aggregate-SK/key-bundle commitments
+without SS smudging proofs. Recipients outside H prove their own C2 root without requiring N C4
+proofs or changing the accepted dealer roster.
+
+This is not a complete admitted setup protocol. The explicit proof API verifies a supplied canonical
+context/roster; it does not establish their chain/signature authority. Final C5/publication
+enforcement, persistent multi-party actor restart evidence and synchronized C6 remain absent.
+Synchronized runtime folding/publication and decryption paths still refuse the SS implementations.
+The joins, root/bundle schemas and setup derivation require human protocol review before consumers
+freeze them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
