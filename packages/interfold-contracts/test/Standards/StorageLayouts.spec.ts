@@ -206,6 +206,43 @@ describe("storage layout validation", function () {
     );
   });
 
+  it("allows a namespaced enum to append a member but not to remove one", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const withStage = (stages: string[]): StorageMetadata => {
+      const metadata = emptyMetadata();
+      metadata.namespaces["erc7201:example.storage.State"] = {
+        root: "Example.State",
+        types: {
+          "Example.State": {
+            kind: "struct",
+            members: [{ name: "stage", type: "enum Example.Stage" }],
+          },
+          "Example.Stage": {
+            kind: "enum",
+            members: stages.map((name) => ({ name })),
+          },
+        },
+      };
+      return metadata;
+    };
+    const before = withStage(["Requested", "Complete"]);
+
+    expect(
+      diffLayouts(
+        "Example",
+        layout,
+        layout,
+        before,
+        withStage(["Requested", "Complete", "Failed"]),
+      ),
+    ).to.deep.equal([]);
+    expect(
+      diffLayouts("Example", layout, layout, before, withStage(["Requested"])),
+    ).to.include(
+      "Example: storage namespace erc7201:example.storage.State type Example.Stage member list changed.",
+    );
+  });
+
   it("fingerprints every source in the compiler input", function () {
     const before: StandardCompilerInput = {
       language: "Solidity",

@@ -643,7 +643,9 @@ function compareMetadata(
         `storage namespace ${namespaceId} type ${name}`,
         oldDefinition,
         newDefinition,
-        name === oldNamespace.root && oldDefinition.kind === "struct",
+        // Appending to an enum keeps every stored value, as for top-level enums above.
+        oldDefinition.kind === "enum" ||
+          (name === oldNamespace.root && oldDefinition.kind === "struct"),
         errors,
       );
     }
