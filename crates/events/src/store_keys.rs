@@ -77,6 +77,10 @@ impl StoreKeys {
         String::from("//node_dkg_fold/recovery/v1")
     }
 
+    pub fn synchronized_dkg_dealer(e3_id: &E3id) -> String {
+        format!("//synchronized_dkg/dealer/v1/{e3_id}")
+    }
+
     pub fn node_dkg_inner_proof(e3_id: &E3id, seq: usize) -> String {
         format!("//node_dkg_fold/proofs/{e3_id}/{seq}")
     }

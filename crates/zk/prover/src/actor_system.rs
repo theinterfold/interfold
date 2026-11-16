@@ -19,6 +19,7 @@ use e3_request::E3Meta;
 use e3_task_pool::TaskPool;
 use std::collections::{HashMap, HashSet};
 
+use crate::actors::node_proof_aggregator::dealer::{self, DealerCollection, DealerRecord};
 use crate::actors::node_proof_aggregator::recovery::NodeProofRecovery;
 use crate::actors::{
     NodeProofAggregator, ProofRequestActor, ProofVerificationActor, ShareVerificationActor,
@@ -36,6 +37,7 @@ pub struct ZkActorRecovery {
     e3_metadata: HashMap<E3id, E3Meta>,
     dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
     node_proofs: NodeProofRecovery,
+    dealer_records: HashMap<E3id, DealerRecord>,
     pending_c0: Vec<TypedEvent<EncryptionKeyReceived>>,
     /// E3s whose DKG ended before startup, also when they failed. The replay can bring back their
     /// C0 inputs, and the verifier does not admit them.
@@ -54,6 +56,7 @@ impl ZkActorRecovery {
             e3_metadata,
             dkg_fold_attestation_contexts,
             node_proofs: NodeProofRecovery::default(),
+            dealer_records: HashMap::new(),
             pending_c0: Vec::new(),
             dkg_ended: HashSet::new(),
             canonical_keys: Default::default(),
@@ -91,6 +94,8 @@ impl ZkActorRecovery {
             .cloned()
             .collect();
         self.node_proofs = NodeProofRecovery::load(repositories, &active_e3_ids).await?;
+        self.dealer_records =
+            dealer::recover(repositories, &self.e3_metadata, &self.dkg_ended).await?;
         self.pending_c0 = Box::pin(
             crate::actors::proof_verification::recovery::recover_pending_verifications(
                 eventstore,
@@ -142,6 +147,12 @@ pub fn setup_zk_actors(
     task_scope: String,
 ) -> ZkActors {
     let zk_actor = ZkActor::new(backend, task_pool, task_scope).start();
+    let dealer = DealerCollection::new(
+        recovery.e3_metadata.clone(),
+        recovery.finalized_committees.clone(),
+        recovery.dkg_ended.clone(),
+        std::mem::take(&mut recovery.dealer_records),
+    );
     let proof_verification = recovery.setup_proof_verification(bus, zk_actor.clone().recipient());
     let ZkActorRecovery {
         finalized_committees,
@@ -151,11 +162,13 @@ pub fn setup_zk_actors(
         ..
     } = recovery;
 
+    let mut inner_proofs = node_proofs.proofs.clone();
+    inner_proofs.extend(dealer.inner_proofs());
     let proof_request = ProofRequestActor::setup_with_recovery(
         bus,
         signer.clone(),
         proof_aggregation_enabled,
-        node_proofs.proofs.clone(),
+        inner_proofs,
         canonical_keys,
     );
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
@@ -167,6 +180,7 @@ pub fn setup_zk_actors(
         proof_aggregation_enabled,
         repositories,
         node_proofs,
+        dealer,
     );
 
     ZkActors {

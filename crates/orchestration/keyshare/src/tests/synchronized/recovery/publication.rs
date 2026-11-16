@@ -48,6 +48,7 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
 
 pub(super) async fn qualify(
     recovered: &[Recovered],
+    pending: &[ThresholdSharePending],
     local_c4: &[DecryptionKeyShared],
     prover: &ZkProver,
     directory: &Path,
@@ -203,23 +204,34 @@ pub(super) async fn qualify(
             .iter()
             .map(|proof| authenticated(selection, id, ProofType::C3aSkShareEncryption, proof))
             .collect::<Result<Vec<_>>>()?;
-        let local = material[id as usize].context.clone();
-        let request = SynchronizedDkgProofRequest {
-            params_profile: PROFILE,
-            committee_size: COMMITTEE,
-            context: local,
-            job: SynchronizedDkgProofJob::Dealer {
-                c1,
-                c2: c2[id as usize].clone(),
-                c3,
-            },
-        };
+        let plan =
+            e3_zk_prover::synchronized::dealer::DealerPlan::from_pending(&pending[id as usize])?;
+        let proofs = [c1, c2[id as usize].clone()]
+            .into_iter()
+            .chain(c3)
+            .enumerate()
+            .map(|(index, proof)| {
+                (
+                    index + 1,
+                    e3_events::DKGInnerProofReady {
+                        e3_id: e3.clone(),
+                        party_id: id.into(),
+                        seq: index + 1,
+                        proof,
+                    },
+                )
+            })
+            .collect();
+        let request = plan
+            .request(e3, &proofs)?
+            .context("reopened dealer collection is incomplete")?;
         let SynchronizedDkgProofResponse::Dealer { proof } =
             execute_definition(prover, e3, &request, &format!("restored-dealer-{id}"))?
         else {
             anyhow::bail!("wrong synchronized dealer response");
         };
         ensure!(prover.verify_fold_proof(&proof, "restored-dealer", id as u64, &namespace)?);
+        plan.validate_result(e3, &proofs, &proof)?;
         nodes.push(proof);
     }
     let batch = dealer_batch(

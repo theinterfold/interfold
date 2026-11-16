@@ -158,6 +158,7 @@ interfold_event_data!(
     BondingAssetConfigUpdatedAt,
     AggregationResumed,
     SynchronizedDkgContextEstablished,
+    SynchronizedDealerProofReady,
 );
 
 impl fmt::Display for EventType {
@@ -288,6 +289,7 @@ impl InterfoldEventData {
             InterfoldEventData::SynchronizedDkgContextEstablished(ref data) => {
                 Some(data.e3_id.clone())
             }
+            InterfoldEventData::SynchronizedDealerProofReady(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
                 Some(data.e3_id.clone())
             }

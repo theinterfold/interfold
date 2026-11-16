@@ -294,6 +294,17 @@ counter bump, migration or rolling intermediate upgrade. Rollback uses the prior
 controlled reset/resync, never an older binary on a new-variant journal. Explicit definition
 qualification does not enable production admission or qualify old-intermediate replay.
 
+The local dealer-collection follow-up appends `SynchronizedDealerProofReady` and adds an exclusive
+version-1 dealer record under `//synchronized_dkg/dealer/v1/{e3_id}`. It retains public leaf proofs,
+the local plan/context and completed output; it contains no plaintext keys. The owner writes and
+flushes this record directly before compute/output publication; snapshot batches never write this
+key. Restart allocates a fresh compute correlation and retains original proof bytes. These additions
+share the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. Existing event
+discriminants and SS recovery records remain unchanged; previous binaries cannot decode the new
+event, and rollback requires the prior backup or reset/resync. This local output is excluded from
+peer forwarding, so gossip/sync majors remain 5/4. No circuit, verifier or contract encoding
+changes.
+
 Signing DTOs remain without production event/snapshot callers. `CanonicalPublicKey` and its typed
 SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
 layouts. Full-authority observations retain the existing lossless raw-log payload. Local compute

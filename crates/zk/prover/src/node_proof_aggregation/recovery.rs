@@ -334,6 +334,9 @@ mod layout_lock {
         rows.extend(repository("node_dkg_fold_meta", |r| {
             meta_repository(r, &E3id::new("1", 1))
         }));
+        rows.extend(repository("synchronized_dkg_dealer", |r| {
+            crate::actors::node_proof_aggregator::dealer::repository(r, &E3id::new("1", 1))
+        }));
         e3_layout_lock::assert_fixture(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layout_lock.txt"),
             &rows,

@@ -45,6 +45,26 @@ pub struct SynchronizedSetupAnchors {
     pub key_bundle: [u8; 32],
 }
 
+/// Local dealer join accepted from the correlated proof worker. This is not a peer-authenticated
+/// setup, recipient consent, or canonical publication.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct SynchronizedDealerProofReady {
+    pub e3_id: E3id,
+    pub context: crate::SynchronizedProofContext,
+    pub proof: crate::Proof,
+}
+
+impl Display for SynchronizedDealerProofReady {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "e3_id: {}, dealer: {}",
+            self.e3_id, self.context.party_id
+        )
+    }
+}
+
 impl Display for SynchronizedDkgContextEstablished {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

@@ -1,0 +1,567 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Definition-level collection/flush tests deliberately enter below disabled runtime admission.
+//! Synthetic proof bytes exercise routing, not cryptographic acceptance.
+
+use super::*;
+use actix::{Actor, ActorContext, Handler, Message};
+use e3_crypto::{Cipher, SensitiveBytes};
+use e3_event_system::test_support::EventFixture;
+use e3_events::*;
+use e3_fhe_params::BfvProfile;
+use e3_trbfv::synchronized::{PrfKey, SealedPrfKeys};
+use e3_utils::ArcBytes;
+use e3_zk_config::{synchronized::Configs, CircuitName, DkgInputType};
+
+fn ec(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
+    EventContext::<Unsequenced>::from(data.into()).sequence(1)
+}
+
+async fn fixture(
+    bus: &BusHandle,
+) -> Result<(NodeProofAggregator, ThresholdSharePending, DealerPlan)> {
+    let profile = BfvProfile::SyncDecInsecure64;
+    let size = CiphernodesCommitteeSize::Minimum;
+    let signer: alloy::signers::local::PrivateKeySigner =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse()?;
+    let mut members = vec![
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        signer.address(),
+    ];
+    members.sort();
+    let owner = members
+        .iter()
+        .position(|member| member == &signer.address())
+        .unwrap() as u32;
+    let context = SynchronizedProofContext {
+        party_id: owner,
+        setup: e3_committee_hash::DkgSetupContext {
+            interfold_address: Address::repeat_byte(3),
+            committee_hash: e3_committee_hash::hash_committee_addresses(&members),
+            crypto_config_id: profile.crypto_config_id(size)?,
+        },
+    };
+    let id = E3id::new("2459", 1);
+    let config = Configs::for_profile(profile, size)?;
+    let binding = crate::synchronized::request_binding(&config, &context, &id)?;
+    let cipher = Cipher::from_password("dealer-test").await?;
+    let keys = (0..size.values().n)
+        .map(|_| PrfKey::from_bytes(profile, [0; 32]))
+        .collect::<Result<Vec<_>>>()?;
+    let sensitive = || SensitiveBytes::from_encrypted(&[]);
+    let c3 = (0..size.values().n)
+        .filter(|&party| party != owner as usize)
+        .flat_map(|party| (0..config.threshold.moduli().len()).map(move |row| (party, row)))
+        .map(|(party, row)| ShareEncryptionProofRequest {
+            share_row_raw: sensitive(),
+            ciphertext_raw: ArcBytes::from_bytes(&[]),
+            recipient_pk_raw: ArcBytes::from_bytes(&[]),
+            u_rns_raw: sensitive(),
+            e0_rns_raw: sensitive(),
+            e1_rns_raw: sensitive(),
+            dkg_input_type: DkgInputType::SecretKey,
+            params_profile: profile,
+            committee_size: size,
+            recipient_party_id: party,
+            row_index: row,
+            esi_index: 0,
+        })
+        .collect();
+    let input = ThresholdSharePending {
+        e3_id: id.clone(),
+        full_share: std::sync::Arc::new(ThresholdShare {
+            party_id: owner.into(),
+            pk_share: ArcBytes::from_bytes(&[]),
+            sk_sss: Default::default(),
+            esi_sss: vec![],
+        }),
+        proof_request: PkGenerationProofRequest {
+            pk0_share: ArcBytes::from_bytes(&[]),
+            sk: sensitive(),
+            eek: sensitive(),
+            e_sm: None,
+            params_profile: profile,
+            committee_size: size,
+            synchronized: Some(context.clone()),
+        },
+        sk_share_computation_request: ShareComputationProofRequest {
+            secret_raw: sensitive(),
+            secret_sss_raw: sensitive(),
+            dkg_input_type: DkgInputType::SecretKey,
+            params_profile: profile,
+            committee_size: size,
+            synchronized: Some(SynchronizedShareComputation {
+                context: context.clone(),
+                outgoing_keys: SealedPrfKeys::seal(profile, binding, owner, &keys, &cipher)?,
+            }),
+        },
+        e_sm_share_computation_request: None,
+        sk_share_encryption_requests: c3,
+        e_sm_share_encryption_requests: vec![],
+        recipient_party_ids: vec![0, 1, 2],
+        own_sk_share_raw: sensitive(),
+        own_esi_shares_raw: vec![],
+    };
+    let plan = DealerPlan::from_pending(&input)?;
+    let mut actor = NodeProofAggregator::new(bus, signer, HashMap::new(), HashMap::new(), true);
+    actor.dealer = DealerCollection::new(
+        HashMap::from([(
+            id.clone(),
+            E3Meta {
+                threshold_m: size.values().threshold,
+                threshold_n: size.values().n,
+                seed: Seed([0; 32]),
+                params_profile: profile,
+                crypto_config_id: context.setup.crypto_config_id.into(),
+                params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&config.threshold)),
+                error_size: ArcBytes::from_bytes(&[]),
+            },
+        )]),
+        HashMap::from([(
+            id,
+            Committee::new(members.iter().map(ToString::to_string).collect()),
+        )]),
+        HashSet::new(),
+        HashMap::new(),
+    );
+    actor.recovery_repositories = Some(Repositories::in_mem());
+    Ok((actor, input, plan))
+}
+
+fn proof(plan: &DealerPlan, id: &E3id, circuit: CircuitName) -> Proof {
+    let config = Configs::for_profile(plan.profile, plan.committee).unwrap();
+    let mut fields = vec![
+        [0; 32];
+        config.public_inputs(circuit).unwrap()
+            + config.public_outputs(circuit).unwrap()
+    ];
+    if circuit != CircuitName::ShareEncryption {
+        let binding = crate::synchronized::request_binding(&config, &plan.context, id).unwrap();
+        fields[0][16..].copy_from_slice(&binding[0].to_be_bytes());
+        fields[1][16..].copy_from_slice(&binding[1].to_be_bytes());
+        fields[2][28..].copy_from_slice(&plan.context.party_id.to_be_bytes());
+    }
+    Proof::new(
+        circuit,
+        ArcBytes::from_bytes(&[7]),
+        ArcBytes::from_bytes(&fields.concat()),
+    )
+}
+
+fn leaves(plan: &DealerPlan, id: &E3id) -> Vec<DKGInnerProofReady> {
+    plan.circuits
+        .iter()
+        .enumerate()
+        .map(|(index, &circuit)| DKGInnerProofReady {
+            e3_id: id.clone(),
+            party_id: plan.context.party_id.into(),
+            seq: index + 1,
+            proof: proof(plan, id, circuit),
+        })
+        .collect()
+}
+
+fn collect(
+    actor: &mut NodeProofAggregator,
+    input: &ThresholdSharePending,
+    plan: &DealerPlan,
+) -> Result<()> {
+    let leaves = leaves(plan, &input.e3_id);
+    // Prefix before plan and tail after plan exercise both recovery orders.
+    actor.accept_dealer_input(&leaves[0].clone().into(), &ec(leaves[0].clone()))?;
+    actor.accept_dealer_input(&input.clone().into(), &ec(input.clone()))?;
+    for leaf in leaves.into_iter().skip(1) {
+        actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf))?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_plan_requires_canonical_fanout_and_no_ss_lane() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (_, input, plan) = fixture(&bus).await?;
+    assert_eq!(plan.circuits.len(), 8); // N=3, threshold L=3; no self C3 or ESM.
+    let mut invalid = input.clone();
+    invalid.sk_share_encryption_requests.swap(0, 1);
+    assert!(DealerPlan::from_pending(&invalid).is_err());
+    let mut invalid = input.clone();
+    invalid.sk_share_encryption_requests.pop();
+    assert!(DealerPlan::from_pending(&invalid).is_err());
+    let mut invalid = input.clone();
+    invalid.proof_request.e_sm = Some(SensitiveBytes::from_encrypted(&[]));
+    assert!(DealerPlan::from_pending(&invalid).is_err());
+    let mut invalid = input;
+    invalid
+        .sk_share_computation_request
+        .synchronized
+        .as_mut()
+        .unwrap()
+        .context
+        .party_id = 0;
+    assert!(DealerPlan::from_pending(&invalid).is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_rejects_unowned_inputs_without_consuming_valid_slots() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    let leaf = leaves(&plan, &input.e3_id).remove(0);
+    let peer = ec(leaf.clone()).with_source(EventSource::Net);
+    assert!(actor
+        .accept_dealer_input(&leaf.clone().into(), &peer)
+        .is_err());
+    assert!(actor.dealer.records.is_empty());
+    let mut wrong = leaf.clone();
+    wrong.party_id = 0;
+    assert!(actor
+        .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+        .is_err());
+    assert!(actor.dealer.records.is_empty());
+    collect(&mut actor, &input, &plan)?;
+    let original = actor.dealer.records[&input.e3_id].proofs[&1].clone();
+    let mut reproved = original.clone();
+    reproved.proof.data = ArcBytes::from_bytes(&[9]);
+    actor.accept_dealer_input(&reproved.clone().into(), &ec(reproved))?;
+    assert_eq!(actor.dealer.records[&input.e3_id].proofs[&1], original);
+    let mut wrong_plan = plan;
+    wrong_plan.context.setup.committee_hash = [8; 32].into();
+    assert!(actor
+        .validate_dealer_authority(&input.e3_id, &wrong_plan)
+        .is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_correlates_exact_response_and_retains_retry_request() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    collect(&mut actor, &input, &plan)?;
+    actor.dealer.effects = true;
+    // Isolated definition dispatch below the runtime admission guard.
+    actor.publish_dealer_work(&input.e3_id);
+    let request = actor.dealer.in_flight[&input.e3_id].clone();
+    let error = ComputeRequestError::new(
+        ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("missing VK".into())),
+        request.clone(),
+    );
+    actor.accept_dealer_input(&error.clone().into(), &ec(error))?;
+    assert_eq!(actor.dealer.in_flight[&input.e3_id], request);
+    let mut substituted = request.clone();
+    let ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work)) = &mut substituted.request else {
+        panic!("expected synchronized dealer request");
+    };
+    work.context.party_id = 0;
+    let error = ComputeRequestError::new(
+        ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("different work".into())),
+        substituted,
+    );
+    assert!(actor
+        .accept_dealer_input(&error.clone().into(), &ec(error))
+        .is_err());
+    let output = proof(&plan, &input.e3_id, CircuitName::NodeFold);
+    let response = ComputeResponse::zk(
+        ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer { proof: output }),
+        request.correlation_id,
+        input.e3_id.clone(),
+    );
+    let mut stale = response.clone();
+    stale.correlation_id = CorrelationId::new();
+    assert!(actor
+        .accept_dealer_input(&stale.clone().into(), &ec(stale))
+        .is_err());
+    let mut wrong_e3 = response.clone();
+    wrong_e3.e3_id = E3id::new("2460", 1);
+    actor.accept_dealer_input(&wrong_e3.clone().into(), &ec(wrong_e3))?;
+    assert!(actor.dealer.records[&input.e3_id].completed.is_none());
+    assert!(actor
+        .accept_dealer_input(
+            &response.clone().into(),
+            &ec(response.clone()).with_source(EventSource::Net)
+        )
+        .is_err());
+    let mut wrong_plan = plan.clone();
+    wrong_plan.context.party_id = 0;
+    let wrong_result = ComputeResponse::zk(
+        ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer {
+            proof: proof(&wrong_plan, &input.e3_id, CircuitName::NodeFold),
+        }),
+        request.correlation_id,
+        input.e3_id.clone(),
+    );
+    assert!(actor
+        .accept_dealer_input(&wrong_result.clone().into(), &ec(wrong_result))
+        .is_err());
+    assert_eq!(actor.dealer.in_flight[&input.e3_id], request);
+    actor.accept_dealer_input(&response.clone().into(), &ec(response))?;
+    assert!(actor.dealer.records[&input.e3_id].completed.is_some());
+    assert!(!actor.dealer.in_flight.contains_key(&input.e3_id));
+    Ok(())
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct FlushDefinition(E3id);
+
+#[derive(Message)]
+#[rtype(result = "(bool, bool, bool)")]
+struct Inspect(E3id);
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct StopDefinition;
+
+impl Handler<StopDefinition> for NodeProofAggregator {
+    type Result = ();
+    fn handle(&mut self, _: StopDefinition, ctx: &mut Context<Self>) {
+        ctx.stop();
+    }
+}
+
+impl Handler<Inspect> for NodeProofAggregator {
+    type Result = actix::MessageResult<Inspect>;
+    fn handle(&mut self, msg: Inspect, _: &mut Context<Self>) -> Self::Result {
+        actix::MessageResult((
+            self.dealer.records.contains_key(&msg.0),
+            self.dealer.ended.contains(&msg.0),
+            self.dealer.in_flight.contains_key(&msg.0),
+        ))
+    }
+}
+
+impl Handler<FlushDefinition> for NodeProofAggregator {
+    type Result = ();
+    fn handle(&mut self, msg: FlushDefinition, ctx: &mut Context<Self>) {
+        let record = self.dealer.records[&msg.0].clone();
+        self.flush_dealer_record(&msg.0, record, ctx);
+    }
+}
+
+#[actix::test]
+async fn synchronized_dealer_flush_restart_reissues_only_unfinished_work() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    let directory = tempfile::tempdir()?;
+    let store = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    actor.recovery_repositories = Some(Repositories::new(store.clone()));
+    collect(&mut actor, &input, &plan)?;
+    actor.dealer.effects = true;
+    let repositories = actor.recovery_repositories.clone().unwrap();
+    let meta = actor.dealer.metadata[&input.e3_id].clone();
+    let addr = actor.start();
+    addr.send(FlushDefinition(input.e3_id.clone())).await?;
+    // A second mailbox message waits for the first record's flush/dispatch acknowledgment.
+    addr.send(FlushDefinition(input.e3_id.clone())).await?;
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(request) => Some(request.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests.len(), 1);
+    addr.send(StopDefinition).await?;
+    store.shutdown().await?;
+    drop(repositories);
+    e3_data::SledDb::close_all_connections();
+    let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    let record = repository(&Repositories::new(reopened.clone()), &input.e3_id)
+        .read()
+        .await?
+        .unwrap();
+    record.validate(&input.e3_id, &meta)?;
+    let (mut restarted, _, _) = fixture(&bus).await?;
+    restarted.dealer.records.insert(input.e3_id.clone(), record);
+    restarted.dealer.effects = true;
+    restarted.publish_dealer_work(&input.e3_id);
+    let new_request = &restarted.dealer.in_flight[&input.e3_id];
+    assert_ne!(new_request.correlation_id, requests[0].correlation_id);
+    assert_eq!(new_request.request, requests[0].request);
+    let stale = ComputeResponse::zk(
+        ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer {
+            proof: proof(&plan, &input.e3_id, CircuitName::NodeFold),
+        }),
+        requests[0].correlation_id,
+        input.e3_id.clone(),
+    );
+    assert!(restarted
+        .accept_dealer_input(&stale.clone().into(), &ec(stale))
+        .is_err());
+    reopened.shutdown().await?;
+    e3_data::SledDb::close_all_connections();
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_runtime_stays_disabled_and_terminal_history_cannot_resurrect(
+) -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    // Even a previously complete definition record cannot bypass runtime admission.
+    collect(&mut actor, &input, &plan)?;
+    let repositories = actor.recovery_repositories.clone().unwrap();
+    let id = input.e3_id.clone();
+    let meta = actor.dealer.metadata.clone();
+    let record = actor.dealer.records[&id].clone();
+    repository(&repositories, &id).write_sync(&record).await?;
+    assert!(recover(&repositories, &meta, &HashSet::new())
+        .await
+        .is_err());
+    let addr = actor.start();
+    let effects: InterfoldEventData = EffectsEnabled::new().into();
+    addr.send(
+        InterfoldEvent::new_with_timestamp(effects, None, 1, None, EventSource::Local)
+            .into_sequenced(1),
+    )
+    .await?;
+    bus.flush_event_pipeline().await?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    let terminal: InterfoldEventData = E3StageChanged {
+        e3_id: id.clone(),
+        previous_stage: E3Stage::Requested,
+        new_stage: E3Stage::KeyPublished,
+    }
+    .into();
+    addr.send(
+        InterfoldEvent::new_with_timestamp(terminal.clone(), None, 2, None, EventSource::Net)
+            .into_sequenced(2),
+    )
+    .await?;
+    assert_eq!(addr.send(Inspect(id.clone())).await?, (true, false, false));
+    addr.send(
+        InterfoldEvent::new_with_timestamp(terminal, None, 3, None, EventSource::Evm)
+            .into_sequenced(3),
+    )
+    .await?;
+    assert_eq!(addr.send(Inspect(id.clone())).await?, (false, true, false));
+    addr.send(
+        InterfoldEvent::new_with_timestamp(input.into(), None, 4, None, EventSource::Local)
+            .into_sequenced(4),
+    )
+    .await?;
+    assert_eq!(addr.send(Inspect(id.clone())).await?, (false, true, false));
+    assert!(repository(&repositories, &id).read().await?.is_none());
+    // A stale disk record is also removed from the independent confirmed startup projection.
+    repository(&repositories, &id).write_sync(&record).await?;
+    recover(&repositories, &meta, &HashSet::from([id.clone()])).await?;
+    assert!(repository(&repositories, &id).read().await?.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_completed_result_is_flushed_before_republication() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    collect(&mut actor, &input, &plan)?;
+    let request = ComputeRequest::zk(
+        ZkRequest::SynchronizedDkg(Box::new(
+            plan.request(&input.e3_id, &actor.dealer.records[&input.e3_id].proofs)?
+                .unwrap(),
+        )),
+        CorrelationId::new(),
+        input.e3_id.clone(),
+    );
+    actor
+        .dealer
+        .in_flight
+        .insert(input.e3_id.clone(), request.clone());
+    let response = ComputeResponse::zk(
+        ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer {
+            proof: proof(&plan, &input.e3_id, CircuitName::NodeFold),
+        }),
+        request.correlation_id,
+        input.e3_id.clone(),
+    );
+    actor.accept_dealer_input(&response.clone().into(), &ec(response))?;
+    let repositories = actor.recovery_repositories.clone().unwrap();
+    let expected = actor.dealer.records[&input.e3_id]
+        .completed
+        .clone()
+        .unwrap();
+    actor.dealer.effects = true;
+    let addr = actor.start();
+    addr.send(FlushDefinition(input.e3_id.clone())).await?;
+    addr.send(Inspect(input.e3_id.clone())).await?;
+    let record = repository(&repositories, &input.e3_id)
+        .read()
+        .await?
+        .unwrap();
+    assert_eq!(record.completed.as_ref(), Some(&expected));
+    let EventFixture {
+        bus: resumed_bus,
+        history: resumed_history,
+        ..
+    } = EventFixture::new()?;
+    let (mut restarted, _, _) = fixture(&resumed_bus).await?;
+    restarted.dealer.records.insert(input.e3_id.clone(), record);
+    restarted.publish_dealer_work(&input.e3_id);
+    resumed_bus.flush_event_pipeline().await?;
+    assert!(resumed_history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    restarted.dealer.effects = true;
+    restarted.publish_dealer_work(&input.e3_id);
+    restarted.publish_dealer_work(&input.e3_id);
+    resumed_bus.flush_event_pipeline().await?;
+    let events = resumed_history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].get_data(), &InterfoldEventData::from(expected));
+    bus.flush_event_pipeline().await?;
+    assert_eq!(
+        history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+struct FailedFlush;
+impl Actor for FailedFlush {
+    type Context = Context<Self>;
+}
+impl Handler<Flush> for FailedFlush {
+    type Result = Result<()>;
+    fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
+        anyhow::bail!("injected flush failure")
+    }
+}
+
+#[actix::test]
+async fn synchronized_dealer_failed_flush_withholds_dispatch_and_keeps_inputs() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    collect(&mut actor, &input, &plan)?;
+    let repositories = actor.recovery_repositories.take().unwrap();
+    actor.recovery_repositories = Some(Repositories::new(
+        repositories
+            .store
+            .with_flush_recipient(FailedFlush.start().recipient()),
+    ));
+    actor.dealer.effects = true;
+    let addr = actor.start();
+    addr.send(FlushDefinition(input.e3_id.clone())).await?;
+    assert_eq!(addr.send(Inspect(input.e3_id)).await?, (true, false, false));
+    bus.flush_event_pipeline().await?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    Ok(())
+}

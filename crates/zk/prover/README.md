@@ -76,8 +76,14 @@ rejects disabled profiles before configuration, witness, artifact or process acc
 substitutes the SS graph. Expected anchors/native PK must come from independently admitted inputs,
 not the candidate's outputs. Actors must still authenticate children, admit the exact local response
 source/correlation and persist phase progress. Runtime generation/verification errors retain the
-original request for retry, never a peer-invalid verdict. Guarded producer actors and the registry
-writer are not implemented by this worker boundary.
+original request for retry, never a peer-invalid verdict.
+
+The node collector's guarded dealer phase uses `synchronized::dealer::DealerPlan` to collect local
+C1–C3 and check the correlated join result. That definition API checks statements, not cryptographic
+validity, chain authority or runtime admission. The actor checks local source/request/committee,
+flushes its exclusive recovery record before effects and retires at confirmed publication. The local
+dealer output is not a peer-authenticated setup or consent. Recipient/publication producers and the
+registry writer remain absent; synchronized admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
