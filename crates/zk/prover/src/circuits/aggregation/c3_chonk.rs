@@ -21,6 +21,7 @@ use crate::circuits::utils::bytes_to_field_strings;
 use crate::circuits::vk::{self, VkArtifacts};
 use crate::error::ZkError;
 use crate::prover::ZkProver;
+use crate::witness::CompiledCircuit;
 use e3_events::Proof;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
@@ -35,7 +36,9 @@ struct C3ChonkCircuits {
     leaf: VkArtifacts,
     stack: ChonkStack,
     tube: VkArtifacts,
+    tube_compiled: CompiledCircuit,
     accumulate: VkArtifacts,
+    accumulate_compiled: CompiledCircuit,
 }
 
 impl C3ChonkCircuits {
@@ -59,7 +62,13 @@ impl C3ChonkCircuits {
             )?,
             stack,
             tube: vk::load_vk_artifacts(&default, CircuitName::C3ChonkTube)?,
+            tube_compiled: load_compiled(prover, CircuitName::C3ChonkTube, artifacts_dir)?,
             accumulate: vk::load_vk_artifacts(&default, CircuitName::C3ChonkAccumulate)?,
+            accumulate_compiled: load_compiled(
+                prover,
+                CircuitName::C3ChonkAccumulate,
+                artifacts_dir,
+            )?,
         })
     }
 }
@@ -165,7 +174,7 @@ fn prove_stack_and_tube(
 
     let tube_circuit = CircuitName::C3ChonkTube;
     let tube_witness = witness(
-        &load_compiled(prover, tube_circuit, artifacts_dir)?,
+        &circuits.tube_compiled,
         &TubeInput {
             chonk_vk: circuits.stack.chonk_key().verification_key.clone(),
             chonk_key_hash: circuits.stack.chonk_key().key_hash.clone(),
@@ -226,7 +235,7 @@ fn prove_accumulate(
         right_public: public(right)?,
         own_key_hash: circuits.accumulate.key_hash.clone(),
     };
-    let witness = witness(&load_compiled(prover, circuit, artifacts_dir)?, &input)?;
+    let witness = witness(&circuits.accumulate_compiled, &input)?;
     let proof = prover.generate_rollup_proof(circuit, &witness, job_id, artifacts_dir)?;
     let _ = prover.cleanup(job_id);
     Ok(proof)
@@ -281,7 +290,8 @@ pub fn generate_c3_chonk_chain_with_substituted_key(
     )
 }
 
-fn prove_chain(
+/// The tubes of `inner_proofs`, one per stack, in order.
+fn prove_tubes(
     prover: &ZkProver,
     circuits: &C3ChonkCircuits,
     inner_proofs: &[Proof],
@@ -289,7 +299,7 @@ fn prove_chain(
     total_slots: usize,
     e3_id: &str,
     artifacts_dir: &str,
-) -> Result<Proof, ZkError> {
+) -> Result<Vec<Proof>, ZkError> {
     // C3 chains may be partial (one C3 per (recipient, modulus) this party computed), so only
     // range and uniqueness are checked; the circuits enforce both again.
     if inner_proofs.len() != slot_indices.len() {
@@ -328,22 +338,47 @@ fn prove_chain(
     // The fewest stacks that hold every leaf, at least two, sized as evenly as possible.
     let stacks = leaves.len().div_ceil(circuits.leaves_per_stack).max(2);
     let size = leaves.len().div_ceil(stacks);
-    let mut tubes = leaves.chunks(size).enumerate().map(|(i, group)| {
-        prove_stack_and_tube(
-            prover,
-            group,
-            total_slots,
-            &format!("{e3_id}-c3chonk-stack-{i}"),
-            artifacts_dir,
-            circuits,
-        )
-    });
-    let mut acc = tubes.next().expect("at least two stacks")?;
+    leaves
+        .chunks(size)
+        .enumerate()
+        .map(|(i, group)| {
+            prove_stack_and_tube(
+                prover,
+                group,
+                total_slots,
+                &format!("{e3_id}-c3chonk-stack-{i}"),
+                artifacts_dir,
+                circuits,
+            )
+        })
+        .collect()
+}
+
+fn prove_chain(
+    prover: &ZkProver,
+    circuits: &C3ChonkCircuits,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let mut tubes = prove_tubes(
+        prover,
+        circuits,
+        inner_proofs,
+        slot_indices,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+    )?
+    .into_iter();
+    let mut acc = tubes.next().expect("at least two stacks");
     for (step, tube) in tubes.enumerate() {
         acc = prove_accumulate(
             prover,
             &acc,
-            &tube?,
+            &tube,
             total_slots,
             &format!("{e3_id}-c3chonk-acc-{step}"),
             artifacts_dir,
@@ -351,4 +386,45 @@ fn prove_chain(
         )?;
     }
     Ok(acc)
+}
+
+/// The tubes [`generate_c3_chonk_chain`] accumulates, one per stack. Negative tests only.
+pub fn generate_c3_chonk_tubes(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Vec<Proof>, ZkError> {
+    prove_tubes(
+        prover,
+        &C3ChonkCircuits::load(prover, artifacts_dir)?,
+        inner_proofs,
+        slot_indices,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+    )
+}
+
+/// One accumulate step of [`generate_c3_chonk_chain`], over children the caller chooses.
+/// Negative tests only.
+pub fn generate_c3_chonk_accumulate(
+    prover: &ZkProver,
+    left: &Proof,
+    right: &Proof,
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    prove_accumulate(
+        prover,
+        left,
+        right,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+        &C3ChonkCircuits::load(prover, artifacts_dir)?,
+    )
 }

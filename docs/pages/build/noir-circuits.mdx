@@ -133,8 +133,9 @@ proofs go on-chain.
 C3 runs over Chonk: `c3_chonk_app` verifies a batch of C3 proofs and three kernels close the stack,
 `c3_chonk_tube` verifies the stack's Chonk proof, `c3_chonk_accumulate` merges the tubes, and
 `c3ab_fold` closes the chain. The decryption path is shorter. The C6 proofs of the committee go
-through `c6_fold`, and `decryption_aggregator` adds C7. The `*_kernel` packages make the first proof
-of each sequential fold (`c6_fold`, `nodes_fold`).
+through `c6_fold`, and `decryption_aggregator` adds C7. The `*_fold_kernel` packages make the first
+proof of each sequential fold (`c6_fold`, `nodes_fold`). The `c3_chonk_*_kernel` packages are Chonk
+kernels, not fold kernels.
 
 The Solidity verifiers for the two aggregators are committed to the repository as
 `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol`. `BfvPkVerifier` and
@@ -439,12 +440,18 @@ and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/
 
 ## Add or rename a circuit
 
-1. Put the package in `bin/dkg`, `bin/threshold`, or `bin/recursive_aggregation`. The build script
-   finds packages in these groups automatically.
-2. Add the package to the `members` list of the group workspace, for `bin/dkg` and `bin/threshold`.
+1. Put the package in `bin/dkg`, `bin/threshold`, `bin/chonk`, or `bin/recursive_aggregation`. The
+   build script finds packages in these groups automatically. In `bin/chonk`, the package suffix
+   (`_app`, `_hiding_kernel`, or any other kernel) picks the Chonk circuit kind the key is written
+   for (`write_vk` in `crates/zk/build/src/artifacts.rs`).
+2. Add the package to the `members` list of the group workspace, for `bin/dkg`, `bin/threshold`, and
+   `bin/chonk`.
 3. Add the directory to `DIRS` in `scripts/circuits/lint.sh`, for a package in
    `bin/recursive_aggregation`.
-4. Add a `CircuitName` variant in `crates/zk/config` if the Rust prover must run the circuit.
+4. Append a `CircuitName` variant in `crates/zk/config` after the last one if the Rust prover must
+   run the circuit. Never remove or reorder variants. Mark the variant of a retired circuit as
+   retired and keep it in place: every persisted or gossiped bincode encoding (the event log, the
+   keyshare layouts, node-fold recovery, DHT documents, and slashing records) holds it by position.
 5. Rebuild each pair that you ship, and regenerate the verifiers if the circuit goes on-chain.
 
 ## Next steps

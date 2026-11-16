@@ -2,10 +2,11 @@
 
 Owners: [Noir library](../../circuits/lib/src/),
 [recursive circuits](../../circuits/bin/recursive_aggregation/),
-[Rust configuration](../../crates/zk/config/) and [witness preparation](../../crates/zk/witness/),
-and [BFV wrappers](../../packages/interfold-contracts/contracts/verifiers/). These constraints
-survive implementation refactors. A passing witness is not a soundness argument, and a code citation
-or audit remediation is not completeness evidence.
+[Chonk circuits](../../circuits/bin/chonk/), [Rust configuration](../../crates/zk/config/) and
+[witness preparation](../../crates/zk/witness/), and
+[BFV wrappers](../../packages/interfold-contracts/contracts/verifiers/). These constraints survive
+implementation refactors. A passing witness is not a soundness argument, and a code citation or
+audit remediation is not completeness evidence.
 
 ## Statement chain
 
@@ -419,7 +420,7 @@ both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which t
 Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
 writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app,
 kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
-on an accumulator.
+on an accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
 
 Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
 verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
@@ -492,10 +493,11 @@ publishes them in the `default` variant alone; the final circuits keep every var
 ## Evidence and change review
 
 - [Noir helpers](../../circuits/lib/src/math/) and
-  [recursive circuit tests](../../circuits/bin/recursive_aggregation/) own range, packing,
-  recipient, and recursion constraints. `pnpm noir:test` exercises the selected configuration; use
-  real secure witnesses and unit branches for secure-only paths. Scan execution output for `bug:` as
-  well as exit failures. Compilation alone is not a proof check.
+  [recursive circuit tests](../../circuits/bin/recursive_aggregation/),
+  [Chonk circuits](../../circuits/bin/chonk/) own range, packing, recipient, and recursion
+  constraints. `pnpm noir:test` exercises the selected configuration; use real secure witnesses and
+  unit branches for secure-only paths. Scan execution output for `bug:` as well as exit failures.
+  Compilation alone is not a proof check.
 - [BFV wrapper tests](../../packages/interfold-contracts/test/BfvDecryptionVerifier.spec.ts),
   [PK tests](../../packages/interfold-contracts/test/BfvPkVerifier.spec.ts), and
   [VK integration](../../packages/interfold-contracts/test/BfvVkBindingIntegration.spec.ts) own

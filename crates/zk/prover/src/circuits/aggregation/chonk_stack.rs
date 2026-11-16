@@ -8,7 +8,7 @@
 //! passes on the data before it and appends the hash of the key it verified, so the stack's public
 //! outputs are the app's data, the leaf key hash, then the app, init and tail key hashes.
 
-use crate::chonk::{prove_stack, ChonkKind, ChonkStackCircuit};
+use crate::chonk::{ChonkKind, ChonkStackCircuit};
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk::{self, VkArtifacts};
 use crate::error::ZkError;
@@ -17,14 +17,12 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_zk_config::{CircuitName, CircuitVariant};
 use noirc_abi::AbiType;
 use serde::Serialize;
-use std::fs;
 
 /// Fields of a Chonk proof after its public inputs (`lib::math::chonk::CHONK_PROOF_LENGTH`).
 const CHONK_PROOF_LENGTH: usize = 1221;
 
 pub(crate) struct StackCircuit {
     compiled: CompiledCircuit,
-    key: Vec<u8>,
     pub(crate) vk: VkArtifacts,
 }
 
@@ -84,16 +82,10 @@ impl ChonkStack {
         let stages = circuits
             .iter()
             .map(|&circuit| {
-                let dir = default.join(circuit.dir_path());
-                let key_path = dir.join(format!("{}.vk", circuit.as_str()));
+                let vk = vk::load_vk_artifacts(&default, circuit)?;
                 Ok(StackCircuit {
-                    compiled: CompiledCircuit::from_file(
-                        &dir.join(format!("{}.json", circuit.as_str())),
-                    )?,
-                    key: fs::read(&key_path).map_err(|e| {
-                        ZkError::CircuitNotFound(format!("{}: {e}", key_path.display()))
-                    })?,
-                    vk: vk::load_vk_artifacts(&default, circuit)?,
+                    compiled: load_compiled(prover, circuit, artifacts_dir)?,
+                    vk,
                 })
             })
             .collect::<Result<_, ZkError>>()?;
@@ -123,14 +115,13 @@ impl ChonkStack {
     }
 
     /// Hands the kernel after `stage` the key of stage `from` in place of `stage`'s own, as a
-    /// prover passing off one circuit's proof as another's would. Negative tests only.
+    /// prover passing off one circuit's proof as another's would. bb still proves `stage` under its
+    /// own key. Negative tests only.
     pub(crate) fn substitute_key(&mut self, stage: usize, from: usize) {
-        self.stages[stage].vk = VkArtifacts {
-            verification_key: self.stages[from].vk.verification_key.clone(),
-            key_hash: self.stages[from].vk.key_hash.clone(),
-            verification_key_bytes: self.stages[from].vk.verification_key_bytes.clone(),
-            key_hash_bytes: self.stages[from].vk.key_hash_bytes,
-        };
+        let key = self.stages[from].vk.verification_key.clone();
+        let hash = self.stages[from].vk.key_hash.clone();
+        self.stages[stage].vk.verification_key = key;
+        self.stages[stage].vk.key_hash = hash;
     }
 
     /// The hiding kernel's Chonk key, which a tube verifies the stack's proof against.
@@ -198,16 +189,11 @@ impl ChonkStack {
                 circuit,
                 kind,
                 compiled: &stage.compiled,
-                verification_key: &stage.key,
+                verification_key: &stage.vk.verification_key_bytes,
                 witness,
             })
             .collect();
-        let chonk = bytes_to_field_strings(&prove_stack(
-            prover.bb_binary(),
-            &stack,
-            job_id,
-            prover.bb_timeout(),
-        )?)?;
+        let chonk = bytes_to_field_strings(&prover.generate_chonk_proof(&stack, job_id)?)?;
         if chonk.len() != outputs.len() + CHONK_PROOF_LENGTH {
             return Err(ZkError::ProveFailed(format!(
                 "Chonk proof has {} fields; expected {} public and {CHONK_PROOF_LENGTH} proof fields",

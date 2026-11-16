@@ -17,6 +17,8 @@
 //!   [`generate_c3_chonk_chain`].
 //! - [`c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key`]: a leaf whose claimed row differs
 //!   from its proof, or a stack stage handed another stage's key, never yields a chain.
+//! - [`c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind`]: the accumulate step and
+//!   `c3ab_fold` reject children of the wrong kind, and a tube under the accumulator's key.
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
 
 mod common;
@@ -36,10 +38,11 @@ use e3_zk_config::DkgInputType;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{
-    fold_witness_field_strings, generate_c3_chonk_chain_with_substituted_key, load_vk_artifacts,
+    fold_witness_field_strings, generate_c3_chonk_accumulate,
+    generate_c3_chonk_chain_with_substituted_key, generate_c3_chonk_tubes, load_vk_artifacts,
 };
 use e3_zk_prover::{
-    generate_c3_chonk_chain, generate_sequential_c6_fold, Provable, ZkBackend, ZkProver,
+    generate_c3_chonk_chain, generate_sequential_c6_fold, Provable, ZkBackend, ZkError, ZkProver,
 };
 use e3_zk_prover::{
     ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,
@@ -429,7 +432,7 @@ fn c3_total_slots_from_compiled_json() -> usize {
         .join("circuits/bin/recursive_aggregation/c3_chonk_tube/target/c3_chonk_tube.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "read {}: {} (run `pnpm build:circuits --group recursive_aggregation`)",
+            "read {}: {} (run `pnpm build:circuits --group recursive_aggregation,chonk`)",
             path.display(),
             e
         )
@@ -530,6 +533,12 @@ async fn c3_chonk_chain_proves_and_exposes_its_key_list() {
     )
     .expect("C3 Chonk chain");
     assert_eq!(chain.circuit, CircuitName::C3ChonkAccumulate);
+    assert!(
+        f.prover
+            .verify_rollup_proof(&chain, "e3-c3chonk-chain", &f.artifacts_dir)
+            .expect("verify_rollup_proof invocation"),
+        "the chain proof should verify under its rollup VK"
+    );
 
     let default_dir = f
         .prover
@@ -576,7 +585,7 @@ async fn c3_chonk_chain_proves_and_exposes_its_key_list() {
 }
 
 /// A stack cannot carry a leaf whose claimed row differs from what it proved, nor a stage passed
-/// off under another stage's key: the chain fails to prove.
+/// off under another stage's key: bb rejects the stack, or cannot even accumulate it.
 #[tokio::test]
 #[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
@@ -591,21 +600,39 @@ async fn c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
         f.inners[1].data.clone(),
         e3_utils::ArcBytes::from_bytes(&signals),
     );
-    let result = generate_c3_chonk_chain(
+    let error = generate_c3_chonk_chain(
         &f.prover,
         &[f.inners[0].clone(), corrupted],
         &slots,
         f.total_slots,
         "c3-corrupted-leaf",
         &f.artifacts_dir,
-    );
+    )
+    .expect_err("a leaf whose claimed row differs from its proof must not reach a chain");
     assert!(
-        result.is_err(),
-        "a leaf whose claimed row differs from its proof must not reach a chain"
+        matches!(&error, ZkError::ProofRejected(message)
+            if message.contains("Failed to verify the generated proof")),
+        "{error:?}"
     );
 
-    for (stage, from) in [(0, 1), (1, 2), (2, 1)] {
-        let result = generate_c3_chonk_chain_with_substituted_key(
+    // The init kernel's key has a different number of public inputs than the app's, so bb cannot
+    // accumulate the stack. The kernels share a shape: the stack proves, and bb rejects it.
+    let error = generate_c3_chonk_chain_with_substituted_key(
+        &f.prover,
+        &f.inners,
+        &slots,
+        f.total_slots,
+        (0, 1),
+        "c3-key-0-as-1",
+        &f.artifacts_dir,
+    )
+    .expect_err("the app claimed under the init kernel's key must not reach a chain");
+    assert!(
+        matches!(&error, ZkError::ProveFailed(message) if message.contains("IO size mismatch")),
+        "{error:?}"
+    );
+    for (stage, from) in [(1, 2), (2, 1)] {
+        let error = generate_c3_chonk_chain_with_substituted_key(
             &f.prover,
             &f.inners,
             &slots,
@@ -613,12 +640,150 @@ async fn c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
             (stage, from),
             &format!("c3-key-{stage}-as-{from}"),
             &f.artifacts_dir,
-        );
+        )
+        .expect_err("a kernel claimed under the other kernel's key must not reach a chain");
         assert!(
-            result.is_err(),
-            "stack stage {stage} claimed under stage {from}'s key must not reach a chain"
+            matches!(&error, ZkError::ProofRejected(message)
+                if message.contains("Failed to verify the generated proof")),
+            "stage {stage} as {from}: {error:?}"
         );
     }
+    for i in 0..2 {
+        f.prover.cleanup(&format!("e3-c3chonk-inner-{i}")).unwrap();
+    }
+}
+
+/// The witness fails on a constraint of the circuit. The solver reports only that an assertion
+/// failed, so each case also solves its honest twin, which differs in the one edit under test.
+fn assert_witness_rejected(result: Result<Vec<u8>, ZkError>, case: &str) {
+    match result {
+        Err(ZkError::WitnessGenerationFailed(message)) => {
+            assert_eq!(message, "Failed assertion", "{case}")
+        }
+        other => panic!("{case}: expected a failed assertion, got {other:?}"),
+    }
+}
+
+/// `c3_chonk_accumulate` takes a tube on the right, and a tube or an accumulator on the left;
+/// `c3ab_fold` takes accumulators. The checks are constraints of the circuits, so each witness
+/// fails where its honest twin solves. A tube handed to the accumulate step under the
+/// accumulator's key is a statement the circuit's constraints allow, so only bb's recursive
+/// verification rejects it.
+#[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
+async fn c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind() {
+    let f = c3_fixture().await;
+    let tubes = generate_c3_chonk_tubes(
+        &f.prover,
+        &f.inners,
+        &[0u32, 1u32],
+        f.total_slots,
+        "e3-c3chonk-tubes",
+        &f.artifacts_dir,
+    )
+    .expect("C3 Chonk tubes");
+    assert_eq!(tubes.len(), 2);
+    assert!(tubes.iter().all(|t| t.circuit == CircuitName::C3ChonkTube));
+    let accumulator = generate_c3_chonk_accumulate(
+        &f.prover,
+        &tubes[0],
+        &tubes[1],
+        f.total_slots,
+        "e3-c3chonk-accumulate",
+        &f.artifacts_dir,
+    )
+    .expect("honest accumulate step");
+    assert!(f
+        .prover
+        .verify_rollup_proof(&accumulator, "e3-c3chonk-accumulate", &f.artifacts_dir)
+        .unwrap());
+
+    let default_dir = f
+        .prover
+        .circuits_dir(CircuitVariant::Default, &f.artifacts_dir);
+    let tube_vk = load_vk_artifacts(&default_dir, CircuitName::C3ChonkTube).unwrap();
+    let accumulate_vk = load_vk_artifacts(&default_dir, CircuitName::C3ChonkAccumulate).unwrap();
+    let compiled = |group: &str, name: &str| {
+        e3_zk_prover::test_utils::workspace_root()
+            .join(format!("circuits/bin/{group}/{name}/target/{name}.json"))
+    };
+    let accumulate_path = compiled("recursive_aggregation", "c3_chonk_accumulate");
+    let accumulate_input = |left: (&Proof, &[String]), right: &Proof| {
+        json!({
+            "left_vk": left.1,
+            "left_proof": fold_witness_field_strings(&left.0.data).unwrap(),
+            "left_public": fields(left.0),
+            "right_vk": tube_vk.verification_key,
+            "right_proof": fold_witness_field_strings(&right.data).unwrap(),
+            "right_public": fields(right),
+            "own_key_hash": accumulate_vk.key_hash,
+        })
+    };
+    witness(
+        &accumulate_path,
+        &accumulate_input((&tubes[0], &tube_vk.verification_key), &tubes[1]),
+    )
+    .expect("honest accumulate witness");
+
+    // The right child must be a tube: an accumulator names a different key as its own.
+    assert_witness_rejected(
+        witness(
+            &accumulate_path,
+            &accumulate_input((&tubes[0], &tube_vk.verification_key), &accumulator),
+        ),
+        "the right child must be a tube",
+    );
+    // The left child must be a tube or an accumulator: name the hiding kernel's key as its own.
+    let mut neither = accumulate_input((&tubes[0], &tube_vk.verification_key), &tubes[1]);
+    let hiding_key = fields(&tubes[0])[2].clone();
+    neither["left_public"][0] = json!(hiding_key);
+    assert_witness_rejected(
+        witness(&accumulate_path, &neither),
+        "the left child must be a tube or this accumulator",
+    );
+
+    // The key list is not enough: a tube verified under the accumulator's key is still rejected.
+    let relabelled = Proof::new(
+        CircuitName::C3ChonkAccumulate,
+        tubes[0].data.clone(),
+        tubes[0].public_signals.clone(),
+    );
+    let error = generate_c3_chonk_accumulate(
+        &f.prover,
+        &relabelled,
+        &tubes[1],
+        f.total_slots,
+        "e3-c3chonk-wrong-left-key",
+        &f.artifacts_dir,
+    )
+    .expect_err("a tube verified under the accumulator's key must be rejected");
+    assert!(matches!(&error, ZkError::ProofRejected(_)), "{error:?}");
+
+    // `c3ab_fold` closes accumulators: a chain that ends on a bare tube is rejected.
+    let c3ab_path = compiled("recursive_aggregation", "c3ab_fold");
+    let c3ab_input = |a: (&Proof, &[String]), b: (&Proof, &[String])| {
+        json!({
+            "c3a_vk": a.1,
+            "c3a_proof": fold_witness_field_strings(&a.0.data).unwrap(),
+            "c3a_public": fields(a.0),
+            "c3b_vk": b.1,
+            "c3b_proof": fold_witness_field_strings(&b.0.data).unwrap(),
+            "c3b_public": fields(b.0),
+            "c3a_key_hash": fields(a.0)[0],
+            "c3b_key_hash": fields(b.0)[0],
+        })
+    };
+    let acc = (&accumulator, accumulate_vk.verification_key.as_slice());
+    let tube = (&tubes[0], tube_vk.verification_key.as_slice());
+    witness(&c3ab_path, &c3ab_input(acc, acc)).expect("honest c3ab witness");
+    assert_witness_rejected(
+        witness(&c3ab_path, &c3ab_input(tube, acc)),
+        "the chain must end on an accumulator",
+    );
+    assert_witness_rejected(
+        witness(&c3ab_path, &c3ab_input(acc, tube)),
+        "the chain must end on an accumulator",
+    );
     for i in 0..2 {
         f.prover.cleanup(&format!("e3-c3chonk-inner-{i}")).unwrap();
     }

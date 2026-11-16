@@ -11,7 +11,7 @@
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
-use lib::math::c3_fold::place_leaves;
+use lib::math::c3_chonk_rows::place_leaves;
 use lib::math::chonk::C3_CHONK_LEAVES;
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;

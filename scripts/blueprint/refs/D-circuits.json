@@ -19,9 +19,9 @@
       "circuits/bin/chonk/c3_chonk_app/src/main.nr@27@verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k]",
       "circuits/bin/recursive_aggregation/c3_chonk_tube/src/main.nr@24@std::verify_proof_with_type(",
       "circuits/bin/recursive_aggregation/c3_chonk_accumulate/src/main.nr@34@verify_rolluphonk_proof(right_vk, right_proof",
-      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@50@verify_root_rolluphonk_proof(c3a_vk, c3a_proof",
-      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@51@verify_root_rolluphonk_proof(c3b_vk, c3b_proof",
-      "crates/zk/prover/src/circuits/aggregation/c3_chonk.rs@69@if proof.circuit != CircuitName::ShareEncryption {"
+      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@62@verify_root_rolluphonk_proof(c3a_vk, c3a_proof",
+      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@63@verify_root_rolluphonk_proof(c3b_vk, c3b_proof",
+      "crates/zk/prover/src/circuits/aggregation/c3_chonk.rs@78@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
       "verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k], leaf_key_hash);",

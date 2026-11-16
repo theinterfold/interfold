@@ -567,30 +567,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             continue;
         }
         let job = tempfile::tempdir_in(target)?;
-        let mut write_vk = Command::new("bb");
-        write_vk
-            .args(["write_vk", "-b"])
-            .arg(&compiled)
-            .arg("-o")
-            .arg(job.path());
-        if verifier_target == CHONK_TARGET {
-            // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding
-            // kernel ends the stack; its key is the stack's Chonk key.
-            let kind = if circuit.name.ends_with("_app") {
-                "app"
-            } else if circuit.name.ends_with("_hiding_kernel") {
-                "hiding"
-            } else {
-                "kernel"
-            };
-            write_vk.args(["--scheme", "chonk", "--circuit_kind", kind]);
-        } else {
-            write_vk.args(["-t", verifier_target]);
-        }
-        run(&mut write_vk)?;
-        if verifier_target == CHONK_TARGET {
-            write_chonk_vk_hash(job.path())?;
-        }
+        write_vk(circuit, &compiled, verifier_target, job.path())?;
         for (file, suffix) in vk_files(extension) {
             let source = job.path().join(file);
             if !source.is_file() {
@@ -607,6 +584,41 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
         }
     }
     println!("Built {}/{}", circuit.group, circuit.name);
+    Ok(())
+}
+
+/// Writes `vk` and `vk_hash` for `circuit` into `out` with `bb write_vk`. The build and the
+/// qualification share it so both derive a Chonk key the same way.
+pub(crate) fn write_vk(
+    circuit: &Circuit,
+    compiled: &Path,
+    verifier_target: &str,
+    out: &Path,
+) -> Result<()> {
+    let mut command = Command::new("bb");
+    command
+        .args(["write_vk", "-b"])
+        .arg(compiled)
+        .arg("-o")
+        .arg(out);
+    if verifier_target == CHONK_TARGET {
+        // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding kernel
+        // ends the stack; its key is the stack's Chonk key.
+        let kind = if circuit.name.ends_with("_app") {
+            "app"
+        } else if circuit.name.ends_with("_hiding_kernel") {
+            "hiding"
+        } else {
+            "kernel"
+        };
+        command.args(["--scheme", "chonk", "--circuit_kind", kind]);
+    } else {
+        command.args(["-t", verifier_target]);
+    }
+    run(&mut command)?;
+    if verifier_target == CHONK_TARGET {
+        write_chonk_vk_hash(out)?;
+    }
     Ok(())
 }
 
@@ -1473,5 +1485,44 @@ mod tests {
             "published-source"
         );
         assert_eq!(fs::read(pair.join(".build-stamp.json")).unwrap(), archived);
+
+        // A Chonk circuit is built with `write_vk --scheme chonk`, which writes no hash. The
+        // qualification must derive its key and hash the way the build does.
+        crate::tests::write_pins(root);
+        let chonk = root.join("circuits/bin/chonk");
+        fs::create_dir_all(chonk.join("c3_chonk_app/src")).unwrap();
+        fs::write(
+            chonk.join("Nargo.toml"),
+            "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/Nargo.toml"),
+            "[package]\nname = \"c3_chonk_app\"\ntype = \"bin\"\nauthors = []\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/src/main.nr"),
+            "fn main(x: Field, y: Field) -> pub Field { x + y }\n",
+        )
+        .unwrap();
+        let mut only_chonk = request();
+        only_chonk.groups =
+            super::super::GroupSelection::Selected(vec![super::super::Group::Chonk]);
+        only_chonk.no_clean = true;
+        only_chonk.no_clean_targets = true;
+        super::super::execute(root, &only_chonk).unwrap();
+        let built = pair.join("default/chonk/c3_chonk_app");
+        assert_eq!(
+            fs::read(built.join("c3_chonk_app.vk_hash")).unwrap().len(),
+            32
+        );
+        vk_commitments::qualify(root, &only_chonk).unwrap();
+        let hash = built.join("c3_chonk_app.vk_hash");
+        fs::write(&hash, [0; 32]).unwrap();
+        assert!(vk_commitments::qualify(root, &only_chonk)
+            .unwrap_err()
+            .to_string()
+            .contains("VK hash differs"));
     }
 }

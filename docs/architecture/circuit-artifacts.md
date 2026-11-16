@@ -169,6 +169,15 @@ keys. Subset builds, skip-VK, or any circuit failure remove **both** pair/bin an
 stale pins. Cache markers and release validation require both; hydration copies them. Final wrappers
 pin these tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
 
+The builder writes the `.vk_hash` of every Chonk app, kernel, and hiding circuit, not bb:
+`write_vk --scheme chonk` writes a key only, and the hash is `e3_safe::bb_poseidon2_hash` over its
+fields. A bb upgrade must recheck these hashes against bb's in-circuit VK-hash check. The C3 stacks
+are proven through `bb prove --scheme chonk --ivc_inputs_path` with the msgpack input layout of that
+bb version, which is part of the pinned bb interface. `qualify-vk-commitments` re-derives Chonk keys
+with bb but recomputes their hashes with the same builder function, so it detects stale files, not a
+hash-algorithm change; that evidence is the `e3-safe` bb 6.0.0 fixture test and real C3 Chonk
+proofs.
+
 Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable routers dispatch by
 public-input length and VK anchors. Selecting an already installed matching pair needs no
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before

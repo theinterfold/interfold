@@ -5,18 +5,19 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Combines the final C3 Chonk accumulator of the sk C3 chain with that of the e_sm chain and
-//! closes both IPA claims (`lib::math::chonk`). Keeps the unchunked `c3ab_fold` output layout.
+//! closes both IPA claims (`lib::math::chonk`). Its output layout is the one `node_fold` reads.
 //!
 //! Each chain's key list (accumulator, tube, Chonk, C3 leaf, app, init and tail keys) enters the
 //! combined key hash, which `node_fold` binds into the VK tree. A chain built from any other
-//! circuits, or ending on a bare tube, gives a different hash and is rejected at the anchor.
+//! circuits gives a different hash and is rejected at the anchor. A chain that ends on a bare tube
+//! is rejected here.
 
 use bb_proof_verification::{
     RollupHonkProof, RollupHonkVerificationKey, verify_root_rolluphonk_proof,
 };
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
-use lib::math::chonk::{C3_CHONK_KEYS, C3_CHONK_OWN_KEY};
+use lib::math::chonk::{C3_CHONK_KEYS, C3_CHONK_OWN_KEY, C3_CHONK_TUBE_KEY};
 use lib::math::commitments::compute_vk_hash;
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
@@ -35,6 +36,15 @@ fn chain_key_hash(public: [Field; C3_CHONK_PUBLIC_LEN]) -> Field {
     compute_vk_hash(keys.as_vector())
 }
 
+/// A chain has at least two stacks, so it ends on an accumulator: a bare tube names itself as its
+/// own key.
+fn assert_ends_on_accumulator(public: [Field; C3_CHONK_PUBLIC_LEN]) {
+    assert(
+        public[C3_CHONK_OWN_KEY] != public[C3_CHONK_TUBE_KEY],
+        "the chain must end on an accumulator",
+    );
+}
+
 fn main(
     c3a_vk: RollupHonkVerificationKey,
     c3a_proof: RollupHonkProof,
@@ -47,6 +57,8 @@ fn main(
     ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
     assert(c3a_public[C3_CHONK_OWN_KEY] == c3a_key_hash);
     assert(c3b_public[C3_CHONK_OWN_KEY] == c3b_key_hash);
+    assert_ends_on_accumulator(c3a_public);
+    assert_ends_on_accumulator(c3b_public);
     verify_root_rolluphonk_proof(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
     verify_root_rolluphonk_proof(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 

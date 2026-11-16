@@ -8,7 +8,7 @@
 //! inner proofs use [`node_fold_witness::share_encryption_for_slot`] (`tests/common/node_fold_witness.rs`); C4 reuses one honest row for
 //! all `H` senders so decryption witnesses stay self-consistent.
 //!
-//! Requires `bb`, `pnpm build:circuits --group recursive_aggregation`, and DKG/threshold bins.
+//! Requires `bb`, `pnpm build:circuits --group recursive_aggregation,chonk`, and DKG/threshold bins.
 
 mod common;
 #[path = "common/node_fold_witness.rs"]
@@ -328,7 +328,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
     if !gate.exists() {
         panic!(
-            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation,chonk`)",
             gate.display()
         );
     }

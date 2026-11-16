@@ -4,29 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Proves a Chonk stack through `bb msgpack run`, the only bb interface that accumulates a stack
-//! from witnesses generated in process. Each message is a 4-byte little-endian length and a
-//! msgpack `[[command, fields]]`; each response is a length and a msgpack `[response, fields]`.
+//! The input of `bb prove --scheme chonk` for one Chonk stack. bb reads the stack from a msgpack
+//! file (`--ivc_inputs_path`) of steps in accumulation order, each with its gzipped bytecode,
+//! gzipped witness stack, Mega verification key and Chonk circuit kind. The prover writes that
+//! file from witnesses generated in process and runs bb through
+//! [`crate::prover::ZkProver::generate_chonk_proof`].
 
 use crate::error::ZkError;
 use crate::witness::CompiledCircuit;
 use base64::{engine::general_purpose, Engine as _};
 use e3_zk_config::CircuitName;
-use flate2::read::GzDecoder;
-use serde::de::{DeserializeOwned, IgnoredAny};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_bytes::ByteBuf;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
-use tracing::{debug, info};
-
-/// The prover's tracing target and messages, so a stack is timed like a `bb prove` run.
-const TRACE_TARGET: &str = "e3_zk_prover::prover";
 
 /// A Chonk circuit's Mega flavor, as bb 6 numbers it (`CircuitKind`).
 #[derive(Clone, Copy)]
@@ -48,210 +37,76 @@ pub(crate) struct ChonkStackCircuit<'a> {
 }
 
 #[derive(Serialize)]
-struct ChonkStart {
-    kinds: Vec<u8>,
-}
-
-#[derive(Serialize)]
-struct CircuitInput<'a> {
-    name: &'a str,
+struct Step<'a> {
     bytecode: ByteBuf,
-    verification_key: ByteBuf,
-}
-
-#[derive(Serialize)]
-struct ChonkLoad<'a> {
-    circuit: CircuitInput<'a>,
+    witness: &'a serde_bytes::Bytes,
+    vk: &'a serde_bytes::Bytes,
+    #[serde(rename = "functionName")]
+    function_name: &'a str,
     kind: u8,
 }
 
-#[derive(Serialize)]
-struct ChonkAccumulate {
-    witness: ByteBuf,
-}
-
-#[derive(Serialize)]
-struct ChonkProve {}
-
-#[derive(Deserialize)]
-struct ChonkProveResponse {
-    proof: ChonkProof,
-}
-
-#[derive(Deserialize)]
-struct ChonkProof {
-    hiding_oink_proof: Vec<ByteBuf>,
-    merge_proof: Vec<ByteBuf>,
-    eccvm_proof: Vec<ByteBuf>,
-    ipa_proof: Vec<ByteBuf>,
-    joint_proof: Vec<ByteBuf>,
-}
-
-#[derive(Deserialize)]
-struct ErrorResponse {
-    message: String,
-}
-
-struct Session {
-    child: Arc<Mutex<Child>>,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
-}
-
-impl Session {
-    fn start(bb: &Path) -> Result<Self, ZkError> {
-        let mut child = Command::new(bb)
-            .args(["msgpack", "run"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        Ok(Self {
-            child: Arc::new(Mutex::new(child)),
-            stdin,
-            stdout,
+/// Encodes `stack` as the file `bb prove --scheme chonk --ivc_inputs_path` reads.
+pub(crate) fn ivc_inputs(stack: &[ChonkStackCircuit<'_>]) -> Result<Vec<u8>, ZkError> {
+    let steps = stack
+        .iter()
+        .map(|entry| {
+            Ok(Step {
+                bytecode: ByteBuf::from(
+                    general_purpose::STANDARD
+                        .decode(&entry.compiled.bytecode)
+                        .map_err(|e| ZkError::SerializationError(format!("base64 decode: {e}")))?,
+                ),
+                witness: serde_bytes::Bytes::new(entry.witness),
+                vk: serde_bytes::Bytes::new(entry.verification_key),
+                function_name: entry.circuit.as_str(),
+                kind: entry.kind as u8,
+            })
         })
-    }
-
-    fn call<C: Serialize, R: DeserializeOwned>(
-        &mut self,
-        command: &str,
-        fields: &C,
-    ) -> Result<R, ZkError> {
-        let request = rmp_serde::to_vec_named(&[(command, fields)])
-            .map_err(|e| ZkError::SerializationError(format!("{command}: {e}")))?;
-        self.stdin
-            .write_all(&(request.len() as u32).to_le_bytes())?;
-        self.stdin.write_all(&request)?;
-        self.stdin.flush()?;
-
-        let mut length = [0u8; 4];
-        self.stdout.read_exact(&mut length).map_err(|e| {
-            ZkError::ProveFailed(format!("bb msgpack gave no response to {command}: {e}"))
-        })?;
-        let mut response = vec![0u8; u32::from_le_bytes(length) as usize];
-        self.stdout.read_exact(&mut response)?;
-        let (name, _): (String, IgnoredAny) = rmp_serde::from_slice(&response)
-            .map_err(|e| ZkError::SerializationError(format!("{command} response: {e}")))?;
-        if name == "ErrorResponse" {
-            let (_, error): (String, ErrorResponse) = rmp_serde::from_slice(&response)
-                .map_err(|e| ZkError::SerializationError(format!("{command} error: {e}")))?;
-            return Err(ZkError::ProveFailed(format!(
-                "bb {command}: {}",
-                error.message
-            )));
-        }
-        let (_, result): (String, R) = rmp_serde::from_slice(&response)
-            .map_err(|e| ZkError::SerializationError(format!("{name}: {e}")))?;
-        Ok(result)
-    }
+        .collect::<Result<Vec<_>, ZkError>>()?;
+    rmp_serde::to_vec_named(&steps).map_err(|e| ZkError::SerializationError(e.to_string()))
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
-            let _ = child.wait();
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stack_file_carries_each_step_in_order_with_its_kind() {
+        let compiled = CompiledCircuit::from_json(
+            r#"{"bytecode":"AQID","abi":{"parameters":[],"return_type":null,"error_types":{}}}"#,
+        )
+        .unwrap();
+        let stack = [
+            (CircuitName::C3ChonkApp, ChonkKind::App),
+            (CircuitName::C3ChonkHidingKernel, ChonkKind::Hiding),
+        ]
+        .map(|(circuit, kind)| ChonkStackCircuit {
+            circuit,
+            kind,
+            compiled: &compiled,
+            verification_key: b"vk",
+            witness: b"witness",
+        });
+
+        #[derive(serde::Deserialize)]
+        struct Decoded {
+            bytecode: ByteBuf,
+            vk: ByteBuf,
+            witness: ByteBuf,
+            #[serde(rename = "functionName")]
+            function_name: String,
+            kind: u8,
         }
+        let steps: Vec<Decoded> = rmp_serde::from_slice(&ivc_inputs(&stack).unwrap()).unwrap();
+
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].function_name, "c3_chonk_app");
+        assert_eq!(steps[0].kind, 0);
+        assert_eq!(steps[1].function_name, "c3_chonk_hiding_kernel");
+        assert_eq!(steps[1].kind, 2);
+        assert_eq!(steps[0].bytecode.as_ref(), [1, 2, 3]);
+        assert_eq!(steps[0].vk.as_ref(), b"vk");
+        assert_eq!(steps[0].witness.as_ref(), b"witness");
     }
-}
-
-fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, ZkError> {
-    let mut out = Vec::new();
-    GzDecoder::new(bytes)
-        .read_to_end(&mut out)
-        .map_err(|e| ZkError::SerializationError(format!("gunzip: {e}")))?;
-    Ok(out)
-}
-
-/// Accumulates `stack` and proves it. Returns the Chonk proof's fields with its public inputs
-/// first, as one byte string of 32-byte fields. A run longer than `timeout` is killed.
-pub(crate) fn prove_stack(
-    bb: &Path,
-    stack: &[ChonkStackCircuit<'_>],
-    job_id: &str,
-    timeout: Duration,
-) -> Result<Vec<u8>, ZkError> {
-    if !bb.exists() {
-        return Err(ZkError::BbNotInstalled);
-    }
-    let label = stack
-        .first()
-        .map_or("chonk", |entry| entry.circuit.as_str());
-    debug!(target: TRACE_TARGET, "generating proof for circuit {label} (Chonk stack)");
-    let mut session = Session::start(bb)?;
-    let (done, finished) = mpsc::channel::<()>();
-    let child = Arc::clone(&session.child);
-    let watchdog = thread::spawn(move || {
-        if finished.recv_timeout(timeout).is_err() {
-            if let Ok(mut child) = child.lock() {
-                let _ = child.kill();
-            }
-        }
-    });
-
-    let result = (|| {
-        let _: IgnoredAny = session.call(
-            "ChonkStart",
-            &ChonkStart {
-                kinds: stack.iter().map(|entry| entry.kind as u8).collect(),
-            },
-        )?;
-        for entry in stack {
-            let bytecode = general_purpose::STANDARD
-                .decode(&entry.compiled.bytecode)
-                .map_err(|e| ZkError::SerializationError(format!("base64 decode: {e}")))?;
-            let _: IgnoredAny = session.call(
-                "ChonkLoad",
-                &ChonkLoad {
-                    circuit: CircuitInput {
-                        name: entry.circuit.as_str(),
-                        bytecode: ByteBuf::from(gunzip(&bytecode)?),
-                        verification_key: ByteBuf::from(entry.verification_key.to_vec()),
-                    },
-                    kind: entry.kind as u8,
-                },
-            )?;
-            let _: IgnoredAny = session.call(
-                "ChonkAccumulate",
-                &ChonkAccumulate {
-                    witness: ByteBuf::from(gunzip(entry.witness)?),
-                },
-            )?;
-        }
-        let response: ChonkProveResponse = session.call("ChonkProve", &ChonkProve {})?;
-        let proof = response.proof;
-        let mut flat = Vec::new();
-        for part in [
-            proof.hiding_oink_proof,
-            proof.merge_proof,
-            proof.eccvm_proof,
-            proof.ipa_proof,
-            proof.joint_proof,
-        ] {
-            for field in part {
-                if field.len() != 32 {
-                    return Err(ZkError::SerializationError(format!(
-                        "Chonk proof field of {} bytes",
-                        field.len()
-                    )));
-                }
-                flat.extend_from_slice(&field);
-            }
-        }
-        Ok(flat)
-    })();
-
-    let _ = done.send(());
-    let _ = watchdog.join();
-    if let Ok(flat) = &result {
-        info!(
-            target: TRACE_TARGET,
-            "generated proof ({} bytes) for {label} / {job_id}",
-            flat.len()
-        );
-    }
-    result
 }

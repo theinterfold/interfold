@@ -386,7 +386,7 @@
         {
           "pattern": "enum-match",
           "note": "CircuitName maps static identities to artifact names without runtime dependencies.",
-          "ref": "crates/zk/config/src/circuit.rs@184@CircuitName::PkBfv => \"pk\","
+          "ref": "crates/zk/config/src/circuit.rs@195@CircuitName::PkBfv => \"pk\","
         }
       ],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe"],
@@ -443,13 +443,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@201@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@243@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@391@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@449@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],
