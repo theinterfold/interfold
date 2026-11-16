@@ -7,6 +7,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolEvent, SolValue};
 use e3_committee::CiphernodesCommitteeSize;
+use e3_data_availability::AvailLocator;
 use e3_evm_contracts::{
     IBondingRegistry, ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager,
 };
@@ -202,10 +203,15 @@ impl Decoder<'_> {
                     at: log.at,
                     time: log.time,
                     e3: self.e3(event.e3Id),
+                    // The contract names the bytes by Avail's block and leaf.
                     ciphertext: DataRef {
                         hash: event.contentHash,
-                        block: event.availabilityBlock,
-                        leaf: event.availabilityLeafIndex,
+                        locator: AvailLocator {
+                            block_number: event.availabilityBlock,
+                            leaf_index: event.availabilityLeafIndex,
+                        }
+                        .encode()
+                        .into(),
                     },
                 })));
             }

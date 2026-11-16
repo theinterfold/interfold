@@ -232,13 +232,13 @@ pub enum ChainFact {
     },
 }
 
-/// Bytes the chain names by their Keccak-256 hash and an availability layer holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Bytes the chain names by their Keccak-256 hash, and where an availability layer holds them, in
+/// that layer's own encoding. The node hands the locator to the layer's reader and reads nothing
+/// in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataRef {
     pub hash: B256,
-    /// The availability layer's block and blob leaf that hold the bytes.
-    pub block: u32,
-    pub leaf: u128,
+    pub locator: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,7 +456,7 @@ pub struct Signed {
 
 /// Bytes for the fetcher to copy from their availability layer into the blob store, checked
 /// against their hash. The blob returns as [`Input::Fetched`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fetch {
     pub e3: E3Id,
     pub data: DataRef,
@@ -2384,12 +2384,14 @@ mod tests {
         journal.extend(bincode::serialize(&read).unwrap());
         journal.extend(bincode::serialize(&confirmed(&[1])).unwrap());
         journal.extend(bincode::serialize(&Input::Drain(true)).unwrap());
+        // A ciphertext's reference, which this sample's failed E3 never reaches.
+        journal.extend(bincode::serialize(&ciphertext_ready(30, e3(1))).unwrap());
         assert_eq!(
             (crate::ENCODING_VERSION, keccak256(&journal)),
             (
                 1,
                 alloy_primitives::b256!(
-                    "46924dccbb4bf2d33de03309ac0f0223c998c240237c6437ed9e8833bbb3c8bf"
+                    "af86050cee0f76702bb246e7b33fd9e05e993dab3d1eabaf6038ae21e7ee4148"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

@@ -380,8 +380,7 @@ pub const CIPHERTEXT: BlobRef = BlobRef {
 /// Where the chain says the ciphertext's bytes are.
 pub const CIPHERTEXT_DATA: DataRef = DataRef {
     hash: CIPHERTEXT.hash,
-    block: 70,
-    leaf: 3,
+    locator: Bytes::from_static(&[70, 3]),
 };
 
 /// After the DKG window, so decryption has its own.

@@ -17,7 +17,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+mod avail_locator;
 pub mod public_key;
+
+pub use avail_locator::AvailLocator;
 
 /// Maximum object size accepted by the application transport.
 ///
@@ -26,11 +29,12 @@ pub mod public_key;
 pub const MAX_OBJECT_BYTES: usize = 1024 * 1024;
 
 /// Stable coordinates recorded by the Ethereum application after receipt verification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Bytes the chain names by their Keccak-256 hash, and where an availability layer holds them, in
+/// that layer's own encoding: empty for a layer that finds bytes by their hash.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DataReference {
     pub content_hash: [u8; 32],
-    pub block_number: u32,
-    pub leaf_index: u128,
+    pub locator: Vec<u8>,
 }
 
 /// Avail transaction coordinates needed while the VectorX proof is being produced.
@@ -55,7 +59,7 @@ pub enum ProofStatus {
 /// Retrieval boundary used by ciphernodes and application servers.
 #[async_trait]
 pub trait DataAvailabilityReader: Send + Sync {
-    async fn retrieve(&self, reference: DataReference) -> Result<Vec<u8>>;
+    async fn retrieve(&self, reference: &DataReference) -> Result<Vec<u8>>;
 }
 
 /// Publication boundary used by an application availability service.
@@ -66,7 +70,7 @@ pub trait DataAvailabilityPublisher: Send + Sync {
 }
 
 /// Re-hash retrieved bytes against their Ethereum-verified reference.
-pub fn verify_retrieved_bytes(reference: DataReference, bytes: Vec<u8>) -> Result<Vec<u8>> {
+pub fn verify_retrieved_bytes(reference: &DataReference, bytes: Vec<u8>) -> Result<Vec<u8>> {
     validate_object_bytes(&bytes)?;
     let actual = keccak256(&bytes);
     if actual.0 != reference.content_hash {
@@ -120,7 +124,9 @@ struct BridgeProofResponse {
 }
 
 impl BridgeProofResponse {
-    fn into_status(self, expected: [u8; 32]) -> Result<ProofStatus> {
+    /// The proof of the leaf at `block_number`, which the bridge API does not report: the
+    /// publisher has it from its finalized receipt.
+    fn into_status(self, expected: [u8; 32], block_number: u32) -> Result<ProofStatus> {
         // Avail's proof response exposes `keccak256(raw_data)` as `leaf`. The bridge hashes this
         // value once more while verifying it against the submitted-data Merkle root. Keep the
         // response boundary and bridge boundary distinct: passing the second hash here would make
@@ -151,10 +157,11 @@ impl BridgeProofResponse {
         Ok(ProofStatus::Ready {
             reference: DataReference {
                 content_hash: expected,
-                // The bridge adapter derives and verifies the block number. The bridge API does
-                // not include it, so the publisher fills this from its finalized receipt.
-                block_number: 0,
-                leaf_index: leaf_index_u128,
+                locator: AvailLocator {
+                    block_number,
+                    leaf_index: leaf_index_u128,
+                }
+                .encode(),
             },
             abi_proof: input.abi_encode(),
         })
@@ -228,11 +235,7 @@ impl VectorXBridgeApi {
             .json()
             .await
             .context("VectorX bridge proof response is invalid")?;
-        let mut status = proof.into_status(publication.content_hash)?;
-        if let ProofStatus::Ready { reference, .. } = &mut status {
-            reference.block_number = publication.block_number;
-        }
-        Ok(status)
+        proof.into_status(publication.content_hash, publication.block_number)
     }
 }
 
@@ -260,7 +263,7 @@ impl HttpObjectReader {
 
 #[async_trait]
 impl DataAvailabilityReader for HttpObjectReader {
-    async fn retrieve(&self, reference: DataReference) -> Result<Vec<u8>> {
+    async fn retrieve(&self, reference: &DataReference) -> Result<Vec<u8>> {
         let url = format!(
             "{}/objects/0x{}",
             self.base_url,
@@ -298,14 +301,13 @@ mod tests {
         let bytes = b"available object".to_vec();
         let reference = DataReference {
             content_hash: keccak256(&bytes).0,
-            block_number: 7,
-            leaf_index: 3,
+            locator: Vec::new(),
         };
         assert_eq!(
-            verify_retrieved_bytes(reference, bytes.clone()).unwrap(),
+            verify_retrieved_bytes(&reference, bytes.clone()).unwrap(),
             bytes
         );
-        assert!(verify_retrieved_bytes(reference, b"substitute".to_vec()).is_err());
+        assert!(verify_retrieved_bytes(&reference, b"substitute".to_vec()).is_err());
     }
 
     #[test]
@@ -329,7 +331,7 @@ mod tests {
         let ProofStatus::Ready {
             reference,
             abi_proof,
-        } = response.into_status(expected).unwrap()
+        } = response.into_status(expected, 9).unwrap()
         else {
             panic!("a complete bridge proof must be ready");
         };
@@ -338,7 +340,8 @@ mod tests {
         assert_eq!(decoded.leaf, B256::from(expected));
         assert_eq!(decoded.dataRootIndex, alloy_primitives::U256::from(48));
         assert_eq!(reference.content_hash, expected);
-        assert_eq!(reference.leaf_index, 0);
+        let at = AvailLocator::decode(&reference.locator).unwrap();
+        assert_eq!((at.block_number, at.leaf_index), (9, 0));
     }
 
     #[test]

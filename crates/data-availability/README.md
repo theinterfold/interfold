@@ -7,11 +7,12 @@ candidate selection, persistence, and Ethereum acceptance remain with their resp
 
 ## Map
 
-| Location                             | Responsibility                                                                    |
-| ------------------------------------ | --------------------------------------------------------------------------------- |
-| [`lib.rs`](src/lib.rs)               | Content references, transport traits, bounds, HTTP reader, and VectorX proof ABI. |
-| [`avail.rs`](src/avail.rs)           | Feature-gated Avail retrieval and signed submission/finalization.                 |
-| [`public_key.rs`](src/public_key.rs) | Pure chunk layout, duplicate/conflict handling, and byte assembly.                |
+| Location                                   | Responsibility                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------- |
+| [`lib.rs`](src/lib.rs)                     | Content references, transport traits, bounds, HTTP reader, and VectorX proof ABI. |
+| [`avail_locator.rs`](src/avail_locator.rs) | Avail's block and leaf, as the locator bytes of a reference.                      |
+| [`avail.rs`](src/avail.rs)                 | Feature-gated Avail retrieval and signed submission/finalization.                 |
+| [`public_key.rs`](src/public_key.rs)       | Pure chunk layout, duplicate/conflict handling, and byte assembly.                |
 
 Publication produces pending coordinates; a later bridge query supplies the Ethereum proof and final
 reference. Retrieval checks bytes against that reference independently of bridge acceptance. The
@@ -26,8 +27,10 @@ Complete, shape-valid bytes still require candidate-hash and request-time key-co
 `DataAvailabilityPublisher` separates `publish(bytes)` from `proof(publication)`. Publication
 returns a `PendingPublication`; poll for `ProofStatus::Ready { reference, abi_proof }` before
 submitting the proof to the application contract. `Pending` is retryable proof absence, not verified
-inclusion. `DataReference` records the content hash, finalized block number, and leaf index used for
-later retrieval.
+inclusion. `DataReference` records the content hash and a locator in the layer's own encoding:
+Avail's finalized block number and leaf index, or nothing for a layer that finds bytes by their
+hash. Only the layer's reader reads the locator, so the rest of the node stays the same for any
+layer.
 
 `DataAvailabilityReader::retrieve(reference)` returns verified object bytes. The public
 `verify_retrieved_bytes` helper validates bounds and Keccak-256 against the reference; readers must

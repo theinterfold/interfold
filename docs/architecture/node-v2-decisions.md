@@ -419,6 +419,15 @@ Each rule is checkable in review.
   without it ranks the requests still open. A committee needs many candidates (mainnet's floor is 19
   members), so draining many nodes at once can leave requests without a committee.
 
+- **D62. The machine reads no availability layer's coordinates.** The chain names a ciphertext by
+  its hash and a locator in the availability layer's own encoding, and only that layer's reader
+  reads the locator: Avail's block and leaf, which `AvailLocator` alone encodes and decodes, or
+  nothing for a layer that finds bytes by their hash. Another layer needs a reader and its
+  configuration, not a change to the machine or its saved state. The contract's
+  `CiphertextOutputReferencePublished` event and `IDataAvailabilityVerifier.DataReference` still
+  name Avail's block and leaf, so the chain decoder builds the locator from them; a layer whose
+  reference has another shape needs those contract types to carry the locator bytes.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

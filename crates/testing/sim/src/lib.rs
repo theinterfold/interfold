@@ -461,8 +461,7 @@ impl<J: Jobs> Sim<J> {
                 e3,
                 ciphertext: DataRef {
                     hash: ciphertext.hash,
-                    block: 0,
-                    leaf: 0,
+                    locator: Default::default(),
                 },
                 deadline: at + 100_000,
             };

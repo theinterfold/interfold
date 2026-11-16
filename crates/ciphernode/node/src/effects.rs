@@ -411,12 +411,11 @@ where
         tokio::spawn(async move {
             let reference = DataReference {
                 content_hash: fetch.data.hash.0,
-                block_number: fetch.data.block,
-                leaf_index: fetch.data.leaf,
+                locator: fetch.data.locator.to_vec(),
             };
             let mut backoff = Backoff::CIPHERTEXT;
             loop {
-                match availability.retrieve(reference).await {
+                match availability.retrieve(&reference).await {
                     Ok(bytes) if keccak256(&bytes) == fetch.data.hash => {
                         match blobs.put(fetch.e3, &bytes) {
                             Ok(blob) => {

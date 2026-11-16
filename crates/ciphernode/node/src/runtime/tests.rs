@@ -144,7 +144,7 @@ struct NoData;
 
 #[async_trait::async_trait]
 impl DataAvailabilityReader for NoData {
-    async fn retrieve(&self, _: DataReference) -> anyhow::Result<Vec<u8>> {
+    async fn retrieve(&self, _: &DataReference) -> anyhow::Result<Vec<u8>> {
         pending().await
     }
 }

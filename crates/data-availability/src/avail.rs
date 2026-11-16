@@ -32,14 +32,15 @@ impl AvailReader {
 
 #[async_trait]
 impl DataAvailabilityReader for AvailReader {
-    async fn retrieve(&self, reference: DataReference) -> Result<Vec<u8>> {
+    async fn retrieve(&self, reference: &DataReference) -> Result<Vec<u8>> {
+        let at = AvailLocator::decode(&reference.locator)?;
         let client = tokio::time::timeout(Duration::from_secs(20), Client::new(&self.endpoint))
             .await
             .context("timed out while connecting to Avail")??;
         let calls = tokio::time::timeout(
             Duration::from_secs(30),
             client
-                .block(reference.block_number)
+                .block(at.block_number)
                 .extrinsics()
                 .all::<avail::data_availability::tx::SubmitData>(Default::default()),
         )
@@ -53,7 +54,7 @@ impl DataAvailabilityReader for AvailReader {
         }
         bail!(
             "Avail block {} does not contain object 0x{}",
-            reference.block_number,
+            at.block_number,
             hex::encode(reference.content_hash)
         )
     }
@@ -89,20 +90,6 @@ impl AvailPublisher {
             bridge: VectorXBridgeApi::new(bridge_api, destination_chain_id)?,
             submission_lock: tokio::sync::Mutex::new(()),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reader_requires_the_http_transport_used_by_avail_rust_client() {
-        assert!(AvailReader::new("https://avail.example/rpc").is_ok());
-        let error = AvailReader::new("wss://avail.example/ws")
-            .err()
-            .expect("WebSocket transport must be rejected");
-        assert!(error.to_string().contains("HTTP or HTTPS"));
     }
 }
 
@@ -149,3 +136,17 @@ impl DataAvailabilityPublisher for AvailPublisher {
 
 // Keep these imports checked against the SDK's typed-call API at compile time.
 fn _typed_submit_data<T: HasHeader + Decode>() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_requires_the_http_transport_used_by_avail_rust_client() {
+        assert!(AvailReader::new("https://avail.example/rpc").is_ok());
+        let error = AvailReader::new("wss://avail.example/ws")
+            .err()
+            .expect("WebSocket transport must be rejected");
+        assert!(error.to_string().contains("HTTP or HTTPS"));
+    }
+}

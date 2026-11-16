@@ -8,6 +8,7 @@ use super::*;
 use crate::testing::{contracts, e3_requested, log, CONFIG, RANDOMNESS};
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolValue;
+use e3_data_availability::AvailLocator;
 use e3_evm_contracts::{ICiphernodeRegistry, IInterfold, IRandomnessProvider, ISlashingManager};
 use e3_protocol::{
     dkg::{AttestationContext, KeyAnchor},
@@ -309,8 +310,12 @@ async fn facts_that_need_contract_state_carry_its_values_at_the_confirmed_head()
     let facts: Vec<ChainFact> = events.into_iter().map(|event| event.fact).collect();
     let ciphertext = DataRef {
         hash: B256::repeat_byte(0xc7),
-        block: 70,
-        leaf: 3,
+        locator: AvailLocator {
+            block_number: 70,
+            leaf_index: 3,
+        }
+        .encode()
+        .into(),
     };
     let expected = vec![
         ChainFact::SeedReady {

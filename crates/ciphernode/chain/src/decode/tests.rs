@@ -204,8 +204,12 @@ fn a_ciphertext_reference_reads_its_decryption_deadline() {
     };
     let expected = DataRef {
         hash: B256::repeat_byte(0xc7),
-        block: 70,
-        leaf: 3,
+        locator: AvailLocator {
+            block_number: 70,
+            leaf_index: 3,
+        }
+        .encode()
+        .into(),
     };
     assert_eq!(*ciphertext, expected);
 }
