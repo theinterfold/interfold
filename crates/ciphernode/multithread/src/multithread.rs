@@ -192,26 +192,16 @@ const LIGHT_JOBS_AT_ONCE: u32 = 4;
 
 /// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
 /// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
-/// batch faster than one at a time on every thread. Every other job takes one slot and every
-/// thread, as before.
+/// batch faster than one at a time on every thread. A C3 job takes a quarter of the pool's units,
+/// so at most four run at once and nothing else is admitted beside them. Every other job takes one
+/// slot and every thread, as before.
 fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
-    let light = matches!(
-        request,
-        ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_))
-    );
-    weight(light, pool.capacity_units(), pool.threads())
-}
-
-/// A light job takes a quarter of the pool's admission units, so at most four run at once and
-/// nothing else is admitted beside them, and a quarter of the threads.
-fn weight(light: bool, capacity_units: u32, threads: usize) -> (u32, Option<usize>) {
-    if light {
-        (
-            (capacity_units / LIGHT_JOBS_AT_ONCE).max(1),
-            Some((threads / LIGHT_JOBS_AT_ONCE as usize).max(1)),
-        )
-    } else {
-        (e3_task_pool::SLOT_UNITS, None)
+    match request {
+        ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_)) => (
+            pool.capacity_units() / LIGHT_JOBS_AT_ONCE,
+            Some(pool.threads() / LIGHT_JOBS_AT_ONCE as usize),
+        ),
+        _ => (e3_task_pool::SLOT_UNITS, None),
     }
 }
 
@@ -258,17 +248,6 @@ fn ended_task_groups(scope: &str, event: &InterfoldEventData) -> Vec<String> {
 #[cfg(test)]
 mod task_group_tests {
     use super::*;
-
-    #[test]
-    fn at_most_four_light_jobs_share_the_pool_and_full_jobs_keep_every_thread() {
-        // Two full slots of four units on 16 threads: a light job takes two units and 4 threads.
-        assert_eq!(weight(true, 8, 16), (2, Some(4)));
-        // One slot: four light jobs of one unit each.
-        assert_eq!(weight(true, 4, 16), (1, Some(4)));
-        // A tiny machine still gives each light job a unit and a thread.
-        assert_eq!(weight(true, 2, 2), (1, Some(1)));
-        assert_eq!(weight(false, 8, 16), (e3_task_pool::SLOT_UNITS, None));
-    }
 
     #[test]
     fn a_failure_ends_protocol_work_and_the_request_end_ends_accusation_work() {

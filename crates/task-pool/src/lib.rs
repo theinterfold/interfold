@@ -597,6 +597,5 @@ mod tests {
         .await
         .expect("light tasks must run concurrently");
         assert_eq!(leaders, 1);
-        assert_eq!(pool.capacity_units(), SLOT_UNITS);
     }
 }

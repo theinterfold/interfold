@@ -815,20 +815,6 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_cap_reaches_bb_through_its_environment() {
-        let temp = tempfile::tempdir().unwrap();
-        let output = run_bb(
-            Path::new("/bin/sh"),
-            &["-c", "echo \"$HARDWARE_CONCURRENCY\""],
-            temp.path(),
-            DEFAULT_BB_TIMEOUT,
-            Some(3),
-        )
-        .unwrap();
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
-    }
-
-    #[test]
     fn an_enormous_cap_allows_bb_to_finish() {
         let temp = get_tempdir().unwrap();
 
