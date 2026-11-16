@@ -109,8 +109,12 @@ pub(crate) fn prepare(
             let sample = e3_zk_samples::dkg::pk::generate(&m.dkg)?;
             prepared(e3_zk_prover::PkCircuit, config, sample, record)
         }
-        Case::Named(CircuitName::SkShareComputation | CircuitName::ESmShareComputation) => {
-            let input_type = if case == Case::Named(CircuitName::SkShareComputation) {
+        Case::Named(
+            CircuitName::SkShareComputationChain | CircuitName::ESmShareComputationChain,
+        ) => {
+            // C2 is proven as a chunk chain; the full-size chunk is its repeated proof. Its inputs
+            // are the chain's first chunk.
+            let input_type = if case == Case::Named(CircuitName::SkShareComputationChain) {
                 DkgInputType::SecretKey
             } else {
                 DkgInputType::SmudgingNoise
@@ -118,12 +122,19 @@ pub(crate) fn prepare(
             let config = dkg::share_computation::Configs::new(m.preset, &m.threshold, m.committee)?;
             let sample =
                 e3_zk_samples::dkg::share_computation::generate(&config, m.preset, input_type)?;
-            prepared(
-                e3_zk_prover::ShareComputationCircuit,
-                config,
-                sample,
-                record,
-            )
+            let start = Instant::now();
+            let result = e3_zk_witness::dkg::share_computation::Inputs::compute(&config, &sample)
+                .and_then(|inputs| {
+                    e3_zk_witness::dkg::share_computation_chain::Chain::compute(&config, &inputs)
+                })
+                .map_err(anyhow::Error::from)
+                .and_then(|chain| {
+                    Ok(e3_zk_prover::inputs_json_to_input_map(
+                        &chain.chunks[0].to_json(),
+                    )?)
+                });
+            record.preparation.finish(start.elapsed(), &result);
+            result
         }
         Case::Named(CircuitName::ShareEncryption) => {
             let config = dkg::share_encryption::Configs::new(&m.dkg)?;

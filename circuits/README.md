@@ -47,22 +47,29 @@ how phases, commitments, and circuit IDs line up end to end, read
 [Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
 [`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
-**C2** uses **inner** recursive proofs plus an optional **wrapper**: `sk_share_computation`
-(**C2a**) and `e_sm_share_computation` (**C2b**) prove the Shamir-share computation; the wrapper
+**C2** is proven as a **chunk chain**: each of `sk_share_computation` (**C2a**) and
+`e_sm_share_computation` (**C2b**) is the final circuit over `*_share_computation_chain` chunks and
+one `*_share_computation_chain_last` chunk, which run the Shamir-share checks on consecutive
+coefficient ranges and carry the commitment sponges between them. The final circuit verifies the
+chunks, so its proof is the one peers and `c2ab_fold` consume, and its share commitments equal the
+unchunked C2's. Gossip and threshold signing use that final proof. The wrapper
 `recursive_aggregation/wrapper/dkg/share_computation` (`CircuitName::ShareComputation`) re-verifies
-a single inner C2 proof at a time and compresses public inputs for folding / aggregation. Gossip and
-threshold signing use the **inner** proof; the wrapper is produced separately when node proof
-aggregation is enabled.
+a single inner C2 proof at a time and compresses public inputs for folding / aggregation; it is
+produced separately when node proof aggregation is enabled.
 
 ### DKG (`bin/dkg/`)
 
-| Path                     | ID  | `CircuitName`         | Role                                          |
-| ------------------------ | --- | --------------------- | --------------------------------------------- |
-| `pk`                     | C0  | `PkBfv`               | Commit to individual BFV public key           |
-| `sk_share_computation`   | C2a | `SkShareComputation`  | Secret-key track Shamir shares (`y`)          |
-| `e_sm_share_computation` | C2b | `ESmShareComputation` | Smudging-noise track Shamir shares (`y`)      |
-| `share_encryption`       | C3  | `ShareEncryption`     | BFV encryption of shares under recipient keys |
-| `share_decryption`       | C4  | `DkgShareDecryption`  | Decrypt shares; aggregate; commitments for P4 |
+| Path                                | ID        | `CircuitName`                  | Role                                                               |
+| ----------------------------------- | --------- | ------------------------------ | ------------------------------------------------------------------ |
+| `pk`                                | C0        | `PkBfv`                        | Commit to individual BFV public key                                |
+| `sk_share_computation`              | C2a       | `SkShareComputation`           | Secret-key track Shamir shares (`y`); verifies the chunk chain     |
+| `sk_share_computation_chain`        | C2a chunk | `SkShareComputationChain`      | A chunk of C2a other than the last; non-ZK                         |
+| `sk_share_computation_chain_last`   | C2a chunk | `SkShareComputationChainLast`  | The last chunk of C2a                                              |
+| `e_sm_share_computation`            | C2b       | `ESmShareComputation`          | Smudging-noise track Shamir shares (`y`); verifies the chunk chain |
+| `e_sm_share_computation_chain`      | C2b chunk | `ESmShareComputationChain`     | A chunk of C2b other than the last; non-ZK                         |
+| `e_sm_share_computation_chain_last` | C2b chunk | `ESmShareComputationChainLast` | The last chunk of C2b                                              |
+| `share_encryption`                  | C3        | `ShareEncryption`              | BFV encryption of shares under recipient keys                      |
+| `share_decryption`                  | C4        | `DkgShareDecryption`           | Decrypt shares; aggregate; commitments for P4                      |
 
 ### Threshold (`bin/threshold/`)
 

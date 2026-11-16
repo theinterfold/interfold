@@ -146,6 +146,21 @@ pub async fn setup_compiled_circuit_for_committee(
     }
 }
 
+/// Sets up both C2 circuits with the four chunk circuits they are proven through.
+#[allow(dead_code)]
+pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
+    for circuit in [
+        CircuitName::SkShareComputation,
+        CircuitName::ESmShareComputation,
+        CircuitName::SkShareComputationChain,
+        CircuitName::SkShareComputationChainLast,
+        CircuitName::ESmShareComputationChain,
+        CircuitName::ESmShareComputationChainLast,
+    ] {
+        setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
+    }
+}
+
 /// Stages a `recursive_aggregation/*` fold binary for [`CircuitVariant::Default`] (`noir-recursive-no-zk`).
 ///
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.

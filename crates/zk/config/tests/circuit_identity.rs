@@ -63,6 +63,30 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
             0,
             Some(0),
         ),
+        (
+            "SkShareComputationChain",
+            "dkg/sk_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "SkShareComputationChainLast",
+            "dkg/sk_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChain",
+            "dkg/e_sm_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChainLast",
+            "dkg/e_sm_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
     ]
     .into_iter()
     .enumerate()

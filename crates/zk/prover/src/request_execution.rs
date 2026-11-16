@@ -1201,6 +1201,9 @@ fn prove_synchronized_leaf<C: Provable<Config = e3_zk_config::synchronized::Conf
 }
 
 /// ZK-verify a share proof (inner recursive circuits).
+///
+/// A C2 proof is the final circuit of a chunk chain: it verifies its chunk proofs against keys it
+/// only exposes, so the exposed key tree must match this node's chunk circuits.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
     proof: &Proof,
@@ -1208,7 +1211,17 @@ fn zk_verify_share_proof_bundle(
     party_id: u64,
     artifacts_dir: &str,
 ) -> Result<bool, ZkError> {
-    prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)
+    if !prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)? {
+        return Ok(false);
+    }
+    if crate::circuits::aggregation::chain_keys::chunk_circuits(proof.circuit).is_some() {
+        return crate::circuits::aggregation::chain_keys::check_key_tree(
+            prover,
+            proof,
+            artifacts_dir,
+        );
+    }
+    Ok(true)
 }
 
 fn handle_verify_share_proofs(

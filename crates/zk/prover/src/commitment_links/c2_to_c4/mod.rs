@@ -158,17 +158,15 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
 
 /// Extract all share commitments from C2's public signals.
 ///
-/// C2 inner-circuit public signals:
+/// Final C2 public signals:
 ///   - field 0: `expected_secret_commitment` (skipped)
-///   - fields 1..: `commit_to_party_shares[party_idx][mod_idx]` outputs,
+///   - fields 1..last: `commit_to_party_shares[party_idx][mod_idx]` outputs,
 ///     row-major (party first, modulus second)
+///   - last field: the chunk key-tree hash (skipped)
 ///
-/// Returns every 32-byte chunk after the first field.
+/// Returns the share commitments only.
 fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
-    if public_signals.len() < 2 * FIELD_BYTE_LEN {
-        return vec![];
-    }
-    public_signals[FIELD_BYTE_LEN..]
+    super::c2_share_commitments(public_signals)
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
