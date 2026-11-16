@@ -187,7 +187,7 @@ function system({ units, tag }) {
         fa: 0.3,
         label: 'witness in-process · bb proves',
         tip: 'Noir is linked as a library to compute the witness; the bb binary runs as a child process to make the proof.',
-        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@130@StdCommand::new(bb)'],
+        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@129@StdCommand::new(bb)'],
       },
       { from: 'circuits', to: 'contracts', fs: 'l', ts: 'r', label: 'Honk verifiers', refs: [...ev('A20'), ...ev('D9', 'D10')] },
       {
@@ -502,7 +502,7 @@ function contracts() {
         label: 'publishPlaintextOutput',
         lt: 0.78,
         refs: [
-          'packages/interfold-contracts/contracts/Interfold.sol@441@function publishPlaintextOutput(',
+          'packages/interfold-contracts/contracts/Interfold.sol@442@function publishPlaintextOutput(',
           'crates/ciphernode/chain/src/writer.rs@392@IInterfold::publishPlaintextOutputCall',
         ],
       },
@@ -960,7 +960,7 @@ function ciphernode() {
         fs: 'r',
         ts: 'l',
         label: 'spawn bb',
-        refs: ['crates/zk/prover/src/prover.rs@130@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
+        refs: ['crates/zk/prover/src/prover.rs@129@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
       },
       { from: 'p2p', to: 'blobs', fs: 'b', ts: 't', both: true, ta: 150 / 1100, label: 'to and from peers', refs: ev('B14') },
       { from: 'jobs', to: 'blobs', fs: 'b', ts: 't', both: true, ta: 960 / 1100, label: 'inputs · results', refs: ev('B16') },

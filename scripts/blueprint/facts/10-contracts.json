@@ -16,87 +16,87 @@
         {
           "name": "publishCiphertextOutput",
           "by": "anyone (output checked by InterfoldLifecycle)",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@425@function publishCiphertextOutput("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@426@function publishCiphertextOutput("
         },
         {
           "name": "publishPlaintextOutput",
           "by": "anyone (decryption proof required)",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@441@function publishPlaintextOutput("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@442@function publishPlaintextOutput("
         },
         {
           "name": "onCommitteeFinalized",
           "by": "CiphernodeRegistryOwnable",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@765@function onCommitteeFinalized("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@766@function onCommitteeFinalized("
         },
         {
           "name": "onCommitteePublished",
           "by": "CiphernodeRegistryOwnable",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@789@function onCommitteePublished("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@790@function onCommitteePublished("
         },
         {
           "name": "onE3Failed",
           "by": "CiphernodeRegistryOwnable or SlashingManager",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@821@function onE3Failed("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@822@function onE3Failed("
         },
         {
           "name": "markE3Failed",
           "by": "anyone (after deadline and grace period)",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@854@function markE3Failed("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@855@function markE3Failed("
         },
-        { "name": "cancelE3", "by": "requester", "ref": "packages/interfold-contracts/contracts/Interfold.sol@883@function cancelE3(" },
+        { "name": "cancelE3", "by": "requester", "ref": "packages/interfold-contracts/contracts/Interfold.sol@884@function cancelE3(" },
         {
           "name": "processE3Failure",
           "by": "anyone",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@731@function processE3Failure("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@732@function processE3Failure("
         },
         {
           "name": "escrowSlashedFunds",
           "by": "SlashingManager",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@743@function escrowSlashedFunds("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@744@function escrowSlashedFunds("
         },
         {
           "name": "claimReward",
           "by": "ciphernode (pending reward holder)",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@1167@function claimReward("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@1168@function claimReward("
         },
         {
           "name": "treasuryClaim",
           "by": "treasury account",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@1214@function treasuryClaim("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@1215@function treasuryClaim("
         },
         {
           "name": "registerE3Program",
           "by": "owner/governance",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@612@function registerE3Program("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@613@function registerE3Program("
         }
       ],
       "emits": [
-        { "name": "E3Requested", "by": "Interfold", "ref": "packages/interfold-contracts/contracts/Interfold.sol@420@emit E3Requested(" },
+        { "name": "E3Requested", "by": "Interfold", "ref": "packages/interfold-contracts/contracts/Interfold.sol@421@emit E3Requested(" },
         {
           "name": "PlaintextOutputPublished",
           "by": "Interfold",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@476@emit PlaintextOutputPublished("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@477@emit PlaintextOutputPublished("
         },
         {
           "name": "CommitteeFinalized",
           "by": "Interfold",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@780@emit CommitteeFinalized("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@781@emit CommitteeFinalized("
         },
         {
           "name": "CommitteeFormed",
           "by": "Interfold",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@812@emit CommitteeFormed("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@813@emit CommitteeFormed("
         },
         {
           "name": "SlashedFundsEscrowed",
           "by": "Interfold",
-          "ref": "packages/interfold-contracts/contracts/Interfold.sol@761@emit SlashedFundsEscrowed("
+          "ref": "packages/interfold-contracts/contracts/Interfold.sol@762@emit SlashedFundsEscrowed("
         },
-        { "name": "E3Failed", "by": "Interfold", "ref": "packages/interfold-contracts/contracts/Interfold.sol@909@emit E3Failed(" },
+        { "name": "E3Failed", "by": "Interfold", "ref": "packages/interfold-contracts/contracts/Interfold.sol@910@emit E3Failed(" },
         {
           "name": "CiphertextOutputReferencePublished",
           "by": "InterfoldLifecycle (called by Interfold)",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@428@emit IInterfold.CiphertextOutputReferencePublished("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@432@emit IInterfold.CiphertextOutputReferencePublished("
         }
       ],
       "state": [
@@ -1514,27 +1514,27 @@
         {
           "name": "InterfoldLifecycle.publishCiphertext",
           "by": "Interfold.publishCiphertextOutput",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@365@function publishCiphertext("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@369@function publishCiphertext("
         },
         {
           "name": "InterfoldLifecycle.verifyPlaintext",
           "by": "Interfold.publishPlaintextOutput",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@307@function verifyPlaintext("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@311@function verifyPlaintext("
         },
         {
           "name": "InterfoldLifecycle.validateAndSnapshotCommitteeFinalization",
           "by": "Interfold.onCommitteeFinalized",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@259@function validateAndSnapshotCommitteeFinalization("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@263@function validateAndSnapshotCommitteeFinalization("
         },
         {
           "name": "InterfoldLifecycle.reportFailure",
           "by": "Interfold.onE3Failed",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@614@function reportFailure("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@618@function reportFailure("
         },
         {
           "name": "InterfoldLifecycle.cancelE3",
           "by": "Interfold.cancelE3",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@851@function cancelE3("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@855@function cancelE3("
         },
         {
           "name": "InterfoldPricing.recordRequestPayment",
@@ -1586,12 +1586,12 @@
         {
           "name": "CiphertextOutputReferencePublished",
           "by": "InterfoldLifecycle",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@428@emit IInterfold.CiphertextOutputReferencePublished("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@432@emit IInterfold.CiphertextOutputReferencePublished("
         },
         {
           "name": "E3FailureReclassified",
           "by": "InterfoldLifecycle",
-          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@685@emit IInterfold.E3FailureReclassified("
+          "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@689@emit IInterfold.E3FailureReclassified("
         },
         {
           "name": "TreasuryCredited",

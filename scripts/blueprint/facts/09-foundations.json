@@ -31,7 +31,7 @@
       "read_first": [
         {
           "why": "crate entry: the public re-exports of presets, builders and CRP helpers",
-          "ref": "crates/bfv/params/src/lib.rs@32@pub use presets::{"
+          "ref": "crates/bfv/params/src/lib.rs@36@pub use presets::{"
         },
         {
           "why": "the preset enum and the default preset constant",
@@ -39,7 +39,7 @@
         },
         {
           "why": "the insecure 64 constants: degree, moduli and party count per threshold or DKG set",
-          "ref": "crates/bfv/params/src/constants.rs@19@pub mod insecure_64 {"
+          "ref": "crates/bfv/params/src/constants.rs@25@pub mod insecure_64 {"
         },
         {
           "why": "turns a preset into its threshold and DKG BFV parameter pair",
@@ -386,7 +386,7 @@
       "read_first": [
         {
           "why": "crate entry: module list and re-exports, including the BytesSerde derive",
-          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@16@pub use e3_utils_derive::BytesSerde;"
         },
         { "why": "ArcBytes, the shared byte buffer", "ref": "crates/utils/src/utility_types.rs@22@pub struct ArcBytes(Arc<Vec<u8>>);" },
         {
@@ -443,7 +443,7 @@
         },
         {
           "why": "where e3-utils re-exports the derive for other crates",
-          "ref": "crates/utils/src/lib.rs@19@pub use e3_utils_derive::BytesSerde;"
+          "ref": "crates/utils/src/lib.rs@16@pub use e3_utils_derive::BytesSerde;"
         }
       ],
       "rust_patterns": [

@@ -3,7 +3,7 @@
     "id": "A1",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/Interfold.sol@399@InterfoldPricing.recordRequestPayment(",
+      "packages/interfold-contracts/contracts/Interfold.sol@400@InterfoldPricing.recordRequestPayment(",
       "packages/interfold-contracts/contracts/lib/InterfoldPricing.sol@130@safeTransferFrom(msg.sender"
     ],
     "line_text": ["InterfoldPricing.recordRequestPayment(", "token.safeTransferFrom(msg.sender, address(this), quotedFee);"],
@@ -13,7 +13,7 @@
     "id": "A2",
     "supported": true,
     "refs": [
-      "packages/interfold-sdk/src/crypto/encrypt.ts@53@bfv_encrypt_number(data, pk",
+      "packages/interfold-sdk/src/crypto/encrypt.ts@62@bfv_encrypt_number(data, pk",
       "packages/interfold-sdk/src/committee-public-key.ts@36@class CommitteePublicKeyAssembler"
     ],
     "line_text": [
@@ -58,7 +58,7 @@
     "supported": true,
     "refs": [
       "templates/default/server/index.ts@245@sdk.publishCiphertextOutput(",
-      "crates/evm/client/src/contracts.rs@479@contract.publishCiphertextOutput("
+      "crates/evm/client/src/contracts.rs@481@contract.publishCiphertextOutput("
     ],
     "line_text": [
       "await sdk.publishCiphertextOutput(BigInt(e3_id), {",
@@ -111,7 +111,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/contracts/contract-client.ts@137@public async requestE3(",
-      "crates/evm/client/src/contracts.rs@428@contract.request(e3_request)"
+      "crates/evm/client/src/contracts.rs@430@contract.request(e3_request)"
     ],
     "line_text": [
       "public async requestE3(params: E3RequestParams): Promise<Hash> {",
@@ -133,8 +133,8 @@
     "id": "A14",
     "supported": true,
     "refs": [
-      "crates/evm/indexer/src/indexer.rs@395@create_contract_listener(rpc_url, addresses)",
-      "crates/evm/indexer/src/indexer.rs@1109@event_listener.listen()"
+      "crates/evm/indexer/src/indexer.rs@396@create_contract_listener(rpc_url, addresses)",
+      "crates/evm/indexer/src/indexer.rs@1126@event_listener.listen()"
     ],
     "line_text": [
       "let event_listener = EventListener::create_contract_listener(rpc_url, addresses).await?;",
@@ -190,7 +190,7 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk/prover/src/prover.rs@130@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@129@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
     "line_text": ["let mut command = StdCommand::new(bb);", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },

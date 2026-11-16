@@ -55,8 +55,8 @@
     "id": "B5",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@514@async fn read_chain<R: Rpc>(",
-      "crates/ciphernode/node/src/runtime.rs@538@events.send(Event::Input(Input::Chain(fact)))"
+      "crates/ciphernode/node/src/runtime.rs@534@async fn read_chain<R: Rpc>(",
+      "crates/ciphernode/node/src/runtime.rs@558@events.send(Event::Input(Input::Chain(fact)))"
     ],
     "line_text": ["async fn read_chain<R: Rpc>(", "if events.send(Event::Input(Input::Chain(fact))).await.is_err() {"],
     "note": "The chain reader's task sends each fact to the event loop as an input."
@@ -64,7 +64,7 @@
   {
     "id": "B6",
     "supported": true,
-    "refs": ["crates/ciphernode/node/src/runtime.rs@260@message = inbox.next() => {"],
+    "refs": ["crates/ciphernode/node/src/runtime.rs@268@message = inbox.next() => {"],
     "line_text": ["message = inbox.next() => {"],
     "note": "Admitted peer messages reach the event loop as inputs."
   },
@@ -73,7 +73,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/engine/src/lib.rs@165@pub fn apply(self, now: UnixSecs, input: M::Input)",
-      "crates/protocol/src/node.rs@1307@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+      "crates/protocol/src/node.rs@1310@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
       "pub fn apply(mut self, now: UnixSecs, input: M::Input) -> Result<Running<M, S>, Error> {",
@@ -95,8 +95,8 @@
     "id": "B9",
     "supported": true,
     "refs": [
-      "crates/ciphernode/node/src/runtime.rs@164@Engine::open(parts.journal, genesis, settings.snapshot_every)",
-      "crates/ciphernode/node/src/runtime.rs@352@queue.extend(effects.dispatch(pending));"
+      "crates/ciphernode/node/src/runtime.rs@169@Engine::open(parts.journal, genesis, settings.snapshot_every)",
+      "crates/ciphernode/node/src/runtime.rs@360@queue.extend(effects.dispatch(pending));"
     ],
     "line_text": [
       "let (mut engine, pending) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;",
@@ -129,7 +129,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/node/src/effects.rs@196@Effect::Run(job) => {",
-      "crates/ciphernode/jobs/src/lib.rs@144@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
+      "crates/ciphernode/jobs/src/lib.rs@146@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
     ],
     "line_text": ["Effect::Run(job) => {", "pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"],
     "note": "A job effect runs on the job runner; its result comes back as an input."
@@ -157,7 +157,7 @@
   {
     "id": "B15",
     "supported": true,
-    "refs": ["crates/ciphernode/jobs/src/proofs.rs@105@self.pool.install(|| {"],
+    "refs": ["crates/ciphernode/jobs/src/proofs.rs@104@self.pool.install(|| {"],
     "line_text": ["self.pool.install(|| {"],
     "note": "Proof jobs run on their own bounded thread pool."
   },
@@ -165,8 +165,8 @@
     "id": "B16",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/lib.rs@196@self.blobs.put_sealed",
-      "crates/ciphernode/jobs/src/proofs.rs@162@store(&self.blobs, &proof)"
+      "crates/ciphernode/jobs/src/lib.rs@198@self.blobs.put_sealed",
+      "crates/ciphernode/jobs/src/proofs.rs@157@store(&self.blobs, &proof)"
     ],
     "line_text": ["Ok(self.blobs.put_sealed(&self.sealed(secret)?)?)", "let proof = store(&self.blobs, &proof)?;"],
     "note": "Jobs store their results, sealed secrets and proofs, in the E3's blobs and pass references back."

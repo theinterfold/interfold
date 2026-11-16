@@ -21,7 +21,7 @@
       "circuits/bin/recursive_aggregation/c3_fold_kernel/src/main.nr@36@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@36@verify_honk_proof_non_zk(c3a_vk, c3a_proof",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@37@verify_honk_proof_non_zk(c3b_vk, c3b_proof",
-      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@126@if proof.circuit != CircuitName::ShareEncryption {"
+      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@130@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
@@ -52,8 +52,8 @@
     "refs": [
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@52@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@40@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@121@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@39@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
+      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@124@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",
@@ -131,8 +131,8 @@
     "id": "D10",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
-      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
+      "packages/interfold-contracts/contracts/Interfold.sol@488@address(e3.decryptionVerifier),",
+      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@336@IDecryptionVerifier(verifierAddress).verify(",
       "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@221@circuitVerifier.verify(rawProof, publicInputs)",
       "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
@@ -150,11 +150,11 @@
     "refs": [
       "circuits/bin/config/src/main.nr@21@use lib::configs::secure::dkg::{",
       "circuits/bin/config/src/main.nr@33@use lib::configs::secure::threshold::{",
-      "circuits/bin/config/src/main.nr@87@fn main() {",
-      "circuits/bin/config/src/main.nr@125@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@158@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@554@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@557@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@88@fn main() {",
+      "circuits/bin/config/src/main.nr@126@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@159@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@567@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure::dkg::{",
@@ -192,14 +192,14 @@
     "id": "D14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/jobs/src/dkg.rs@938@fn aggregate_key(",
-      "crates/ciphernode/jobs/src/dkg.rs@983@prove_with_variant(zk, &c5_config, &c5",
-      "crates/ciphernode/jobs/src/dkg.rs@1003@prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
+      "crates/ciphernode/jobs/src/dkg.rs@944@fn aggregate_key(",
+      "crates/ciphernode/jobs/src/dkg.rs@989@prove_with_variant(zk, &c5_config, &c5",
+      "crates/ciphernode/jobs/src/dkg.rs@1009@prove_dkg_aggregation(zk, &input, &work, &artifacts, params.committee_size)"
     ],
     "line_text": [
       "fn aggregate_key(",
       "PkAggregationCircuit.prove_with_variant(zk, &c5_config, &c5, &work, variant, &artifacts)",
-      "prove_dkg_aggregation(zk, &input, &work, preset, params.committee_size)"
+      "prove_dkg_aggregation(zk, &input, &work, &artifacts, params.committee_size)"
     ],
     "note": "The committee key job proves C5 (PkAggregation), then the DKG aggregation that verifies C5 with the nodes' folded proofs."
   },
@@ -208,11 +208,11 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/jobs/src/decryption.rs@385@prove_with_variant(zk, &config, &c7",
-      "crates/ciphernode/jobs/src/decryption.rs@396@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
+      "crates/ciphernode/jobs/src/decryption.rs@396@prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, &artifacts)"
     ],
     "line_text": [
       ".prove_with_variant(zk, &config, &c7, &work, variant, &artifacts)",
-      "prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)"
+      "prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, &artifacts)"
     ],
     "note": "The plaintext job proves C7 (DecryptedSharesAggregation), then the decryption aggregation over the C6 fold and C7."
   },

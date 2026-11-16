@@ -19,14 +19,14 @@
         {
           "name": "each E3's stage, committee, DKG and decryption work, inside Node",
           "where": "memory",
-          "ref": "crates/protocol/src/node.rs@747@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@750@pub struct Node {"
         }
       ],
       "key_types": [
         {
           "name": "Node",
           "what": "the whole node's protocol state for one operator",
-          "ref": "crates/protocol/src/node.rs@747@pub struct Node {"
+          "ref": "crates/protocol/src/node.rs@750@pub struct Node {"
         },
         {
           "name": "Machine",
@@ -36,22 +36,22 @@
         {
           "name": "Input",
           "what": "what the node can be told: chain facts, peer messages, job results, ticks",
-          "ref": "crates/protocol/src/node.rs@509@pub enum Input {"
+          "ref": "crates/protocol/src/node.rs@512@pub enum Input {"
         },
         {
           "name": "Effect",
           "what": "what the node asks its adapters to do: send, publish, run a job, fetch",
-          "ref": "crates/protocol/src/node.rs@643@pub enum Effect {"
+          "ref": "crates/protocol/src/node.rs@646@pub enum Effect {"
         },
         {
           "name": "ChainFact",
           "what": "a confirmed contract log, decoded with the state it needs",
-          "ref": "crates/protocol/src/node.rs@129@pub enum ChainFact {"
+          "ref": "crates/protocol/src/node.rs@132@pub enum ChainFact {"
         },
         {
           "name": "PeerMessage",
           "what": "an operator-signed message from another member",
-          "ref": "crates/protocol/src/node.rs@255@pub struct PeerMessage {"
+          "ref": "crates/protocol/src/node.rs@258@pub struct PeerMessage {"
         },
         { "name": "DkgWork", "what": "the DKG jobs the machine asks for", "ref": "crates/protocol/src/dkg/mod.rs@193@pub enum DkgWork {" },
         {
@@ -72,9 +72,9 @@
         },
         {
           "why": "the machine: one step per input, returning the effects",
-          "ref": "crates/protocol/src/node.rs@1307@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
+          "ref": "crates/protocol/src/node.rs@1310@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
         },
-        { "why": "every kind of input", "ref": "crates/protocol/src/node.rs@509@pub enum Input {" }
+        { "why": "every kind of input", "ref": "crates/protocol/src/node.rs@512@pub enum Input {" }
       ],
       "rust_patterns": [],
       "depends_on": ["e3-committee"],
@@ -390,24 +390,24 @@
         {
           "name": "bb's proving files, one folder per E3, deleted when its work ends",
           "where": "disk",
-          "ref": "crates/ciphernode/jobs/src/proofs.rs@133@fn directory(e3: E3Id) -> String {"
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@128@fn directory(e3: E3Id) -> String {"
         }
       ],
       "key_types": [
         {
           "name": "JobRunner",
           "what": "runs one job from blob references and stores its results",
-          "ref": "crates/ciphernode/jobs/src/lib.rs@104@pub struct JobRunner<S> {"
+          "ref": "crates/ciphernode/jobs/src/lib.rs@106@pub struct JobRunner<S> {"
         },
         {
           "name": "Proofs",
           "what": "real circuits, or placeholders for mock verifiers",
-          "ref": "crates/ciphernode/jobs/src/proofs.rs@27@pub enum Proofs {"
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@26@pub enum Proofs {"
         },
         {
           "name": "Circuits",
           "what": "the prover with its own bounded thread pool",
-          "ref": "crates/ciphernode/jobs/src/proofs.rs@38@pub struct Circuits {"
+          "ref": "crates/ciphernode/jobs/src/proofs.rs@37@pub struct Circuits {"
         },
         {
           "name": "JobError",
@@ -418,7 +418,7 @@
       "read_first": [
         {
           "why": "run: one job, by kind",
-          "ref": "crates/ciphernode/jobs/src/lib.rs@144@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
+          "ref": "crates/ciphernode/jobs/src/lib.rs@146@pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {"
         },
         { "why": "the DKG jobs, C0 to C5", "ref": "crates/ciphernode/jobs/src/dkg.rs@7@//! The DKG's jobs" },
         { "why": "the decryption jobs, C6 and C7", "ref": "crates/ciphernode/jobs/src/decryption.rs@7@//! The decryption jobs" },
@@ -504,13 +504,13 @@
         },
         {
           "why": "run: the event loop",
-          "ref": "crates/ciphernode/node/src/runtime.rs@151@pub async fn run<R, A, N, B>("
+          "ref": "crates/ciphernode/node/src/runtime.rs@156@pub async fn run<R, A, N, B>("
         },
         {
           "why": "one step: apply an input and dispatch its effects",
-          "ref": "crates/ciphernode/node/src/runtime.rs@343@engine.apply(now(), input)?"
+          "ref": "crates/ciphernode/node/src/runtime.rs@351@engine.apply(now(), input)?"
         },
-        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@514@async fn read_chain<R: Rpc>(" },
+        { "why": "the chain reader's loop", "ref": "crates/ciphernode/node/src/runtime.rs@534@async fn read_chain<R: Rpc>(" },
         {
           "why": "how many proofs run at once",
           "ref": "crates/ciphernode/node/src/memory.rs@45@pub(crate) fn capacity(requested: usize, reserved: usize) -> Result<Capacity, HostTooSmall> {"

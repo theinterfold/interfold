@@ -111,7 +111,7 @@
         {
           "name": "PkGeneration",
           "what": "the C1 statement: secret witnesses plus the public common reference polynomial",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@67@pub struct PkGeneration<"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@69@pub struct PkGeneration<"
         },
         {
           "name": "Configs",
@@ -126,11 +126,11 @@
         },
         {
           "why": "PkGeneration::execute: range checks, CRT consistency, commitments, then the evaluation check",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@149@pub fn execute(self) -> (Field, Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@151@pub fn execute(self) -> (Field, Field, Field)"
         },
         {
           "why": "the key equation, checked at the Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@279@Public key equation 1 failed"
+          "ref": "circuits/lib/src/core/threshold/pk_generation.nr@282@Public key equation 1 failed"
         }
       ],
       "rust_patterns": [],
@@ -369,7 +369,7 @@
         },
         {
           "why": "the BFV encryption identity, checked at a Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@524@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
+          "ref": "circuits/lib/src/core/dkg/share_encryption.nr@527@fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>)"
         }
       ],
       "rust_patterns": [],
@@ -554,7 +554,7 @@
         {
           "name": "UserDataEncryptionCt1",
           "what": "the ct1 leg statement: the CRS pk1, ciphertext, u and the reduction quotient",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@41@pub struct UserDataEncryptionCt1<"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@52@pub struct UserDataEncryptionCt1<"
         }
       ],
       "read_first": [
@@ -564,11 +564,11 @@
         },
         {
           "why": "the ct0 leg body: range bounds, commitments, then the ciphertext identity",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@181@pub fn execute(self) -> (Field, Field, Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@191@pub fn execute(self) -> (Field, Field, Field, Field)"
         },
         {
           "why": "the ct1 leg in the merged circuit: takes ct0's u commitment instead of committing u again",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@192@pub(crate) fn execute_with_u_commitment(self, u_commitment: Field) -> (Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@208@pub(crate) fn execute_with_u_commitment(self, u_commitment: Field) -> (Field, Field)"
         },
         {
           "why": "the three public outputs",
@@ -683,7 +683,7 @@
         },
         {
           "why": "the decryption-share identity, checked at the Fiat-Shamir point",
-          "ref": "circuits/lib/src/core/threshold/share_decryption.nr@314@fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field)"
+          "ref": "circuits/lib/src/core/threshold/share_decryption.nr@316@fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field)"
         }
       ],
       "rust_patterns": [],
@@ -972,15 +972,15 @@
       "read_first": [
         {
           "why": "entry point: main takes no inputs and runs the verification functions in order",
-          "ref": "circuits/bin/config/src/main.nr@87@fn main() {"
+          "ref": "circuits/bin/config/src/main.nr@88@fn main() {"
         },
         {
           "why": "the CRT product check against the secure DKG preset",
-          "ref": "circuits/bin/config/src/main.nr@125@assert(product == DKG_Q_MOD_T"
+          "ref": "circuits/bin/config/src/main.nr@126@assert(product == DKG_Q_MOD_T"
         },
         {
           "why": "the cross-preset check that the DKG and threshold configs agree on N",
-          "ref": "circuits/bin/config/src/main.nr@554@assert(DKG_N == THRESHOLD_N"
+          "ref": "circuits/bin/config/src/main.nr@564@assert(DKG_N == THRESHOLD_N"
         }
       ],
       "rust_patterns": [],

@@ -2,7 +2,7 @@
   {
     "id": "C1",
     "supported": true,
-    "refs": ["packages/interfold-contracts/contracts/Interfold.sol@412@requestCommittee("],
+    "refs": ["packages/interfold-contracts/contracts/Interfold.sol@413@requestCommittee("],
     "line_text": ["dependencies.registry.requestCommittee("],
     "note": "Interfold.request calls dependencies.registry.requestCommittee, and that registry is an ICiphernodeRegistry."
   },
@@ -23,7 +23,7 @@
   {
     "id": "C4",
     "supported": true,
-    "refs": ["packages/interfold-contracts/contracts/Interfold.sol@361@e3Program.validate("],
+    "refs": ["packages/interfold-contracts/contracts/Interfold.sol@362@e3Program.validate("],
     "line_text": ["bytes32 encryptionSchemeId = requestParams.e3Program.validate("],
     "note": "Interfold.request calls requestParams.e3Program.validate and binds the encryptionSchemeId it returns."
   },
@@ -31,8 +31,8 @@
     "id": "C5",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/Interfold.sol@429@InterfoldLifecycle.publishCiphertext(",
-      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@526@e3.e3Program.verify("
+      "packages/interfold-contracts/contracts/Interfold.sol@430@InterfoldLifecycle.publishCiphertext(",
+      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@530@e3.e3Program.verify("
     ],
     "line_text": ["InterfoldLifecycle.publishCiphertext(", "e3.e3Program.verify("],
     "note": "publishCiphertext reaches e3Program.verify through _isValidCiphertextHash, after the ciphertext verifier check."
@@ -41,8 +41,8 @@
     "id": "C6",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/Interfold.sol@471@_verifyPlaintext(e3Id",
-      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify("
+      "packages/interfold-contracts/contracts/Interfold.sol@472@_verifyPlaintext(e3Id",
+      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@336@IDecryptionVerifier(verifierAddress).verify("
     ],
     "line_text": ["_verifyPlaintext(e3Id, keccak256(plaintextOutput), proof);", "!IDecryptionVerifier(verifierAddress).verify("],
     "note": "publishPlaintextOutput calls _verifyPlaintext, which runs InterfoldLifecycle.verifyPlaintext and then the decryption verifier's verify."
@@ -61,9 +61,9 @@
     "id": "C8",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/Interfold.sol@732@InterfoldPricing.processE3Failure(",
+      "packages/interfold-contracts/contracts/Interfold.sol@733@InterfoldPricing.processE3Failure(",
       "packages/interfold-contracts/contracts/lib/InterfoldPricing.sol@162@refundManager.calculateRefund(",
-      "packages/interfold-contracts/contracts/Interfold.sol@754@escrowSlashedFunds("
+      "packages/interfold-contracts/contracts/Interfold.sol@755@escrowSlashedFunds("
     ],
     "line_text": [
       "InterfoldPricing.processE3Failure(",

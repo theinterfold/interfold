@@ -336,27 +336,27 @@
         {
           "name": "CommitteePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@657@move |e: CommitteePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@674@move |e: CommitteePublished, ctx| async move {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@669@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@686@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@745@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@762@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputReferencePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@768@move |event: CiphertextOutputReferencePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@785@move |event: CiphertextOutputReferencePublished, ctx| async move {"
         },
         {
           "name": "PlaintextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@790@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@807@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
         }
       ],
       "emits": [],
@@ -364,24 +364,24 @@
         {
           "name": "E3 record under the key _e3:<id> in the crate's InMemoryStore",
           "where": "memory",
-          "ref": "crates/evm/indexer/src/indexer.rs@122@pub struct InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@123@pub struct InMemoryStore {"
         },
         {
           "name": "callback queue and cursor flags (backfill_enabled, cursor_high, caught_up)",
           "where": "memory",
-          "ref": "crates/evm/indexer/src/indexer.rs@266@callbacks: CallbackQueue,"
+          "ref": "crates/evm/indexer/src/indexer.rs@267@callbacks: CallbackQueue,"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldIndexer",
           "what": "owns the IndexerContext and the listen loop, which restarts the listeners after an error",
-          "ref": "crates/evm/indexer/src/indexer.rs@235@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@236@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "IndexerContext",
           "what": "shared by every handler: store, listeners, contract handle, callback queue and cursor flags",
-          "ref": "crates/evm/indexer/src/indexer.rs@259@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@260@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "DataStore",
@@ -411,19 +411,19 @@
         },
         {
           "why": "construction: reads the chain id, wires the listeners and registers the handlers",
-          "ref": "crates/evm/indexer/src/indexer.rs@555@pub async fn new("
+          "ref": "crates/evm/indexer/src/indexer.rs@572@pub async fn new("
         },
         {
           "why": "opt-in catch-up and cursor, with the reason for the opt-in in the doc",
-          "ref": "crates/evm/indexer/src/indexer.rs@910@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
+          "ref": "crates/evm/indexer/src/indexer.rs@927@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
         },
         {
           "why": "committee key handling: the on-chain commitment check before storage",
-          "ref": "crates/evm/indexer/src/indexer.rs@477@if let Err(error) = validate_pk_commitment("
+          "ref": "crates/evm/indexer/src/indexer.rs@494@if let Err(error) = validate_pk_commitment("
         },
         {
           "why": "the live loop: backfill, subscribe, overlap replay, restart on error",
-          "ref": "crates/evm/indexer/src/indexer.rs@1007@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1024@pub async fn listen(&self) -> Result<()> {"
         }
       ],
       "rust_patterns": [
@@ -435,17 +435,17 @@
         {
           "pattern": "trait-impl",
           "note": "InMemoryStore implements DataStore, storing values as bincode bytes",
-          "ref": "crates/evm/indexer/src/indexer.rs@141@impl DataStore for InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@142@impl DataStore for InMemoryStore {"
         },
         {
           "pattern": "tokio-select",
           "note": "listen() races the event listener, the block listener and the overlap replay, and restarts when one ends",
-          "ref": "crates/evm/indexer/src/indexer.rs@1108@let res = tokio::select! {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1125@let res = tokio::select! {"
         },
         {
           "pattern": "arc-shared",
           "note": "handlers hold a Weak reference to the context, so the context and its listeners can be dropped",
-          "ref": "crates/evm/indexer/src/indexer.rs@603@let ctx_weak = Arc::downgrade(&ctx);"
+          "ref": "crates/evm/indexer/src/indexer.rs@620@let ctx_weak = Arc::downgrade(&ctx);"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-data-availability", "e3-evm-client", "e3-evm-contracts", "e3-fhe-params"],
@@ -485,12 +485,12 @@
         {
           "name": "request and registerE3Program transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm/client/src/contracts.rs@428@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
+          "ref": "crates/evm/client/src/contracts.rs@430@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
         },
         {
           "name": "publishCiphertextOutput and publishPlaintextOutput transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm/client/src/contracts.rs@479@contract.publishCiphertextOutput("
+          "ref": "crates/evm/client/src/contracts.rs@481@contract.publishCiphertextOutput("
         }
       ],
       "state": [
@@ -514,7 +514,7 @@
         {
           "name": "InterfoldContract",
           "what": "typed handle to the Interfold contract, read-only or read-write by its marker type",
-          "ref": "crates/evm/client/src/contracts.rs@181@pub struct InterfoldContract<T: ProviderType> {"
+          "ref": "crates/evm/client/src/contracts.rs@182@pub struct InterfoldContract<T: ProviderType> {"
         },
         {
           "name": "EventListener",
@@ -529,17 +529,17 @@
         {
           "name": "InterfoldRead",
           "what": "read-only trait over the Interfold contract: E3 record, stage, failure reason, deadlines and quotes",
-          "ref": "crates/evm/client/src/contracts.rs@84@pub trait InterfoldRead {"
+          "ref": "crates/evm/client/src/contracts.rs@85@pub trait InterfoldRead {"
         },
         {
           "name": "InterfoldWrite",
           "what": "write trait for read-write handles: request, register program, publish outputs",
-          "ref": "crates/evm/client/src/contracts.rs@127@pub trait InterfoldWrite {"
+          "ref": "crates/evm/client/src/contracts.rs@128@pub trait InterfoldWrite {"
         },
         {
           "name": "ProviderType",
           "what": "marker trait; ReadOnly and ReadWrite select the provider behind InterfoldContract",
-          "ref": "crates/evm/client/src/contracts.rs@162@pub trait ProviderType: Clone + Send + Sync + 'static {"
+          "ref": "crates/evm/client/src/contracts.rs@163@pub trait ProviderType: Clone + Send + Sync + 'static {"
         },
         {
           "name": "ThresholdQueue",
@@ -554,7 +554,7 @@
         },
         {
           "why": "read operations and their trait",
-          "ref": "crates/evm/client/src/contracts.rs@84@pub trait InterfoldRead {"
+          "ref": "crates/evm/client/src/contracts.rs@85@pub trait InterfoldRead {"
         },
         {
           "why": "the log subscription loop; it marks the subscription live so that an owner can replay the gap after it",
@@ -574,7 +574,7 @@
         {
           "pattern": "trait-impl",
           "note": "InterfoldRead is implemented once for every InterfoldContract, whatever its provider type",
-          "ref": "crates/evm/client/src/contracts.rs@290@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
+          "ref": "crates/evm/client/src/contracts.rs@291@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
         },
         {
           "pattern": "tokio-spawn",
@@ -584,7 +584,7 @@
         {
           "pattern": "option-combinators",
           "note": "a missing wallet becomes an error through ok_or_else, then ?",
-          "ref": "crates/evm/client/src/contracts.rs@469@.ok_or_else(|| eyre::eyre!("
+          "ref": "crates/evm/client/src/contracts.rs@471@.ok_or_else(|| eyre::eyre!("
         }
       ],
       "depends_on": ["e3-utils", "e3-evm-contracts", "e3-evm-transactions", "e3-fhe-params"],
@@ -705,7 +705,7 @@
       "read_first": [
         {
           "why": "DKG: the public-key share and the secret Shamir shares",
-          "ref": "crates/bfv/threshold/src/gen_pk_share_and_sk_sss.rs@111@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
+          "ref": "crates/bfv/threshold/src/gen_pk_share_and_sk_sss.rs@113@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
         },
         {
           "why": "summing the shares a node collected",
@@ -713,11 +713,11 @@
         },
         {
           "why": "one decryption share per ciphertext",
-          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@102@pub fn calculate_decryption_share("
+          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@105@pub fn calculate_decryption_share("
         },
         {
           "why": "combining the shares of a threshold of nodes into plaintext",
-          "ref": "crates/bfv/threshold/src/calculate_threshold_decryption.rs@126@pub fn calculate_threshold_decryption("
+          "ref": "crates/bfv/threshold/src/calculate_threshold_decryption.rs@129@pub fn calculate_threshold_decryption("
         }
       ],
       "rust_patterns": [
@@ -729,7 +729,7 @@
         {
           "pattern": "impl-from",
           "note": "an internal response converts into its serializable form with From",
-          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@90@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
+          "ref": "crates/bfv/threshold/src/calculate_decryption_share.rs@93@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
         },
         {
           "pattern": "iterator-chain",
@@ -770,7 +770,7 @@
         {
           "name": "VerifiableEncryptionResult",
           "what": "ciphertext bytes plus the circuit inputs as a JSON string",
-          "ref": "crates/bfv/client/src/client.rs@72@pub struct VerifiableEncryptionResult {"
+          "ref": "crates/bfv/client/src/client.rs@73@pub struct VerifiableEncryptionResult {"
         },
         {
           "name": "Error",
@@ -785,19 +785,19 @@
         },
         {
           "why": "encryption under a public key",
-          "ref": "crates/bfv/client/src/client.rs@45@pub fn bfv_encrypt<T>("
+          "ref": "crates/bfv/client/src/client.rs@46@pub fn bfv_encrypt<T>("
         },
         {
           "why": "verifiable encryption, with the circuit inputs",
-          "ref": "crates/bfv/client/src/client.rs@96@pub fn bfv_verifiable_encrypt<T>("
+          "ref": "crates/bfv/client/src/client.rs@97@pub fn bfv_verifiable_encrypt<T>("
         },
         {
           "why": "the public-key commitment check used before a key is trusted",
-          "ref": "crates/bfv/client/src/client.rs@197@pub fn validate_pk_commitment("
+          "ref": "crates/bfv/client/src/client.rs@200@pub fn validate_pk_commitment("
         },
         {
           "why": "the ciphertext commitment, with a variant that reuses built parameters",
-          "ref": "crates/bfv/client/src/client.rs@221@pub fn compute_ct_commitment("
+          "ref": "crates/bfv/client/src/client.rs@224@pub fn compute_ct_commitment("
         }
       ],
       "rust_patterns": [
@@ -809,22 +809,22 @@
         {
           "pattern": "generic-where",
           "note": "the encrypt functions take any value T that fhe.rs can encode, through a where bound",
-          "ref": "crates/bfv/client/src/client.rs@53@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
+          "ref": "crates/bfv/client/src/client.rs@54@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "building the parameters returns early on error",
-          "ref": "crates/bfv/client/src/client.rs@55@build_client_params(degree, plaintext_modulus, moduli, None)?;"
+          "ref": "crates/bfv/client/src/client.rs@56@build_client_params(degree, plaintext_modulus, moduli, None)?;"
         },
         {
           "pattern": "option-combinators",
           "note": "an unsupported parameter tuple becomes an anyhow error through ok_or_else",
-          "ref": "crates/bfv/client/src/client.rs@107@.ok_or_else(|| {"
+          "ref": "crates/bfv/client/src/client.rs@108@.ok_or_else(|| {"
         },
         {
           "pattern": "unit-test",
           "note": "the encryption round trips are plain #[test] functions",
-          "ref": "crates/bfv/client/src/client.rs@382@fn test_bfv_encrypt_a64() {"
+          "ref": "crates/bfv/client/src/client.rs@385@fn test_bfv_encrypt_a64() {"
         }
       ],
       "depends_on": ["e3-fhe-params", "e3-zk-config", "e3-zk-witness", "e3-polynomial"],
