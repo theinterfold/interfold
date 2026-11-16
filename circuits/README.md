@@ -20,11 +20,7 @@ circuits/
 │   ├── config/                # Deployment-time consistency checks on presets
 │   ├── dkg/                   # DKG packages and C2 proof pipeline
 │   ├── threshold/             # TrBFV, user encryption, threshold decryption
-│   └── recursive_aggregation/
-│       ├── fold/
-│       └── wrapper/
-│           ├── dkg/
-│           └── threshold/
+│   └── recursive_aggregation/ # Folds and the two on-chain aggregators
 └── benchmarks/
 ```
 
@@ -52,10 +48,8 @@ how phases, commitments, and circuit IDs line up end to end, read
 one `*_share_computation_chain_last` chunk, which run the Shamir-share checks on consecutive
 coefficient ranges and carry the commitment sponges between them. The final circuit verifies the
 chunks, so its proof is the one peers and `c2ab_fold` consume, and its share commitments equal the
-unchunked C2's. Gossip and threshold signing use that final proof. The wrapper
-`recursive_aggregation/wrapper/dkg/share_computation` (`CircuitName::ShareComputation`) re-verifies
-a single inner C2 proof at a time and compresses public inputs for folding / aggregation; it is
-produced separately when node proof aggregation is enabled.
+unchunked C2's. Gossip and threshold signing use that final proof. `c2ab_fold` verifies the final
+C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 
 ### DKG (`bin/dkg/`)
 
@@ -83,12 +77,17 @@ produced separately when node proof aggregation is enabled.
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
-| Path                            | `CircuitName`      | Role                                                                               |
-| ------------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
-| `fold`                          | `Fold`             | Fold two wrapper outputs                                                           |
-| `wrapper/dkg/share_computation` | `ShareComputation` | C2 wrapper: one inner C2a or C2b proof per wrap; VK genealogy + compressed outputs |
-| `wrapper/dkg/*`                 | —                  | Verifies inner DKG proofs; compresses public inputs                                |
-| `wrapper/threshold/*`           | —                  | Verifies inner threshold proofs; compresses public inputs                          |
+| Path                              | `CircuitName`                  | Role                                                                                   |
+| --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b and binds each C2's chunk key tree into its key hash.                |
+| `c3_fold`, `c3_fold_kernel`       | `C3Fold`, `C3FoldKernel`       | Folds the C3 proofs of one branch in sequence. The kernel makes the first accumulator. |
+| `c3ab_fold`                       | `C3abFold`                     | Folds the final secret key and smudging noise C3 folds.                                |
+| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b.                                                                     |
+| `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                  |
+| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence.                                            |
+| `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                |
+| `c6_fold`, `c6_fold_kernel`       | `C6Fold`, `C6FoldKernel`       | Folds the T + 1 C6 proofs of one ciphertext.                                           |
+| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_fold` and C7. Its EVM proof goes to `publishPlaintextOutput`.             |
 
 For recursive trust and public-input bindings, see
 [proof statements](../docs/architecture/proof-statements.md#recursive-trust-and-exported-values).

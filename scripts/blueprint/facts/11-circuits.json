@@ -153,17 +153,17 @@
       "consumes": [
         {
           "name": "public: expected_secret_commitment",
-          "by": "SecretKeyShareComputation::execute",
+          "by": "sk_share_computation_final",
           "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@28@expected_secret_commitment: pub Field"
         },
         {
           "name": "private: sk_secret",
-          "by": "SecretKeyShareComputation::execute",
+          "by": "sk_share_computation_final",
           "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@29@sk_secret: Polynomial<N>"
         },
         {
           "name": "private: chunk_proofs",
-          "by": "SecretKeyShareComputation::execute",
+          "by": "sk_share_computation_final",
           "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@34@chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_SK_N_CHUNKS]"
         }
       ],
@@ -171,9 +171,9 @@
       "state": [],
       "key_types": [
         {
-          "name": "SecretKeyShareComputation",
-          "what": "the C2a statement: secret commitment, secret and the share grid",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@36@pub struct SecretKeyShareComputation<"
+          "name": "sk_share_computation_final",
+          "what": "the C2a statement over a verified chunk chain: the chain dealt C1's sk, and these are its share commitments",
+          "ref": "circuits/lib/src/core/dkg/share_computation_chain.nr@284@pub fn sk_share_computation_final<"
         },
         {
           "name": "Configs",
@@ -187,21 +187,21 @@
           "ref": "circuits/bin/dkg/sk_share_computation/src/main.nr@27@fn main("
         },
         {
-          "why": "execute: secret commitment, consistency, range, parity, then commit to shares",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@85@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "why": "the final check: the sk commitment opens, the chain dealt that sk, and the chain ends on the returned commitments",
+          "ref": "circuits/lib/src/core/dkg/share_computation_chain.nr@291@assert(outputs[0] == sk_secret_digest(sk_secret), \"Secret consistency check failed\");"
         },
         {
-          "why": "the share-at-zero check: y at point 0 equals the secret coefficient",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@138@assert(self.y[coeff_idx][mod_idx][0] == secret_coeff)"
+          "why": "the share-at-zero check: every limb of the sk column is the same value, which the chain's secret digest absorbs",
+          "ref": "circuits/lib/src/core/dkg/share_computation_chain.nr@91@fn check_secret_column<"
         },
         {
           "why": "the parity check: each window of T + 2 shares, weighted by alternating binomial coefficients, is zero modulo each prime",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@349@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@169@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
         }
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "No #[test] in this package or in lib core/dkg/share_computation.nr; no C2a test found.",
+      "tests": "No #[test] in the bin package; lib core/dkg/share_computation_chain.nr tests the chain, the chunk checks and both finals, and core/dkg/share_computation.nr the finite differences.",
       "unverified": [
         "Generator and verifier roles (each dealer proves; recipients verify) come from docs/architecture/dkg.md, not from the circuit code."
       ]
@@ -219,17 +219,17 @@
       "consumes": [
         {
           "name": "public: expected_secret_commitment",
-          "by": "SmudgingNoiseShareComputation::execute",
+          "by": "e_sm_share_computation_final",
           "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@26@expected_secret_commitment: pub Field"
         },
         {
           "name": "private: e_sm_secret",
-          "by": "SmudgingNoiseShareComputation::execute",
+          "by": "e_sm_share_computation_final",
           "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@27@e_sm_secret: [Polynomial<N>; L_THRESHOLD]"
         },
         {
           "name": "private: chunk_proofs",
-          "by": "SmudgingNoiseShareComputation::execute",
+          "by": "e_sm_share_computation_final",
           "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@32@chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_E_SM_N_CHUNKS]"
         }
       ],
@@ -237,9 +237,9 @@
       "state": [],
       "key_types": [
         {
-          "name": "SmudgingNoiseShareComputation",
-          "what": "the C2b statement: the same shape as C2a, with the centered noise as the secret",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@60@pub struct SmudgingNoiseShareComputation<"
+          "name": "e_sm_share_computation_final",
+          "what": "the C2b statement over a verified chunk chain: the chain dealt C1's e_sm, and these are its share commitments",
+          "ref": "circuits/lib/src/core/dkg/share_computation_chain.nr@298@pub fn e_sm_share_computation_final<"
         }
       ],
       "read_first": [
@@ -248,17 +248,17 @@
           "ref": "circuits/bin/dkg/e_sm_share_computation/src/main.nr@25@fn main("
         },
         {
-          "why": "execute: the same body shape as C2a",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@155@pub fn execute(self) -> [[Field; L]; N_PARTIES]"
+          "why": "the final check: the noise commitment opens, the chain dealt that noise, and the chain ends on the returned commitments",
+          "ref": "circuits/lib/src/core/dkg/share_computation_chain.nr@310@assert(outputs[0] == e_sm_secret_digest(e_sm_secret), \"Secret consistency check failed\");"
         },
         {
           "why": "the noise commitment check, after centering each modulus",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@263@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@83@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
         }
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "No #[test] in this package or in lib core/dkg/share_computation.nr; no C2b test found.",
+      "tests": "No #[test] in the bin package; lib core/dkg/share_computation_chain.nr tests the chain, the chunk checks and both finals, and core/dkg/share_computation.nr the finite differences.",
       "unverified": [
         "Generator and verifier roles (each dealer proves; recipients verify) come from docs/architecture/dkg.md, not from the circuit code."
       ]

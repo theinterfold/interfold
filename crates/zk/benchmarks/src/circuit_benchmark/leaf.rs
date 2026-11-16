@@ -27,7 +27,7 @@ pub(crate) fn benchmark(
     shared: &mut Vec<SharedPreparation>,
     record: &mut Record,
 ) -> Result<()> {
-    let variant = super::selection::variant(&options.variant)?;
+    let variant = case.variant(super::selection::variant(&options.variant)?);
     if case == Case::Config && options.bench_compile {
         record.compilation.metric = "config_compile_and_provenance_wall".into();
         let start = Instant::now();
@@ -51,7 +51,7 @@ pub(crate) fn benchmark(
         .then(|| fs::metadata(&vk).map(|data| data.len()))
         .transpose()?;
     record.artifact = Some(identity);
-    let inputs = inputs::prepare(material, case, &compiled, ude, shared, record)?;
+    let inputs = inputs::prepare(material, case, &compiled, prover, pair, ude, shared, record)?;
     if options.export_toml {
         fs::write(
             output.join(format!("{}.toml", case.path().replace('/', "_"))),

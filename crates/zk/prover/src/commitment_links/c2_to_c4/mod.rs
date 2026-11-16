@@ -29,11 +29,13 @@
 //! [party_0_mod_0 (32 B)] [party_0_mod_1] ... [party_0_mod_{L-1}]
 //! [party_1_mod_0] ...
 //! [party_{N-1}_mod_{L-1}]
+//! [key_tree (32 B, skip)]
 //! ```
 //!
 //! The first field is the `expected_secret_commitment` public input and is
-//! skipped. The remaining N_PARTIES × L fields are share commitments output
-//! by `commit_to_party_shares`, indexed in row-major order (party first, then
+//! skipped. The last is the hash of the chunk keys of the C2 chain and is
+//! skipped. The N_PARTIES × L fields between them are share commitments
+//! output by the chunk chain, indexed in row-major order (party first, then
 //! modulus).
 //!
 //! ## C4 public signals layout

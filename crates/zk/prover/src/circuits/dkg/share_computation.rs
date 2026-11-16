@@ -22,11 +22,11 @@ impl Provable for ShareComputationCircuit {
     ) -> Result<noirc_abi::InputMap, ZkError> {
         let _ = (config, input);
         Err(ZkError::InputsGenerationFailed(
-            "C2 is proven as a chunk chain; its final inputs need the batch proofs".into(),
+            "C2 is proven as a chunk chain; its final inputs need the chunk proofs".into(),
         ))
     }
 
-    /// Proves the chunk chain, its batches and the final C2 proof (see
+    /// Proves the chunk chain and the final C2 proof (see
     /// [`crate::circuits::aggregation::c2_chain`]).
     fn prove_with_variant(
         &self,

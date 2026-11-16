@@ -11,8 +11,8 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 11);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 10);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 15);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 14);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
@@ -27,6 +27,40 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
     assert!(config
         .select("secure", &["threshold/user_data_encryption_ct0".into()])
         .is_err());
+}
+
+#[test]
+fn c2_chunk_cases_always_run_in_the_default_variant() {
+    use e3_zk_config::{CircuitName, CircuitVariant};
+    for chunk in [
+        CircuitName::SkShareComputationChain,
+        CircuitName::SkShareComputationChainLast,
+        CircuitName::ESmShareComputationChain,
+        CircuitName::ESmShareComputationChainLast,
+    ] {
+        for requested in [
+            CircuitVariant::Recursive,
+            CircuitVariant::Default,
+            CircuitVariant::Evm,
+        ] {
+            let case = Case::Named(chunk);
+            assert_eq!(case.variant(requested), CircuitVariant::Default);
+            let record = Record::new(case, "insecure", case.variant(requested));
+            assert_eq!(record.variant, "default");
+        }
+    }
+    // Every other case, the final C2 circuits included, runs in the requested variant.
+    for case in [
+        Case::Named(CircuitName::SkShareComputation),
+        Case::Named(CircuitName::ESmShareComputation),
+        Case::Named(CircuitName::PkBfv),
+        Case::Ude,
+    ] {
+        assert_eq!(
+            case.variant(CircuitVariant::Recursive),
+            CircuitVariant::Recursive
+        );
+    }
 }
 
 #[test]

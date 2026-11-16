@@ -316,16 +316,32 @@ mod share_encryption {
 }
 
 mod share_computation_chain {
+    use ark_bn254::Fr as Field;
     use ark_ff::{BigInteger, PrimeField};
     use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
     use e3_polynomial::Polynomial;
+    use e3_safe::ABSORB_FLAG;
     use e3_zk_config::dkg::share_computation::Configs;
     use e3_zk_config::DkgInputType;
-    use e3_zk_witness::commitments::compute_share_encryption_commitment_from_message;
+    use e3_zk_witness::commitments::{
+        compute_commitments, compute_share_encryption_commitment_from_message,
+        DS_SHARE_COMPUTATION_CHAIN_SECRET,
+    };
     use e3_zk_witness::dkg::share_computation::Inputs;
     use e3_zk_witness::dkg::share_computation_chain::Chain;
-    use num_bigint::{BigInt, BigUint};
+    use num_bigint::{BigInt, BigUint, Sign};
+
+    /// `value` as a field element; the `sk` column holds `-1`, which wraps mod p.
+    fn to_field(value: &BigInt) -> Field {
+        let (sign, bytes) = value.to_bytes_le();
+        let magnitude = Field::from_le_bytes_mod_order(&bytes);
+        if sign == Sign::Minus {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
 
     /// The chain's commitments are the unchunked C2 commitments, and its chunks cover the degree.
     #[test]
@@ -347,7 +363,6 @@ mod share_computation_chain {
                 DkgInputType::SmudgingNoise => &config.e_sm_chunks,
             };
             assert_eq!(chain.chunks.len(), layout.n_chunks);
-            assert_eq!(chain.chunks[0].h_in, chain.start_hash);
             assert!(chain.chunks.last().unwrap().is_last);
             assert_eq!(
                 chain.chunks.iter().map(|c| c.y_chunk.len()).sum::<usize>(),
@@ -374,6 +389,25 @@ mod share_computation_chain {
                     );
                 }
             }
+
+            // The secret digest is the one-shot hash of the dealt secret column, highest degree
+            // first, which the final circuit recomputes from the opened secret.
+            let limbs = match input_type {
+                DkgInputType::SecretKey => 1,
+                DkgInputType::SmudgingNoise => num_moduli,
+            };
+            let stream: Vec<Field> = inputs
+                .y
+                .iter()
+                .rev()
+                .flat_map(|row| row[..limbs].iter().map(|limb| to_field(&limb[0])))
+                .collect();
+            let io_pattern = [ABSORB_FLAG | stream.len() as u32, 1];
+            assert_eq!(
+                chain.outputs[0],
+                compute_commitments(stream, DS_SHARE_COMPUTATION_CHAIN_SECRET, io_pattern)[0],
+                "{input_type:?} secret digest"
+            );
         }
     }
 }

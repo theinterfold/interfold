@@ -446,12 +446,13 @@ does not store t.
 C2 is split by coefficient range so each chunk proof stays within 2^22 gates at secure-8192. Each
 share commitment is one SAFE sponge over the share's packed coefficients, highest degree first. A
 chunk runs C2's per-coefficient checks (Shamir finite differences, share ranges, the `sk` column
-equal across limbs) and continues every party's sponge from a carried `(state, absorb_pos)`. SAFE
-merges consecutive ABSORB words into one tag, so the chain computes exactly the unchunked commitment
-and C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers and whole
-sponge blocks, so every chunk starts each sponge at a known position; only the last may end on a
-partial carrier. At degree 8192 C2a and C2b each take six chunks of 1368 coefficients (the last
-1352); C2b's are the larger because it also hashes every secret limb.
+equal across limbs) and continues every party's sponge from a carried `(state, absorb_pos)`. The
+absorb loop reads only that carried pair, so continuing one ABSORB `[ABSORB | total, 1]` across
+chunks computes exactly the unchunked commitment, and C1, C3, C4 and the node fold are unchanged. A
+full chunk holds whole packing carriers and whole sponge blocks, so every chunk starts each sponge
+at a known position; only the last may end on a partial carrier. At degree 8192 C2a and C2b each
+take six chunks of 1368 coefficients (the last 1352); C2b's are the larger because it also hashes
+every secret limb.
 
 Each chunk proves `h_out` from `h_in`, hashes of every carried sponge
 (`DS_SHARE_COMPUTATION_CHAIN_STATE`). The final `sk_share_computation` or `e_sm_share_computation`
@@ -465,6 +466,9 @@ C1's secret.
 The final proof exposes the hash of the two chunk keys as its last public field. `c2ab_fold` folds
 it into the VK tree above. A peer verifying a C2 proof directly must compare it with its own chunk
 keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
+
+The chunk circuits are proven non-ZK and only verified inside the final circuit, so the build
+publishes them in the `default` variant alone; the final circuits keep every variant.
 
 ## Evidence and change review
 

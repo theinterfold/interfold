@@ -6,9 +6,9 @@
 
 //! Combines C2a + C2b (two ZK Honk proofs) and surfaces their public inputs for `node_fold`.
 //!
-//! Each C2 is the final circuit of a chunk chain and exposes the hash of its batch and chunk keys
-//! last. That hash enters this fold's key hash next to the C2 key, so the VK tree covers every
-//! circuit of the chain. The outputs keep the unchunked C2 layout `node_fold` reads.
+//! Each C2 is the final circuit of a chunk chain and exposes the hash of its full-chunk and
+//! last-chunk keys last. That hash enters this fold's key hash next to the C2 key, so the VK tree
+//! covers every circuit of the chain. The outputs keep the unchunked C2 layout `node_fold` reads.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::dkg::L_THRESHOLD;

@@ -212,25 +212,35 @@ impl Configs {
 
 #[cfg(test)]
 mod tests {
-    use super::ChunkLayout;
+    use super::Configs;
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
 
+    /// The layouts the presets generate: whole carriers and sponge blocks per chunk, covering the
+    /// degree, split into the chunk counts the circuits are built for.
     #[test]
-    fn chunk_layouts_cover_the_degree_with_whole_carriers() {
-        // 60-bit shares pack three per carrier.
-        for (degree, target, chunk_size, last_chunk_size, n_chunks) in [
-            (8192, ChunkLayout::TARGET_CHUNKS, 1368, 1352, 6),
-            (64, ChunkLayout::TARGET_CHUNKS, 18, 10, 4),
+    fn generated_chunk_layouts_cover_the_degree_with_whole_carriers() {
+        for (preset, degree, bit_share, group, chunk_size, last_chunk_size, n_chunks) in [
+            // 27-bit shares pack seven per carrier.
+            (BfvPreset::InsecureThreshold64, 64, 27, 7, 21, 1, 4),
+            // 60-bit shares pack three per carrier.
+            (BfvPreset::SecureThreshold8192, 8192, 60, 3, 1368, 1352, 6),
         ] {
-            let layout = ChunkLayout::new(degree, 60, target).unwrap();
-            assert_eq!(
-                (layout.chunk_size, layout.last_chunk_size, layout.n_chunks),
-                (chunk_size, last_chunk_size, n_chunks)
-            );
-            assert_eq!(layout.chunk_size % 9, 0);
-            assert_eq!(
-                (layout.n_chunks - 1) * layout.chunk_size + layout.last_chunk_size,
-                degree
-            );
+            let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+            assert_eq!(config.params.degree(), degree);
+            assert_eq!(config.bits.bit_share, bit_share);
+            for layout in [&config.sk_chunks, &config.e_sm_chunks] {
+                assert_eq!(
+                    (layout.chunk_size, layout.last_chunk_size, layout.n_chunks),
+                    (chunk_size, last_chunk_size, n_chunks),
+                    "{preset:?}"
+                );
+                assert_eq!(layout.chunk_size % (3 * group), 0);
+                assert_eq!(
+                    (layout.n_chunks - 1) * layout.chunk_size + layout.last_chunk_size,
+                    degree
+                );
+            }
         }
     }
 }

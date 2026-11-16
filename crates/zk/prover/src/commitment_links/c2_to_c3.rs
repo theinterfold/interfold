@@ -6,14 +6,15 @@
 
 //! C2 (ShareComputation) → C3 (ShareEncryption) message commitment link.
 //!
-//! C2's inner circuit outputs per-party-per-modulus share commitments via
-//! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
+//! C2's final circuit outputs per-party-per-modulus share commitments, which the chunk chain
+//! computes as `commit_to_party_shares` would. C3 claims `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
-//! The signed C2 proof is the **inner** circuit proof (SkShareComputation /
+//! The signed C2 proof is the **final** circuit proof (SkShareComputation /
 //! ESmShareComputation, `CircuitVariant::Recursive`). Its public signals layout:
 //!   - field 0: `expected_secret_commitment` (public input, skip)
-//!   - fields 1..(N_PARTIES × L_THRESHOLD): share commitments from `commit_to_party_shares`
+//!   - fields 1..=(N_PARTIES × L_THRESHOLD): share commitments
+//!   - last field: the hash of the chunk keys of the C2 chain (skip)
 //!
 //! Source is C3 (the claimant — it declares what commitment it encrypts).
 //! Target is C2 (the provider — it produced the actual share commitments).

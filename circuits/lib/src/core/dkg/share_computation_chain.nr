@@ -429,21 +429,74 @@ fn a_chunk_rejects_a_carried_state_that_does_not_match_its_input_hash() {
     );
 }
 
-#[test]
-fn the_final_check_accepts_the_chain_of_the_dealt_secret() {
-    let (y, sk) = test_sharing();
+/// C1's `sk` commitment as C2a opens it: the checked commitment of `sk` highest-degree first.
+fn test_sk_commitment(sk: Polynomial<19>) -> Field {
+    let mut reversed = [0; 19];
+    for i in 0..19 {
+        reversed[i] = sk.coefficients[18 - i];
+    }
+    crate::math::commitments::compute_share_computation_sk_commitment_checked::<19, 1>(
+        Polynomial::new(reversed),
+    )
+}
+
+/// What the last chunk hands the final circuit: the secret digest of `secret`, then the share
+/// commitments of `y`.
+fn test_chain_outputs(y: [[[Field; 4]; 2]; 19], secret: Polynomial<19>) -> [Field; 7] {
     let commitments =
         crate::core::dkg::share_computation::commit_to_party_shares::<19, 2, 3, 60>(y);
     let mut outputs = [0; 7];
-    outputs[0] = sk_secret_digest(sk);
+    outputs[0] = sk_secret_digest(secret);
     for party_idx in 0..3 {
         for mod_idx in 0..2 {
             outputs[1 + party_idx * 2 + mod_idx] = commitments[party_idx][mod_idx];
         }
     }
+    outputs
+}
+
+#[test]
+fn the_final_circuit_returns_the_share_commitments_of_the_chain() {
+    let (y, sk) = test_sharing();
     let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
-    check_chain::<1, 19, 2, 3, 60, 1>(links, outputs);
-    assert(outputs[0] == sk_secret_digest(sk));
+    let commitments = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+        test_sk_commitment(sk),
+        sk,
+        links,
+        test_chain_outputs(y, sk),
+    );
+    assert(
+        commitments
+            == crate::core::dkg::share_computation::commit_to_party_shares::<19, 2, 3, 60>(y),
+    );
+}
+
+#[test(should_fail_with = "Secret consistency check failed")]
+fn the_final_circuit_rejects_a_chain_dealt_a_secret_other_than_the_opened_one() {
+    let (y, sk) = test_sharing();
+    let mut other = sk;
+    other.coefficients[3] = 0;
+    let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
+    let _ = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+        test_sk_commitment(sk),
+        sk,
+        links,
+        test_chain_outputs(y, other),
+    );
+}
+
+#[test(should_fail_with = "Chain output mismatch")]
+fn the_final_circuit_rejects_outputs_the_last_chunk_did_not_produce() {
+    let (y, sk) = test_sharing();
+    let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
+    let mut outputs = test_chain_outputs(y, sk);
+    outputs[1] += 1;
+    let _ = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+        test_sk_commitment(sk),
+        sk,
+        links,
+        outputs,
+    );
 }
 
 #[test]
@@ -473,6 +526,65 @@ fn chunked_e_sm_chain_carries_every_limb_of_the_secret() {
         }
     }
     assert(run_test_chain_with::<2>(y) == chain_output_hash(outputs));
+}
+
+/// A degree-1 sharing of an `e_sm` held as residues in `[0, q_j)`, with some above `(q_j - 1) / 2`
+/// so the final circuit's centering matters: `y[i][j][x] = (s_ij + a_i * x) mod q_j`.
+fn test_e_sm_sharing() -> ([[[Field; 4]; 2]; 19], [Polynomial<19>; 2]) {
+    let mut y = [[[0; 4]; 2]; 19];
+    let mut e_sm = [Polynomial::new([0; 19]); 2];
+    for i in 0..19 {
+        for j in 0..2 {
+            let q: u64 = if j == 0 { 97 } else { 89 };
+            let s = ((i as u64) * 7 + (j as u64) * 31 + 5) % q;
+            let a = ((i as u64) * 13 + 3) % q;
+            e_sm[j].coefficients[i] = s as Field;
+            y[i][j][0] = s as Field;
+            for x in 1..4 {
+                y[i][j][x] = ((s + a * (x as u64)) % q) as Field;
+            }
+        }
+    }
+    (y, e_sm)
+}
+
+/// C1's `e_sm` commitment as C2b opens it: each limb reversed and centered to `[-(q-1)/2, (q-1)/2]`.
+fn test_e_sm_commitment(e_sm: [Polynomial<19>; 2]) -> Field {
+    let mut centered = [Polynomial::new([0; 19]); 2];
+    for j in 0..2 {
+        let q = TQ[j];
+        let half = ((q - 1) / 2) as u64;
+        for i in 0..19 {
+            let c = e_sm[j].coefficients[18 - i];
+            centered[j].coefficients[i] = if (c as u64) > half { c - q } else { c };
+        }
+    }
+    crate::math::commitments::compute_share_computation_e_sm_commitment_checked::<19, 2, 7>(
+        centered,
+    )
+}
+
+#[test]
+fn the_e_sm_final_circuit_returns_the_share_commitments_of_the_chain() {
+    let (y, e_sm) = test_e_sm_sharing();
+    let links = [[chain_start_hash::<19, 2, 3, 60, 2>(), run_test_chain_with::<2>(y)]];
+    let mut outputs = [0; 7];
+    let commitments =
+        crate::core::dkg::share_computation::commit_to_party_shares::<19, 2, 3, 60>(y);
+    outputs[0] = e_sm_secret_digest(e_sm);
+    for party_idx in 0..3 {
+        for mod_idx in 0..2 {
+            outputs[1 + party_idx * 2 + mod_idx] = commitments[party_idx][mod_idx];
+        }
+    }
+    let returned = e_sm_share_computation_final::<1, 19, 2, 3, 7, 60>(
+        Configs::new(TQ),
+        test_e_sm_commitment(e_sm),
+        e_sm,
+        links,
+        outputs,
+    );
+    assert(returned == commitments);
 }
 
 #[test(should_fail_with = "Chain must start from fresh sponges")]
