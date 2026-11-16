@@ -37,6 +37,17 @@ struct Script {
     sent: Vec<(Call, u64)>,
     /// What each look for a key chunk on chain finds, in order; nothing once the script runs out.
     chunks: VecDeque<Result<OnChain, &'static str>>,
+    /// The calls driven now.
+    driven: usize,
+}
+
+/// Counts a call of the fake account as driven while it lives.
+struct Driving(Arc<Mutex<Script>>);
+
+impl Drop for Driving {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().driven -= 1;
+    }
 }
 
 #[derive(Clone, Default)]
@@ -83,6 +94,15 @@ impl Account for FakeAccount {
             None => Ok(OnChain::Absent),
         }
     }
+
+    fn drive(&self, _: &Call) -> impl Send + '_ {
+        self.0.lock().unwrap().driven += 1;
+        Driving(self.0.clone())
+    }
+
+    async fn free_abandoned(&self) -> Result<(), RpcError> {
+        Ok(())
+    }
 }
 
 fn reverts(error: impl SolError) -> Result<Estimate, &'static str> {
@@ -121,6 +141,29 @@ fn stage(expected: u8, actual: u8) -> IInterfold::InvalidStage {
         expected,
         actual,
     }
+}
+
+/// A delivery that waits to try again still sends its call, so the account frees no nonce of it.
+#[tokio::test(start_paused = true)]
+async fn a_call_waiting_to_try_again_stays_driven() {
+    let (account, blobs) = (FakeAccount::default(), MemoryBlobs::default());
+    account.script(|script| {
+        let not_yet = Ok(Estimate::NotYet(Bytes::new()));
+        script.estimates.push_back(not_yet);
+    });
+    let writer = Arc::new(writer(&account, &blobs));
+    let delivering = tokio::spawn({
+        let writer = writer.clone();
+        async move {
+            let finalize = submission(Transaction::FinalizeCommittee);
+            writer.submit(&finalize).await
+        }
+    });
+    tokio::time::sleep(FIRST_RETRY / 2).await;
+    assert_eq!(account.0.lock().unwrap().driven, 1);
+    delivering.abort();
+    let _ = delivering.await;
+    assert_eq!(account.0.lock().unwrap().driven, 0);
 }
 
 #[tokio::test]

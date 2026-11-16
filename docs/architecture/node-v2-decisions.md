@@ -401,6 +401,14 @@ Each rule is checkable in review.
   committees from part of the operators, and submitting no ticket when its own is among the missing.
   Only a reset repairs a history with a hole, so the error says so.
 
+- **D60. The account frees a nonce that no call drives.** A transaction whose call no one sends any
+  more, because the node stopped its effect or no longer owes it, can sit on low fees for good, or a
+  chain node can drop it; every later transaction of the account waits behind its nonce. A call
+  counts as driven while a delivery runs, its waits between attempts included. Once recovered work
+  is under way after a start, the wallet looks once a minute, and a nonce that two looks in a row
+  find undriven is replaced by an empty transaction to the account itself at replacement fees. The
+  wallet keeps its unmined sends by nonce, so a replaced call and its replacement cannot collide.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**

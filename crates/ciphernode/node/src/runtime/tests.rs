@@ -112,6 +112,12 @@ impl Account for NoAccount {
     async fn key_chunk(&self, _: &KeyChunk) -> Result<OnChain, RpcError> {
         pending().await
     }
+
+    fn drive(&self, _: &Call) -> impl Send + '_ {}
+
+    async fn free_abandoned(&self) -> Result<(), RpcError> {
+        Ok(())
+    }
 }
 
 struct Quiet;

@@ -52,6 +52,8 @@ const BOARD_UPDATE: Duration = Duration::from_secs(5);
 /// How long a stop waits for cancelled jobs: `bb` ends within a poll, and Rust work that cannot stop
 /// midway is not worth holding a shutdown for.
 const JOB_STOP_LIMIT: Duration = Duration::from_secs(5);
+/// How often the account looks for nonces whose calls no one sends any more.
+const FREE_NONCES_EVERY: Duration = Duration::from_secs(60);
 
 /// The node's settings from its operator.
 #[derive(Clone, Debug)]
@@ -206,6 +208,7 @@ where
         settings.contracts,
     ));
     let (refresher, operator) = (writer.clone(), parts.operator.address());
+    let keeper = writer.clone();
     essential.spawn(async move {
         refresh_each_window(refresher, operator).await;
         NodeError::TaskEnded("the operator refresh")
@@ -290,7 +293,9 @@ where
                             start_block,
                         });
                     }
-                    let recovered = recovered.take().unwrap_or_default();
+                    let Some(recovered) = recovered.take() else {
+                        continue;
+                    };
                     let (owed, over): (Vec<_>, Vec<_>) = recovered
                         .into_iter()
                         .partition(|work| machine.owes(&work.effect.e3(), work.effect.scope()));
@@ -298,6 +303,9 @@ where
                         engine.acknowledge(work.key)?;
                     }
                     queue.extend(effects.dispatch(owed));
+                    // The recovered calls go out again from here, so a call no one sends now is one
+                    // the node no longer owes.
+                    essential.spawn(free_abandoned_nonces(keeper.clone()));
                     continue;
                 }
             };
@@ -348,6 +356,22 @@ fn ended_task(ended: Option<Result<NodeError, tokio::task::JoinError>>) -> NodeE
         Some(Ok(reason)) => reason,
         Some(Err(error)) => NodeError::TaskPanicked("an essential task", error.to_string()),
         None => NodeError::Stopped,
+    }
+}
+
+/// Looks for nonces whose calls no one sends any more, once a minute, for good. The account frees
+/// a nonce on the second look that finds it so.
+async fn free_abandoned_nonces<A, B>(writer: Arc<Writer<A, B>>) -> NodeError
+where
+    A: Account + Send + Sync + 'static,
+    B: BlobStore,
+{
+    let mut every = tokio::time::interval(FREE_NONCES_EVERY);
+    loop {
+        every.tick().await;
+        if let Err(error) = writer.free_abandoned().await {
+            warn!(%error, "looking for abandoned nonces failed");
+        }
     }
 }
 

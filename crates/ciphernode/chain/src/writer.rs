@@ -128,6 +128,12 @@ pub trait Account {
     /// Where the chain holds the operator's copy of `chunk`.
     fn key_chunk(&self, chunk: &KeyChunk)
         -> impl Future<Output = Result<OnChain, RpcError>> + Send;
+
+    /// Counts `call` as driven, by a sender that still sends it, for as long as the result lives.
+    fn drive(&self, call: &Call) -> impl Send + '_;
+
+    /// Frees the nonces whose transactions carry calls no one drives any more.
+    fn free_abandoned(&self) -> impl Future<Output = Result<(), RpcError>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -198,6 +204,11 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
             warn!(%operator, "the refresh did not finish in time; the next one tries again");
         }
     }
+
+    /// Frees the account's nonces whose calls no one sends any more.
+    pub async fn free_abandoned(&self) -> Result<(), RpcError> {
+        self.account.free_abandoned().await
+    }
 }
 
 /// Sends the operator's acknowledgement of this node's release until the chain has it: whether
@@ -214,6 +225,9 @@ pub async fn acknowledge<A: Account>(account: &A, call: &Call) -> bool {
 /// `of` names what the call is for, in logs.
 async fn deliver<A: Account>(account: &A, of: &(dyn Display + Sync), step: &Step) -> Delivered {
     let (label, mut wait) = (step.call.label, FIRST_RETRY);
+    // Driven through the waits between attempts too, so the account frees no nonce of a call that
+    // still goes out.
+    let _driving = account.drive(&step.call);
     loop {
         match attempt(account, of, step).await {
             Ok(Some(delivered)) => return delivered,

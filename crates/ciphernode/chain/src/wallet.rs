@@ -12,19 +12,21 @@ use alloy::{
     rpc::types::{Filter, TransactionRequest},
     transports::{RpcError as TransportFailure, TransportErrorKind},
 };
-use alloy_primitives::{keccak256, Bytes, B256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
 use e3_evm_contracts::ICiphernodeRegistry::CommitteePublicKeyChunkPublished;
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     io::{self, Write},
     path::PathBuf,
-    time::{Duration, Instant},
+    sync::{Mutex as SyncMutex, PoisonError},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
+use tracing::warn;
 
 /// How long a send waits for its receipt before the writer checks the chain again.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -40,57 +42,85 @@ pub struct Wallet<P> {
     /// Blocks closer to the head than this may still be replaced.
     confirmations: u64,
     nonces: Mutex<Nonces>,
+    /// How many senders drive each call, by the call's hash: a send under way, or a delivery that
+    /// waits to try again.
+    driven: SyncMutex<HashMap<B256, usize>>,
 }
 
 struct Nonces {
     /// The nonces this process sent, with their send times.
     sent: BTreeMap<u64, Instant>,
     unmined: Unmined,
+    /// The unmined nonces whose calls had no sender at the last pass.
+    suspects: BTreeSet<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Sent {
     nonce: u64,
-    #[serde(with = "fees")]
     fees: Eip1559Estimation,
 }
 
-/// The last send of each call whose nonce the chain has not used yet, by the hash of the call's
-/// target and data. It is kept in a file, so that after a restart the node still replaces a
-/// transaction stuck on low fees instead of queueing behind it.
+/// A transaction at a nonce the chain has not used yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Pending {
+    /// The hash of the call's target and data; none for the empty transaction that frees the
+    /// nonce.
+    call: Option<B256>,
+    #[serde(with = "fees")]
+    fees: Eip1559Estimation,
+    /// When it was sent last, in Unix seconds.
+    at: u64,
+}
+
+/// The last send at each nonce the chain has not used yet. It is kept in a file, so that after a
+/// restart the node still replaces a transaction stuck on low fees instead of queueing behind it.
 struct Unmined {
     path: PathBuf,
-    sends: HashMap<B256, Sent>,
+    sends: BTreeMap<u64, Pending>,
 }
 
 impl Unmined {
     fn open(path: PathBuf) -> io::Result<Self> {
         let sends = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => HashMap::new(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
             Err(error) => return Err(error),
         };
         Ok(Self { path, sends })
     }
 
-    fn get(&self, call: &B256) -> Option<Sent> {
-        self.sends.get(call).copied()
+    /// The nonce of `call`'s unmined send, and the send.
+    fn of(&self, call: &B256) -> Option<(u64, Pending)> {
+        let mut sends = self.sends.iter();
+        let (nonce, pending) = sends.find(|(_, pending)| pending.call == Some(*call))?;
+        Some((*nonce, *pending))
     }
 
-    fn insert(&mut self, call: B256, sent: Sent) -> io::Result<()> {
-        self.sends.insert(call, sent);
+    fn insert(&mut self, nonce: u64, pending: Pending) -> io::Result<()> {
+        self.sends.insert(nonce, pending);
         self.save()
     }
 
-    fn remove(&mut self, call: &B256) -> io::Result<()> {
-        self.sends.remove(call);
-        self.save()
+    /// Forgets the send at `nonce` if it still carries `call`.
+    fn landed(&mut self, nonce: u64, call: &B256) -> io::Result<()> {
+        match self
+            .sends
+            .get(&nonce)
+            .is_some_and(|sent| sent.call == Some(*call))
+        {
+            true => {
+                self.sends.remove(&nonce);
+                self.save()
+            }
+            false => Ok(()),
+        }
     }
 
     /// Forgets the sends whose nonces the chain used, `mined` being the account's mined count.
     fn forget_mined(&mut self, mined: u64) -> io::Result<()> {
         let before = self.sends.len();
-        self.sends.retain(|_, sent| sent.nonce >= mined);
+        self.sends.retain(|nonce, _| *nonce >= mined);
         match self.sends.len() == before {
             true => Ok(()),
             false => self.save(),
@@ -153,6 +183,51 @@ fn replacement(earlier: Sent, fees: Eip1559Estimation) -> Sent {
     }
 }
 
+/// Counts a call as driven for as long as it lives.
+pub struct Driving<'a> {
+    driven: &'a SyncMutex<HashMap<B256, usize>>,
+    call: B256,
+}
+
+impl Drop for Driving<'_> {
+    fn drop(&mut self) {
+        let mut driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(senders) = driven.get_mut(&self.call) {
+            *senders -= 1;
+            if *senders == 0 {
+                driven.remove(&self.call);
+            }
+        }
+    }
+}
+
+/// A call's identity in the account's records: the hash of its target and data.
+fn call_hash(call: &Call) -> B256 {
+    keccak256([call.to.as_slice(), &call.data].concat())
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+impl<P> Wallet<P> {
+    fn driving(&self, call: B256) -> Driving<'_> {
+        let mut driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
+        *driven.entry(call).or_default() += 1;
+        Driving {
+            driven: &self.driven,
+            call,
+        }
+    }
+
+    fn driven(&self, call: Option<B256>) -> bool {
+        let driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
+        call.is_some_and(|call| driven.contains_key(&call))
+    }
+}
+
 impl<P: Provider + WalletProvider> Wallet<P> {
     /// `unmined` is the file that keeps the sends the chain has not mined across restarts.
     pub fn new(
@@ -164,13 +239,73 @@ impl<P: Provider + WalletProvider> Wallet<P> {
         let nonces = Nonces {
             sent: BTreeMap::new(),
             unmined: Unmined::open(unmined)?,
+            suspects: BTreeSet::new(),
         };
         Ok(Self {
             provider,
             chain_id,
             confirmations,
             nonces: Mutex::new(nonces),
+            driven: SyncMutex::new(HashMap::new()),
         })
+    }
+
+    /// Replaces the transaction at `nonce` with an empty one to the account itself, at fees a
+    /// chain node takes as its replacement. Whichever of the two lands uses the nonce.
+    async fn free(
+        &self,
+        nonces: &mut Nonces,
+        account: Address,
+        nonce: u64,
+    ) -> Result<(), RpcError> {
+        let Some(earlier) = nonces.unmined.sends.get(&nonce).copied() else {
+            return Ok(());
+        };
+        let estimate = self
+            .provider
+            .estimate_eip1559_fees()
+            .await
+            .map_err(RpcError::new)?;
+        let fees = replacement(
+            Sent {
+                nonce,
+                fees: earlier.fees,
+            },
+            estimate,
+        )
+        .fees;
+        let request = TransactionRequest::default()
+            .with_from(account)
+            .with_to(account)
+            .with_value(U256::ZERO)
+            .with_nonce(nonce)
+            .with_chain_id(self.chain_id)
+            .with_max_fee_per_gas(fees.max_fee_per_gas)
+            .with_max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
+        let gas = self
+            .provider
+            .estimate_gas(request.clone())
+            .await
+            .map_err(RpcError::new)?;
+        let pending = Pending {
+            call: None,
+            fees,
+            at: unix_now(),
+        };
+        // Kept before the broadcast, as for any send.
+        nonces
+            .unmined
+            .insert(nonce, pending)
+            .map_err(RpcError::new)?;
+        match self
+            .provider
+            .send_transaction(request.with_gas_limit(gas))
+            .await
+        {
+            Ok(_) => warn!(nonce, "freed a nonce whose call no one sends any more"),
+            Err(error) => warn!(nonce, %error, "freeing a nonce failed; the next pass tries again"),
+        }
+        Ok(())
     }
 
     fn request(&self, call: &Call) -> TransactionRequest {
@@ -253,14 +388,15 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     /// accepted a moment ago, so a new nonce also skips the ones this process sent recently. The
     /// turn ends before the receipt, so a slow confirmation holds up no other call.
     async fn send(&self, call: &Call, gas: u64) -> Result<bool, RpcError> {
+        let key = call_hash(call);
+        let _driving = self.driving(key);
         let fees = self
             .provider
             .estimate_eip1559_fees()
             .await
             .map_err(RpcError::new)?;
         let account = self.provider.default_signer_address();
-        let key = keccak256([call.to.as_slice(), &call.data].concat());
-        let pending = {
+        let (nonce, pending) = {
             let mut nonces = self.nonces.lock().await;
             let mined = self
                 .provider
@@ -269,9 +405,15 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 .await
                 .map_err(RpcError::new)?;
             nonces.unmined.forget_mined(mined).map_err(RpcError::new)?;
-            let replaced = nonces.unmined.get(&key);
+            let replaced = nonces.unmined.of(&key);
             let send = match replaced {
-                Some(earlier) => replacement(earlier, fees),
+                Some((nonce, earlier)) => replacement(
+                    Sent {
+                        nonce,
+                        fees: earlier.fees,
+                    },
+                    fees,
+                ),
                 None => {
                     let count = self
                         .provider
@@ -284,9 +426,17 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 }
             };
             nonces.sent.insert(send.nonce, Instant::now());
+            let unmined = Pending {
+                call: Some(key),
+                fees: send.fees,
+                at: unix_now(),
+            };
             // Kept before the broadcast: the node can take the transaction and lose its answer, or
             // this process can stop before the answer.
-            nonces.unmined.insert(key, send).map_err(RpcError::new)?;
+            nonces
+                .unmined
+                .insert(send.nonce, unmined)
+                .map_err(RpcError::new)?;
             let request = self
                 .request(call)
                 .with_gas_limit(gas)
@@ -295,12 +445,15 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 .with_chain_id(self.chain_id)
                 .with_nonce(send.nonce);
             match self.provider.send_transaction(request).await {
-                Ok(pending) => pending,
+                Ok(pending) => (send.nonce, pending),
                 Err(error) => {
                     let error = alloy::contract::Error::TransportError(error);
                     if broadcast_refused(&error) && replaced.is_none() {
                         nonces.sent.remove(&send.nonce);
-                        nonces.unmined.remove(&key).map_err(RpcError::new)?;
+                        nonces
+                            .unmined
+                            .landed(send.nonce, &key)
+                            .map_err(RpcError::new)?;
                     }
                     return Err(RpcError::new(error));
                 }
@@ -313,10 +466,50 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .await
             .map_err(RpcError::new)?;
         let mut nonces = self.nonces.lock().await;
-        nonces.unmined.remove(&key).map_err(RpcError::new)?;
+        nonces.unmined.landed(nonce, &key).map_err(RpcError::new)?;
         Ok(receipt.status())
     }
+
+    fn drive(&self, call: &Call) -> impl Send + '_ {
+        self.driving(call_hash(call))
+    }
+
+    /// A transaction whose call no one sends any more, because the node stopped it or no longer
+    /// owes it, can sit on low fees for good, and every later transaction of the account waits
+    /// behind it. Such a nonce is freed when two passes in a row find no sender for its call: a
+    /// call the node starts again can come between the two.
+    async fn free_abandoned(&self) -> Result<(), RpcError> {
+        let account = self.provider.default_signer_address();
+        let mut nonces = self.nonces.lock().await;
+        let mined = self
+            .provider
+            .get_transaction_count(account)
+            .latest()
+            .await
+            .map_err(RpcError::new)?;
+        nonces.unmined.forget_mined(mined).map_err(RpcError::new)?;
+        let unsent: BTreeSet<u64> = nonces
+            .unmined
+            .sends
+            .iter()
+            .filter(|(_, pending)| !self.driven(pending.call))
+            .map(|(nonce, _)| *nonce)
+            .collect();
+        let free = &unsent & &nonces.suspects;
+        nonces.suspects = &unsent - &free;
+        for nonce in free {
+            let call = nonces.unmined.sends.get(&nonce).and_then(|sent| sent.call);
+            // A sender can start in the meantime; it then sends at a new nonce.
+            if !self.driven(call) {
+                self.free(&mut nonces, account, nonce).await?;
+            }
+        }
+        Ok(())
+    }
 }
+
+#[cfg(test)]
+mod anvil_tests;
 
 #[cfg(test)]
 mod tests {
@@ -465,18 +658,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("unmined.json");
         let call = B256::repeat_byte(1);
-        let sent = Sent {
-            nonce: 7,
+        let sent = Pending {
+            call: Some(call),
             fees: fees(100, 10),
+            at: 1_000,
         };
         Unmined::open(path.clone())
             .unwrap()
-            .insert(call, sent)
+            .insert(7, sent)
             .unwrap();
         let mut reopened = Unmined::open(path.clone()).unwrap();
-        assert_eq!(reopened.get(&call), Some(sent));
+        assert_eq!(reopened.of(&call), Some((7, sent)));
         reopened.forget_mined(8).unwrap();
-        assert_eq!(Unmined::open(path).unwrap().get(&call), None);
+        assert_eq!(Unmined::open(path).unwrap().of(&call), None);
     }
 
     /// Nodes refuse a replacement that raises either fee by less than a tenth.
