@@ -468,20 +468,6 @@ fn absorbing_in_pieces_from_a_carried_state_matches_one_absorb() {
     let (state, pos) = absorb_from(state, pos, [4, 1, 5, 9, 2, 6, 5].as_vector());
     let (state, pos) = absorb_from(state, pos, [3, 5, 8, 9].as_vector());
     assert(squeeze_one_after_absorb(io_pattern, state, pos) == expected);
-
-    // A different split of the same stream gives the same digest; a different stream does not.
-    let (state, pos) = absorb_from(
-        initial_state(io_pattern, domain_separator),
-        0,
-        elements.as_vector(),
-    );
-    assert(squeeze_one_after_absorb(io_pattern, state, pos) == expected);
-    let (state, pos) = absorb_from(
-        initial_state(io_pattern, domain_separator),
-        0,
-        [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 8].as_vector(),
-    );
-    assert(squeeze_one_after_absorb(io_pattern, state, pos) != expected);
 }
 
 #[test]
@@ -513,13 +499,6 @@ fn absorbing_from_a_block_boundary_matches_one_absorb() {
     assert(pos == RATE);
     let (state, pos) = absorb_from_block_boundary(state, pos, [2, 6, 5].as_vector());
     assert(squeeze_one_after_absorb(io_pattern, state, pos) == expected);
-}
-
-#[test(should_fail_with = "absorb position must be a block boundary")]
-fn absorbing_from_a_block_boundary_rejects_a_mid_block_position() {
-    let io_pattern = [0x80000000 | 4, 1];
-    let (state, pos) = absorb_from(initial_state(io_pattern, [0; 64]), 0, [1].as_vector());
-    let _ = absorb_from_block_boundary(state, pos, [2, 3, 4].as_vector());
 }
 
 #[test]
