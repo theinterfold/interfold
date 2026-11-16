@@ -17,7 +17,7 @@ e3-crypto.workspace = true
 e3-utils.workspace = true
 fhe-math.workspace = true
 fhe-traits.workspace = true
-fhe.workspace = true
+fhe = { workspace = true, features = ["synchronized-decryption"] }
 ndarray.workspace = true
 num-bigint.workspace = true
 petname.workspace = true

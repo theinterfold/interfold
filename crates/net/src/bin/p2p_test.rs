@@ -235,7 +235,9 @@ impl TestPeer {
         });
 
         println!("WAIT FOR MESH READY...");
-        wait_for_mesh_ready(60, 3, &mut rx, &topic).await?;
+        // Allow a background bootstrap redial after the initial timeout. Every scenario peer
+        // must be gossip-ready before the leader emits the one-shot barrier announcement.
+        wait_for_mesh_ready(90, sync_threshold.saturating_sub(1), &mut rx, &topic).await?;
         println!("MESH READY!");
 
         // Give network time to initialize

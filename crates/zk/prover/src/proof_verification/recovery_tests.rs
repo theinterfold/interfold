@@ -267,7 +267,7 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
 
     let other_sample = e3_zk_samples::dkg::pk::generate(&config.params).unwrap();
     let other_pk = other_sample.to_bytes();
-    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&other_pk, preset).unwrap();
+    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&other_pk, &config).unwrap();
     let invalid_proof = Proof::new(
         proof.circuit,
         proof.data.clone(),

@@ -454,9 +454,10 @@ async fn disabled_profile_rejects_live_and_restored_contexts() -> Result<()> {
 
     let context = repositories.router().repositories().context(&e3_id);
     let meta = E3Meta::from(&request);
-    assert!(
-        meta.share_enc_preset().is_err(),
-        "synchronized DKG must not fall back to an SS preset"
+    assert_eq!(
+        meta.share_enc_preset()?,
+        e3_fhe_params::BfvPreset::InsecureSyncDkg64,
+        "disabled synchronized definitions must resolve their own transport, never SS"
     );
     context
         .repositories()
