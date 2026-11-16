@@ -24,9 +24,10 @@ or audit remediation is not completeness evidence.
 as a copy of another party's key or zero. That key only receives the shares dealt to its owner:
 dealers draw fresh encryption randomness per recipient and limb, C4 aggregates plaintext shares
 pinned to C2 commitments rather than decrypting in-circuit, and accusations come only from failed
-proofs. A bad key therefore exposes or loses only its owner's shares, which a corrupt party could
-publish or withhold anyway. Prove `pk0 = -(pk1 * s + e)` in C0 if encryption randomness is ever
-shared across recipients or recipients can blame dealers for undecryptable shares.
+proofs or cross-proof commitment mismatches, never from a recipient failing to decrypt. A bad key
+therefore exposes or loses only its owner's shares, which a corrupt party could publish or withhold
+anyway. Prove `pk0 = -pk1 * s + e` in C0 if encryption randomness is ever shared across recipients
+or recipients can blame dealers for undecryptable shares.
 
 [DKG](dkg.md) defines identities, multiplicity, and roster links;
 [threshold decryption](threshold-decryption.md) defines the domain and final verifier checks. Both

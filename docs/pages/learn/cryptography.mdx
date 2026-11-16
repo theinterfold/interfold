@@ -177,7 +177,7 @@ are under `circuits/bin/`.
 
 | ID       | Directory                                | `CircuitName`                | What the proof shows                                                                   |
 | -------- | ---------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
-| C0       | `dkg/pk`                                 | `PkBfv`                      | The member's individual BFV public key is valid, with a commitment to it               |
+| C0       | `dkg/pk`                                 | `PkBfv`                      | The member's BFV public key is committed and every coefficient is bounded              |
 | C1       | `threshold/pk_generation`                | `PkGeneration`               | The public key share follows BFV key generation from the committed secret contribution |
 | C2a      | `dkg/sk_share_computation`               | `SkShareComputation`         | The Shamir shares of the secret contribution are valid (a Reed–Solomon parity check)   |
 | C2b      | `dkg/e_sm_share_computation`             | `ESmShareComputation`        | The Shamir shares of the smudging noise are valid                                      |
