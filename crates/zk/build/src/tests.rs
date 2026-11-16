@@ -475,8 +475,8 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         write(root, path, "changed");
         assert_ne!(hash(), before, "{path}");
     }
-    let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure.nr");
-    let updates = vec![(parity.clone(), "generated parity\n".to_owned())];
+    let generated = root.join("circuits/lib/src/configs/committee/micro/generated.nr");
+    let updates = vec![(generated.clone(), "generated source\n".to_owned())];
     let projected = identity::source_hash_with_updates(
         root,
         &opts,
@@ -486,10 +486,10 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     )
     .unwrap();
     assert!(
-        !parity.exists(),
+        !generated.exists(),
         "projected identity published a missing source"
     );
-    fs::write(&parity, &updates[0].1).unwrap();
+    fs::write(&generated, &updates[0].1).unwrap();
     assert_eq!(
         hash(),
         projected,
@@ -689,15 +689,11 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
             material.parameter_hash.to_string(),
             vector["parameterHash"].as_str().unwrap()
         );
-        assert_eq!(
-            material.config_id.to_string(),
-            vector["cryptoConfigId"].as_str().unwrap()
-        );
     }
 }
 
 #[test]
-fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
+fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -708,15 +704,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
-    // The same material renders parity files, bound updates, and Solidity's deployed hashes.
-    for committee in [
-        CiphernodesCommitteeSize::Minimum,
-        CiphernodesCommitteeSize::Micro,
-        CiphernodesCommitteeSize::Small,
-    ] {
-        let parity = configuration::parity_files(committee, &params).unwrap();
-        assert_eq!(parity.len(), 2);
-    }
+    // The same material renders bound updates and Solidity's deployed hashes.
     let material = params.get(BfvPreset::InsecureThreshold64);
     let bounds = configuration::bound_updates(
         root,
@@ -729,7 +717,9 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     let contract = crate::bindings::solidity(&params).unwrap();
     assert!(contract.contains(&format!(
         "{:#x}",
-        params.get(BfvPreset::SecureThreshold8192).config_id
+        e3_fhe_params::BfvProfile::SsSecure8192
+            .crypto_config_id(CiphernodesCommitteeSize::Small)
+            .unwrap()
     )));
     let selection = configuration::prepare_selection(
         root,
@@ -1109,6 +1099,86 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
     fs::remove_file(pair.join("default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
         .unwrap();
     assert!(artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").is_err());
+}
+
+/// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
+/// variant's VK and VK hash under its published name, the compiled program in every variant, and the
+/// VK-tree anchor only where the folding circuit has one.
+#[test]
+fn staging_bin_reproduces_the_published_pair_layout() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let published = root.join("dist/circuits/insecure-64/minimum");
+    write(
+        root,
+        "circuits/bin/dkg/Nargo.toml",
+        "[workspace]\nmembers = [\"pk\"]\n",
+    );
+    let circuits = [("dkg", "pk"), ("recursive_aggregation", "nodes_fold")];
+    for (group, name) in circuits {
+        write(
+            root,
+            &format!("circuits/bin/{group}/{name}/Nargo.toml"),
+            format!("[package]\nname = \"{name}\"\ntype = \"bin\"\n"),
+        );
+        for variant in ["default", "recursive", "evm"] {
+            for extension in ["json", "vk", "vk_hash"] {
+                write(
+                    &published,
+                    &format!("{variant}/{group}/{name}/{name}.{extension}"),
+                    format!("{name}-{variant}-{extension}"),
+                );
+            }
+        }
+    }
+    write(
+        &published,
+        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
+        "nodes_fold-anchor",
+    );
+    let stamp = artifacts::Stamp {
+        preset: "insecure-64".into(),
+        committee: "minimum".into(),
+        source_hash: "source".into(),
+        built_at: "time".into(),
+    };
+    artifacts::hydrate(root, &published, &request(), &stamp).unwrap();
+
+    let staged = root.join("staged/insecure-64/minimum");
+    artifacts::stage_bin(root, &staged).unwrap();
+
+    let read = |pair: &Path, path: String| fs::read_to_string(pair.join(path)).unwrap();
+    for (group, name, variants) in [
+        ("dkg", "pk", &["default", "recursive", "evm"][..]),
+        ("recursive_aggregation", "nodes_fold", &["default"][..]),
+    ] {
+        for variant in variants {
+            let file = |extension: &str| format!("{variant}/{group}/{name}/{name}.{extension}");
+            for extension in ["vk", "vk_hash"] {
+                assert_eq!(
+                    read(&staged, file(extension)),
+                    read(&published, file(extension)),
+                    "{}",
+                    file(extension)
+                );
+            }
+            assert_eq!(
+                read(&staged, file("json")),
+                format!("{name}-default-json"),
+                "{}",
+                file("json")
+            );
+        }
+    }
+    assert!(!staged.join("evm/recursive_aggregation/nodes_fold").exists());
+    assert_eq!(
+        read(
+            &staged,
+            "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash".into()
+        ),
+        "nodes_fold-anchor"
+    );
+    assert!(!staged.join("default/dkg/pk/pk.vk_tree_hash").exists());
 }
 
 const VK_PATHS: &[(&str, &str, &str)] = &[

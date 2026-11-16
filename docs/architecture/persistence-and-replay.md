@@ -300,6 +300,9 @@ deleting identity or already matching history. It is not generic repair for comm
 
 - Live fanout logs an accept timeout and does not retry. Snapshot-suffix replay does not necessarily
   redeliver it. Thus at-least-once is a requirement, not a complete live guarantee.
+- Admission bounds only the event pipeline. Queues in front of it are not bounded: while the chain
+  gateway waits for capacity, the EVM parser's sends still grow the gateway's mailbox. A synchronous
+  publisher that traps a saturation error logs and drops that event; the pipeline does not retry it.
 - Snapshot `try_mutate` queues without acknowledgment; no general transactional outbox exists. Slash
   intent and BFV key DurableIntent are narrower protections, not replacements.
 - Current recovery needs matching snapshots, not log alone. No test compares full replay and

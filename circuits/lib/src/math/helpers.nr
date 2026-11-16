@@ -242,6 +242,103 @@ pub fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
     (upper - 1 - v).assert_max_bit_size::<BIT>();
 }
 
+/// [`assert_in_range`] for a residue interval `[0, upper)` whose `upper` is a modulus of bit length
+/// `BIT`, with one `(BIT - 1)`-bit check and a boolean instead of two `BIT`-bit checks.
+///
+/// With `W = 2^(BIT - 1)` and `W <= upper <= 2^BIT`, the windows `[0, W)` and `[upper - W, upper)`
+/// cover `[0, upper)` exactly, so a boolean selector chooses the window that holds `v`. Pass `upper`
+/// as a compile-time constant (a configured modulus), so the width test below folds away. A smaller
+/// `upper` keeps [`assert_in_range`], which holds for any `upper` that `BIT` covers.
+pub fn assert_in_residue_range<let BIT: u32>(v: Field, upper: Field) {
+    std::static_assert(BIT >= 2, "a residue window needs at least two bits");
+    std::static_assert(BIT <= 127, "the width test compares as u128");
+    let width = 2.pow_32((BIT - 1) as Field);
+    if (upper as u128) >= (width as u128) {
+        // Safety: the selector is constrained to be boolean, and either value puts `v` in
+        // `[0, W)` or `[upper - W, upper)`, both inside `[0, upper)`.
+        let selector = unsafe { residue_window_hint(v, width) };
+        assert(selector * (selector - 1) == 0);
+        (v - selector * (upper - width)).assert_max_bit_size::<BIT - 1>();
+    } else {
+        assert_in_range::<BIT>(v, upper);
+    }
+}
+
+unconstrained fn residue_window_hint(v: Field, width: Field) -> Field {
+    ((v as u128) >= (width as u128)) as Field
+}
+
+#[test]
+fn residue_range_accepts_the_whole_interval() {
+    // A modulus between W and 2^BIT, a power of two at each end, and a 51-bit configured modulus.
+    for v in [0, 63, 64, 100] {
+        assert_in_residue_range::<7>(v, 101);
+    }
+    for v in [0, 63] {
+        assert_in_residue_range::<7>(v, 64);
+    }
+    for v in [0, 63, 64, 127] {
+        assert_in_residue_range::<7>(v, 128);
+    }
+    for v in [0, 1125899906842623, 1125899906842624, 1125899917262848] {
+        assert_in_residue_range::<51>(v, 1125899917262849);
+    }
+}
+
+#[test]
+fn residue_range_falls_back_below_the_window() {
+    // 100 < 2^7, so the 8-bit check keeps the two-sided bound.
+    assert_in_residue_range::<8>(99, 100);
+}
+
+#[test(should_fail)]
+fn residue_range_rejects_the_modulus() {
+    assert_in_residue_range::<51>(1125899917262849, 1125899917262849);
+}
+
+#[test(should_fail)]
+fn residue_range_rejects_minus_one() {
+    assert_in_residue_range::<51>(-1, 1125899917262849);
+}
+
+#[test(should_fail)]
+fn residue_range_fallback_rejects_the_modulus() {
+    assert_in_residue_range::<8>(100, 100);
+}
+
+/// Appends `value_at(0) .. value_at(A - 1)` packed at exactly `W` bits each: `253 / W` digits per
+/// carrier, big-endian, the last carrier padded with zero digits.
+///
+/// Unlike [`pack`] there is no base offset and no headroom nibble, so the caller must already have
+/// constrained every value to `[0, 2^W)` (typically a shifted value whose range check is exactly
+/// that). Then every digit fits its slot and the packing is injective. Carriers hold at most 253
+/// bits, below the field modulus, so they never wrap.
+///
+/// C3's insecure configs set some widths to 0 because they never take the scaled path that packs
+/// them; the branch is a compile-time constant, so those instances are folded away before unrolling.
+pub fn flatten_exact_width<let A: u32, let W: u32, Env>(
+    mut inputs: [Field],
+    value_at: fn[Env](u32) -> Field,
+) -> [Field] {
+    let group = 253 / W;
+    assert(group >= 2, "exact-width packing needs two digits per carrier");
+    let radix = 2.pow_32(W as Field);
+    let num_chunks = (A + group - 1) / group;
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+        let mut acc = 0;
+        for i in 0..take {
+            acc = acc * radix + value_at(chunk * group + i);
+        }
+        for _ in 0..(group - take) {
+            acc = acc * radix;
+        }
+        inputs = inputs.push_back(acc);
+    }
+    inputs
+}
+
 pub fn compute_safe(domain_separator: [u8; 64], inputs: [Field], io_pattern: [u32; 2]) -> [Field] {
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
     sponge.absorb(inputs);
@@ -446,4 +543,15 @@ fn test_pack_checked_matches_pack_partial_chunk() {
     for i in 0..plain.len() {
         assert(plain[i] == checked[i]);
     }
+}
+
+#[test]
+fn test_flatten_exact_width_packs_without_offsets() {
+    // W = 100: two digits per carrier, three values -> two carriers, the second padded.
+    let values = [5, 7, 9];
+    let out = flatten_exact_width::<3, 100, _>([].as_vector(), |i| values[i]);
+    let r = 2.pow_32(100);
+    assert(out.len() == 2);
+    assert(out[0] == 5 * r + 7);
+    assert(out[1] == 9 * r);
 }

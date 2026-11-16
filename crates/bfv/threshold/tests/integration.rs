@@ -22,11 +22,22 @@ use e3_trbfv::{
     },
     TrBFVConfig,
 };
-use e3_utils::{to_ordered_vec, ArcBytes};
+use e3_utils::ArcBytes;
 use fhe_traits::Serialize;
 
 #[tokio::test]
 async fn test_trbfv_isolation() -> Result<()> {
+    run_trbfv_isolation(&[(1, 1), (4, 4), (2, 2)]).await
+}
+
+#[tokio::test]
+async fn test_trbfv_reconstructs_from_surplus_unsorted_shares() -> Result<()> {
+    // Party 4 carries party 3's share: only the lowest-ID subset [1, 2, 3] is valid,
+    // not the input prefix [4, 2, 1].
+    run_trbfv_isolation(&[(4, 3), (2, 2), (1, 1), (3, 3)]).await
+}
+
+async fn run_trbfv_isolation(share_sources: &[(usize, usize)]) -> Result<()> {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let subscriber = fmt()
@@ -62,7 +73,8 @@ async fn test_trbfv_isolation() -> Result<()> {
         &generated.bfv_params,
     )?;
     // Create the inputs
-    let num_votes_per_voter = 3;
+    // One SS output: independent outputs require independently committed/dealt noise.
+    let num_votes_per_voter = 1;
     let num_voters = 30;
     let (inputs, numbers) =
         e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_votes_per_voter);
@@ -75,10 +87,9 @@ async fn test_trbfv_isolation() -> Result<()> {
         .map(|ct| ArcBytes::from_bytes(&(*ct).clone().to_bytes()))
         .collect::<Vec<ArcBytes>>();
 
-    let mut decryption_shares = HashMap::new();
-    // for party_id in 0..=threshold_m as usize {
-    for party_id in [1, 4, 2] {
-        let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
+    let mut d_share_polys = Vec::with_capacity(share_sources.len());
+    for &(party_id, key_party_id) in share_sources {
+        let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&key_party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
         let d_share_poly = calculate_decryption_share(
             &cipher,
@@ -92,14 +103,10 @@ async fn test_trbfv_isolation() -> Result<()> {
         )?
         .d_share_poly;
 
-        // store the decryption shares in a hash map indexed by party_id
-        decryption_shares.insert(party_id as u64, d_share_poly);
+        d_share_polys.push((party_id as u64, d_share_poly));
     }
 
-    // Get a vector of the shares
-    let d_share_polys: Vec<(u64, Vec<ArcBytes>)> = decryption_shares.into_iter().collect();
-
-    // Data preparation sorts the decryption shares by party_id.
+    // Reconstruction sorts party/share pairs and selects the lowest T+1 IDs, matching C7.
     let plaintext = calculate_threshold_decryption(CalculateThresholdDecryptionRequest {
         ciphertexts,
         trbfv_config: trbfv_config.clone(),
@@ -117,7 +124,7 @@ async fn test_trbfv_isolation() -> Result<()> {
     // Show summation result
     let plaintext_modulus = params_raw.clone().plaintext();
 
-    let mut expected_result = [0u64; 3];
+    let mut expected_result = [0u64; 1];
     for vals in &numbers {
         for j in 0..num_votes_per_voter {
             expected_result[j] = (expected_result[j] + vals[j]) % plaintext_modulus;
@@ -134,4 +141,14 @@ async fn test_trbfv_isolation() -> Result<()> {
         println!("Tally {i} result = {res} / {exp}");
     }
     Ok(())
+}
+
+/// The values of `source` in key order.
+fn to_ordered_vec<K, T>(source: HashMap<K, T>) -> Vec<T>
+where
+    K: Ord + Copy,
+{
+    let mut pairs: Vec<_> = source.into_iter().collect();
+    pairs.sort_by_key(|&(key, _)| key);
+    pairs.into_iter().map(|(_, value)| value).collect()
 }

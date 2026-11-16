@@ -292,16 +292,17 @@ pub(crate) fn load(
         artifact_noir_version: version.into(),
     };
     let compiled = CompiledCircuit::from_json(std::str::from_utf8(&bytes)?)?;
-    if let Some(quotient) = match case {
-        Case::Ct0 => Some("r"),
-        Case::Ct1 => Some("r_ct1"),
-        _ => None,
-    } {
+    // The circuit reads one reduction quotient per leg.
+    let quotients: &[&str] = match case {
+        Case::Ude => &["r", "r_ct1"],
+        _ => &[],
+    };
+    for quotient in quotients {
         if !compiled
             .abi
             .parameters
             .iter()
-            .any(|parameter| parameter.name == quotient)
+            .any(|parameter| parameter.name == *quotient)
         {
             bail!("UDE artifact ABI is missing its canonical quotient {quotient}");
         }

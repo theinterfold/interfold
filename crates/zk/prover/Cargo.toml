@@ -48,6 +48,7 @@ tracing.workspace = true
 walkdir = "2.5"
 
 [dev-dependencies]
+zeroize.workspace = true
 e3-zk-samples.workspace = true
 num-integer.workspace = true
 e3-test-support = { workspace = true }

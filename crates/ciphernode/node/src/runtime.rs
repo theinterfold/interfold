@@ -126,6 +126,11 @@ pub enum NodeError {
         read: u64,
         start_block: u64,
     },
+    #[error(
+        "E3 {e3} still has work under a BFV profile that this release does not run ({reason}). Run \
+         the release that runs it until the E3 ends, then upgrade"
+    )]
+    RetiredProfile { e3: E3Id, reason: String },
 }
 
 /// What the chain says when the reader first catches up.
@@ -162,6 +167,9 @@ where
     let genesis_operator = parts.operator.address();
     let genesis = Node::new(genesis_operator);
     let (mut engine, recovered) = Engine::open(parts.journal, genesis, settings.snapshot_every)?;
+    if let Some((e3, reason)) = retired_profile(engine.machine()) {
+        return Err(NodeError::RetiredProfile { e3, reason });
+    }
     // What was under way at the last stop waits for the chain: an E3 may have moved on meanwhile.
     let mut recovered = Some(recovered);
     sweep(&parts.blobs, engine.machine());
@@ -375,6 +383,16 @@ where
     // has to read.
     outcome?.checkpoint()?;
     Ok(())
+}
+
+/// The first E3 with work under a BFV profile this release does not run, and why: its jobs could
+/// not run here.
+fn retired_profile(machine: &Node) -> Option<(E3Id, String)> {
+    machine.held().find_map(|e3| {
+        let state = machine.e3(e3)?;
+        let refused = e3_jobs::profile(&state.params).err()?;
+        state.has_work().then(|| (*e3, refused.to_string()))
+    })
 }
 
 /// An essential task ended while the node runs: the process should end, so its supervisor can

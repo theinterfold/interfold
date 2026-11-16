@@ -44,6 +44,7 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 alloy-sol-types = { workspace = true }
+e3-protocol = { workspace = true, features = ["testing"] }
 async-trait = { workspace = true }
 bincode = { workspace = true }
 e3-jobs = { workspace = true, features = ["testing"] }

@@ -9,7 +9,8 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
 use e3_evm_contracts::IInterfold;
 use e3_protocol::node::LogPosition;
-use std::collections::{BTreeMap, BTreeSet};
+use e3_committee::CiphernodesCommitteeSize;
+use std::collections::{BTreeSet, HashSet};
 
 pub const CONFIG: B256 = B256::repeat_byte(0xcc);
 
@@ -23,7 +24,7 @@ pub fn contracts() -> Contracts {
         bonding: Address::repeat_byte(0x3b),
         slashing: BTreeSet::from([Address::repeat_byte(0x4c)]),
         randomness: BTreeSet::from([RANDOMNESS]),
-        crypto_configs: BTreeMap::from([(1, CONFIG)]),
+        crypto_configs: HashSet::from([(1, CiphernodesCommitteeSize::Minimum, CONFIG)]),
     }
 }
 

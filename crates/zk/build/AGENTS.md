@@ -13,6 +13,8 @@ This unpublished crate owns build/configuration operations, source identity, sta
   remove both VK-tree anchors. Hydration retains the published hash; releases remain source-bound.
 - Preserve generated provenance bytes, isolated read-only checks, argument forwarding, and tool failures.
   Do not restamp an artifact to hide a changed source identity.
+- Test fixtures stage and check local circuits through `stage_bin`, `dist_current`, `bin_current`
+  and `write_checksums`; do not copy the variant table or marker lists into a test.
 
 Run `pnpm test:circuit-build` and `pnpm build:circuits check --committee all`. A full circuit build
 or proof matrix is not incidental preparation. See

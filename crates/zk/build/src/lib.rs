@@ -10,6 +10,9 @@ mod toolchain;
 mod vk_commitments;
 mod vk_tree;
 
+pub use artifacts::{
+    bin_current, checksums as write_checksums, dist_current, read_active_stamp, stage_bin, Stamp,
+};
 pub use identity::checksum;
 pub use toolchain::{pinned_noir_version, reports_version};
 

@@ -12,5 +12,5 @@ This is the native Secure Process/worker adapter; the separate worker owns OpenV
   memory usage is not the guest's streaming memory bound.
 
 Use the [README adapter tests](README.md#tests). Real proving, guest parity, and contract acceptance
-need the pinned tools/artifacts in the [OpenVM README](../../openvm-prover/README.md); fake worker
+need the pinned tools/artifacts in the [OpenVM README](../openvm-prover/README.md); fake worker
 tests do not validate a receipt.

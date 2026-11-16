@@ -18,10 +18,12 @@ commitment saved at publication, and uses e3Id separately to resolve registry-ba
 Keccak of serialized ciphertext and the SAFE commitment are different bindings.
 
 `CanonicalKeyProjection` derives authority only from confirmed chain observations:
-`CommitteeProofPublished` retained as `EvmLogObserved`, the request's preset and committee, and the
-configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
+`CommitteeProofPublished` retained as `EvmLogObserved`, the request's saved profile and committee,
+and the configured Interfold deployment. It recovers the ordered committee, selected party IDs, key
 commitment, and SK/ESM anchors. It updates before domain delivery and rebuilds from the full
-retained log before hydration, including history before snapshot cursors. Chunk history supplies
+retained log before hydration, including history before snapshot cursors. Like chain ingestion, it
+tracks only requests whose profile this release admits, so the retained requests of a profile that a
+later release disables get no authority and do not stop recovery. Chunk history supplies
 commitment-checked bytes. Neither gossip nor registry/head-state RPC populates this authority; the
 shared router performs no blocking key-authority reads or retry waits.
 
@@ -30,11 +32,13 @@ projection and its decoded bytes reproduce the commitment. Keep the first matchi
 bytes are bounded candidates, not authority. Ciphertext may wait in `Decrypting` for first canonical
 key admission; repeating an already-retained matching key is a no-op.
 
-Before proof-intent deduplication, repair retained C6 public key, domain, preset, and committee size
-from canonical authority. Before compute dispatch or response reuse, `ComputeEffectGate` checks
-logged C6 requests against it. Missing authority defers admission; a mismatch must not reserve a
-party slot or dedup key that blocks corrected work. Pre-v0.19 state is not repaired: that release
-resets to schema 8.
+Before proof-intent deduplication, reject a C6 profile mismatch before accessing or repairing key
+material. Within the same profile, repair the public key, domain, and committee size from canonical
+authority without changing secret or ciphertext witnesses. Before compute dispatch or response
+reuse, `ComputeEffectGate` checks logged C6 requests against it. Missing authority defers admission;
+a mismatch must not reserve a party slot or dedup key that blocks corrected work. This is not a
+cross-version migration; the [profile cutover](upgrades.md#bfv-profile-cutover) requires
+reset/resync.
 
 ## Shares and exact batches
 
@@ -65,10 +69,12 @@ resume. A fresh chain-scoped `PlaintextVerificationResumed` gives recovered resu
 sequence; never write under the earlier result sequence or chain-independent `EffectsEnabled`
 context.
 
-The active aggregator reconstructs from exactly T+1 verified shares. C7 witness construction refuses
-any other share/party count. Sort runtime IDs and convert **once** to one-based Shamir coordinates
-`party_id + 1`; zero, duplicate, unordered, and out-of-range coordinates fail. The wrapper subtracts
-one to locate registry slots. C7 proves every plaintext coefficient, including claimed zeros.
+The active aggregator reconstructs from exactly T+1 verified shares. A retry batch may contain more;
+native reconstruction, C7, and the C6 fold must select the same T+1 lowest runtime party IDs. C7
+witness construction refuses any other share/party count. Sort runtime IDs and convert **once** to
+one-based Shamir coordinates `party_id + 1`; zero, duplicate, unordered, and out-of-range
+coordinates fail. The wrapper subtracts one to locate registry slots. C7 proves every plaintext
+coefficient, including claimed zeros.
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

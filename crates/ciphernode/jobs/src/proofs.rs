@@ -9,7 +9,6 @@
 
 use crate::{trbfv, Attempt, Blobs, JobError, Jobs};
 use alloy_primitives::{keccak256, B256};
-use e3_fhe_params::BfvPreset;
 use e3_protocol::{
     accusation::{disputed_proof, Fault, Verdict},
     node::CryptoParams,
@@ -113,9 +112,6 @@ impl Prover<'_> {
         self.outcome(self.zk.verify_proof(proof, work, 0, artifacts))
     }
 
-    fn artifacts(&self, preset: BfvPreset, committee: &str) -> String {
-        self.zk.resolve_artifacts_dir(preset, committee)
-    }
 }
 
 /// A failing proof stays the verdict: `bound` runs only once every proof holds.
@@ -157,7 +153,7 @@ impl<B: Blobs> Jobs<'_, B> {
         if let Some(kept) = self.blobs.kept(&key)? {
             return bincode::deserialize(&kept).map_err(JobError::crypto);
         }
-        let (work, artifacts) = (self.work(work), self.artifacts(prover, params)?);
+        let (work, artifacts) = (self.work(work), self.artifacts(params)?);
         let proof = prover.proving(|zk| circuit.prove(zk, config, input, &work, &artifacts))?;
         let proof = store(&self.blobs, &proof)?;
         let encoded = bincode::serialize(&proof).map_err(JobError::crypto)?;
@@ -177,7 +173,7 @@ impl<B: Blobs> Jobs<'_, B> {
         params: &CryptoParams,
         proofs: impl IntoIterator<Item = (ProofType, &'a ZkProof)>,
     ) -> Result<Verdict, JobError> {
-        let artifacts = self.artifacts(prover, params)?;
+        let artifacts = self.artifacts(params)?;
         // A message can repeat one proof to make the node verify it many times.
         let mut seen = BTreeSet::new();
         for (proof_type, proof) in proofs {
@@ -217,13 +213,9 @@ impl<B: Blobs> Jobs<'_, B> {
     }
 
     /// The directory of the request's compiled circuits.
-    pub(crate) fn artifacts(
-        &self,
-        prover: &Prover<'_>,
-        params: &CryptoParams,
-    ) -> Result<String, JobError> {
-        let preset = trbfv::threshold_preset(params)?;
-        Ok(prover.artifacts(preset, params.committee_size.as_str()))
+    pub(crate) fn artifacts(&self, params: &CryptoParams) -> Result<String, JobError> {
+        let profile = trbfv::profile(params)?;
+        Ok(profile.artifacts_dir_for_committee(params.committee_size)?)
     }
 
     pub(crate) fn work(&self, name: &str) -> String {

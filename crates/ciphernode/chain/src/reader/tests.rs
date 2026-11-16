@@ -557,6 +557,7 @@ async fn a_request_carries_the_seed_its_own_transaction_fulfilled() {
             param_set: 1,
             committee_size: e3_committee::CiphernodesCommitteeSize::Minimum,
             seed: B256::from(U256::from(42)),
+            config: CONFIG,
         },
         interfold: c.interfold,
         attestation: AttestationContext {

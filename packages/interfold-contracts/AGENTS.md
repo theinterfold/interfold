@@ -18,11 +18,12 @@ deployment, and address operations.
   redeploy needs a DAppNode package release. Follow
   [address generation](README.md#contract-addresses); a clean address scan does
   not validate wiring.
-- BFV fixture refresh has
-  [automatic benchmark inputs and a manual override](test/fixtures/bfv_vk_binding/README.md).
-  Mock lifecycle tests and a refreshed fixture are not evidence of real verifier
-  acceptance. Preserve [audit scope](audits/README.md) when describing changed
-  or newly generated code.
+- The [BFV VK-binding fixture guide](test/fixtures/bfv_vk_binding/README.md)
+  says which artifacts the test reads, how to check a fresh benchmark run, and
+  how to refresh the fixture. Mock lifecycle tests and a refreshed fixture are
+  not evidence of real verifier acceptance. Preserve
+  [audit scope](audits/README.md) when describing changed or newly generated
+  code.
 
 From this package, use `pnpm test <test-file>` or the focused `test:interfold`,
 `test:ciphernodeRegistry`, `test:bondingRegistry`, or `test:slashing` scripts.

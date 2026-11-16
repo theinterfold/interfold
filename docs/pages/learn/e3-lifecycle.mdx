@@ -83,7 +83,8 @@ The requester calls `request(E3RequestParams)`. The parameters are `committeeSiz
 
 - Requests are paused, or the E3 program is not registered.
 - The fee token is not allowed, or it is different from `expectedFeeToken`.
-- The circuit configuration for `paramSet` is different from `expectedCryptoConfigId`.
+- The circuit configuration for `paramSet` and `committeeSize` is different from
+  `expectedCryptoConfigId`.
 - The quote from `getE3Quote` is more than `maxFee`.
 - `inputWindow[0]` is before the current time, or `inputWindow[1]` is before `inputWindow[0]`.
 - The worst-case lifecycle duration is more than `maxDuration`.

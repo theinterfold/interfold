@@ -1,7 +1,7 @@
 # Encrypted computation and application input binding
 
 Owners: [compute-provider](../../crates/program/compute-provider/),
-[OpenVM prover](../../crates/openvm-prover/), the
+[OpenVM prover](../../crates/program/openvm-prover/), the
 [CRISP program](https://github.com/theinterfold/CRISP/tree/main/program), and the
 [CRISP contracts](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-contracts).
 Protocol verification creates decryption duty; application verification decides what computation is
@@ -72,9 +72,9 @@ start the frozen decryption window, and emit durable DA reference then Ciphertex
 
 SAFE commitment covers **exactly two** ciphertext components c0/c1. `bfv_ciphertext_to_greco`
 rejects others; seed compression expands c1 before conversion. Padding a third component otherwise
-preserves commitment/root but fails ShareManager decryption, wrongly imposing ciphernode
-DecryptionTimeout. Receipt-verifier addresses must have code; a void call to an EOA returning empty
-bytes is not success.
+preserves commitment/root but fails SS decryption, wrongly imposing ciphernode DecryptionTimeout.
+Receipt-verifier addresses must have code; a void call to an EOA returning empty bytes is not
+success.
 
 Each project's guest and separate `runner/` crate link its own program. The runner calls
 `e3_program_runner::run(fhe_processor, policy())`; keeping it separate prevents server dependencies
@@ -87,7 +87,7 @@ RISC Zero image ID or another VM configuration's aggregation key. `interfold pro
 prepares artifacts/config; `program start` checks the selected CPU/CUDA worker (CUDA only after a
 successful GPU probe) before accepting work. Worker runs have deadlines; machine-local paths, keys,
 proofs, and benchmarks stay outside Git. See
-[OpenVM operations](../../crates/openvm-prover/README.md) and
+[OpenVM operations](../../crates/program/openvm-prover/README.md) and
 [provenance](../pages/build/e3-program/verify-compute-provider.mdx).
 
 The CLI's `program_support.rs` owns project-root compile/start and cache purge. Development compile

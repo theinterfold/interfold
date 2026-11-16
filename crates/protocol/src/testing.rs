@@ -578,6 +578,7 @@ pub fn params(committee_size: CiphernodesCommitteeSize) -> CryptoParams {
         param_set: 0,
         committee_size,
         seed: B256::repeat_byte(0x5e),
+        config: B256::repeat_byte(0xcf),
     }
 }
 

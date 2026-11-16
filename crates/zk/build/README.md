@@ -6,7 +6,7 @@ This unpublished development crate owns repository circuit building. Its library
 hash, generated-configuration check, and synchronization operations from a typed `Request`. Its thin
 binary supplies the project command entry point, `pnpm build:circuits`.
 
-The implementation calls `e3-zk-config` for static rendering and parity values, and
+The implementation calls `e3-zk-config` for static rendering values, and
 `e3-zk-witness::compute_vk_hash` for ordered SAFE hashes. It uses the existing Nargo, BB, and verifier
 tools; it does not implement a compiler or a prover. It has no sample-support dependency.
 
@@ -14,6 +14,11 @@ The library owns artifact staging, immutable VK-tree anchors, checksums, source 
 hydration. `scripts/circuits/build-pairs.json` owns supported build pairs. Release requirements stay
 in the separate runtime release matrix. Hydration accepts a different artifact source hash and
 records the original hash. Release validation remains source-bound.
+
+Test fixtures and local tooling that need circuits without rebuilding call the library's narrow
+operations: `read_active_stamp`, `dist_current`/`bin_current` (stamp and markers, any source hash when
+`None` is passed), `stage_bin` (`circuits/bin` into a pair directory) and `write_checksums`. They
+do not recompute source identity or compile.
 
 The unpublished `e3-zk-benchmarks` crate uses this crate through a normal dependency. Normal dependency
 direction stays `build -> witness -> config`; the configuration library does not import build,
@@ -47,5 +52,5 @@ it does not change compiled artifacts or their stamps.
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools
 and compile only temporary circuits. Run `pnpm build:circuits check --committee all` for this
-checkout's generated parity/configuration comparison. These are not a full proof matrix.
+checkout's generated configuration comparison. These are not a full proof matrix.
 [AGENTS.md](AGENTS.md) owns artifact and editing hazards.

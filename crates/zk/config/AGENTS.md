@@ -1,7 +1,7 @@
 # e3-zk-config
 
-Circuit identity/variants, static BFV configuration, bounds, parity, and public-input layouts belong
-here. [README.md](README.md) owns construction and rendering APIs.
+Circuit identity/variants, static BFV configuration, bounds, and public-input layouts belong here.
+[README.md](README.md) owns construction and rendering APIs.
 
 - Keep normal dependencies free of witness, samples, build tooling, and runtime orchestration.
 - Preserve identity enum order/serde names, circuit paths, prover targets, and layout selection.

@@ -24,7 +24,7 @@ pub use e3_zk_prover::Cancel;
 pub use proofs::{Circuits, Proofs};
 #[cfg(any(test, feature = "testing"))]
 pub use requester::encrypt;
-pub use trbfv::crypto_configs;
+pub use trbfv::{crypto_configs, profile};
 
 use alloy_primitives::{keccak256, B256};
 use e3_crypto::Cipher;
@@ -47,6 +47,8 @@ pub enum JobError {
     Blob(#[from] e3_blobs::BlobError),
     #[error("parameter set {0} is not supported by this node")]
     UnsupportedParams(u8),
+    #[error("the request's BFV profile: {0}")]
+    Profile(#[from] e3_fhe_params::BfvProfileError),
     #[error("sealing: {0}")]
     Seal(String),
     #[error("{0}")]

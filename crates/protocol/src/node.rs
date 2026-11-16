@@ -93,14 +93,17 @@ impl FailureReason {
     }
 }
 
-/// What a request fixed for its E3's cryptography. Every job gets it: the job runner maps the
-/// contract's parameter set to BFV parameters and derives the error size from them and the
-/// committee size; the seed is the E3's shared randomness.
+/// What a request fixed for its E3's cryptography. Every job gets it: the job runner finds the
+/// BFV profile that the request's crypto configuration names, for its parameter set and committee
+/// size, and builds the parameters from it; the seed is the E3's shared randomness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CryptoParams {
     pub param_set: u8,
     pub committee_size: CiphernodesCommitteeSize,
     pub seed: B256,
+    /// The request's crypto configuration ID. Two profiles can share a parameter set, so only this
+    /// ID names the profile.
+    pub config: B256,
 }
 
 /// What a request froze for forming its committee: the registry's selection inputs (and
@@ -2422,7 +2425,7 @@ mod tests {
             (
                 1,
                 alloy_primitives::b256!(
-                    "af86050cee0f76702bb246e7b33fd9e05e993dab3d1eabaf6038ae21e7ee4148"
+                    "000bee6c77bd0d0ca660ac91f0ad023b9b2eb1cb5746ce2641faa9bcf0afbc86"
                 )
             ),
             "the persisted encoding changed: update this fingerprint, and ENCODING_VERSION if a \

@@ -16,7 +16,7 @@ use e3_protocol::{
     node::{ChainEvent, ChainFact, CryptoParams, DataRef, FailureReason, LogPosition, Stage},
     E3Id, UnixSecs,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// The contracts of one chain whose logs the node reads.
 #[derive(Clone, Debug)]
@@ -31,9 +31,9 @@ pub struct Contracts {
     /// The randomness providers whose fulfillments the node reads: the registry's at start, then
     /// each one a request names or governance sets.
     pub randomness: BTreeSet<Address>,
-    /// The crypto configuration this build runs for each parameter set; a request for another is
-    /// skipped.
-    pub crypto_configs: BTreeMap<u8, B256>,
+    /// The crypto configurations this build admits, each with its parameter set and committee
+    /// size; a request for another is skipped.
+    pub crypto_configs: HashSet<(u8, CiphernodesCommitteeSize, B256)>,
 }
 
 impl Contracts {
@@ -382,9 +382,9 @@ impl Decoder<'_> {
     /// committee size this build does not support is skipped.
     fn requested(&mut self, log: &RawLog, event: IInterfold::E3Requested) -> Option<Decoded> {
         let parts = self.requests.remove(&(log.transaction, event.e3Id))?;
-        let supported =
-            self.contracts.crypto_configs.get(&event.e3.paramSet) == Some(&event.cryptoConfigId);
         let size = committee_size(event.e3.committeeSize)?;
+        let config = (event.e3.paramSet, size, event.cryptoConfigId);
+        let supported = self.contracts.crypto_configs.contains(&config);
         let (Some(attestation), true) = (parts.attestation, supported) else {
             return None;
         };
@@ -396,6 +396,7 @@ impl Decoder<'_> {
                 param_set: event.e3.paramSet,
                 committee_size: size,
                 seed: B256::from(event.e3.seed),
+                config: event.cryptoConfigId,
             },
             interfold: log.address,
             attestation,

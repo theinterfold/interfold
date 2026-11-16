@@ -133,7 +133,7 @@ const RequestComputation: React.FC = () => {
         committeeSize,
         inputWindow,
         e3Program: contracts.e3Program,
-        paramSet: 0, // ParamSet.Insecure64
+        profile: 'ss-insecure-64' as const,
         computeProviderParams,
       }
 

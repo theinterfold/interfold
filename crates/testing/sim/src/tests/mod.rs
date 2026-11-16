@@ -17,7 +17,8 @@ use alloy_primitives::{Address, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_protocol::{
     node::{ChainFact, CommitteeSeed},
-    testing::{address, e3, params, ATTESTATION, COMMITTEE_DEADLINE, INTERFOLD, REQUEST, TIMING},
+    node::CryptoParams,
+    testing::{address, e3, ATTESTATION, COMMITTEE_DEADLINE, INTERFOLD, REQUEST, TIMING},
 };
 
 const FAULTS: Faults = Faults {
@@ -92,4 +93,14 @@ fn committee_with<J: Jobs>(size: CiphernodesCommitteeSize, seed: u64, jobs: J) -
     );
     sim.set_ciphertext_at(TIMING.deadline + 500);
     sim
+}
+
+/// A request's parameters with the crypto configuration this build admits for parameter set 0 and
+/// `size`, which real jobs need to find their BFV profile.
+fn params(size: CiphernodesCommitteeSize) -> CryptoParams {
+    let base = e3_protocol::testing::params(size);
+    let configs = e3_jobs::crypto_configs().into_iter();
+    let mut matching = configs.filter(|(set, at, _)| (*set, *at) == (base.param_set, size));
+    let (_, _, config) = matching.next().expect("the build admits parameter set 0");
+    CryptoParams { config, ..base }
 }

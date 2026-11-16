@@ -4,7 +4,7 @@
 
 | Crate                              | Responsibility                                                                         |
 | ---------------------------------- | -------------------------------------------------------------------------------------- |
-| [config](config/README.md)         | Static parameters, bounds, parity, rendering, and public layouts.                      |
+| [config](config/README.md)         | Static parameters, bounds, rendering, and public layouts.                              |
 | [witness](witness/README.md)       | Production inputs, deterministic preparation, commitments, and Noir JSON.              |
 | [prover](prover/README.md)         | Runtime Noir/BB execution, verification, folding, recovery, and artifact installation. |
 | [samples](samples/README.md)       | Unpublished artificial cryptographic material for tests/development.                   |

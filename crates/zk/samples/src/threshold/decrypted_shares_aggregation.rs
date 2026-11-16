@@ -16,12 +16,16 @@ use e3_zk_witness::threshold::decrypted_shares_aggregation::DecryptedSharesAggre
 use e3_zk_witness::WitnessError;
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
-use fhe::trbfv::ShareManager;
+use fhe::trbfv::{
+    AggregatedSmudgingShare, ShareManager, SsSmudgingDecryptionConfig, SsSmudgingDecryptionShare,
+    SsSmudgingDecryptor,
+};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheDecoder;
 use fhe_traits::{FheEncoder, FheEncrypter};
 use ndarray::Array2;
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 struct Party {
     sk_sss: Vec<Array2<u64>>,
@@ -81,9 +85,7 @@ pub fn generate(
                     WitnessError::Sample(format!("Failed to generate secret shares: {:?}", e))
                 })?;
 
-            let esi_coeffs = noise.generate_smudging_error(&mut rng).map_err(|e| {
-                WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e))
-            })?;
+            let esi_coeffs = crate::smudging::sample_coefficients(&noise, &mut rng);
             let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
                 WitnessError::Sample(format!("Failed to convert error to poly: {:?}", e))
             })?;
@@ -122,6 +124,11 @@ pub fn generate(
     // Decryption shares from T+1 parties (1-based party IDs)
     let reconstructing_count = threshold + 1;
     let mut d_share_polys: Vec<Poly<PowerBasis>> = Vec::with_capacity(reconstructing_count);
+    let decryptor = SsSmudgingDecryptor::new(SsSmudgingDecryptionConfig::new(
+        num_parties,
+        threshold,
+        threshold_params.clone(),
+    )?);
 
     for receiver in 0..reconstructing_count {
         // Keep every dealer contribution, but only collect the recipients used for reconstruction.
@@ -138,23 +145,28 @@ pub fn generate(
                 .map(|party| super::receiver_shares(&party.esi_sss, receiver, threshold_params))
                 .collect::<Vec<_>>(),
         )?;
-        let d_share = share_manager
-            .decryption_share(Arc::clone(&ciphertext), sk_poly_sum.into_ntt(), es_poly_sum)
+        let d_share = decryptor
+            .decryption_share(
+                &ciphertext,
+                &Zeroizing::new(sk_poly_sum.into_ntt()),
+                AggregatedSmudgingShare::from_transport(Zeroizing::new(es_poly_sum)),
+            )
             .map_err(|e| {
                 WitnessError::Sample(format!("Failed to compute decryption share: {:?}", e))
             })?;
-        d_share_polys.push(d_share);
+        d_share_polys.push(d_share.into_parts());
     }
 
     let reconstructing_parties: Vec<usize> = (1..=reconstructing_count).collect();
 
     // Threshold decrypt to obtain message (verify)
-    let plaintext = share_manager
-        .decrypt_from_shares(
-            d_share_polys.clone(),
-            reconstructing_parties.clone(),
-            Arc::clone(&ciphertext),
-        )
+    let shares: Vec<SsSmudgingDecryptionShare> = d_share_polys
+        .iter()
+        .cloned()
+        .map(SsSmudgingDecryptionShare::from_parts)
+        .collect();
+    let plaintext = decryptor
+        .decrypt_from_shares(&shares, &reconstructing_parties, &ciphertext)
         .map_err(|e| WitnessError::Sample(format!("Failed to decrypt from shares: {:?}", e)))?;
 
     let message_vec = Vec::<u64>::try_decode(&plaintext, Encoding::poly())

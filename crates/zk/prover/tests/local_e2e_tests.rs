@@ -18,7 +18,6 @@
 mod common;
 
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use std::sync::Arc;
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
@@ -55,7 +54,7 @@ use e3_zk_witness::{
     compute_pk_aggregation_commitment, compute_share_computation_sk_commitment,
     compute_threshold_pk_commitment,
 };
-use fhe::trbfv::TRBFV;
+use fhe::trbfv::{AggregatedSmudgingShare, SsSmudgingDecryptionConfig, SsSmudgingDecryptor};
 
 /// Sum per-modulus decrypted shares across honest parties (matches C4 `compute_aggregated_shares`).
 /// Coefficients are summed in the BN254 field, not reduced mod each CRT modulus (see `share_decryption.nr`).
@@ -730,7 +729,7 @@ async fn test_threshold_share_decryption_commitment_consistency() {
     prover.cleanup(e3_id).unwrap();
 }
 
-/// Wires the same aggregated SK (`agg_sk`) into C6: DKG aggregate → `s` + TRBFV `decryption_share` for new `d_share`.
+/// Wires the same aggregated SK (`agg_sk`) into C6: DKG aggregate → `s` + SS `decryption_share` for new `d_share`.
 ///
 /// C4 hashes the aggregate with `SHARE_DECRYPTION_BIT_AGG`; C6 uses the same width for `sk`.
 /// Per-share C4 checks still use `SHARE_DECRYPTION_BIT_MSG` (`msg_bit`) vs C2.
@@ -774,12 +773,19 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
     let sk_poly = to_fhe(&agg_sk).into_ntt();
     let es_poly = to_fhe(&c6_sample.e);
 
-    let trbfv =
-        TRBFV::new(committee.n, committee.threshold, threshold_params.clone()).expect("TRBFV::new");
+    let decryptor = SsSmudgingDecryptor::new(
+        SsSmudgingDecryptionConfig::new(committee.n, committee.threshold, threshold_params.clone())
+            .expect("SS config"),
+    );
 
-    let d_share_rns = trbfv
-        .decryption_share(Arc::new(c6_sample.ciphertext.clone()), sk_poly, es_poly)
-        .expect("decryption_share");
+    let d_share_rns = decryptor
+        .decryption_share(
+            &c6_sample.ciphertext,
+            &zeroize::Zeroizing::new(sk_poly),
+            AggregatedSmudgingShare::from_transport(zeroize::Zeroizing::new(es_poly)),
+        )
+        .expect("decryption_share")
+        .into_parts();
 
     c6_sample.s = agg_sk.clone();
     c6_sample.d_share = CrtPolynomial::from_fhe_polynomial(&d_share_rns);
@@ -810,6 +816,23 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
             &artifacts_dir,
         )
         .expect("C6 proof generation should succeed");
+
+    assert_proof_verifies(
+        &DkgShareDecryptionCircuit,
+        &prover,
+        &c4_proof,
+        e3_id_c4,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
+    assert_proof_verifies(
+        &ThresholdShareDecryptionCircuit,
+        &prover,
+        &c6_proof,
+        e3_id_c6,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
 
     let c4_commitment = CircuitName::DkgShareDecryption
         .output_layout()

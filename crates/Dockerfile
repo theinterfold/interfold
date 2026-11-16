@@ -71,7 +71,6 @@ COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
 COPY crates/evm/transactions/Cargo.toml ./evm/transactions/Cargo.toml
 COPY crates/fs/Cargo.toml ./fs/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
-COPY crates/parity-matrix/Cargo.toml ./parity-matrix/Cargo.toml
 COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
 COPY crates/polynomial/fhe-adapter/Cargo.toml ./polynomial/fhe-adapter/Cargo.toml
 COPY crates/program/compute-provider/Cargo.toml ./program/compute-provider/Cargo.toml

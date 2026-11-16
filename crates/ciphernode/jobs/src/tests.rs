@@ -13,7 +13,7 @@ use crate::{
 use alloy_primitives::{Address, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_protocol::{
     accusation::Verdict,
     decryption::{DecryptionWork, DecryptionWorkResult, SharesMessage as DecryptionShares},
@@ -25,15 +25,12 @@ use e3_protocol::{
 use std::collections::BTreeMap;
 
 fn params() -> CryptoParams {
-    let param_set = (0..=u8::MAX)
-        .find(|set| {
-            BfvPreset::from_on_chain_param_set(*set) == Some(BfvPreset::InsecureThreshold64)
-        })
-        .expect("development chains support the insecure set");
+    let (profile, size) = (BfvProfile::SsInsecure64, CiphernodesCommitteeSize::Minimum);
     CryptoParams {
-        param_set,
-        committee_size: CiphernodesCommitteeSize::Minimum,
+        param_set: profile.param_set(),
+        committee_size: size,
         seed: B256::ZERO,
+        config: profile.crypto_config_id(size).unwrap(),
     }
 }
 

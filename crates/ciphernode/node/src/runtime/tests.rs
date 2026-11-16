@@ -25,7 +25,6 @@ use e3_protocol::{
 };
 use futures::stream::BoxStream;
 use std::{
-    collections::BTreeMap,
     future::pending,
     path::Path,
     sync::atomic::{AtomicUsize, Ordering},
@@ -164,7 +163,7 @@ async fn parts(
         bonding: Address::repeat_byte(3),
         slashing: BTreeSet::new(),
         randomness: BTreeSet::new(),
-        crypto_configs: BTreeMap::new(),
+        crypto_configs: Default::default(),
     };
     let settings = Settings {
         contracts,
@@ -250,6 +249,31 @@ async fn recovered_work_waits_for_the_first_catch_up() {
         let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
         assert_eq!(stored.outbox.len(), left);
     }
+}
+
+/// A release that no longer runs an E3's BFV profile refuses to start while that E3 has work.
+#[tokio::test]
+async fn a_held_e3_under_a_profile_this_release_does_not_run_stops_the_start() {
+    use e3_protocol::testing::{e3, finalized, requested};
+    let dir = tempfile::tempdir().unwrap();
+    let (settings, first, _peers) = parts(dir.path(), Chain::default()).await;
+    let signer = first.operator.clone();
+    let operator = signer.address();
+    drop(first);
+    {
+        let journal = Journal::open(dir.path().join("journal.redb")).unwrap();
+        let (engine, _) = Engine::open(journal, Node::new(operator), 100).unwrap();
+        // The test request names a crypto configuration that no release runs.
+        let (engine, _) = engine.apply(0, requested(10, e3(1))).unwrap();
+        let members = vec![operator, Address::repeat_byte(1)];
+        engine.apply(0, finalized(11, e3(1), members)).unwrap();
+    }
+    let (_, mut second, _peers) = parts(dir.path(), Chain::default()).await;
+    second.operator = signer;
+    let started = run(settings, second, pending());
+    let ended = tokio::time::timeout(Duration::from_secs(60), started).await;
+    let ended = ended.expect("the start stops at once").unwrap_err();
+    assert!(matches!(ended, NodeError::RetiredProfile { .. }), "{ended}");
 }
 
 /// The drain setting reaches the machine as a journaled input. A later start without it takes E3s

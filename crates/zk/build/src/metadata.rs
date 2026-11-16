@@ -22,7 +22,7 @@ pub struct CryptoMetadata {
 pub fn collect(root: &Path) -> Result<CryptoMetadata> {
     let build_pairs = crate::build_pairs(root)?;
     Ok(CryptoMetadata {
-        format_version: 1,
+        format_version: 2,
         bfv: BfvMetadata::current()?,
         zk: ZkMetadata::current(),
         committees: CiphernodesCommitteeSize::ALL

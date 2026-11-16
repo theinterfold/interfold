@@ -66,7 +66,7 @@ require it; do not claim accepted HTTP means recoverable completion.
 The project-specific OpenVM service links that project's program and checks its worker before
 serving. Native and guest policy must agree, but genuine proof identity still depends on
 executable/VM/keys and deployed receipt verifiers. See
-[OpenVM prover operations](../../openvm-prover/README.md); explicit `program.dev` is unproved and is
+[OpenVM prover operations](../openvm-prover/README.md); explicit `program.dev` is unproved and is
 not a fallback for failed production proving.
 
 ## Tests

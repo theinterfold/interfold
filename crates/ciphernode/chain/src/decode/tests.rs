@@ -60,6 +60,7 @@ fn a_request_is_read_with_the_parts_its_transaction_logged_first() {
         param_set: 1,
         committee_size: CiphernodesCommitteeSize::Minimum,
         seed: B256::from(U256::from(42)),
+        config: CONFIG,
     };
     assert_eq!(*params, expected);
     assert_eq!(*time, request(CONFIG)[2].time);

@@ -899,6 +899,52 @@ describe("CiphernodeRegistryOwnable", function () {
           encodeMockDkgProof(dataHash),
         );
     });
+    it("accepts only the first committee publication", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
+
+      // After a failover, the demoted aggregator and its successor can both submit.
+      await registry
+        .connect(operator1)
+        .publishCommittee(
+          firstE3Id,
+          dataHash,
+          encodeMockDkgProof(dataHash),
+          "0x01",
+        );
+      const otherHash = ethers.keccak256("0x02");
+      for (const commitment of [dataHash, otherHash]) {
+        await expect(
+          registry
+            .connect(operator2)
+            .publishCommittee(
+              firstE3Id,
+              commitment,
+              encodeMockDkgProof(commitment),
+              "0x01",
+            ),
+        ).to.be.revertedWithCustomError(registry, "CommitteeAlreadyPublished");
+      }
+      expect(await registry.committeePublicKey(firstE3Id)).to.equal(dataHash);
+    });
     it("rejects malformed chunks and accepts a committee member's valid candidate", async function () {
       const {
         registry,

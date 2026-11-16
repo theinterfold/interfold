@@ -134,6 +134,17 @@ impl FromStr for CiphernodesCommitteeSize {
     }
 }
 
+impl TryFrom<u8> for CiphernodesCommitteeSize {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|committee| *committee as u8 == value)
+            .ok_or_else(|| anyhow::anyhow!("Unsupported committee size enum value {value}"))
+    }
+}
+
 impl fmt::Display for CiphernodesCommitteeSize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -182,8 +193,13 @@ mod tests {
                 size
             );
             assert_eq!(CiphernodesCommitteeSize::from_n_h(n, h).unwrap(), size);
+            assert_eq!(
+                CiphernodesCommitteeSize::try_from(size as u8).unwrap(),
+                size
+            );
         }
         assert!(CiphernodesCommitteeSize::from_threshold(2, 3).is_err());
         assert!(CiphernodesCommitteeSize::from_n_h(3, 3).is_err());
+        assert!(CiphernodesCommitteeSize::try_from(255).is_err());
     }
 }

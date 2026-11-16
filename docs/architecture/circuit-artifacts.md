@@ -10,9 +10,9 @@ Owners: [Rust circuit builder](../../crates/zk/build/),
 ## Generated configuration and pair identity
 
 Use `pnpm build:circuits --committee <name> [--preset <preset>]` and `pnpm check:committee`. Do not
-hand-edit generated default/active selectors, parity matrices, C1/C2 bounds, generated TS/Solidity
-constants, verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts.
-Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
+hand-edit generated default/active selectors, C1/C2 bounds, generated TS/Solidity constants,
+verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts. Canonical
+committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
 preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
 `pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,
@@ -113,6 +113,9 @@ chosen by archive contents. Explicit nonempty subsets are available through inst
 repeated `--circuits-configuration` only with `--circuits-archive`. Local archives need the same
 version pin unless explicit `--allow-unpinned-archive`; without that flag a missing pin fails closed
 too. CI candidate fixtures deliberately use that flag/subsets, not production policy.
+`ZkBackend::install_circuits_dir` is the unpinned path for a local circuits tree (a dist directory
+or staged `circuits/bin`) in local builds and tests: it applies the same manifest and
+required-artifact rules, without a release pin.
 
 Readiness requires the default bb executable to report the required version and every recorded
 artifact file to exist. A downloaded bb that cannot run on the host or reports another version fails

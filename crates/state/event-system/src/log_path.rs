@@ -4,6 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! Names each aggregate's commit log. Node validation and data reset locate the logs through it.
+
 use std::path::PathBuf;
 
 /// Enumerates a PathBuf by inserting an index before the file extension

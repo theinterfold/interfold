@@ -377,7 +377,7 @@ impl<B: Blobs> Jobs<'_, B> {
             params.committee_size,
         )
         .map_err(JobError::crypto)?;
-        let (work, artifacts) = (self.work("c7"), self.artifacts(prover, params)?);
+        let (work, artifacts) = (self.work("c7"), self.artifacts(params)?);
         // C7 takes the variant the decryption aggregation verifies inside it.
         let c7 = prover.proving(|zk| {
             let variant = CircuitVariant::Default;
@@ -390,10 +390,10 @@ impl<B: Blobs> Jobs<'_, B> {
             c6_slot_indices: &slots,
             c7_proof: &c7,
         };
-        let (work, preset) = (self.work("decryption"), trbfv::threshold_preset(params)?);
+        let (work, artifacts) = (self.work("decryption"), self.artifacts(params)?);
         let proofs = prover.proving(|zk| {
-            let (slots, size) = (c6.len(), params.committee_size);
-            prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, preset, size)
+            let slots = c6.len();
+            prove_decryption_aggregation_jobs(zk, slots, &[job], committee, &work, &artifacts)
         })?;
         let proof = proofs
             .first()

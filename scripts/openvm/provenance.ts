@@ -88,7 +88,7 @@ async function main() {
   const project = path.resolve(root, args.project)
   const files: Record<string, string> = {
     'Cargo.lock': path.join(root, 'Cargo.lock'),
-    'crates/openvm-prover/Cargo.lock': path.join(root, 'crates/openvm-prover/Cargo.lock'),
+    'crates/program/openvm-prover/Cargo.lock': path.join(root, 'crates/program/openvm-prover/Cargo.lock'),
     'rust-toolchain.toml': path.join(root, 'rust-toolchain.toml'),
     'project/Cargo.lock': path.join(project, 'Cargo.lock'),
     'project/guest/Cargo.lock': path.join(project, 'guest/Cargo.lock'),

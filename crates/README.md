@@ -27,8 +27,8 @@ compile-only flag does not establish proof readiness. Choose the smallest applic
 root `pnpm rust:test` and `pnpm rust:test:proofs` cover different scopes, with additional
 prerequisites documented by their owners.
 
-The [OpenVM worker](openvm-prover/README.md) is an independent excluded workspace with its own
-pinned tools. [e3-program-runner](program/runner/README.md) supplies shared development/OpenVM
+The [OpenVM worker](program/openvm-prover/README.md) is an independent excluded workspace with its
+own pinned tools. [e3-program-runner](program/runner/README.md) supplies shared development/OpenVM
 modes. Each generated project's separate `runner/` binary links its own program and calls that
 library; the CLI owns compile/start orchestration.
 
@@ -50,7 +50,7 @@ the [network](ciphernode/p2p/), and [jobs](ciphernode/jobs/) perform its effects
 | Runtime adapters               | [EVM](evm/README.md), [chain](ciphernode/chain/), [network](ciphernode/p2p/), [jobs](ciphernode/jobs/), [local crypto](crypto/README.md)                                                                                                                                                                          |
 | Application computation        | [application execution family](program/README.md), [Secure Process/provider](program/compute-provider/Readme.md), [OpenVM host](program/openvm-host/README.md), [guest/journal types](program/openvm-types/README.md), [program HTTP server](program/server/README.md), [DA clients](data-availability/README.md) |
 | Client libraries               | [Rust SDK](sdk/README.md), [WASM](wasm/README.md), [EVM client](evm/client/README.md), [indexer](evm/indexer/README.md)                                                                                                                                                                                           |
-| Parameters, math, and proofs   | [committee](committee/README.md), [committee hashes](committee/hash/README.md), [SAFE](safe/README.md), [polynomials](polynomial/README.md), [parity matrices](parity-matrix/README.md), [ZK config](zk/config/README.md), [witnesses](zk/witness/README.md), [prover](zk/prover/README.md)                       |
+| Parameters, math, and proofs   | [committee](committee/README.md), [committee hashes](committee/hash/README.md), [SAFE](safe/README.md), [polynomials](polynomial/README.md), [ZK config](zk/config/README.md), [witnesses](zk/witness/README.md), [prover](zk/prover/README.md)                                                                   |
 | Project tooling and utilities  | [initializer](init/README.md), [program runner](program/runner/README.md), [circuit builder](zk/build/README.md), [benchmarks](zk/benchmarks/README.md), [samples](zk/samples/README.md), [VFS](fs/README.md), [utilities](utils/README.md), [byte derive](utils-derive/README.md)                                |
 | Command output and transport   | [console](console/README.md), [local daemon](ciphernode/daemon-server/README.md)                                                                                                                                                                                                                                  |
 | Testing                        | [test infrastructure family](testing/README.md), [mechanical test support](testing/support/README.md), [BFV ballots](testing/bfv-support/README.md), [fixture binaries](testing/system/README.md), [node simulation](testing/sim/)                                                                                |

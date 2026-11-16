@@ -30,24 +30,23 @@ checkout, use that checkout's matching SDK, circuits, and [toolchain pins](/buil
 - `nargo` `1.0.0-beta.26` and `bb` `5.1.0` on your `PATH`. See
   [Noir Circuits](/build/noir-circuits).
 - A checkout of the Interfold repository at the tag `v0.18.0`, with Rust installed. You compile the
-  user-data-encryption circuits and run one Rust tool from it.
+  user-data-encryption circuit and run one Rust tool from it.
 
 ## What the proof shows
 
-The final proof combines three proofs. The Interfold repository supplies the first two circuits. You
-write the last two.
+The final proof combines two proofs. The Interfold repository supplies the first circuit. You write
+the other two.
 
-| Circuit                                                | Source                   | Proves                                                                                        |
-| ------------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------- |
-| `user_data_encryption_ct0`, `user_data_encryption_ct1` | `circuits/bin/threshold` | Each part of the BFV ciphertext is a correct encryption under the committee key.              |
-| `user_data_encryption`                                 | `circuits/bin/threshold` | Both part proofs are valid and use the same randomness.                                       |
-| `binary_input`                                         | Your project             | The plaintext is 0 or 1.                                                                      |
-| `binary_input_fold`                                    | Your project             | Both proofs describe the same ciphertext and plaintext, and each circuit is the expected one. |
+| Circuit                | Source                   | Proves                                                                                                       |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `user_data_encryption` | `circuits/bin/threshold` | Both parts of the BFV ciphertext are a correct encryption under the committee key, with the same randomness. |
+| `binary_input`         | Your project             | The plaintext is 0 or 1.                                                                                     |
+| `binary_input_fold`    | Your project             | Both proofs describe the same ciphertext and plaintext, and each circuit is the expected one.                |
 
-The circuits connect through commitments. `user_data_encryption` outputs five public values:
-`ct0_key_hash`, `ct1_key_hash`, `pk_commitment`, `ct_commitment`, and `k1_commitment`. Your input
-circuit computes `ct_commitment` and `k1_commitment` from the same ciphertext and plaintext. The
-fold circuit checks that the values are equal.
+The circuits connect through commitments. `user_data_encryption` outputs three public values:
+`pk_commitment`, `ct_commitment`, and `k1_commitment`. Your input circuit computes `ct_commitment`
+and `k1_commitment` from the same ciphertext and plaintext. The fold circuit checks that the values
+are equal.
 
 <Flow
   label='Input proof'
@@ -57,7 +56,7 @@ fold circuit checks that the values are equal.
       icon: 'lock',
       sub: 'The SDK encrypts the value and returns the circuit inputs.',
     },
-    { label: 'Encryption proof', icon: 'circuit', sub: 'ct0, ct1, and user_data_encryption.' },
+    { label: 'Encryption proof', icon: 'circuit', sub: 'user_data_encryption.' },
     { label: 'Rule proof', icon: 'shield', sub: 'binary_input checks the plaintext.' },
     { label: 'Fold', icon: 'layers', sub: 'binary_input_fold makes one EVM proof.' },
     { label: 'publishInput', icon: 'contract', sub: 'The program calls the Solidity verifier.' },
@@ -194,15 +193,15 @@ CRISP repository:
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// The ordered SAFE hash of the four canonical inner verification-key hashes.
+/// The ordered SAFE hash of the two canonical inner verification-key hashes.
 pub global EXPECTED_KEY_HASH: Field = 0;
 
 fn main(
     // The user_data_encryption proof. Its public inputs are
-    // [ct0_key_hash, ct1_key_hash, pk_commitment, ct_commitment, k1_commitment].
+    // [pk_commitment, ct_commitment, k1_commitment].
     user_data_encryption_verification_key: UltraHonkVerificationKey,
     user_data_encryption_proof: UltraHonkProof,
-    user_data_encryption_public_inputs: [Field; 5],
+    user_data_encryption_public_inputs: [Field; 3],
     user_data_encryption_key_hash: Field,
     // The binary_input proof. Its public inputs are [ct_commitment, k1_commitment].
     binary_input_verification_key: UltraHonkVerificationKey,
@@ -225,21 +224,15 @@ fn main(
     );
 
     // Both proofs must describe the same ciphertext and the same plaintext.
-    assert(ct_commitment == user_data_encryption_public_inputs[3]);
-    assert(k1_commitment == user_data_encryption_public_inputs[4]);
+    assert(ct_commitment == user_data_encryption_public_inputs[1]);
+    assert(k1_commitment == user_data_encryption_public_inputs[2]);
 
-    // Pin the four inner circuits. Without this check, a prover can supply any circuit.
-    let vk_hashes = [
-        user_data_encryption_key_hash,
-        binary_input_key_hash,
-        user_data_encryption_public_inputs[0],
-        user_data_encryption_public_inputs[1],
-    ]
-        .as_vector();
+    // Pin the two inner circuits. Without this check, a prover can supply any circuit.
+    let vk_hashes = [user_data_encryption_key_hash, binary_input_key_hash].as_vector();
     assert(compute_vk_hash(vk_hashes) == EXPECTED_KEY_HASH);
 
     // The committee public key commitment. The E3 program compares it with e3.committeePublicKey.
-    user_data_encryption_public_inputs[2]
+    user_data_encryption_public_inputs[0]
 }
 ```
 
@@ -254,26 +247,22 @@ The contract must pass them in this order.
 
 ### Compile the inner circuits and write their keys
 
-In the Interfold checkout, compile the three user-data-encryption circuits. They share the workspace
-target `circuits/bin/threshold/target`:
+In the Interfold checkout, compile the `user_data_encryption` circuit. The compiled file goes to the
+workspace target `circuits/bin/threshold/target`:
 
 ```bash
-cd <interfold>/circuits/bin/threshold
-(cd user_data_encryption_ct0 && nargo compile)
-(cd user_data_encryption_ct1 && nargo compile)
-(cd user_data_encryption && nargo compile)
+cd <interfold>/circuits/bin/threshold/user_data_encryption
+nargo compile
 ```
 
-Write a `noir-recursive-no-zk` key for each one. `bb` writes `vk` and `vk_hash`, so rename them
-before the next call, as `compile_circuits.sh` does:
+Write its `noir-recursive-no-zk` key. `bb` writes `vk` and `vk_hash`, so rename them, as
+`compile_circuits.sh` does:
 
 ```bash
 T=<interfold>/circuits/bin/threshold/target
-for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do
-  bb write_vk -b "$T/$name.json" -o "$T" -t noir-recursive-no-zk
-  mv "$T/vk" "$T/$name.vk_recursive"
-  mv "$T/vk_hash" "$T/$name.vk_recursive_hash"
-done
+bb write_vk -b "$T/user_data_encryption.json" -o "$T" -t noir-recursive-no-zk
+mv "$T/vk" "$T/user_data_encryption.vk_recursive"
+mv "$T/vk_hash" "$T/user_data_encryption.vk_recursive_hash"
 ```
 
 In your project, compile `binary_input` and write its key the same way:
@@ -300,8 +289,6 @@ not reduce them modulo the field. Preserve this order:
 
 1. `user_data_encryption.vk_recursive_hash`
 2. `binary_input.vk_recursive_hash`
-3. `user_data_encryption_ct0.vk_recursive_hash`
-4. `user_data_encryption_ct1.vk_recursive_hash`
 
 The repository build owner implements strict loading in `crates/zk/build/src/vk_tree.rs`.
 [CRISP](https://github.com/theinterfold/CRISP) computes the same ordered hash for its fold circuits
@@ -442,15 +429,15 @@ Run `pnpm compile` to regenerate the TypeChain types before you deploy.
 
 ### Prove each input in the client
 
-The client makes five proofs: three for the encryption, one for the rule, and the fold. Then it
+The client makes three proofs: one for the encryption, one for the rule, and the fold. Then it
 encodes the input for `publishInput`. This function is adapted from `generateProof` in
 [`packages/crisp-sdk/src/vote.ts`](https://github.com/theinterfold/CRISP/blob/main/packages/crisp-sdk/src/vote.ts)
 in the CRISP repository.
 
 Before you use it, do these two things:
 
-1. Copy the five compiled JSON files (`user_data_encryption_ct0`, `user_data_encryption_ct1`,
-   `user_data_encryption`, `binary_input`, and `binary_input_fold`) into `client/src/circuits`.
+1. Copy the three compiled JSON files (`user_data_encryption`, `binary_input`, and
+   `binary_input_fold`) into `client/src/circuits`.
 2. Add `@aztec/bb.js` `5.1.0` and `@noir-lang/noir_js` `1.0.0-beta.26` to `client/package.json`.
    These are the versions that `@interfold/sdk` uses in release `0.18.0`.
 
@@ -459,8 +446,6 @@ import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import type { InterfoldSDK } from '@interfold/sdk'
 import { bytesToHex, encodeAbiParameters, parseAbiParameters } from 'viem'
-import ct0Circuit from '@/circuits/user_data_encryption_ct0.json'
-import ct1Circuit from '@/circuits/user_data_encryption_ct1.json'
 import udeCircuit from '@/circuits/user_data_encryption.json'
 import binaryInputCircuit from '@/circuits/binary_input.json'
 import foldCircuit from '@/circuits/binary_input_fold.json'
@@ -492,30 +477,18 @@ export async function proveBinaryInput(sdk: InterfoldSDK, value: bigint, publicK
   }
 
   try {
-    const ct0 = await prove(ct0Circuit as CompiledCircuit, {
+    // One circuit proves both ciphertext parts with the same `u`. It hard-codes the CRS as `pk1`,
+    // so the key's second component is not an input.
+    const ude = await prove(udeCircuit as CompiledCircuit, {
       pk0is: c.pk0is,
       ct0is: c.ct0is,
-      u: c.u,
-      e0: c.e0,
-      k1: c.k1,
-      r: c.r,
-    })
-    const ct1 = await prove(ct1Circuit as CompiledCircuit, {
-      pk1is: c.pk1is,
       ct1is: c.ct1is,
       u: c.u,
+      e0: c.e0,
       e1: c.e1,
+      k1: c.k1,
+      r: c.r,
       r_ct1: c.r_ct1,
-    })
-    const ude = await prove(udeCircuit as CompiledCircuit, {
-      ct0_verification_key: ct0.artifacts.vkAsFields,
-      ct0_proof: proofToFields(ct0.proof.proof),
-      ct0_public_inputs: ct0.proof.publicInputs,
-      ct0_key_hash: ct0.artifacts.vkHash,
-      ct1_verification_key: ct1.artifacts.vkAsFields,
-      ct1_proof: proofToFields(ct1.proof.proof),
-      ct1_public_inputs: ct1.proof.publicInputs,
-      ct1_key_hash: ct1.artifacts.vkHash,
     })
     const rule = await prove(binaryInputCircuit as CompiledCircuit, {
       ct0is: c.ct0is,
@@ -553,6 +526,15 @@ export async function proveBinaryInput(sdk: InterfoldSDK, value: bigint, publicK
   }
 }
 ```
+
+<Callout type='info'>
+  `generateRecursiveProofArtifacts` builds the circuit again to compute its key, on each call. To
+  save that time, load the key from a file. `pnpm build:circuits` in the Interfold checkout writes
+  `<name>.vk_recursive.json` next to the compiled circuit, for example
+  `circuits/bin/threshold/target/user_data_encryption.vk_recursive.json`. The file has the same
+  `vkAsFields` and `vkHash` fields that `generateRecursiveProofArtifacts` returns. CRISP makes the
+  file for its own circuits with `examples/CRISP/scripts/vk-json.mjs`.
+</Callout>
 
 Send the result as `data` in `publishInput(e3Id, data)`. The template encodes inputs in
 `client/src/utils/input.ts` and `server/input.ts` as `(bytes, bytes32)`. Change both files to the

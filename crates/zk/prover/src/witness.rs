@@ -147,28 +147,30 @@ mod tests {
         let inputs = Inputs::compute(&config, &sample, &ct, &material).unwrap();
         let json = inputs.to_json();
         let generator = WitnessGenerator::new();
-        for name in ["user_data_encryption_ct0", "user_data_encryption_ct1"] {
-            let compiled =
-                CompiledCircuit::from_file(&root.join(name).join(format!("{name}.json"))).unwrap();
-            let mut leg = json.clone();
-            leg.as_object_mut().unwrap().retain(|key, _| {
-                compiled
-                    .abi
-                    .parameters
-                    .iter()
-                    .any(|parameter| &parameter.name == key)
-            });
-            generator
-                .generate_witness(&compiled, inputs_json_to_input_map(&leg).unwrap())
-                .unwrap();
-            let key = if name.ends_with("ct0") { "r" } else { "r_ct1" };
-            leg[key][0]["coefficients"][0] = serde_json::json!(0);
+        // Both legs are proven in one circuit; each leg's reduction quotient feeds its own input.
+        let name = "user_data_encryption";
+        let compiled =
+            CompiledCircuit::from_file(&root.join(name).join(format!("{name}.json"))).unwrap();
+        let mut abi_inputs = json.clone();
+        abi_inputs.as_object_mut().unwrap().retain(|key, _| {
+            compiled
+                .abi
+                .parameters
+                .iter()
+                .any(|parameter| &parameter.name == key)
+        });
+        generator
+            .generate_witness(&compiled, inputs_json_to_input_map(&abi_inputs).unwrap())
+            .unwrap();
+        for key in ["r", "r_ct1"] {
+            let mut tampered = abi_inputs.clone();
+            tampered[key][0]["coefficients"][0] = serde_json::json!(0);
             // Choose a different carry even if the first coefficient happened to be zero.
-            if leg[key][0]["coefficients"][0] == json[key][0]["coefficients"][0] {
-                leg[key][0]["coefficients"][0] = serde_json::json!(1);
+            if tampered[key][0]["coefficients"][0] == json[key][0]["coefficients"][0] {
+                tampered[key][0]["coefficients"][0] = serde_json::json!(1);
             }
             assert!(generator
-                .generate_witness(&compiled, inputs_json_to_input_map(&leg).unwrap())
+                .generate_witness(&compiled, inputs_json_to_input_map(&tampered).unwrap())
                 .is_err());
         }
     }

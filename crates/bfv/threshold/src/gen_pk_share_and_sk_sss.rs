@@ -7,6 +7,7 @@
 /// This module defines event payloads that will generate the public key share as well as the sk shamir secret shares to be distributed to other members of the committee.
 /// This has been separated from the esi setup in order to be able to take advantage of parallelism
 use crate::{
+    helpers::calculate_error_size,
     shares::{Encrypted, SharedSecret},
     TrBFVConfig,
 };
@@ -17,8 +18,9 @@ use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
     mbfv::{CommonRandomPoly, PublicKeyShare},
-    trbfv::{ShareManager, TRBFV},
+    trbfv::ShareManager,
 };
+use fhe_math::rq::sample_uniform_coefficients_bigint;
 use fhe_traits::Serialize as FheSerialize;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -130,11 +132,17 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         PublicKeyShare::new_with_intermediates(&sk_share, crp.clone(), rng)?;
 
     // Generate smudging noise
-    let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let share_manager_for_esm =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, 0, lambda, rng)?;
+    let bound = calculate_error_size(
+        params.clone(),
+        num_ciphernodes as usize,
+        req.num_ciphertexts,
+        lambda,
+    )?;
+    // Retain the same signed-to-RNS sampling path for the encrypted C1 witness.
+    let esi_coeffs = sample_uniform_coefficients_bigint(&bound.into(), params.degree(), rng);
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
