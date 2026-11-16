@@ -477,15 +477,17 @@ mod tests {
         assert_eq!(squeeze_one_after_absorb(io_pattern, state, pos), expected);
     }
 
-    /// Matches the hash bb's `Poseidon2Hash` gives for a Mega verification key (recorded with bb
-    /// 5.2.0; bb 6.0.0 checks the same hash in-circuit).
+    /// Matches the hash bb 6.0.0 wrote for one of its verification keys: the `pk` circuit's
+    /// `noir-recursive` key and its `vk_hash`. bb hashes every recursive key, Mega (Chonk) keys
+    /// included, with this sponge over the key's fields; it writes no hash file for a Mega key but
+    /// checks the same hash in-circuit.
     #[test]
     fn bb_poseidon2_hash_matches_barretenberg() {
         use ark_ff::PrimeField;
-        let vk = include_bytes!("../tests/fixtures/mega_vk.bin");
+        let vk = include_bytes!("../tests/fixtures/bb6_recursive_vk.bin");
         let fields: Vec<Field> = vk.chunks(32).map(Field::from_be_bytes_mod_order).collect();
         let expected = Field::from_be_bytes_mod_order(&hex_literal(
-            "0e9eafdbf5dd43fd962894c5ec42d0f29a65644ed23eaff397b5cec210106f19",
+            "2b0a92d88671342e419d05d86a9b4fade028de6018637531fb8185429af2a787",
         ));
         assert_eq!(bb_poseidon2_hash(&fields), expected);
     }
