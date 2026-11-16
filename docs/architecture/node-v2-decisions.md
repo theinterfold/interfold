@@ -433,6 +433,13 @@ Each rule is checkable in review.
   name Avail's block and leaf, so the chain decoder builds the locator from them; a layer whose
   reference has another shape needs those contract types to carry the locator bytes.
 
+- **D63. A request names its BFV profile by its configuration ID.** Two profiles can share a
+  parameter set, so the parameter set does not name the profile. The machine keeps each request's
+  configuration ID, the chain reader takes only the (parameter set, committee size, ID) triples this
+  release admits, and the job runner finds the profile by its ID for the BFV parameters and the
+  circuit folder. A start refuses a held E3 that still has work under a profile the release no
+  longer runs: run the release that runs it until the E3 ends.
+
 ## Problems in the earlier node, with the fix above them
 
 - **Separate inputs, effects, signals, and notifications; wire types apart from internal types.**
