@@ -120,7 +120,11 @@ pub fn prepare_share_computation(
                 .iter()
                 .map(|limb| limb.mapv(BigInt::from))
                 .collect(),
-            outgoing_keys: keys.iter().map(|key| *key.as_bytes()).collect(),
+            outgoing_keys: keys
+                .iter()
+                .map(|key| *key.as_bytes())
+                .collect::<Vec<_>>()
+                .into(),
         },
     )?)
 }
@@ -170,12 +174,12 @@ pub fn prepare_share_decryption(
     );
     let raw = req.sk_bfv.access(cipher)?;
     let secret = deserialize_secret_key(&raw, &config.transport)?;
-    let own_share: Option<Vec<Vec<u64>>> = req
+    let own_share: Option<zeroize::Zeroizing<Vec<Vec<u64>>>> = req
         .own_share_raw
         .as_ref()
         .map(|raw| {
             let decrypted = raw.access(cipher)?;
-            Ok::<_, anyhow::Error>(bincode::deserialize(&decrypted)?)
+            Ok::<_, anyhow::Error>(zeroize::Zeroizing::new(bincode::deserialize(&decrypted)?))
         })
         .transpose()?;
     let keys = sync.outgoing_keys.open(
@@ -185,24 +189,24 @@ pub fn prepare_share_decryption(
         config.committee.values().n,
         cipher,
     )?;
-    let mut packed_shares = Vec::with_capacity(h);
-    let mut incoming_keys = Vec::with_capacity(h);
+    let mut packed_shares = zeroize::Zeroizing::new(Vec::with_capacity(h));
+    let mut incoming_keys = zeroize::Zeroizing::new(Vec::with_capacity(h));
     let mut external = req.honest_ciphertexts_raw.iter();
     for row in 0..h {
-        let coefficients = if Some(row) == own {
+        let mut coefficients = if Some(row) == own {
             own_share
                 .as_ref()
                 .context("missing own C4 plaintext")?
                 .clone()
         } else {
-            (0..l)
-                .map(|_| {
-                    let raw = external.next().context("missing C4 transport ciphertext")?;
-                    let ct = Ciphertext::from_bytes(raw, &config.transport)?;
-                    let plaintext = secret.try_decrypt(&ct)?;
-                    Ok::<_, anyhow::Error>(Vec::<u64>::try_decode(&plaintext, Encoding::poly())?)
-                })
-                .collect::<Result<Vec<_>>>()?
+            let mut limbs = zeroize::Zeroizing::new(Vec::with_capacity(l));
+            for _ in 0..l {
+                let raw = external.next().context("missing C4 transport ciphertext")?;
+                let ct = Ciphertext::from_bytes(raw, &config.transport)?;
+                let plaintext = secret.try_decrypt(&ct)?;
+                limbs.push(Vec::<u64>::try_decode(&plaintext, Encoding::poly())?);
+            }
+            limbs
         };
         ensure!(
             coefficients.len() == l && coefficients.iter().all(|limb| limb.len() == n),
@@ -214,7 +218,7 @@ pub fn prepare_share_decryption(
         )?);
         let (_, key) = unpack_key(config.profile, &packed)?;
         incoming_keys.push(*key.as_bytes());
-        packed_shares.push(coefficients);
+        packed_shares.push(std::mem::take(&mut *coefficients));
     }
     let field = |bytes: &[u8; 32]| BigInt::from_bytes_be(Sign::Plus, bytes);
     Ok(share_decryption::Inputs::compute(
@@ -230,7 +234,11 @@ pub fn prepare_share_decryption(
                 .map(|row| row.iter().map(field).collect())
                 .collect(),
             packed_shares,
-            outgoing_keys: keys.iter().map(|key| *key.as_bytes()).collect(),
+            outgoing_keys: keys
+                .iter()
+                .map(|key| *key.as_bytes())
+                .collect::<Vec<_>>()
+                .into(),
             incoming_keys,
         },
     )?)

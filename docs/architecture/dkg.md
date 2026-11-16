@@ -69,6 +69,9 @@ incoming/outgoing keys with the aggregate-SK and bidirectional-bundle anchors. S
 links connect C1→C2, C3→C2 and C4→owner-C2 under exact synchronized public layouts. C4 checks every
 dealer row against the complete saved verified C2 batch: the SS C2→C4 check's cross-party blame and
 partial-cache semantics are not reused. Missing provenance is a local failure, not an accusation.
+Pre-slot rejection is not a verified dishonest-peer verdict. A rejected saved C4 input releases its
+slot and restarts collection with the valid retained inputs; a partial batch cannot authorize an H
+verdict.
 
 This is not a complete admitted setup protocol. Reviewed recursive provenance joins, final-verifier
 enforcement, and synchronized C6 remain absent; synchronized node-fold and decryption paths

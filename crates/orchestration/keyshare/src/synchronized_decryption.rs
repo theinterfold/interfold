@@ -67,16 +67,23 @@ pub(crate) fn plan_decryption(
         e3_id,
     )?;
     let root = own_c2.outgoing_root().unwrap();
-    let keys: Vec<_> = outgoing.iter().map(|key| *key.as_bytes()).collect();
+    let keys = zeroize::Zeroizing::new(
+        outgoing
+            .iter()
+            .map(|key| *key.as_bytes())
+            .collect::<Vec<_>>(),
+    );
     ensure!(
         commitment_field(&commitments::outgoing_root(config, binding, owner, &keys)?)? == root,
         "saved outgoing keys do not open the owner's C2 root"
     );
     let raw = current.sk_bfv.access(cipher)?;
     let secret = deserialize_secret_key(&raw, &config.transport)?;
-    let own: Vec<Vec<u64>> = bincode::deserialize(&current.own_sk_share_raw.access(cipher)?)?;
+    let own = zeroize::Zeroizing::new(bincode::deserialize::<Vec<Vec<u64>>>(
+        &current.own_sk_share_raw.access(cipher)?,
+    )?);
     let mut ciphertexts = Vec::new();
-    let mut packed_rows = Vec::new();
+    let mut packed_rows = zeroize::Zeroizing::new(Vec::new());
     let mut residues = Vec::new();
     let mut incoming = Vec::new();
     let mut expected_commitments = Vec::new();
@@ -151,7 +158,11 @@ pub(crate) fn plan_decryption(
                 .collect(),
             packed_shares: packed_rows,
             outgoing_keys: keys.clone(),
-            incoming_keys: incoming.iter().map(|key| *key.as_bytes()).collect(),
+            incoming_keys: incoming
+                .iter()
+                .map(|key| *key.as_bytes())
+                .collect::<Vec<_>>()
+                .into(),
         },
     )?;
     let manager = ShareManager::new(committee.n, committee.threshold, config.threshold.clone())?;
@@ -165,6 +176,12 @@ pub(crate) fn plan_decryption(
         e3_zk_witness::encoding::fhe_poly_to_crt_centered(&aggregate, config.threshold.moduli())?;
     let sk_commitment =
         e3_zk_witness::compute_aggregated_shares_commitment(&aggregate, config.aggregate_bit);
+    let incoming_bytes = zeroize::Zeroizing::new(
+        incoming
+            .iter()
+            .map(|key| *key.as_bytes())
+            .collect::<Vec<_>>(),
+    );
     let bundle = commitments::key_bundle(
         config,
         binding,
@@ -172,10 +189,7 @@ pub(crate) fn plan_decryption(
         &dealer_ids,
         &sk_commitment,
         &keys,
-        &incoming
-            .iter()
-            .map(|key| *key.as_bytes())
-            .collect::<Vec<_>>(),
+        &incoming_bytes,
     )?;
     let own_idx = dealer_ids.iter().position(|&id| id == owner);
     let request = DkgShareDecryptionProofRequest {

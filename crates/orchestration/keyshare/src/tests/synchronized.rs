@@ -869,11 +869,11 @@ async fn synchronized_conflicting_success_cannot_replace_recovered_randomized_ge
 #[actix::test]
 async fn synchronized_early_c4_is_rechecked_before_it_can_reserve_a_recovered_slot() -> Result<()> {
     let setup = Setup::new().await?;
-    let e3 = &setup.selected[2].e3_id;
+    let e3 = &setup.selected[1].e3_id;
     let DecryptionKeyPlan::Proceed {
         synchronized: Some(recipient),
         ..
-    } = setup.plan(2)?
+    } = setup.plan(1)?
     else {
         anyhow::bail!("missing recipient");
     };
@@ -907,7 +907,27 @@ async fn synchronized_early_c4_is_rechecked_before_it_can_reserve_a_recovered_sl
     early.signed_sk_decryption_proof =
         signed(&setup, 0, ProofType::C4aSkShareDecryption, wrong_fields)?;
     early = early.sign(&setup.signers[0])?;
-    let (mut actor, _, _, _) = build_actor(
+    let DecryptionKeyPlan::Proceed {
+        sk_request: other_request,
+        synchronized: Some(other_material),
+        ..
+    } = setup.plan(2)?
+    else {
+        anyhow::bail!("missing other dealer");
+    };
+    let retained = DecryptionKeyShared {
+        party_id: 2,
+        node: setup.signers[2].address().to_string(),
+        signed_sk_decryption_proof: signed(
+            &setup,
+            2,
+            ProofType::C4aSkShareDecryption,
+            c4_fields(&other_request, &other_material, e3)?,
+        )?,
+        ..valid.clone()
+    }
+    .sign(&setup.signers[2])?;
+    let (mut actor, _, recovery_repo, history) = build_actor(
         e3,
         KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
         7200,
@@ -918,32 +938,67 @@ async fn synchronized_early_c4_is_rechecked_before_it_can_reserve_a_recovered_sl
     actor.params_profile = PROFILE;
     actor.interfold_address = Address::repeat_byte(0x11);
     actor.state.try_mutate_without_context(|mut state| {
-        state.party_id = 2;
+        state.party_id = 1;
         state.honest_parties = Some(DEALERS.into());
         Ok(state)
     })?;
     actor.recovery.try_mutate_without_context(|mut recovery| {
-        recovery.ciphernode_selected = Some(TypedEvent::new(setup.selected[2].clone(), test_ec(0)));
+        recovery.ciphernode_selected = Some(TypedEvent::new(setup.selected[1].clone(), test_ec(0)));
         recovery
             .decryption_key_shares
             .insert(0, TypedEvent::new(early.clone(), test_ec(1)));
+        recovery
+            .decryption_key_shares
+            .insert(2, TypedEvent::new(retained.clone(), test_ec(1)));
         recovery.synchronized = Some(recipient);
         Ok(recovery)
     })?;
-    actor.handle_early_decryption_key_share(early, test_ec(1))?;
-    actor.discard_unanchored_synchronized_c4(&test_ec(2))?;
-    assert!(actor.recovery.try_get()?.decryption_key_shares.is_empty());
-    assert!(actor
-        .pending
-        .c4_verification_shares
-        .as_ref()
+    actor.handle_early_decryption_key_share(early.clone(), test_ec(1))?;
+    actor.state.try_mutate_without_context(|mut state| {
+        let mut ready = ready_for_c4_test();
+        ready.es_poly_sum.clear();
+        state.state = KeyshareState::ReadyForDecryption(ready);
+        Ok(state)
+    })?;
+    actor.effects_enabled = true;
+    let actor = actor.start();
+    actor
+        .send(TypedEvent::new(
+            AllDecryptionKeySharesCollected {
+                shares: HashMap::from([(0, early), (2, retained)]),
+            },
+            test_ec(2),
+        ))
+        .await?;
+    let recovery = recovery_repo.read().await?.unwrap();
+    assert_eq!(
+        recovery
+            .decryption_key_shares
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    actor
+        .send(keyshare_event(valid.clone(), 3, EventSource::Net))
+        .await?;
+    let dispatched = next_event(&history).await?;
+    let InterfoldEventData::ShareVerificationDispatched(dispatched) = dispatched.get_data() else {
+        anyhow::bail!("replacement did not complete the retained C4 batch");
+    };
+    assert_eq!(
+        dispatched
+            .decryption_proofs
+            .iter()
+            .map(|proof| proof.sender_party_id)
+            .collect::<BTreeSet<_>>(),
+        DEALERS.into()
+    );
+    assert!(dispatched.pre_dishonest.is_empty());
+    assert!(recovery_repo
+        .read()
+        .await?
         .unwrap()
-        .is_empty());
-    let (parent, _, _, _) = build_actor(e3, KeyshareState::Init, 7200, 7200, &[]).await?;
-    actor.handle_decryption_key_shared(valid.clone(), test_ec(3), parent.start());
-    assert!(actor
-        .recovery
-        .try_get()?
         .decryption_key_shares
         .get(&0)
         .is_some_and(|saved| **saved == valid));

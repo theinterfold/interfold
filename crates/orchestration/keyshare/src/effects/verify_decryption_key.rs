@@ -240,6 +240,7 @@ impl ThresholdKeyshare {
         &mut self,
         collected_shares: HashMap<u64, DecryptionKeyShared>,
         ec: EventContext<Sequenced>,
+        self_addr: Addr<Self>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
@@ -257,14 +258,27 @@ impl ThresholdKeyshare {
                 .ciphernode_selected
                 .as_ref()
                 .ok_or_else(|| anyhow!("missing synchronized C4 committee"))?;
+            let mut rejected = false;
             for share in collected_shares.values() {
-                crate::synchronized::validate_c4_message(
+                if let Err(error) = crate::synchronized::validate_c4_message(
                     selected,
                     self.interfold_address,
                     share,
                     state.honest_parties.as_ref(),
                     recovery.synchronized.as_ref(),
-                )?;
+                ) {
+                    warn!(party_id = share.party_id, %error, "Reopening synchronized C4 collection for a rejected slot");
+                    rejected = true;
+                }
+            }
+            if rejected {
+                // Preserve valid durable shares and let the rejected owners replace their inputs.
+                // A partial H batch must not authorize publication or accuse a peer.
+                self.discard_unanchored_synchronized_c4(&ec)?;
+                if self.effects_enabled {
+                    self.replay_decryption_key_shares(&self.recovery.try_get()?, self_addr)?;
+                }
+                return Ok(());
             }
         }
 

@@ -429,7 +429,7 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    fn replay_decryption_key_shares(
+    pub(in crate::actors::threshold_keyshare) fn replay_decryption_key_shares(
         &mut self,
         recovery: &ThresholdKeyshareRecoveryState,
         self_addr: Addr<Self>,

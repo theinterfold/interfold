@@ -57,9 +57,9 @@ tokio = { workspace = true, features = ["process", "fs"] }
 toml.workspace = true
 tracing.workspace = true
 walkdir = "2.5"
+zeroize.workspace = true
 
 [dev-dependencies]
-zeroize.workspace = true
 e3-zk-samples.workspace = true
 num-integer.workspace = true
 e3-event-system = { workspace = true, features = ["test-support"] }
