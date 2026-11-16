@@ -72,7 +72,7 @@
     "id": "B7",
     "supported": true,
     "refs": [
-      "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)",
+      "crates/ciphernode/engine/src/lib.rs@165@pub fn apply(self, now: UnixSecs, input: M::Input)",
       "crates/protocol/src/node.rs@1242@fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {"
     ],
     "line_text": [
@@ -139,7 +139,7 @@
     "supported": true,
     "refs": [
       "crates/ciphernode/node/src/effects.rs@202@Effect::Fetch(fetch) => self.fetch(key, fetch),",
-      "crates/ciphernode/node/src/effects.rs@419@availability.retrieve(reference)"
+      "crates/ciphernode/node/src/effects.rs@418@availability.retrieve(&reference)"
     ],
     "line_text": ["Effect::Fetch(fetch) => self.fetch(key, fetch),", "match availability.retrieve(reference).await {"],
     "note": "A fetch effect reads a ciphertext from the availability layer."
@@ -148,8 +148,8 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/ciphernode/p2p/src/driver.rs@695@.send_request(&read.peer, (read.e3, read.hash));",
-      "crates/ciphernode/p2p/src/driver.rs@386@Some((channel, bytes)) = self.served.recv() => {"
+      "crates/ciphernode/p2p/src/driver.rs@713@let request = self.swarm.behaviour_mut().blobs.send_request(",
+      "crates/ciphernode/p2p/src/driver.rs@421@Some(served) = self.served.recv() => self.on_served(served),"
     ],
     "line_text": [".send_request(&read.peer, (read.e3, read.hash));", "Some((channel, bytes)) = self.served.recv() => {"],
     "note": "A node fetches a message's blobs from its publisher with a request-response protocol and serves its own."

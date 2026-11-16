@@ -1303,6 +1303,11 @@ impl Machine for Node {
     type Effect = Effect;
 
     fn step(&mut self, now: UnixSecs, input: Input) -> Vec<Effect> {
+        // The operator's setting holds from its own step on, so the deadlines it passes take no E3
+        // for a node that starts to drain.
+        if let Input::Drain(draining) = input {
+            self.draining = draining;
+        }
         // Counted now: the input may complete the E3, which must see these checks.
         let deadlines = self.pass_deadlines(now);
         self.count_checks(&deadlines);
@@ -1329,13 +1334,10 @@ impl Machine for Node {
                 Some(seed) => self.rank(now, answer.e3, seed, answer.eligible.as_ref()),
                 None => Vec::new(),
             },
-            Input::Drain(draining) => {
-                self.draining = draining;
-                match draining {
-                    true => Vec::new(),
-                    false => self.rank_open(now),
-                }
-            }
+            Input::Drain(draining) => match draining {
+                true => Vec::new(),
+                false => self.rank_open(now),
+            },
         };
         self.count_checks(&applied);
         effects.extend(applied);
@@ -1885,6 +1887,14 @@ mod tests {
         assert!(!effects
             .iter()
             .any(|effect| matches!(effect, Effect::ReadEligibility(_))));
+    }
+
+    /// The step that starts draining applies its deadlines as a draining node: an eligibility read
+    /// that is late by then ranks no ticket.
+    #[test]
+    fn draining_holds_for_the_deadlines_of_its_own_step() {
+        let (mut node, _) = capped_request();
+        assert!(submissions(&node.step(26, Input::Drain(true))).is_empty());
     }
 
     /// A node that stops draining takes a seat in a request that still has time for its ticket.

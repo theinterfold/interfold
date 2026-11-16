@@ -287,6 +287,11 @@ impl<P: Provider + WalletProvider> Wallet<P> {
             .estimate_gas(request.clone())
             .await
             .map_err(RpcError::new)?;
+        // A delivery of the call can start during those reads. Then it keeps its transaction; a
+        // delivery that starts later sends at a new nonce.
+        if self.driven(earlier.call) {
+            return Ok(());
+        }
         let pending = Pending {
             call: None,
             fees,
@@ -421,7 +426,14 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                         .pending()
                         .await
                         .map_err(RpcError::new)?;
-                    let nonce = next_free_nonce(&mut nonces.sent, count, Instant::now());
+                    let mut nonce = next_free_nonce(&mut nonces.sent, count, Instant::now());
+                    // A chain node's pending count can miss a transaction this account still
+                    // keeps, as after a restart. Its nonce stays taken until it is mined or freed.
+                    while nonces.unmined.sends.contains_key(&nonce)
+                        || nonces.sent.contains_key(&nonce)
+                    {
+                        nonce += 1;
+                    }
                     Sent { nonce, fees }
                 }
             };

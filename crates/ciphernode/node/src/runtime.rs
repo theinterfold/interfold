@@ -13,7 +13,7 @@ use crate::{
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::BlobStore;
-use e3_chain::{Account, Contracts, ReadError, Reader, Rpc, Writer};
+use e3_chain::{Account, Contracts, ReadError, Reader, Rpc, RpcError, Writer};
 use e3_data_availability::DataAvailabilityReader;
 use e3_engine::{EffectKey, Engine};
 use e3_jobs::JobRunner;
@@ -26,6 +26,7 @@ use e3_protocol::{
 use e3_utils::limited::Limited;
 use std::{
     collections::{BTreeSet, VecDeque},
+    convert::Infallible,
     future::Future,
     path::PathBuf,
     sync::Arc,
@@ -236,8 +237,10 @@ where
     tokio::pin!(stop);
     let drain = settings.drain;
     let outcome = async {
-        if engine.machine().draining() != drain {
-            let (next, pending) = engine.apply(now(), Input::Drain(drain))?;
+        // Draining starts at once. Taking E3s again waits for the first catch-up, so ranking reads
+        // the chain as it is now.
+        if drain && !engine.machine().draining() {
+            let (next, pending) = engine.apply(now(), Input::Drain(true))?;
             engine = next;
             queue.extend(effects.dispatch(pending));
         }
@@ -321,9 +324,17 @@ where
                         engine.acknowledge(work.key)?;
                     }
                     queue.extend(effects.dispatch(owed));
+                    if !drain && engine.machine().draining() {
+                        let (next, pending) = engine.apply(now(), Input::Drain(false))?;
+                        engine = next;
+                        queue.extend(effects.dispatch(pending));
+                    }
                     // The recovered calls go out again from here, so a call no one sends now is one
                     // the node no longer owes.
-                    essential.spawn(free_abandoned_nonces(keeper.clone()));
+                    let keeper = keeper.clone();
+                    essential.spawn(async move {
+                        match free_abandoned_nonces(|| keeper.free_abandoned()).await {}
+                    });
                     continue;
                 }
             };
@@ -382,15 +393,15 @@ fn ended_task(ended: Option<Result<NodeError, tokio::task::JoinError>>) -> NodeE
 
 /// Looks for nonces whose calls no one sends any more, once a minute, for good. The account frees
 /// a nonce on the second look that finds it so.
-async fn free_abandoned_nonces<A, B>(writer: Arc<Writer<A, B>>) -> NodeError
+pub(crate) async fn free_abandoned_nonces<F, Fut>(free: F) -> Infallible
 where
-    A: Account + Send + Sync + 'static,
-    B: BlobStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<(), RpcError>>,
 {
     let mut every = tokio::time::interval(FREE_NONCES_EVERY);
     loop {
         every.tick().await;
-        if let Err(error) = writer.free_abandoned().await {
+        if let Err(error) = free().await {
             warn!(%error, "looking for abandoned nonces failed");
         }
     }

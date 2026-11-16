@@ -252,20 +252,30 @@ async fn recovered_work_waits_for_the_first_catch_up() {
     }
 }
 
-/// The drain setting reaches the machine as a journaled input, and a later start without it
-/// takes it back.
+/// The drain setting reaches the machine as a journaled input. A later start without it takes E3s
+/// again only once the reader has caught up, so ranking reads the chain as it is now.
 #[tokio::test]
 async fn the_drain_setting_reaches_the_machine() {
     let dir = tempfile::tempdir().unwrap();
-    for drain in [true, false] {
-        let (mut settings, parts, _peers) = parts(dir.path(), Chain::default()).await;
+    let behind = || Chain {
+        head: 5,
+        logs_fail: true,
+        ..Chain::default()
+    };
+    let starts = [
+        (true, Chain::default(), true),
+        (false, behind(), true),
+        (false, Chain::default(), false),
+    ];
+    for (drain, chain, draining) in starts {
+        let (mut settings, parts, _peers) = parts(dir.path(), chain).await;
         let operator = parts.operator.address();
         settings.drain = drain;
         let stop = tokio::time::sleep(Duration::from_millis(50));
         run(settings, parts, stop).await.unwrap();
         let stored = Journal::read_existing(dir.path().join("journal.redb")).unwrap();
         let machine = e3_engine::restore(stored, Node::new(operator)).unwrap();
-        assert_eq!(machine.draining(), drain);
+        assert_eq!(machine.draining(), draining);
     }
 }
 

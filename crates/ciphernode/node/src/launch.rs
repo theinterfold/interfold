@@ -19,7 +19,7 @@ use alloy_primitives::{keccak256, Address};
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::FileBlobs;
-use e3_chain::{acknowledge, ChainNode, Endpoint, Standing, Wallet};
+use e3_chain::{acknowledge, Account as _, ChainNode, Endpoint, Standing, Wallet};
 use e3_crypto::Cipher;
 use e3_data_availability::{AvailReader, DataAvailabilityReader, HttpObjectReader};
 use e3_entrypoint::fence::ProcessFence;
@@ -174,8 +174,13 @@ async fn start(
     if let Standing::Unacknowledged(call) = &standing {
         let deadline = Instant::now() + config.startup_timeout;
         let acknowledged = tokio::time::timeout_at(deadline, acknowledge(&wallet, call));
+        // Nothing else sends yet, so a transaction left from before this start has no sender, and
+        // freeing its nonce lets the acknowledgement through. A call the node still owes goes out
+        // again after the first catch-up, at a new nonce.
+        let freeing = crate::runtime::free_abandoned_nonces(|| wallet.free_abandoned());
         let acknowledged = tokio::select! {
             acknowledged = acknowledged => acknowledged,
+            ended = freeing => match ended {},
             () = &mut stop => return Ok(()),
         };
         let acknowledged = acknowledged

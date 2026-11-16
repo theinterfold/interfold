@@ -118,3 +118,58 @@ async fn a_transaction_whose_call_is_still_sent_is_kept() {
     let kept = nonces.unmined.sends.get(&0).and_then(|sent| sent.call);
     assert_eq!(kept, Some(call_hash(&call(1))));
 }
+
+/// After a restart the chain node's pending count can miss a transaction the account still keeps.
+/// A new call takes the next nonce, so the kept one is not overwritten and can still be freed.
+#[tokio::test]
+async fn a_new_call_after_a_restart_does_not_take_a_kept_nonce() {
+    let anvil = Anvil::new().arg("--no-mining").spawn();
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let account = signer.address();
+    let provider = ProviderBuilder::new()
+        .wallet(EthereumWallet::from(signer))
+        .connect_http(anvil.endpoint_url());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unmined.json");
+    let before =
+        Arc::new(Wallet::new(provider.clone(), anvil.chain_id(), 0, path.clone()).unwrap());
+    let sending = tokio::spawn({
+        let wallet = before.clone();
+        async move { wallet.send(&call(1), 100_000).await }
+    });
+    while provider
+        .get_transaction_count(account)
+        .pending()
+        .await
+        .unwrap()
+        == 0
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    sending.abort();
+    let _ = sending.await;
+    // The chain node drops A, so its pending count no longer shows it.
+    provider
+        .anvil_set_next_block_base_fee_per_gas(1_000 * GWEI)
+        .await
+        .unwrap();
+    provider.evm_mine(None).await.unwrap();
+    drop(before);
+
+    let after = Arc::new(Wallet::new(provider.clone(), anvil.chain_id(), 0, path).unwrap());
+    let _sending = tokio::spawn({
+        let wallet = after.clone();
+        async move { wallet.send(&call(2), 100_000).await }
+    });
+    let b = call_hash(&call(2));
+    let kept = loop {
+        let nonces = after.nonces.lock().await;
+        if let Some((nonce, _)) = nonces.unmined.of(&b) {
+            break (nonce, nonces.unmined.of(&call_hash(&call(1))));
+        }
+        drop(nonces);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(kept.0, 1);
+    assert_eq!(kept.1.map(|(nonce, _)| nonce), Some(0));
+}

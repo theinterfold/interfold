@@ -926,7 +926,7 @@ function ciphernode() {
         fs: 'r',
         ts: 'l',
         label: 'ciphertexts',
-        refs: [H('crates/data-availability/src/lib.rs', 58, 'async fn retrieve(&self, reference: DataReference)')],
+        refs: [H('crates/data-availability/src/lib.rs', 62, 'async fn retrieve(&self, reference: &DataReference)')],
       },
       { from: 'peers', to: 'p2p', fs: 'r', ts: 'l', both: true, label: 'gossip\nblobs', refs: ev('A23') },
       {

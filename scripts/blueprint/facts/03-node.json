@@ -134,7 +134,7 @@
         },
         {
           "why": "apply: one input, one commit, the new effects",
-          "ref": "crates/ciphernode/engine/src/lib.rs@126@pub fn apply(mut self, now: UnixSecs, input: M::Input)"
+          "ref": "crates/ciphernode/engine/src/lib.rs@165@pub fn apply(self, now: UnixSecs, input: M::Input)"
         },
         {
           "why": "acknowledge: an effect is done and leaves the outbox",

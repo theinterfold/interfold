@@ -406,8 +406,11 @@ Each rule is checkable in review.
   chain node can drop it; every later transaction of the account waits behind its nonce. A call
   counts as driven while a delivery runs, its waits between attempts included. Once recovered work
   is under way after a start, the wallet looks once a minute, and a nonce that two looks in a row
-  find undriven is replaced by an empty transaction to the account itself at replacement fees. The
-  wallet keeps its unmined sends by nonce, so a replaced call and its replacement cannot collide.
+  find undriven is replaced by an empty transaction to the account itself at replacement fees. While
+  a start waits for its release acknowledgement nothing else sends, so the wallet looks then too; a
+  call still owed goes out again after the first catch-up, at a new nonce. The wallet keeps its
+  unmined sends by nonce, and a new call never takes a nonce it keeps, whatever a chain node's
+  pending count says.
 
 - **D61. A clean stop leaves a snapshot, and a node can drain.** On a clean stop the engine
   snapshots the state after the last step, so the store holds that snapshot and the outbox, and no
@@ -415,9 +418,10 @@ Each rule is checkable in review.
   not a replay of old inputs. No conversion exists yet, and a crash leaves a journal tail that only
   the binary that wrote it can replay. `interfold start --drain` makes a node take no new E3: it
   submits no ticket and asks for no eligibility, the E3s it holds go on, and the log says when none
-  runs. The setting is a journaled input, so a replay ranks as the first run did, and a start
-  without it ranks the requests still open. A committee needs many candidates (mainnet's floor is 19
-  members), so draining many nodes at once can leave requests without a committee.
+  runs. The setting is a journaled input, so a replay ranks as the first run did. Draining starts at
+  once; a start without it takes E3s again after the first catch-up and ranks the requests still
+  open then, so ranking reads the chain as it is now. A committee needs many candidates (mainnet's
+  floor is 19 members), so draining many nodes at once can leave requests without a committee.
 
 - **D62. The machine reads no availability layer's coordinates.** The chain names a ciphertext by
   its hash and a locator in the availability layer's own encoding, and only that layer's reader
