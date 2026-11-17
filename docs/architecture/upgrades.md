@@ -341,19 +341,27 @@ old-binary rollback over new journals remain unsupported. Rollback requires the 
 controlled reset/resync. SS peer payload encodings, circuits, verifiers, signature domains and
 release counters are unchanged.
 
+The publication-aggregation follow-up appends the local-only `SynchronizedDkgPublicationReady` event
+and adds an exclusive version-1 record under `synchronized-publication/v1` in the per-E3 public-key
+recovery scope. The record retains canonical selection, local verdict, authenticated contributions,
+successful C5/publication proofs and started-owner state. Its writes are flushed outside snapshot
+batching; worker correlations remain boot-local. These additions share the same unreleased
+drain/reset cutover and rollback rules above. Existing SS records and wire payloads remain
+unchanged; the local event is not peer-forwardable, so gossip/sync stay at 7/6. No new
+release-counter, verifier or signature encoding change is introduced.
+
 `CanonicalPublicKey` and its typed SS/synchronized anchors are in-memory projections rebuilt from
 confirmed journals, not saved layouts. Full-authority observations retain the existing lossless
 raw-log payload. Local compute requests/responses/errors and the new typed chain-context event are
 excluded from peer forwarding, and existing SS payload bytes remain unchanged. Peer join/setup
-transport uses the cutover above; publication aggregation and its local-intent writer still need
-integration. Synchronized admission stays off. New registry implementations must link
-`DkgPublicationLib`; new deployment/upgrade records retain that address while pre-extension records
-remain readable. No deployment record is rewritten here. Rollback of this unactivated extension
-preserves legacy SS storage and uses the reviewed prior implementation; once synchronized records
-can exist, rollback needs a separate drain/backup and consumer decision rather than ignoring them.
-Human review must approve the signed encoding, authority schema, artifact pins and governance
-rollout/rollback before deployment. Implementation direction approval and passing tests are not that
-review.
+transport uses the cutover above; the local-intent registry writer still needs integration.
+Synchronized admission stays off. New registry implementations must link `DkgPublicationLib`; new
+deployment/upgrade records retain that address while pre-extension records remain readable. No
+deployment record is rewritten here. Rollback of this unactivated extension preserves legacy SS
+storage and uses the reviewed prior implementation; once synchronized records can exist, rollback
+needs a separate drain/backup and consumer decision rather than ignoring them. Human review must
+approve the signed encoding, authority schema, artifact pins and governance rollout/rollback before
+deployment. Implementation direction approval and passing tests are not that review.
 
 The request-time context event binds the synchronized wrapper rather than the SS fold-attestation
 verifier; it adds no storage slot or initializer. SS requests retain their previous context event.

@@ -224,6 +224,7 @@ impl Chain {
         recovered: &[Recovered],
         setups: &[SynchronizedSetupAnchors],
         recipients: &[Proof],
+        planned: &super::publication::PlannedPublication,
         public_key: &PublicKey,
         proof: &Proof,
         directory: &Path,
@@ -436,6 +437,13 @@ impl Chain {
                     unreachable!()
                 };
                 ensure!(message.attestation.recover_address()? == committee[owner]);
+                planned.plan.consent(
+                    keys.synchronized_context(id)
+                        .context("missing frozen consent context")?,
+                    &planned.native,
+                    &planned.peers,
+                    &message.attestation,
+                )?;
                 signatures.push(Bytes::copy_from_slice(&message.attestation.signature));
             }
             local_setups.push(saved);

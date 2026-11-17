@@ -81,13 +81,22 @@ impl E3Extension for AggregatorRoleExtension {
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
     eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
+    canonical_keys: CanonicalPublicKeys,
+    interfold_addresses: HashMap<u64, Address>,
 }
 
 impl PublicKeyAggregatorExtension {
-    pub fn create(bus: &BusHandle, eventstore: Recipient<EventStoreQueryBy<SeqAgg>>) -> Box<Self> {
+    pub fn create(
+        bus: &BusHandle,
+        eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
+        canonical_keys: CanonicalPublicKeys,
+        interfold_addresses: HashMap<u64, Address>,
+    ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             eventstore,
+            canonical_keys,
+            interfold_addresses,
         })
     }
 }
@@ -169,11 +178,11 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 return;
             }
         };
-        let value = PublicKeyAggregator::new(
+        let mut value = PublicKeyAggregator::new(
             PublicKeyAggregatorParams {
                 fhe,
                 bus: self.bus.clone(),
-                e3_id,
+                e3_id: e3_id.clone(),
                 params_profile,
                 committee_size,
                 dkg_fold_attestation_context,
@@ -185,6 +194,24 @@ impl E3Extension for PublicKeyAggregatorExtension {
             },
             sync_state,
         );
+        if params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let Some(interfold) = self.interfold_addresses.get(&e3_id.chain_id()).copied() else {
+                self.bus.err(
+                    EType::PublickeyAggregation,
+                    anyhow!("missing synchronized controller"),
+                );
+                return;
+            };
+            value = value.with_synchronized_publication(
+                ctx.repositories().synchronized_publication(&e3_id),
+                self.canonical_keys.clone(),
+                interfold,
+                Some(e3_events::TypedEvent::new(
+                    data.clone(),
+                    evt.get_ctx().clone(),
+                )),
+            );
+        }
 
         ctx.set_event_recipient("publickey", Some(start_publickey_aggregator(value)));
     }
@@ -278,9 +305,27 @@ impl E3Extension for PublicKeyAggregatorExtension {
             },
             sync_state,
         );
-        value
-            .recover_dkg_folds(&self.eventstore, &ctx.repositories())
-            .await?;
+        if meta.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            meta.validate_configuration()?;
+            let interfold = self
+                .interfold_addresses
+                .get(&ctx.e3_id.chain_id())
+                .copied()
+                .ok_or_else(|| anyhow!("missing synchronized controller"))?;
+            value = value.with_synchronized_publication(
+                ctx.repositories().synchronized_publication(&ctx.e3_id),
+                self.canonical_keys.clone(),
+                interfold,
+                None,
+            );
+            value
+                .recover_synchronized_publication(&self.eventstore, meta)
+                .await?;
+        } else {
+            value
+                .recover_dkg_folds(&self.eventstore, &ctx.repositories())
+                .await?;
+        }
 
         // send to context
         ctx.set_event_recipient("publickey", Some(start_publickey_aggregator(value)));

@@ -27,3 +27,7 @@ pub use actors::{
     ThresholdPlaintextAggregatorState, VerifyingC6,
 };
 pub use repo::*;
+pub use workflow::publickey_aggregation::synchronized::{
+    PublicationPlan as SynchronizedPublicationPlan,
+    PublicationRecord as SynchronizedPublicationRecord,
+};

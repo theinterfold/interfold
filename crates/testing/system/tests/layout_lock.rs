@@ -148,6 +148,11 @@ fn layout_rows() -> Vec<String> {
     );
     repository("publickey", |r| r.publickey(&e3()), &mut rows);
     repository(
+        "synchronized_publication",
+        |r| r.synchronized_publication(&e3()),
+        &mut rows,
+    );
+    repository(
         "publickey_recovery",
         |r| r.publickey_recovery(&e3()),
         &mut rows,

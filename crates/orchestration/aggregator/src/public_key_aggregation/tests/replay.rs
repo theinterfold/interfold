@@ -164,7 +164,13 @@ async fn replay_selection() -> Result<ReplayedAggregator> {
         party_id: 0,
         committee: committee.clone(),
     };
-    PublicKeyAggregatorExtension::create(&bus, history_reader(&[])?).on_event(
+    PublicKeyAggregatorExtension::create(
+        &bus,
+        history_reader(&[])?,
+        Default::default(),
+        Default::default(),
+    )
+    .on_event(
         &mut ctx,
         &InterfoldEvent::<Unsequenced>::new_with_timestamp(
             selected.into(),

@@ -51,8 +51,8 @@ refuses consent, retry the signed payload from the flushed intent with its origi
 Confirmed publication, terminal cleanup and shutdown stop those attempts. SS terminal cleanup does
 not access the synchronized setup store. A restored `SynchronizedSetupIntent::confirmed_setup`
 rechecks native PK bytes, sealed keys and local anchors against shared confirmed authority,
-including outside-H recipients. This is the read-only #2050 boundary; C5/publication aggregation and
-the registry writer remain unfinished.
+including outside-H recipients. This is the read-only #2050 boundary; the registry writer remains
+unfinished.
 
 A closed setup store stops automatic attempts for the current boot. Outside shutdown, check the
 storage service before restarting; closure does not indicate damaged data. An intent that cannot be

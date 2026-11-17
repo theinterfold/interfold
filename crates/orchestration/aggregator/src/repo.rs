@@ -36,9 +36,23 @@ impl TrBfvPlaintextRepositoryFactory for Repositories {
 pub trait PublicKeyRepositoryFactory {
     fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState>;
     fn publickey_recovery(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorRecoveryState>;
+    fn synchronized_publication(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<crate::workflow::publickey_aggregation::synchronized::PublicationRecord>;
 }
 
 impl PublicKeyRepositoryFactory for Repositories {
+    fn synchronized_publication(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<crate::workflow::publickey_aggregation::synchronized::PublicationRecord> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::publickey_recovery(e3_id))
+                .scope("synchronized-publication/v1"),
+        )
+    }
     fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {
         Repository::new(self.store.scope(StoreKeys::publickey(e3_id)))
     }

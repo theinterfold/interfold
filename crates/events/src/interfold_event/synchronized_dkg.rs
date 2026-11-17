@@ -145,6 +145,27 @@ pub struct SynchronizedDkgConsentPublished {
     pub attestation: SignedSynchronizedDkgAttestation,
 }
 
+/// Local publication intent. A registry writer must recheck the request's canonical authority;
+/// peer delivery of this event never grants transaction authority.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct SynchronizedDkgPublicationReady {
+    pub e3_id: E3id,
+    pub params_profile: e3_fhe_params::BfvProfile,
+    pub committee_size: e3_committee::CiphernodesCommitteeSize,
+    pub context: crate::SynchronizedProofContext,
+    pub expected: crate::SynchronizedPublicationExpectation,
+    pub proof: crate::Proof,
+    /// Exactly H signatures in ascending selected-recipient order.
+    pub consents: Vec<SignedSynchronizedDkgAttestation>,
+}
+
+impl Display for SynchronizedDkgPublicationReady {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "e3_id: {}", self.e3_id)
+    }
+}
+
 impl Display for SynchronizedDkgConsentPublished {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

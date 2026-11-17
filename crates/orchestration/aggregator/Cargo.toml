@@ -20,6 +20,7 @@ e3-polynomial = { workspace = true }
 e3-polynomial-fhe = { workspace = true }
 e3-trbfv = { workspace = true }
 fhe = { workspace = true }
+fhe-traits = { workspace = true }
 e3-bfv-client = { workspace = true }
 e3-committee-hash = { workspace = true }
 e3-request = { workspace = true }
@@ -32,13 +33,13 @@ serde = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 bincode = { workspace = true }
 e3-evm = { workspace = true }
 e3-sync = { workspace = true }
 e3-test-support = { workspace = true }
 e3-event-system = { workspace = true, features = ["test-support"] }
 fhe-math = { workspace = true }
-fhe-traits = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 tracing-subscriber = { workspace = true }
