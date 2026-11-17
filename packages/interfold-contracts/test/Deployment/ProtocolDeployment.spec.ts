@@ -48,6 +48,10 @@ import {
   loadConfig,
   readExcludedAccounts,
 } from "../../scripts/protocol/values";
+import {
+  assertDkgPublicationLibraryLink,
+  deployUpgradeImplementation,
+} from "../../scripts/upgrade/safeProxyUpgrade";
 import { requiredActiveOperators } from "../../scripts/upgrade/v19Cutover";
 import {
   activeBfvConfigForChain,
@@ -417,6 +421,39 @@ describe("Protocol deployment", function () {
         plan,
       ),
     ).to.throw("deployment Interfold implementation");
+  });
+
+  it("rejects a deployed but unlinked DKG publication library during VRF validation", async function () {
+    const [operator] = await ethers.getSigners();
+    const poseidon = await ethers.deployContract("PoseidonT3");
+    await poseidon.waitForDeployment();
+    const upgrade = await deployUpgradeImplementation(
+      ethers,
+      operator,
+      "ciphernodeRegistry",
+      { poseidonT3: await poseidon.getAddress() } as ProtocolDeployment,
+    );
+    await assertDkgPublicationLibraryLink(
+      ethers.provider,
+      upgrade.implementation,
+      upgrade.dkgPublicationLibrary!,
+    );
+    const unlinked = await ethers.deployContract("DkgPublicationLib");
+    await unlinked.waitForDeployment();
+    await expect(
+      assertDkgPublicationLibraryLink(
+        ethers.provider,
+        upgrade.implementation,
+        await unlinked.getAddress(),
+      ),
+    ).to.be.rejectedWith("registry DkgPublicationLib link mismatch");
+    await expect(
+      assertDkgPublicationLibraryLink(
+        ethers.provider,
+        upgrade.implementation,
+        ethersLib.ZeroAddress,
+      ),
+    ).to.be.rejectedWith("DKG publication library has no code");
   });
 
   it("reuses the funded deployment subscription for a replacement provider", function () {

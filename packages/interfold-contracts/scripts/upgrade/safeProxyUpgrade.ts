@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
+import { artifacts } from "hardhat";
 import path from "path";
 
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
@@ -34,6 +35,32 @@ export async function proxyImplementation(
 ): Promise<string> {
   const word = await ethers.provider.getStorage(proxy, IMPLEMENTATION_SLOT);
   return ethersLib.getAddress(`0x${word.slice(-40)}`);
+}
+
+export async function assertDkgPublicationLibraryLink(
+  provider: ethersLib.Provider,
+  implementation: string,
+  library: string,
+): Promise<void> {
+  await requireContract(provider, library, "DKG publication library");
+  const artifact = await artifacts.readArtifact("CiphernodeRegistryOwnable");
+  const references = Object.values(artifact.deployedLinkReferences).flatMap(
+    (libraries) => libraries.DkgPublicationLib ?? [],
+  );
+  if (references.length === 0) {
+    throw new Error(
+      "registry artifact has no DkgPublicationLib link references",
+    );
+  }
+  const code = await provider.getCode(implementation);
+  for (const { start, length } of references) {
+    const actual = `0x${code.slice(2 + 2 * start, 2 + 2 * (start + length))}`;
+    if (actual.toLowerCase() !== library.toLowerCase()) {
+      throw new Error(
+        `registry DkgPublicationLib link mismatch: expected ${library}, got ${actual}`,
+      );
+    }
+  }
 }
 
 export type UpgradeTarget =

@@ -18,7 +18,10 @@ import type {
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
-import { proxyImplementation } from "./safeProxyUpgrade";
+import {
+  assertDkgPublicationLibraryLink,
+  proxyImplementation,
+} from "./safeProxyUpgrade";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -63,10 +66,10 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     await requireContract(ethers.provider, target, label);
   }
   if (plan.dkgPublicationLibrary) {
-    await requireContract(
+    await assertDkgPublicationLibraryLink(
       ethers.provider,
+      plan.registryImplementation,
       plan.dkgPublicationLibrary,
-      "DKG publication library",
     );
   }
 
