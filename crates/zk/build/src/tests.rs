@@ -398,6 +398,18 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
 
     let temp = circuit_root_without_tools();
     let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/bin/synchronized"),
+        &root.join("circuits/bin/synchronized"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    assert_eq!(artifacts::discover(root, &selected).unwrap().len(), 1);
+    fs::remove_dir_all(root.join("circuits/bin/synchronized/dkg/pk")).unwrap();
+    assert!(artifacts::discover(root, &selected).is_err());
+    let ordinary = artifacts::discover(root, &ss).unwrap();
+    assert_eq!(ordinary.len(), 1);
+    assert_eq!(ordinary[0].path, root.join("circuits/bin/dkg/pk"));
     let before = snapshot(root);
     let selection = configuration::prepare_profile(
         root,
