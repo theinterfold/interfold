@@ -81,8 +81,9 @@ fix it, so the sync fails.
 <Callout type='info'>
   The first sync starts at the lowest `deploy_block` of all configured contracts. On mainnet, the
   published `fee_token` deploy block (20663730) is about 4.8 million blocks before the
-  `bonding_registry` deploy block (25473398). The node does not use `fee_token`, so you can remove
-  it from the configuration to shorten the first sync.
+  `bonding_registry` deploy block (25473398). The node does not use `fee_token`. Remove it from the
+  configuration: otherwise the first sync can miss the startup time limit, and a restart without
+  saved sync progress begins again from block 20663730.
 </Callout>
 
 ## Missing log history
