@@ -29,9 +29,7 @@ use crate::{
     direct_responder::DirectResponder,
     domain::{
         build_sync_batch,
-        net_event_batch::{
-            fetch_all_batched_events_with_budget, FetchEventsSince, SyncFetchBudget,
-        },
+        history_messages::FetchEventsSince,
         sync_coordinator::sync_scan_limit,
         wire::{decode_sync, encode_sync, SyncMessageKind},
         EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
@@ -251,6 +249,7 @@ mod effects;
 mod handlers;
 
 use effects::historical_sync::{handle_sync_request_event, HistoryBounds};
+use effects::history_source::{fetch_all_batched_events_with_budget, SyncFetchBudget};
 use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]

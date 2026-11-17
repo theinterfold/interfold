@@ -2,9 +2,9 @@
 
 //! Bounded historical-event fetching, validation, and recovery retries.
 
+use super::history_source::LatestTs;
 use super::*;
 use crate::direct_requester::WithoutPeer;
-use crate::domain::net_event_batch::LatestTs;
 use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
 use anyhow::ensure;

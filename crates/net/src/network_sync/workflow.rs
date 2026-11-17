@@ -8,7 +8,7 @@ use e3_events::{prelude::*, HistoryProgress, InterfoldEvent, Unsequenced};
 
 use crate::domain::{
     event_translation::EventTranslationService,
-    net_event_batch::{BatchCursor, EventBatch, FetchEventsSince},
+    history_messages::{BatchCursor, EventBatch, FetchEventsSince},
 };
 
 /// Maximum number of forwardable events a remote peer may request in one sync response.

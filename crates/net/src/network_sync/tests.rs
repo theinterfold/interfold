@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use super::effects::history_source::LatestTs;
 use super::*;
 use crate::actors::{NetEventBuffer, NetEventTranslator};
-use crate::domain::net_event_batch::{BatchCursor, EventBatch, LatestTs};
+use crate::domain::history_messages::{BatchCursor, EventBatch};
 use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use crate::{
     direct_responder::ChannelType,

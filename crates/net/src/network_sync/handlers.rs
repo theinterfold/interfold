@@ -2,8 +2,8 @@
 
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
+use super::effects::history_source::LatestTs;
 use super::*;
-use crate::domain::net_event_batch::LatestTs;
 use e3_events::E3Stage;
 use std::sync::Arc;
 

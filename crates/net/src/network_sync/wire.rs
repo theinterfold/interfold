@@ -311,7 +311,7 @@ pub(crate) mod fixtures {
 mod tests {
     use super::fixtures::{assert_locked_bytes, unsequenced_event};
     use super::*;
-    use crate::domain::net_event_batch::{BatchCursor, EventBatch, FetchEventsSince};
+    use crate::domain::history_messages::{BatchCursor, EventBatch, FetchEventsSince};
     use e3_ciphernode_config::NetworkProfile;
     use e3_events::AggregateId;
 
