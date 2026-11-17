@@ -79,9 +79,6 @@ chains:
       slashing_manager:
         address: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'
         deploy_block: 25998899
-      fee_token:
-        address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
-        deploy_block: 20663730
 ```
 
   </Tabs.Tab>
@@ -156,10 +153,12 @@ to the manifest by name, and it skips other names. Also set `chain_id`, because 
 compares it with the manifest. The command does not query the endpoint.
 
 <Callout type='info'>
-  The first sync starts at the lowest `deploy_block` of all configured contracts. On mainnet, the
-  `fee_token` deploy block (20663730) is about 4.8 million blocks before the `bonding_registry`
-  deploy block (25473398). The node does not use `fee_token`, so you can remove that entry to
-  shorten the first sync. `interfold config check` then prints a note for it, but the check passes.
+  The first sync starts at the lowest `deploy_block` of all configured contracts. The mainnet
+  example leaves out `fee_token`: the node does not use it, and its deploy block (20663730) is about
+  4.8 million blocks before the `bonding_registry` deploy block (25473398). With that entry, the
+  first sync can exceed `node.startup_timeout_secs`, and every restart begins again from block
+  20663730. Remove the entry from an existing file. `interfold config check` then prints a note for
+  it, but the check passes.
 </Callout>
 
 ### Main configuration keys
