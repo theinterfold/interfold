@@ -1032,17 +1032,18 @@ fn verify_publication_contract(
                 .map(|bytes| encode(bytes.try_into().unwrap())).collect::<Vec<_>>(),
         }))?,
     )?;
+    // Resolve a selected path before the child changes directory; bare names still use PATH.
+    let bb = if bb.parent().is_some_and(|path| !path.as_os_str().is_empty()) {
+        bb.canonicalize()?
+    } else {
+        bb.to_path_buf()
+    };
     let mut command = Command::new("pnpm");
     command
         .arg("test:sync-dkg:contract")
         .arg(&fixture)
+        .env("E3_CUSTOM_BB", bb)
         .current_dir(root);
-    if let Some(parent) = bb.parent().filter(|path| !path.as_os_str().is_empty()) {
-        command.env(
-            "PATH",
-            format!("{}:{}", parent.display(), std::env::var("PATH")?),
-        );
-    }
     run(&mut command)?;
     Ok(())
 }

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import test from 'node:test'
 import { VerifierGenerator } from './verifiers'
 import { verifySynchronizedPublication } from './verify-sync-publication'
@@ -19,8 +19,12 @@ test('verifier generation rejects a requested circuit it cannot find', async (t)
 function fixture(t: { after: (fn: () => void) => void }): string {
   const root = mkdtempSync(join(tmpdir(), 'interfold-verifier-transform-'))
   const oldPath = process.env.PATH
+  const oldBb = process.env.E3_CUSTOM_BB
+  delete process.env.E3_CUSTOM_BB
   t.after(() => {
     process.env.PATH = oldPath
+    if (oldBb === undefined) delete process.env.E3_CUSTOM_BB
+    else process.env.E3_CUSTOM_BB = oldBb
     rmSync(root, { recursive: true, force: true })
   })
   const write = (path: string, text: string, mode = 0o644) => {
@@ -103,16 +107,15 @@ test('sync qualification renders only the explicit VK and propagates the prepare
   const canonical = join(root, 'packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol')
   mkdirSync(dirname(canonical), { recursive: true })
   writeFileSync(canonical, 'untouched canonical verifier')
-  writeFileSync(
-    join(root, 'bin/bb'),
-    `#!/usr/bin/env node
+  const renderer = `#!/usr/bin/env node
 const fs = require('node:fs')
 const args = process.argv.slice(2)
 require('node:assert/strict').deepEqual(args.slice(0, 3), ['write_solidity_verifier', '-k', ${JSON.stringify(vk)}])
 fs.copyFileSync(${JSON.stringify(join(root, 'raw.sol'))}, args[args.indexOf('-o') + 1])
-`,
-    { mode: 0o755 },
-  )
+`
+  writeFileSync(join(root, 'bin/bb'), renderer, { mode: 0o755 })
+  const customBb = join(root, 'temporary publication/bb-6.0.0')
+  writeFileSync(customBb, renderer, { mode: 0o755 })
   writeFileSync(
     join(root, 'bin/pnpm'),
     `#!/usr/bin/env node
@@ -130,17 +133,26 @@ else {
 `,
     { mode: 0o755 },
   )
-  for (const status of [0, 23]) {
-    writeFileSync(join(root, 'status'), String(status))
-    assert.equal(verifySynchronizedPublication(root, input), status)
-    assert.deepEqual(JSON.parse(readFileSync(join(root, 'runner.json'), 'utf8')), {
-      args: ['exec', 'hardhat', 'test', 'mocha', '--no-compile', 'test/SynchronizedDkgPublication.spec.ts'],
-      cwd: realpathSync(join(root, 'packages/interfold-contracts')),
-      fixture: input,
-      source: join(prepared, 'SynchronizedHonk.sol'),
-    })
-    assert.match(readFileSync(join(prepared, 'SynchronizedHonk.sol'), 'utf8'), /contract DkgAggregatorVerifier/)
-    assert.equal(readFileSync(canonical, 'utf8'), 'untouched canonical verifier')
+  for (const selected of [undefined, 'bb', customBb, relative(process.cwd(), customBb)]) {
+    if (selected !== undefined) {
+      process.env.E3_CUSTOM_BB = selected
+    }
+    if (selected !== undefined && selected !== 'bb') {
+      // A custom executable must win over a different bb on PATH, even with a nonstandard name.
+      writeFileSync(join(root, 'bin/bb'), '#!/bin/sh\nexit 97\n', { mode: 0o755 })
+    }
+    for (const status of [0, 23]) {
+      writeFileSync(join(root, 'status'), String(status))
+      assert.equal(verifySynchronizedPublication(root, input), status)
+      assert.deepEqual(JSON.parse(readFileSync(join(root, 'runner.json'), 'utf8')), {
+        args: ['exec', 'hardhat', 'test', 'mocha', '--no-compile', 'test/SynchronizedDkgPublication.spec.ts'],
+        cwd: realpathSync(join(root, 'packages/interfold-contracts')),
+        fixture: input,
+        source: join(prepared, 'SynchronizedHonk.sol'),
+      })
+      assert.match(readFileSync(join(prepared, 'SynchronizedHonk.sol'), 'utf8'), /contract DkgAggregatorVerifier/)
+      assert.equal(readFileSync(canonical, 'utf8'), 'untouched canonical verifier')
+    }
   }
   writeFileSync(input, '{invalid')
   assert.throws(() => verifySynchronizedPublication(root, input), SyntaxError)

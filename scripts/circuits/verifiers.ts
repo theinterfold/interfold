@@ -376,11 +376,11 @@ class VerifierGenerator {
     return { content: solidity, outputPath }
   }
 
-  renderFromKey(vkPath: string, name: string, outputPath: string): string {
+  renderFromKey(vkPath: string, name: string, outputPath: string, bb = 'bb'): string {
     const job = mkdtempSync(join(tmpdir(), 'interfold-solidity-verifier-'))
     try {
       const rawSolPath = join(job, 'verifier.sol')
-      execFileSync('bb', ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
+      execFileSync(bb, ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
       if (!existsSync(rawSolPath)) throw new Error('bb write_solidity_verifier did not produce output')
       const contractName = this.toContractName(name)
       let solidity = readFileSync(rawSolPath, 'utf-8')
@@ -830,11 +830,12 @@ if (require.main === module) {
   })
 }
 
-export function renderSolidityVerifier(root: string, key: string, circuit: string, outputPath: string): string {
+export function renderSolidityVerifier(root: string, key: string, circuit: string, outputPath: string, bb = 'bb'): string {
   return new VerifierGenerator(root, { outputDir: dirname(outputPath), check: true, compile: false }).renderFromKey(
     key,
     circuit,
     outputPath,
+    bb,
   )
 }
 
