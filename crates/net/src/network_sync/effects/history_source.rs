@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use e3_events::{
-    prelude::*, AggregateId, EventId, EventSource, InterfoldEvent, TimestampClaim, Unsequenced,
+    prelude::*, AggregateId, EventConstructorWithTimestamp, EventId, EventSource, InterfoldEvent,
+    TimestampClaim, Unsequenced,
 };
 use tokio::time::Instant;
 use tracing::debug;
@@ -194,26 +195,42 @@ impl MergedEvents {
         Ok(())
     }
 
-    /// Merge `other` in timestamp order, or change nothing when one of its events conflicts. The
-    /// check reads only `other`'s events, so a failed merge copies none of the history.
-    pub(crate) fn extend(&mut self, other: MergedEvents) -> Result<()> {
-        let events = other.into_events();
+    /// Merge `additions` in timestamp order, or change nothing when one of them conflicts. The
+    /// check reads only the additions, so a failed merge copies none of the history.
+    pub(crate) fn extend(&mut self, additions: Additions) -> Result<()> {
+        let mut items: Vec<(u128, Addition)> = additions
+            .events
+            .into_events()
+            .into_iter()
+            .map(|event| (event.ts(), Addition::Event(Box::new(event))))
+            .chain(
+                additions
+                    .earlier
+                    .into_iter()
+                    .map(|(id, ts)| (ts, Addition::Earlier(id))),
+            )
+            .collect();
+        items.sort_by_key(|(ts, _)| *ts);
         // The timestamps that the merge moves events to and frees, as merging in order would.
         let mut moved: HashMap<EventId, u128> = HashMap::new();
         let mut taken: HashMap<u128, EventId> = HashMap::new();
         let mut freed: HashSet<u128> = HashSet::new();
-        for event in &events {
-            let id = event.id();
-            let ts = event.ts();
-            let current = match self.by_id.get(&id) {
-                Some(kept) => {
+        for (ts, item) in &items {
+            let ts = *ts;
+            let id = item.id();
+            let current = match (self.by_id.get(&id), item) {
+                (Some(kept), Addition::Event(event)) => {
                     ensure!(
                         kept.get_data() == event.get_data(),
                         "history peers served different payloads under event ID {id}"
                     );
                     Some(moved.get(&id).copied().unwrap_or(kept.ts()))
                 }
-                None => None,
+                (Some(kept), Addition::Earlier(_)) => {
+                    Some(moved.get(&id).copied().unwrap_or(kept.ts()))
+                }
+                (None, Addition::Event(_)) => None,
+                (None, Addition::Earlier(_)) => bail!("no history event {id} to move earlier"),
             };
             if current.is_some_and(|current| ts >= current) {
                 continue;
@@ -233,21 +250,42 @@ impl MergedEvents {
             taken.insert(ts, id);
             moved.insert(id, ts);
         }
-        events.into_iter().try_for_each(|event| self.merge(event))
+        items.into_iter().try_for_each(|(ts, item)| match item {
+            Addition::Event(event) => self.merge(*event),
+            Addition::Earlier(id) => self.move_earlier(id, ts),
+        })
     }
 
-    /// Whether `event` adds nothing: the events hold it at the same or an earlier time. Fails when
-    /// they hold another payload under its ID.
-    fn holds_copy(&self, event: &InterfoldEvent<Unsequenced>) -> Result<bool> {
+    /// Move the held event `id` to the earlier time `ts`.
+    fn move_earlier(&mut self, id: EventId, ts: u128) -> Result<()> {
+        let kept = self
+            .by_id
+            .remove(&id)
+            .with_context(|| format!("no history event {id} to move earlier"))?;
+        self.by_ts.remove(&kept.ts());
+        self.size = self.size.minus(HistorySize::of(&kept)?);
+        let (data, ctx) = kept.into_components();
+        self.merge(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data,
+            None,
+            ts,
+            ctx.block(),
+            EventSource::Net,
+        ))
+    }
+
+    /// The time of the held copy of `event`, if the events hold it. Fails when they hold another
+    /// payload under its ID.
+    fn copy_time(&self, event: &InterfoldEvent<Unsequenced>) -> Result<Option<u128>> {
         let Some(kept) = self.by_id.get(&event.id()) else {
-            return Ok(false);
+            return Ok(None);
         };
         ensure!(
             kept.get_data() == event.get_data(),
             "history peers served different payloads under event ID {}",
             event.id()
         );
-        Ok(kept.ts() <= event.ts())
+        Ok(Some(kept.ts()))
     }
 
     pub(crate) fn size(&self) -> HistorySize {
@@ -261,10 +299,41 @@ impl MergedEvents {
     }
 }
 
+/// What a source adds to a history: the events that the history lacks, and the earlier times of
+/// events that it holds. An earlier time moves a held event and adds nothing to hold.
+#[derive(Default)]
+pub(crate) struct Additions {
+    events: MergedEvents,
+    earlier: HashMap<EventId, u128>,
+}
+
+impl From<MergedEvents> for Additions {
+    fn from(events: MergedEvents) -> Self {
+        Self {
+            events,
+            earlier: HashMap::new(),
+        }
+    }
+}
+
+enum Addition {
+    Event(Box<InterfoldEvent<Unsequenced>>),
+    Earlier(EventId),
+}
+
+impl Addition {
+    fn id(&self) -> EventId {
+        match self {
+            Addition::Event(event) => event.id(),
+            Addition::Earlier(id) => *id,
+        }
+    }
+}
+
 /// One peer's history of a range, checked event by event as its pages arrive. A peer stores an
 /// event again each time that the event reaches it after the peer forgot it, and serves every
 /// copy. The source keeps one copy of each event that the earlier sources' `held` history lacks,
-/// within `room`.
+/// within `room`, and only the earlier time of an event that it holds.
 pub(crate) struct SourceHistory<'a> {
     range: &'a HistoryRange,
     held: &'a MergedEvents,
@@ -272,6 +341,7 @@ pub(crate) struct SourceHistory<'a> {
     room: HistorySize,
     last_ts: Option<u128>,
     kept: MergedEvents,
+    earlier: HashMap<EventId, u128>,
 }
 
 impl<'a> SourceHistory<'a> {
@@ -288,6 +358,7 @@ impl<'a> SourceHistory<'a> {
             room,
             last_ts: None,
             kept: MergedEvents::default(),
+            earlier: HashMap::new(),
         }
     }
 
@@ -338,7 +409,11 @@ impl<'a> SourceHistory<'a> {
         }
         self.network.validate_peer_event(&event)?;
         self.last_ts = Some(event.ts());
-        if self.held.holds_copy(&event)? {
+        if let Some(held) = self.held.copy_time(&event)? {
+            if event.ts() < held {
+                // Pages arrive in timestamp order, so the first earlier copy is the earliest.
+                self.earlier.entry(event.id()).or_insert(event.ts());
+            }
             return Ok(());
         }
         // A peer's history is the network's, whatever source the peer's store recorded.
@@ -359,7 +434,7 @@ impl<'a> SourceHistory<'a> {
     /// The kept events of a source that served its whole history. The allowance is read at the
     /// end: a peer ahead of this node within it can store events while the node pages through
     /// its history.
-    pub(crate) fn finish(self) -> Result<MergedEvents> {
+    pub(crate) fn finish(self) -> Result<Additions> {
         if let Some(last) = self.last_ts {
             let latest = (self.range.latest_ts)()?;
             if last > latest {
@@ -369,7 +444,10 @@ impl<'a> SourceHistory<'a> {
                 );
             }
         }
-        Ok(self.kept)
+        Ok(Additions {
+            events: self.kept,
+            earlier: self.earlier,
+        })
     }
 }
 

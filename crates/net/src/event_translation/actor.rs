@@ -616,6 +616,14 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn no_peer_failures_use_the_long_join_window() {
+        assert_eq!(
+            retry_policy(&GossipPublishFailure::NoPeersSubscribed, 1),
+            Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
+        );
+    }
+
     /// A transient failure waits 2 s after the first attempt and twice as long after the second.
     #[test]
     fn transient_publish_failures_back_off() {

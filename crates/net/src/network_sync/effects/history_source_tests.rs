@@ -105,7 +105,7 @@ async fn fetch_pages(
     .await;
     handle.await.unwrap();
     let observed_from = fetched?;
-    Ok((source.finish()?.into_events(), observed_from))
+    Ok((source.finish()?.events.into_events(), observed_from))
 }
 
 #[tokio::test]
@@ -191,7 +191,7 @@ fn copies_count_once_against_the_kept_history() {
     for ts in [10, 20, 30] {
         source.add(keyshare(&[1], ts)).unwrap();
     }
-    let kept = source.finish().unwrap();
+    let kept = source.finish().unwrap().events;
     assert_eq!(kept.size(), one);
     assert_eq!(kept.into_events()[0].ts(), 10);
 }
@@ -224,7 +224,7 @@ fn a_conflicting_source_leaves_the_history_unchanged() {
     source.merge(keyshare(&[3], 5)).unwrap();
     source.merge(keyshare(&[4], 20)).unwrap();
 
-    assert!(history.extend(source).is_err());
+    assert!(history.extend(source.into()).is_err());
 
     let times: Vec<_> = history
         .into_events()
@@ -252,7 +252,7 @@ fn a_source_replaces_a_later_copy_before_its_next_event_takes_that_time() {
     source.merge(keyshare(&[1], 5)).unwrap();
     source.merge(keyshare(&[2], 10)).unwrap();
 
-    history.extend(source).unwrap();
+    history.extend(source.into()).unwrap();
 
     let times: Vec<_> = history
         .into_events()
@@ -274,4 +274,53 @@ fn a_source_keeps_only_events_that_the_history_lacks() {
 
     source.add(keyshare(&[1], 11)).unwrap();
     assert!(source.add(keyshare(&[2], 12)).is_err());
+}
+
+/// Each peer stamps an event with the time that it reached the peer. A later source's earlier copy
+/// of an event that the history holds moves the event to that time and costs no room.
+#[test]
+fn an_earlier_copy_of_a_held_event_moves_it_and_costs_no_room() {
+    let range = range();
+    let policy = NetworkPolicy::local_unrestricted();
+    let mut history = MergedEvents::default();
+    history.merge(keyshare(&[1], 20)).unwrap();
+    history.merge(keyshare(&[2], 30)).unwrap();
+    let mut source = SourceHistory::new(&range, &history, &policy, HistorySize::default());
+    source.add(keyshare(&[1], 10)).unwrap();
+    source.add(keyshare(&[1], 15)).unwrap();
+    source.add(keyshare(&[2], 31)).unwrap();
+    let additions = source.finish().unwrap();
+
+    history.extend(additions).unwrap();
+
+    assert_eq!(history.size().events, 2);
+    let times: Vec<_> = history
+        .into_events()
+        .iter()
+        .map(|event| event.ts())
+        .collect();
+    assert_eq!(times, vec![10, 30]);
+}
+
+/// An earlier time that would take another event's timestamp conflicts like an earlier copy does,
+/// and changes nothing.
+#[test]
+fn an_earlier_time_at_another_events_timestamp_changes_nothing() {
+    let range = range();
+    let policy = NetworkPolicy::local_unrestricted();
+    let mut history = MergedEvents::default();
+    history.merge(keyshare(&[1], 10)).unwrap();
+    history.merge(keyshare(&[2], 20)).unwrap();
+    let mut source = SourceHistory::new(&range, &history, &policy, HistorySize::default());
+    source.add(keyshare(&[2], 10)).unwrap();
+    let additions = source.finish().unwrap();
+
+    assert!(history.extend(additions).is_err());
+
+    let times: Vec<_> = history
+        .into_events()
+        .iter()
+        .map(|event| event.ts())
+        .collect();
+    assert_eq!(times, vec![10, 20]);
 }

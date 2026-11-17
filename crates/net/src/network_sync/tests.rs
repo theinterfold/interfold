@@ -944,6 +944,50 @@ async fn copies_that_peers_serve_count_once_against_the_kept_history() {
     );
 }
 
+/// Each peer stamps an event with the time that it reached the peer, so the second source can hold
+/// earlier copies of the first source's events. Those copies move events and cost no room: the
+/// same history fits whichever peer the node asks first.
+#[actix::test]
+async fn earlier_copies_from_the_second_source_cost_no_room() {
+    let mut unique = MergedEvents::default();
+    unique.merge(received("e1", 10)).unwrap();
+    unique.merge(received("e2", 20)).unwrap();
+    let held_elsewhere = MAX_KEPT_HISTORY.minus(unique.size());
+    for (first, second) in [([10u128, 20], [110u128, 120]), ([110, 120], [10, 20])] {
+        let peer = |times: [u128; 2]| FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e1", times[0]), received("e2", times[1])],
+            observed_from: None,
+            fails: 0,
+            silent: 0,
+            slow: None,
+        };
+        let peers = vec![peer(first), peer(second)];
+        let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+        let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+        let events = NetEventChannel::new(64);
+        let _keep_open = events.subscribe();
+        spawn_fake_history_network(peers, commands_rx, events.clone());
+
+        let history = fetch_history_from_peers(
+            &commands_tx,
+            &NetEventSubscriber::from(&events),
+            order,
+            AggregateHistory::new(AggregateId::new(1), 0, Default::default(), any_time()),
+            &mut FetchDeadline::production(),
+            &NetworkPolicy::local_unrestricted(),
+            held_elsewhere,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fetched_e3s(&history.into_events()),
+            vec![("e1".to_string(), 10), ("e2".to_string(), 20)]
+        );
+    }
+}
+
 #[actix::test]
 async fn a_failing_history_peer_is_replaced() {
     let failing = PeerId::random();
@@ -1340,6 +1384,46 @@ async fn hint_probes_cannot_take_the_time_of_a_later_aggregate() {
     assert!(of(2) >= 60, "the second aggregate lacks its sources");
 }
 
+/// When an aggregate's history fails every round, startup fails with the reason, not only with the
+/// count of rounds.
+#[actix::test]
+async fn a_history_that_fails_every_round_reports_why() {
+    tokio::time::pause();
+    let peers = vec![FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e1", 10)],
+        observed_from: None,
+        fails: usize::MAX,
+        silent: 0,
+        slow: None,
+    }];
+    let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    spawn_fake_history_network(peers, net_rx, event_tx.clone());
+    let (response_tx, _response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    let error = handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+        no_stored_history(),
+    )
+    .await
+    .unwrap_err();
+
+    let error = format!("{error:#}");
+    assert!(error.contains("recovery attempts"), "{error}");
+    assert!(error.contains("unavailable"), "{error}");
+}
+
 /// Listing the admitted peers counts against the fetch deadline too. With no answer, the fetch of
 /// many aggregates ends at the fetch deadline.
 #[actix::test]
@@ -1402,7 +1486,9 @@ fn check_source(
     let held = MergedEvents::default();
     let mut source = SourceHistory::new(range, &held, &policy, MAX_KEPT_HISTORY);
     events.into_iter().try_for_each(|event| source.add(event))?;
-    Ok(source.finish()?.into_events())
+    let mut merged = MergedEvents::default();
+    merged.extend(source.finish()?)?;
+    Ok(merged.into_events())
 }
 
 #[test]

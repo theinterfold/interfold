@@ -3,8 +3,8 @@
 //! Bounded historical-event fetching, validation, and recovery retries.
 
 use super::history_source::{
-    fetch_source, FetchDeadline, HistoryRange, HistorySize, LatestTs, MergedEvents, SourceHistory,
-    MAX_KEPT_HISTORY,
+    fetch_source, Additions, FetchDeadline, HistoryRange, HistorySize, LatestTs, MergedEvents,
+    SourceHistory, MAX_KEPT_HISTORY,
 };
 use super::*;
 use crate::direct_requester::WithoutPeer;
@@ -280,7 +280,7 @@ async fn fetch_validated_history(
     network: &NetworkPolicy,
     source_time: Option<Duration>,
     room: HistorySize,
-) -> Result<(MergedEvents, Option<u128>)> {
+) -> Result<(Additions, Option<u128>)> {
     let mut source = SourceHistory::new(&history.range, &history.merged, network, room);
     let requester = requester.to(PeerTarget::Specific(peer));
     let observed_from = fetch_source(&requester, &mut source, deadline, source_time).await?;
@@ -477,6 +477,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 
     let mut histories: Vec<AggregateHistory> = Vec::new();
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
+    let mut last_error: Option<anyhow::Error> = None;
     let mut deadline = FetchDeadline::production();
     // A peer's event must not take the timestamp of an event that the node stores after the
     // cursor, or of one that startup publishes with the history. The read counts against the
@@ -535,9 +536,10 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                     return Err(e).context("historical net sync exhausted its deadline");
                 }
                 warn!(
-                    "Failed to fetch events for aggregate_id={}: {e}. Continuing with available events.",
+                    "Failed to fetch events for aggregate_id={}: {e:#}. Continuing with available events.",
                     aggregate_id
                 );
+                last_error = Some(e);
                 failed_aggregates.push(*aggregate_id);
             }
         }
@@ -619,8 +621,9 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                         }
                         warn!(
                             attempt = recovery_attempt,
-                            "Retry failed for aggregate_id={}: {e}", aggregate_id
+                            "Retry failed for aggregate_id={}: {e:#}", aggregate_id
                         );
+                        last_error = Some(e);
                         still_failed.push(aggregate_id);
                     }
                 }
@@ -630,11 +633,12 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
         }
 
         if !failed_aggregates.is_empty() {
-            bail!(
-                "failed to fetch historical net events for aggregates: {:?} after {} recovery attempts",
-                failed_aggregates,
-                SYNC_RECOVERY_MAX_ATTEMPTS
-            );
+            let error = last_error
+                .unwrap_or_else(|| anyhow::anyhow!("no admitted peer served the history"));
+            return Err(error.context(format!(
+                "failed to fetch historical net events for aggregates {:?} after {} recovery attempts",
+                failed_aggregates, SYNC_RECOVERY_MAX_ATTEMPTS
+            )));
         }
     }
 
