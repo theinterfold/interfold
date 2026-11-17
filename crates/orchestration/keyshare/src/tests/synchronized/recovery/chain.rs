@@ -344,6 +344,20 @@ impl Chain {
             EventSource::Evm,
         )];
         history.extend(self.decode(&receipt, registry).await?);
+        // The test harness seeds finalized storage below admission, without emitting sortition.
+        history.push(InterfoldEvent::new_with_timestamp(
+            e3_events::CommitteeFinalized {
+                e3_id: id.clone(),
+                committee: selected.committee.clone(),
+                scores: Vec::new(),
+                chain_id: id.chain_id(),
+            }
+            .into(),
+            None,
+            2,
+            receipt.block_number,
+            EventSource::Evm,
+        ));
         let prefix =
             EventSystem::new()
                 .with_fresh_bus()
@@ -373,6 +387,7 @@ impl Chain {
             .await?;
         ensure!(keys.get(id).is_none());
         let mut signatures = Vec::new();
+        let mut intent = planned.intent.clone();
         let mut local_setups = Vec::new();
         for owner in 0..recovered.len() {
             use super::super::publication::{actor, consents, DriveSetup, SetupCheckpoint};
@@ -445,6 +460,7 @@ impl Chain {
                     &message.attestation,
                 )?;
                 signatures.push(Bytes::copy_from_slice(&message.attestation.signature));
+                intent.consents.push(message.attestation.clone());
             }
             local_setups.push(saved);
             node.send(Die).await?;
@@ -479,13 +495,49 @@ impl Chain {
                 .is_some(),
             "missing consent failed for an unrelated reason: {error:#}"
         );
-        let receipt = contract
-            .publishSynchronizedCommittee(numeric_id, publication)
-            .send()
-            .await
-            .context("publish recovered proof with native H consents")?
+        history.push(InterfoldEvent::new_with_timestamp(
+            intent.clone().into(),
+            None,
+            3,
+            None,
+            EventSource::Local,
+        ));
+        let (writer_keys, pending) = reopen_history(
+            &history,
+            &directory.join("writer-recovery"),
+            self.controller,
+        )
+        .await?;
+        ensure!(pending == vec![intent.clone()] && writer_keys.get(id).is_none());
+        self.provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .with_to(signers[0].address())
+                    .with_value(U256::from(10u64).pow(U256::from(18))),
+            )
+            .await?
             .get_receipt()
             .await?;
+        let publisher = ProviderBuilder::new()
+            .wallet(signers[0].clone())
+            .connect_http(self.anvil.endpoint_url());
+        let publisher = e3_evm::EthProvider::new(publisher).await?;
+        let receipts = e3_evm::publish_synchronized_committee_definition(
+            publisher.clone(),
+            &writer_keys,
+            &pending[0],
+        )
+        .await?;
+        ensure!(
+            receipts.len() == 2,
+            "expected proof and one native key chunk"
+        );
+        // Reuse the reopened pre-publication journal after a mined success that it has not yet
+        // observed. The complete-authority preflight skips the proof and resumes only key bytes.
+        let resumed =
+            e3_evm::publish_synchronized_committee_definition(publisher, &writer_keys, &pending[0])
+                .await?;
+        ensure!(resumed.len() == 1, "settled proof was submitted again");
         let authority = contract
             .getSynchronizedDkgAuthority(numeric_id)
             .call()
@@ -502,7 +554,9 @@ impl Chain {
                         .map(|&party| B256::from(setups[party as usize].key_bundle))
                         .collect::<Vec<_>>()
         );
-        history.extend(self.decode(&receipt, registry).await?);
+        for receipt in receipts {
+            history.extend(self.decode(&receipt, registry).await?);
+        }
         ensure!(
             ICiphernodeRegistry::new(registry, &self.provider)
                 .committeePublicKey(numeric_id)
@@ -511,36 +565,12 @@ impl Chain {
                 .0
                 == commitment
         );
-        // Use the unchanged chain chunk transport, not a direct insertion of candidate PK bytes.
-        self.provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_to(signers[0].address())
-                    .with_value(U256::from(10u64).pow(U256::from(18))),
-            )
-            .await?
-            .get_receipt()
-            .await?;
-        let publisher = ProviderBuilder::new()
-            .wallet(signers[0].clone())
-            .connect_http(self.anvil.endpoint_url());
         let bytes = public_key.to_bytes();
-        let receipt = ICiphernodeRegistry::new(registry, &publisher)
-            .publishCommitteePublicKey(
-                numeric_id,
-                keccak256(&bytes),
-                0,
-                1,
-                bytes.len().try_into()?,
-                bytes.clone().into(),
-            )
-            .send()
-            .await
-            .context("publish confirmed public-key bytes")?
-            .get_receipt()
-            .await?;
-        history.extend(self.decode(&receipt, registry).await?);
-        let recovered_keys = reopen_history(&history, directory, self.controller).await?;
+        // Receipt success alone did not install authority in the shared projection.
+        ensure!(writer_keys.get(id).is_none());
+        let (recovered_keys, pending) =
+            reopen_history(&history, directory, self.controller).await?;
+        ensure!(pending.is_empty());
         ensure!(recovered_keys.public_key(id).as_deref() == Some(bytes.as_slice()));
         let key = recovered_keys
             .get(id)
@@ -607,7 +637,10 @@ async fn reopen_history(
     history: &[InterfoldEvent<Unsequenced>],
     directory: &Path,
     controller: Address,
-) -> Result<CanonicalPublicKeys> {
+) -> Result<(
+    CanonicalPublicKeys,
+    Vec<e3_events::SynchronizedDkgPublicationReady>,
+)> {
     let logs = directory.join("authority-journal");
     let index = directory.join("authority-index");
     let chain = AggregateId::new(31337);
@@ -629,7 +662,7 @@ async fn reopen_history(
                 event.get_data().clone(),
                 event.ts(),
                 event.block(),
-                EventSource::Evm,
+                event.source(),
             )?;
         }
         bus.flush_event_pipeline().await?;
@@ -654,6 +687,9 @@ async fn reopen_history(
     projection
         .recover(&system.eventstore_reader()?.seq(), &[chain], HashSet::new())
         .await?;
+    let pending =
+        e3_evm::recover_synchronized_publications(&system.eventstore_reader()?.seq(), 31337, &keys)
+            .await?;
     if let EventStoreAddrs::Persisted(stores) = system.eventstore_addrs()? {
         for actor in stores.values() {
             actor.send(StopForReopen).await??;
@@ -661,5 +697,5 @@ async fn reopen_history(
     }
     system.store()?.shutdown().await?;
     SledDb::close_all_connections();
-    Ok(keys)
+    Ok((keys, pending))
 }

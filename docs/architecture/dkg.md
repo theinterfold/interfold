@@ -108,9 +108,9 @@ This handoff only reads setup that already reached the durable checkpoint. Today
 against the same confirmed H batch without making all N setups a condition of publication or
 restarting consent.
 
-This remains unactivated: the registry writer, full-node synchronized startup and synchronized C6
-are absent. The capability replay fixture below does not enable production admission. Synchronized
-runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
+This remains unactivated: admitted full-node synchronized startup and synchronized C6 are absent.
+The capability replay fixture below does not enable production admission. Synchronized runtime
+folding/publication and decryption paths still refuse the SS implementations. The joins,
 root/bundle/batch schemas, attestation domain and setup derivation require human protocol review
 before consumers freeze them.
 
@@ -173,9 +173,16 @@ emitted. A known frozen domain is checked before replacing a consent slot, inclu
 Provisional peer SK/bundle anchors cannot invalidate retained early consent before local wrapper
 verification. Standbys retain authenticated inputs without dispatching work; an owner that started
 C5 continues after demotion. Exclusive flushes precede readiness, compute and output, and restart
-reuses successful proof bytes with fresh worker correlations. The local-intent registry writer
-remains unfinished. Admission stays disabled; below-admission actor tests and real-proof
-qualification do not admit production effects.
+reuses successful proof bytes with fresh worker correlations.
+
+The registry writer accepts only local intents and rechecks the shared confirmed selection, frozen
+context, complete native key and ordered all-H consent before deduplication. It reconstructs pending
+intents from retained history before snapshot cursors, with terminal history taking precedence.
+Invalid recovered candidates are logged and skipped before deduplication; journal
+read/decode/sequence errors still fail recovery. Its preflight compares the complete synchronized
+authority, not only the PK commitment, before publishing or resuming key chunks through the existing
+nonce/receipt machinery. Transaction success never installs canonical authority. Admission stays
+disabled; below-admission actor tests and real-proof qualification do not admit production effects.
 
 Publication workers ignore unrelated correlations. Local generation failures and changed recipient
 candidates share one coalesced, capped-backoff retry per actor; repaired children retire stale work

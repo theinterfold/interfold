@@ -7,7 +7,61 @@ use e3_committee_hash::{hash_committee_addresses, DkgSetupContext};
 use e3_events::{E3id, SynchronizedDkgContext};
 use e3_fhe_params::BfvDecryptionProtocol;
 
+mod publication;
+
+/// Finalized pre-publication committee recovered by the shared confirmed-history projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SynchronizedDkgSelection {
+    pub params_profile: e3_fhe_params::BfvProfile,
+    pub committee_size: e3_committee::CiphernodesCommitteeSize,
+    pub interfold_address: alloy::primitives::Address,
+    pub committee: Vec<alloy::primitives::Address>,
+}
+
 impl CanonicalPublicKeys {
+    pub fn synchronized_selection(&self, id: &E3id) -> Option<SynchronizedDkgSelection> {
+        self.0
+            .read()
+            .expect("canonical key lock")
+            .synchronized_selections
+            .get(id)
+            .cloned()
+    }
+
+    pub fn remember_synchronized_selection(
+        &self,
+        id: E3id,
+        selection: SynchronizedDkgSelection,
+    ) -> Result<()> {
+        ensure!(
+            selection.params_profile.protocol() == BfvDecryptionProtocol::Synchronized,
+            "synchronized selection cannot use SS"
+        );
+        selection
+            .params_profile
+            .validate_committee(selection.committee_size)?;
+        ensure!(
+            !selection.interfold_address.is_zero()
+                && selection.committee.len() == selection.committee_size.values().n
+                && selection.committee.iter().all(|node| !node.is_zero())
+                && selection
+                    .committee
+                    .windows(2)
+                    .all(|nodes| nodes[0] < nodes[1]),
+            "synchronized selection requires a complete canonical committee"
+        );
+        let mut keys = self.0.write().expect("canonical key lock");
+        if let Some(previous) = keys.synchronized_selections.get(&id) {
+            ensure!(
+                previous == &selection,
+                "confirmed synchronized selection changed"
+            );
+        } else {
+            keys.synchronized_selections.insert(id, selection);
+        }
+        Ok(())
+    }
+
     /// Frozen chain facts needed before publication consent, recovered by the same history owner.
     pub fn synchronized_context(&self, id: &E3id) -> Option<SynchronizedDkgContext> {
         self.0

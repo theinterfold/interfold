@@ -24,6 +24,7 @@ pub(super) struct PlannedPublication {
     pub plan: e3_aggregator::SynchronizedPublicationPlan,
     pub native: e3_events::PkAggregationProofRequest,
     pub peers: BTreeMap<u32, e3_events::SynchronizedDkgProofPublished>,
+    pub intent: e3_events::SynchronizedDkgPublicationReady,
 }
 
 fn authenticated(
@@ -440,6 +441,18 @@ pub(super) async fn qualify(
         plan,
         native: native_request,
         peers: recipient_messages,
+        intent: e3_events::SynchronizedDkgPublicationReady {
+            e3_id: e3.clone(),
+            params_profile: PROFILE,
+            committee_size: COMMITTEE,
+            context: request.context.clone(),
+            expected: match &request.job {
+                SynchronizedDkgProofJob::Publication { expected, .. } => expected.clone(),
+                _ => unreachable!(),
+            },
+            proof: publication.clone(),
+            consents: Vec::new(),
+        },
     };
     let verified = verify_publication(
         prover,

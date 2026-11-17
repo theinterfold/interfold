@@ -80,7 +80,14 @@ impl CiphernodeBuilder {
                     readers.chain.contracts.bonding_registry.address()?,
                     move |next| BondingRegistrySolReader::setup(&next).recipient(),
                 );
-                attach_ciphernode_registry(&mut readers, provider_cache, restart).await?;
+                attach_ciphernode_registry(
+                    &mut readers,
+                    provider_cache,
+                    storage,
+                    restart,
+                    protocol,
+                )
+                .await?;
                 attach_slashing_manager(&mut readers, provider_cache, storage, slashing_manager)
                     .await?;
                 attach_capacity_refresher(&readers, provider_cache, protocol).await?;
@@ -225,7 +232,9 @@ async fn attach_interfold(
 async fn attach_ciphernode_registry(
     readers: &mut ChainReaders<'_>,
     provider_cache: &mut ProviderCache<WriteEnabled>,
+    storage: &Storage,
     restart: &Restart,
+    protocol: &Protocol,
 ) -> Result<()> {
     let chain_id = readers.chain_id;
     let registry = &readers.chain.contracts.ciphernode_registry;
@@ -282,7 +291,11 @@ async fn attach_ciphernode_registry(
                 on_chain(&restart.committee_finalizer.tickets, chain_id)
                     .map(|(e3_id, ticket)| (e3_id.clone(), ticket.clone()))
                     .collect(),
-            );
+                protocol.canonical_keys.clone(),
+                e3_evm::recover_synchronized_publications(
+                    &storage.seq_eventstore, chain_id, &protocol.canonical_keys,
+                ).await?,
+            )?;
             info!("CiphernodeRegistrySolWriter attached for publishing committees");
         }
         Err(e) => error!(

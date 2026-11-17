@@ -33,6 +33,7 @@ use alloy::{
     sol_types::{SolError, SolEvent},
 };
 use anyhow::{Context as _, Result};
+use e3_events::SynchronizedDkgPublicationReady;
 use e3_events::{
     prelude::*, BusHandle, CommitteeFinalizeRequested, CommitteePublished,
     DkgFoldAttestationContextEstablished, E3RequestComplete, E3id, EType, EffectsEnabled,
@@ -40,6 +41,7 @@ use e3_events::{
     Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_evm_transactions::require_successful_receipt;
+use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::{ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -52,6 +54,11 @@ const ENTROPY_WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 mod effects;
 #[path = "handlers.rs"]
 mod handlers;
+#[path = "synchronized.rs"]
+mod synchronized;
+pub use synchronized::{
+    publish_synchronized_committee_definition, recover_synchronized_publications,
+};
 
 #[allow(unused_imports)]
 pub use effects::{
@@ -367,6 +374,9 @@ pub struct CiphernodeRegistrySolWriter<P> {
     settled_keys: SettledKeys,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
+    canonical_keys: CanonicalPublicKeys,
+    synchronized_publication: ReplaySubmissionGate<E3id, SynchronizedDkgPublicationReady>,
+    synchronized_settled: SettledKeys,
     ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
     committee_finalizations: ReplaySubmissionGate<E3id, CommitteeFinalizeRequested>,
 }
@@ -377,6 +387,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
+        canonical_keys: CanonicalPublicKeys,
     ) -> Result<Self> {
         Self::new_with_recovery(
             bus,
@@ -384,6 +395,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             request_registries,
             HashMap::new(),
+            canonical_keys,
+            Vec::new(),
         )
     }
 
@@ -393,12 +406,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
+        canonical_keys: CanonicalPublicKeys,
+        recovered_publications: Vec<SynchronizedDkgPublicationReady>,
     ) -> Result<Self> {
         let mut ticket_submissions = ReplaySubmissionGate::new();
         for (e3_id, ticket) in recovered_tickets {
             ticket_submissions.record(e3_id, ticket);
         }
-        Ok(Self {
+        let mut writer = Self {
             provider,
             contract_address,
             bus: bus.clone(),
@@ -406,9 +421,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             settled_keys: SettledKeys::default(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
+            canonical_keys,
+            synchronized_publication: ReplaySubmissionGate::new(),
+            synchronized_settled: SettledKeys::default(),
             ticket_submissions,
             committee_finalizations: ReplaySubmissionGate::new(),
-        })
+        };
+        for intent in recovered_publications {
+            writer.accept_synchronized_definition(intent)?;
+        }
+        Ok(writer)
     }
 
     pub fn attach(
@@ -416,14 +438,17 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
-    ) {
+        canonical_keys: CanonicalPublicKeys,
+    ) -> Result<()> {
         Self::attach_with_recovery(
             bus,
             provider,
             contract_address,
             request_registries,
             HashMap::new(),
-        );
+            canonical_keys,
+            Vec::new(),
+        )
     }
 
     pub fn attach_with_recovery(
@@ -432,15 +457,18 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
-    ) {
+        canonical_keys: CanonicalPublicKeys,
+        recovered_publications: Vec<SynchronizedDkgPublicationReady>,
+    ) -> Result<()> {
         let addr = CiphernodeRegistrySolWriter::new_with_recovery(
             bus,
             provider,
             contract_address,
             request_registries,
             recovered_tickets,
-        )
-        .expect("failed to create CiphernodeRegistrySolWriter")
+            canonical_keys,
+            recovered_publications,
+        )?
         .start();
 
         bus.subscribe_all(
@@ -448,14 +476,18 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
                 EventType::EffectsEnabled,
                 EventType::DkgFoldAttestationContextEstablished,
                 EventType::PublicKeyAggregated,
+                EventType::SynchronizedDkgPublicationReady,
                 EventType::CommitteePublished,
                 EventType::CommitteeFinalizeRequested,
                 EventType::TicketGenerated,
                 EventType::E3RequestComplete,
+                EventType::E3Failed,
+                EventType::E3StageChanged,
                 EventType::Shutdown,
             ],
             addr.into(),
         );
+        Ok(())
     }
 }
 
@@ -468,10 +500,18 @@ impl CiphernodeRegistrySol {
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
-    ) where
+        canonical_keys: CanonicalPublicKeys,
+    ) -> Result<()>
+    where
         P: Provider + WalletProvider + Clone + 'static,
     {
-        CiphernodeRegistrySolWriter::attach(bus, provider, contract_address, request_registries);
+        CiphernodeRegistrySolWriter::attach(
+            bus,
+            provider,
+            contract_address,
+            request_registries,
+            canonical_keys,
+        )
     }
 
     pub fn attach_writer_with_recovery<P>(
@@ -480,7 +520,10 @@ impl CiphernodeRegistrySol {
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
-    ) where
+        canonical_keys: CanonicalPublicKeys,
+        recovered_publications: Vec<SynchronizedDkgPublicationReady>,
+    ) -> Result<()>
+    where
         P: Provider + WalletProvider + Clone + 'static,
     {
         CiphernodeRegistrySolWriter::attach_with_recovery(
@@ -489,6 +532,8 @@ impl CiphernodeRegistrySol {
             contract_address,
             request_registries,
             recovered_tickets,
-        );
+            canonical_keys,
+            recovered_publications,
+        )
     }
 }

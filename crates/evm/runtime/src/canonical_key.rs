@@ -201,6 +201,31 @@ impl CanonicalKeyProjection {
             InterfoldEventData::SynchronizedDkgContextEstablished(context) if chain_fact => {
                 self.record_synchronized_context(context)?;
             }
+            InterfoldEventData::CommitteeFinalized(committee) if chain_fact => {
+                if let Some(request) = self.requests.get(&committee.e3_id) {
+                    if request.params_profile.protocol()
+                        == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+                    {
+                        self.keys.remember_synchronized_selection(
+                            committee.e3_id.clone(),
+                            e3_request::canonical_key::SynchronizedDkgSelection {
+                                params_profile: request.params_profile,
+                                committee_size: CiphernodesCommitteeSize::from_threshold(
+                                    request.threshold_m,
+                                    request.threshold_n,
+                                )?,
+                                interfold_address: self.interfold_addresses
+                                    [&committee.e3_id.chain_id()],
+                                committee: committee
+                                    .committee
+                                    .iter()
+                                    .map(|node| node.parse())
+                                    .collect::<Result<_, _>>()?,
+                            },
+                        )?;
+                    }
+                }
+            }
             InterfoldEventData::EvmLogObserved(log)
                 if chain_fact
                     && log.contract == "CiphernodeRegistry"

@@ -114,8 +114,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let source = msg.source();
+        let chain_fact = source == EventSource::Evm && msg.block().is_some();
         match msg.into_data() {
-            InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
+            InterfoldEventData::EffectsEnabled(data) if source == EventSource::Local => {
+                self.notify_sync(ctx, data)
+            }
             InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
                 if self.provider.chain_id() == data.e3_id.chain_id() {
                     ctx.notify(data);
@@ -127,7 +130,24 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     ctx.notify(data);
                 }
             }
-            InterfoldEventData::CommitteePublished(data) => {
+            InterfoldEventData::SynchronizedDkgPublicationReady(data) => {
+                self.route_synchronized_publication(source, data, ctx);
+            }
+            InterfoldEventData::E3Failed(data)
+                if chain_fact && data.e3_id.chain_id() == self.provider.chain_id() =>
+            {
+                self.synchronized_publication.finish(&data.e3_id, true);
+                self.synchronized_settled.insert(data.e3_id);
+            }
+            InterfoldEventData::E3StageChanged(data)
+                if chain_fact
+                    && data.e3_id.chain_id() == self.provider.chain_id()
+                    && data.new_stage.is_terminal() =>
+            {
+                self.synchronized_publication.finish(&data.e3_id, true);
+                self.synchronized_settled.insert(data.e3_id);
+            }
+            InterfoldEventData::CommitteePublished(data) if source != EventSource::Net => {
                 if self.provider.chain_id() == data.e3_id.chain_id() {
                     self.notify_sync(ctx, data);
                 }
@@ -143,7 +163,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     ctx.notify(data);
                 }
             }
-            InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
+            InterfoldEventData::E3RequestComplete(data) if source != EventSource::Net => {
+                self.notify_sync(ctx, data)
+            }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
         }
@@ -158,9 +180,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
     fn handle(&mut self, _: EffectsEnabled, ctx: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
         self.publication.enable_effects();
+        self.synchronized_publication.enable_effects();
         self.ticket_submissions.enable_effects();
         self.committee_finalizations.enable_effects();
         self.try_start_pending_public_keys(ctx);
+        for id in self.synchronized_publication.pending_keys() {
+            self.try_start_synchronized(&id, ctx);
+        }
         self.try_start_pending_tickets(ctx);
         self.try_start_pending_finalizations(ctx);
     }
@@ -195,6 +221,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     type Result = ();
 
     fn handle(&mut self, msg: E3RequestComplete, _: &mut Self::Context) -> Self::Result {
+        self.synchronized_publication.finish(&msg.e3_id, true);
         let publication_pending = settle_publication_for_completed_request(
             &mut self.publication,
             &msg.e3_id,
@@ -220,6 +247,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteePublished>
     type Result = ();
 
     fn handle(&mut self, msg: CommitteePublished, _: &mut Self::Context) -> Self::Result {
+        self.synchronized_publication.finish(&msg.e3_id, true);
         self.publication.finish(&msg.e3_id, true);
         self.settled_keys.insert(msg.e3_id);
     }
@@ -536,6 +564,8 @@ mod tests {
             Address::repeat_byte(0x44),
             HashMap::from([(e3_id.clone(), Address::repeat_byte(0x33))]),
             HashMap::new(),
+            Default::default(),
+            Vec::new(),
         )?
         .start())
     }
@@ -616,6 +646,8 @@ mod tests {
             Address::repeat_byte(0x44),
             HashMap::from([(e3_id.clone(), Address::repeat_byte(0x33))]),
             HashMap::new(),
+            Default::default(),
+            Vec::new(),
         )?
         .start();
 
