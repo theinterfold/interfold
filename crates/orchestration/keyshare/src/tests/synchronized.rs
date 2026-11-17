@@ -391,6 +391,7 @@ fn c4_fields(
 async fn synchronized_native_plans_restore_authenticated_keys_for_nonprefix_h_and_outside_recipient(
 ) -> Result<()> {
     let setup = Setup::new().await?;
+    let mut aggregate_shares = Vec::new();
     for owner in 0..3 {
         let DecryptionKeyPlan::Proceed {
             calc_request,
@@ -434,6 +435,7 @@ async fn synchronized_native_plans_restore_authenticated_keys_for_nonprefix_h_an
                 )
             )?)
         );
+        aggregate_shares.push(polynomial);
         let root = ThresholdKeyshareRecoveryState {
             synchronized: Some(saved.clone()),
             ..Default::default()
@@ -511,6 +513,39 @@ async fn synchronized_native_plans_restore_authenticated_keys_for_nonprefix_h_an
             &setup.cipher
         )
         .is_err());
+    }
+    // Independent T=1 interpolation at x=0. Recipient IDs 0,1,2 name coordinates 1,2,3;
+    // compare every T+1 pair with the original dealers' SKs, not another native aggregate.
+    assert_eq!(COMMITTEE.values().threshold, 1);
+    let secrets = DEALERS
+        .iter()
+        .map(|&dealer| {
+            try_poly_from_sensitive_bytes(
+                setup.responses[dealer as usize].sk_raw.clone(),
+                setup.config.threshold.clone(),
+                &setup.cipher,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for (limb, &modulus) in setup.config.threshold.moduli().iter().enumerate() {
+        let q = u128::from(modulus);
+        for (x1, x2) in [(1usize, 2usize), (1, 3), (2, 3)] {
+            let inverse = if x2 - x1 == 1 { 1 } else { (q + 1) / 2 };
+            for coefficient in 0..setup.config.threshold.degree() {
+                let a = u128::from(aggregate_shares[x1 - 1].coefficients()[(limb, coefficient)]);
+                let b = u128::from(aggregate_shares[x2 - 1].coefficients()[(limb, coefficient)]);
+                let reconstructed = ((x2 as u128 * a + q - x1 as u128 * b % q) % q) * inverse % q;
+                let expected = secrets
+                    .iter()
+                    .map(|secret| u128::from(secret.coefficients()[(limb, coefficient)]))
+                    .sum::<u128>()
+                    % q;
+                assert!(
+                    reconstructed == expected,
+                    "SK reconstruction mismatch at coordinates {x1},{x2}, limb {limb}, coefficient {coefficient}"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -671,6 +706,120 @@ async fn synchronized_c4_claims_match_every_dealer_row_and_the_owner_outgoing_ro
     assert!(incomplete
         .validate_c4(&setup.config, &setup.selected[0].e3_id, 0, &proof)
         .is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_missing_c2_provenance_does_not_accuse_or_reserve_a_c4_slot() -> Result<()> {
+    let setup = Setup::new().await?;
+    let e3 = &setup.selected[1].e3_id;
+    let DecryptionKeyPlan::Proceed {
+        synchronized: Some(mut recipient),
+        ..
+    } = setup.plan(1)?
+    else {
+        anyhow::bail!("missing recipient");
+    };
+    let mut messages = Vec::new();
+    for &dealer in &DEALERS {
+        let DecryptionKeyPlan::Proceed {
+            sk_request,
+            synchronized: Some(material),
+            ..
+        } = setup.plan(dealer as usize)?
+        else {
+            anyhow::bail!("missing dealer");
+        };
+        messages.push(
+            DecryptionKeyShared {
+                e3_id: e3.clone(),
+                party_id: dealer,
+                node: setup.signers[dealer as usize].address().to_string(),
+                signed_sk_decryption_proof: signed(
+                    &setup,
+                    dealer as usize,
+                    ProofType::C4aSkShareDecryption,
+                    c4_fields(&sk_request, &material, e3)?,
+                )?,
+                signed_e_sm_decryption_proofs: vec![],
+                external: true,
+                signature: Default::default(),
+            }
+            .sign(&setup.signers[dealer as usize])?,
+        );
+    }
+    let provenance = recipient.c2_statements.remove(&0).unwrap();
+    let mut ready = ready_for_c4_test();
+    ready.es_poly_sum.clear();
+    let (mut actor, _, recovery_repo, history) = build_actor(
+        e3,
+        KeyshareState::ReadyForDecryption(ready),
+        7200,
+        7200,
+        &[],
+    )
+    .await?;
+    actor.params_profile = PROFILE;
+    actor.interfold_address = Address::repeat_byte(0x11);
+    actor.state.try_mutate_without_context(|mut state| {
+        state.party_id = 1;
+        state.honest_parties = Some(DEALERS.into());
+        Ok(state)
+    })?;
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(setup.selected[1].clone(), test_ec(0)));
+        recovery.synchronized = Some(recipient);
+        Ok(recovery)
+    })?;
+    let (parent, _, _, _) = build_actor(e3, KeyshareState::Init, 7200, 7200, &[]).await?;
+    actor.handle_decryption_key_shared(messages[0].clone(), test_ec(1), parent.start());
+    assert!(actor.recovery.try_get()?.decryption_key_shares.is_empty());
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+
+    // Restore only local provenance, then redeliver the same signed peer bytes.
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery
+            .synchronized
+            .as_mut()
+            .unwrap()
+            .c2_statements
+            .insert(0, provenance);
+        Ok(recovery)
+    })?;
+    actor.effects_enabled = true;
+    let actor = actor.start();
+    for (index, message) in messages.iter().enumerate() {
+        actor
+            .send(keyshare_event(
+                message.clone(),
+                2 + index as u64,
+                EventSource::Net,
+            ))
+            .await?;
+    }
+    let dispatched = next_event(&history).await?;
+    let InterfoldEventData::ShareVerificationDispatched(dispatched) = dispatched.get_data() else {
+        anyhow::bail!("restored provenance did not complete C4 collection");
+    };
+    assert!(dispatched.pre_dishonest.is_empty());
+    assert_eq!(
+        dispatched
+            .decryption_proofs
+            .iter()
+            .map(|proof| proof.sender_party_id)
+            .collect::<BTreeSet<_>>(),
+        DEALERS.into()
+    );
+    assert!(recovery_repo
+        .read()
+        .await?
+        .unwrap()
+        .decryption_key_shares
+        .get(&0)
+        .is_some_and(|saved| **saved == messages[0]));
     Ok(())
 }
 
