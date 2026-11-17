@@ -75,17 +75,21 @@ impl EventTranslationService {
         )
     }
 
-    /// Decide whether a local event should be gossiped.
-    ///
-    /// Returns `Some(GossipData)` to publish over the network, or `None` when the event is not
-    /// forwardable or has already been broadcast.
+    /// Whether this node gossips `event`: a protocol event that this node created. Gossipsub
+    /// relays an event to the whole mesh, so a node never gossips an event from the network again,
+    /// such as one that startup fetched from a peer's history: a peer that forgot it would store
+    /// another copy.
+    pub fn gossips<S: SeqState>(event: &InterfoldEvent<S>) -> bool {
+        event.source() == EventSource::Local && Self::is_forwardable_event(event)
+    }
+
+    /// Returns the gossip to publish for `event`, or `None` when this node does not gossip it or
+    /// has already published it.
     pub fn prepare_outbound(
         &mut self,
         event: InterfoldEvent,
     ) -> Result<Option<(EventId, GossipData)>> {
-        if !Self::is_forwardable_event(&event) {
-            let id = event.event_id();
-            trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring");
+        if !Self::gossips(&event) {
             return Ok(None);
         }
 
@@ -143,8 +147,7 @@ impl EventTranslationService {
         }
     }
 
-    /// Decode an inbound gossip payload into the internal event to publish locally, recording it
-    /// for dedup so it is not later rebroadcast.
+    /// Decode an inbound gossip payload into the internal event to publish locally.
     pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
         let event: InterfoldEvent<Unsequenced> = data.try_into()?;
         ensure!(
@@ -153,9 +156,6 @@ impl EventTranslationService {
             event.event_type()
         );
         self.network.validate_event(&event)?;
-        // Use the ID that the event store derives from the payload, not the peer-supplied context
-        // ID, so a mislabeled event cannot mark another event as sent.
-        self.mark_published(EventId::hash(event.get_data()));
         Ok(event)
     }
 }

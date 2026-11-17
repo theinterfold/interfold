@@ -387,6 +387,54 @@ mod tests {
         Ok(())
     }
 
+    /// Startup stores the history that it fetched from peers as network events. The translator
+    /// gossips only the node's own events, so that history does not go out again.
+    #[actix::test]
+    async fn events_from_the_network_are_not_gossiped_again() -> Result<()> {
+        use e3_events::{AggregateConfig, AggregateId};
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    AggregateId::new(1),
+                    Duration::ZERO,
+                )])));
+        let bus = system.handle()?.enable("test");
+        let (tx, mut commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(8);
+        let _translator = NetEventTranslator::setup(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+            LiveHistory::default(),
+        );
+        let keyshare = |e3: &str| KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+            e3_id: E3id::new(e3, 1),
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
+        };
+        let fetched = bus
+            .event_from(keyshare("1"), None)?
+            .with_source(EventSource::Net);
+        let own = bus.event_from(keyshare("2"), None)?;
+
+        bus.naked_dispatch_async(fetched).await?;
+        bus.naked_dispatch_async(own.clone()).await?;
+
+        let Some(NetCommand::GossipPublish { data, .. }) =
+            tokio::time::timeout(Duration::from_secs(5), commands.recv()).await?
+        else {
+            anyhow::bail!("the translator did not publish the node's own event");
+        };
+        let published: InterfoldEvent<Unsequenced> = data.try_into()?;
+        assert_eq!(published.get_data(), own.get_data());
+        Ok(())
+    }
+
     fn local_forwardable_event() -> InterfoldEvent {
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             KeyshareCreated {
