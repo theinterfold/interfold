@@ -5,7 +5,7 @@
 
 use super::NodeProofAggregator;
 use crate::synchronized::recipient::RecipientPlan;
-use actix::{ActorFutureExt, AsyncContext, Context, WrapFuture};
+use actix::{ActorFutureExt, AsyncContext, Context, SpawnHandle, WrapFuture};
 use alloy::primitives::Address;
 use anyhow::{ensure, Context as _, Result};
 use e3_committee::CiphernodesCommitteeSize;
@@ -18,7 +18,10 @@ use e3_zk_config::{
     CircuitName,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    time::Duration,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct RecipientRecord {
@@ -35,6 +38,7 @@ pub(crate) struct RecipientCollection {
     pub records: HashMap<E3id, RecipientRecord>,
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
+    flush_retries: HashMap<E3id, SpawnHandle>,
 }
 
 pub(crate) fn repository(repositories: &Repositories, id: &E3id) -> Repository<RecipientRecord> {
@@ -144,6 +148,9 @@ impl NodeProofAggregator {
             return false;
         }
         if self.dealer.ended.contains(&id) {
+            if let Some(retry) = self.recipient.flush_retries.remove(&id) {
+                ctx.cancel_future(retry);
+            }
             self.recipient.records.remove(&id);
             self.recipient.in_flight.remove(&id);
             self.recipient.published.remove(&id);
@@ -457,16 +464,40 @@ impl NodeProofAggregator {
         };
         let repository = repository(repositories, id);
         let id = id.clone();
-        ctx.wait(async move { repository.write_sync(&record).await }.into_actor(self).map(move |result, actor, _| {
+        ctx.wait(async move { repository.write_sync(&record).await }.into_actor(self).map(move |result, actor, ctx| {
             match result {
                 Ok(()) => {
+                    if let Some(retry) = actor.recipient.flush_retries.remove(&id) {
+                        ctx.cancel_future(retry);
+                    }
                     if let Err(error) = actor.publish_recipient_work(&id) {
                         tracing::error!(%id, %error, "recipient publication failed; inputs retained");
                     }
                 }
-                Err(error) => tracing::error!(%id, %error, "recipient flush failed; effects withheld"),
+                Err(error) => {
+                    tracing::error!(%id, %error, "recipient flush failed; effects withheld until retry succeeds");
+                    actor.retry_recipient_flush(&id, ctx);
+                }
             }
         }));
+    }
+
+    fn retry_recipient_flush(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        if self.recipient.flush_retries.contains_key(id) {
+            return;
+        }
+        let retry_id = id.clone();
+        let retry = ctx.run_later(Duration::from_secs(1), move |actor, ctx| {
+            actor.recipient.flush_retries.remove(&retry_id);
+            if !actor.dealer.effects || actor.dealer.ended.contains(&retry_id) {
+                return;
+            }
+            // Retry the latest retained record, not a snapshot superseded by another input.
+            if let Some(record) = actor.recipient.records.get(&retry_id).cloned() {
+                actor.flush_recipient_record(&retry_id, record, ctx);
+            }
+        });
+        self.recipient.flush_retries.insert(id.clone(), retry);
     }
 
     fn publish_recipient_work(&mut self, id: &E3id) -> Result<()> {

@@ -138,6 +138,10 @@ event and signed peer setup. Downstream consent/publication producers still need
 outputs. Admission stays disabled; below-admission actor tests and real-proof qualification do not
 admit production effects.
 
+Recipient record flush failures retain the work and use one coalesced actor-owned retry per request.
+Successful flush or confirmed termination cancels the retry. Effects remain withheld until a flush
+succeeds.
+
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CiphernodeSelected` → initialization                | Read `getDeadlines` and the request-frozen timeout configuration at `CommitteeFinalized`. Retry unavailable RPC; do not substitute a local window. Record the encrypted BFV keypair with flushed `DurableIntent` before using or publishing it.                                    |

@@ -414,20 +414,35 @@ impl Handler<StopRecipient> for NodeProofAggregator {
     }
 }
 
-struct FailedFlush;
+#[derive(Default)]
+struct FailedFlush {
+    recovered: bool,
+}
 impl Actor for FailedFlush {
     type Context = Context<Self>;
 }
 impl Handler<Flush> for FailedFlush {
     type Result = Result<()>;
     fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
-        anyhow::bail!("injected flush failure")
+        ensure!(self.recovered, "injected flush failure");
+        Ok(())
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct RecoverFlush;
+impl Handler<RecoverFlush> for FailedFlush {
+    type Result = ();
+    fn handle(&mut self, _: RecoverFlush, _: &mut Context<Self>) {
+        self.recovered = true;
     }
 }
 
 #[actix::test]
-async fn recipient_failed_flush_withholds_compute_and_signed_publication() -> Result<()> {
-    for completed in [false, true] {
+async fn recipient_failed_flush_resumes_compute_and_publication_without_new_inputs() -> Result<()> {
+    tokio::time::pause();
+    for completed in [true, false] {
         let EventFixture { bus, history, .. } = EventFixture::new()?;
         let mut f = fixture(&bus, 1)?;
         collect(&mut f)?;
@@ -447,22 +462,113 @@ async fn recipient_failed_flush_withholds_compute_and_signed_publication() -> Re
                 .insert(id.clone(), request.clone());
             accept(&mut f.actor, response(&request))?;
         }
+        let expected = f.actor.recipient.records[&id].clone();
         let repositories = f.actor.recovery_repositories.take().unwrap();
+        let flush = FailedFlush::default().start();
         f.actor.recovery_repositories = Some(Repositories::new(
             repositories
                 .store
-                .with_flush_recipient(FailedFlush.start().recipient()),
+                .with_flush_recipient(flush.clone().recipient()),
         ));
         f.actor.dealer.effects = true;
         let addr = f.actor.start();
         addr.send(FlushRecipient(id.clone())).await?;
-        assert_eq!(addr.send(InspectRecipient(id)).await?, (true, false));
+        assert_eq!(
+            addr.send(InspectRecipient(id.clone())).await?,
+            (true, false)
+        );
         bus.flush_event_pipeline().await?;
         assert!(history
             .send(GetEvents::<InterfoldEvent>::new())
             .await?
             .is_empty());
+        flush.send(RecoverFlush).await?;
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        let events = history
+            .send(TakeEvents::<InterfoldEvent>::new(if completed {
+                2
+            } else {
+                1
+            }))
+            .await?;
+        assert!(
+            !events.timed_out,
+            "flush recovery did not resume recipient effects"
+        );
+        if completed {
+            assert_eq!(
+                events.events[0].get_data(),
+                &InterfoldEventData::from(expected.completed.clone().unwrap())
+            );
+            let InterfoldEventData::SynchronizedDkgProofPublished(signed) =
+                events.events[1].get_data()
+            else {
+                anyhow::bail!("missing signed recipient publication");
+            };
+            assert_eq!(signed.proof, expected.completed.unwrap().proof);
+            assert_eq!(signed.recover_address()?, f.signers[1].address());
+        } else {
+            let InterfoldEventData::ComputeRequest(request) = events.events[0].get_data() else {
+                anyhow::bail!("missing recipient compute request");
+            };
+            assert_eq!(
+                request.request,
+                ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(Box::new(
+                    f.plan
+                        .request(&expected.leaves, &expected.dealers)?
+                        .unwrap()
+                )))
+            );
+        }
     }
+    Ok(())
+}
+
+#[actix::test]
+async fn recipient_terminal_history_cancels_failed_flush_retry() -> Result<()> {
+    tokio::time::pause();
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    let repositories = f.actor.recovery_repositories.take().unwrap();
+    let flush = FailedFlush::default().start();
+    f.actor.recovery_repositories = Some(Repositories::new(
+        repositories
+            .store
+            .with_flush_recipient(flush.clone().recipient()),
+    ));
+    f.actor.dealer.effects = true;
+    let addr = f.actor.start();
+    addr.send(FlushRecipient(id.clone())).await?;
+    assert_eq!(
+        addr.send(InspectRecipient(id.clone())).await?,
+        (true, false)
+    );
+    addr.send(
+        InterfoldEvent::new_with_timestamp(
+            E3StageChanged {
+                e3_id: id.clone(),
+                previous_stage: E3Stage::Requested,
+                new_stage: E3Stage::KeyPublished,
+            }
+            .into(),
+            None,
+            2,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(2),
+    )
+    .await?;
+    flush.send(RecoverFlush).await?;
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    assert_eq!(addr.send(InspectRecipient(id)).await?, (false, false));
+    bus.flush_event_pipeline().await?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
     Ok(())
 }
 
