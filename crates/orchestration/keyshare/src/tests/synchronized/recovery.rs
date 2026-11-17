@@ -7,7 +7,11 @@
 use super::*;
 use actix::{ActorContext, ActorFutureExt, Message, ResponseActFuture, WrapFuture};
 use e3_data::{SledDb, SledStore};
-use e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyResponse;
+use e3_events::ComputeRequestKind;
+use e3_trbfv::{
+    calculate_decryption_key::{CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse},
+    shares::DecryptVec,
+};
 use e3_zk_prover::{synchronized as adapters, ZkProver};
 use std::path::Path;
 
@@ -180,6 +184,7 @@ async fn artifacts(setup: &mut Setup, prover: Option<&ZkProver>) -> Result<Artif
 
 #[derive(Clone)]
 struct Calculation {
+    native_request: CalculateDecryptionKeyRequest,
     response: CalculateDecryptionKeyResponse,
     request: DkgShareDecryptionProofRequest,
     material: SynchronizedDkgRecovery,
@@ -200,7 +205,8 @@ fn calculations(setup: &Setup) -> Result<Vec<Calculation>> {
             };
             ensure!(esm_requests.is_empty() && honest_party_ids == DEALERS.into());
             Ok(Calculation {
-                response: calculate_decryption_key(&setup.ciphers[owner], calc_request)?,
+                response: calculate_decryption_key(&setup.ciphers[owner], calc_request.clone())?,
+                native_request: calc_request,
                 request: sk_request,
                 material,
             })
@@ -243,13 +249,14 @@ fn provisional_c4(
     )
 }
 
-// Only the qualification driver supplies the result of the admission-disabled calculation. The
-// actual response handler performs C4 intent capture, phase transition and stale-C4 retirement.
+// Qualification supplies the verified C2/C3 verdict and native worker result below admission.
+// Production readiness, roster acceptance, planning and plan persistence own the asserted state.
 #[derive(Message)]
 #[rtype(result = "Result<()>")]
 struct CompleteQualifiedCalculation {
     calculation: Calculation,
     roster: DkgCoordination,
+    shares: Vec<ThresholdShareCreated>,
 }
 
 impl Handler<CompleteQualifiedCalculation> for ThresholdKeyshare {
@@ -260,18 +267,43 @@ impl Handler<CompleteQualifiedCalculation> for ThresholdKeyshare {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let ec = test_ec(500);
+        let enabled = self.effects_enabled;
+        self.effects_enabled = false;
+        let owner = self.state.try_get()?.party_id;
+        for share in &input.shares {
+            self.handle_threshold_share_created(
+                TypedEvent::new(share.clone(), ec.clone()),
+                ctx.address(),
+            )?;
+        }
+        let verified: BTreeSet<_> = input
+            .shares
+            .iter()
+            .map(|share| share.share.party_id)
+            .collect();
+        let e3_id = self.state.try_get()?.e3_id;
         self.recovery.try_mutate(&ec, |mut saved| {
-            saved.synchronized = Some(input.calculation.material);
-            saved.dkg_roster = Some(input.roster);
-            saved.last_ec = Some(ec.clone());
+            saved.collected_threshold_share_ids = Some(verified.clone());
+            saved.verified_dealer_ids = Some(verified);
+            saved.share_verification_complete = Some(share_proofs_verified(&e3_id));
             Ok(saved)
         })?;
-        self.state.try_mutate(&ec, |mut state| {
-            state.honest_parties = Some(DEALERS.into());
-            state.dkg_roster_fixed = true;
-            Ok(state)
-        })?;
-        self.pending.share_decryption_data = Some((input.calculation.request, vec![]));
+        self.maybe_publish_dkg_ready(ec.clone())?;
+        self.accept_dkg_roster(input.roster, ec.clone())?;
+        ensure!(!self.state.try_get()?.dkg_roster_fixed);
+        let plan = self.decryption_key_plan(None)?;
+        let DecryptionKeyPlan::Proceed {
+            ref honest_party_ids,
+            ref sk_request,
+            ..
+        } = plan
+        else {
+            anyhow::bail!("restored authenticated contributions cannot produce C4 for {owner}");
+        };
+        ensure!(honest_party_ids == &DEALERS.into());
+        ensure!(sk_request == &input.calculation.request);
+        self.apply_decryption_key_plan(plan, ec.clone())?;
+        self.effects_enabled = enabled;
         let response = ComputeResponse::trbfv(
             TrBFVResponse::CalculateDecryptionKey(input.calculation.response),
             CorrelationId::new(),
@@ -525,7 +557,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
     let mut setup = Setup::with_ciphers(ciphers).await?;
     let artifacts = artifacts(&mut setup, prover).await?;
     let mut plans = calculations(&setup)?;
-    let successful = plans.clone();
+    let mut successful = plans.clone();
     let provisional = plans
         .iter()
         .enumerate()
@@ -648,14 +680,56 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
             .send(CompleteQualifiedCalculation {
                 calculation,
                 roster: roster.clone(),
+                shares: DEALERS
+                    .iter()
+                    .filter(|&&dealer| dealer != owner as u64)
+                    .map(|&dealer| artifacts.messages[&(dealer as usize, owner)].clone())
+                    .collect(),
             })
             .await??;
-        let event = next_event(&node.history).await?;
+        let events = next_events(&node.history, 3).await?;
         ensure!(matches!(
-            event.get_data(),
+            events[0].get_data(),
+            InterfoldEventData::CommitmentRosterSelected(_)
+        ));
+        let InterfoldEventData::ComputeRequest(request) = events[1].get_data() else {
+            anyhow::bail!("expected recovered calculation work");
+        };
+        let ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(actual)) =
+            &request.request
+        else {
+            anyhow::bail!("recovery dispatched another calculation kind");
+        };
+        let expected = &successful[owner].native_request;
+        ensure!(request.e3_id == *e3 && actual.trbfv_config == expected.trbfv_config);
+        ensure!(actual.esi_sss_collected.is_empty() && expected.esi_sss_collected.is_empty());
+        // Replanning seals with fresh AEAD randomness; compare every ordered native share value.
+        ensure!(
+            actual
+                .sk_sss_collected
+                .clone()
+                .decrypt(&setup.ciphers[owner])?
+                == expected
+                    .sk_sss_collected
+                    .clone()
+                    .decrypt(&setup.ciphers[owner])?,
+            "recovered calculation inputs differ from the successful native request"
+        );
+        ensure!(matches!(
+            events[2].get_data(),
             InterfoldEventData::DecryptionShareProofsPending(_)
         ));
         let root = node.root(e3).await?;
+        let material = root
+            .synchronized
+            .as_ref()
+            .context("production planning lost setup")?;
+        let mut expected = successful[owner].material.clone();
+        // Planning seals the same keys with fresh local AEAD randomness. Check the independent
+        // native anchors now, then require these exact production bytes across each reopen.
+        expected.incoming_keys = material.incoming_keys.clone();
+        ensure!(material == &expected);
+        successful[owner].material = material.clone();
         ensure!(
             root.decryption_key_shares.is_empty(),
             "provisional C4 retained a dealer slot"
