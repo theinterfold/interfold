@@ -137,6 +137,24 @@ pub struct SignedSynchronizedDkgAttestation {
     pub signature: ArcBytes,
 }
 
+/// Authenticated consent for one selected recipient. Transport authentication alone does not
+/// authorize its slot; the publication owner checks the frozen context, roster and exact anchors.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct SynchronizedDkgConsentPublished {
+    pub attestation: SignedSynchronizedDkgAttestation,
+}
+
+impl Display for SynchronizedDkgConsentPublished {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "e3_id: {}, recipient: {}",
+            self.attestation.payload.e3_id, self.attestation.payload.party_id
+        )
+    }
+}
+
 impl SignedSynchronizedDkgAttestation {
     /// Callers must first admit the exact setup and independently expected native key/anchors.
     pub fn sign(

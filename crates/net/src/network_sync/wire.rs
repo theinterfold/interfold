@@ -309,20 +309,20 @@ mod tests {
     use e3_ciphernode_config::NetworkProfile;
     use e3_events::AggregateId;
 
-    // The locked wire bytes for gossip wire 6 and sync wire 5.
+    // The locked wire bytes for gossip wire 7 and sync wire 6.
     const GOSSIP_LEN: usize = 390;
-    const GOSSIP_DIGEST: &str = "58e1c8b3e268657b73e9782890b95309ea9725d30fa66b041884b1c16fc2ecfc";
+    const GOSSIP_DIGEST: &str = "6e91ec19393af9c6cf90a75bb1b4e76fe37fa6a29fc507d0457df1aa06848740";
     const FETCH_LEN: usize = 82;
-    const FETCH_DIGEST: &str = "3f79eeac430a9527c4703230064fa10039bd2ceb0f36f9d29782272f473840e0";
+    const FETCH_DIGEST: &str = "f9e25acfde72a00af1e9d6b6f244bb6d691d0c083b55188fdf190965023ca23b";
     const BATCH_LEN: usize = 314;
-    const BATCH_DIGEST: &str = "791aaea600f1eb91345539f6fd84d3e2c8843325faa2597900f5891c131a4aaa";
+    const BATCH_DIGEST: &str = "2a493ec5fbda77f2d6f5dbccd85b77096d248b6358508726db173fda9902021e";
     const REQUEST_FRAME: (usize, &str) = (
         119,
-        "57a0b91cc5cdd47396a8e13ad9fdf9a74b19605cc563b6d22478de678d16c9d7",
+        "cc5603bce3d6eb6a12e1f6ad28a25102c0c040033df602529cc675144523927c",
     );
     const OK_FRAME: (usize, &str) = (
         88,
-        "354224a89f8673e5112fd6c97c2084a40bbdffd2106a844352ada0be92800036",
+        "fd3dc5932b5a3068d9f2d04b4ccb513a658392bb2bfc366e525ca9480096de51",
     );
     const BAD_REQUEST_FRAME: (usize, &str) = (
         24,
@@ -505,27 +505,85 @@ mod tests {
     }
 
     #[test]
+    fn synchronized_consent_round_trips_gossip_and_history() -> Result<()> {
+        use e3_events::*;
+        use e3_utils::ArcBytes;
+        let message = SynchronizedDkgConsentPublished {
+            attestation: SignedSynchronizedDkgAttestation {
+                payload: SynchronizedDkgAttestationPayload {
+                    e3_id: E3id::new("2459", 1),
+                    context: SynchronizedDkgContext {
+                        registry: [1; 20].into(),
+                        verifying_contract: [2; 20].into(),
+                        crypto_config_id: [3; 32],
+                    },
+                    setup_binding: [4; 32],
+                    roster_hash: [5; 32],
+                    dealer_batch: [6; 32],
+                    pk_commitment: [7; 32],
+                    party_id: 2,
+                    sk_agg_commit: [8; 32],
+                    key_bundle_commit: [9; 32],
+                },
+                // Committee authorization belongs to the consumer, not wire decoding.
+                signature: ArcBytes::from_bytes(&[10; 65]),
+            },
+        };
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            message.clone().into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        );
+        assert_eq!(
+            event.get_data().get_e3_id(),
+            Some(message.attestation.payload.e3_id.clone())
+        );
+        let policy = NetworkPolicy::local_unrestricted();
+        let gossip: GossipData = event.clone().into_sequenced(1).try_into()?;
+        assert_eq!(
+            decode_gossip(&encode_gossip(&gossip, &policy, None)?, &policy, Utc::now())?,
+            gossip,
+        );
+        let batch = EventBatch {
+            events: vec![event],
+            next: BatchCursor::Next(9),
+            aggregate_id: AggregateId::new(1),
+            observed_from: Some(1),
+        };
+        let bytes: Vec<u8> = batch.try_into()?;
+        let decoded: EventBatch<InterfoldEvent<Unsequenced>> = bytes.try_into()?;
+        policy.validate_peer_event(&decoded.events[0])?;
+        assert_eq!(
+            decoded.events[0].get_data(),
+            &InterfoldEventData::from(message)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn previous_gossip_and_sync_majors_are_rejected_before_payload_decoding() -> Result<()> {
         let policy = NetworkPolicy::local_unrestricted();
         let bytes = encode_gossip(&forwardable_gossip(), &policy, None)?;
         let mut old: GossipWireEnvelope = bincode::deserialize(&bytes)?;
-        old.schema_version = 5;
+        old.schema_version = 6;
         old.payload = vec![255]; // Even malformed payloads stop at the version boundary.
         assert!(
             decode_gossip(&bincode::serialize(&old)?, &policy, Utc::now())
                 .unwrap_err()
                 .to_string()
-                .contains("unsupported gossip schema version 5")
+                .contains("unsupported gossip schema version 6")
         );
         let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64)?;
         let mut old: SyncWireEnvelope = bincode::deserialize(&bytes)?;
-        old.schema_version = 4;
+        old.schema_version = 5;
         old.payload = vec![255];
         assert!(
             decode_sync::<u64>(&bincode::serialize(&old)?, SyncMessageKind::FetchEvents)
                 .unwrap_err()
                 .to_string()
-                .contains("unsupported sync schema version 4")
+                .contains("unsupported sync schema version 5")
         );
         Ok(())
     }
@@ -580,12 +638,12 @@ mod tests {
         let policy = NetworkPolicy::local_unrestricted();
         let gossip = encode_gossip(&forwardable_gossip(), &policy, Some([7; 16])).unwrap();
         let mut prior = gossip.clone();
-        prior[4..6].copy_from_slice(&5u16.to_le_bytes());
+        prior[4..6].copy_from_slice(&6u16.to_le_bytes());
         assert_locked_bytes(
             "unchanged SS gossip payload",
             &prior,
             GOSSIP_LEN,
-            "98f658a6f46e26ceeef0858fde1eecf4254f3a047b95f4156f8f7ee12dbe3d1f",
+            "58e1c8b3e268657b73e9782890b95309ea9725d30fa66b041884b1c16fc2ecfc",
         );
         assert_locked_bytes("gossip event envelope", &gossip, GOSSIP_LEN, GOSSIP_DIGEST);
 
@@ -593,12 +651,12 @@ mod tests {
             .try_into()
             .unwrap();
         let mut prior = fetch.clone();
-        prior[4..6].copy_from_slice(&4u16.to_le_bytes());
+        prior[4..6].copy_from_slice(&5u16.to_le_bytes());
         assert_locked_bytes(
             "unchanged FetchEvents payload",
             &prior,
             FETCH_LEN,
-            "bfb226a144e0c1dacd6678ee09cc7e51e2da8ba3f2da8fd4f8e926a473963122",
+            "3f79eeac430a9527c4703230064fa10039bd2ceb0f36f9d29782272f473840e0",
         );
         assert_locked_bytes("FetchEvents", &fetch, FETCH_LEN, FETCH_DIGEST);
 
@@ -611,12 +669,12 @@ mod tests {
         .try_into()
         .unwrap();
         let mut prior = batch.clone();
-        prior[4..6].copy_from_slice(&4u16.to_le_bytes());
+        prior[4..6].copy_from_slice(&5u16.to_le_bytes());
         assert_locked_bytes(
             "unchanged SS EventBatch payload",
             &prior,
             BATCH_LEN,
-            "6dfc97c4029940cdccdb2d348c17a8161bd959eb29b3371088c1ff19f5aede7b",
+            "791aaea600f1eb91345539f6fd84d3e2c8843325faa2597900f5891c131a4aaa",
         );
         assert_locked_bytes("EventBatch", &batch, BATCH_LEN, BATCH_DIGEST);
     }

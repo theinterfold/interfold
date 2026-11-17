@@ -37,6 +37,8 @@ use num_bigint::BigInt;
 use rand::SeedableRng;
 use std::collections::BTreeMap;
 
+#[path = "synchronized/publication.rs"]
+mod publication;
 #[path = "synchronized/recovery.rs"]
 mod recovery;
 
@@ -184,6 +186,7 @@ impl Setup {
                 sk_commitment: None,
                 key_bundle: None,
                 c2_statements: Default::default(),
+                threshold_pk_shares: Default::default(),
             };
             saved.validate(selection, interfold, cipher)?;
             let plan = build_shares_generated_plan(

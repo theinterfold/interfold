@@ -243,6 +243,22 @@ pub(crate) fn plan_decryption(
                     ))
                 })
                 .collect::<Result<_>>()?,
+            threshold_pk_shares: selected
+                .iter()
+                .map(|&id| {
+                    let bytes = if id == u64::from(owner) {
+                        current.pk_share.clone()
+                    } else {
+                        shares
+                            .iter()
+                            .find(|share| share.party_id == id)
+                            .context("selected dealer has no native PK share")?
+                            .pk_share
+                            .clone()
+                    };
+                    Ok((u32::try_from(id)?, bytes))
+                })
+                .collect::<Result<_>>()?,
         }),
     })
 }

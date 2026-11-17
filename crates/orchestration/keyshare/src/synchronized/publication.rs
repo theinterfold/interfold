@@ -8,11 +8,16 @@ use e3_events::{
     synchronized_dkg_roster_hash, SignedSynchronizedDkgAttestation,
     SynchronizedDkgAttestationPayload, SynchronizedSetupAnchors,
 };
+use e3_polynomial::CrtPolynomial;
+use e3_polynomial_fhe::FromFhePolynomial;
 use e3_request::canonical_key::{
     CanonicalDkgAnchors, CanonicalPublicKeys, SynchronizedDkgAuthority,
 };
 use e3_utils::ArcBytes;
+use e3_zk_witness::threshold::pk_aggregation::PkAggregationCircuitData;
 use fhe::bfv::PublicKey;
+use fhe::mbfv::{Aggregate, PublicKeyShare};
+use fhe_traits::Serialize as _;
 
 /// Context-bound sealed inputs for a later C6 implementation. No plaintext keys or work admission.
 pub struct ConfirmedSynchronizedDkgSetup<'a> {
@@ -58,7 +63,59 @@ impl ConfirmedSynchronizedDkgSetup<'_> {
 }
 
 impl SynchronizedDkgRecovery {
-    fn validate_setup(
+    /// Rebuild C5 inputs only from the authenticated native contributions saved at C4 fixation.
+    pub fn publication_key(
+        &self,
+        selected: &CiphernodeSelected,
+        setup: &SynchronizedSetupAnchors,
+    ) -> Result<PublicKey> {
+        let config = e3_zk_config::synchronized::Configs::for_profile(
+            selected.params_profile,
+            CiphernodesCommitteeSize::from_threshold(selected.threshold_m, selected.threshold_n)?,
+        )?;
+        ensure!(
+            self.threshold_pk_shares.keys().copied().collect::<Vec<_>>() == self.dealer_ids
+                && setup.dealers == self.dealer_ids
+                && self.dealer_ids.len() == config.committee.values().h,
+            "publication requires the complete fixed native PK-share roster"
+        );
+        let crp = e3_fhe_params::create_deterministic_crp_from_default_seed(&config.threshold);
+        let shares = self
+            .threshold_pk_shares
+            .values()
+            .map(|bytes| {
+                let share = PublicKeyShare::deserialize(bytes, &config.threshold, crp.clone())?;
+                ensure!(
+                    share.to_bytes().as_slice() == &**bytes,
+                    "noncanonical native PK share"
+                );
+                Ok(share)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let public_key = PublicKey::from_shares(shares.clone())?;
+        let input = e3_zk_witness::synchronized::publication::c5(
+            &config,
+            &PkAggregationCircuitData {
+                public_key: public_key.clone(),
+                pk0_shares: shares
+                    .iter()
+                    .map(|share| CrtPolynomial::from_fhe_polynomial(share.p0_share()))
+                    .collect(),
+            },
+        )?;
+        let commitments = input
+            .expected_threshold_pk_commitments
+            .iter()
+            .map(commitment_field)
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(
+            commitments == setup.threshold_keys,
+            "recipient setup differs from independently retained native PK shares"
+        );
+        Ok(public_key)
+    }
+
+    pub(super) fn validate_setup(
         &self,
         selected: &CiphernodeSelected,
         interfold: Address,
@@ -92,6 +149,10 @@ impl SynchronizedDkgRecovery {
         cipher: &Cipher,
     ) -> Result<SignedSynchronizedDkgAttestation> {
         self.validate_setup(selected, interfold, setup, cipher)?;
+        ensure!(
+            self.publication_key(selected, setup)?.to_bytes() == public_key.to_bytes(),
+            "publication key differs from the authenticated native dealer batch"
+        );
         ensure!(
             setup.dealers.contains(&setup.recipient),
             "only selected H recipients consent to publication"
@@ -191,6 +252,10 @@ impl SynchronizedDkgRecovery {
             .context("confirmed public-key bytes are unavailable")?;
         // This is DKG byte/commitment validation, not C6 profile admission.
         key.validate_dkg_key(&public_key)?;
+        ensure!(
+            self.publication_key(selected, setup)?.to_bytes().as_slice() == &*public_key,
+            "confirmed key differs from the authenticated native dealer batch"
+        );
         Ok(ConfirmedSynchronizedDkgSetup {
             profile: key.params_profile,
             committee: key.committee_size,

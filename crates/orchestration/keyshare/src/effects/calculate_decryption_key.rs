@@ -127,7 +127,8 @@ impl ThresholdKeyshare {
                                 existing.context == material.context
                                     && existing.dealer_ids == material.dealer_ids
                                     && existing.sk_commitment == material.sk_commitment
-                                    && existing.key_bundle == material.key_bundle,
+                                    && existing.key_bundle == material.key_bundle
+                                    && existing.threshold_pk_shares == material.threshold_pk_shares,
                                 "synchronized C4 recovery changed its fixed keys or roster"
                             );
                         } else {

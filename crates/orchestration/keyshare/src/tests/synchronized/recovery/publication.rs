@@ -487,6 +487,7 @@ pub(super) async fn qualify(
         .qualify(
             recovered,
             &setups,
+            &recipients,
             &public_key,
             &publication,
             directory,

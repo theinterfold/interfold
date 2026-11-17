@@ -446,8 +446,14 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         }
         // The BFV keypair lives until the E3 ends. The actor stops only once its removal is on disk.
         let keys = self.bfv_keys.clone();
-        ctx.wait(async move { keys.settle().await }.into_actor(self).map(
-            move |settled, actor, ctx| {
+        let setup = self.recovery_payloads.synchronized_setup();
+        ctx.wait(
+            async move {
+                setup.settle().await?;
+                keys.settle().await
+            }
+            .into_actor(self)
+            .map(move |settled, actor, ctx| {
                 if let Err(error) = settled {
                     error!(%error, "Could not remove the BFV key of an ended E3");
                     ctx.notify_later(event, std::time::Duration::from_secs(1));
@@ -458,8 +464,8 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
                 actor.decryption_key_shared_collector = None;
                 actor.pending = PendingKeyshareWork::default();
                 actor.notify_sync(ctx, Die);
-            },
-        ));
+            }),
+        );
     }
 }
 

@@ -162,6 +162,7 @@ interfold_event_data!(
     SynchronizedDkgProofPublished,
     SynchronizedRecipientInputsReady,
     SynchronizedRecipientProofReady,
+    SynchronizedDkgConsentPublished,
 );
 
 impl fmt::Display for EventType {
@@ -201,6 +202,7 @@ impl InterfoldEventData {
             InterfoldEventData::DecryptionshareCreated(_)
                 | InterfoldEventData::DkgCoordination(_)
                 | InterfoldEventData::SynchronizedDkgProofPublished(_)
+                | InterfoldEventData::SynchronizedDkgConsentPublished(_)
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
@@ -300,6 +302,9 @@ impl InterfoldEventData {
             }
             InterfoldEventData::SynchronizedRecipientProofReady(ref data) => {
                 Some(data.e3_id.clone())
+            }
+            InterfoldEventData::SynchronizedDkgConsentPublished(ref data) => {
+                Some(data.attestation.payload.e3_id.clone())
             }
             InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
                 Some(data.e3_id.clone())

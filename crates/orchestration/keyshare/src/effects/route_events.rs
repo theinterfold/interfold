@@ -13,7 +13,30 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             return;
         }
         let (msg, ec) = msg.into_components();
+        if matches!(
+            &msg,
+            InterfoldEventData::EffectsEnabled(_)
+                | InterfoldEventData::SynchronizedDkgContextEstablished(_)
+                | InterfoldEventData::EvmLogObserved(_)
+                | InterfoldEventData::CommitteePublished(_)
+                | InterfoldEventData::CommitteePublicKeyChunkPublished(_)
+                | InterfoldEventData::SynchronizedRecipientInputsReady(_)
+        ) {
+            if matches!(&msg, InterfoldEventData::EffectsEnabled(_)) {
+                self.effects_enabled = true;
+            }
+            if let Err(error) = self.drive_synchronized_setup(ctx) {
+                self.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+            }
+        }
         match msg {
+            InterfoldEventData::SynchronizedRecipientProofReady(data) => {
+                if let Err(error) =
+                    self.accept_synchronized_setup(TypedEvent::new(data, ec.clone()), ctx)
+                {
+                    self.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+                }
+            }
             InterfoldEventData::CiphernodeSelected(data) => {
                 let timing = self.notify_sync(ctx, TypedEvent::new(data, ec));
                 ctx.spawn(timing);

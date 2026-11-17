@@ -129,6 +129,10 @@ fn layout_rows() -> Vec<String> {
         "threshold_keyshare_bfv_key",
         none,
     ));
+    rows.extend(sample_rows::<
+        e3_keyshare::synchronized::SynchronizedSetupIntent,
+        _,
+    >("threshold_keyshare_synchronized_setup", none));
     // e3-sortition (the finalizer keeps its original persisted identity)
     repository(
         "committee_finalizer_recovery",
