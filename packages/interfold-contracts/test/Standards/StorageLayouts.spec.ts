@@ -130,6 +130,30 @@ describe("storage layout validation", function () {
     }
   });
 
+  it("allows a persisted enum to append a member", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const before = emptyMetadata();
+    before.enums["Example.Stage"] = ["Requested", "Complete"];
+    const after = emptyMetadata();
+    after.enums["Example.Stage"] = ["Requested", "Complete", "Failed"];
+
+    expect(diffLayouts("Example", layout, layout, before, after)).to.deep.equal(
+      [],
+    );
+  });
+
+  it("rejects removing a persisted enum member", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const before = emptyMetadata();
+    before.enums["Example.Stage"] = ["Requested", "Complete"];
+    const after = emptyMetadata();
+    after.enums["Example.Stage"] = ["Requested"];
+
+    expect(diffLayouts("Example", layout, layout, before, after)).to.include(
+      "Example: persisted enum Example.Stage member order changed.",
+    );
+  });
+
   it("extracts enum definitions without treating array wrappers as enums", function () {
     expect(
       persistedEnumName({
@@ -179,6 +203,43 @@ describe("storage layout validation", function () {
 
     expect(diffLayouts("Example", layout, layout, before, after)).to.include(
       "Example: storage namespace erc7201:example.storage.State type Example.State member order or type changed.",
+    );
+  });
+
+  it("allows a namespaced enum to append a member but not to remove one", function () {
+    const layout: StorageLayout = { storage: [], types: {} };
+    const withStage = (stages: string[]): StorageMetadata => {
+      const metadata = emptyMetadata();
+      metadata.namespaces["erc7201:example.storage.State"] = {
+        root: "Example.State",
+        types: {
+          "Example.State": {
+            kind: "struct",
+            members: [{ name: "stage", type: "enum Example.Stage" }],
+          },
+          "Example.Stage": {
+            kind: "enum",
+            members: stages.map((name) => ({ name })),
+          },
+        },
+      };
+      return metadata;
+    };
+    const before = withStage(["Requested", "Complete"]);
+
+    expect(
+      diffLayouts(
+        "Example",
+        layout,
+        layout,
+        before,
+        withStage(["Requested", "Complete", "Failed"]),
+      ),
+    ).to.deep.equal([]);
+    expect(
+      diffLayouts("Example", layout, layout, before, withStage(["Requested"])),
+    ).to.include(
+      "Example: storage namespace erc7201:example.storage.State type Example.Stage member list changed.",
     );
   });
 
