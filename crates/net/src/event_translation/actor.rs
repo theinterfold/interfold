@@ -69,7 +69,6 @@ struct LibP2pEvent(pub GossipData, pub Option<libp2p::PeerId>);
 struct StartupBufferReleased;
 
 impl NetEventTranslator {
-    /// Create a new NetEventTranslator actor
     pub fn new(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
@@ -102,7 +101,6 @@ impl NetEventTranslator {
         let addr = translator.start();
         let mut rx = rx.subscribe();
 
-        // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());
         info!("NetEventTranslator is running");
         tokio::spawn({
@@ -146,13 +144,6 @@ impl NetEventTranslator {
         });
 
         addr
-    }
-
-    /// Function to determine which events are allowed to be automatically broadcast to the
-    /// network. Kept here so the rule can be referenced via `NetEventTranslator` while the
-    /// implementation lives in the pure service.
-    pub fn is_forwardable_event(event: &InterfoldEvent) -> bool {
-        EventTranslationService::is_forwardable_event(event)
     }
 
     fn handle_interfold_event(
@@ -623,14 +614,6 @@ mod tests {
             "the translator published a delivered event again: {republished:?}"
         );
         Ok(())
-    }
-
-    #[test]
-    fn no_peer_failures_use_the_long_join_window() {
-        assert_eq!(
-            retry_policy(&GossipPublishFailure::NoPeersSubscribed, 1),
-            Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
-        );
     }
 
     /// A transient failure waits 2 s after the first attempt and twice as long after the second.

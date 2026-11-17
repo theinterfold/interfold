@@ -232,7 +232,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     // peer.
     for event in &history.events[2..] {
         assert!(
-            !NetEventTranslator::is_forwardable_event(event),
+            !event.get_data().is_forwardable(),
             "{} must stay local",
             event.event_type()
         );

@@ -8,174 +8,148 @@ use super::*;
 use crate::direct_requester::DirectRequesterTester;
 use crate::events::{NetCommand, PeerTarget};
 use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
+use e3_events::{E3id, EventConstructorWithTimestamp, InterfoldEventData, KeyshareCreated};
+use e3_utils::ArcBytes;
 use tokio::sync::mpsc;
 
-#[test]
-fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
-    let mut budget = SyncFetchBudget::new(1, 2, 3);
-    budget.record_page(2, 3).unwrap();
+/// The keyshare `pubkey`, as a peer that received it at `ts` stores it.
+fn keyshare(pubkey: &[u8], ts: u128) -> InterfoldEvent<Unsequenced> {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(pubkey),
+            e3_id: E3id::new("1", 1),
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
+        }
+        .into(),
+        None,
+        ts,
+        None,
+        EventSource::Net,
+    )
+}
 
-    let page_error = budget.record_page(0, 0).unwrap_err();
-    assert!(page_error.to_string().contains("page limit"));
-    assert_eq!((budget.pages, budget.events, budget.bytes), (1, 2, 3));
+/// `payload`'s event under the context of `label`, as two payloads with one ID would arrive.
+fn under_the_id_of(
+    payload: &[u8],
+    label: &InterfoldEvent<Unsequenced>,
+) -> InterfoldEvent<Unsequenced> {
+    #[derive(serde::Serialize)]
+    struct Raw<'a> {
+        payload: &'a InterfoldEventData,
+        ctx: &'a e3_events::EventContext<Unsequenced>,
+    }
+    let (data, _) = keyshare(payload, 5).into_components();
+    let (_, ctx) = label.clone().into_components();
+    let bytes = bincode::serialize(&Raw {
+        payload: &data,
+        ctx: &ctx,
+    })
+    .unwrap();
+    InterfoldEvent::from_bytes(&bytes).unwrap()
+}
 
-    let mut event_budget = SyncFetchBudget::new(2, 1, 3);
-    let event_error = event_budget.record_page(2, 0).unwrap_err();
-    assert!(event_error.to_string().contains("event limit"));
-    assert_eq!(
-        (event_budget.pages, event_budget.events, event_budget.bytes),
-        (0, 0, 0)
-    );
+fn range() -> HistoryRange {
+    HistoryRange {
+        aggregate_id: AggregateId::new(1),
+        since: 0,
+        stored: Default::default(),
+        latest_ts: Arc::new(|| Ok(u128::MAX)),
+    }
+}
 
-    let mut byte_budget = SyncFetchBudget::new(2, 2, 1);
-    let byte_error = byte_budget.record_page(0, 2).unwrap_err();
-    assert!(byte_error.to_string().contains("byte limit"));
-    assert_eq!(
-        (byte_budget.pages, byte_budget.events, byte_budget.bytes),
-        (0, 0, 0)
-    );
+fn page(
+    events: Vec<InterfoldEvent<Unsequenced>>,
+    next: BatchCursor,
+) -> EventBatch<InterfoldEvent<Unsequenced>> {
+    EventBatch {
+        events,
+        next,
+        aggregate_id: AggregateId::new(1),
+        observed_from: None,
+    }
+}
+
+/// Serve `pages` for requests from the given cursors, and fetch them as one source.
+async fn fetch_pages(
+    pages: Vec<(u128, EventBatch<InterfoldEvent<Unsequenced>>)>,
+) -> Result<(Vec<InterfoldEvent<Unsequenced>>, Option<u128>)> {
+    let (commands, commands_rx) = mpsc::channel::<NetCommand>(16);
+    let events = NetEventChannel::new(16);
+    let _keep_open = events.subscribe();
+    let requester = DirectRequester::builder(commands, NetEventSubscriber::from(&events))
+        .build()
+        .to(PeerTarget::Random);
+    let mut tester = DirectRequesterTester::new(commands_rx, events);
+    for (cursor, batch) in pages {
+        tester = tester
+            .expect_request(FetchEventsSince::new(
+                AggregateId::new(1),
+                cursor,
+                MAX_SYNC_BATCH_SIZE,
+            ))
+            .respond_with(batch);
+    }
+    let handle = tester.spawn();
+    let range = range();
+    let policy = NetworkPolicy::local_unrestricted();
+    let held = MergedEvents::default();
+    let mut source = SourceHistory::new(&range, &held, &policy, MAX_KEPT_HISTORY);
+    let fetched = fetch_source(
+        &requester,
+        &mut source,
+        &mut FetchDeadline::production(),
+        None,
+    )
+    .await;
+    handle.await.unwrap();
+    let observed_from = fetched?;
+    Ok((source.finish()?.into_events(), observed_from))
 }
 
 #[tokio::test]
-async fn test_non_advancing_cursor_is_rejected() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let net_events_tx = NetEventChannel::new(16);
-    let _net_events_rx = net_events_tx.subscribe();
-    let net_events = NetEventSubscriber::from(&net_events_tx);
+async fn pages_follow_the_responders_cursor() {
+    let (events, _) = fetch_pages(vec![
+        (
+            0,
+            page(
+                vec![keyshare(&[1], 10), keyshare(&[2], 20)],
+                BatchCursor::Next(200),
+            ),
+        ),
+        (200, page(vec![keyshare(&[3], 210)], BatchCursor::Next(400))),
+        (400, page(vec![keyshare(&[4], 410)], BatchCursor::Done)),
+    ])
+    .await
+    .unwrap();
 
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-    let batch = EventBatch {
-        events: vec![b"event1".to_vec()],
-        next: BatchCursor::Next(0),
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
-        .respond_with(batch)
-        .spawn();
+    let times: Vec<_> = events.iter().map(|event| event.ts()).collect();
+    assert_eq!(times, vec![10, 20, 210, 410]);
+}
 
-    let error = fetch_all_batched_events_with_budget::<Vec<u8>>(
-        requester,
-        PeerTarget::Random,
-        AggregateId::new(1),
+#[tokio::test]
+async fn a_non_advancing_cursor_fails_the_source() {
+    let error = fetch_pages(vec![(
         0,
-        1,
-        &mut SyncFetchBudget::production(),
-        None,
-    )
+        page(vec![keyshare(&[1], 10)], BatchCursor::Next(0)),
+    )])
     .await
     .unwrap_err();
 
-    handle.await.unwrap();
     assert!(error.to_string().contains("non-advancing cursor"));
 }
 
 #[tokio::test]
-async fn test_three_batches_with_cursor_continuity() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let net_events_tx = NetEventChannel::new(16);
-    let _net_events_rx = net_events_tx.subscribe();
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-    let batch1 = EventBatch {
-        events: vec![b"a".to_vec(), b"b".to_vec()],
-        next: BatchCursor::Next(200),
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-    let batch2 = EventBatch {
-        events: vec![b"c".to_vec(), b"d".to_vec()],
-        next: BatchCursor::Next(400),
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-    let batch3 = EventBatch {
-        events: vec![b"e".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 2))
-        .respond_with(batch1)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 200, 2))
-        .respond_with(batch2)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 400, 2))
-        .respond_with(batch3)
-        .spawn();
-
-    let events: Vec<Vec<u8>> = fetch_all_batched_events_with_budget(
-        requester,
-        PeerTarget::Random,
-        AggregateId::new(1),
-        0,
-        2,
-        &mut SyncFetchBudget::production(),
-        None,
-    )
-    .await
-    .unwrap()
-    .events;
-
-    handle.await.unwrap();
-
-    let expected = vec![
-        b"a".to_vec(),
-        b"b".to_vec(),
-        b"c".to_vec(),
-        b"d".to_vec(),
-        b"e".to_vec(),
-    ];
-    assert_eq!(events.len(), expected.len());
-    assert_eq!(events, expected);
-}
-
-#[tokio::test]
 async fn a_responder_that_resets_between_pages_fails_as_a_source() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let net_events_tx = NetEventChannel::new(16);
-    let _net_events_rx = net_events_tx.subscribe();
-    let net_events = NetEventSubscriber::from(&net_events_tx);
+    // The first page vouches from 5. The responder then resets and answers the next cursor from
+    // an empty log while it starts up.
+    let mut first = page(vec![keyshare(&[1], 10)], BatchCursor::Next(200));
+    first.observed_from = Some(5);
+    let error = fetch_pages(vec![(0, first), (200, page(vec![], BatchCursor::Done))])
+        .await
+        .unwrap_err();
 
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-    // The first page vouches from 5. The responder then resets and answers the next cursor
-    // from an empty log while it starts up.
-    let first = EventBatch {
-        events: vec![b"a".to_vec()],
-        next: BatchCursor::Next(200),
-        aggregate_id: AggregateId::new(1),
-        observed_from: Some(5),
-    };
-    let after_reset = EventBatch::<Vec<u8>> {
-        events: vec![],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
-        .respond_with(first)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 200, 1))
-        .respond_with(after_reset)
-        .spawn();
-
-    let error = fetch_all_batched_events_with_budget::<Vec<u8>>(
-        requester,
-        PeerTarget::Random,
-        AggregateId::new(1),
-        0,
-        1,
-        &mut SyncFetchBudget::production(),
-        None,
-    )
-    .await
-    .unwrap_err();
-
-    handle.await.unwrap();
     assert!(error
         .to_string()
         .contains("changed its live-history time from Some(5) to None"));
@@ -185,44 +159,119 @@ async fn a_responder_that_resets_between_pages_fails_as_a_source() {
 /// history, and the source keeps the time of its first page, so it vouches for nothing.
 #[tokio::test]
 async fn a_responder_that_ends_its_startup_between_pages_stays_a_source() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let net_events_tx = NetEventChannel::new(16);
-    let _net_events_rx = net_events_tx.subscribe();
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-    let starting = EventBatch {
-        events: vec![b"a".to_vec()],
-        next: BatchCursor::Next(200),
-        aggregate_id: AggregateId::new(1),
-        observed_from: None,
-    };
-    let started = EventBatch {
-        events: vec![b"b".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-        observed_from: Some(7),
-    };
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
-        .respond_with(starting)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 200, 1))
-        .respond_with(started)
-        .spawn();
-
-    let fetched = fetch_all_batched_events_with_budget::<Vec<u8>>(
-        requester,
-        PeerTarget::Random,
-        AggregateId::new(1),
-        0,
-        1,
-        &mut SyncFetchBudget::production(),
-        None,
-    )
+    let mut started = page(vec![keyshare(&[2], 210)], BatchCursor::Done);
+    started.observed_from = Some(7);
+    let (events, observed_from) = fetch_pages(vec![
+        (0, page(vec![keyshare(&[1], 10)], BatchCursor::Next(200))),
+        (200, started),
+    ])
     .await
     .unwrap();
 
-    handle.await.unwrap();
-    assert_eq!(fetched.events, vec![b"a".to_vec(), b"b".to_vec()]);
-    assert_eq!(fetched.observed_from, None);
+    assert_eq!(events.len(), 2);
+    assert_eq!(observed_from, None);
+}
+
+/// A peer that stored an event several times serves every copy. The source keeps the earliest,
+/// and only kept events count against the limit.
+#[test]
+fn copies_count_once_against_the_kept_history() {
+    let range = range();
+    let policy = NetworkPolicy::local_unrestricted();
+    let one = HistorySize::of(&keyshare(&[1], 10)).unwrap();
+    let held = MergedEvents::default();
+    let mut source = SourceHistory::new(&range, &held, &policy, one);
+    for ts in [10, 20, 30] {
+        source.add(keyshare(&[1], ts)).unwrap();
+    }
+    let error = source.add(keyshare(&[2], 40)).unwrap_err();
+    assert!(error.to_string().contains("kept-history limit"), "{error}");
+
+    let mut source = SourceHistory::new(&range, &held, &policy, one);
+    for ts in [10, 20, 30] {
+        source.add(keyshare(&[1], ts)).unwrap();
+    }
+    let kept = source.finish().unwrap();
+    assert_eq!(kept.size(), one);
+    assert_eq!(kept.into_events()[0].ts(), 10);
+}
+
+#[test]
+fn copies_of_one_event_merge_to_the_earliest_and_different_payloads_fail() {
+    let mut merged = MergedEvents::default();
+    merged.merge(keyshare(&[1], 20)).unwrap();
+    merged.merge(keyshare(&[1], 10)).unwrap();
+    // The later copy's timestamp is free again.
+    merged.merge(keyshare(&[2], 20)).unwrap();
+    let conflicting = under_the_id_of(&[3], &keyshare(&[1], 30));
+    assert!(merged.merge(conflicting).is_err());
+
+    let times: Vec<_> = merged
+        .into_events()
+        .iter()
+        .map(|event| event.ts())
+        .collect();
+    assert_eq!(times, vec![10, 20]);
+}
+
+/// A source that conflicts with the history adds none of its events.
+#[test]
+fn a_conflicting_source_leaves_the_history_unchanged() {
+    let mut history = MergedEvents::default();
+    history.merge(keyshare(&[1], 10)).unwrap();
+    history.merge(keyshare(&[2], 20)).unwrap();
+    let mut source = MergedEvents::default();
+    source.merge(keyshare(&[3], 5)).unwrap();
+    source.merge(keyshare(&[4], 20)).unwrap();
+
+    assert!(history.extend(source).is_err());
+
+    let times: Vec<_> = history
+        .into_events()
+        .iter()
+        .map(|event| event.ts())
+        .collect();
+    assert_eq!(times, vec![10, 20]);
+}
+
+/// The event store holds one event at a timestamp, so two events must not share one.
+#[test]
+fn different_events_at_one_timestamp_fail() {
+    let mut merged = MergedEvents::default();
+    merged.merge(keyshare(&[1], 10)).unwrap();
+    assert!(merged.merge(keyshare(&[2], 10)).is_err());
+}
+
+/// A later source can bring an earlier copy of an event that the history holds. Its timestamp is
+/// free again before a later event of the source takes it, whatever order the merge sees.
+#[test]
+fn a_source_replaces_a_later_copy_before_its_next_event_takes_that_time() {
+    let mut history = MergedEvents::default();
+    history.merge(keyshare(&[1], 10)).unwrap();
+    let mut source = MergedEvents::default();
+    source.merge(keyshare(&[1], 5)).unwrap();
+    source.merge(keyshare(&[2], 10)).unwrap();
+
+    history.extend(source).unwrap();
+
+    let times: Vec<_> = history
+        .into_events()
+        .iter()
+        .map(|event| event.ts())
+        .collect();
+    assert_eq!(times, vec![5, 10]);
+}
+
+/// A source keeps only what the earlier sources lack, so the second source of a history fits in
+/// the room that the first one left.
+#[test]
+fn a_source_keeps_only_events_that_the_history_lacks() {
+    let range = range();
+    let policy = NetworkPolicy::local_unrestricted();
+    let mut held = MergedEvents::default();
+    held.merge(keyshare(&[1], 10)).unwrap();
+    let mut source = SourceHistory::new(&range, &held, &policy, HistorySize::default());
+
+    source.add(keyshare(&[1], 11)).unwrap();
+    assert!(source.add(keyshare(&[2], 12)).is_err());
 }

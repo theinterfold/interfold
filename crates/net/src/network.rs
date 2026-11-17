@@ -182,6 +182,16 @@ impl NetworkPolicy {
         Ok(())
     }
 
+    /// Check an event that a peer sent: a forwardable protocol event of this network.
+    pub fn validate_peer_event<S: SeqState>(&self, event: &InterfoldEvent<S>) -> Result<()> {
+        ensure!(
+            event.get_data().is_forwardable(),
+            "event type {} is not a forwardable protocol event",
+            event.event_type()
+        );
+        self.validate_event(event)
+    }
+
     pub fn validate_event<S: SeqState>(&self, event: &InterfoldEvent<S>) -> Result<()> {
         let e3_id = event.get_e3_id().ok_or_else(|| {
             anyhow::anyhow!(

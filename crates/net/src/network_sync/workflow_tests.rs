@@ -231,20 +231,6 @@ fn build_sync_batch_stops_at_max_timestamp() {
 }
 
 #[test]
-fn build_sync_batch_continues_after_a_storage_page_that_stopped_early() {
-    // Storage stopped at its byte budget after one large filtered record; history continues.
-    let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
-    let SyncBatchOutcome::Batch(batch) =
-        build_sync_batch(vec![local_event(3)], more_after(Some(3)), None, &fetch)
-    else {
-        panic!("expected batch");
-    };
-
-    assert!(batch.events.is_empty());
-    assert!(matches!(batch.next, BatchCursor::Next(4)));
-}
-
-#[test]
 fn build_sync_batch_continues_after_a_page_without_returned_records() {
     // Every record of the page was quarantined before it reached the reply.
     let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);

@@ -9,11 +9,8 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{ensure, Result};
-use e3_events::{
-    prelude::*, Event, EventId, EventSource, InterfoldEvent, InterfoldEventData, SeqState,
-    Unsequenced,
-};
+use anyhow::Result;
+use e3_events::{prelude::*, Event, EventId, EventSource, InterfoldEvent, SeqState, Unsequenced};
 use libp2p::PeerId;
 use tracing::{debug, trace};
 
@@ -60,27 +57,12 @@ impl EventTranslationService {
         &self.topic
     }
 
-    /// Function to determine which events are allowed to be automatically broadcast to the
-    /// network. Static so the same rule can be reused elsewhere (e.g. sync responses).
-    pub fn is_forwardable_event<S: SeqState>(event: &InterfoldEvent<S>) -> bool {
-        matches!(
-            event.get_data(),
-            InterfoldEventData::DecryptionshareCreated(_)
-                | InterfoldEventData::DkgCoordination(_)
-                | InterfoldEventData::DKGRecursiveAggregationComplete(_)
-                | InterfoldEventData::KeyshareCreated(_)
-                | InterfoldEventData::PublicKeyAggregated(_)
-                | InterfoldEventData::ProofFailureAccusation(_)
-                | InterfoldEventData::AccusationVote(_)
-        )
-    }
-
     /// Whether this node gossips `event`: a protocol event that this node created. Gossipsub
     /// relays an event to the whole mesh, so a node never gossips an event from the network again,
     /// such as one that startup fetched from a peer's history: a peer that forgot it would store
     /// another copy.
     pub fn gossips<S: SeqState>(event: &InterfoldEvent<S>) -> bool {
-        event.source() == EventSource::Local && Self::is_forwardable_event(event)
+        event.source() == EventSource::Local && event.get_data().is_forwardable()
     }
 
     /// Returns the gossip to publish for `event`, or `None` when this node does not gossip it or
@@ -141,21 +123,16 @@ impl EventTranslationService {
     /// one that historical sync stored. The bus delivers an event only after it is stored. The ID
     /// comes from the payload, because a sync peer supplies the context ID.
     pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
-        if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
+        if event.source() == EventSource::Net && event.get_data().is_forwardable() {
             self.stored_remote
                 .admit(None, &EventId::hash(event.get_data()), now);
         }
     }
 
     /// Decode an inbound gossip payload into the internal event to publish locally.
-    pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
+    pub fn prepare_inbound(&self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
         let event: InterfoldEvent<Unsequenced> = data.try_into()?;
-        ensure!(
-            Self::is_forwardable_event(&event),
-            "inbound gossip event type {} is not allowed on the protocol gossip channel",
-            event.event_type()
-        );
-        self.network.validate_event(&event)?;
+        self.network.validate_peer_event(&event)?;
         Ok(event)
     }
 }
@@ -165,8 +142,8 @@ mod tests {
     use super::*;
     use e3_events::{
         AggregateId, DkgCoordination, DkgCoordinationKind, DkgDealer, E3id,
-        EventConstructorWithTimestamp, EventContext, KeyshareCreated, PlaintextAggregated,
-        TestEvent,
+        EventConstructorWithTimestamp, EventContext, InterfoldEventData, KeyshareCreated,
+        PlaintextAggregated, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -216,35 +193,30 @@ mod tests {
     }
 
     #[test]
-    fn stored_remote_events_are_reported_until_the_window_ends() {
+    fn a_stored_network_event_is_not_admitted_again_within_the_window() {
         let mut svc = EventTranslationService::new("topic");
         let remote = local_forwardable_event().with_source(EventSource::Net);
         let id = remote.event_id();
         let start = Instant::now();
-        assert!(!svc.stored_remote.contains(&id, start));
         svc.record_stored_event(&remote, start);
-        assert!(svc
-            .stored_remote
-            .contains(&id, start + crate::seen_messages::SEEN_TTL / 2));
-        assert!(!svc
-            .stored_remote
-            .contains(&id, start + crate::seen_messages::SEEN_TTL));
+        assert!(!svc.admit_remote_event(None, &id, start + crate::seen_messages::SEEN_TTL / 2));
+        assert!(svc.admit_remote_event(None, &id, start + crate::seen_messages::SEEN_TTL));
     }
 
     #[test]
-    fn local_and_non_protocol_events_are_not_recorded_as_stored_remote_events() {
+    fn local_and_non_protocol_events_do_not_block_gossip() {
         let mut svc = EventTranslationService::new("topic");
         let start = Instant::now();
         let local = local_forwardable_event();
         svc.record_stored_event(&local, start);
-        assert!(!svc.stored_remote.contains(&local.event_id(), start));
+        assert!(svc.admit_remote_event(None, &local.event_id(), start));
         let internal = local_test_event().with_source(EventSource::Net);
         svc.record_stored_event(&internal, start);
-        assert!(!svc.stored_remote.contains(&internal.event_id(), start));
+        assert!(svc.admit_remote_event(None, &internal.event_id(), start));
     }
 
     #[test]
-    fn a_mislabeled_stored_event_records_its_payload_id() -> Result<()> {
+    fn a_mislabeled_stored_event_does_not_block_the_genuine_one() -> Result<()> {
         let mut svc = EventTranslationService::new("topic");
         let genuine = local_forwardable_event();
         let payload: InterfoldEventData = KeyshareCreated {
@@ -270,36 +242,24 @@ mod tests {
 
         let now = Instant::now();
         svc.record_stored_event(&forged, now);
-        assert!(!svc.stored_remote.contains(&genuine.event_id(), now));
-        assert!(svc
-            .stored_remote
-            .contains(&EventId::hash(forged.get_data()), now));
+        assert!(svc.admit_remote_event(None, &genuine.event_id(), now));
+        assert!(!svc.admit_remote_event(None, &EventId::hash(forged.get_data()), now));
         Ok(())
     }
 
+    /// Plaintext results stay on the node that decrypted them.
     #[test]
-    fn test_events_are_not_forwardable() {
-        assert!(!EventTranslationService::is_forwardable_event(
-            &local_test_event()
-        ));
-    }
-
-    #[test]
-    fn plaintext_results_are_not_forwardable() {
-        assert!(!EventTranslationService::is_forwardable_event(
-            &local_plaintext_event()
-        ));
-    }
-
-    #[test]
-    fn non_forwardable_events_produce_no_gossip() {
+    fn plaintext_results_are_not_gossiped() {
         let mut svc = EventTranslationService::new("topic");
-        assert!(svc.prepare_outbound(local_test_event()).unwrap().is_none());
+        assert!(svc
+            .prepare_outbound(local_plaintext_event())
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn inbound_gossip_rejects_non_forwardable_internal_events() {
-        let mut svc = EventTranslationService::new("topic");
+        let svc = EventTranslationService::new("topic");
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             TestEvent::new("fish", 7).into(),
             None,
@@ -309,12 +269,14 @@ mod tests {
         );
         let data: GossipData = event.clone().into_sequenced(3).try_into().unwrap();
         let error = svc.prepare_inbound(data).unwrap_err();
-        assert!(error.to_string().contains("TestEvent"));
+        assert!(error
+            .to_string()
+            .contains("TestEvent is not a forwardable protocol event"));
     }
 
     #[test]
     fn inbound_gossip_accepts_forwardable_protocol_events() {
-        let mut svc = EventTranslationService::new("topic");
+        let svc = EventTranslationService::new("topic");
         let expected = local_forwardable_event();
         let data: GossipData = expected.clone().try_into().unwrap();
 
@@ -346,7 +308,7 @@ mod tests {
         .into_sequenced(1);
         let mut outbound = EventTranslationService::new("topic");
         let (_, gossip) = outbound.prepare_outbound(event.clone()).unwrap().unwrap();
-        let mut inbound = EventTranslationService::new("topic");
+        let inbound = EventTranslationService::new("topic");
         let decoded = inbound.prepare_inbound(gossip).unwrap();
         assert_eq!(decoded.get_data(), event.get_data());
     }
