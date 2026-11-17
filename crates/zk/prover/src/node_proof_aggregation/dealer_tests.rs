@@ -17,6 +17,102 @@ fn ec(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(1)
 }
 
+fn request(id: E3id, profile: BfvProfile) -> Result<E3Requested> {
+    let size = CiphernodesCommitteeSize::Minimum;
+    let params = e3_fhe_params::BfvParamSet::from(profile.threshold_preset()).build();
+    Ok(E3Requested {
+        e3_id: id,
+        threshold_m: size.values().threshold,
+        threshold_n: size.values().n,
+        params_profile: profile,
+        crypto_config_id: profile.crypto_config_id(size)?.into(),
+        params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(&params)),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn synchronized_dealer_initial_collection_excludes_ss_authority() -> Result<()> {
+    let sync_id = E3id::new("2459", 1);
+    let ss_id = E3id::new("2460", 1);
+    let sync_meta = E3Meta::from(&request(sync_id.clone(), BfvProfile::SyncDecInsecure64)?);
+    let ss_meta = E3Meta::from(&request(ss_id.clone(), BfvProfile::SsInsecure64)?);
+    sync_meta.validate_identity()?;
+    ss_meta.validate_identity()?;
+    let committee = Committee::new(vec![Address::repeat_byte(1).to_string()]);
+    let collection = DealerCollection::new(
+        HashMap::from([
+            (sync_id.clone(), sync_meta.clone()),
+            (ss_id.clone(), ss_meta),
+        ]),
+        HashMap::from([
+            (sync_id.clone(), committee.clone()),
+            (ss_id.clone(), committee.clone()),
+        ]),
+        HashSet::from([sync_id.clone(), ss_id]),
+        HashMap::new(),
+    );
+    assert_eq!(
+        collection.metadata,
+        HashMap::from([(sync_id.clone(), sync_meta)])
+    );
+    assert_eq!(
+        collection.committees,
+        HashMap::from([(sync_id.clone(), committee)])
+    );
+    assert!(collection.ended.contains(&sync_id));
+    Ok(())
+}
+
+#[derive(Message)]
+#[rtype(result = "(bool, bool)")]
+struct InspectAuthority(E3id);
+
+impl Handler<InspectAuthority> for NodeProofAggregator {
+    type Result = actix::MessageResult<InspectAuthority>;
+    fn handle(&mut self, msg: InspectAuthority, _: &mut Context<Self>) -> Self::Result {
+        actix::MessageResult((
+            self.dealer.metadata.contains_key(&msg.0),
+            self.dealer.committees.contains_key(&msg.0),
+        ))
+    }
+}
+
+#[actix::test]
+async fn synchronized_dealer_live_routing_does_not_retain_ss_authority() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, _, _) = fixture(&bus).await?;
+    actor.dealer = DealerCollection::default();
+    let addr = actor.start();
+    for (id, profile, retained) in [
+        (E3id::new("2460", 1), BfvProfile::SsInsecure64, false),
+        (E3id::new("2459", 1), BfvProfile::SyncDecInsecure64, true),
+    ] {
+        for data in [
+            InterfoldEventData::from(request(id.clone(), profile)?),
+            CommitteeFinalized {
+                e3_id: id.clone(),
+                committee: vec![Address::repeat_byte(1).to_string()],
+                scores: vec![],
+                chain_id: 1,
+            }
+            .into(),
+        ] {
+            addr.send(
+                InterfoldEvent::new_with_timestamp(data, None, 1, None, EventSource::Evm)
+                    .into_sequenced(1),
+            )
+            .await?;
+        }
+        assert_eq!(
+            addr.send(InspectAuthority(id)).await?,
+            (retained, retained),
+            "{profile}"
+        );
+    }
+    Ok(())
+}
+
 async fn fixture(
     bus: &BusHandle,
 ) -> Result<(NodeProofAggregator, ThresholdSharePending, DealerPlan)> {

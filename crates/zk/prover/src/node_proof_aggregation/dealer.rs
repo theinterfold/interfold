@@ -42,11 +42,15 @@ pub(crate) struct DealerCollection {
 
 impl DealerCollection {
     pub(crate) fn new(
-        metadata: HashMap<E3id, E3Meta>,
-        committees: HashMap<E3id, Committee>,
+        mut metadata: HashMap<E3id, E3Meta>,
+        mut committees: HashMap<E3id, Committee>,
         ended: HashSet<E3id>,
         records: HashMap<E3id, DealerRecord>,
     ) -> Self {
+        metadata.retain(|_, meta| {
+            meta.params_profile.protocol() == BfvDecryptionProtocol::Synchronized
+        });
+        committees.retain(|id, _| metadata.contains_key(id));
         Self {
             metadata,
             committees,
@@ -120,7 +124,9 @@ impl NodeProofAggregator {
         match data {
             InterfoldEventData::E3Requested(request) if ec.source() == EventSource::Evm => {
                 let meta = E3Meta::from(request);
-                if meta.validate_identity().is_ok() {
+                if meta.params_profile.protocol() == BfvDecryptionProtocol::Synchronized
+                    && meta.validate_identity().is_ok()
+                {
                     self.dealer
                         .metadata
                         .entry(request.e3_id.clone())
@@ -128,7 +134,8 @@ impl NodeProofAggregator {
                 }
             }
             InterfoldEventData::CommitteeFinalized(committee)
-                if ec.source() == EventSource::Evm =>
+                if ec.source() == EventSource::Evm
+                    && self.dealer.metadata.contains_key(&committee.e3_id) =>
             {
                 let mut committee = committee.clone();
                 committee.sort_by_address();
