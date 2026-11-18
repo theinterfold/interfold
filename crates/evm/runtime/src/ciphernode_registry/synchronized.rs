@@ -21,7 +21,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
     pub(super) fn accept_synchronized_definition(
         &mut self,
         intent: SynchronizedDkgPublicationReady,
+        source: EventSource,
     ) -> Result<()> {
+        anyhow::ensure!(
+            source == EventSource::Local,
+            "publication intent must be local"
+        );
         if self.settled_keys.contains(&intent.e3_id)
             || self.synchronized_settled.contains(&intent.e3_id)
             || self.canonical_keys.public_key(&intent.e3_id).is_some()
@@ -38,26 +43,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         &self,
         intent: &SynchronizedDkgPublicationReady,
     ) -> Result<CanonicalPublicKey> {
-        anyhow::ensure!(
-            intent.e3_id.chain_id() == self.provider.chain_id(),
-            "publication belongs to another chain"
-        );
-        let selection = self
-            .canonical_keys
-            .synchronized_selection(&intent.e3_id)
-            .context("publication has no confirmed selection")?;
-        let context = self
-            .canonical_keys
-            .synchronized_context(&intent.e3_id)
-            .context("publication has no frozen context")?;
-        let candidate = selection.validate_publication(context, intent)?;
-        if let Some(confirmed) = self.canonical_keys.get(&intent.e3_id) {
-            anyhow::ensure!(
-                confirmed == candidate,
-                "publication differs from confirmed authority"
-            );
-        }
-        Ok(candidate)
+        validate_synchronized_intent(&self.canonical_keys, self.provider.chain_id(), intent)
     }
 
     pub(super) fn try_start_synchronized(&mut self, id: &E3id, ctx: &mut actix::Context<Self>) {
@@ -89,18 +75,42 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         intent: SynchronizedDkgPublicationReady,
         ctx: &mut actix::Context<Self>,
     ) {
-        if source != EventSource::Local
-            || intent.e3_id.chain_id() != self.provider.chain_id()
+        if intent.e3_id.chain_id() != self.provider.chain_id()
             || intent.params_profile.ensure_admission_enabled().is_err()
         {
             return;
         }
         let id = intent.e3_id.clone();
-        match self.accept_synchronized_definition(intent) {
+        match self.accept_synchronized_definition(intent, source) {
             Ok(()) => self.try_start_synchronized(&id, ctx),
             Err(error) => self.bus.err(EType::Evm, error),
         }
     }
+}
+
+fn validate_synchronized_intent(
+    keys: &CanonicalPublicKeys,
+    chain: u64,
+    intent: &SynchronizedDkgPublicationReady,
+) -> Result<CanonicalPublicKey> {
+    anyhow::ensure!(
+        intent.e3_id.chain_id() == chain,
+        "publication belongs to another chain"
+    );
+    let selection = keys
+        .synchronized_selection(&intent.e3_id)
+        .context("publication has no confirmed selection")?;
+    let context = keys
+        .synchronized_context(&intent.e3_id)
+        .context("publication has no frozen context")?;
+    let candidate = selection.validate_publication(context, intent)?;
+    if let Some(confirmed) = keys.get(&intent.e3_id) {
+        anyhow::ensure!(
+            confirmed == candidate,
+            "publication differs from confirmed authority"
+        );
+    }
+    Ok(candidate)
 }
 
 #[derive(Message)]

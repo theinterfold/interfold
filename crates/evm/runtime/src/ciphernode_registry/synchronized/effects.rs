@@ -18,10 +18,12 @@ impl std::error::Error for ConflictingAuthority {}
 
 pub(super) fn is_terminal(error: &anyhow::Error) -> bool {
     error.is::<ConflictingAuthority>()
-        || contains_error_selector(
-            &format!("{error:?}"),
+        || [
             ISynchronizedDkgPublication::InvalidSynchronizedDkgPublication::SELECTOR,
-        )
+            ISynchronizedDkgPublication::InvalidPublication::SELECTOR,
+        ]
+        .into_iter()
+        .any(|selector| contains_error_selector(&format!("{error:?}"), selector))
 }
 
 pub(super) fn authority(

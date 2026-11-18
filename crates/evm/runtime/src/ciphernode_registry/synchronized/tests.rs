@@ -185,7 +185,9 @@ async fn synchronized_terminal_retirement_preserves_ss_failure_behavior() -> Res
             )
             .await?;
     }
-    writer.send(AcceptDefinition(intent)).await??;
+    writer
+        .send(AcceptDefinition(intent, EventSource::Local))
+        .await??;
     assert_eq!(writer.send(Pending).await?, 0);
     // The SS writer historically retains these intents until its completion/publication boundary.
     writer
@@ -207,13 +209,13 @@ async fn synchronized_terminal_retirement_preserves_ss_failure_behavior() -> Res
 
 #[derive(Message)]
 #[rtype(result = "Result<()>")]
-struct AcceptDefinition(SynchronizedDkgPublicationReady);
+struct AcceptDefinition(SynchronizedDkgPublicationReady, EventSource);
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<AcceptDefinition>
     for CiphernodeRegistrySolWriter<P>
 {
     type Result = Result<()>;
     fn handle(&mut self, msg: AcceptDefinition, _: &mut Self::Context) -> Self::Result {
-        self.accept_synchronized_definition(msg.0)
+        self.accept_synchronized_definition(msg.0, msg.1)
     }
 }
 
@@ -243,7 +245,28 @@ async fn local_intent_validation_precedes_dedup_and_terminal_history_wins() -> R
         writer.send(event(intent.clone(), source)).await?;
         assert_eq!(writer.send(Pending).await?, 0); // Admission is still disabled, even locally.
     }
-    for mutation in 0..6 {
+    for source in [EventSource::Net, EventSource::Evm] {
+        let error = writer
+            .send(AcceptDefinition(intent.clone(), source))
+            .await?
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("publication intent must be local"));
+        assert_eq!(writer.send(Pending).await?, 0);
+    }
+    for (mutation, expected) in [
+        "publication proof differs from native/setup expectations",
+        "publication lacks exact ordered all-H consent",
+        "Error deserializing public key",
+        "local publication differs from confirmed request/committee",
+        "publication proof differs from native/setup expectations",
+        "publication lacks exact ordered all-H consent",
+        "publication lacks exact ordered all-H consent",
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let mut changed = intent.clone();
         match mutation {
             0 => {
@@ -253,13 +276,39 @@ async fn local_intent_validation_precedes_dedup_and_terminal_history_wins() -> R
             2 => changed.expected.public_key = ArcBytes::from_bytes(&[1]),
             3 => changed.context.setup.interfold_address = Address::repeat_byte(10),
             4 => changed.expected.key_bundles[0][31] ^= 1,
-            _ => changed.consents[0] = changed.consents[1].clone(),
+            5 => changed.consents[0] = changed.consents[1].clone(),
+            _ => {
+                changed.consents[0] = SignedSynchronizedDkgAttestation::sign(
+                    changed.consents[0].payload.clone(),
+                    &PrivateKeySigner::from_bytes(&B256::repeat_byte(9))?,
+                )?;
+            }
         }
-        assert!(writer.send(AcceptDefinition(changed)).await?.is_err());
+        let error = writer
+            .send(AcceptDefinition(changed, EventSource::Local))
+            .await?
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "mutation {mutation}: {error:#}"
+        );
         assert_eq!(writer.send(Pending).await?, 0);
     }
-    writer.send(AcceptDefinition(intent.clone())).await??;
-    writer.send(AcceptDefinition(intent.clone())).await??;
+    writer
+        .send(AcceptDefinition(intent.clone(), EventSource::Local))
+        .await??;
+    writer
+        .send(AcceptDefinition(intent.clone(), EventSource::Local))
+        .await??;
+    assert_eq!(writer.send(Pending).await?, 1);
+    let mut invalid_redelivery = intent.clone();
+    invalid_redelivery.consents.swap(0, 1);
+    assert!(writer
+        .send(AcceptDefinition(invalid_redelivery, EventSource::Local))
+        .await?
+        .unwrap_err()
+        .to_string()
+        .contains("publication lacks exact ordered all-H consent"));
     assert_eq!(writer.send(Pending).await?, 1);
     writer
         .send(event(
@@ -278,7 +327,9 @@ async fn local_intent_validation_precedes_dedup_and_terminal_history_wins() -> R
             EventSource::Local,
         ))
         .await?;
-    writer.send(AcceptDefinition(intent)).await??;
+    writer
+        .send(AcceptDefinition(intent, EventSource::Local))
+        .await??;
     writer
         .send(event(EffectsEnabled::new(), EventSource::Local))
         .await?;
@@ -360,7 +411,138 @@ async fn transient_preflight_failure_retains_the_local_intent() -> Result<()> {
 }
 
 #[actix::test]
-async fn recovery_ignores_peer_intents_and_prunes_closed_history_before_validation() -> Result<()> {
+async fn permanent_synchronized_reverts_retire_the_pending_intent() -> Result<()> {
+    for selector in [
+        crate::contracts::ISynchronizedDkgPublication::InvalidPublication::SELECTOR,
+        ICiphernodeRegistry::ThresholdNotMet::SELECTOR,
+    ] {
+        let (keys, intent) = fixture()?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        asserter.push_failure_msg(format!("execution reverted: 0x{}", hex::encode(selector)));
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        let mut writer = CiphernodeRegistrySolWriter::new_with_recovery(
+            &bus,
+            provider,
+            Address::repeat_byte(99),
+            HashMap::new(),
+            HashMap::new(),
+            keys.clone(),
+            vec![intent.clone()],
+        )?;
+        writer.effects_enabled = true;
+        writer.synchronized_publication.enable_effects();
+        let started = writer
+            .synchronized_publication
+            .start(&intent.e3_id)
+            .unwrap();
+        let writer = writer.start();
+        writer.send(SubmitSynchronizedPublication(started)).await?;
+        assert_eq!(
+            writer.send(Pending).await?,
+            0,
+            "0x{}",
+            hex::encode(selector)
+        );
+        assert!(keys.get(&intent.e3_id).is_none());
+        writer.send(Shutdown).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn rejected_recovered_intents_do_not_block_startup_or_valid_later_intents() -> Result<()> {
+    use e3_data::{InMemEventLog, InMemSequenceIndex};
+    let (keys, intent) = fixture()?;
+    for valid_later in [false, true] {
+        let mut store = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
+        let mut invalid = intent.clone();
+        invalid.expected.dealer_batch[31] ^= 1;
+        for (index, candidate) in std::iter::once(invalid)
+            .chain(valid_later.then_some(intent.clone()))
+            .enumerate()
+        {
+            store.store_event(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                candidate.into(),
+                None,
+                index as u128 + 1,
+                None,
+                EventSource::Local,
+            ))?;
+        }
+        let reader = EventStoreRouter::new(HashMap::from([(1, store.start())]))
+            .start()
+            .recipient();
+        let restored = recover_synchronized_publications(&reader, 1, &keys).await?;
+        assert_eq!(
+            restored,
+            if valid_later {
+                vec![intent.clone()]
+            } else {
+                vec![]
+            }
+        );
+        assert!(
+            recover_synchronized_publications(&reader, 1, &CanonicalPublicKeys::default())
+                .await?
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
+struct FaultyHistory(Option<InterfoldEvent>);
+impl Actor for FaultyHistory {
+    type Context = actix::Context<Self>;
+}
+impl Handler<EventStoreQueryBy<SeqAgg>> for FaultyHistory {
+    type Result = ();
+    fn handle(&mut self, query: EventStoreQueryBy<SeqAgg>, _: &mut Self::Context) {
+        let result = self
+            .0
+            .clone()
+            .map(|event| vec![event])
+            .ok_or_else(|| anyhow::anyhow!("injected journal read failure"));
+        let response = EventStoreQueryResponse::from_result(query.id(), result);
+        query
+            .sender()
+            .try_send(response)
+            .expect("recovery query reply");
+    }
+}
+
+#[actix::test]
+async fn publication_recovery_keeps_journal_read_and_sequence_errors_fatal() -> Result<()> {
+    let (_, intent) = fixture()?;
+    let gap = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        intent.into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(2);
+    for (event, expected) in [
+        (Some(gap), "publication recovery event-store sequence gap"),
+        (None, "injected journal read failure"),
+    ] {
+        let reader = FaultyHistory(event).start().recipient();
+        let error = recover_synchronized_publications(&reader, 1, &CanonicalPublicKeys::default())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:#}");
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn recovery_ignores_peer_intents_and_closed_history_without_blocking_startup() -> Result<()> {
     use e3_data::{InMemEventLog, InMemSequenceIndex};
     let (keys, intent) = fixture()?;
     for (source, terminal, expected) in [

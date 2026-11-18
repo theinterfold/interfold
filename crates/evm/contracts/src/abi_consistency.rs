@@ -179,7 +179,10 @@ fn declared_bindings_match_solidity() {
     assert_subset(
         ISynchronizedDkgPublication::abi::contract(),
         "registry/CiphernodeRegistryOwnable.sol/CiphernodeRegistryOwnable.json",
-        &[],
+        &[(
+            "InvalidPublication",
+            "verifiers/bfv/SynchronizedDkgPublicationVerifier.sol/SynchronizedDkgPublicationVerifier.json",
+        )],
     );
     assert_subset(
         IInterfold::abi::contract(),

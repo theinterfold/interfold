@@ -33,13 +33,13 @@ use alloy::{
     sol_types::{SolError, SolEvent},
 };
 use anyhow::{Context as _, Result};
-use e3_events::SynchronizedDkgPublicationReady;
 use e3_events::{
     prelude::*, BusHandle, CommitteeFinalizeRequested, CommitteePublished,
     DkgFoldAttestationContextEstablished, E3RequestComplete, E3id, EType, EffectsEnabled,
     EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof, PublicKeyAggregated,
     Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
+use e3_events::{EventSource, SynchronizedDkgPublicationReady};
 use e3_evm_transactions::require_successful_receipt;
 use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::{ArcBytes, NotifySync, MAILBOX_LIMIT};
@@ -428,7 +428,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             committee_finalizations: ReplaySubmissionGate::new(),
         };
         for intent in recovered_publications {
-            writer.accept_synchronized_definition(intent)?;
+            writer.accept_synchronized_definition(intent, EventSource::Local)?;
         }
         Ok(writer)
     }

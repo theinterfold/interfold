@@ -104,6 +104,7 @@ pub(in crate::actors::ciphernode_registry_sol) fn committee_publication_error_is
         ICiphernodeRegistry::AttestationBindingCountMismatch::SELECTOR,
         ICiphernodeRegistry::PartyIdOutOfBounds::SELECTOR,
         ICiphernodeRegistry::InvalidProof::SELECTOR,
+        ICiphernodeRegistry::ThresholdNotMet::SELECTOR,
         ICiphernodeRegistry::InvalidPublicInputsLength::SELECTOR,
         ICiphernodeRegistry::VkHashMismatch::SELECTOR,
         ICiphernodeRegistry::PkCommitmentMismatch::SELECTOR,
@@ -536,6 +537,9 @@ mod tests {
 
     #[test]
     fn invalid_public_key_length_is_terminal() {
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::ThresholdNotMet::SELECTOR
+        )));
         assert!(committee_publication_error_is_terminal(&selector_error(
             ICiphernodeRegistry::InvalidPublicKeyLength::SELECTOR
         )));

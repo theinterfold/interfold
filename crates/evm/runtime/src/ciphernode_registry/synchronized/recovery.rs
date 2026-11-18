@@ -66,30 +66,22 @@ pub async fn recover_synchronized_publications(
                 continue;
             }
             if let InterfoldEventData::SynchronizedDkgPublicationReady(intent) = event.get_data() {
-                anyhow::ensure!(
-                    intent.e3_id.chain_id() == chain,
-                    "publication intent in another chain aggregate"
-                );
                 if event.source() == EventSource::Local
                     && !closed.contains(&intent.e3_id)
                     && keys.public_key(&intent.e3_id).is_none()
                 {
+                    // Candidate rejection matches live intake; query, decode and sequence
+                    // failures above still fail journal recovery.
+                    if let Err(error) = validate_synchronized_intent(keys, chain, intent) {
+                        tracing::warn!(e3_id = %intent.e3_id, %error, "recovered synchronized publication candidate rejected");
+                        continue;
+                    }
                     pending
                         .entry(intent.e3_id.clone())
                         .or_insert_with(|| intent.clone());
                 }
             }
         }
-    }
-    // Validate only surviving intents: terminal history wins even over obsolete candidates.
-    for intent in pending.values() {
-        keys.synchronized_selection(&intent.e3_id)
-            .context("recovered publication has no selection")?
-            .validate_publication(
-                keys.synchronized_context(&intent.e3_id)
-                    .context("recovered publication has no frozen context")?,
-                intent,
-            )?;
     }
     Ok(pending.into_values().collect())
 }

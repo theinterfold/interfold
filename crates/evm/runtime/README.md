@@ -31,12 +31,15 @@ path rather than treating transaction submission as completion.
 
 The synchronized registry writer consumes only local publication intents. It uses the shared
 confirmed selection and frozen context, checks the exact all-H signatures and native key, and
-rebuilds pending work from retained history before snapshot cursors. Complete on-chain setup anchors
-must match before a proof publication can be considered settled and key chunks resumed. The ordinary
-transaction owner supplies nonce serialization and receipt/retry checks. This path remains behind
-disabled profile admission; its explicit definition API is for isolated qualification, not admitted
-node startup. In-flight transaction cancellation and distributed nonce journaling remain outside
-that gate's guarantees.
+rebuilds pending work from retained history before snapshot cursors. Rejected recovered candidates
+are logged and skipped before deduplication, as in live intake; journal read/decode/sequence
+failures still fail startup. Decoded permanent wrapper/threshold reverts stop retries. Complete
+on-chain setup anchors must match before a proof publication can be considered settled and key
+chunks resumed. The ordinary transaction owner supplies nonce serialization and receipt/retry
+checks. This path remains behind disabled profile admission; its explicit definition API is for
+isolated qualification, not admitted node startup. In-flight transaction cancellation and
+distributed nonce journaling remain outside that gate's guarantees. Key chunks can be resent after
+restart; this is not a per-chunk exactly-once journal.
 
 ## Runtime integration
 

@@ -35,5 +35,7 @@ alloy_sol_types::sol! {
         event SynchronizedDkgAuthorityPublished(uint256 indexed e3Id, Authority authority);
         error InvalidSynchronizedDkgPublication();
         error SynchronizedDkgPublicationRequired();
+        // Forwarded unchanged from SynchronizedDkgPublicationVerifier.
+        error InvalidPublication();
     }
 }
