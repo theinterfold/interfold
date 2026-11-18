@@ -59,12 +59,22 @@ impl CiphernodeBuilder {
             router_builder(bus, addr, storage, restart, protocol, chain_parameters)?;
         let effect_stages = compute_gate_stages(&restart.lifecycle_stages, &restart.kept_failures);
         let repositories = &storage.repositories;
+        let full = match &self.profile {
+            NodeProfile::Full { zk_backend } => {
+                Some((zk_backend, self.dkg_timing(&storage.chains)?))
+            }
+            _ => None,
+        };
+        let interfold_addresses = full
+            .as_ref()
+            .map(|(_, (addresses, _))| addresses.clone())
+            .unwrap_or_default();
         let (zk_recovery, persisted_committees) =
-            recover_zk_actors(&effect_stages, storage, restart).await?;
+            recover_zk_actors(&effect_stages, storage, restart, interfold_addresses).await?;
 
         // A bootstrap node verifies no proofs and must not sign accusation votes, so it gets
         // no protocol extension.
-        let NodeProfile::Full { zk_backend } = &self.profile else {
+        let Some((zk_backend, (interfold_addresses, dkg_timing_reader))) = full else {
             return Ok(e3_builder);
         };
 
@@ -73,7 +83,6 @@ impl CiphernodeBuilder {
             self.start_multithread(bus, addr, &effect_stages, canonical_keys, zk_backend);
         zk_backend.ensure_installed().await?;
         let signer = provider_cache.ensure_signer().await?;
-        let (interfold_addresses, dkg_timing_reader) = self.dkg_timing(&storage.chains)?;
 
         info!("Setting up ThresholdKeyshareExtension");
         e3_builder = e3_builder.with_recipient(
@@ -265,6 +274,7 @@ async fn recover_zk_actors(
     effect_stages: &HashMap<E3id, E3Stage>,
     storage: &Storage,
     restart: &Restart,
+    interfold_addresses: HashMap<u64, Address>,
 ) -> Result<(ZkActorRecovery, HashMap<E3id, Committee>)> {
     let Storage {
         event_system,
@@ -286,7 +296,8 @@ async fn recover_zk_actors(
         persisted_committees.clone(),
         persisted_e3_metadata,
         restart.dkg_fold_contexts_by_e3.clone(),
-    );
+    )
+    .with_interfold_addresses(interfold_addresses);
     Box::pin(
         zk_recovery.hydrate(
             repositories,
