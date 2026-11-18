@@ -129,14 +129,19 @@ The exact encoding and wire cutover are described in [upgrades](upgrades.md).
 The same node collector owns recipient collection. It authenticates dealer authorship against the
 finalized committee before reserving a bounded slot. Early authenticated rows cannot choose a
 roster: native keyshare's C4 intent supplies the fixed H roster, verified C2 provenance,
-transport-key and SK/bundle anchors. Incompatible early rows are discarded when that intent arrives.
-C0, own C2 and C4 must come from local planned slots; all N recipients, including outside H, join
-exactly those H dealers. Its exclusive record flushes before work or output, preserves original
-proof bytes, replaces restart correlations, and retires at canonical DKG termination. A peer setup
-is never a local recipient verdict. Only the correlated local worker result produces the local setup
-event and signed peer setup. Downstream consent/publication producers still need to consume these
-outputs. Admission stays disabled; below-admission actor tests and real-proof qualification do not
-admit production effects.
+transport-key and SK/bundle anchors. Before that intent, the signed controller domain is provisional
+too. Incompatible early rows are discarded when the native intent arrives. C0, own C2 and C4 must
+come from local planned slots; all N recipients, including outside H, join exactly those H dealers.
+Retained peer rows are authenticated candidates; `NodesFold` recursively verifies their proofs, and
+the executor verifies the join. Before completion, a signer can replace proof bytes for the same
+fixed statement; this retires old compute correlations, not the native roster. A join failure is not
+a localized peer-invalid verdict. PK/batch expectations are derived from those dealer rows; this
+collector does not independently compare native PK shares. Its exclusive record flushes before work
+or output, preserves completed output, replaces restart correlations, and retires at canonical DKG
+termination. A peer setup is never a local recipient verdict. Only the correlated local worker
+result produces the local setup event and signed peer setup. Downstream consent/publication
+producers still need to consume these outputs. Admission stays disabled; below-admission actor tests
+and real-proof qualification do not admit production effects.
 
 Recipient record flush failures retain the work and use one coalesced actor-owned retry per request.
 Successful flush or confirmed termination cancels the retry. Effects remain withheld until a flush

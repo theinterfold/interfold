@@ -38,7 +38,10 @@ pub(crate) struct RecipientCollection {
     pub records: HashMap<E3id, RecipientRecord>,
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
+    local_published: HashSet<E3id>,
     flush_retries: HashMap<E3id, SpawnHandle>,
+    work_retries: HashMap<E3id, SpawnHandle>,
+    invalid_work: HashSet<E3id>,
 }
 
 pub(crate) fn repository(repositories: &Repositories, id: &E3id) -> Repository<RecipientRecord> {
@@ -151,9 +154,14 @@ impl NodeProofAggregator {
             if let Some(retry) = self.recipient.flush_retries.remove(&id) {
                 ctx.cancel_future(retry);
             }
+            if let Some(retry) = self.recipient.work_retries.remove(&id) {
+                ctx.cancel_future(retry);
+            }
             self.recipient.records.remove(&id);
             self.recipient.in_flight.remove(&id);
             self.recipient.published.remove(&id);
+            self.recipient.local_published.remove(&id);
+            self.recipient.invalid_work.remove(&id);
             if let Some(repositories) = &self.recovery_repositories {
                 let store = e3_data::DataStore::from(repository(repositories, &id));
                 ctx.wait(
@@ -297,21 +305,33 @@ impl NodeProofAggregator {
                 let record = self
                     .recipient
                     .records
-                    .entry(id)
+                    .entry(id.clone())
                     .or_insert_with(|| RecipientRecord::new(ec.clone()));
                 if let Some(plan) = &record.plan {
                     plan.validate_dealer(message)?;
                 }
                 if let Some(old) = record.dealers.get(&message.context.party_id) {
                     if old.context == message.context
-                        && old.proof.public_signals == message.proof.public_signals
+                        // NodeFold's only local-artifact anchor is field 3. Preserve every
+                        // statement field while allowing its authenticated genealogy repair.
+                        && old.proof.public_signals[..3 * 32]
+                            == message.proof.public_signals[..3 * 32]
+                        && old.proof.public_signals[4 * 32..]
+                            == message.proof.public_signals[4 * 32..]
                     {
-                        return Ok(()); // Original successful randomized bytes survive redelivery.
+                        if old.proof == message.proof {
+                            return Ok(());
+                        }
+                        // Authorship is not proof validity; repaired candidates must still pass
+                        // the batch/genealogy and recursive verification boundaries.
+                    } else {
+                        ensure!(
+                            record.plan.is_none(),
+                            "conflicting authenticated dealer join"
+                        );
                     }
-                    ensure!(
-                        record.plan.is_none(),
-                        "conflicting authenticated dealer join"
-                    );
+                    self.recipient.in_flight.remove(&id);
+                    self.recipient.invalid_work.remove(&id);
                 }
                 record
                     .dealers
@@ -410,7 +430,13 @@ impl NodeProofAggregator {
                         error.request() == request,
                         "recipient error has another request"
                     );
-                    tracing::error!(%id, %error, "recipient worker failed locally; exact retry request retained");
+                    if matches!(
+                        error.get_err(),
+                        ComputeRequestErrorKind::Zk(ZkError::InvalidParams(_))
+                    ) {
+                        self.recipient.invalid_work.insert(id.clone());
+                    }
+                    tracing::error!(%id, %error, "recipient join failed; exact request and authenticated candidates retained, not a peer-invalid verdict");
                 }
             }
             _ => {}
@@ -473,7 +499,9 @@ impl NodeProofAggregator {
                     }
                     if let Err(error) = actor.publish_recipient_work(&id) {
                         tracing::error!(%id, %error, "recipient publication failed; inputs retained");
+                        actor.retry_recipient_flush(&id, ctx);
                     }
+                    actor.retry_recipient_work(&id, ctx);
                 }
                 Err(error) => {
                     tracing::error!(%id, %error, "recipient flush failed; effects withheld until retry succeeds");
@@ -501,6 +529,61 @@ impl NodeProofAggregator {
         self.recipient.flush_retries.insert(id.clone(), retry);
     }
 
+    fn retry_recipient_work(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        if !self.recipient.in_flight.contains_key(id) || self.recipient.invalid_work.contains(id) {
+            if let Some(retry) = self.recipient.work_retries.remove(id) {
+                ctx.cancel_future(retry);
+            }
+            return;
+        }
+        if self.recipient.work_retries.contains_key(id) {
+            return;
+        }
+        let id = id.clone();
+        let retry_id = id.clone();
+        let retry = ctx.run_later(Duration::from_secs(60), move |actor, ctx| {
+            actor.recipient.work_retries.remove(&retry_id);
+            if !actor.dealer.effects || actor.dealer.ended.contains(&retry_id) {
+                return;
+            }
+            if actor.recipient.invalid_work.contains(&retry_id) {
+                return;
+            }
+            if let Err(error) = actor.redrive_recipient_work(&retry_id) {
+                tracing::error!(%retry_id, %error, "recipient redelivery failed; live correlation retained");
+            }
+            actor.retry_recipient_work(&retry_id, ctx);
+        });
+        self.recipient.work_retries.insert(id, retry);
+    }
+
+    fn redrive_recipient_work(&mut self, id: &E3id) -> Result<()> {
+        let Some(current) = self.recipient.in_flight.get(id) else {
+            return Ok(());
+        };
+        let record = self
+            .recipient
+            .records
+            .get(id)
+            .context("missing recipient record")?;
+        self.validate_recipient_record(id, record)?;
+        let plan = record.plan.as_ref().context("missing recipient plan")?;
+        let work = plan.request(&record.leaves, &record.dealers)?;
+        ensure!(
+            record.completed.is_none()
+                && work.is_some_and(|work| current.request
+                    == ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(Box::new(work)))),
+            "recipient redelivery differs from flushed work"
+        );
+        let mut request = current.clone();
+        request.correlation_id = CorrelationId::new();
+        // The compute gate reuses success and waits for queued/running work to finish. Keep the
+        // current correlation until bus admission succeeds, including when admission is saturated.
+        self.bus.publish(request.clone(), record.ec.clone())?;
+        self.recipient.in_flight.insert(id.clone(), request);
+        Ok(())
+    }
+
     fn publish_recipient_work(&mut self, id: &E3id) -> Result<()> {
         if !self.dealer.effects || self.dealer.ended.contains(id) {
             return Ok(());
@@ -517,7 +600,10 @@ impl NodeProofAggregator {
                     output.proof.clone(),
                     &self.signer,
                 )?;
-                self.bus.publish(output.clone(), record.ec.clone())?;
+                if !self.recipient.local_published.contains(id) {
+                    self.bus.publish(output.clone(), record.ec.clone())?;
+                    self.recipient.local_published.insert(id.clone());
+                }
                 self.bus.publish(signed, record.ec.clone())?;
                 self.recipient.published.insert(id.clone());
             }

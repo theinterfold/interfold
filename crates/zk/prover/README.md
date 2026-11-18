@@ -89,10 +89,17 @@ Refused flushed effects retain their exact payload/correlation and causation for
 publication retry with capped backoff, cancelled on retirement. The local dealer output is not a
 recipient setup or consent. Its signed peer envelope feeds the same collector's recipient phase.
 `synchronized::recipient::RecipientPlan` consumes native keyshare's fixed C4 intent, local
-C0/own-C2/C4 and authenticated H dealer joins, including for outside-H recipients. It checks
-statement consistency; the actor owns signature/source/correlation admission and durable effects,
-and the executor owns proof verification. Consent/publication producers and the registry writer
-remain absent; synchronized admission stays disabled.
+C0/own-C2/C4 and authenticated H dealer joins, including for outside-H recipients. Retained dealer
+rows are authenticated candidates, not individually verified proofs. `NodesFold` recursively
+verifies every dealer proof, and the executor verifies that resulting join. A failed join does not
+identify a dishonest peer: local artifacts or a candidate may be at fault. Corrected authenticated
+proof bytes or genealogy can replace a candidate for the same fixed statement, retiring old
+correlations; a completed local verdict is retained. Recipient bus refusals retry from flushed
+progress, tracking local and signed outputs separately. Missing outcomes trigger fresh-correlated
+redelivery of the same work; the compute gate owns running-job deduplication. The native intent
+fixes C4/C2 provenance and setup context; PK/batch expectations are derived from those authenticated
+dealer rows, not an independent native PK check at this collector. Consent/publication producers
+and the registry writer remain absent; synchronized admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

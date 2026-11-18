@@ -220,6 +220,142 @@ fn response(request: &ComputeRequest) -> ComputeResponse {
 }
 
 #[actix::test]
+async fn corrected_dealer_genealogy_repairs_retained_mixed_batch() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor
+        .recipient
+        .records
+        .get_mut(&id)
+        .unwrap()
+        .dealers
+        .remove(&2);
+    let mut mixed = f.dealers[1].clone();
+    let mut public = mixed.proof.public_signals.to_vec();
+    public[3 * 32 + 31] = 1;
+    mixed.proof.public_signals = ArcBytes::from_bytes(&public);
+    mixed = SynchronizedDkgProofPublished::sign(
+        mixed.e3_id,
+        mixed.context,
+        mixed.role,
+        mixed.proof,
+        &f.signers[2],
+    )?;
+    accept(&mut f.actor, mixed)?;
+    assert!(f
+        .actor
+        .validate_recipient_record(&id, &f.actor.recipient.records[&id])
+        .is_err());
+    accept(&mut f.actor, f.dealers[1].clone())?;
+    f.actor
+        .validate_recipient_record(&id, &f.actor.recipient.records[&id])?;
+    f.actor.dealer.effects = true;
+    f.actor.publish_recipient_work(&id)?;
+    assert!(f.actor.recipient.in_flight.contains_key(&id));
+    Ok(())
+}
+
+#[actix::test]
+async fn recipient_bus_retry_does_not_repeat_the_admitted_first_output() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor.dealer.effects = true;
+    f.actor.publish_recipient_work(&id)?;
+    let request = f.actor.recipient.in_flight[&id].clone();
+    accept(&mut f.actor, response(&request))?;
+    bus.flush_event_pipeline().await?;
+    // No await: leave exactly one slot for the local output; signed publication must be refused.
+    for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE - 1 {
+        bus.publish_without_context(EffectsEnabled::new())?;
+    }
+    assert!(f.actor.publish_recipient_work(&id).is_err());
+    bus.flush_event_pipeline().await?;
+    // Again leave only one slot. A retry that republishes the local output cannot admit the
+    // signed output, even if durable dedup would later hide that redundant local occurrence.
+    for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE - 1 {
+        bus.publish_without_context(EffectsEnabled::new())?;
+    }
+    f.actor.publish_recipient_work(&id)?;
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(
+                e.get_data(),
+                InterfoldEventData::SynchronizedRecipientProofReady(_)
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(
+                e.get_data(),
+                InterfoldEventData::SynchronizedDkgProofPublished(_)
+            ))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn recipient_missing_outcome_redrives_without_new_input() -> Result<()> {
+    tokio::time::pause();
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor.dealer.effects = true;
+    let addr = f.actor.start();
+    addr.send(FlushRecipient(id.clone())).await?;
+    addr.send(InspectRecipient(id.clone())).await?;
+    bus.flush_event_pipeline().await?;
+    tokio::time::advance(Duration::from_secs(61)).await;
+    addr.send(InspectRecipient(id.clone())).await?;
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests = events
+        .iter()
+        .filter_map(|e| match e.get_data() {
+            InterfoldEventData::ComputeRequest(request) => Some(request),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        requests.len(),
+        2,
+        "missing outcome must trigger fresh-correlated redelivery"
+    );
+    assert_ne!(requests[0].correlation_id, requests[1].correlation_id);
+    assert_eq!(requests[0].request, requests[1].request);
+    addr.send(RejectRecipientWork(ComputeRequestError::new(
+        ComputeRequestErrorKind::Zk(ZkError::InvalidParams("permanent child mismatch".into())),
+        requests[1].clone(),
+    )))
+    .await??;
+    tokio::time::advance(Duration::from_secs(61)).await;
+    addr.send(InspectRecipient(id)).await?;
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e.get_data(), InterfoldEventData::ComputeRequest(_)))
+            .count(),
+        2
+    );
+    addr.send(StopRecipient).await?;
+    Ok(())
+}
+
+#[actix::test]
 async fn recipient_authentication_precedes_slots_and_valid_replacement_survives() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
     let mut f = fixture(&bus, 1)?;
@@ -251,8 +387,56 @@ async fn recipient_authentication_precedes_slots_and_valid_replacement_survives(
         repeated.proof,
         &f.signers[0],
     )?;
-    accept(&mut f.actor, repeated)?;
-    assert_eq!(f.actor.recipient.records[id].dealers[&0], f.dealers[0]);
+    accept(&mut f.actor, repeated.clone())?;
+    assert_eq!(f.actor.recipient.records[id].dealers[&0], repeated);
+    Ok(())
+}
+
+#[actix::test]
+async fn corrected_authenticated_dealer_proof_retires_stale_recipient_work() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor.dealer.effects = true;
+    f.actor.publish_recipient_work(&id)?;
+    let first = f.actor.recipient.in_flight[&id].clone();
+    accept(
+        &mut f.actor,
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
+                "recursive join rejected a candidate".into(),
+            )),
+            first.clone(),
+        ),
+    )?;
+    let mut corrected = f.dealers[0].clone();
+    corrected.proof.data = ArcBytes::from_bytes(&[99]);
+    assert!(accept(&mut f.actor, corrected.clone()).is_err()); // changed bytes need authorship
+    assert_eq!(f.actor.recipient.in_flight[&id], first);
+    corrected = SynchronizedDkgProofPublished::sign(
+        corrected.e3_id,
+        corrected.context,
+        corrected.role,
+        corrected.proof,
+        &f.signers[0],
+    )?;
+    accept(&mut f.actor, corrected.clone())?;
+    assert!(!f.actor.recipient.in_flight.contains_key(&id));
+    assert_eq!(f.actor.recipient.records[&id].dealers[&0], corrected);
+    f.actor.publish_recipient_work(&id)?;
+    let second = f.actor.recipient.in_flight[&id].clone();
+    assert_ne!(first.correlation_id, second.correlation_id);
+    assert_ne!(first.request, second.request);
+    assert!(accept(&mut f.actor, response(&first)).is_err());
+    assert!(f.actor.recipient.records[&id].completed.is_none());
+    accept(&mut f.actor, corrected)?;
+    assert_eq!(f.actor.recipient.in_flight[&id], second);
+    accept(&mut f.actor, response(&second))?;
+    let completed = f.actor.recipient.records[&id].completed.clone();
+    accept(&mut f.actor, f.dealers[0].clone())?;
+    assert_eq!(f.actor.recipient.records[&id].completed, completed);
+    assert!(completed.is_some());
     Ok(())
 }
 
@@ -271,7 +455,22 @@ async fn native_c4_fixes_nonprefix_roster_for_all_n_recipients() -> Result<()> {
         assert!(f.plan.request(&misplaced, &record.dealers).is_err());
         let mut replacement = f.plan.inputs.clone();
         replacement.dealers = vec![0, 1];
-        assert!(accept(&mut f.actor, replacement).is_err());
+        let mut c2 = replacement.c2_statements[&0].to_vec();
+        c2[2 * 32 + 31] = 1;
+        replacement
+            .c2_statements
+            .insert(1, ArcBytes::from_bytes(&c2));
+        if recipient != 2 {
+            replacement.c2_statements.remove(&2);
+        }
+        RecipientPlan::new(replacement.clone())?;
+        let error = accept(&mut f.actor, replacement).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("native C4 roster is already fixed"),
+            "{error:#}"
+        );
         assert_eq!(f.actor.recipient.records[&id].plan.as_ref(), Some(&f.plan));
         let mut wrong = f.leaves[2].clone();
         let mut fields = wrong.proof.public_signals.to_vec();
@@ -285,25 +484,39 @@ async fn native_c4_fixes_nonprefix_roster_for_all_n_recipients() -> Result<()> {
 #[actix::test]
 async fn early_peer_setup_cannot_choose_native_roster_or_poison_replacement() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
-    let mut f = fixture(&bus, 1)?;
-    let mut early = f.dealers[0].clone();
-    // Authenticated sender, wrong native C2 messages. Retained before intent, discarded at fixation.
-    let mut fields = early.proof.public_signals.to_vec();
-    fields[7 * 32 - 1] = 42;
-    early.proof.public_signals = ArcBytes::from_bytes(&fields);
-    early = SynchronizedDkgProofPublished::sign(
-        early.e3_id,
-        early.context,
-        early.role,
-        early.proof,
-        &f.signers[0],
-    )?;
-    accept(&mut f.actor, early)?;
-    accept(&mut f.actor, f.plan.inputs.clone())?;
-    assert!(f.actor.recipient.records[&f.plan.inputs.e3_id]
-        .dealers
-        .is_empty());
-    collect(&mut f)?;
+    for wrong_controller in [false, true] {
+        let mut f = fixture(&bus, 1)?;
+        let mut early = f.dealers[0].clone();
+        let mut fields = early.proof.public_signals.to_vec();
+        if wrong_controller {
+            // Before native intent, the signed controller domain is only a candidate context.
+            early.context.setup.interfold_address = Address::repeat_byte(99);
+            let binding = crate::synchronized::request_binding(
+                &Configs::for_profile(f.plan.inputs.params_profile, f.plan.inputs.committee_size)?,
+                &early.context,
+                &early.e3_id,
+            )?;
+            fields[..64].fill(0);
+            fields[16..32].copy_from_slice(&binding[0].to_be_bytes());
+            fields[48..64].copy_from_slice(&binding[1].to_be_bytes());
+        } else {
+            fields[7 * 32 - 1] = 42; // wrong native C2 messages
+        }
+        early.proof.public_signals = ArcBytes::from_bytes(&fields);
+        early = SynchronizedDkgProofPublished::sign(
+            early.e3_id,
+            early.context,
+            early.role,
+            early.proof,
+            &f.signers[0],
+        )?;
+        accept(&mut f.actor, early)?;
+        accept(&mut f.actor, f.plan.inputs.clone())?;
+        assert!(f.actor.recipient.records[&f.plan.inputs.e3_id]
+            .dealers
+            .is_empty());
+        collect(&mut f)?;
+    }
     Ok(())
 }
 
@@ -389,6 +602,66 @@ impl Handler<FlushRecipient> for NodeProofAggregator {
     fn handle(&mut self, msg: FlushRecipient, ctx: &mut Context<Self>) {
         self.flush_recipient_record(&msg.0, self.recipient.records[&msg.0].clone(), ctx);
     }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct ReplaceRecipientBus(BusHandle);
+impl Handler<ReplaceRecipientBus> for NodeProofAggregator {
+    type Result = ();
+    fn handle(&mut self, msg: ReplaceRecipientBus, _: &mut Context<Self>) {
+        self.bus = msg.0;
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<()>")]
+struct RejectRecipientWork(ComputeRequestError);
+impl Handler<RejectRecipientWork> for NodeProofAggregator {
+    type Result = Result<()>;
+    fn handle(&mut self, msg: RejectRecipientWork, _: &mut Context<Self>) -> Self::Result {
+        accept(self, msg.0)
+    }
+}
+
+#[actix::test]
+async fn recipient_bus_refusal_retries_flushed_output_without_input_redelivery() -> Result<()> {
+    tokio::time::pause();
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor.dealer.effects = true;
+    f.actor.publish_recipient_work(&id)?;
+    let request = f.actor.recipient.in_flight[&id].clone();
+    accept(&mut f.actor, response(&request))?;
+    bus.flush_event_pipeline().await?;
+    bus.fail_event_pipeline("injected bus refusal");
+    let addr = f.actor.start();
+    addr.send(FlushRecipient(id.clone())).await?;
+    addr.send(InspectRecipient(id.clone())).await?;
+    // The substitute bus isolates effect retry from the fatal node-health policy of a real
+    // failed pipeline; no production pipeline is reopened.
+    let EventFixture {
+        bus: healthy,
+        history,
+        ..
+    } = EventFixture::new()?;
+    addr.send(ReplaceRecipientBus(healthy.clone())).await?;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    addr.send(InspectRecipient(id)).await?;
+    let events = history.send(TakeEvents::<InterfoldEvent>::new(2)).await?;
+    assert!(!events.timed_out, "refused output needs automatic retry");
+    assert!(matches!(
+        events.events[0].get_data(),
+        InterfoldEventData::SynchronizedRecipientProofReady(_)
+    ));
+    assert!(matches!(
+        events.events[1].get_data(),
+        InterfoldEventData::SynchronizedDkgProofPublished(_)
+    ));
+    addr.send(StopRecipient).await?;
+    Ok(())
 }
 
 #[derive(Message)]
