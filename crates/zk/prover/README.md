@@ -82,13 +82,14 @@ The node collector's guarded dealer phase uses `synchronized::dealer::DealerPlan
 C1–C3 and check the correlated join result. That definition API checks statements, not cryptographic
 validity, chain authority or runtime admission. The actor checks local source/request/committee,
 flushes its exclusive recovery record before effects and retires at confirmed publication. The
-configured controller, not the proof request, supplies the Interfold address. A mismatched C1/C2
-secret leaves both slots repairable. C3 uses the native recipient key and the coherent C2's exact
-recipient/CRT message. Startup recovers native key anchors and one alternate per provisional C3 slot
-from the retained prefix; the qualified proof keeps its original bytes. An unchanged input only
-redrives a write that still needs acknowledgment. Refused flushed effects retain their exact
-payload/correlation and causation for a coalesced publication retry with capped backoff, cancelled
-on retirement. The local dealer output is not a recipient setup or consent.
+configured controller, not the proof request, supplies the Interfold address. Until C1/C2 agree and
+all C3 rows match that C2 and the native recipient keys, every slot stays repairable with one
+alternate. Startup recovers those alternates and native key anchors from the retained prefix; it
+rejects saved plans whose chain has no configured journal. Only the qualified batch seeds the
+producer's proof cache, with its original bytes. An unchanged input only redrives a write that still
+needs acknowledgment. Refused flushed effects retain their exact payload/correlation and causation
+for a coalesced publication retry with capped backoff, cancelled on retirement. The local dealer
+output is not a recipient setup or consent.
 
 The signed dealer envelope feeds the same collector's recipient phase.
 `synchronized::recipient::RecipientPlan` consumes native keyshare's fixed C4 intent, local
