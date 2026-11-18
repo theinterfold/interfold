@@ -54,6 +54,11 @@ failures belong to `trbfv`. The dispatcher only wraps native results with their 
 identity; it contains no circuit or threshold calculation. The memory-only gate is not a
 transactional outbox.
 
+Synchronized DKG/C5 owners can retry a failed generation under a fresh correlation; the gate does
+not return a cached failure forever. Successful outcomes and same-correlation dedup remain intact.
+The requesting actor owns backoff; every new attempt still passes shared pool and lifecycle gates.
+SS outcome reuse is unchanged.
+
 The extraction preserves the existing pool-type re-exports and changes no persisted/event/wire
 encoding or cryptographic statement. `setup_zk_actors` and `ZkActor::new` now require the shared
 pool and node scope, so direct Rust callers must supply them when constructing the runtime. No

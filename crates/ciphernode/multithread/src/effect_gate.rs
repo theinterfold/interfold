@@ -247,6 +247,17 @@ impl ComputeEffectGate {
         }
     }
 
+    fn synchronized_generation(kind: &ComputeRequestKind) -> bool {
+        match kind {
+            ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(_)) => true,
+            ComputeRequestKind::Zk(ZkRequest::PkAggregation(request)) => {
+                request.params_profile.protocol()
+                    == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+            }
+            _ => false,
+        }
+    }
+
     /// Forward a compute once. Send its outcome to later request IDs.
     fn forward(&mut self, event: InterfoldEvent) -> bool {
         if let Some(key) = Self::request_key(&event) {
@@ -282,12 +293,19 @@ impl ComputeEffectGate {
                     return false;
                 }
                 Some(forwarded) => {
-                    if let Some(outcome) = forwarded.outcome.clone() {
-                        self.publish_outcome(&outcome, correlation_id, &event);
-                        return false;
-                    }
-                    if forwarded.forwarded_at.elapsed() < self.reforward_after
-                        || self.running.any(&forwarded.correlation_ids)
+                    let failed_generation = match forwarded.outcome.clone() {
+                        Some(ComputeOutcome::Error(_)) if Self::synchronized_generation(&key.1) => {
+                            true
+                        }
+                        Some(outcome) => {
+                            self.publish_outcome(&outcome, correlation_id, &event);
+                            return false;
+                        }
+                        None => false,
+                    };
+                    if !failed_generation
+                        && (forwarded.forwarded_at.elapsed() < self.reforward_after
+                            || self.running.any(&forwarded.correlation_ids))
                     {
                         if !forwarded.waiting.contains(&correlation_id) {
                             forwarded.waiting.push(correlation_id);
@@ -296,10 +314,12 @@ impl ComputeEffectGate {
                     }
                     info!(
                         e3_id = %key.0,
-                        "Sending a compute request to the worker again: its result has not reached the gate"
+                        failed_generation,
+                        "Sending a fresh correlated compute attempt to the worker"
                     );
                     forwarded.correlation_ids.push(correlation_id);
                     forwarded.forwarded_at = Instant::now();
+                    forwarded.outcome = None;
                 }
                 None => {
                     self.forwarded.insert(
@@ -1022,6 +1042,91 @@ pub(crate) mod tests {
         };
         assert_eq!(result.correlation_id(), &current);
         assert_eq!(result.request().request, failure(old).request().request);
+    }
+
+    #[actix::test]
+    async fn live_synchronized_generation_failures_allow_fresh_correlated_attempts() {
+        use e3_events::{
+            PkAggregationProofRequest, SynchronizedDkgProofJob, SynchronizedDkgProofRequest,
+            SynchronizedProofContext,
+        };
+        use e3_fhe_params::BfvProfile;
+        let c5 = |params_profile| {
+            ZkRequest::PkAggregation(PkAggregationProofRequest {
+                keyshare_bytes: vec![],
+                aggregated_pk_bytes: ArcBytes::default(),
+                params_profile,
+                committee_n: 3,
+                committee_h: 2,
+                committee_threshold: 1,
+            })
+        };
+        let proof = Proof::new(
+            CircuitName::PkGeneration,
+            ArcBytes::default(),
+            ArcBytes::default(),
+        );
+        let join = ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+            params_profile: BfvProfile::SyncDecInsecure64,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            context: SynchronizedProofContext {
+                party_id: 0,
+                setup: e3_committee_hash::DkgSetupContext {
+                    interfold_address: alloy::primitives::Address::repeat_byte(1),
+                    committee_hash: [2; 32].into(),
+                    crypto_config_id: [3; 32].into(),
+                },
+            },
+            job: SynchronizedDkgProofJob::Dealer {
+                c1: proof.clone(),
+                c2: proof,
+                c3: vec![],
+            },
+        }));
+        for (job, rerun) in [
+            (join, true),
+            (c5(BfvProfile::SyncDecInsecure64), true),
+            (c5(BfvProfile::SsInsecure64), false),
+        ] {
+            let (bus, _) = test_bus();
+            let recorder = Recorder::default().start();
+            let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+                .with_bus(bus)
+                .start();
+            let first = CorrelationId::new();
+            let retry = CorrelationId::new();
+            let request = |id| ComputeRequest::zk(job.clone(), id, E3id::new("4", 1));
+            let work = |id| {
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    request(id).into(),
+                    None,
+                    10,
+                    None,
+                    EventSource::Local,
+                )
+                .into_sequenced(1)
+            };
+            gate.send(effects_enabled()).await.unwrap();
+            gate.send(work(first)).await.unwrap();
+            gate.send(outcome_event(ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
+                    "missing local VK".into(),
+                )),
+                request(first),
+            )))
+            .await
+            .unwrap();
+            gate.send(work(first)).await.unwrap(); // same-correlation dedup remains intact
+            gate.send(work(retry)).await.unwrap();
+            assert_eq!(
+                recorder.send(Received).await.unwrap(),
+                if rerun {
+                    vec![first, retry]
+                } else {
+                    vec![first]
+                },
+            );
+        }
     }
 
     #[actix::test]
