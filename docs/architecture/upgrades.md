@@ -177,7 +177,8 @@ written, such as late registrations and admission cooldowns. It refuses an `enfo
 batch past the deadline in the plan.
 
 Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
-that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
+that the verification page downloaded (open the dashboard with `?identity-preview`, because the
+panel is hidden before the deployment) against ZKPassport's verifier on an Anvil mainnet fork. Set
 `CONFIRM_MAINNET_FORK=1`, and point the `mainnet` network at the fork with `RPC_URL` and a test
 `PRIVATE_KEY`; the script refuses any chain that is not an Anvil mainnet fork. It deploys the
 verifier with the proof's settings, checks that another owner is rejected, registers the bound
