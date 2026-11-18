@@ -625,6 +625,15 @@ impl NodeProofAggregator {
         ctx: &mut Context<Self>,
     ) {
         self.recipient.unflushed.insert(id.clone());
+        // New inputs update the retained record but cannot bypass a failing store's backoff.
+        if self
+            .recipient
+            .flush_retries
+            .get(id)
+            .is_some_and(|retry| retry.timer.is_some())
+        {
+            return;
+        }
         // Every writer, including a pending retry, must revalidate its current snapshot.
         if let Err(error) = self.validate_recipient_record(id, &record) {
             tracing::error!(%id, %error, "saved recipient input rejected");
@@ -639,9 +648,7 @@ impl NodeProofAggregator {
             match result {
                 Ok(()) => {
                     actor.recipient.unflushed.remove(&id);
-                    if let Some(retry) = actor.recipient.flush_retries.remove(&id).and_then(|retry| retry.timer) {
-                        ctx.cancel_future(retry);
-                    }
+                    actor.recipient.flush_retries.remove(&id);
                     actor.drive_recipient_delivery(&id, ctx);
                 }
                 Err(error) => {

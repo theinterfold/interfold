@@ -954,6 +954,71 @@ async fn recipient_failed_flush_resumes_compute_and_publication_without_new_inpu
 }
 
 #[actix::test]
+async fn recipient_new_progress_waits_for_pending_flush_backoff() -> Result<()> {
+    use std::{sync::atomic::Ordering, time::Duration};
+
+    tokio::time::pause();
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    let record = f.actor.recipient.records.get_mut(&id).unwrap();
+    let expected = f.plan.request(&record.leaves, &record.dealers)?.unwrap();
+    let missing = record.dealers.remove(&2).unwrap();
+
+    let repositories = f.actor.recovery_repositories.take().unwrap();
+    let flush = FailedFlush::default();
+    let attempts = flush.attempts.clone();
+    let flush = flush.start();
+    f.actor.recovery_repositories = Some(Repositories::new(
+        repositories
+            .store
+            .with_flush_recipient(flush.clone().recipient()),
+    ));
+    f.actor.dealer.effects = true;
+    let node = f.actor.start();
+    node.send(FlushRecipient(id.clone())).await?;
+    assert_eq!(
+        node.send(InspectRecipient(id.clone())).await?,
+        (true, false)
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+    tokio::time::advance(Duration::from_millis(1200)).await;
+    assert_eq!(
+        node.send(InspectRecipient(id.clone())).await?,
+        (true, false)
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    node.send(RetainDealer(missing)).await??;
+    node.send(FlushRecipient(id.clone())).await?;
+    tokio::time::advance(Duration::from_millis(1200)).await;
+    assert_eq!(
+        node.send(InspectRecipient(id.clone())).await?,
+        (true, false)
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+    flush.send(RecoverFlush).await?;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    let delivered = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+    assert!(
+        !delivered.timed_out,
+        "latest retained record was not dispatched"
+    );
+    let InterfoldEventData::ComputeRequest(request) = delivered.events[0].get_data() else {
+        anyhow::bail!("expected dispatch of the latest flushed inputs");
+    };
+    assert_eq!(
+        request.request,
+        ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(Box::new(expected)))
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    node.send(StopRecipient).await?;
+    Ok(())
+}
+
+#[actix::test]
 async fn recipient_terminal_history_cancels_failed_flush_retry() -> Result<()> {
     tokio::time::pause();
     let EventFixture { bus, history, .. } = EventFixture::new()?;

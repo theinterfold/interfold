@@ -98,11 +98,12 @@ one alternate per dealer, and promotes a compatible repair only after a matching
 failure, with a per-boot cap per dealer. The active correlation and successful verdict are not
 superseded by new bytes alone. Local retries that have not returned an outcome remain in flight.
 Recipient bus refusals retry from flushed progress without another store write; storage and delivery
-back off separately. Missing outcomes trigger fresh-correlated redelivery of the same work; the
-compute gate owns running-job deduplication. The native intent fixes C4/C2 provenance and setup
-context; PK/batch expectations are derived from those authenticated dealer rows, not an independent
-native PK check at this collector. Consent, publication aggregation and registry writing have
-separate owners; synchronized admission stays disabled.
+back off separately. New progress updates the pending write without bypassing its backoff. Missing
+outcomes trigger fresh-correlated redelivery of the same work; the compute gate owns running-job
+deduplication. The native intent fixes C4/C2 provenance and setup context; PK/batch expectations are
+derived from those authenticated dealer rows, not an independent native PK check at this collector.
+Consent, publication aggregation and registry writing have separate owners; synchronized admission
+stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
