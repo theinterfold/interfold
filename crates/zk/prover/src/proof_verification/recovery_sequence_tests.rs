@@ -4,9 +4,11 @@ use super::*;
 use actix::{Actor, Handler, ResponseFuture};
 use e3_event_system::EventSystem;
 use e3_events::{
-    AggregateConfig, EventConstructorWithTimestamp, StoreEventRequested, StoreEventResponse,
-    TestEvent, Unsequenced,
+    AggregateConfig, EventConstructorWithTimestamp, EventStoreQueryResponse, InterfoldEvent,
+    StoreEventRequested, StoreEventResponse, TestEvent, Unsequenced,
 };
+use e3_utils::actix::channel;
+use std::time::Duration;
 
 struct GapReader {
     inner: Recipient<EventStoreQueryBy<SeqAgg>>,

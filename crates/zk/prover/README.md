@@ -81,14 +81,16 @@ original request for retry, never a peer-invalid verdict.
 The node collector's guarded dealer phase uses `synchronized::dealer::DealerPlan` to collect local
 C1–C3 and check the correlated join result. That definition API checks statements, not cryptographic
 validity, chain authority or runtime admission. The actor checks local source/request/committee,
-flushes its exclusive recovery record before effects and retires at confirmed publication. Early C3
-messages stay provisional until the native plan and C2 can qualify their commitments. One alternate
-per provisional slot can be reconstructed from retained journal inputs; the qualified proof keeps
-its original bytes. An unchanged input only redrives a write that still needs acknowledgment.
-Refused flushed effects retain their exact payload/correlation and causation for a coalesced
-publication retry with capped backoff, cancelled on retirement. The local dealer output is not a
-peer-authenticated setup or consent. Recipient/publication producers and the registry writer remain
-absent; synchronized admission stays disabled.
+flushes its exclusive recovery record before effects and retires at confirmed publication. The
+configured controller, not the proof request, supplies the Interfold address. A mismatched C1/C2
+secret leaves both slots repairable. C3 uses the native recipient key and the coherent C2's exact
+recipient/CRT message. Startup recovers native key anchors and one alternate per provisional C3 slot
+from the retained prefix; the qualified proof keeps its original bytes. An unchanged input only
+redrives a write that still needs acknowledgment. Refused flushed effects retain their exact
+payload/correlation and causation for a coalesced publication retry with capped backoff, cancelled
+on retirement. The local dealer output is not a peer-authenticated setup or consent.
+Recipient/publication producers and the registry writer remain absent; synchronized admission stays
+disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

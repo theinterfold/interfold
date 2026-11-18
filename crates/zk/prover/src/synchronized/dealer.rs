@@ -3,6 +3,7 @@
 //! Local dealer collection. Admission/effects and storage belong to the actor; this definition
 //! validates the plan and its statements without enabling the synchronized profile.
 
+use alloy::primitives::Address;
 use anyhow::{ensure, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
@@ -11,7 +12,10 @@ use e3_events::{
 };
 use e3_fhe_params::BfvProfile;
 use e3_zk_config::{
-    synchronized::{public_signals::PublicSignals, Configs},
+    synchronized::{
+        public_signals::{Field, PublicSignals},
+        Configs,
+    },
     CircuitName, DkgInputType,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +27,9 @@ pub struct DealerPlan {
     pub(crate) committee: CiphernodesCommitteeSize,
     pub(crate) context: SynchronizedProofContext,
     pub(crate) circuits: Vec<CircuitName>,
+    // The retained native plan owns these public keys. Rebuild them when opening a snapshot.
+    #[serde(skip)]
+    pub(crate) recipient_keys: Vec<Option<Field>>,
 }
 
 impl DealerPlan {
@@ -60,6 +67,8 @@ impl DealerPlan {
             input.sk_share_encryption_requests.len() == slots.len(),
             "incomplete dealer C3 plan"
         );
+        let pk_config = e3_zk_config::dkg::pk::Configs::new(&config.transport)?;
+        let mut keys = vec![None; committee.values().n];
         for (request, (party, row)) in input.sk_share_encryption_requests.iter().zip(slots) {
             ensure!(
                 request.params_profile == profile
@@ -69,6 +78,19 @@ impl DealerPlan {
                     && (request.recipient_party_id, request.row_index) == (party, row),
                 "dealer C3 plan is not canonical recipient/CRT order"
             );
+            let key_bytes: &[u8] = &request.recipient_pk_raw;
+            if let Some((bytes, _)) = keys[party] {
+                ensure!(
+                    bytes == key_bytes,
+                    "dealer native C3 recipient key differs across CRT rows"
+                );
+            } else {
+                let commitment = e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes(
+                    key_bytes, &pk_config,
+                )
+                .context("invalid native dealer C3 recipient key")?;
+                keys[party] = Some((key_bytes, commitment));
+            }
         }
         // Use the leaf producer's sequence owner rather than inventing another C1-C3 layout.
         let dispatch = crate::workflow::proof_request::plan_threshold_dispatch(
@@ -96,7 +118,32 @@ impl DealerPlan {
             committee,
             context,
             circuits,
+            recipient_keys: keys
+                .into_iter()
+                .map(|key| key.map(|(_, field)| field))
+                .collect(),
         })
+    }
+
+    pub(crate) fn validate_controller(&self, controller: Option<Address>) -> Result<()> {
+        ensure!(
+            controller == Some(self.context.setup.interfold_address)
+                && !self.context.setup.interfold_address.is_zero(),
+            "dealer plan differs from the configured Interfold controller"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn restore_recipient_keys(&mut self, native: Self) -> bool {
+        if self.profile != native.profile
+            || self.committee != native.committee
+            || self.context != native.context
+            || self.circuits != native.circuits
+        {
+            return false;
+        }
+        self.recipient_keys = native.recipient_keys;
+        true
     }
 
     pub fn validate_leaf(&self, id: &E3id, input: &DKGInnerProofReady) -> Result<()> {
@@ -135,7 +182,18 @@ impl DealerPlan {
             input.seq > 0 && self.circuits.get(input.seq - 1) == Some(&input.proof.circuit),
             "dealer leaf is outside its planned slot"
         );
-        if input.proof.circuit != CircuitName::ShareEncryption {
+        if input.proof.circuit == CircuitName::ShareEncryption {
+            let (recipient, _) = self.c3_slot(config, input.seq)?;
+            let key = self
+                .recipient_keys
+                .get(recipient)
+                .and_then(|key| *key)
+                .context("missing native dealer C3 recipient key")?;
+            ensure!(
+                public.pk_commitment() == Some(key),
+                "dealer C3 recipient key differs from the native plan"
+            );
+        } else {
             ensure!(
                 public.binding()
                     == Some(crate::synchronized::request_binding(
@@ -189,15 +247,46 @@ impl DealerPlan {
             ensure!(seq == leaf.seq, "dealer slot differs from input");
             if seq != 2 {
                 let public = self.decode_leaf(id, &config, leaf)?;
-                if let Some(sharing) = sharing.as_ref().filter(|_| seq >= 3) {
-                    self.validate_c3_message(&config, seq, &public, sharing)?;
+                if let Some(sharing) = &sharing {
+                    if seq == 1 {
+                        ensure!(
+                            public.sk_commitment() == sharing.sk_commitment(),
+                            "dealer C1/C2 secret differs"
+                        );
+                    } else {
+                        self.validate_c3_message(&config, seq, &public, sharing)?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    /// C3 has no setup identity. A validated C2 anchors the planned recipient/CRT message.
+    pub(crate) fn matching_c2(
+        &self,
+        id: &E3id,
+        config: &Configs,
+        proofs: &BTreeMap<usize, DKGInnerProofReady>,
+    ) -> Result<Option<PublicSignals>> {
+        let (Some(c1), Some(c2)) = (proofs.get(&1), proofs.get(&2)) else {
+            return Ok(None);
+        };
+        let c1 = self.decode_leaf(id, config, c1)?;
+        let c2 = self.decode_leaf(id, config, c2)?;
+        Ok((c1.sk_commitment() == c2.sk_commitment()).then_some(c2))
+    }
+
+    pub(crate) fn c3_slot(&self, config: &Configs, seq: usize) -> Result<(usize, usize)> {
+        let l = config.threshold.moduli().len();
+        let slot = seq.checked_sub(3).context("invalid C3 slot")?;
+        let recipient = slot / l;
+        Ok((
+            recipient + usize::from(recipient >= self.context.party_id as usize),
+            slot % l,
+        ))
+    }
+
+    /// C3 has no setup identity. The coherent C2 anchors the planned recipient/CRT message.
     pub(crate) fn validate_c3_message(
         &self,
         config: &Configs,
@@ -206,12 +295,10 @@ impl DealerPlan {
         sharing: &PublicSignals,
     ) -> Result<()> {
         let l = config.threshold.moduli().len();
-        let slot = seq.checked_sub(3).context("invalid C3 slot")?;
-        let recipient = slot / l;
-        let recipient = recipient + usize::from(recipient >= self.context.party_id as usize);
+        let (recipient, row) = self.c3_slot(config, seq)?;
         let message = sharing
             .message_commitments()
-            .and_then(|fields| fields.get(recipient * l + slot % l))
+            .and_then(|fields| fields.get(recipient * l + row))
             .context("missing C2 message for the planned C3 slot")?;
         ensure!(
             Some(message)

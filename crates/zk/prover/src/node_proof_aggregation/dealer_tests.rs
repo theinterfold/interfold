@@ -6,12 +6,16 @@
 use super::*;
 use actix::{Actor, ActorContext, Handler, Message};
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_event_system::test_support::EventFixture;
+use e3_data::RepositoriesFactory;
+use e3_event_system::{test_support::EventFixture, EventSystem};
 use e3_events::*;
 use e3_fhe_params::BfvProfile;
+use e3_sync::SyncRepositoryFactory;
 use e3_trbfv::synchronized::{PrfKey, SealedPrfKeys};
 use e3_utils::ArcBytes;
 use e3_zk_config::{synchronized::Configs, CircuitName, DkgInputType};
+use fhe::bfv::{PublicKey, SecretKey};
+use fhe_traits::Serialize as _;
 
 fn ec(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(1)
@@ -51,6 +55,7 @@ fn synchronized_dealer_initial_collection_excludes_ss_authority() -> Result<()> 
         ]),
         HashSet::from([sync_id.clone(), ss_id]),
         HashMap::new(),
+        DealerRecovery::default(),
     );
     assert_eq!(
         collection.metadata,
@@ -146,13 +151,21 @@ async fn fixture(
         .map(|_| PrfKey::from_bytes(profile, [0; 32]))
         .collect::<Result<Vec<_>>>()?;
     let sensitive = || SensitiveBytes::from_encrypted(&[]);
+    let mut rng = rand::rng();
+    let transport_keys: Vec<_> = members
+        .iter()
+        .map(|_| {
+            let secret = SecretKey::random(&config.transport, &mut rng);
+            ArcBytes::from_bytes(&PublicKey::new(&secret, &mut rng).to_bytes())
+        })
+        .collect();
     let c3 = (0..size.values().n)
         .filter(|&party| party != owner as usize)
         .flat_map(|party| (0..config.threshold.moduli().len()).map(move |row| (party, row)))
         .map(|(party, row)| ShareEncryptionProofRequest {
             share_row_raw: sensitive(),
             ciphertext_raw: ArcBytes::from_bytes(&[]),
-            recipient_pk_raw: ArcBytes::from_bytes(&[]),
+            recipient_pk_raw: transport_keys[party].clone(),
             u_rns_raw: sensitive(),
             e0_rns_raw: sensitive(),
             e1_rns_raw: sensitive(),
@@ -219,7 +232,8 @@ async fn fixture(
             Committee::new(members.iter().map(ToString::to_string).collect()),
         )]),
         HashSet::new(),
-        HashMap::new(),
+        HashMap::from([(1, context.setup.interfold_address)]),
+        DealerRecovery::default(),
     );
     actor.recovery_repositories = Some(Repositories::in_mem());
     Ok((actor, input, plan))
@@ -238,6 +252,12 @@ fn proof(plan: &DealerPlan, id: &E3id, circuit: CircuitName) -> Proof {
         fields[1][16..].copy_from_slice(&binding[1].to_be_bytes());
         fields[2][28..].copy_from_slice(&plan.context.party_id.to_be_bytes());
     }
+    if circuit == CircuitName::NodeFold {
+        let first_key = 6 + plan.committee.values().n * config.threshold.moduli().len();
+        for (field, key) in fields[first_key..].iter_mut().zip(&plan.recipient_keys) {
+            *field = key.unwrap_or_default();
+        }
+    }
     Proof::new(
         circuit,
         ArcBytes::from_bytes(&[7]),
@@ -246,16 +266,33 @@ fn proof(plan: &DealerPlan, id: &E3id, circuit: CircuitName) -> Proof {
 }
 
 fn leaves(plan: &DealerPlan, id: &E3id) -> Vec<DKGInnerProofReady> {
+    let config = plan.config().unwrap();
     plan.circuits
         .iter()
         .enumerate()
-        .map(|(index, &circuit)| DKGInnerProofReady {
-            e3_id: id.clone(),
-            party_id: plan.context.party_id.into(),
-            seq: index + 1,
-            proof: proof(plan, id, circuit),
+        .map(|(index, &circuit)| {
+            let seq = index + 1;
+            let mut proof = proof(plan, id, circuit);
+            if circuit == CircuitName::ShareEncryption {
+                let (party, _) = plan.c3_slot(&config, seq).unwrap();
+                let mut public = proof.public_signals.to_vec();
+                public[..32].copy_from_slice(&plan.recipient_keys[party].unwrap());
+                proof.public_signals = ArcBytes::from_bytes(&public);
+            }
+            DKGInnerProofReady {
+                e3_id: id.clone(),
+                party_id: plan.context.party_id.into(),
+                seq,
+                proof,
+            }
         })
         .collect()
+}
+
+fn change_public_field(leaf: &mut DKGInnerProofReady, field: usize) {
+    let mut bytes = leaf.proof.public_signals.to_vec();
+    bytes[field * 32 + 31] ^= 1;
+    leaf.proof.public_signals = ArcBytes::from_bytes(&bytes);
 }
 
 fn collect(
@@ -274,7 +311,7 @@ fn collect(
 }
 
 #[actix::test]
-async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<()> {
+async fn synchronized_dealer_c3_stays_provisional_until_plan_and_coherent_sharing() -> Result<()> {
     for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [2, 0, 1]] {
         let EventFixture { bus, .. } = EventFixture::new()?;
         let (mut actor, input, plan) = fixture(&bus).await?;
@@ -298,15 +335,9 @@ async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<
                 assert!(!actor.dealer.inner_proofs()[&id].contains_key(&3));
             }
         }
-        // Simulate serialized recovery of the partial record; matching bytes must survive.
-        let repositories = actor.recovery_repositories.clone().unwrap();
-        repository(&repositories, &id)
-            .write_sync(&actor.dealer.records[&id])
-            .await?;
-        let restored = repository(&repositories, &id).read().await?.unwrap();
-        assert_eq!(restored.proofs[&3], valid[2]);
-        assert_eq!(restored.proofs[&2], valid[1]);
-        actor.dealer.records.insert(id.clone(), restored);
+        assert!(!actor.dealer.inner_proofs()[&id].contains_key(&3));
+        actor.accept_dealer_input(&valid[0].clone().into(), &ec(valid[0].clone()))?;
+        assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
         for leaf in valid.iter().filter(|leaf| leaf.seq != 3) {
             actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
         }
@@ -320,6 +351,211 @@ async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<
         reproved.proof.data = ArcBytes::from_bytes(&[99]);
         actor.accept_dealer_input(&reproved.clone().into(), &ec(reproved))?;
         assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_uses_controller_independent_of_both_local_requests() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, canonical, _) = fixture(&bus).await?;
+    let mut wrong = canonical.clone();
+    wrong
+        .proof_request
+        .synchronized
+        .as_mut()
+        .unwrap()
+        .setup
+        .interfold_address = Address::repeat_byte(4);
+    wrong
+        .sk_share_computation_request
+        .synchronized
+        .as_mut()
+        .unwrap()
+        .context = wrong.proof_request.synchronized.clone().unwrap();
+    assert!(actor
+        .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+        .is_err());
+    assert!(actor.dealer.records.is_empty());
+    assert!(actor.accept_dealer_input(&canonical.clone().into(), &ec(canonical))?);
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_keeps_inconsistent_secret_pair_repairable_before_dispatch(
+) -> Result<()> {
+    for bad_slot in [0, 1] {
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let (mut actor, input, plan) = fixture(&bus).await?;
+        let id = input.e3_id.clone();
+        let valid = leaves(&plan, &id);
+        actor.accept_dealer_input(&input.clone().into(), &ec(input))?;
+        let mut candidates = valid.clone();
+        change_public_field(&mut candidates[bad_slot], 3);
+        if bad_slot == 1 {
+            // A C2 candidate that disagrees on the secret must not discard an earlier valid C3.
+            let (party, row) = plan.c3_slot(&plan.config()?, 3)?;
+            let l = plan.config()?.threshold.moduli().len();
+            change_public_field(&mut candidates[1], 4 + party * l + row);
+        }
+        for leaf in candidates {
+            actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf))?;
+        }
+        actor.dealer.effects = true;
+        actor.publish_dealer_work(&id);
+        assert!(!actor.dealer.in_flight.contains_key(&id));
+        let corrected = valid[bad_slot].clone();
+        assert!(actor.accept_dealer_input(&corrected.clone().into(), &ec(corrected))?);
+        actor.publish_dealer_work(&id);
+        assert!(actor.dealer.in_flight.contains_key(&id));
+        assert_eq!(actor.dealer.records[&id].proofs[&1], valid[0]);
+        assert_eq!(actor.dealer.records[&id].proofs[&2], valid[1]);
+        assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_requires_the_native_recipient_key_in_every_crt_row() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    let id = input.e3_id.clone();
+    let valid = leaves(&plan, &id);
+    actor.accept_dealer_input(&input.clone().into(), &ec(input))?;
+    for leaf in &valid[..3] {
+        actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+    }
+    let mut wrong = valid[3].clone();
+    let l = plan.config()?.threshold.moduli().len();
+    let mut public = wrong.proof.public_signals.to_vec();
+    public[..32].copy_from_slice(&valid[2 + l].proof.public_signals[..32]);
+    wrong.proof.public_signals = ArcBytes::from_bytes(&public);
+    assert!(actor
+        .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+        .is_err());
+    for leaf in &valid[3..] {
+        actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+    }
+    assert!(plan
+        .request(&id, &actor.dealer.records[&id].proofs)?
+        .is_some());
+    assert_eq!(actor.dealer.records[&id].proofs[&4], valid[3]);
+    Ok(())
+}
+
+#[test]
+fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<()> {
+    let aggregate = AggregateId::new(1);
+    for saved_plan in [false, true] {
+        let root = tempfile::tempdir()?;
+        let system = || {
+            EventSystem::persisted(root.path().join("log"), root.path().join("sled"))
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])))
+        };
+        let (native, valid) = actix::System::new().block_on(async {
+            let system = system();
+            let bus = system.handle()?.enable("dealer-prefix");
+            let store = system.store()?;
+            let repositories = store.repositories();
+            e3_sync::preflight_schema_version(
+                &repositories,
+                &system.aggregate_config(),
+                &system.eventstore_reader()?.seq(),
+            )
+            .await?;
+            let (mut actor, input, plan) = fixture(&bus).await?;
+            let mut valid = leaves(&plan, &input.e3_id);
+            valid[2].proof.data = ArcBytes::from_bytes(&[89]);
+            let mut wrong = valid[2].clone();
+            change_public_field(&mut wrong, 1);
+            let events = saved_plan
+                .then(|| InterfoldEventData::from(input.clone()))
+                .into_iter()
+                .chain([wrong.into(), valid[2].clone().into()]);
+            for data in events {
+                bus.publish_without_context(data.clone())?;
+                actor.accept_dealer_input(&data, &ec(data.clone()))?;
+            }
+            bus.flush_event_pipeline().await?;
+            repository(&repositories, &input.e3_id)
+                .write_sync(&actor.dealer.records[&input.e3_id])
+                .await?;
+            system.buffer()?.send(FlushPendingSnapshots).await??;
+            let cursor = repositories.aggregate_seq(aggregate).read().await?;
+            assert!(cursor.is_some_and(|seq| seq >= 2 + u64::from(saved_plan)));
+            store.shutdown().await?;
+            Ok::<_, anyhow::Error>((input, valid))
+        })?;
+
+        // The journal and the snapshot outlive the actor. Neither early C3 is redelivered.
+        actix::System::new().block_on(async {
+            let system = system();
+            let bus = system.handle()?.enable("dealer-prefix-restored");
+            let (mut actor, _, _) = fixture(&bus).await?;
+            let id = &native.e3_id;
+            let store = system.store()?;
+            let record = repository(&store.repositories(), id).read().await?.unwrap();
+            let recovery = DealerRecovery {
+                records: HashMap::from([(id.clone(), record)]),
+                ..Default::default()
+            };
+            let reader = system.eventstore_reader()?.seq();
+            if saved_plan {
+                let mut wrong = recovery.clone();
+                wrong
+                    .records
+                    .get_mut(id)
+                    .unwrap()
+                    .plan
+                    .as_mut()
+                    .unwrap()
+                    .context
+                    .setup
+                    .interfold_address = Address::repeat_byte(4);
+                let error = wrong
+                    .restore(
+                        &actor.dealer.metadata,
+                        &actor.dealer.controllers,
+                        &reader,
+                        &[aggregate],
+                    )
+                    .await
+                    .expect_err("a saved plan cannot authenticate its own controller");
+                assert!(error
+                    .to_string()
+                    .contains("configured Interfold controller"));
+            }
+            let restored = recovery
+                .restore(
+                    &actor.dealer.metadata,
+                    &actor.dealer.controllers,
+                    &reader,
+                    &[aggregate],
+                )
+                .await?;
+            actor.dealer.records = restored.records;
+            actor.dealer.alternate_c3 = restored.alternate_c3;
+            if !saved_plan {
+                actor.accept_dealer_input(&native.clone().into(), &ec(native.clone()))?;
+            }
+            for leaf in valid.iter().filter(|leaf| leaf.seq != 3) {
+                actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+            }
+            let record = &actor.dealer.records[id];
+            assert_eq!(record.proofs[&3], valid[2]);
+            assert!(record
+                .plan
+                .as_ref()
+                .unwrap()
+                .request(id, &record.proofs)?
+                .is_some());
+            store.shutdown().await?;
+            Ok::<_, anyhow::Error>(())
+        })?;
     }
     Ok(())
 }
@@ -707,10 +943,15 @@ async fn synchronized_dealer_flush_restart_reissues_only_unfinished_work() -> Re
         &bus,
         &directory.path().to_path_buf(),
     )?);
-    let record = repository(&Repositories::new(reopened.clone()), &input.e3_id)
+    let mut record = repository(&Repositories::new(reopened.clone()), &input.e3_id)
         .read()
         .await?
         .unwrap();
+    assert!(record
+        .plan
+        .as_mut()
+        .unwrap()
+        .restore_recipient_keys(plan.clone()));
     record.validate(&input.e3_id, &meta)?;
     let (mut restarted, _, _) = fixture(&bus).await?;
     restarted.dealer.records.insert(input.e3_id.clone(), record);
@@ -745,10 +986,22 @@ async fn synchronized_dealer_runtime_stays_disabled_and_terminal_history_cannot_
     let id = input.e3_id.clone();
     let meta = actor.dealer.metadata.clone();
     let record = actor.dealer.records[&id].clone();
+    let controllers = actor.dealer.controllers.clone();
+    let eventstore = EventSystem::in_mem()
+        .with_fresh_bus()
+        .eventstore_reader()?
+        .seq();
     repository(&repositories, &id).write_sync(&record).await?;
-    assert!(recover(&repositories, &meta, &HashSet::new())
-        .await
-        .is_err());
+    assert!(recover(
+        &repositories,
+        &meta,
+        &HashSet::new(),
+        &controllers,
+        &eventstore,
+        &[]
+    )
+    .await
+    .is_err());
     let addr = actor.start();
     let effects: InterfoldEventData = EffectsEnabled::new().into();
     addr.send(
@@ -788,7 +1041,15 @@ async fn synchronized_dealer_runtime_stays_disabled_and_terminal_history_cannot_
     assert!(repository(&repositories, &id).read().await?.is_none());
     // A stale disk record is also removed from the independent confirmed startup projection.
     repository(&repositories, &id).write_sync(&record).await?;
-    recover(&repositories, &meta, &HashSet::from([id.clone()])).await?;
+    recover(
+        &repositories,
+        &meta,
+        &HashSet::from([id.clone()]),
+        &controllers,
+        &eventstore,
+        &[],
+    )
+    .await?;
     assert!(repository(&repositories, &id).read().await?.is_none());
     Ok(())
 }
