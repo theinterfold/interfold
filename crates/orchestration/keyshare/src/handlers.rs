@@ -437,6 +437,9 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         // No event, collector result or deadline, or selection starts work and no decryption
         // work is redelivered after the end, also while the cleanup below retries.
         self.ended = true;
+        if let Some(retry) = self.synchronized_setup_retry.take() {
+            ctx.cancel_future(retry);
+        }
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {

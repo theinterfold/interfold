@@ -102,6 +102,12 @@ setup for the same batch; it does not acquire an H publication-consent slot. A s
 not a proof verdict: callers must admit the local worker source/correlation and cryptographic result
 before either helper.
 
+This handoff only reads setup that already reached the durable checkpoint. Today confirmed
+`KeyPublished` retires unfinished recipient work, including outside H.
+[#2461](https://github.com/theinterfold/interfold/issues/2461) requires qualifying a continuation
+against the same confirmed H batch without making all N setups a condition of publication or
+restarting consent.
+
 This remains unactivated: guarded C5/publication aggregation and writer phases, full-node
 synchronized startup and synchronized C6 are absent. The capability replay fixture below does not
 enable production admission. Synchronized runtime folding/publication and decryption paths still
@@ -152,11 +158,20 @@ progress without another write. Confirmed retirement cancels both timers.
 Keyshare consumes only the local result, checks request/owner, native PK and sealed-material
 anchors, and records an exclusive setup intent before consent. Replay records that intent without
 signing; current-boot effects and the request-frozen context must both be available. Restart
-restores the original result and causal context. Selected H recipients publish signed consent
-through gossip/history; outside-H recipients retain their own setup without acquiring a consent
-slot. Canonical publication ends consent production but retains setup until the E3 ends.
+restores the original result and causal context before considering a differing replayed candidate;
+that candidate cannot replace or block the durable verdict. Selected H recipients publish signed
+consent through gossip/history; outside-H recipients retain their own setup without acquiring a
+consent slot. Canonical publication ends consent production but retains setup until the E3 ends.
 C5/publication aggregation still needs these outputs. Admission stays disabled; below-admission
 actor tests and real-proof qualification do not admit production effects.
+
+Retryable setup storage failures retain the candidate. Retries wait for current-boot effects and
+back off from one to thirty seconds plus jitter, with one journal error per failure episode. Invalid
+saved intents remain untouched. An unexpectedly closed store stops setup attempts for the boot
+without labeling saved data corrupt; known shutdown starts no new attempts or repair diagnostics.
+See [keyshare recovery guidance](../../crates/orchestration/keyshare/README.md#runtime-integration).
+A rejected new candidate does not block a later corrected candidate. Effects remain withheld until a
+flush succeeds, and consent publication is guarded once per boot.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

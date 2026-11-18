@@ -7,6 +7,11 @@ use crate::synchronized::SynchronizedSetupIntent;
 use anyhow::ensure;
 use e3_events::{EventSource, SynchronizedDkgConsentPublished, SynchronizedRecipientProofReady};
 
+enum SetupDriveOutcome {
+    Ready(Option<Box<SynchronizedSetupIntent>>),
+    Retry(anyhow::Error),
+}
+
 impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn accept_synchronized_setup(
         &mut self,
@@ -95,7 +100,10 @@ impl ThresholdKeyshare {
         let cipher = self.cipher.clone();
         ctx.wait(
             async move {
-                let saved = store.restore().await?;
+                let saved = match store.restore().await {
+                    Ok(saved) => saved,
+                    Err(error) => return Ok(SetupDriveOutcome::Retry(error)),
+                };
                 let intent = match (saved, candidate) {
                     (Some(saved), candidate) => {
                         if let Some(candidate) = candidate {
@@ -114,24 +122,52 @@ impl ThresholdKeyshare {
                         "saved setup differs from the canonical selection"
                     );
                     intent.validate(interfold, &cipher)?;
-                    store.record(intent).await?;
-                }
-                Ok::<_, anyhow::Error>(intent)
-            }
-            .into_actor(self)
-            .map(|result, actor, _| match result {
-                Ok(Some(intent)) => {
-                    actor.synchronized_setup = Some(intent);
-                    actor.pending.synchronized_result = None;
-                    if let Err(error) = actor.publish_synchronized_consent_definition() {
-                        actor.bus.err(EType::KeyGeneration, error);
+                    if let Err(error) = store.record(intent).await {
+                        return Ok(SetupDriveOutcome::Retry(error));
                     }
                 }
-                Ok(None) => {}
+                Ok::<_, anyhow::Error>(SetupDriveOutcome::Ready(intent.map(Box::new)))
+            }
+            .into_actor(self)
+            .map(|result, actor, ctx| match result {
+                Ok(SetupDriveOutcome::Ready(intent)) => {
+                    if let Some(retry) = actor.synchronized_setup_retry.take() {
+                        ctx.cancel_future(retry);
+                    }
+                    if let Some(intent) = intent {
+                        actor.synchronized_setup = Some(*intent);
+                        actor.pending.synchronized_result = None;
+                        if let Err(error) = actor.publish_synchronized_consent_definition() {
+                            actor.bus.err(EType::KeyGeneration, error);
+                        }
+                    }
+                }
+                Ok(SetupDriveOutcome::Retry(error)) => {
+                    actor.bus.err(EType::KeyGeneration, error);
+                    actor.retry_synchronized_setup(ctx);
+                }
                 Err(error) => actor.bus.err(EType::KeyGeneration, error),
             }),
         );
         Ok(())
+    }
+
+    fn retry_synchronized_setup(&mut self, ctx: &mut actix::Context<Self>) {
+        if !self.effects_enabled || self.ended || self.synchronized_setup_retry.is_some() {
+            return;
+        }
+        self.synchronized_setup_retry = Some(ctx.run_later(
+            std::time::Duration::from_secs(1),
+            |actor, ctx| {
+                actor.synchronized_setup_retry = None;
+                if !actor.effects_enabled || actor.ended {
+                    return;
+                }
+                if let Err(error) = actor.drive_synchronized_setup_definition(ctx) {
+                    actor.bus.err(EType::KeyGeneration, error);
+                }
+            },
+        ));
     }
 
     fn publish_synchronized_consent_definition(&mut self) -> Result<()> {

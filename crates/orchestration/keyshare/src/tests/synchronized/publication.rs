@@ -225,15 +225,25 @@ async fn synchronized_setup_rejects_peer_and_substituted_native_anchors_before_r
 }
 
 #[actix::test]
-async fn synchronized_setup_storage_failure_cannot_publish_consent() -> Result<()> {
-    struct FailFlush;
+async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_input() -> Result<()> {
+    struct FailFlush(bool);
     impl Actor for FailFlush {
         type Context = actix::Context<Self>;
     }
     impl Handler<e3_events::Flush> for FailFlush {
         type Result = Result<()>;
         fn handle(&mut self, _: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
-            anyhow::bail!("injected setup flush failure")
+            ensure!(self.0, "injected setup flush failure");
+            Ok(())
+        }
+    }
+    #[derive(Message)]
+    #[rtype(result = "()")]
+    struct RecoverFlush;
+    impl Handler<RecoverFlush> for FailFlush {
+        type Result = ();
+        fn handle(&mut self, _: RecoverFlush, _: &mut Self::Context) {
+            self.0 = true;
         }
     }
     let setup = Setup::new().await?;
@@ -259,8 +269,9 @@ async fn synchronized_setup_storage_failure_cannot_publish_consent() -> Result<(
         synchronized: Some(material),
         ..Default::default()
     };
+    let flush = FailFlush(false).start();
     let store = DataStore::from_in_mem(&InMemStore::new(false).start())
-        .with_flush_recipient(FailFlush.start().recipient());
+        .with_flush_recipient(flush.clone().recipient());
     let (node, history) = actor(
         &store,
         root,
@@ -271,12 +282,48 @@ async fn synchronized_setup_storage_failure_cannot_publish_consent() -> Result<(
     )
     .await?;
     node.send(DriveSetup {
-        result: Some(TypedEvent::new(verdict, test_ec(30))),
+        result: Some(TypedEvent::new(verdict.clone(), test_ec(30))),
         effects: true,
     })
     .await??;
     assert!(node.send(SetupCheckpoint).await?.is_none());
     assert!(consents(&history).await?.is_empty());
+    flush.send(RecoverFlush).await?;
+    let consent = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let next = history
+                .send(TakeEvents::<InterfoldEvent>::with_per_evt_timeout(
+                    1,
+                    std::time::Duration::from_secs(5),
+                ))
+                .await?;
+            let Some(event) = next.events.into_iter().next() else {
+                anyhow::bail!("setup flush recovery did not publish consent");
+            };
+            if let InterfoldEventData::SynchronizedDkgConsentPublished(consent) = event.get_data() {
+                break Ok::<_, anyhow::Error>(consent.clone());
+            }
+        }
+    })
+    .await
+    .context("setup flush recovery did not publish consent")??;
+    assert_eq!(
+        consent.attestation.recover_address()?,
+        setup.signers[0].address()
+    );
+    let saved = node
+        .send(SetupCheckpoint)
+        .await?
+        .context("missing durable setup after retry")?;
+    assert_eq!(**saved.result(), verdict);
+    let extra = history
+        .send(TakeEvents::<InterfoldEvent>::with_per_evt_timeout(
+            1,
+            std::time::Duration::from_secs(2),
+        ))
+        .await?;
+    assert!(extra.timed_out && extra.events.is_empty());
+    assert_eq!(consents(&history).await?.len(), 1);
     node.send(Die).await?;
     Ok(())
 }

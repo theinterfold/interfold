@@ -205,6 +205,7 @@ pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
 
 pub struct ThresholdKeyshare {
     synchronized_setup: Option<crate::synchronized::SynchronizedSetupIntent>,
+    synchronized_setup_retry: Option<SpawnHandle>,
     synchronized_consent_published: bool,
     canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     bus: BusHandle,
@@ -282,6 +283,7 @@ impl ThresholdKeyshare {
         });
         Self {
             synchronized_setup: None,
+            synchronized_setup_retry: None,
             synchronized_consent_published: false,
             canonical_keys: Default::default(),
             bus: params.bus,
