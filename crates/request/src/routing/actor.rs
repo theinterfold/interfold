@@ -13,6 +13,7 @@ use crate::PostForward;
 use crate::RequestRouter;
 use crate::RouterRepositoryFactory;
 use crate::RoutingDecision;
+use crate::UnadmittedInputs;
 use actix::{Actor, Addr, Context, Handler};
 use anyhow::*;
 use async_trait::async_trait;
@@ -100,6 +101,8 @@ pub struct E3Router {
     extensions: Arc<Vec<Box<dyn E3Extension>>>,
     /// A buffer for events to send to the
     buffer: EventBuffer,
+    /// Peer events of E3s that the chain has not admitted yet, in memory only.
+    unadmitted: UnadmittedInputs,
     /// The EventBus
     bus: BusHandle,
     /// A repository for storing snapshots
@@ -158,6 +161,7 @@ impl E3Router {
             completed: HashSet::new(),
             contexts: HashMap::new(),
             buffer: EventBuffer::default(),
+            unadmitted: UnadmittedInputs::default(),
             replay_cursors: params.replay_cursors,
             recovery_store: params.recovery_store,
             recovered_selections: params.recovered_selections,

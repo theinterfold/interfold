@@ -9,8 +9,8 @@ use crate::{
     domain::wire::notification_is_valid,
     domain::{
         closed_e3s::record_closed_e3, datetime_to_instant_from_now, Cleanup, CleanupQueue,
-        DocumentPublishingService, FetchQueue, PublicationSchedule, RestorableDocuments,
-        WaitingFetch,
+        DocumentPublishingService, FetchQueue, LogPosition, PublicationSchedule,
+        RestorableDocuments, RestoreEntry, WaitingFetch,
     },
     events::{
         call_and_await_response, DocumentIngress, DocumentPublishedNotification, GossipData,
@@ -22,8 +22,8 @@ use actix::prelude::*;
 use anyhow::{Context, Result};
 use e3_events::{
     prelude::*, trap, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta, DocumentReceived,
-    E3Stage, E3id, EType, EventSource, EventType, InterfoldEvent, InterfoldEventData, PartyId,
-    PublishDocumentRequested, TypedEvent,
+    E3Stage, E3id, EType, EventSource, EventStoreQueryBy, EventType, InterfoldEvent,
+    InterfoldEventData, PartyId, PublishDocumentRequested, SeqAgg, TypedEvent,
 };
 use e3_utils::ArcBytes;
 use e3_utils::NotifySync;
@@ -83,6 +83,9 @@ pub struct RecoveredDocumentState {
     /// Received documents to store in this node's DHT store again at `SyncEnded`.
     pub restorable: RestorableDocuments,
     pub closed_e3s: VecDeque<E3id>,
+    /// The event log that recovery read, to read again the restorable documents that are only
+    /// references into it.
+    pub document_log: Option<Recipient<EventStoreQueryBy<SeqAgg>>>,
 }
 
 /// Store a pending publication in this node's DHT store and gossip its notification.
@@ -172,6 +175,8 @@ pub struct DocumentPublisher {
     closed_e3s: VecDeque<E3id>,
     /// Received documents that wait for `SyncEnded` to be stored in this node's DHT store again.
     restorable: RestorableDocuments,
+    /// The event log that holds the restorable documents that `restorable` keeps as references.
+    document_log: Option<Recipient<EventStoreQueryBy<SeqAgg>>>,
     /// The E3 of the received document being stored again, and whether that E3 closed since.
     restoring: Option<(E3id, bool)>,
 }
@@ -237,6 +242,7 @@ impl DocumentPublisher {
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
             restorable: recovered.restorable,
+            document_log: recovered.document_log,
             restoring: None,
         };
         for event in recovered.publications {
@@ -481,11 +487,38 @@ impl DocumentPublisher {
     /// Store the next restorable received document in this node's DHT store. The documents are
     /// stored one at a time, and their keys are pruned with the other records of their E3. A
     /// document that does not fit in a full store is skipped: the restore only makes the node
-    /// serve documents again, and the node does not need it to fetch them.
+    /// serve documents again, and the node does not need it to fetch them. A document that is only
+    /// a reference is read from the event log first.
     fn restore_next_received_document(&mut self, ctx: &mut actix::Context<Self>) {
-        let Some(DocumentReceived { meta, value }) = self.restorable.pop(chrono::Utc::now()) else {
-            return;
-        };
+        match self.restorable.pop(chrono::Utc::now()) {
+            None => {}
+            Some(RestoreEntry::Loaded(document)) => self.restore_received_document(document, ctx),
+            Some(RestoreEntry::Logged { position, e3_id }) => {
+                let Some(log) = self.document_log.clone() else {
+                    return self.restore_next_received_document(ctx);
+                };
+                self.restoring = Some((e3_id.clone(), false));
+                let read = async move { read_logged_document(&log, position, &e3_id).await };
+                ctx.spawn(read.into_actor(self).map(|result, actor, ctx| {
+                    let closed = matches!(actor.restoring.take(), Some((_, true)));
+                    match result {
+                        Ok(document) if !closed => actor.restore_received_document(document, ctx),
+                        Ok(_) => actor.restore_next_received_document(ctx),
+                        Err(error) => {
+                            actor.bus.err(EType::IO, error);
+                            actor.restore_next_received_document(ctx);
+                        }
+                    }
+                }));
+            }
+        }
+    }
+
+    fn restore_received_document(
+        &mut self,
+        DocumentReceived { meta, value }: DocumentReceived,
+        ctx: &mut actix::Context<Self>,
+    ) {
         let key = self.service.track_published_key(&meta.e3_id, &value);
         self.restoring = Some((meta.e3_id.clone(), false));
         let (tx, rx) = (self.tx.clone(), self.rx.clone());
@@ -604,6 +637,7 @@ use effects::{
     DocumentMetadataMismatch,
 };
 pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+use recovery::read_logged_document;
 pub use recovery::recover_document_state;
 
 #[cfg(test)]

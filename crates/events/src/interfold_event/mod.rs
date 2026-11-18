@@ -389,6 +389,21 @@ impl InterfoldEventData {
         let name: &'static str = self.into();
         name.to_string()
     }
+
+    /// Whether nodes send this event to their peers, over gossip and in history replies. Every
+    /// other event stays on the node that produced or received it.
+    pub fn is_forwardable(&self) -> bool {
+        matches!(
+            self,
+            InterfoldEventData::DecryptionshareCreated(_)
+                | InterfoldEventData::DkgCoordination(_)
+                | InterfoldEventData::DKGRecursiveAggregationComplete(_)
+                | InterfoldEventData::KeyshareCreated(_)
+                | InterfoldEventData::PublicKeyAggregated(_)
+                | InterfoldEventData::ProofFailureAccusation(_)
+                | InterfoldEventData::AccusationVote(_)
+        )
+    }
 }
 
 pub trait SeqState: Clone + std::fmt::Debug + 'static {

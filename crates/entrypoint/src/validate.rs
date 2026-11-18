@@ -1036,8 +1036,8 @@ async fn check_open_loops(
         name,
         format!(
             "{} orphaned committee(s) still hold active-job slots despite a terminal event in \
-             the log (tickets stuck). Affected E3 committee keys: {}. A restart re-applies the \
-             terminal events and releases these slots.",
+             the log (tickets stuck). Affected E3 committee keys: {}. A restart releases the \
+             slots of E3s that the lifecycle records as finished.",
             orphaned.len(),
             orphaned.join(", ")
         ),

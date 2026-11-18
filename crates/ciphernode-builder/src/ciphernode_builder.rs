@@ -1074,6 +1074,7 @@ impl CiphernodeBuilder {
         let mut committees = committees_repo.read().await?.unwrap_or_default();
         let (selector_changed, committees_changed) =
             reconcile_committee_snapshots(&mut selector_snapshot, &mut committees, &lifecycle)?;
+        let finished_e3s = terminal_e3s(&lifecycle);
         if selector_changed {
             selector_store.write_sync(&selector_snapshot).await?;
         }
@@ -1113,6 +1114,7 @@ impl CiphernodeBuilder {
                     ticket.node.eq_ignore_ascii_case(addr).then_some(e3_id)
                 })
                 .collect(),
+            finished_e3s,
         })
         .await?;
         Ok((sortition, ciphernode_selector, selector_state))
@@ -2840,6 +2842,138 @@ mod tests {
             .with_contract_interfold_full()
             .ensure_role_components()
             .is_ok());
+        Ok(())
+    }
+
+    /// The startup chain sync can deliver an E3's failure before its committee finalization, and
+    /// the failure can also be in the saved lifecycle while only the finalization is replayed. The
+    /// late finalization must not reserve slots, because no later event releases them.
+    #[actix::test]
+    async fn a_finalization_after_the_e3_failure_reserves_no_capacity() -> anyhow::Result<()> {
+        use e3_events::{
+            AggregateConfig, AggregateId, CommitteeFinalized, E3Failed,
+            EventConstructorWithTimestamp, EventSource, FailureReason, FlushPendingSnapshots,
+            InterfoldEvent, InterfoldEventData, Unsequenced,
+        };
+        use e3_request::E3LifecycleRepositoryFactory;
+        use e3_sortition::{NodeRegistry, NodeStateRepositoryFactory};
+
+        for failure_in_lifecycle in [false, true] {
+            let aggregate = AggregateId::from_chain_id(Some(1));
+            let system = crate::EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+            let bus = system.handle()?.enable("sortition-late-finalization");
+            let repos = e3_data::Repositories::from(system.store()?);
+            let local = Address::from([0xab; 20]).to_string();
+            let e3_id = E3id::new("1", 1);
+            let mut events: Vec<InterfoldEventData> = Vec::new();
+            if failure_in_lifecycle {
+                repos
+                    .e3_lifecycle()
+                    .write_sync(&HashMap::from([(e3_id.clone(), E3Stage::Failed)]))
+                    .await?;
+            } else {
+                events.push(
+                    E3Failed {
+                        e3_id: e3_id.clone(),
+                        failed_at_stage: E3Stage::CommitteeFinalized,
+                        reason: FailureReason::DKGTimeout,
+                    }
+                    .into(),
+                );
+            }
+            events.push(
+                CommitteeFinalized {
+                    e3_id: e3_id.clone(),
+                    committee: vec![local.clone(), Address::from([0xcd; 20]).to_string()],
+                    scores: vec!["1".into(), "2".into()],
+                    chain_id: 1,
+                }
+                .into(),
+            );
+            let builder = super::CiphernodeBuilder::new(
+                e3_test_helpers::derive_shared_rng(1, 1),
+                std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-sortition").await?),
+            );
+            let (_sortition, _, _) = builder.setup_sortition(&bus, &repos, &local).await?;
+
+            for (index, data) in events.into_iter().enumerate() {
+                let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    data,
+                    None,
+                    index as u128 + 1,
+                    Some(1),
+                    EventSource::Evm,
+                )
+                .into_sequenced(index as u64 + 1);
+                system
+                    .eventbus()
+                    .send(e3_events::EventBusFanout(event))
+                    .await??;
+            }
+            bus.flush_event_pipeline().await?;
+            system.buffer()?.send(FlushPendingSnapshots).await??;
+
+            let state = repos.node_state().read().await?.unwrap_or_default();
+            assert!(
+                NodeRegistry::open_committees(&state).is_empty(),
+                "failure_in_lifecycle={failure_in_lifecycle}: a finished E3 holds capacity: {state:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A node whose saved state already holds a finished E3's slots gets them back at startup.
+    #[actix::test]
+    async fn startup_releases_the_capacity_of_finished_e3s() -> anyhow::Result<()> {
+        use e3_request::E3LifecycleRepositoryFactory;
+        use e3_sortition::{committee_key, NodeRegistry, NodeStateRepositoryFactory};
+
+        let system = crate::EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("sortition-startup-release");
+        let repos = e3_data::Repositories::from(system.store()?);
+        let local = Address::from([0xab; 20]).to_string();
+        let failed = E3id::new("1", 1);
+        let active = E3id::new("2", 1);
+        let mut state = HashMap::new();
+        for e3_id in [&failed, &active] {
+            NodeRegistry::reconcile_committee_jobs(
+                &mut state,
+                e3_id,
+                std::slice::from_ref(&local),
+                "test",
+            );
+        }
+        repos.node_state().write_sync(&state).await?;
+        repos
+            .e3_lifecycle()
+            .write_sync(&HashMap::from([
+                (failed.clone(), E3Stage::Failed),
+                (active.clone(), E3Stage::KeyPublished),
+            ]))
+            .await?;
+
+        let builder = super::CiphernodeBuilder::new(
+            e3_test_helpers::derive_shared_rng(1, 1),
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-sortition").await?),
+        );
+        let (_sortition, _, _) = builder.setup_sortition(&bus, &repos, &local).await?;
+        system
+            .buffer()?
+            .send(e3_events::FlushPendingSnapshots)
+            .await??;
+
+        let state = repos.node_state().read().await?.unwrap_or_default();
+        let open = NodeRegistry::open_committees(&state)
+            .into_iter()
+            .map(|committee| committee.committee_key)
+            .collect::<Vec<_>>();
+        assert_eq!(open, vec![committee_key(&active)]);
+        assert_eq!(state[&1].nodes[&local].active_jobs, 1);
         Ok(())
     }
 }

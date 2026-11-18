@@ -240,6 +240,9 @@ impl ThresholdKeyshare {
                 },
             ))
         })?;
+        if let Some(collector) = self.decryption_key_collector.clone() {
+            self.send_dealers_without_key(&collector);
+        }
 
         if let Some(response) = self.pending.gen_pk_response.take() {
             self.handle_gen_pk_share_and_sk_sss_response(response)?;

@@ -69,28 +69,17 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
         let provider = provider.clone();
 
         async move {
-            let _nonce_guard = transaction_nonce_guard(&provider).await;
-            let from_address = provider.provider().default_signer_address();
-            let current_nonce = provider
-                .provider()
-                .get_transaction_count(from_address)
-                .pending()
-                .await?;
             let contract = ISlashingManager::new(contract_address, provider.provider());
             let pending = if let Some(pid) = party_id {
-                contract
-                    .proposeSlashByDkgParty(e3_id, pid, proof)
-                    .nonce(current_nonce)
-                    .send()
-                    .await?
+                send_with_next_nonce(
+                    &provider,
+                    contract.proposeSlashByDkgParty(e3_id, pid, proof),
+                )
+                .await?
             } else {
-                contract
-                    .proposeSlash(e3_id, operator, proof)
-                    .nonce(current_nonce)
-                    .send()
+                send_with_next_nonce(&provider, contract.proposeSlash(e3_id, operator, proof))
                     .await?
             };
-            drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit slashing evidence", &receipt)?;
             Ok(receipt)

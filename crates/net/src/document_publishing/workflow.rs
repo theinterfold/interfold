@@ -11,12 +11,11 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use e3_events::{DocumentReceived, E3id, PartyId};
-use e3_utils::ArcBytes;
+use e3_events::{AggregateId, DocumentReceived, E3id, PartyId};
+use e3_utils::{backoff_delay, ArcBytes};
 use libp2p::PeerId;
 
 use crate::{
-    backoff::backoff_delay,
     events::{DocumentPublishedNotification, NetCommand},
     ContentHash,
 };
@@ -458,20 +457,55 @@ pub const MAX_RESTORED_DOCUMENTS: usize = 512;
 /// Most bytes of received documents that a restart stores in this node's DHT store again.
 pub const MAX_RESTORED_DOCUMENT_BYTES: usize = 128 * 1024 * 1024;
 
+/// Most received documents that a restart keeps as candidates until the chain history arrives.
+/// Only the newest ones within the restore limits hold their bytes; the older ones are references
+/// into the event log.
+pub const MAX_RESTORE_CANDIDATES: usize = 8_192;
+
+/// Where a received document is in the event log, so that it can be read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogPosition {
+    pub aggregate_id: AggregateId,
+    pub seq: u64,
+}
+
+/// A received document that a restart stores in this node's DHT store again.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RestoreEntry {
+    /// The document, held in memory.
+    Loaded(DocumentReceived),
+    /// A document that newer ones pushed out of memory before the chain history arrived. The
+    /// restore reads it from the event log again.
+    Logged { position: LogPosition, e3_id: E3id },
+}
+
+#[derive(Debug)]
+struct RestoreCandidate {
+    e3_id: E3id,
+    expires_at: DateTime<Utc>,
+    size: usize,
+    position: Option<LogPosition>,
+    /// The bytes, while the candidate is among the newest ones within the limits.
+    document: Option<DocumentReceived>,
+}
+
 /// Received documents to store in this node's DHT store again after a restart. The DHT store is in
 /// memory, so without them the node stops serving the documents that it received, also to peers
 /// whose dealer is offline.
 ///
 /// It keeps the documents received last, in event-log order, within a count and a byte limit, and
-/// drops the documents that expired and the documents of E3s that closed. The limits apply while
-/// recovery reads the log, before the chain history closes the E3s that ended while the node was
-/// offline, so those documents can take the place of older documents of open E3s.
+/// drops the documents that expired and the documents of E3s that closed. Recovery reads the log
+/// before the chain history closes the E3s that ended while the node was offline. So a document
+/// that newer ones push out of the limits stays a candidate as a reference into the event log, and
+/// `select` applies the limits once the history has closed those E3s.
 #[derive(Debug)]
 pub struct RestorableDocuments {
     max_documents: usize,
     max_bytes: usize,
-    documents: VecDeque<DocumentReceived>,
-    bytes: usize,
+    candidates: VecDeque<RestoreCandidate>,
+    /// The candidates that hold their bytes, and those bytes. They are the newest candidates.
+    loaded: usize,
+    loaded_bytes: usize,
 }
 
 impl Default for RestorableDocuments {
@@ -485,17 +519,24 @@ impl RestorableDocuments {
         Self {
             max_documents,
             max_bytes,
-            documents: VecDeque::new(),
-            bytes: 0,
+            candidates: VecDeque::new(),
+            loaded: 0,
+            loaded_bytes: 0,
         }
     }
 
-    /// Keep a received broadcast document after the ones kept before. The oldest documents make
-    /// room for it. A document with a party filter is not kept: this node received it because the
-    /// filter names this node, and no other peer fetches it, so a restored copy would only take
-    /// the place of a broadcast document. An expired document, or one larger than the byte limit,
-    /// is not kept either.
-    pub fn push(&mut self, document: DocumentReceived, now: DateTime<Utc>) {
+    /// Keep a received broadcast document after the ones kept before. The oldest documents in
+    /// memory make room for it: one with a log position stays a candidate without its bytes, one
+    /// without is dropped. A document with a party filter is not kept: this node received it
+    /// because the filter names this node, and no other peer fetches it, so a restored copy would
+    /// only take the place of a broadcast document. An expired document, or one larger than the
+    /// byte limit, is not kept either.
+    pub fn push(
+        &mut self,
+        document: DocumentReceived,
+        position: Option<LogPosition>,
+        now: DateTime<Utc>,
+    ) {
         let size = document.value.size();
         if !document.meta.filter.is_empty()
             || document.meta.expires_at <= now
@@ -503,37 +544,102 @@ impl RestorableDocuments {
         {
             return;
         }
-        self.documents.push_back(document);
-        self.bytes += size;
-        while self.documents.len() > self.max_documents || self.bytes > self.max_bytes {
+        self.candidates.push_back(RestoreCandidate {
+            e3_id: document.meta.e3_id.clone(),
+            expires_at: document.meta.expires_at,
+            size,
+            position,
+            document: Some(document),
+        });
+        self.loaded += 1;
+        self.loaded_bytes += size;
+        while self.loaded > self.max_documents || self.loaded_bytes > self.max_bytes {
+            self.unload_oldest();
+        }
+        while self.candidates.len() > MAX_RESTORE_CANDIDATES {
             self.pop_oldest();
         }
     }
 
-    /// Remove and return the oldest document that has not expired at `now`.
-    pub fn pop(&mut self, now: DateTime<Utc>) -> Option<DocumentReceived> {
-        while let Some(document) = self.pop_oldest() {
-            if document.meta.expires_at > now {
-                return Some(document);
+    /// Apply the limits to every candidate, once the chain history has closed the E3s that ended
+    /// while the node was offline: keep the newest candidates within the count and byte limits.
+    pub fn select(&mut self, now: DateTime<Utc>) {
+        self.candidates
+            .retain(|candidate| candidate.expires_at > now);
+        let (mut count, mut bytes, mut keep) = (0, 0, 0);
+        for candidate in self.candidates.iter().rev() {
+            if count + 1 > self.max_documents || bytes + candidate.size > self.max_bytes {
+                break;
+            }
+            count += 1;
+            bytes += candidate.size;
+            keep += 1;
+        }
+        let drop = self.candidates.len() - keep;
+        self.candidates.drain(..drop);
+        self.recount();
+    }
+
+    /// Remove and return the oldest candidate that has not expired at `now`.
+    pub fn pop(&mut self, now: DateTime<Utc>) -> Option<RestoreEntry> {
+        while let Some(candidate) = self.pop_oldest() {
+            if candidate.expires_at <= now {
+                continue;
+            }
+            match (candidate.document, candidate.position) {
+                (Some(document), _) => return Some(RestoreEntry::Loaded(document)),
+                (None, Some(position)) => {
+                    return Some(RestoreEntry::Logged {
+                        position,
+                        e3_id: candidate.e3_id,
+                    })
+                }
+                (None, None) => {}
             }
         }
         None
     }
 
     pub fn remove_e3(&mut self, e3_id: &E3id) {
-        self.documents
-            .retain(|document| &document.meta.e3_id != e3_id);
-        self.bytes = self
-            .documents
-            .iter()
-            .map(|document| document.value.size())
-            .sum();
+        self.candidates
+            .retain(|candidate| &candidate.e3_id != e3_id);
+        self.recount();
     }
 
-    fn pop_oldest(&mut self) -> Option<DocumentReceived> {
-        let document = self.documents.pop_front()?;
-        self.bytes -= document.value.size();
-        Some(document)
+    /// Drop the bytes of the oldest candidate that holds them. The candidates that hold their bytes
+    /// are the newest ones, so it is the first of them. Without a log position the candidate cannot
+    /// be read again, so it is dropped.
+    fn unload_oldest(&mut self) {
+        if self.loaded == 0 {
+            return;
+        }
+        let index = self.candidates.len() - self.loaded;
+        let size = self.candidates[index].size;
+        if self.candidates[index].position.is_some() {
+            self.candidates[index].document = None;
+        } else {
+            self.candidates.remove(index);
+        }
+        self.loaded -= 1;
+        self.loaded_bytes -= size;
+    }
+
+    fn pop_oldest(&mut self) -> Option<RestoreCandidate> {
+        let candidate = self.candidates.pop_front()?;
+        if candidate.document.is_some() {
+            self.loaded -= 1;
+            self.loaded_bytes -= candidate.size;
+        }
+        Some(candidate)
+    }
+
+    fn recount(&mut self) {
+        let loaded = self
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.document.is_some());
+        self.loaded = loaded.clone().count();
+        self.loaded_bytes = loaded.map(|candidate| candidate.size).sum();
     }
 }
 
@@ -1090,9 +1196,23 @@ mod tests {
         }
     }
 
+    fn entry_e3(entry: &RestoreEntry) -> &E3id {
+        match entry {
+            RestoreEntry::Loaded(document) => &document.meta.e3_id,
+            RestoreEntry::Logged { e3_id, .. } => e3_id,
+        }
+    }
+
+    fn at(seq: u64) -> Option<LogPosition> {
+        Some(LogPosition {
+            aggregate_id: AggregateId::new(1),
+            seq,
+        })
+    }
+
     fn restore_order(restorable: &mut RestorableDocuments) -> Vec<String> {
         std::iter::from_fn(|| restorable.pop(Utc::now()))
-            .map(|document| document.meta.e3_id.e3_id().to_string())
+            .map(|entry| entry_e3(&entry).e3_id().to_string())
             .collect()
     }
 
@@ -1100,7 +1220,7 @@ mod tests {
     fn restorable_documents_keep_at_most_their_count_limit() {
         let mut restorable = RestorableDocuments::with_limits(3, 1_000);
         for e3 in ["a", "b", "c", "d"] {
-            restorable.push(received(e3, 2), Utc::now());
+            restorable.push(received(e3, 2), None, Utc::now());
         }
         assert_eq!(restore_order(&mut restorable), ["b", "c", "d"]);
     }
@@ -1109,7 +1229,7 @@ mod tests {
     fn restorable_documents_keep_at_most_their_byte_limit() {
         let mut restorable = RestorableDocuments::with_limits(100, 10);
         for (e3, bytes) in [("a", 4), ("b", 4), ("c", 4), ("d", 6)] {
-            restorable.push(received(e3, bytes), Utc::now());
+            restorable.push(received(e3, bytes), None, Utc::now());
         }
         assert_eq!(restore_order(&mut restorable), ["c", "d"]);
     }
@@ -1130,25 +1250,25 @@ mod tests {
     fn an_expired_document_is_not_kept() {
         let now = Utc::now();
         let mut restorable = RestorableDocuments::with_limits(1, 100);
-        restorable.push(received("a", 2), now);
+        restorable.push(received("a", 2), None, now);
         // Kept, it would push out "a".
-        restorable.push(expiring("expired", 2, -1, now), now);
+        restorable.push(expiring("expired", 2, -1, now), None, now);
         assert_eq!(restore_order(&mut restorable), ["a"]);
     }
 
     #[test]
     fn a_document_larger_than_the_byte_limit_is_not_kept() {
         let mut restorable = RestorableDocuments::with_limits(10, 10);
-        restorable.push(received("a", 4), Utc::now());
+        restorable.push(received("a", 4), None, Utc::now());
         // Kept, it would push out "a" and then itself.
-        restorable.push(received("too large", 11), Utc::now());
+        restorable.push(received("too large", 11), None, Utc::now());
         assert_eq!(restore_order(&mut restorable), ["a"]);
     }
 
     #[test]
     fn a_document_for_one_party_is_not_kept() {
         let mut restorable = RestorableDocuments::with_limits(1, 100);
-        restorable.push(received("broadcast", 2), Utc::now());
+        restorable.push(received("broadcast", 2), None, Utc::now());
         let mut share = received("share", 2);
         share.meta = DocumentMeta::new(
             E3id::new("share", 1),
@@ -1157,7 +1277,7 @@ mod tests {
             Some(Utc::now() + chrono::Duration::hours(1)),
         );
         // Kept, it would push out the broadcast document.
-        restorable.push(share, Utc::now());
+        restorable.push(share, None, Utc::now());
         assert_eq!(restore_order(&mut restorable), ["broadcast"]);
     }
 
@@ -1165,11 +1285,11 @@ mod tests {
     fn a_document_that_expires_while_kept_is_not_restored() {
         let now = Utc::now();
         let mut restorable = RestorableDocuments::with_limits(10, 100);
-        restorable.push(expiring("f", 1, 1, now), now);
-        restorable.push(expiring("g", 1, 60, now), now);
+        restorable.push(expiring("f", 1, 1, now), None, now);
+        restorable.push(expiring("g", 1, 60, now), None, now);
         let later = now + chrono::Duration::seconds(2);
         let next = |restorable: &mut RestorableDocuments| {
-            restorable.pop(later).map(|document| document.meta.e3_id)
+            restorable.pop(later).map(|entry| entry_e3(&entry).clone())
         };
         assert_eq!(next(&mut restorable), Some(E3id::new("g", 1)));
         assert_eq!(next(&mut restorable), None);
@@ -1178,11 +1298,45 @@ mod tests {
     #[test]
     fn removing_an_e3_frees_its_bytes() {
         let mut restorable = RestorableDocuments::with_limits(10, 10);
-        restorable.push(received("a", 4), Utc::now());
-        restorable.push(received("e", 6), Utc::now());
+        restorable.push(received("a", 4), None, Utc::now());
+        restorable.push(received("e", 6), None, Utc::now());
         restorable.remove_e3(&E3id::new("e", 1));
         // Fits only when the bytes of "e" are free again.
-        restorable.push(received("b", 6), Utc::now());
+        restorable.push(received("b", 6), None, Utc::now());
         assert_eq!(restore_order(&mut restorable), ["a", "b"]);
+    }
+
+    /// Recovery reads the log before the chain history closes the E3s that ended while the node
+    /// was offline. A document of an open E3 that their documents push out of memory stays a
+    /// candidate, and the restore reads it from the log.
+    #[test]
+    fn a_pushed_out_document_is_restored_from_the_log_when_its_e3_stays_open() {
+        let now = Utc::now();
+        let mut restorable = RestorableDocuments::with_limits(1, 100);
+        restorable.push(received("open", 2), at(1), now);
+        restorable.push(received("closed", 2), at(2), now);
+        restorable.remove_e3(&E3id::new("closed", 1));
+        restorable.select(now);
+        assert_eq!(
+            restorable.pop(now),
+            Some(RestoreEntry::Logged {
+                position: at(1).unwrap(),
+                e3_id: E3id::new("open", 1),
+            })
+        );
+        assert_eq!(restorable.pop(now), None);
+    }
+
+    /// After the history, the limits keep the newest candidates, with or without their bytes.
+    #[test]
+    fn select_keeps_the_newest_candidates_within_the_limits() {
+        let now = Utc::now();
+        let mut restorable = RestorableDocuments::with_limits(2, 100);
+        for (seq, e3) in (1..).zip(["a", "b", "c", "d"]) {
+            restorable.push(received(e3, 2), at(seq), now);
+        }
+        restorable.remove_e3(&E3id::new("d", 1));
+        restorable.select(now);
+        assert_eq!(restore_order(&mut restorable), ["b", "c"]);
     }
 }

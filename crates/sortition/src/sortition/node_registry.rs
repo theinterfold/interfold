@@ -472,6 +472,30 @@ impl NodeRegistry {
         );
     }
 
+    /// Release the slots that `finished` E3s still hold, and return how many E3s held them.
+    ///
+    /// The startup chain sync can deliver an E3's `CommitteeFinalized` after its terminal event,
+    /// and that finalization would reserve slots that no later event releases. Startup calls
+    /// this with the E3s that the lifecycle projection records as terminal.
+    pub fn release_finished_committees<'a>(
+        store: &mut HashMap<u64, NodeStateStore>,
+        finished: impl IntoIterator<Item = &'a E3id>,
+    ) -> usize {
+        let mut released = 0;
+        for e3_id in finished {
+            let held = store.get(&e3_id.chain_id()).is_some_and(|chain_state| {
+                chain_state
+                    .e3_committees
+                    .contains_key(&committee_key(e3_id))
+            });
+            if held {
+                Self::release_committee_jobs(store, e3_id, "terminal lifecycle stage at startup");
+                released += 1;
+            }
+        }
+        released
+    }
+
     /// Enumerate every committee that still holds active jobs (i.e. has not been
     /// released by a completion/failure event).
     ///

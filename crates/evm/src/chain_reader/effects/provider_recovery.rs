@@ -4,6 +4,14 @@
 
 use super::*;
 
+/// Why the chain reader stopped.
+pub(super) enum ReaderStop {
+    /// The node is shutting down.
+    Shutdown,
+    /// The reader cannot continue. The node must stop rather than run without the chain.
+    Failed(String),
+}
+
 pub(super) async fn sleep_or_shutdown(
     duration: Duration,
     shutdown: &mut oneshot::Receiver<()>,
@@ -22,10 +30,10 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
     shutdown: &mut oneshot::Receiver<()>,
     chain_id: u64,
     backoff: &mut Backoff,
-) -> Option<EthProvider<P>> {
+) -> Result<EthProvider<P>, ReaderStop> {
     loop {
         if shutdown.try_recv().is_ok() {
-            return None;
+            return Err(ReaderStop::Shutdown);
         }
 
         let delay = backoff.next_delay();
@@ -35,7 +43,7 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
             "Waiting before provider recreation attempt"
         );
         if sleep_or_shutdown(delay, shutdown).await {
-            return None;
+            return Err(ReaderStop::Shutdown);
         }
 
         let factory_clone = factory.clone();
@@ -70,11 +78,13 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
                         chain_id,
                         new_chain_id, "Recreated provider is on wrong chain — fatal"
                     );
-                    return None;
+                    return Err(ReaderStop::Failed(format!(
+                        "the recreated provider is on chain {new_chain_id}"
+                    )));
                 }
                 info!(chain_id, "Provider recreated and verified");
                 backoff.reset();
-                return Some(new_provider);
+                return Ok(new_provider);
             }
             Err(e) => {
                 error!(
@@ -93,25 +103,15 @@ pub(super) async fn get_new_provider_or_exit<P: Provider + Clone + 'static>(
     shutdown: &mut oneshot::Receiver<()>,
     chain_id: u64,
     backoff: &mut Backoff,
-    bus: &BusHandle,
-) -> Option<EthProvider<P>> {
+) -> Result<EthProvider<P>, ReaderStop> {
     let Some(factory) = factory else {
         error!(
             chain_id,
             "Transport died and no provider factory configured"
         );
-        bus.err(
-            EType::Evm,
-            anyhow!("Transport died and no provider factory configured"),
-        );
-        return None;
+        return Err(ReaderStop::Failed(
+            "the transport died and no provider factory is configured".to_owned(),
+        ));
     };
-    let result = recreate_provider(factory, shutdown, chain_id, backoff).await;
-    if result.is_none() && shutdown.try_recv().is_err() {
-        bus.err(
-            EType::Evm,
-            anyhow!("Provider recreation failed for chain {}", chain_id),
-        );
-    }
-    result
+    recreate_provider(factory, shutdown, chain_id, backoff).await
 }

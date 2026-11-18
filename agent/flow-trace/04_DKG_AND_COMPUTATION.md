@@ -79,7 +79,10 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │      At the threshold-share cutoff, a node that has at least H−1 external shares
 │      starts verification from that snapshot and keeps the collector open. Later
 │      shares extend the verified dealer set until all N−1 arrive or the on-chain
-│      DKG deadline expires.
+│      DKG deadline expires. The node reaches this cutoff early when every dealer
+│      that it still waits for had no C0 key when its key collection closed: this
+│      node dealt such a dealer no share, so the two never list each other as
+│      Ready, and no roster holds both.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -484,7 +487,9 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 ├─ When local key calculation completes or the keyshare actor stops:
 │   └─ Stop the threshold-share collector and its cutoff and deadline timers
 │
-├─ At the 75% soft cutoff:
+├─ At the 75% soft cutoff, or earlier when every missing dealer had no C0 key at the key
+│  cutoff (the keys that this node recorded count as present; after a restart, the rebuilt
+│  collector gets the same set):
 │   ├─ With at least H−1 external shares:
 │   │    send AllThresholdSharesCollected with the available snapshot
 │   │    and keep collecting later shares
@@ -877,7 +882,8 @@ phase.
   │
   ├─ When every member of the accepted H roster has submitted a keyshare:
 │   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
-│   │   → CiphernodeSelector starts the 10-minute failover budget only now
+│   │   → CiphernodeSelector starts the 40-minute failover budget only now: C5 also
+│   │     waits for every roster member's node fold proof, about 12 minutes each at N = 19
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
@@ -1849,12 +1855,14 @@ The document publisher rebuilds its active outbox and received-document set from
 log before network effects start. Its DHT store is in memory, so at `SyncEnded` it also stores
 received broadcast documents in that store again, one at a time, and prunes them with the other
 records of their E3. A document with a party filter is not restored: its filter names this node, so
-no peer fetches it from here. This restore is best effort. Recovery chooses the candidates while it
-reads the local log: at most 512 documents and 128 MiB, the ones received last in event-log order.
-The chain history then drops the documents of E3s that closed while the node was offline, but those
-documents can already have taken the place of an open E3's document, which is then not restored.
-Expired documents, and documents that do not fit in a full store, are skipped. Document publication
-and receipt events use their E3's chain aggregate. Recovery reads the log in pages of at most 1,024
+no peer fetches it from here. This restore is best effort. Recovery keeps every candidate while it
+reads the local log, in event-log order; only the newest ones within 512 documents and 128 MiB hold
+their bytes, and the older ones stay as references into the log. The chain history then drops the
+documents of E3s that closed while the node was offline. At `SyncEnded` the publisher keeps the
+newest candidates within the limits and reads a referenced document from the log before it stores
+it, so the documents of closed E3s cannot take the place of an open E3's document. Expired
+documents, and documents that do not fit in a full store, are skipped. Document publication and
+receipt events use their E3's chain aggregate. Recovery reads the log in pages of at most 1,024
 events and 16 MiB; a page holds at least one event, also a larger one. During DKG, the publisher
 first stores each document in its own DHT store, so that a peer whose lookup reaches this node can
 fetch it from here, and then gossips a small notification that names it. The inbound put handler in

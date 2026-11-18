@@ -20,3 +20,7 @@ rand_chacha.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+alloy = { workspace = true, features = ["json-rpc"] }
+tokio = { workspace = true, features = ["test-util"] }

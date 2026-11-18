@@ -483,6 +483,34 @@ receives live events. The affected E3 can fail at its existing deadline. Teardow
 reservations and failure records. Restart starts with empty queues and failure records. The buffer
 does not read EventStore or recover events before the existing checkpoint.
 
+### Request-router peer events before admission
+
+**Files:** `crates/request/src/routing/unadmitted_inputs.rs`, `crates/request/src/routing/handlers.rs`
+(`UnadmittedNetworkEvent`, `Process`).
+
+A peer event can only contribute to an E3 that the node admitted from chain state or restored from
+a snapshot. When the chain reader lags while gossip is live, peers' first messages for a new E3 can
+arrive before the node sees the request. The router holds such an event in `UnadmittedInputs`, in
+memory, and does not report an error. When the chain event that creates the E3's context arrives,
+the router forwards the held events right after that event, in arrival order, along the normal path:
+each extension's `on_event`, then `forward_message`, so a missing recipient gets them from
+`EventBuffer` before its creation event. A held event keeps its sequence number and identity.
+Teardown drops the E3's held events. The router ignores a peer event of a completed E3.
+
+| Scope  | Items | Accounted bytes |
+| ------ | ----: | --------------: |
+| One E3 |   512 |         128 MiB |
+| Router | 1,024 |         256 MiB |
+
+`event_bytes` accounts each held event. A DKG of 19 parties sends about 160 such events before the
+last party starts. A decryption sends 19 shares of about 0.2 MB each. A full bound drops the oldest
+held event, of the same E3 for the per-E3 bound, and logs a warning. An event larger than the per-E3
+budget is not held.
+
+Startup does not use this path: `NetEventBuffer` holds gossip until `SyncEnded`, after the historical
+chain events. The hold is memory only. A restart between a peer event and its admission drops the
+event, because the router checkpoint is already past it.
+
 ### 2b. CiphernodeSelector Processing
 
 ```
@@ -706,6 +734,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   ├─ Reconciles the provisional reservation with the finalized N-node committee
 │   │   → A selected node keeps its existing reservation without a second increment
 │   │   → A node outside the final committee releases its provisional reservation
+│   │   → Reserves nothing for an E3 that already had a terminal event, because the startup
+│   │     chain sync can deliver the finalization after it; startup releases the slots of
+│   │     E3s that the lifecycle projection records as terminal
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
 │       → `CommitteeFinalized` is normalized into ascending address order before storage
@@ -723,7 +754,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │     is_aggregator = (my node has the lowest eligible party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
-│   │   Persists an absolute 10-minute deadline while a public-key result is pending
+│   │   Later persists an absolute failover deadline: 10 minutes from
+│   │   AggregationInputsReady(DkgRoster), then 40 minutes from
+│   │   AggregationInputsReady(PublicKey) while a public-key result is pending
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -807,10 +840,10 @@ A ready committee must finalize at or before its absolute DKG deadline.
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee, enriched exclusion events, and its durable phase-local timeout state. The
    active aggregator is the lowest eligible `party_id` in the address-sorted runtime committee. When
-   the expected chain result is absent for 10 minutes, every node promotes the next party in that
-   order. The same phase keeps its absolute deadline across restart. Canonical phase progress clears
-   the local unresponsive set. The final eligible party remains active after all standby budgets
-   expire.
+   the expected chain result is absent for 10 minutes (40 minutes for the public key, which waits
+   for node fold proofs), every node promotes the next party in that order. The same phase keeps its
+   absolute deadline across restart. Canonical phase progress clears the local unresponsive set. The
+   final eligible party remains active after all standby budgets expire.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
    deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG

@@ -3,9 +3,9 @@
 //! Re-gossip this node's forwardable in-flight artifacts after restart.
 
 use super::*;
-use crate::backoff::backoff_delay;
 use crate::domain::closed_e3s::record_closed_e3;
 use e3_events::E3id;
+use e3_utils::backoff_delay;
 
 impl NetSyncManager {
     /// Keep re-sending this node's latest DKG Ready or Roster message until key publication or the
@@ -27,7 +27,7 @@ impl NetSyncManager {
     }
 
     fn remember(&mut self, event: InterfoldEvent, base: Duration, cap: Duration) {
-        if event.source() != EventSource::Local {
+        if !EventTranslationService::gossips(&event) {
             return;
         }
         if let Err(error) = self.network.validate_event(&event) {
@@ -192,10 +192,7 @@ impl NetSyncManager {
     ) {
         let mut commands = Vec::new();
         for event in events {
-            if event.source() != EventSource::Local {
-                continue;
-            }
-            if !EventTranslationService::is_forwardable_event(&event) {
+            if !EventTranslationService::gossips(&event) {
                 continue;
             }
             if let Err(error) = self.network.validate_event(&event) {

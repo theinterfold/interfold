@@ -15,7 +15,7 @@ use e3_events::{
     prelude::*, trap, BusHandle, CorrelationId, EType, EventContextAccessors, EventId, EventSource,
     EventType, InterfoldEvent,
 };
-use e3_utils::MAILBOX_LIMIT;
+use e3_utils::{backoff_delay, MAILBOX_LIMIT};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -38,7 +38,9 @@ pub struct NetEventTranslator {
 }
 
 const MAX_GOSSIP_PUBLISH_ATTEMPTS: u8 = 3;
+/// The first wait before a transient publish failure is tried again. Later waits double.
 const GOSSIP_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_GOSSIP_RETRY_DELAY: Duration = Duration::from_secs(30);
 const MAX_NO_PEER_PUBLISH_ATTEMPTS: u8 = 20;
 const NO_PEER_RETRY_DELAY: Duration = Duration::from_secs(30);
 const GOSSIP_PUBLISH_RESULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -67,7 +69,6 @@ struct LibP2pEvent(pub GossipData, pub Option<libp2p::PeerId>);
 struct StartupBufferReleased;
 
 impl NetEventTranslator {
-    /// Create a new NetEventTranslator actor
     pub fn new(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
@@ -100,7 +101,6 @@ impl NetEventTranslator {
         let addr = translator.start();
         let mut rx = rx.subscribe();
 
-        // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());
         info!("NetEventTranslator is running");
         tokio::spawn({
@@ -144,13 +144,6 @@ impl NetEventTranslator {
         });
 
         addr
-    }
-
-    /// Function to determine which events are allowed to be automatically broadcast to the
-    /// network. Kept here so the rule can be referenced via `NetEventTranslator` while the
-    /// implementation lives in the pure service.
-    pub fn is_forwardable_event(event: &InterfoldEvent) -> bool {
-        EventTranslationService::is_forwardable_event(event)
     }
 
     fn handle_interfold_event(
@@ -227,7 +220,7 @@ impl NetEventTranslator {
         let Some(pending) = self.pending.remove(&correlation_id) else {
             return;
         };
-        let retry = retry_policy(&failure);
+        let retry = retry_policy(&failure, pending.attempt);
         if let Some((_, delay)) = retry.filter(|(max, _)| pending.attempt < *max) {
             warn!(
                 attempt = pending.attempt,
@@ -322,14 +315,16 @@ fn wait_failure(error: &anyhow::Error) -> GossipPublishFailure {
     }
 }
 
-fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
+/// The attempt limit and the wait after failed attempt `attempt` (counted from 1).
+fn retry_policy(failure: &GossipPublishFailure, attempt: u8) -> Option<(u8, Duration)> {
     match failure {
         GossipPublishFailure::NoPeersSubscribed => {
             Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
         }
-        GossipPublishFailure::Transient(_) => {
-            Some((MAX_GOSSIP_PUBLISH_ATTEMPTS, GOSSIP_RETRY_DELAY))
-        }
+        GossipPublishFailure::Transient(_) => Some((
+            MAX_GOSSIP_PUBLISH_ATTEMPTS,
+            backoff_delay(GOSSIP_RETRY_DELAY, attempt.into(), MAX_GOSSIP_RETRY_DELAY),
+        )),
         GossipPublishFailure::Permanent(_) => None,
     }
 }
@@ -380,6 +375,54 @@ mod tests {
             }
         })
         .await?;
+        Ok(())
+    }
+
+    /// Startup stores the history that it fetched from peers as network events. The translator
+    /// gossips only the node's own events, so that history does not go out again.
+    #[actix::test]
+    async fn events_from_the_network_are_not_gossiped_again() -> Result<()> {
+        use e3_events::{AggregateConfig, AggregateId};
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    AggregateId::new(1),
+                    Duration::ZERO,
+                )])));
+        let bus = system.handle()?.enable("test");
+        let (tx, mut commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(8);
+        let _translator = NetEventTranslator::setup(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+            LiveHistory::default(),
+        );
+        let keyshare = |e3: &str| KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+            e3_id: E3id::new(e3, 1),
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
+        };
+        let fetched = bus
+            .event_from(keyshare("1"), None)?
+            .with_source(EventSource::Net);
+        let own = bus.event_from(keyshare("2"), None)?;
+
+        bus.naked_dispatch_async(fetched).await?;
+        bus.naked_dispatch_async(own.clone()).await?;
+
+        let Some(NetCommand::GossipPublish { data, .. }) =
+            tokio::time::timeout(Duration::from_secs(5), commands.recv()).await?
+        else {
+            anyhow::bail!("the translator did not publish the node's own event");
+        };
+        let published: InterfoldEvent<Unsequenced> = data.try_into()?;
+        assert_eq!(published.get_data(), own.get_data());
         Ok(())
     }
 
@@ -576,15 +619,30 @@ mod tests {
     #[test]
     fn no_peer_failures_use_the_long_join_window() {
         assert_eq!(
-            retry_policy(&GossipPublishFailure::NoPeersSubscribed),
+            retry_policy(&GossipPublishFailure::NoPeersSubscribed, 1),
             Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
         );
+    }
+
+    /// A transient failure waits 2 s after the first attempt and twice as long after the second.
+    #[test]
+    fn transient_publish_failures_back_off() {
+        let transient = GossipPublishFailure::transient("timed out");
+        for (attempt, secs) in [(1, 2), (2, 4)] {
+            let (max, delay) = retry_policy(&transient, attempt).expect("retried");
+            assert_eq!(max, MAX_GOSSIP_PUBLISH_ATTEMPTS);
+            let expected = Duration::from_secs(secs);
+            assert!(
+                delay >= expected && delay <= expected.mul_f64(1.1),
+                "{delay:?}"
+            );
+        }
     }
 
     #[test]
     fn permanent_publish_failures_are_not_retried() {
         assert_eq!(
-            retry_policy(&GossipPublishFailure::permanent("invalid payload")),
+            retry_policy(&GossipPublishFailure::permanent("invalid payload"), 1),
             None
         );
     }

@@ -332,8 +332,8 @@ async fn received_documents_are_stored_again_after_the_sync() -> Result<()> {
     let open = received("open", b"open document");
     let open_key = ContentHash::from_content(&open.value);
     let mut recovered = RecoveredDocumentState::default();
-    recovered.restorable.push(closed.clone(), Utc::now());
-    recovered.restorable.push(open.clone(), Utc::now());
+    recovered.restorable.push(closed.clone(), None, Utc::now());
+    recovered.restorable.push(open.clone(), None, Utc::now());
     let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) =
         setup_startup_test(recovered)?;
     let mut commands = Commands::new(commands);
@@ -392,6 +392,77 @@ async fn received_documents_are_stored_again_after_the_sync() -> Result<()> {
     Ok(())
 }
 
+/// Recovery reads the log before the chain history closes the E3s that ended while the node was
+/// offline. Their receipts can push an open E3's receipt out of memory. At `SyncEnded` the
+/// publisher reads that receipt from the event log and stores it again.
+#[actix::test]
+async fn a_pushed_out_receipt_is_read_from_the_log_and_stored_again() -> Result<()> {
+    use crate::domain::{LogPosition, RestorableDocuments};
+    use e3_events::{StoreEventRequested, StoreEventResponse};
+    use e3_utils::actix::channel;
+
+    tokio::time::pause();
+    let received = |e3: &str, value: &[u8]| {
+        let request = publish_request(e3, value);
+        DocumentReceived {
+            meta: request.meta,
+            value: request.value,
+        }
+    };
+    let open = received("open", b"open document");
+    let closed = received("closed-in-history", b"closed document");
+
+    let aggregate_id = AggregateId::new(1);
+    let log = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate_id,
+            Duration::ZERO,
+        )])));
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        InterfoldEventData::DocumentReceived(open.clone()),
+        None,
+        1,
+        None,
+        EventSource::Net,
+    );
+    let (stored, response) = channel::oneshot::<StoreEventResponse>();
+    log.eventstore_router()?
+        .send(StoreEventRequested::new(event, stored))
+        .await?;
+    response.await?;
+
+    let mut recovered = RecoveredDocumentState {
+        restorable: RestorableDocuments::with_limits(1, 1_000),
+        document_log: Some(log.eventstore_reader()?.seq()),
+        ..RecoveredDocumentState::default()
+    };
+    let at = |seq| Some(LogPosition { aggregate_id, seq });
+    recovered.restorable.push(open.clone(), at(1), Utc::now());
+    // With a limit of one document in memory, this receipt pushes the open one out.
+    recovered.restorable.push(closed.clone(), at(2), Utc::now());
+    let (_guard, _bus, _net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 1))
+        .await?;
+    publisher.send(key_published(&closed.meta.e3_id, 2)).await?;
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 3))
+        .await?;
+
+    let NetCommand::DhtStoreLocal { key, value, .. } = commands.take(is_store_local).await? else {
+        bail!("expected a local store");
+    };
+    assert_eq!(
+        (&key, &value),
+        (&ContentHash::from_content(&open.value), &open.value)
+    );
+    Ok(())
+}
+
 /// Recovery reads only the receipts of the E3s in the committee snapshot, which can predate a
 /// selection that replay restores. A receipt that replay delivers before `SyncEnded` is stored
 /// again too, unless its E3 closed; a receipt that recovery already read is stored once.
@@ -415,7 +486,7 @@ async fn receipts_that_replay_delivers_are_stored_again_once() -> Result<()> {
     ));
     recovered
         .restorable
-        .push(recovered_receipt.clone(), Utc::now());
+        .push(recovered_receipt.clone(), None, Utc::now());
     recovered
         .closed_e3s
         .push_back(closed_receipt.meta.e3_id.clone());

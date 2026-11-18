@@ -43,6 +43,8 @@ jobs:
 
       - name: Validate release candidate
         id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/release.mjs prepare
 
   build-ciphernode-image-release:
@@ -329,7 +331,7 @@ jobs:
     needs: [validate-and-prepare, build-binaries, download-circuits]
     steps:
       - name: Confirm candidate qualification
-        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} is on main and passed release artifact checks."
+        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} is in protected history and passed artifact checks."
 
   publication-gate:
     name: Verify Every Release Publication

@@ -73,6 +73,10 @@ Before the node starts its protocol actors, it checks each enabled chain:
    `acknowledgeNodeRelease(releaseId, protocolVersion, nodeGeneration)` from the operator key. The
    registry emits `OperatorNodeReleaseAcknowledged` and refreshes the operator status.
 
+If a read in step 3 or the transaction in step 4 fails, the node runs steps 3 and 4 again, up to
+three attempts, after about 2 s and then 4 s. Each attempt runs the check of step 3 again, so after
+a mined acknowledgment it sends nothing more when the operator is active or not registered.
+
 The acknowledgment is a transaction, so the operator wallet needs ETH for gas. These errors stop the
 startup:
 

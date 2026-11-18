@@ -8,8 +8,12 @@ use e3_events::EventSource;
 use std::collections::HashSet;
 use tracing::debug;
 
-const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
-const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(30);
+use crate::helpers::PUBLICATION_RETRY_DELAY;
+
+/// The wait before the failure path polls a chain condition again: a settlement that is pending, or
+/// a failure deadline that the chain does not accept yet. A failed read or transaction waits with
+/// `FailureRetryBackoff` instead.
+const FAILURE_POLL_DELAY: Duration = Duration::from_secs(30);
 const FAILURE_PARTY_STAGGER_SECS: u64 = 15;
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
@@ -154,6 +158,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
     fn clear_failure_watch(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
         self.failure_stage_discoveries.invalidate(e3_id);
         self.failure_stages.remove(e3_id);
+        self.failure_errors.clear(e3_id);
         if let Some(handle) = self.failure_timers.remove(e3_id) {
             ctx.cancel_future(handle);
         }
@@ -523,6 +528,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                 if terminal {
                     actor.blocked_settlements.clear(&e3_id);
                 }
+                if result.is_ok() || terminal {
+                    actor.failure_errors.clear(&e3_id);
+                }
 
                 match result {
                     Ok(FailureSettlementOutcome::Submitted(receipt)) => {
@@ -536,7 +544,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                         info!(e3_id = %e3_id, "E3 completed on-chain; no failure settlement needed");
                     }
                     Ok(FailureSettlementOutcome::Pending) => {
-                        ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_RETRY_DELAY);
+                        ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_POLL_DELAY);
                     }
                     Ok(FailureSettlementOutcome::Blocked) => {
                         let (delay, first) = actor.blocked_settlements.record(&e3_id);
@@ -561,7 +569,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                     }
                     Err(error) => {
                         actor.bus.err(EType::Evm, error);
-                        ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_RETRY_DELAY);
+                        let (delay, _) = actor.failure_errors.record(&e3_id);
+                        ctx.notify_later(ProcessFailedE3 { e3_id }, delay);
                     }
                 }
             }),
@@ -598,6 +607,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ResolveFailureDeadl
             .into_actor(self)
             .map(|(request, result), actor, ctx| match result {
                 Ok(schedule) if schedule.deadline > 0 => {
+                    actor.failure_errors.clear(&request.e3_id);
                     actor.arm_failure_timer(request.e3_id, request.stage, schedule, ctx);
                 }
                 Ok(_) => {
@@ -605,11 +615,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ResolveFailureDeadl
                         EType::Evm,
                         anyhow::anyhow!("canonical failure deadline is zero"),
                     );
-                    ctx.notify_later(request, FAILURE_RETRY_DELAY);
+                    let (delay, _) = actor.failure_errors.record(&request.e3_id);
+                    ctx.notify_later(request, delay);
                 }
                 Err(error) => {
                     actor.bus.err(EType::Evm, error);
-                    ctx.notify_later(request, FAILURE_RETRY_DELAY);
+                    let (delay, _) = actor.failure_errors.record(&request.e3_id);
+                    ctx.notify_later(request, delay);
                 }
             }),
         )
@@ -643,13 +655,15 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<DiscoverFailureStag
                 }
                 match result {
                     Ok(Some(stage)) => {
+                        actor.failure_errors.clear(&e3_id);
                         actor.failure_stages.insert(e3_id.clone(), stage);
                         actor.try_start_failure_watch(&e3_id, ctx);
                     }
                     Ok(None) => actor.clear_failure_watch(&e3_id, ctx),
                     Err(error) => {
                         actor.bus.err(EType::Evm, error);
-                        ctx.notify_later(DiscoverFailureStage { e3_id }, FAILURE_RETRY_DELAY);
+                        let (delay, _) = actor.failure_errors.record(&e3_id);
+                        ctx.notify_later(DiscoverFailureStage { e3_id }, delay);
                     }
                 }
             }),
@@ -685,17 +699,20 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<MarkFailedAtDeadlin
             .map(|(request, result), actor, ctx| match result {
                 Ok(MarkFailureOutcome::Marked) => {
                     info!(e3_id = %request.e3_id, "Marked E3 failed after its canonical deadline");
+                    actor.failure_errors.clear(&request.e3_id);
                     actor.failure_stages.remove(&request.e3_id);
                 }
                 Ok(MarkFailureOutcome::StageAdvanced) => {
                     actor.clear_failure_watch(&request.e3_id, ctx);
                 }
                 Ok(MarkFailureOutcome::NotDue) => {
-                    ctx.notify_later(request, FAILURE_RETRY_DELAY);
+                    actor.failure_errors.clear(&request.e3_id);
+                    ctx.notify_later(request, FAILURE_POLL_DELAY);
                 }
                 Err(error) => {
                     actor.bus.err(EType::Evm, error);
-                    ctx.notify_later(request, FAILURE_RETRY_DELAY);
+                    let (delay, _) = actor.failure_errors.record(&request.e3_id);
+                    ctx.notify_later(request, delay);
                 }
             }),
         )
@@ -937,6 +954,61 @@ mod tests {
                 "the writer released the retained noncanonical proof"
             );
         }
+        Ok(())
+    }
+
+    /// A failed read in the failure settlement backs off: the second retry waits about 60 s, not
+    /// another 30 s.
+    #[actix::test]
+    async fn failed_settlement_reads_back_off() -> Result<()> {
+        tokio::time::pause();
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("failed-settlement-backoff");
+
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter.clone()),
+        )
+        .await?;
+        // Each attempt fails at its first read, `getE3Stage`.
+        for _ in 0..3 {
+            asserter.push_failure_msg("connection reset");
+        }
+
+        let writer = InterfoldSolWriter::new_with_recovery(
+            &bus,
+            provider,
+            Address::ZERO,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashSet::from([E3id::new("7", 1)]),
+            HashSet::new(),
+            CanonicalPublicKeys::default(),
+            system.eventstore_reader()?.seq(),
+        )?
+        .start();
+        writer.send(EffectsEnabled::new()).await?;
+
+        // The (paused) time at which each of the three attempts read the chain.
+        let mut attempts = Vec::new();
+        while attempts.len() < 3 {
+            if asserter.read_q().len() < 3 - attempts.len() {
+                attempts.push(tokio::time::Instant::now());
+                continue;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let first_wait = attempts[1] - attempts[0];
+        let second_wait = attempts[2] - attempts[1];
+        assert!(
+            first_wait >= Duration::from_secs(30) && first_wait < Duration::from_secs(34),
+            "{first_wait:?}"
+        );
+        assert!(second_wait >= Duration::from_secs(60), "{second_wait:?}");
         Ok(())
     }
 

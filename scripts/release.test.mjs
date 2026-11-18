@@ -14,6 +14,7 @@ import {
   prepareReleaseAssets,
   promoteStableTag,
   publishNpmPackage,
+  trustedReleaseRefs,
   verifyPublications,
   verifyReleaseCandidate,
 } from './release.mjs'
@@ -59,6 +60,61 @@ describe('release candidate ancestry', () => {
     const divergent = git(repository, 'commit-tree', tree, '-m', 'divergent candidate')
     git(repository, 'tag', 'v2.0.0', divergent)
     assert.throws(() => verifyReleaseCandidate('v2.0.0', 'main', divergent, repository), /not in protected history/)
+  })
+
+  test('accepts a patch tag only in the history of a listed maintenance branch', () => {
+    const repository = temporaryDirectory('interfold-release-maintenance')
+    git(repository, 'init', '--quiet', '--initial-branch=main')
+    git(repository, 'config', 'user.name', 'Release Test')
+    git(repository, 'config', 'user.email', 'release-test@example.invalid')
+
+    writeFileSync(join(repository, 'artifact'), 'release\n')
+    git(repository, 'add', 'artifact')
+    git(repository, 'commit', '--quiet', '-m', 'release')
+    git(repository, 'branch', 'releases/1.0.x')
+    writeFileSync(join(repository, 'artifact'), 'main advanced\n')
+    git(repository, 'commit', '--quiet', '-am', 'advance main')
+    git(repository, 'checkout', '--quiet', 'releases/1.0.x')
+    writeFileSync(join(repository, 'artifact'), 'backported fix\n')
+    git(repository, 'commit', '--quiet', '-am', 'backport')
+    const patch = git(repository, 'rev-parse', 'HEAD')
+    git(repository, 'tag', 'v1.0.1', patch)
+
+    assert.equal(verifyReleaseCandidate('v1.0.1', ['main', 'releases/1.0.x'], patch, repository), patch)
+    assert.throws(() => verifyReleaseCandidate('v1.0.1', ['main'], patch, repository), /not in protected history main$/)
+  })
+
+  test('trusts a maintenance branch only when its rules require pull requests and block force pushes', () => {
+    const remote = temporaryDirectory('interfold-trusted-remote')
+    const repository = temporaryDirectory('interfold-trusted-source')
+    git(remote, 'init', '--quiet', '--bare')
+    git(repository, 'init', '--quiet', '--initial-branch=main')
+    git(repository, 'config', 'user.name', 'Release Test')
+    git(repository, 'config', 'user.email', 'release-test@example.invalid')
+    git(repository, 'remote', 'add', 'origin', remote)
+    writeFileSync(join(repository, 'artifact'), 'release\n')
+    git(repository, 'add', 'artifact')
+    git(repository, 'commit', '--quiet', '-m', 'release')
+    git(repository, 'push', '--quiet', 'origin', 'main', 'main:releases/1.0.x')
+
+    const main = 'refs/remotes/origin/main'
+    const maintenance = 'refs/remotes/origin/releases/1.0.x'
+    const protectedRules = () => ['deletion', 'non_fast_forward', 'pull_request']
+    assert.deepEqual(trustedReleaseRefs('1.0.1', protectedRules, repository), [main, maintenance])
+    assert.deepEqual(
+      trustedReleaseRefs('1.0.1', () => ['pull_request'], repository),
+      [main],
+    )
+    assert.deepEqual(
+      trustedReleaseRefs('1.0.1', () => [], repository),
+      [main],
+    )
+    const unreadable = () => {
+      throw new Error('API unavailable')
+    }
+    assert.deepEqual(trustedReleaseRefs('1.0.1', unreadable, repository), [main])
+    // Another minor line has no maintenance branch; its tag can only come from main.
+    assert.deepEqual(trustedReleaseRefs('1.1.1', protectedRules, repository), [main])
   })
 
   test('promotes the validated commit to the remote stable tag', () => {

@@ -78,6 +78,10 @@ pub struct Sortition {
     recovery: Persistable<SortitionRecoveryState>,
     /// Requests already dispatched during this process.
     processed_requests: HashSet<E3id>,
+    /// E3s with a terminal event or a terminal lifecycle stage. The startup chain sync can deliver
+    /// an E3's `CommitteeFinalized` after its terminal event; capacity is not reserved for these
+    /// E3s. Startup seeds the set from the lifecycle projection.
+    finished_e3s: HashSet<E3id>,
     effects_enabled: bool,
 }
 
@@ -192,6 +196,8 @@ pub struct SortitionParams {
     pub address: String,
     /// Existing ticket intents retain their ticket number and finalization rank after upgrade.
     pub submitted_e3s: HashSet<E3id>,
+    /// E3s that the lifecycle projection records as terminal.
+    pub finished_e3s: HashSet<E3id>,
 }
 
 /// Startup dependencies for the global sortition actor.
@@ -207,6 +213,7 @@ pub struct SortitionAttachParams<'a> {
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     pub address: &'a str,
     pub submitted_e3s: HashSet<E3id>,
+    pub finished_e3s: HashSet<E3id>,
 }
 
 impl Sortition {
@@ -222,6 +229,7 @@ impl Sortition {
             address: params.address,
             recovery: params.recovery,
             processed_requests: params.submitted_e3s,
+            finished_e3s: params.finished_e3s,
             effects_enabled: false,
         }
     }
@@ -240,9 +248,17 @@ impl Sortition {
             ciphernode_selector,
             address,
             submitted_e3s,
+            finished_e3s,
         } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
-        let node_state = node_state_store.load_or_default(HashMap::new()).await?;
+        let mut node_state = node_state_store.load_or_default(HashMap::new()).await?;
+        let mut released_state = node_state.try_get()?;
+        let released =
+            NodeRegistry::release_finished_committees(&mut released_state, &finished_e3s);
+        if released > 0 {
+            info!(released, "Released the capacity of finished E3s");
+            node_state.try_mutate_without_context(|_| Ok(released_state))?;
+        }
         let bond_owners = bond_owners_store
             .load_or_default(BondOwnerState::default())
             .await?;
@@ -276,6 +292,7 @@ impl Sortition {
             ciphernode_selector,
             address: address.to_owned(),
             submitted_e3s,
+            finished_e3s,
         })
         .start();
 
@@ -476,6 +493,7 @@ impl Sortition {
         reason: &str,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        self.finished_e3s.insert(e3_id.clone());
         self.node_state.try_mutate(&ec, |mut state_map| {
             NodeRegistry::release_committee_jobs(&mut state_map, e3_id, reason);
             Ok(state_map)

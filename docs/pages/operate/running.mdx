@@ -346,9 +346,9 @@ arguments.
 </Callout>
 
 Run the node under a process manager, for example systemd. The node exits with an error when a chain
-gateway or the event storage fails, and when startup takes longer than `startup_timeout_secs`. The
-process manager restarts it. Give the node more than 60 seconds to stop (see
-[Stop and restart](#stop-and-restart)).
+gateway or the event storage fails, when one of its actors panics, and when startup takes longer
+than `startup_timeout_secs`. The process manager restarts it. Give the node more than 60 seconds to
+stop (see [Stop and restart](#stop-and-restart)).
 
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>

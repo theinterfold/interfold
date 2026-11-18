@@ -1326,6 +1326,10 @@ flowchart TD
     StoreDeath --> PipelineStall[sequencer loses its acknowledgement path]
     StoreDeath --> ProcessAlive[process may remain alive because unwind stops at the actor task]
 
+    ActorPanic[panic on the thread that runs the actors] --> PanicHook[start command panic hook records the first panic]
+    PanicHook --> PanicStop[Shutdown barrier under the deadline]
+    PanicStop --> CLIExit
+
     Signal[SIGINT / SIGTERM] --> Close[close BusHandle admission]
     Close --> Shutdown[acknowledged Shutdown fanout]
     Shutdown --> Flush[event log and snapshot/store flush]
@@ -1346,13 +1350,14 @@ Startup barriers propagate errors to the caller and fail closed where continuing
 historical or live input. Awaited network bridges stop when their destination actor closes.
 Recoverable handler failures are generally converted into durable `InterfoldError` events by the
 existing `trap` helpers; a logged error is not itself a supervision restart. EventStore write
-failures preserve safety by panicking before dispatch, but the default unwind build does not turn a
-spawned Actix actor panic into a guaranteed process exit. The store actor can die while the process
-remains present and the sequencer stalls; current code has no supervisor that converts that
-condition into a deterministic restart. Shutdown closes event admission, waits for admitted
-publishers, persists and fans out `Shutdown`, flushes the durable pipeline, then drains snapshot
-batches and the backing store under one deadline. Any failed shutdown stage reaches the CLI and
-causes an unsuccessful exit.
+failures preserve safety by panicking before dispatch. A panic ends only the actor whose handler
+panicked, so the start command installs a panic hook (`e3_entrypoint::actor_panics`): after a panic
+on the thread that runs the actors, the CLI runs the shutdown barrier and exits with an error, and
+the node recovers from its event log at the next start. Panics on other threads stay with their
+owners; the compute pool returns them as job errors. Shutdown closes event admission, waits for
+admitted publishers, persists and fans out `Shutdown`, flushes the durable pipeline, then drains
+snapshot batches and the backing store under one deadline. Any failed shutdown stage reaches the CLI
+and causes an unsuccessful exit.
 
 Cancellation ownership is not uniform across the workspace. EVM reader loops have an explicit
 oneshot shutdown signal, the EventBus shutdown event stops many actors, and the outer deadline

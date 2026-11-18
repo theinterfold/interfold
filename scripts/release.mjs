@@ -12,7 +12,7 @@ import { publishNpmPackage } from './release/npm.mjs'
 export { prepareReleaseAssets } from './release/assets.mjs'
 export { ROOT_DIR } from './release/core.mjs'
 export { checkReleaseSafeguards, verifyPublications } from './release/gates.mjs'
-export { prepareRelease, promoteStableTag, tagRelease, verifyReleaseCandidate } from './release/git.mjs'
+export { prepareRelease, promoteStableTag, tagRelease, trustedReleaseRefs, verifyReleaseCandidate } from './release/git.mjs'
 export { publishNpmPackage } from './release/npm.mjs'
 export { normalizeVersion, validateReleaseVersion } from './release/version.mjs'
 

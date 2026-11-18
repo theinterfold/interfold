@@ -15,7 +15,7 @@ use e3_data::{InMemEventLog, InMemSequenceIndex, InMemStore, RepositoriesFactory
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, CommitteeFinalized,
     DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3Failed, E3Requested,
-    E3Stage, EffectsEnabled, EventBus, EventStore, FailureReason, InterfoldEventData,
+    E3Stage, EffectsEnabled, EventBus, EventSource, EventStore, FailureReason, InterfoldEventData,
     RequestRouterCheckpoint, Sequencer, SyncEffect, Unsequenced,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
@@ -794,3 +794,130 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
 
 #[path = "buffer_tests.rs"]
 mod buffer_tests;
+
+type Inputs = Arc<std::sync::Mutex<Vec<(String, u64)>>>;
+
+/// Records the test events, requests and selections that reach one recipient, with their seq.
+struct InputProbe {
+    seen: Inputs,
+}
+
+impl Actor for InputProbe {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for InputProbe {
+    type Result = ();
+
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) {
+        let label = match msg.get_data() {
+            InterfoldEventData::E3Requested(_) => "requested".to_owned(),
+            InterfoldEventData::CiphernodeSelected(_) => "selected".to_owned(),
+            InterfoldEventData::TestEvent(data) => data.msg.clone(),
+            _ => return,
+        };
+        self.seen.lock().unwrap().push((label, msg.seq()));
+    }
+}
+
+/// Starts one recipient at the request and declares another that starts at the node's selection,
+/// like a keyshare.
+struct InputProbeExtension {
+    at_request: Inputs,
+    at_selection: Inputs,
+}
+
+#[async_trait]
+impl E3Extension for InputProbeExtension {
+    fn on_event(&self, ctx: &mut E3Context, event: &InterfoldEvent) {
+        match event.get_data() {
+            InterfoldEventData::E3Requested(_) => {
+                let probe = InputProbe {
+                    seen: self.at_request.clone(),
+                };
+                ctx.set_event_recipient("at_request", Some(probe.start().recipient()));
+                ctx.set_event_recipient("at_selection", None);
+            }
+            InterfoldEventData::CiphernodeSelected(_) => {
+                let probe = InputProbe {
+                    seen: self.at_selection.clone(),
+                };
+                ctx.set_event_recipient("at_selection", Some(probe.start().recipient()));
+            }
+            _ => {}
+        }
+    }
+
+    async fn hydrate(&self, _: &mut E3Context, _: &E3ContextSnapshot) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn peer_event(label: &str, e3_id: &E3id, seq: u64) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::test_event(label)
+        .e3_id(e3_id.clone())
+        .seq(seq)
+        .build()
+        .with_source(EventSource::Net)
+}
+
+#[actix::test]
+async fn peer_events_before_the_request_reach_its_recipients_after_it() -> Result<()> {
+    let e3_id = E3id::new("40", 31337);
+    let (at_request, at_selection) = (Inputs::default(), Inputs::default());
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let bus = test_bus();
+    let router = E3Router::builder(&bus, store)
+        .with(Box::new(InputProbeExtension {
+            at_request: at_request.clone(),
+            at_selection: at_selection.clone(),
+        }))
+        .build()
+        .await?;
+
+    // The chain reader lags: two peer events arrive before the node sees the request.
+    router.send(peer_event("early-a", &e3_id, 5)).await?;
+    router.send(peer_event("early-b", &e3_id, 6)).await?;
+    send_in_order(
+        &router,
+        vec![(
+            E3Requested {
+                e3_id: e3_id.clone(),
+                ..Default::default()
+            }
+            .into(),
+            7,
+        )],
+    )
+    .await?;
+    router.send(peer_event("live", &e3_id, 8)).await?;
+    send_in_order(
+        &router,
+        vec![(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                ..Default::default()
+            }
+            .into(),
+            9,
+        )],
+    )
+    .await?;
+    bus.flush_event_pipeline().await?;
+    actix::clock::sleep(Duration::from_millis(100)).await;
+
+    // Each held event arrives once, after the request, in arrival order, and before later events.
+    // The recipient that starts at the selection gets them from the deferred buffer.
+    let expected = [
+        ("requested", 7),
+        ("early-a", 5),
+        ("early-b", 6),
+        ("live", 8),
+        ("selected", 9),
+    ]
+    .map(|(label, seq)| (label.to_owned(), seq))
+    .to_vec();
+    assert_eq!(*at_request.lock().unwrap(), expected);
+    assert_eq!(*at_selection.lock().unwrap(), expected);
+    Ok(())
+}

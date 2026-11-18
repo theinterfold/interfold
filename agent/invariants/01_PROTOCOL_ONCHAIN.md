@@ -396,10 +396,11 @@ every section.
   Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
   decryption lifecycle. — `flow-trace/03`
 - **The threshold-share checkpoint is not a DKG deadline.** At 75% of the frozen DKG window, a node
-  with at least H−1 external shares may take a snapshot and continue. It keeps collecting the
-  remaining shares until collection completes or the on-chain DKG deadline passes. Below H−1, it
-  keeps collecting. Only the request-frozen on-chain DKG deadline may turn missing threshold shares
-  into `DKGTimeout`. Restart must preserve the remaining deadline. —
+  with at least H−1 external shares may take a snapshot and continue. It reaches the checkpoint
+  earlier when every dealer that it still waits for had no C0 key when its key collection closed. It
+  keeps collecting the remaining shares until collection completes or the on-chain DKG deadline
+  passes. Below H−1, it keeps collecting. Only the request-frozen on-chain DKG deadline may turn
+  missing threshold shares into `DKGTimeout`. Restart must preserve the remaining deadline. —
   `crates/keyshare/src/threshold_keyshare/collect_threshold_shares.rs`; `flow-trace/04`; INDEX
   concern #54
 - Failure checks compare `block.timestamp` with the raw stage deadline. `E3TimeoutConfig` has no

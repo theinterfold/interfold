@@ -10,7 +10,7 @@ use e3_events::{
     E3Stage, E3StageChanged, EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced,
     SyncEffect,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
@@ -160,18 +160,23 @@ impl Handler<InterfoldEvent> for E3Router {
                     msg.source(),
                     msg.block(),
                 )),
-                RoutingDecision::UnadmittedNetworkEvent(e3_id) => Err(anyhow!(
-                    "rejected {} for unknown E3 {} from the peer network (event={}, origin={})",
-                    msg.event_type(),
-                    e3_id,
-                    msg.id(),
-                    msg.origin_id(),
-                )),
+                RoutingDecision::UnadmittedNetworkEvent(e3_id) => {
+                    // A peer event cannot create a context. It waits for the chain event that does.
+                    debug!(
+                        %e3_id,
+                        event_type = %msg.event_type(),
+                        event = %msg.id(),
+                        "Holding a peer event until the chain admits its E3"
+                    );
+                    self.unadmitted.hold(e3_id, msg);
+                    Ok(())
+                }
                 RoutingDecision::Process {
                     e3_id,
                     post_forward,
                 } => {
                     let repositories = self.store.repositories();
+                    let created = !self.contexts.contains_key(&e3_id);
                     let context = self.contexts.entry(e3_id.clone()).or_insert_with(|| {
                         E3Context::from_params(E3ContextParams {
                             e3_id: e3_id.clone(),
@@ -190,6 +195,16 @@ impl Handler<InterfoldEvent> for E3Router {
                             extension.on_event(context, &msg);
                         }
                         context.forward_message(&msg, &mut self.buffer);
+                    }
+                    // Peer events that arrived before the chain admitted this E3 follow the event
+                    // that admitted it, in arrival order, along the same path.
+                    if created && post_forward != PostForward::Teardown {
+                        for held in self.unadmitted.take(&e3_id) {
+                            for extension in self.extensions.iter() {
+                                extension.on_event(context, &held);
+                            }
+                            context.forward_message(&held, &mut self.buffer);
+                        }
                     }
                     if post_forward != PostForward::Teardown {
                         context
@@ -220,6 +235,7 @@ impl Handler<InterfoldEvent> for E3Router {
                         PostForward::Teardown => {
                             self.contexts.remove(&e3_id);
                             self.buffer.remove_e3(&e3_id);
+                            self.unadmitted.remove_e3(&e3_id);
                             self.completed.insert(e3_id);
                         }
                         PostForward::None => (),
