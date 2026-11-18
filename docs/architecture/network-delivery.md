@@ -45,10 +45,13 @@ connections.
 
 ## Gossip identity and overload
 
-Periodic retransmission uses a fresh transport delivery ID but the same embedded protocol event ID.
-Libp2p may transmit again; EventBus and stored-event identity still deduplicate the fact. Do not
-accept or forward IDs retained in the six-hour seen window. Stored-event retention is also bounded;
-rejected handoff releases its reservation and append failure stops the node.
+A node gossips only the forwardable events that it created; gossipsub relays them to the mesh. It
+never gossips an event from the network again, including the history that startup fetched: a peer
+that forgot the event would store another copy. Periodic retransmission uses a fresh transport
+delivery ID but the same embedded protocol event ID. Libp2p may transmit again; EventBus and
+stored-event identity still deduplicate the fact. Do not accept or forward IDs retained in the
+six-hour seen window. Stored-event retention is also bounded; rejected handoff releases its
+reservation and append failure stops the node.
 
 Capacity follows four concurrent N=19/H=14 E3s with 2x margin plus retry bursts. Peers borrow idle
 capacity. At pressure a peer at fair share evicts its own oldest ID; a peer below share reclaims
@@ -72,21 +75,28 @@ events, `StartupBufferReleased` triggers storage flush before history replies vo
 
 ## Historical sync and coverage
 
-Startup peer history is bounded across **all aggregates, retries, and peer-list waits**: 512 pages,
-50,000 events, 128 MiB, and five minutes per attempt, without an operator override. Missing required
-sources or exhausted budget fails full-node startup; bootstrap explicitly permits absent peer
-history. After required sources exist, exhaustion while seeking optional coverage hints stops that
-extra search rather than discarding the collected sources. Reset can recover only still-available
-chain/peer facts, not a deleted secret share or every historical gossip event.
+Startup peer history has a **five-minute deadline across all aggregates, retries, and peer-list
+waits**, and holds at most **50,000 events and 128 MiB**: the merged history plus the source in
+progress, without an operator override. A peer stores an event again each time it reaches the peer
+after the peer forgot it, and serves every copy; the fetch keeps one copy of each event, and only
+kept history counts; a later source's earlier copy of a kept event only moves it. A source that
+passes the kept limit fails like any other source. Startup hands the merged history over as one
+local record, which the event log stores as a blob when it passes the 32 MiB inline limit. That
+record stays beside the stored events for as long as the log, so every startup whose fetched history
+passes the limit keeps one more blob. Missing required sources or the passed deadline fails
+full-node startup; bootstrap explicitly permits absent peer history. After required sources exist,
+the deadline stops the optional search for coverage hints rather than discarding the collected
+sources. Reset can recover only still-available chain/peer facts, not a deleted secret share or
+every historical gossip event.
 
 Fetch an aggregate from two admitted sources when available, or its sole connected peer. Page each
 source from the requested timestamp and union by event ID with earliest time. Require
-payload-derived IDs, equal payloads for repeated IDs, advancing cursors, and no events before the
-requested boundary. Compare timestamp claims against retained local records and historical EVM
-inputs (including quarantined legacy records that still occupy timestamps). Different IDs/payload
-digests at one claimed timestamp fail rather than collide later in EventStore. The local claim scan
-is also bounded. Replace bad sources; give replaceable slow peers bounded opportunities so they
-cannot consume the entire attempt.
+payload-derived IDs, equal payloads for repeated IDs, advancing cursors, strictly increasing event
+times within a source, and no events before the requested boundary. Compare timestamp claims against
+retained local records and historical EVM inputs (including quarantined legacy records that still
+occupy timestamps). Different IDs/payload digests at one claimed timestamp fail rather than collide
+later in EventStore. The local claim scan is also bounded. Replace bad sources; give replaceable
+slow peers bounded opportunities so they cannot consume the entire attempt.
 
 History serving uses timestamp-index order, not physical log order: older remote timestamps can
 follow newer log records. Storage pages are count/decoded-byte bounded, admit one larger record for
@@ -106,7 +116,8 @@ unpublished future history fails startup. These are bounded reconciliation heuri
 availability or consensus.
 
 [Network-sync tests](../../crates/net/src/network_sync/tests.rs) exercise source conflicts, coverage
-hints, and shared budgets. They do not prove that two peers retained every fact ever published.
+hints, copies, and the shared deadline. They do not prove that two peers retained every fact ever
+published.
 
 ## DKG documents
 

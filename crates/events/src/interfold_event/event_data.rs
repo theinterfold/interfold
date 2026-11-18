@@ -188,6 +188,21 @@ impl InterfoldEventData {
         EventType::from(self).as_str().to_string()
     }
 
+    /// Whether nodes send this event to their peers, over gossip and in history replies. Every
+    /// other event stays on the node that produced or received it.
+    pub fn is_forwardable(&self) -> bool {
+        matches!(
+            self,
+            InterfoldEventData::DecryptionshareCreated(_)
+                | InterfoldEventData::DkgCoordination(_)
+                | InterfoldEventData::DKGRecursiveAggregationComplete(_)
+                | InterfoldEventData::KeyshareCreated(_)
+                | InterfoldEventData::PublicKeyAggregated(_)
+                | InterfoldEventData::ProofFailureAccusation(_)
+                | InterfoldEventData::AccusationVote(_)
+        )
+    }
+
     /// The E3 that this payload belongs to. The match lists every variant, so a new variant must
     /// state whether it carries an E3: the E3 chain selects the event's aggregate.
     pub fn get_e3_id(&self) -> Option<E3id> {

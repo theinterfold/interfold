@@ -6,10 +6,7 @@
 
 use e3_events::{prelude::*, HistoryProgress, InterfoldEvent, Unsequenced};
 
-use crate::domain::{
-    event_translation::EventTranslationService,
-    net_event_batch::{BatchCursor, EventBatch, FetchEventsSince},
-};
+use crate::domain::history_messages::{BatchCursor, EventBatch, FetchEventsSince};
 
 /// Maximum number of forwardable events a remote peer may request in one sync response.
 pub(crate) const MAX_SYNC_BATCH_SIZE: usize = 100;
@@ -18,9 +15,9 @@ pub(crate) const MAX_SYNC_BATCH_SIZE: usize = 100;
 /// small, bounded multiple of the response size so those events cannot prematurely terminate sync,
 /// while preventing a request from materializing the complete remaining history.
 const SYNC_SCAN_MULTIPLIER: usize = 4;
-pub(crate) const MAX_SYNC_SCAN_EVENTS: usize = MAX_SYNC_BATCH_SIZE * SYNC_SCAN_MULTIPLIER;
+const MAX_SYNC_SCAN_EVENTS: usize = MAX_SYNC_BATCH_SIZE * SYNC_SCAN_MULTIPLIER;
 
-pub(crate) fn effective_sync_limit(requested: usize) -> usize {
+fn effective_sync_limit(requested: usize) -> usize {
     requested.min(MAX_SYNC_BATCH_SIZE)
 }
 
@@ -163,7 +160,7 @@ pub fn build_sync_batch(
     let mut consumed = 0usize;
     let mut consumed_ts = None;
     for event in page {
-        if EventTranslationService::is_forwardable_event(&event) {
+        if event.get_data().is_forwardable() {
             let event = event.clone_unsequenced();
             let size = bincode::serialized_size(&event)
                 .ok()

@@ -23,10 +23,10 @@ pub(crate) mod document_publishing;
 pub(crate) mod event_conversion;
 #[path = "event_translation/workflow.rs"]
 pub(crate) mod event_translation;
+#[path = "network_sync/history_messages.rs"]
+pub(crate) mod history_messages;
 #[path = "event_buffer/workflow.rs"]
 pub(crate) mod net_buffer;
-#[path = "event_buffer/model.rs"]
-pub(crate) mod net_event_batch;
 #[path = "network_status.rs"]
 mod network_status;
 #[path = "peer_failure_tracker.rs"]
