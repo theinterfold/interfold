@@ -216,10 +216,11 @@ recovery.
 
 Fence startup `EffectsEnabled` → `SyncEffect` → merged canonical history → `SyncEnded`. Compute
 waits for effects; document publication waits for SyncEnded. `ComputeEffectGate` subscribes before
-replay, uses durable lifecycle, coalesces requests/new hydrated correlations, reuses successful
-responses but not replayed errors, and answers every waiting correlation. Outcomes must match the
-E3. Discard DKG work after KeyPublished while keeping C6 verification (inspect proof type in the
-shared verification request). Before release/reuse, canonical C6 admission still applies.
+replay, uses durable lifecycle, coalesces requests and routes admitted outcomes to waiting
+correlations. Reuse successful responses but not replayed errors. At `KeyPublished` the gate refuses
+new obsolete DKG requests and retires synchronized DKG work, but retains outcomes and waiters for SS
+work it already forwarded. Keep C6 verification (inspect proof type in the shared verification
+request); canonical C6 admission still applies before dispatch or reuse.
 
 `E3Context::effects_enabled` stays false until the router receives `EffectsEnabled`. Extensions must
 propagate it to actors created during replay, not only hydrated actors. Keyshare collectors and
