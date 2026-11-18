@@ -385,7 +385,7 @@ impl Chain {
                 proof: recipients[owner].clone(),
                 setup: setups[owner].clone(),
             };
-            let (node, history) = actor(
+            let (node, setup_bus, history) = actor(
                 &store,
                 root.clone(),
                 signers[owner].clone(),
@@ -403,14 +403,14 @@ impl Chain {
                 .send(SetupCheckpoint)
                 .await?
                 .context("local setup was not retained")?;
-            ensure!(consents(&history).await?.is_empty());
+            ensure!(consents(&setup_bus, &history).await?.is_empty());
             node.send(Die).await?;
             drop(node);
             store.shutdown().await?;
             drop(store);
             // The consent producer must recover its own verdict without another worker result.
             let store = DataStore::from_sled_store(&SledStore::new(&bus, &path)?);
-            let (node, history) = actor(
+            let (node, setup_bus, history) = actor(
                 &store,
                 root,
                 signers[owner].clone(),
@@ -428,7 +428,7 @@ impl Chain {
             ensure!(saved
                 .confirmed_setup(self.controller, &keys, &*cipher(owner).await?)
                 .is_err());
-            let output = consents(&history).await?;
+            let output = consents(&setup_bus, &history).await?;
             ensure!(output.len() == usize::from(setups[0].dealers.contains(&(owner as u32))));
             if let Some(event) = output.first() {
                 let InterfoldEventData::SynchronizedDkgConsentPublished(message) = event.get_data()

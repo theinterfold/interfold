@@ -51,14 +51,30 @@ impl Handler<SetupRetryPending> for ThresholdKeyshare {
 }
 
 #[derive(Message)]
-#[rtype(result = "(BusHandle, bool)")]
-struct SetupStorageState;
+#[rtype(result = "bool")]
+struct SetupStorageBlocked;
 
-impl Handler<SetupStorageState> for ThresholdKeyshare {
-    type Result = actix::MessageResult<SetupStorageState>;
+impl Handler<SetupStorageBlocked> for ThresholdKeyshare {
+    type Result = bool;
 
-    fn handle(&mut self, _: SetupStorageState, _: &mut Self::Context) -> Self::Result {
-        actix::MessageResult((self.bus.clone(), self.synchronized_setup_blocked))
+    fn handle(&mut self, _: SetupStorageBlocked, _: &mut Self::Context) -> Self::Result {
+        self.synchronized_setup_blocked
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<()>")]
+struct SaturateConsent;
+
+impl Handler<SaturateConsent> for ThresholdKeyshare {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: SaturateConsent, ctx: &mut Self::Context) -> Self::Result {
+        for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE {
+            self.bus.publish_without_context(EffectsEnabled::new())?;
+        }
+        self.effects_enabled = true;
+        self.drive_synchronized_setup_definition(ctx)
     }
 }
 
@@ -71,6 +87,7 @@ pub(super) async fn actor(
     keys: CanonicalPublicKeys,
 ) -> Result<(
     Addr<ThresholdKeyshare>,
+    BusHandle,
     Addr<HistoryCollector<InterfoldEvent>>,
 )> {
     let selection = root
@@ -78,7 +95,8 @@ pub(super) async fn actor(
         .as_ref()
         .context("missing selection")?;
     let e3 = selection.e3_id.clone();
-    let (bus, history) = test_bus();
+    // Observe the producer, not the number of events that survived bus deduplication.
+    let (bus, history) = test_bus_with_deduplication(false);
     let repos = store.repositories();
     let state = ThresholdKeyshareState::new(
         e3.clone(),
@@ -95,7 +113,7 @@ pub(super) async fn actor(
         recovery_payloads: ThresholdKeyshareRecoveryPayloads::new(
             repos.threshold_keyshare_recovery_payloads(&e3),
         ),
-        bus,
+        bus: bus.clone(),
         cipher,
         params_profile: PROFILE,
         interfold_address: interfold,
@@ -108,12 +126,14 @@ pub(super) async fn actor(
     })
     .with_canonical_keys(keys)
     .start();
-    Ok((actor, history))
+    Ok((actor, bus, history))
 }
 
 pub(super) async fn consents(
+    bus: &BusHandle,
     history: &Addr<HistoryCollector<InterfoldEvent>>,
 ) -> Result<Vec<InterfoldEvent>> {
+    bus.flush_event_pipeline().await?;
     Ok(history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
@@ -276,7 +296,7 @@ async fn closed_setup_storage_is_not_corruption_and_is_ignored_at_shutdown() -> 
     let setup = Setup::new().await?;
     for shutdown in [false, true] {
         let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let (node, history) = actor(
+        let (node, bus, history) = actor(
             &store,
             ThresholdKeyshareRecoveryState {
                 ciphernode_selected: Some(TypedEvent::new(setup.selected[0].clone(), test_ec(1))),
@@ -288,9 +308,12 @@ async fn closed_setup_storage_is_not_corruption_and_is_ignored_at_shutdown() -> 
             CanonicalPublicKeys::default(),
         )
         .await?;
-        let (bus, _) = node.send(SetupStorageState).await?;
+        // Close the setup store only after the actor's separate BFV-key startup read completes.
+        assert!(!node.send(SetupStorageBlocked).await?);
         if shutdown {
-            bus.publish_shutdown_and_wait().await?;
+            bus.publish_shutdown_and_wait()
+                .await
+                .context("fixture did not observe bus shutdown")?;
         }
         store.shutdown().await?;
         for _ in 0..2 {
@@ -298,17 +321,34 @@ async fn closed_setup_storage_is_not_corruption_and_is_ignored_at_shutdown() -> 
                 result: None,
                 effects: true,
             })
-            .await??;
-            let (_, blocked) = node.send(SetupStorageState).await?;
-            assert!(!node.send(SetupRetryPending).await?);
-            assert_eq!(blocked, !shutdown);
+            .await
+            .context("drive closed setup store")??;
+            assert!(!node
+                .send(SetupRetryPending)
+                .await
+                .context("check setup retry")?);
+            assert_eq!(
+                node.send(SetupStorageBlocked)
+                    .await
+                    .context("check setup block")?,
+                !shutdown
+            );
         }
+        bus.flush_event_pipeline().await?;
+        let events = history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await
+            .context("read setup diagnostics")?;
+        let errors: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::InterfoldError(error) => Some(error),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(errors.len(), usize::from(!shutdown));
         if !shutdown {
-            let events = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
-            assert!(!events.timed_out);
-            let InterfoldEventData::InterfoldError(error) = events.events[0].get_data() else {
-                panic!("expected a storage closure report");
-            };
+            let error = errors[0];
             assert!(
                 error.message.contains("setup storage is closed"),
                 "{}",
@@ -316,7 +356,7 @@ async fn closed_setup_storage_is_not_corruption_and_is_ignored_at_shutdown() -> 
             );
             assert!(!error.message.contains("operator repair"));
         }
-        node.send(Die).await?;
+        node.send(Die).await.context("stop setup fixture")?;
     }
     Ok(())
 }
@@ -357,7 +397,7 @@ async fn synchronized_setup_permanent_saved_errors_are_reported_once_without_red
             )?)
             .await?;
         }
-        let (node, history) = actor(
+        let (node, bus, history) = actor(
             &store,
             ThresholdKeyshareRecoveryState {
                 ciphernode_selected: Some(TypedEvent::new(setup.selected[0].clone(), test_ec(1))),
@@ -383,6 +423,7 @@ async fn synchronized_setup_permanent_saved_errors_are_reported_once_without_red
                 "malformed bytes: {malformed_bytes}"
             );
         }
+        bus.flush_event_pipeline().await?;
         let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
         let errors = events
             .iter()
@@ -393,7 +434,119 @@ async fn synchronized_setup_permanent_saved_errors_are_reported_once_without_red
             .collect::<Vec<_>>();
         assert_eq!(errors.len(), 1, "malformed bytes: {malformed_bytes}");
         assert!(errors[0].contains("saved setup cannot be decoded or validated"));
-        assert!(consents(&history).await?.is_empty());
+        assert!(consents(&bus, &history).await?.is_empty());
+        node.send(Die).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn refused_consent_retries_only_until_publication_or_shutdown() -> Result<()> {
+    use std::time::Duration;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum AfterRefusal {
+        Drain,
+        KeyPublished,
+        Shutdown,
+    }
+
+    tokio::time::pause();
+    let setup = Setup::new().await?;
+    let DecryptionKeyPlan::Proceed {
+        synchronized: Some(material),
+        ..
+    } = setup.plan(0)?
+    else {
+        unreachable!()
+    };
+    let verdict = result(&setup, &material, 0)?;
+    let id = verdict.e3_id.clone();
+    let root = ThresholdKeyshareRecoveryState {
+        ciphernode_selected: Some(TypedEvent::new(setup.selected[0].clone(), test_ec(1))),
+        synchronized: Some(material),
+        ..Default::default()
+    };
+    for after in [
+        AfterRefusal::Drain,
+        AfterRefusal::KeyPublished,
+        AfterRefusal::Shutdown,
+    ] {
+        let keys = CanonicalPublicKeys::default();
+        keys.remember_synchronized_context(
+            id.clone(),
+            e3_events::SynchronizedDkgContext {
+                registry: Address::repeat_byte(1),
+                verifying_contract: Address::repeat_byte(2),
+                crypto_config_id: setup.selected[0].crypto_config_id,
+            },
+        )?;
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let (node, bus, _) = actor(
+            &store,
+            root.clone(),
+            setup.signers[0].clone(),
+            setup.cipher.clone(),
+            setup.interfold,
+            keys,
+        )
+        .await?;
+        let history = HistoryCollector::<InterfoldEvent>::new().start();
+        bus.event_bus()
+            .send(e3_events::Subscribe::new(
+                EventType::SynchronizedDkgConsentPublished,
+                history.clone().recipient(),
+            ))
+            .await?;
+        let ec = test_ec(30);
+        node.send(DriveSetup {
+            result: Some(TypedEvent::new(verdict.clone(), ec.clone())),
+            effects: false,
+        })
+        .await??;
+        let saved = node.send(SetupCheckpoint).await?.context("missing setup")?;
+        node.send(SaturateConsent).await??;
+        assert!(node.send(SetupRetryPending).await?);
+        assert!(consents(&bus, &history).await?.is_empty());
+        match after {
+            AfterRefusal::KeyPublished => {
+                node.send(keyshare_event(
+                    E3StageChanged {
+                        e3_id: id.clone(),
+                        previous_stage: E3Stage::CommitteeFinalized,
+                        new_stage: E3Stage::KeyPublished,
+                    },
+                    40,
+                    EventSource::Evm,
+                ))
+                .await?;
+            }
+            AfterRefusal::Shutdown => {
+                bus.publish_shutdown_and_wait().await?;
+            }
+            AfterRefusal::Drain => {
+                let received = history
+                    .send(TakeEvents::<InterfoldEvent>::with_per_evt_timeout(
+                        1,
+                        Duration::from_secs(5),
+                    ))
+                    .await?;
+                assert!(!received.timed_out, "no automatic consent delivery");
+                assert_eq!(received.events[0].get_ctx().causation_id(), ec.id());
+                node.send(DriveSetup {
+                    result: None,
+                    effects: true,
+                })
+                .await??;
+            }
+        }
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert_eq!(node.send(SetupCheckpoint).await?, Some(saved));
+        assert!(!node.send(SetupRetryPending).await?);
+        assert_eq!(
+            consents(&bus, &history).await?.len(),
+            usize::from(after == AfterRefusal::Drain)
+        );
         node.send(Die).await?;
     }
     Ok(())
@@ -401,11 +554,14 @@ async fn synchronized_setup_permanent_saved_errors_are_reported_once_without_red
 
 #[actix::test]
 async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_input() -> Result<()> {
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
     tokio::time::pause();
-    #[derive(Default)]
     struct FailFlush {
         recovered: bool,
         attempts: u32,
+        observed: mpsc::UnboundedSender<u32>,
     }
     impl Actor for FailFlush {
         type Context = actix::Context<Self>;
@@ -414,6 +570,7 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
         type Result = Result<()>;
         fn handle(&mut self, _: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
             self.attempts += 1;
+            let _ = self.observed.send(self.attempts);
             ensure!(
                 self.recovered,
                 "injected setup flush failure {}",
@@ -463,10 +620,16 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
         synchronized: Some(material),
         ..Default::default()
     };
-    let flush = FailFlush::default().start();
+    let (notify, mut observed) = mpsc::unbounded_channel();
+    let flush = FailFlush {
+        recovered: false,
+        attempts: 0,
+        observed: notify,
+    }
+    .start();
     let store = DataStore::from_in_mem(&InMemStore::new(false).start())
         .with_flush_recipient(flush.clone().recipient());
-    let (node, history) = actor(
+    let (node, bus, history) = actor(
         &store,
         root,
         setup.signers[0].clone(),
@@ -481,21 +644,27 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
     })
     .await??;
     assert!(node.send(SetupCheckpoint).await?.is_none());
-    assert!(consents(&history).await?.is_empty());
-    assert_eq!(flush.send(FlushAttempts).await?, 1);
-    for (millis, attempts) in [(1101, 2), (1000, 2), (1201, 3)] {
-        tokio::time::advance(std::time::Duration::from_millis(millis)).await;
+    assert!(consents(&bus, &history).await?.is_empty());
+    assert_eq!(observed.try_recv()?, 1);
+    for (millis, expected, expect_retry) in [(1101, 2, true), (1000, 2, false), (1201, 3, true)] {
+        tokio::time::advance(Duration::from_millis(millis)).await;
+        if expect_retry {
+            let attempt = tokio::time::timeout(Duration::from_millis(500), observed.recv())
+                .await
+                .context("flush retry did not run after its deadline")?;
+            assert_eq!(attempt, Some(expected));
+        }
         assert!(node.send(SetupCheckpoint).await?.is_none());
-        assert_eq!(flush.send(FlushAttempts).await?, attempts);
-        assert!(consents(&history).await?.is_empty());
+        assert_eq!(flush.send(FlushAttempts).await?, expected);
+        assert!(consents(&bus, &history).await?.is_empty());
     }
+    bus.flush_event_pipeline().await?;
     let errors = history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
         .into_iter()
         .filter(|event| matches!(event.get_data(), InterfoldEventData::InterfoldError(_)))
         .count();
-    // Every injected error differs, so journal deduplication cannot hide repeated reports.
     assert_eq!(errors, 1);
     flush.send(RecoverFlush).await?;
     tokio::time::advance(std::time::Duration::from_secs(5)).await;
@@ -533,7 +702,7 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
         ))
         .await?;
     assert!(extra.timed_out && extra.events.is_empty());
-    assert_eq!(consents(&history).await?.len(), 1);
+    assert_eq!(consents(&bus, &history).await?.len(), 1);
     node.send(Die).await?;
     Ok(())
 }
@@ -572,7 +741,7 @@ async fn synchronized_confirmed_publication_suppresses_consent_until_terminal_cl
             .threshold_keyshare_recovery_payloads(&id),
     )
     .synchronized_setup();
-    let (node, history) = actor(
+    let (node, bus, history) = actor(
         &store,
         root,
         setup.signers[0].clone(),
@@ -604,7 +773,7 @@ async fn synchronized_confirmed_publication_suppresses_consent_until_terminal_cl
     .await??;
     assert!(node.send(SetupCheckpoint).await?.is_some());
     assert!(record.restore().await?.is_some());
-    assert!(consents(&history).await?.is_empty());
+    assert!(consents(&bus, &history).await?.is_empty());
     node.send(keyshare_event(
         E3RequestComplete { e3_id: id },
         50,
@@ -620,6 +789,7 @@ async fn synchronized_confirmed_publication_suppresses_consent_until_terminal_cl
 #[actix::test]
 async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_intent() -> Result<()>
 {
+    let _exclusive = super::recovery::DISK_RECOVERY.lock().await;
     let setup = Setup::new().await?;
     for owner in 0..3 {
         let DecryptionKeyPlan::Proceed {
@@ -639,7 +809,7 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         let (bus, _) = test_bus();
         let store = DataStore::from_sled_store(&SledStore::new(&bus, &dir.path().to_path_buf())?);
         let keys = CanonicalPublicKeys::default();
-        let (node, history) = actor(
+        let (node, setup_bus, history) = actor(
             &store,
             root.clone(),
             setup.signers[owner].clone(),
@@ -675,14 +845,14 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
             .send(SetupCheckpoint)
             .await?
             .context("missing durable setup")?;
-        assert!(consents(&history).await?.is_empty());
+        assert!(consents(&setup_bus, &history).await?.is_empty());
         node.send(DriveSetup {
             result: None,
             effects: true,
         })
         .await??;
         node.send(SetupCheckpoint).await?;
-        assert!(consents(&history).await?.is_empty());
+        assert!(consents(&setup_bus, &history).await?.is_empty());
         keys.remember_synchronized_context(
             setup.selected[owner].e3_id.clone(),
             e3_events::SynchronizedDkgContext {
@@ -697,7 +867,7 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         })
         .await??;
         node.send(SetupCheckpoint).await?;
-        let before = consents(&history).await?;
+        let before = consents(&setup_bus, &history).await?;
         assert_eq!(before.len(), usize::from(owner != 1));
         assert!(saved
             .confirmed_setup(setup.interfold, &keys, &setup.cipher)
@@ -708,7 +878,7 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         drop(store);
         SledDb::close_all_connections();
         let store = DataStore::from_sled_store(&SledStore::new(&bus, &dir.path().to_path_buf())?);
-        let (node, history) = actor(
+        let (node, setup_bus, history) = actor(
             &store,
             root,
             setup.signers[owner].clone(),
@@ -728,14 +898,14 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         })
         .await??;
         assert_eq!(node.send(SetupCheckpoint).await?, Some(saved));
-        assert!(consents(&history).await?.is_empty());
+        assert!(consents(&setup_bus, &history).await?.is_empty());
         node.send(DriveSetup {
             result: None,
             effects: true,
         })
         .await??;
         node.send(SetupCheckpoint).await?;
-        let after = consents(&history).await?;
+        let after = consents(&setup_bus, &history).await?;
         assert_eq!(after.len(), before.len());
         if owner != 1 {
             assert_eq!(after[0].get_data(), before[0].get_data());

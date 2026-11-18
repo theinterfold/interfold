@@ -46,10 +46,13 @@ intent is not permission to decrypt under an unconfirmed key.
 The disabled `synchronized` capability retains the node collector's locally admitted recipient
 result in an exclusive flushed setup intent before producing consent. Native PK shares come from the
 authenticated fixed C4 batch and survive retirement of encrypted transport. Consent waits for
-current-boot effects and the shared chain-frozen domain. Only H recipients sign. A restored
-`SynchronizedSetupIntent::confirmed_setup` rechecks native PK bytes, sealed keys and local anchors
-against shared confirmed authority, including outside-H recipients. This is the read-only #2050
-boundary; C5/publication aggregation and the registry writer remain unfinished.
+current-boot effects and the shared chain-frozen domain. Only H recipients sign. If event admission
+refuses consent, retry the signed payload from the flushed intent with its original causation.
+Confirmed publication, terminal cleanup and shutdown stop those attempts. SS terminal cleanup does
+not access the synchronized setup store. A restored `SynchronizedSetupIntent::confirmed_setup`
+rechecks native PK bytes, sealed keys and local anchors against shared confirmed authority,
+including outside-H recipients. This is the read-only #2050 boundary; C5/publication aggregation and
+the registry writer remain unfinished.
 
 A closed setup store stops automatic attempts for the current boot. Outside shutdown, check the
 storage service before restarting; closure does not indicate damaged data. An intent that cannot be

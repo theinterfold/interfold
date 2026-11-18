@@ -152,6 +152,7 @@ pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 #[derive(Default)]
 struct PendingKeyshareWork {
     synchronized_result: Option<TypedEvent<e3_events::SynchronizedRecipientProofReady>>,
+    synchronized_consent: Option<e3_events::SynchronizedDkgConsentPublished>,
     /// Replayed key-generation output waiting for encryption-key recovery.
     gen_pk_response: Option<TypedEvent<ComputeResponse>>,
     /// Replayed ESI output waiting for key-generation recovery.

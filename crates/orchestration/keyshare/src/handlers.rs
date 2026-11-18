@@ -440,6 +440,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         if let Some(retry) = self.synchronized_setup_retry.take() {
             ctx.cancel_future(retry);
         }
+        self.pending.synchronized_consent = None;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {
@@ -449,14 +450,19 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         }
         // The BFV keypair lives until the E3 ends. The actor stops only once its removal is on disk.
         let keys = self.bfv_keys.clone();
-        let setup = self.recovery_payloads.synchronized_setup();
+        let setup = (self.params_profile.protocol()
+            == e3_fhe_params::BfvDecryptionProtocol::Synchronized)
+            .then(|| self.recovery_payloads.synchronized_setup());
         ctx.wait(
             async move {
                 keys.settle().await.context("BFV keypair removal failed")?;
-                setup
-                    .settle()
-                    .await
-                    .context("synchronized setup removal failed")
+                if let Some(setup) = setup {
+                    setup
+                        .settle()
+                        .await
+                        .context("synchronized setup removal failed")?;
+                }
+                Ok::<_, anyhow::Error>(())
             }
             .into_actor(self)
             .map(move |settled, actor, ctx| {

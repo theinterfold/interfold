@@ -328,7 +328,7 @@ impl DataStore {
 
     /// Remove the data at the scope location and flush the removal.
     pub async fn remove_sync(&self) -> Result<()> {
-        self.remove.send(Remove::new(&self.scope)).await?;
+        self.remove.send(Remove::new(&self.scope)).await??;
         self.flush.send(Flush).await??;
         Ok(())
     }
@@ -613,6 +613,31 @@ mod tests {
             Some(b"original".to_vec())
         );
         assert_eq!(store.scope("missing").read::<Vec<u8>>().await?, None);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn a_remove_rejection_is_not_an_acknowledged_removal() -> Result<()> {
+        struct RejectRemove;
+        impl Actor for RejectRemove {
+            type Context = actix::Context<Self>;
+        }
+        impl actix::Handler<Remove> for RejectRemove {
+            type Result = Result<()>;
+
+            fn handle(&mut self, _: Remove, _: &mut Self::Context) -> Self::Result {
+                anyhow::bail!("storage rejected removal")
+            }
+        }
+        let live = InMemStore::new(false).start();
+        let mut store = DataStore::from(&live).scope("intent");
+        store.write_sync(42_u64).await?;
+        store.remove = RejectRemove.start().recipient();
+        assert_eq!(
+            store.remove_sync().await.unwrap_err().to_string(),
+            "storage rejected removal"
+        );
+        assert_eq!(store.read_checked::<u64>().await?, Some(42));
         Ok(())
     }
 

@@ -86,6 +86,7 @@ impl ThresholdKeyshare {
         ctx: &mut actix::Context<Self>,
     ) -> Result<()> {
         if self.bus.is_shutting_down() {
+            self.pending.synchronized_consent = None;
             self.cancel_synchronized_setup_retry(ctx);
             return Ok(());
         }
@@ -93,7 +94,7 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         if self.synchronized_setup.is_some() {
-            return self.publish_synchronized_consent_definition();
+            return self.publish_synchronized_consent_definition(ctx);
         }
         let recovery = self.recovery.try_get()?;
         let Some(selected) = recovery.ciphernode_selected else {
@@ -178,7 +179,7 @@ impl ThresholdKeyshare {
                 if let Some(intent) = intent {
                     self.synchronized_setup = Some(*intent);
                     self.pending.synchronized_result = None;
-                    if let Err(error) = self.publish_synchronized_consent_definition() {
+                    if let Err(error) = self.publish_synchronized_consent_definition(ctx) {
                         self.bus.err(EType::KeyGeneration, error);
                     }
                 }
@@ -225,8 +226,19 @@ impl ThresholdKeyshare {
         }
     }
 
+    pub(super) fn discard_synchronized_consent(&mut self, ctx: &mut actix::Context<Self>) {
+        // A pending consent implies the intent was flushed; never cancel a storage retry here.
+        if self.pending.synchronized_consent.take().is_some() {
+            self.cancel_synchronized_setup_retry(ctx);
+        }
+    }
+
     fn retry_synchronized_setup(&mut self, ctx: &mut actix::Context<Self>) {
-        if !self.effects_enabled || self.ended || self.synchronized_setup_retry.is_some() {
+        if !self.effects_enabled
+            || self.ended
+            || self.bus.is_shutting_down()
+            || self.synchronized_setup_retry.is_some()
+        {
             return;
         }
         let delay = e3_utils::backoff_delay(
@@ -245,7 +257,10 @@ impl ThresholdKeyshare {
         }));
     }
 
-    fn publish_synchronized_consent_definition(&mut self) -> Result<()> {
+    fn publish_synchronized_consent_definition(
+        &mut self,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
         if !self.effects_enabled || self.ended || self.synchronized_consent_published {
             return Ok(());
         }
@@ -254,24 +269,51 @@ impl ThresholdKeyshare {
         };
         let e3 = &intent.selected().e3_id;
         // A canonical publication ends consent work, but keeps the local setup for every recipient.
-        if self.canonical_key_published
-            || self.canonical_keys.get(e3).is_some()
-            || self.canonical_keys.synchronized_context(e3).is_none()
+        if self.canonical_key_published || self.canonical_keys.get(e3).is_some() {
+            self.discard_synchronized_consent(ctx);
+            return Ok(());
+        }
+        if self.canonical_keys.synchronized_context(e3).is_none()
+            || self.synchronized_setup_retry.is_some()
         {
             return Ok(());
         }
-        if let Some(attestation) = intent.consent(
-            self.interfold_address,
-            &self.canonical_keys,
-            &self.signer,
-            &self.cipher,
-        )? {
-            self.bus.publish(
-                SynchronizedDkgConsentPublished { attestation },
-                intent.result().get_ctx().clone(),
-            )?;
+        let consent = match self.pending.synchronized_consent.take() {
+            Some(consent) => consent,
+            None => {
+                let Some(attestation) = intent.consent(
+                    self.interfold_address,
+                    &self.canonical_keys,
+                    &self.signer,
+                    &self.cipher,
+                )?
+                else {
+                    // A validated outside-H intent has no consent to deliver.
+                    self.synchronized_consent_published = true;
+                    return Ok(());
+                };
+                SynchronizedDkgConsentPublished { attestation }
+            }
+        };
+        match self
+            .bus
+            .publish(consent.clone(), intent.result().get_ctx().clone())
+        {
+            Ok(()) => {
+                self.synchronized_consent_published = true;
+                self.synchronized_setup_failures = 0;
+            }
+            Err(error) if error.is::<e3_events::AdmissionClosed>() => {}
+            Err(error) => {
+                self.pending.synchronized_consent = Some(consent);
+                self.synchronized_setup_failures =
+                    self.synchronized_setup_failures.saturating_add(1);
+                if self.synchronized_setup_failures == 1 {
+                    tracing::warn!(%e3, %error, "consent admission refused; retained flushed intent");
+                }
+                self.retry_synchronized_setup(ctx);
+            }
         }
-        self.synchronized_consent_published = true;
         Ok(())
     }
 }

@@ -198,5 +198,10 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             }
             _ => (),
         }
+        if self.pending.synchronized_consent.is_some()
+            && (self.canonical_key_published || self.bus.is_shutting_down())
+        {
+            self.discard_synchronized_consent(ctx);
+        }
     }
 }

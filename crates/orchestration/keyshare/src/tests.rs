@@ -928,8 +928,10 @@ impl Handler<Insert> for StoppedStore {
 }
 
 impl Handler<Remove> for StoppedStore {
-    type Result = ();
-    fn handle(&mut self, _: Remove, _: &mut Self::Context) {}
+    type Result = Result<()>;
+    fn handle(&mut self, _: Remove, _: &mut Self::Context) -> Self::Result {
+        Ok(())
+    }
 }
 
 impl Handler<e3_events::Flush> for StoppedStore {
@@ -1573,9 +1575,24 @@ impl Handler<StoreEventRequested> for TestEventStore {
 }
 
 fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
-    let event_bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+    test_bus_with_deduplication(true)
+}
+
+impl Handler<e3_events::FlushEventStores> for TestEventStore {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: e3_events::FlushEventStores, _: &mut Self::Context) -> Self::Result {
+        Ok(())
+    }
+}
+
+fn test_bus_with_deduplication(
+    deduplicate: bool,
+) -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+    let event_bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate }).start();
     let store = TestEventStore::default().start();
-    let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+    let sequencer =
+        Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient()).start();
     let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("test-keyshare");
     let history = bus.history();
     (bus, history)
@@ -5883,9 +5900,21 @@ async fn synchronized_setup_failure_does_not_keep_ss_or_sync_bfv_keys() -> Resul
             EventSource::Local,
         ))
         .await?;
-        // This mailbox barrier runs after the failed cleanup's async attempt.
-        node.send(Die).await?;
+        // The BFV key is settled first in both cases. Only synchronized cleanup depends on the
+        // other store and therefore keeps the actor alive after its injected failure.
+        let still_running = node
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await
+            .is_ok();
+        assert_eq!(
+            still_running,
+            profile == e3_fhe_params::BfvProfile::SyncDecInsecure64,
+            "{profile}"
+        );
         assert!(keys.restore().await?.is_none(), "{profile}");
+        if still_running {
+            node.send(Die).await?;
+        }
     }
     Ok(())
 }
