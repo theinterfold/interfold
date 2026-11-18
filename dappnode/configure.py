@@ -58,8 +58,10 @@ def render():
             "rpc_url": rpc_url,
             "chain_id": preset["chain_id"],
             "data_availability": {"mode": "avail", "rpc_url": avail_url},
+            # The node does not use fee_token. Its deploy block is far older than the other
+            # contracts', and the first sync starts at the oldest configured deploy block.
             "contracts": {name: preset["contracts"][name] for name in (
-                "interfold", "ciphernode_registry", "bonding_registry", "slashing_manager", "fee_token"
+                "interfold", "ciphernode_registry", "bonding_registry", "slashing_manager"
             )},
         }],
     }
