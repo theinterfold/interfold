@@ -157,7 +157,8 @@ fn fixture(bus: &BusHandle, recipient: u32) -> Result<Fixture> {
             e3_committee::Committee::new(members.iter().map(ToString::to_string).collect()),
         )]),
         HashSet::new(),
-        HashMap::new(),
+        HashMap::from([(1, context.setup.interfold_address)]),
+        Default::default(),
     );
     actor.recovery_repositories = Some(Repositories::in_mem());
     Ok(Fixture {

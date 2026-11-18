@@ -5,15 +5,16 @@
 
 use super::NodeProofAggregator;
 use crate::synchronized::dealer::DealerPlan;
-use actix::{ActorFutureExt, AsyncContext, Context, WrapFuture};
+use actix::{ActorFutureExt, AsyncContext, Context, Recipient, WrapFuture};
 use alloy::primitives::Address;
 use anyhow::{ensure, Context as _, Result};
 use e3_committee::{CiphernodesCommitteeSize, Committee};
 use e3_data::{Repositories, Repository};
 use e3_events::{
-    ComputeRequest, ComputeResponseKind, DKGInnerProofReady, E3id, EventContext,
-    EventContextAccessors, EventPublisher, EventSource, InterfoldEventData, Sequenced, StoreKeys,
-    SynchronizedDealerProofReady, SynchronizedDkgProofResponse, ZkRequest, ZkResponse,
+    AggregateId, ComputeRequest, ComputeResponseKind, DKGInnerProofReady, E3id, EventContext,
+    EventContextAccessors, EventPublisher, EventSource, EventStoreQueryBy, InterfoldEvent,
+    InterfoldEventData, SeqAgg, Sequenced, StoreKeys, SynchronizedDealerProofReady,
+    SynchronizedDkgProofResponse, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::BfvDecryptionProtocol;
 use e3_request::E3Meta;
@@ -40,15 +41,23 @@ pub(crate) struct DealerCollection {
     pub committees: HashMap<E3id, Committee>,
     pub ended: HashSet<E3id>,
     pub records: HashMap<E3id, DealerRecord>,
+    pub(super) controllers: HashMap<u64, Address>,
     dirty: HashSet<E3id>,
-    // One alternate per provisional C3 slot. Both occurrences are already in the event journal;
-    // replay rebuilds this buffer without changing the snapshot schema.
-    alternate_c3: HashMap<E3id, BTreeMap<usize, DKGInnerProofReady>>,
+    // Recover each slot's one alternate from the retained journal, not snapshot-suffix replay.
+    alternate_c3: DealerAlternates,
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
     pending: HashMap<E3id, PendingPublication>,
     publication_retries: HashMap<E3id, actix::SpawnHandle>,
     pub(super) effects: bool,
+}
+
+type DealerAlternates = HashMap<E3id, BTreeMap<usize, DKGInnerProofReady>>;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DealerRecovery {
+    records: HashMap<E3id, DealerRecord>,
+    alternate_c3: DealerAlternates,
 }
 
 struct PendingPublication {
@@ -72,7 +81,8 @@ impl DealerCollection {
         mut metadata: HashMap<E3id, E3Meta>,
         mut committees: HashMap<E3id, Committee>,
         ended: HashSet<E3id>,
-        records: HashMap<E3id, DealerRecord>,
+        controllers: HashMap<u64, Address>,
+        recovery: DealerRecovery,
     ) -> Self {
         metadata.retain(|_, meta| {
             meta.params_profile.protocol() == BfvDecryptionProtocol::Synchronized
@@ -82,7 +92,9 @@ impl DealerCollection {
             metadata,
             committees,
             ended,
-            records,
+            controllers,
+            records: recovery.records,
+            alternate_c3: recovery.alternate_c3,
             ..Self::default()
         }
     }
@@ -91,14 +103,19 @@ impl DealerCollection {
         self.records
             .iter()
             .map(|(id, record)| {
+                let coherent = record.plan.as_ref().is_some_and(|plan| {
+                    plan.config()
+                        .and_then(|config| plan.matching_c2(id, &config, &record.proofs))
+                        .is_ok_and(|sharing| sharing.is_some())
+                });
+                let inconsistent =
+                    !coherent && record.proofs.contains_key(&1) && record.proofs.contains_key(&2);
                 (
                     id.clone(),
                     record
                         .proofs
                         .iter()
-                        .filter(|(&seq, _)| {
-                            seq < 3 || (record.plan.is_some() && record.proofs.contains_key(&2))
-                        })
+                        .filter(|(&seq, _)| if seq < 3 { !inconsistent } else { coherent })
                         .map(|(&seq, input)| (seq, input.proof.clone()))
                         .collect(),
                 )
@@ -119,7 +136,10 @@ pub(crate) async fn recover(
     repositories: &Repositories,
     metadata: &HashMap<E3id, E3Meta>,
     ended: &HashSet<E3id>,
-) -> Result<HashMap<E3id, DealerRecord>> {
+    controllers: &HashMap<u64, Address>,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    aggregates: &[AggregateId],
+) -> Result<DealerRecovery> {
     let mut records = HashMap::new();
     for (id, meta) in metadata {
         if meta.params_profile.protocol() != BfvDecryptionProtocol::Synchronized {
@@ -131,20 +151,136 @@ pub(crate) async fn recover(
                 .await?;
             continue;
         }
-        if let Some(mut record) = e3_data::DataStore::from(repository(repositories, id))
+        if let Some(record) = e3_data::DataStore::from(repository(repositories, id))
             .read_checked::<DealerRecord>()
             .await?
         {
             meta.validate_configuration()?;
-            if let Some(plan) = &record.plan {
-                let config = plan.config()?;
-                record.qualify_c3(id, &config, BTreeMap::new())?;
-            }
-            record.validate(id, meta)?;
             records.insert(id.clone(), record);
         }
     }
-    Ok(records)
+    DealerRecovery {
+        records,
+        ..Default::default()
+    }
+    .restore(metadata, controllers, eventstore, aggregates)
+    .await
+}
+
+impl DealerRecovery {
+    async fn restore(
+        mut self,
+        metadata: &HashMap<E3id, E3Meta>,
+        controllers: &HashMap<u64, Address>,
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        aggregates: &[AggregateId],
+    ) -> Result<Self> {
+        for (id, record) in &self.records {
+            if let Some(plan) = &record.plan {
+                plan.validate_controller(controllers.get(&id.chain_id()).copied())?;
+            }
+        }
+        let chains: HashSet<_> = self.records.keys().map(E3id::chain_id).collect();
+        for &aggregate in aggregates {
+            if aggregate
+                .to_chain_id()
+                .is_some_and(|id| chains.contains(&id))
+            {
+                crate::retained_journal::visit(eventstore, aggregate, "dealer recovery", |event| {
+                    self.observe_retained(metadata, event);
+                    Ok(())
+                })
+                .await?;
+            }
+        }
+        for (id, record) in &mut self.records {
+            if let Some(plan) = &record.plan {
+                ensure!(
+                    !plan.recipient_keys.is_empty(),
+                    "saved dealer plan is missing its retained native input for E3 {id}"
+                );
+                let config = plan.config()?;
+                record.qualify_c3(
+                    id,
+                    &config,
+                    self.alternate_c3.entry(id.clone()).or_default(),
+                )?;
+            }
+            record.validate(id, &metadata[id])?;
+        }
+        Ok(self)
+    }
+
+    fn observe_retained(&mut self, metadata: &HashMap<E3id, E3Meta>, event: InterfoldEvent) {
+        if event.source() != EventSource::Local {
+            return;
+        }
+        match event.into_components().0 {
+            InterfoldEventData::ThresholdSharePending(native) => {
+                let id = &native.e3_id;
+                let Some(plan) = self.records.get_mut(id).and_then(|r| r.plan.as_mut()) else {
+                    return;
+                };
+                if plan.recipient_keys.is_empty() {
+                    if let Ok(native) = DealerPlan::from_pending(&native) {
+                        if plan.restore_recipient_keys(native) {
+                            if let (Ok(config), Some(alternates)) =
+                                (plan.config(), self.alternate_c3.get_mut(id))
+                            {
+                                alternates.retain(|_, input| {
+                                    plan.decode_leaf(id, &config, input).is_ok()
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            InterfoldEventData::DKGInnerProofReady(input)
+                if input.seq >= 3 && input.proof.circuit == CircuitName::ShareEncryption =>
+            {
+                let id = &input.e3_id;
+                let Some(record) = self.records.get(id).filter(|r| r.completed.is_none()) else {
+                    return;
+                };
+                let Some(primary) = record.proofs.get(&input.seq) else {
+                    return;
+                };
+                if primary.party_id != input.party_id
+                    || primary.proof.public_signals == input.proof.public_signals
+                    || primary.proof.circuit != input.proof.circuit
+                    || self
+                        .alternate_c3
+                        .get(id)
+                        .is_some_and(|slots| slots.contains_key(&input.seq))
+                {
+                    return;
+                }
+                let meta = &metadata[id];
+                let Ok(size) =
+                    CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)
+                else {
+                    return;
+                };
+                let Ok(config) = Configs::for_profile(meta.params_profile, size) else {
+                    return;
+                };
+                if PublicSignals::decode(&config, input.proof.circuit, &input.proof.public_signals)
+                    .is_err()
+                    || record.plan.as_ref().is_some_and(|plan| {
+                        !plan.recipient_keys.is_empty()
+                            && plan.decode_leaf(id, &config, &input).is_err()
+                    })
+                {
+                    return;
+                }
+                self.alternate_c3
+                    .entry(id.clone())
+                    .or_default()
+                    .insert(input.seq, input);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl NodeProofAggregator {
@@ -271,6 +407,7 @@ impl NodeProofAggregator {
     }
 
     fn validate_dealer_authority(&self, id: &E3id, plan: &DealerPlan) -> Result<()> {
+        plan.validate_controller(self.dealer.controllers.get(&id.chain_id()).copied())?;
         self.validate_synchronized_authority(id, plan.profile, plan.committee, &plan.context)
     }
 
@@ -351,14 +488,12 @@ impl NodeProofAggregator {
                 }
                 let config = plan.config()?;
                 // Early leaves cannot reserve a slot against the native plan across restarts.
-                record
-                    .proofs
-                    .retain(|_, proof| plan.decode_leaf(&id, &config, proof).is_ok());
+                record.proofs.retain(|&seq, proof| {
+                    seq >= 3 || plan.decode_leaf(&id, &config, proof).is_ok()
+                });
                 record.plan = Some(plan);
-                if record.proofs.contains_key(&2) {
-                    let alternatives = self.dealer.alternate_c3.remove(&id).unwrap_or_default();
-                    record.qualify_c3(&id, &config, alternatives)?;
-                }
+                let alternatives = self.dealer.alternate_c3.entry(id).or_default();
+                record.qualify_c3(&input.e3_id, &config, alternatives)?;
                 record.ec = ec.clone();
             }
             InterfoldEventData::DKGInnerProofReady(input) => {
@@ -410,13 +545,16 @@ impl NodeProofAggregator {
                     .records
                     .entry(id.clone())
                     .or_insert_with(|| DealerRecord::new(ec.clone()));
-                if let Some(plan) = &record.plan {
+                let sharing = if let Some(plan) = &record.plan {
                     plan.validate_leaf_statement(&id, &config, input, &public)?;
-                    if let Some(c2) = record.proofs.get(&2).filter(|_| input.seq >= 3) {
-                        let sharing = plan.decode_leaf(&id, &config, c2)?;
-                        plan.validate_c3_message(&config, input.seq, &public, &sharing)?;
+                    let sharing = plan.matching_c2(&id, &config, &record.proofs)?;
+                    if let Some(sharing) = sharing.as_ref().filter(|_| input.seq >= 3) {
+                        plan.validate_c3_message(&config, input.seq, &public, sharing)?;
                     }
-                }
+                    sharing
+                } else {
+                    None
+                };
                 if let Some(old) = record.proofs.get(&input.seq) {
                     if old.party_id == input.party_id
                         && old.proof.circuit == input.proof.circuit
@@ -424,24 +562,30 @@ impl NodeProofAggregator {
                     {
                         return Ok(false); // Keep the original randomized proof bytes.
                     }
+                    if input.seq >= 3 {
+                        ensure!(sharing.is_none(), "conflicting dealer C3 statement");
+                        let alternatives = self.dealer.alternate_c3.entry(id).or_default();
+                        let alternate = alternatives
+                            .entry(input.seq)
+                            .or_insert_with(|| input.clone());
+                        ensure!(
+                            alternate.proof.public_signals == input.proof.public_signals,
+                            "provisional C3 slot already has an alternate"
+                        );
+                        return Ok(false);
+                    }
+                    // Neither conflicting secret anchor can be assumed correct. Until a coherent
+                    // pair exists, let the local owner repair either slot without pinning work.
                     ensure!(
-                        input.seq >= 3
-                            && (record.plan.is_none() || !record.proofs.contains_key(&2)),
+                        record.plan.is_some()
+                            && sharing.is_none()
+                            && record.proofs.contains_key(&(3 - input.seq)),
                         "conflicting dealer leaf statement"
                     );
-                    let alternatives = self.dealer.alternate_c3.entry(id).or_default();
-                    let alternate = alternatives
-                        .entry(input.seq)
-                        .or_insert_with(|| input.clone());
-                    ensure!(
-                        alternate.proof.public_signals == input.proof.public_signals,
-                        "provisional C3 slot already has an alternate"
-                    );
-                    return Ok(false);
                 }
                 record.proofs.insert(input.seq, input.clone());
-                if input.seq == 2 && record.plan.is_some() {
-                    let alternatives = self.dealer.alternate_c3.remove(&id).unwrap_or_default();
+                if input.seq <= 2 && record.plan.is_some() {
+                    let alternatives = self.dealer.alternate_c3.entry(id.clone()).or_default();
                     record.qualify_c3(&id, &config, alternatives)?;
                 }
                 record.ec = ec.clone();
@@ -648,29 +792,32 @@ impl DealerRecord {
         &mut self,
         id: &E3id,
         config: &Configs,
-        alternatives: BTreeMap<usize, DKGInnerProofReady>,
+        alternatives: &mut BTreeMap<usize, DKGInnerProofReady>,
     ) -> Result<()> {
         let Some(plan) = &self.plan else {
             return Ok(());
         };
-        let Some(c2) = self.proofs.get(&2) else {
-            return Ok(());
-        };
         if self.completed.is_none() {
-            let sharing = plan.decode_leaf(id, config, c2)?;
+            let sharing = plan.matching_c2(id, config, &self.proofs)?;
             let qualified = |leaf: &DKGInnerProofReady| {
                 plan.decode_leaf(id, config, leaf)
                     .and_then(|public| {
-                        plan.validate_c3_message(config, leaf.seq, &public, &sharing)
+                        if let Some(sharing) = &sharing {
+                            plan.validate_c3_message(config, leaf.seq, &public, sharing)?;
+                        }
+                        Ok(())
                     })
                     .is_ok()
             };
             self.proofs.retain(|&seq, leaf| seq < 3 || qualified(leaf));
-            for (seq, leaf) in alternatives {
+            for (seq, leaf) in std::mem::take(alternatives) {
+                if !qualified(&leaf) {
+                    continue;
+                }
                 if let std::collections::btree_map::Entry::Vacant(slot) = self.proofs.entry(seq) {
-                    if qualified(&leaf) {
-                        slot.insert(leaf);
-                    }
+                    slot.insert(leaf);
+                } else if sharing.is_none() {
+                    alternatives.insert(seq, leaf);
                 }
             }
         }
@@ -700,8 +847,13 @@ impl DealerRecord {
                         )?,
                 "saved dealer plan differs from request"
             );
-            plan.validate_leaves(id, &self.proofs)?;
+            let config = plan.config()?;
+            for (&seq, leaf) in &self.proofs {
+                ensure!(seq == leaf.seq, "dealer slot differs from input");
+                plan.decode_leaf(id, &config, leaf)?;
+            }
             if let Some(output) = &self.completed {
+                plan.validate_leaves(id, &self.proofs)?;
                 ensure!(
                     &output.e3_id == id && output.context == plan.context,
                     "saved dealer output context differs"
