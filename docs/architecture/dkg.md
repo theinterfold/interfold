@@ -113,11 +113,15 @@ current-boot effects and retires this DKG work at confirmed key publication. Nei
 setup response authenticates peer inputs or replaces actor-owned correlation and durable phases.
 
 The node proof collector now has a distinct local dealer phase. It checks the request profile,
-finalized committee/local owner, local source and canonical non-self C3 order, then collects C1–C3
-without waiting for C4. Its exclusive flushed record fences work dispatch and local output
-publication; replay waits for current-boot effects, restart preserves randomized proof bytes and
-replaces compute correlations, and confirmed key publication retires the phase. Local generation
-errors retain the exact request rather than accusing peers.
+configured Interfold controller, finalized committee/local owner, local source and canonical
+non-self C3 order, then collects C1–C3 without waiting for C4. The C1/C2 secret commitments must
+agree before dispatch; inconsistent local leaves remain repairable. Each C3 must bind the key from
+the native fan-out and the exact recipient/CRT message from the coherent C2. Its exclusive flushed
+record fences work dispatch and local output publication. Startup reads the retained journal,
+including the snapshotted prefix, for the native key anchors and one alternate per provisional C3
+slot; this does not change the snapshot encoding. Replay waits for current-boot effects, restart
+preserves randomized proof bytes and replaces compute correlations, and confirmed key publication
+retires the phase. Local generation errors retain the exact request rather than accusing peers.
 
 Dealer and recipient joins have a separate signed peer envelope, not an extension of the on-chain
 fault-attribution roles. Its `InterfoldSynchronizedDkgProof` EIP-712 domain (version `1`) binds the
