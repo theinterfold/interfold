@@ -91,9 +91,9 @@ rewards** sends `claimRewards(e3Ids)` for the completed E3s of the connected rec
 `claimHonestNodeReward` for each failed E3. Each transaction waits for the previous one. E3s that an
 earlier refund manager recorded are not listed. The amounts use the `FEE_TOKEN_*` display settings.
 
-**Bond-owner identity** (`src/lib/identity.ts`) shows when the operator has a bond owner. Governance
-can require each bond owner to prove one identity document with ZKPassport (`OwnerIdentityRegistry`
-and `ZKPassportIdentityVerifier`). The page:
+**Bond-owner identity** (`src/lib/identity.ts`) shows when the operator has a bond owner and the
+network has an identity policy. Governance can require each bond owner to prove one identity
+document with ZKPassport (`OwnerIdentityRegistry` and `ZKPassportIdentityVerifier`). The page:
 
 1. Reads the policy from the bonding registry's storage (it has no view). Then it reads the
    verifier's fixed settings (domain, scope, ZKPassport version, identifier type, FaceMatch, proof
@@ -108,7 +108,8 @@ and `ZKPassportIdentityVerifier`). The page:
 
 The page warns when the proof's ZKPassport version differs from the verifier's, when the proof is
 too old, when a renewal would shorten the credential, and when the credential ends inside the
-current 30-day capacity window. Before a deployment (no policy yet), it makes a proof with the
+current 30-day capacity window. Before a deployment (no policy yet), the panel is hidden, because a
+proof made then cannot register. With `?identity-preview` in the URL, it makes a proof with the
 planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
 the verifier parameters, and the evidence, so a fork test can replay it.
 

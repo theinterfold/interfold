@@ -9,8 +9,8 @@
 // The policy has no view, so the page reads it from the bonding registry's ERC-7201 storage. Three
 // storage reads need no log history, so any RPC serves them. The verifier's fixed settings (domain, scope,
 // ZKPassport version, identifier type) are read from the verifier itself, so the page follows the
-// deployment. Before a deployment, the page can still make a proof with the planned settings
-// (PREVIEW_SERVICE) and offer it as a download.
+// deployment. Before a deployment, the panel is hidden; with `?identity-preview` the page makes a
+// proof with the planned settings (PREVIEW_SERVICE) and offers it as a download.
 
 import {
   BaseError,

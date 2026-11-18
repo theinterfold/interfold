@@ -1410,6 +1410,11 @@ function identityService(verifier: VerifierConfig | null, previewFaceMatch: bool
       }
 }
 
+// Until governance publishes an identity policy, the panel stays hidden: a proof made before the
+// deployment cannot register. `?identity-preview` shows it with the planned settings, for the fork
+// replay of a real proof before the upgrade.
+const IDENTITY_PREVIEW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('identity-preview')
+
 function IdentityPanel({
   owner,
   wallet,
@@ -1464,7 +1469,7 @@ function IdentityPanel({
 
   // `busy` changes when a transaction settles, so a registration shows its new expiry.
   useEffect(() => {
-    if (policy === undefined) return
+    if (policy === undefined || (policy === null && !IDENTITY_PREVIEW)) return
     let cancelled = false
     const registry = policy?.registry ?? null
     fetchOwnerAccount(owner, registry).then(
@@ -1572,6 +1577,9 @@ function IdentityPanel({
       update({ phase: 'failed', message: walletErrorMessage(e) })
     }
   }
+
+  // Nothing shows while the policy loads, so a network without a registry never flashes the panel.
+  if ((policy === undefined && !loadFailed) || (policy === null && !IDENTITY_PREVIEW)) return null
 
   return (
     <IdentityView
