@@ -55,10 +55,14 @@ pub fn publication(
     let mut batch = None;
     for (&id, child) in roster.iter().zip(recipients) {
         let public = statement(config, child, CircuitName::NodesFold)?;
+        if public.tree_hash() != Some(keys.descendants) {
+            return Err(WitnessError::VerificationKey(
+                "recipient genealogy differs from the local verifier keys".into(),
+            ));
+        }
         if public.binding() != Some(binding)
             || public.party_id() != Some(id)
             || public.dealers().as_deref() != Some(roster)
-            || public.tree_hash() != Some(keys.descendants)
             || public.threshold_keys() != aggregation.threshold_keys()
         {
             return Err(invalid(

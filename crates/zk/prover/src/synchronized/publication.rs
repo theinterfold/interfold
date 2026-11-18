@@ -180,6 +180,19 @@ pub fn verify_publication(
     proof: &Proof,
     job: &str,
 ) -> Result<Option<PublicationCommitments>> {
+    Ok(verify_publication_result(prover, config, context, e3, expected, proof, job)?.ok())
+}
+
+pub(super) fn verify_publication_result(
+    prover: &ZkProver,
+    config: &Configs,
+    context: &SynchronizedProofContext,
+    e3: &E3id,
+    expected: &ExpectedPublication<'_>,
+    proof: &Proof,
+    job: &str,
+) -> Result<std::result::Result<PublicationCommitments, super::provenance::Rejection>> {
+    use super::provenance::Rejection;
     let binding = request_binding(config, context, e3)?;
     ensure!(
         expected.public_key.params == config.threshold && expected.public_key.c.len() == 2,
@@ -189,30 +202,31 @@ pub fn verify_publication(
     let keys = PublicationKeys::load(prover, config)?;
     let tree = keys.inputs().tree()?;
     if proof.circuit != CircuitName::DkgAggregator {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let Ok(public) = PublicSignals::decode(config, proof.circuit, &proof.public_signals) else {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     };
+    if public.tree_hash() != Some(tree) || public.c5_key_hash() != Some(keys.c5.key_hash_bytes) {
+        return Ok(Err(Rejection::VerificationKey));
+    }
     if public.binding() != Some(binding)
         || public.dealers().as_deref() != Some(expected.dealers)
-        || public.tree_hash() != Some(tree)
-        || public.c5_key_hash() != Some(keys.c5.key_hash_bytes)
         || public.threshold_keys() != Some(expected.threshold_keys)
         || public.dealer_batch() != Some(expected.dealer_batch)
         || public.recipient_sk_commitments() != Some(expected.sk_commitments)
         || public.recipient_key_bundles() != Some(expected.key_bundles)
         || public.pk_commitment() != Some(pk)
     {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let directory = config
         .profile
         .artifacts_dir_for_committee(config.committee)?;
     if !prover.verify_proof_with_variant(proof, job, 0, CircuitVariant::Evm, &directory)? {
-        return Ok(None);
+        return Ok(Err(Rejection::Proof));
     }
-    Ok(Some(PublicationCommitments {
+    Ok(Ok(PublicationCommitments {
         binding,
         dealers: expected.dealers.to_vec(),
         threshold_keys: expected.threshold_keys.to_vec(),

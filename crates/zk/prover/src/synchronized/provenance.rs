@@ -265,33 +265,54 @@ pub fn verify_recipient(
     proof: &Proof,
     job: &str,
 ) -> Result<Option<SetupCommitments>> {
+    Ok(verify_recipient_result(prover, config, context, e3_id, expected, proof, job)?.ok())
+}
+
+/// Preserve statement rejection separately from a completed cryptographic rejection for workers.
+pub(super) enum Rejection {
+    Expectations,
+    VerificationKey,
+    Proof,
+}
+
+pub(super) fn verify_recipient_result(
+    prover: &ZkProver,
+    config: &Configs,
+    context: &SynchronizedProofContext,
+    e3_id: &E3id,
+    expected: &ExpectedSetup<'_>,
+    proof: &Proof,
+    job: &str,
+) -> Result<std::result::Result<SetupCommitments, Rejection>> {
     let binding = request_binding(config, context, e3_id)?;
     let keys = Keys::load(prover, config)?;
     let tree = keys.as_inputs().setup_tree()?;
     if proof.circuit != CircuitName::NodesFold {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let Ok(public) = PublicSignals::decode(config, proof.circuit, &proof.public_signals) else {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     };
+    if public.tree_hash() != Some(tree) {
+        return Ok(Err(Rejection::VerificationKey));
+    }
     if public.binding() != Some(binding)
         || public.party_id() != Some(context.party_id)
         || public.dealers().as_deref() != Some(expected.dealers)
-        || public.tree_hash() != Some(tree)
         || public.threshold_keys() != Some(expected.threshold_keys)
         || public.dealer_batch() != Some(expected.dealer_batch)
         || public.sk_commitment() != Some(expected.sk_commitment)
         || public.key_bundle() != Some(expected.key_bundle)
     {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let directory = config
         .profile
         .artifacts_dir_for_committee(config.committee)?;
     if !prover.verify_fold_proof(proof, job, context.party_id as u64, &directory)? {
-        return Ok(None);
+        return Ok(Err(Rejection::Proof));
     }
-    Ok(Some(SetupCommitments {
+    Ok(Ok(SetupCommitments {
         binding,
         recipient: context.party_id,
         dealers: expected.dealers.to_vec(),

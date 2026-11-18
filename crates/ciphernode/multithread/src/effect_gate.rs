@@ -1201,10 +1201,10 @@ pub(crate) mod tests {
         let recorder = Recorder::default().start();
         let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
         let first = CorrelationId::new();
-        let work = |correlation, timestamp| {
+        let work = |correlation, timestamp, proof_byte| {
             let proof = Proof::new(
                 CircuitName::PkGeneration,
-                ArcBytes::default(),
+                ArcBytes::from_bytes(&[proof_byte]),
                 ArcBytes::default(),
             );
             let request = ComputeRequest::zk(
@@ -1237,7 +1237,7 @@ pub(crate) mod tests {
             )
             .into_sequenced(1)
         };
-        gate.send(work(first, 10)).await.unwrap();
+        gate.send(work(first, 10, 1)).await.unwrap();
         assert!(recorder.send(Received).await.unwrap().is_empty());
         gate.send(effects_enabled()).await.unwrap();
         assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
@@ -1258,7 +1258,8 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        gate.send(work(CorrelationId::new(), 40)).await.unwrap();
+        // A new payload cannot be suppressed by semantic dedup of the earlier request.
+        gate.send(work(CorrelationId::new(), 40, 2)).await.unwrap();
         assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
     }
 

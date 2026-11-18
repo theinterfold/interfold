@@ -150,14 +150,7 @@ pub fn execute_zk_request(
                 &req,
                 &zk_bb_work_id(&request),
             )
-            .map_err(|error| {
-                ComputeRequestError::new(
-                    ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
-                        "{error:#}"
-                    ))),
-                    request.clone(),
-                )
-            })?;
+            .map_err(|error| synchronized_execution_error(&request, error))?;
             Ok(ComputeResponse::zk(
                 ZkResponse::SynchronizedDkg(response),
                 request.correlation_id,
@@ -165,6 +158,18 @@ pub fn execute_zk_request(
             ))
         }
     }
+}
+
+fn synchronized_execution_error(
+    request: &ComputeRequest,
+    error: crate::synchronized::execution::ExecutionError,
+) -> ComputeRequestError {
+    use crate::synchronized::execution::ExecutionError;
+    let kind = match error {
+        ExecutionError::InvalidParams(error) => ZkEventError::InvalidParams(format!("{error:#}")),
+        ExecutionError::Local(error) => ZkEventError::ProofGenerationFailed(format!("{error:#}")),
+    };
+    ComputeRequestError::new(ComputeRequestErrorKind::Zk(kind), request.clone())
 }
 
 #[cfg(test)]

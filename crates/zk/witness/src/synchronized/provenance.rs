@@ -42,7 +42,7 @@ pub struct VerificationKeys<'a> {
 
 pub(crate) fn hash(fields: &[Field]) -> Result<Field, WitnessError> {
     for field in fields {
-        canonical(field)?;
+        canonical(field).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
     }
     let value = compute_vk_hash(
         fields
@@ -113,8 +113,9 @@ pub(crate) fn insert_child(
     child: &Child<'_>,
     key: &VerificationKey<'_>,
 ) -> Result<(), WitnessError> {
-    canonical(&key.hash)?;
-    json[format!("{prefix}_vk")] = fields(key.fields)?;
+    canonical(&key.hash).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
+    json[format!("{prefix}_vk")] =
+        fields(key.fields).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
     json[format!("{prefix}_key_hash")] = json!(format!("0x{}", hex::encode(key.hash)));
     json[format!("{prefix}_proof")] = fields(child.proof)?;
     json[format!("{prefix}_public")] = fields(child.public_signals)?;
@@ -253,7 +254,9 @@ pub fn recipient(
         let public = statement(config, node, CircuitName::NodeFold)?;
         identity(&public, binding, dealer)?;
         if public.tree_hash() != Some(tree) {
-            return Err(invalid("unanchored dealer descendant VK"));
+            return Err(WitnessError::VerificationKey(
+                "dealer genealogy differs from the local verifier keys".into(),
+            ));
         }
         let messages = public.message_commitments().unwrap();
         if messages[id as usize * l..(id as usize + 1) * l]
