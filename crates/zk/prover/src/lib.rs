@@ -57,4 +57,5 @@ pub use prover::ZkProver;
 pub use request_execution::{execute_zk_request, zk_operation_name};
 pub use traits::Provable;
 pub use witness::{input_map, CompiledCircuit, WitnessGenerator};
+mod retained_journal;
 pub mod synchronized;
