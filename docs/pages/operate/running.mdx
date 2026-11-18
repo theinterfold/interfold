@@ -286,15 +286,15 @@ does not prove that the node is registered. Read the logs and the
 Use the install script to install a fixed `interfold` release in `~/.local/bin`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.19.0
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.19.1
 interfold --version
 ```
 
-The last command prints the installed version, for example `interfold 0.19.0`. To install in another
+The last command prints the installed version, for example `interfold 0.19.1`. To install in another
 folder, for example `/usr/local/bin`, add `--dir <folder>` after the tag.
 
-To change the release later, run `interfold update --version <TAG>`. Release 0.19.0 does not have
-this command, so on that release run the install script again with `--version <TAG>`. See
+To change the release later, run `interfold update --version <TAG>`. Releases 0.19.x do not have
+this command, so on those releases run the install script again with `--version <TAG>`. See
 [Change the installed version](/build/installation#change-the-installed-version).
 
 ### Save the configuration file
@@ -379,7 +379,7 @@ See [Docker state](#docker-state).
 ### Pull a versioned image
 
 ```bash
-export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.0'
+export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.1'
 docker pull "$CIPHERNODE_IMAGE"
 ```
 
@@ -704,7 +704,7 @@ The key/value store holds the key shares of the node, and the chain cannot resto
 </Callout>
 
 Do this procedure one time for each node, when the node serves no active E3. An earlier image uses
-storage schema 7 or earlier, and v0.19.0 uses schema 8. The procedure therefore resets the state
+storage schema 7 or earlier, and v0.19.x uses schema 8. The procedure therefore resets the state
 after the copy. The reset keeps the operator key and the libp2p keypair. See
 [Reset node state](/operate/upgrades#reset-node-state).
 
@@ -725,7 +725,7 @@ new_image() {
 1. Set the image of the new release, and pull it. The helper and the later steps use this variable.
 
    ```bash
-   export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.0'
+   export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.1'
    docker pull "$CIPHERNODE_IMAGE"
    ```
 
