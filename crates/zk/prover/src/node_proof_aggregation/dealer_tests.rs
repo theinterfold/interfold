@@ -332,18 +332,18 @@ async fn synchronized_dealer_c3_stays_provisional_until_plan_and_coherent_sharin
                 // Both candidates arrive while the slot is still provisional. The correct
                 // candidate is journaled only once; no redelivery will rescue a lost slot.
                 actor.accept_dealer_input(&valid[2].clone().into(), &ec(valid[2].clone()))?;
-                assert!(!actor.dealer.inner_proofs()[&id].contains_key(&3));
+                assert!(!actor.dealer.inner_proofs().contains_key(&id));
             }
         }
-        assert!(!actor.dealer.inner_proofs()[&id].contains_key(&3));
+        assert!(!actor.dealer.inner_proofs().contains_key(&id));
         actor.accept_dealer_input(&valid[0].clone().into(), &ec(valid[0].clone()))?;
-        assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
         for leaf in valid.iter().filter(|leaf| leaf.seq != 3) {
             actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
         }
         assert!(plan
             .request(&id, &actor.dealer.records[&id].proofs)?
             .is_some());
+        assert_eq!(actor.dealer.inner_proofs()[&id][&3], valid[2].proof);
         assert!(actor
             .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
             .is_err());
@@ -416,6 +416,56 @@ async fn synchronized_dealer_keeps_inconsistent_secret_pair_repairable_before_di
 }
 
 #[actix::test]
+async fn synchronized_dealer_keeps_c2_repairable_until_all_c3_match() -> Result<()> {
+    for c2_first in [false, true] {
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let (mut actor, input, plan) = fixture(&bus).await?;
+        let id = input.e3_id.clone();
+        let mut valid = leaves(&plan, &id);
+        valid[1].proof.data = ArcBytes::from_bytes(&[87]);
+        let config = plan.config()?;
+        let (party, row) = plan.c3_slot(&config, 3)?;
+        let mut wrong = valid[1].clone();
+        change_public_field(
+            &mut wrong,
+            4 + party * config.threshold.moduli().len() + row,
+        );
+        actor.accept_dealer_input(&input.clone().into(), &ec(input))?;
+        for leaf in [&valid[0], &wrong] {
+            actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+        }
+        if c2_first {
+            actor.accept_dealer_input(&valid[1].clone().into(), &ec(valid[1].clone()))?;
+            let mut reproved = valid[1].clone();
+            reproved.proof.data = ArcBytes::from_bytes(&[88]);
+            actor.accept_dealer_input(&reproved.clone().into(), &ec(reproved))?;
+        }
+        for leaf in &valid[2..valid.len() - 1] {
+            actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+        }
+        actor.dealer.effects = true;
+        actor.publish_dealer_work(&id);
+        assert!(!actor.dealer.in_flight.contains_key(&id));
+        assert!(!actor.dealer.inner_proofs().contains_key(&id));
+        let last = valid.last().unwrap().clone();
+        actor.accept_dealer_input(&last.clone().into(), &ec(last))?;
+        if !c2_first {
+            actor.publish_dealer_work(&id);
+            assert!(!actor.dealer.in_flight.contains_key(&id));
+            actor.accept_dealer_input(&valid[1].clone().into(), &ec(valid[1].clone()))?;
+        }
+        actor.publish_dealer_work(&id);
+        assert!(actor.dealer.in_flight.contains_key(&id));
+        assert_eq!(actor.dealer.records[&id].proofs[&2], valid[1]);
+        assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
+        assert!(actor
+            .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+            .is_err());
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_dealer_requires_the_native_recipient_key_in_every_crt_row() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
     let (mut actor, input, plan) = fixture(&bus).await?;
@@ -444,20 +494,22 @@ async fn synchronized_dealer_requires_the_native_recipient_key_in_every_crt_row(
 }
 
 #[test]
-fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<()> {
+fn synchronized_dealer_restores_alternates_from_the_disk_prefix() -> Result<()> {
     let aggregate = AggregateId::new(1);
-    for saved_plan in [false, true] {
+    for (saved_plan, saved_c2_alternate) in [(false, false), (true, false), (true, true)] {
         let root = tempfile::tempdir()?;
-        let system = || {
+        let system = |enable_chain: bool| {
             EventSystem::persisted(root.path().join("log"), root.path().join("sled"))
                 .with_fresh_bus()
-                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
-                    aggregate,
-                    Duration::ZERO,
-                )])))
+                .with_aggregate_config(AggregateConfig::new(
+                    enable_chain
+                        .then_some((aggregate, Duration::ZERO))
+                        .into_iter()
+                        .collect(),
+                ))
         };
         let (native, valid) = actix::System::new().block_on(async {
-            let system = system();
+            let system = system(true);
             let bus = system.handle()?.enable("dealer-prefix");
             let store = system.store()?;
             let repositories = store.repositories();
@@ -469,13 +521,27 @@ fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<(
             .await?;
             let (mut actor, input, plan) = fixture(&bus).await?;
             let mut valid = leaves(&plan, &input.e3_id);
+            valid[1].proof.data = ArcBytes::from_bytes(&[87]);
             valid[2].proof.data = ArcBytes::from_bytes(&[89]);
             let mut wrong = valid[2].clone();
             change_public_field(&mut wrong, 1);
-            let events = saved_plan
-                .then(|| InterfoldEventData::from(input.clone()))
-                .into_iter()
-                .chain([wrong.into(), valid[2].clone().into()]);
+            let mut events = Vec::new();
+            if saved_plan {
+                events.push(input.clone().into());
+            }
+            if saved_c2_alternate {
+                let config = plan.config()?;
+                // No C3 for this incorrect C2 at sequence 4 is ever emitted.
+                let (party, row) = plan.c3_slot(&config, 4)?;
+                let mut wrong_c2 = valid[1].clone();
+                change_public_field(
+                    &mut wrong_c2,
+                    4 + party * config.threshold.moduli().len() + row,
+                );
+                events.extend([InterfoldEventData::from(wrong_c2), valid[1].clone().into()]);
+            }
+            events.extend([InterfoldEventData::from(wrong), valid[2].clone().into()]);
+            let last_seq = events.len() as u64;
             for data in events {
                 bus.publish_without_context(data.clone())?;
                 actor.accept_dealer_input(&data, &ec(data.clone()))?;
@@ -486,25 +552,46 @@ fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<(
                 .await?;
             system.buffer()?.send(FlushPendingSnapshots).await??;
             let cursor = repositories.aggregate_seq(aggregate).read().await?;
-            assert!(cursor.is_some_and(|seq| seq >= 2 + u64::from(saved_plan)));
+            assert!(cursor.is_some_and(|seq| seq >= last_seq));
             store.shutdown().await?;
             Ok::<_, anyhow::Error>((input, valid))
         })?;
+        e3_data::SledDb::close_all_connections();
 
-        // The journal and the snapshot outlive the actor. Neither early C3 is redelivered.
+        // Neither early C3 nor any previously journaled C2 is redelivered.
         actix::System::new().block_on(async {
-            let system = system();
-            let bus = system.handle()?.enable("dealer-prefix-restored");
+            let reopened = system(true);
+            let bus = reopened.handle()?.enable("dealer-prefix-restored");
             let (mut actor, _, _) = fixture(&bus).await?;
             let id = &native.e3_id;
-            let store = system.store()?;
+            let store = reopened.store()?;
             let record = repository(&store.repositories(), id).read().await?.unwrap();
             let recovery = DealerRecovery {
                 records: HashMap::from([(id.clone(), record)]),
                 ..Default::default()
             };
-            let reader = system.eventstore_reader()?.seq();
+            let reader = reopened.eventstore_reader()?.seq();
             if saved_plan {
+                let disabled = system(false);
+                let aggregates = disabled
+                    .aggregate_config()
+                    .indexed_ids()
+                    .into_iter()
+                    .map(AggregateId::new)
+                    .collect::<Vec<_>>();
+                let error = recovery
+                    .clone()
+                    .restore(
+                        &actor.dealer.metadata,
+                        &actor.dealer.controllers,
+                        &disabled.eventstore_reader()?.seq(),
+                        &aggregates,
+                    )
+                    .await
+                    .expect_err("a chain with saved dealer work cannot lose its journal");
+                assert!(error
+                    .to_string()
+                    .contains("no configured journal aggregate"));
                 let mut wrong = recovery.clone();
                 wrong
                     .records
@@ -538,14 +625,18 @@ fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<(
                 )
                 .await?;
             actor.dealer.records = restored.records;
-            actor.dealer.alternate_c3 = restored.alternate_c3;
+            actor.dealer.alternates = restored.alternates;
             if !saved_plan {
                 actor.accept_dealer_input(&native.clone().into(), &ec(native.clone()))?;
             }
-            for leaf in valid.iter().filter(|leaf| leaf.seq != 3) {
+            for leaf in valid
+                .iter()
+                .filter(|leaf| leaf.seq != 3 && !(saved_c2_alternate && leaf.seq == 2))
+            {
                 actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
             }
             let record = &actor.dealer.records[id];
+            assert_eq!(record.proofs[&2], valid[1]);
             assert_eq!(record.proofs[&3], valid[2]);
             assert!(record
                 .plan
@@ -556,6 +647,7 @@ fn synchronized_dealer_restores_the_alternate_from_the_disk_prefix() -> Result<(
             store.shutdown().await?;
             Ok::<_, anyhow::Error>(())
         })?;
+        e3_data::SledDb::close_all_connections();
     }
     Ok(())
 }
@@ -1046,16 +1138,21 @@ async fn synchronized_dealer_runtime_stays_disabled_and_terminal_history_cannot_
         .eventstore_reader()?
         .seq();
     repository(&repositories, &id).write_sync(&record).await?;
-    assert!(recover(
+    let error = recover(
         &repositories,
         &meta,
         &HashSet::new(),
         &controllers,
         &eventstore,
-        &[]
+        &[],
     )
     .await
-    .is_err());
+    .expect_err("the production recovery path must reject the disabled profile");
+    assert!(matches!(
+        error.downcast_ref::<e3_fhe_params::BfvProfileError>(),
+        Some(e3_fhe_params::BfvProfileError::AdmissionDisabled(profile))
+            if *profile == meta[&id].params_profile.name()
+    ));
     let addr = actor.start();
     let effects: InterfoldEventData = EffectsEnabled::new().into();
     addr.send(
