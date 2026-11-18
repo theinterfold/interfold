@@ -262,18 +262,46 @@ impl DealerPlan {
         Ok(())
     }
 
-    pub(crate) fn matching_c2(
+    /// Prefer the primary C2 if it can be completed. Each non-self row is independent once
+    /// the C2 statement is fixed, so selecting a complete batch never searches row combinations.
+    pub(crate) fn select_complete_leaves(
         &self,
         id: &E3id,
         config: &Configs,
-        proofs: &BTreeMap<usize, DKGInnerProofReady>,
-    ) -> Result<Option<PublicSignals>> {
-        let (Some(c1), Some(c2)) = (proofs.get(&1), proofs.get(&2)) else {
-            return Ok(None);
+        primary: &BTreeMap<usize, DKGInnerProofReady>,
+        alternate: &BTreeMap<usize, DKGInnerProofReady>,
+    ) -> Option<BTreeMap<usize, DKGInnerProofReady>> {
+        let candidates = |seq| primary.get(&seq).into_iter().chain(alternate.get(&seq));
+        let decode = |seq, leaf: &DKGInnerProofReady| {
+            (leaf.seq == seq)
+                .then(|| self.decode_leaf(id, config, leaf).ok())
+                .flatten()
         };
-        let c1 = self.decode_leaf(id, config, c1)?;
-        let c2 = self.decode_leaf(id, config, c2)?;
-        Ok((c1.sk_commitment() == c2.sk_commitment()).then_some(c2))
+        'sharing: for c2 in candidates(2) {
+            let Some(sharing) = decode(2, c2) else {
+                continue;
+            };
+            let Some(c1) = candidates(1).find(|leaf| {
+                decode(1, leaf)
+                    .is_some_and(|public| public.sk_commitment() == sharing.sk_commitment())
+            }) else {
+                continue;
+            };
+            let mut selected = BTreeMap::from([(1, c1.clone()), (2, c2.clone())]);
+            for seq in 3..=self.circuits.len() {
+                let Some(c3) = candidates(seq).find(|leaf| {
+                    decode(seq, leaf).is_some_and(|public| {
+                        self.validate_c3_message(config, seq, &public, &sharing)
+                            .is_ok()
+                    })
+                }) else {
+                    continue 'sharing;
+                };
+                selected.insert(seq, c3.clone());
+            }
+            return Some(selected);
+        }
+        None
     }
 
     pub(crate) fn c3_slot(&self, config: &Configs, seq: usize) -> Result<(usize, usize)> {
