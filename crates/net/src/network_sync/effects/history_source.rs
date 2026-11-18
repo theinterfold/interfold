@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
+use e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES;
 use e3_events::{
     prelude::*, AggregateId, EventConstructorWithTimestamp, EventId, EventSource, InterfoldEvent,
     TimestampClaim, Unsequenced,
@@ -34,7 +35,7 @@ const MAX_SYNC_FETCH_DURATION: Duration = Duration::from_secs(5 * 60);
 /// Peers can serve several copies of an event; the fetch keeps one.
 pub(crate) const MAX_KEPT_HISTORY: HistorySize = HistorySize {
     events: 50_000,
-    bytes: 128 * 1024 * 1024,
+    bytes: DEFAULT_MAX_SYNC_FETCH_BYTES,
 };
 
 /// The latest event time that the node accepts at the time of the call.

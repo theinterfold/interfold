@@ -19,6 +19,9 @@ use std::{collections::HashMap, env, path::PathBuf};
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDefinition {
+    /// Maximum unique peer-history bytes retained during startup, across all aggregates.
+    #[serde(default = "default_max_sync_fetch_bytes")]
+    pub max_sync_fetch_bytes: usize,
     /// Ethereum Address for the node
     pub address: Option<Address>,
     /// A list of libp2p multiaddrs to dial to as peers when joining the network
@@ -115,6 +118,12 @@ fn default_max_buffered_net_bytes() -> usize {
     256 * 1024 * 1024
 }
 
+pub const DEFAULT_MAX_SYNC_FETCH_BYTES: usize = 128 * 1024 * 1024;
+
+fn default_max_sync_fetch_bytes() -> usize {
+    DEFAULT_MAX_SYNC_FETCH_BYTES
+}
+
 impl Default for NodeDefinition {
     fn default() -> Self {
         Self {
@@ -137,6 +146,7 @@ impl Default for NodeDefinition {
             bootstrap: false,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
+            max_sync_fetch_bytes: DEFAULT_MAX_SYNC_FETCH_BYTES,
             startup_timeout_secs: default_startup_timeout_secs(),
             bb_timeout_secs: default_bb_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
@@ -199,6 +209,9 @@ impl NodeConfig {
         };
 
         let mut node = node.clone();
+        if node.max_sync_fetch_bytes == 0 {
+            bail!("node.max_sync_fetch_bytes must be greater than zero");
+        }
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
         }
@@ -413,6 +426,11 @@ impl NodeConfig {
     /// admission can reduce the effective value.
     pub fn multithread_concurrent_jobs(&self) -> Option<usize> {
         self.node_def().multithread_concurrent_jobs
+    }
+
+    /// Maximum unique peer-history bytes retained during startup.
+    pub fn max_sync_fetch_bytes(&self) -> usize {
+        self.node_def().max_sync_fetch_bytes
     }
 
     /// Maximum time allowed for construction and initial synchronization.
@@ -759,6 +777,7 @@ node:
   max_buffered_evm_events: 12345
   max_buffered_net_events: 321
   max_buffered_net_bytes: 654321
+  max_sync_fetch_bytes: 1073741824
 "#,
         )?;
         let configured = configured.into_scoped_with_defaults(
@@ -771,6 +790,7 @@ node:
         assert_eq!(configured.max_buffered_evm_events(), 12_345);
         assert_eq!(configured.max_buffered_net_events(), 321);
         assert_eq!(configured.max_buffered_net_bytes(), 654_321);
+        assert_eq!(configured.max_sync_fetch_bytes(), 1_073_741_824);
 
         let default = UnscopedNodeConfig::default().into_scoped_with_defaults(
             "_default",
@@ -782,6 +802,7 @@ node:
         assert_eq!(default.max_buffered_evm_events(), 100_000);
         assert_eq!(default.max_buffered_net_events(), 1_024);
         assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
+        assert_eq!(default.max_sync_fetch_bytes(), 134_217_728);
         Ok(())
     }
 
@@ -882,8 +903,12 @@ node:
     }
 
     #[test]
-    fn test_zero_network_buffer_limits_are_rejected() -> Result<()> {
-        for field in ["max_buffered_net_events", "max_buffered_net_bytes"] {
+    fn test_zero_network_startup_limits_are_rejected() -> Result<()> {
+        for field in [
+            "max_buffered_net_events",
+            "max_buffered_net_bytes",
+            "max_sync_fetch_bytes",
+        ] {
             let yaml = format!("node:\n  {field}: 0\n");
             let unscoped: UnscopedNodeConfig = serde_yaml::from_str(&yaml)?;
             let error = unscoped

@@ -200,6 +200,10 @@ impl CiphernodeBuilder {
 
     fn ensure_startup_options(&self) -> Result<()> {
         ensure!(
+            self.max_sync_fetch_bytes > 0,
+            "max_sync_fetch_bytes must be greater than zero"
+        );
+        ensure!(
             self.multithread_concurrent_jobs != Some(0),
             "the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit"
         );

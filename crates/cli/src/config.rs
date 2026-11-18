@@ -185,6 +185,9 @@ fn get(
         Some("network_id") => {
             log!(out, "{}", config.network().id());
         }
+        Some("max_sync_fetch_bytes") => {
+            log!(out, "{}", config.max_sync_fetch_bytes());
+        }
         Some("quic_port") => {
             log!(out, "{}", config.quic_port());
         }

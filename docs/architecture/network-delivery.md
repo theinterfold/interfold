@@ -76,18 +76,18 @@ events, `StartupBufferReleased` triggers storage flush before history replies vo
 ## Historical sync and coverage
 
 Startup peer history has a **five-minute deadline across all aggregates, retries, and peer-list
-waits**, and holds at most **50,000 events and 128 MiB**: the merged history plus the source in
-progress, without an operator override. A peer stores an event again each time it reaches the peer
-after the peer forgot it, and serves every copy; the fetch keeps one copy of each event, and only
-kept history counts; a later source's earlier copy of a kept event only moves it. A source that
-passes the kept limit fails like any other source. Startup hands the merged history over as one
-local record, which the event log stores as a blob when it passes the 32 MiB inline limit. That
-record stays beside the stored events for as long as the log, so every startup whose fetched history
-passes the limit keeps one more blob. Missing required sources or the passed deadline fails
-full-node startup; bootstrap explicitly permits absent peer history. After required sources exist,
-the deadline stops the optional search for coverage hints rather than discarding the collected
-sources. Reset can recover only still-available chain/peer facts, not a deleted secret share or
-every historical gossip event.
+waits**, and holds at most **50,000 events and a default of 128 MiB**: the merged history plus the
+source in progress. `node.max_sync_fetch_bytes` sets this byte allowance and must be greater than
+zero. A peer stores an event again each time it reaches the peer after the peer forgot it, and
+serves every copy; the fetch keeps one copy of each event, and only kept history counts; a later
+source's earlier copy of a kept event only moves it. A source that passes the kept limit fails like
+any other source. Startup hands the merged history over as one local record, which the event log
+stores as a blob when it passes the 32 MiB inline limit. That record stays beside the stored events
+for as long as the log, so every startup whose fetched history passes the limit keeps one more blob.
+Missing required sources or the passed deadline fails full-node startup; bootstrap explicitly
+permits absent peer history. After required sources exist, the deadline stops the optional search
+for coverage hints rather than discarding the collected sources. Reset can recover only
+still-available chain/peer facts, not a deleted secret share or every historical gossip event.
 
 Fetch an aggregate from two admitted sources when available, or its sole connected peer. Page each
 source from the requested timestamp and union by event ID with earliest time. Require

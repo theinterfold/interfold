@@ -106,6 +106,7 @@ struct PendingSyncRequest {
 }
 
 pub struct NetSyncManager {
+    max_sync_fetch_bytes: usize,
     /// Interfold EventBus
     bus: BusHandle,
     /// NetCommand sender to forward commands to the Libp2pNetInterface
@@ -203,6 +204,7 @@ impl NetSyncManager {
         network: NetworkPolicy,
     ) -> Self {
         Self {
+            max_sync_fetch_bytes: e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
             bus: bus.clone(),
             tx: tx.clone(),
             rx: rx.clone(),

@@ -703,6 +703,7 @@ impl Handler<EventStoreQueryBy<TsAgg>> for StoredHistory {
 /// The bounds of a node that stores `stored` and accepts any event time.
 fn stored_history(stored: Vec<InterfoldEvent<Unsequenced>>) -> HistoryBounds {
     HistoryBounds {
+        max_bytes: e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
         latest_ts: any_time(),
         eventstore: StoredHistory(stored).start().recipient(),
     }
@@ -1270,6 +1271,70 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
     assert!(!deadline.has_passed());
 }
 
+/// The configured startup allowance reaches the actor and its paged downloader. A failed
+/// fetch publishes no partial history; the same history succeeds with a larger allowance.
+#[actix::test]
+async fn startup_history_uses_the_configured_byte_limit() {
+    tokio::time::pause();
+    for (max_bytes, should_succeed) in [(1, false), (1_048_576, true)] {
+        let peer = FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e1", 10)],
+            observed_from: Some(0),
+            fails: 0,
+            silent: 0,
+            slow: None,
+        };
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle().unwrap().enable("test");
+        let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+        let event_tx = NetEventChannel::new(64);
+        let _event_rx = event_tx.subscribe();
+        spawn_fake_history_network(vec![peer], net_rx, event_tx.clone());
+        let manager = NetSyncManager::setup(
+            &bus,
+            &net_tx,
+            &NetEventSubscriber::from(&event_tx),
+            StoredHistory(Vec::new()).start().recipient(),
+            "my-topic",
+            NetworkPolicy::local_unrestricted(),
+            false,
+            LiveHistory::default(),
+            max_bytes,
+        );
+        manager
+            .send(AllPeersDialed {
+                connected: 1,
+                total: 1,
+            })
+            .await
+            .unwrap();
+        let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
+        let history_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+        bus.publish_without_context(
+            HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]))
+                .with_failure_recipient(failure),
+        )
+        .unwrap();
+        tokio::select! {
+            event = history_received => {
+                assert!(should_succeed, "startup ignored the configured byte limit");
+                let event = event.unwrap();
+                let InterfoldEventData::HistoricalNetSyncEventsReceived(history) = event.get_data() else {
+                    panic!("unexpected history response");
+                };
+                assert_eq!(fetched_e3s(&history.events), vec![("e1".to_string(), 10)]);
+            }
+            failure = failed => {
+                assert!(!should_succeed, "startup ignored the larger byte allowance");
+                let reason = failure.unwrap().reason;
+                assert!(reason.contains("kept-history limit") && reason.contains("1 bytes"), "{reason}");
+            }
+            _ = tokio::time::sleep(Duration::from_secs(60)) => panic!("startup history did not complete"),
+        }
+    }
+}
+
 /// With two admitted peers, one that serves an empty history is not enough: when the other fails
 /// for a moment, the fetch fails, and recovery asks both peers again.
 #[actix::test]
@@ -1663,6 +1728,7 @@ async fn a_slow_read_of_the_stored_history_ends_at_the_fetch_deadline() {
         false,
         NetworkPolicy::local_unrestricted(),
         HistoryBounds {
+            max_bytes: e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
             latest_ts: any_time(),
             eventstore,
         },
@@ -1753,6 +1819,7 @@ async fn startup_keeps_the_timestamps_of_its_evm_history_from_peers() -> anyhow:
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let net_ready = bus.wait_for(EventType::NetReady);
     assert!(net_events
@@ -2290,6 +2357,7 @@ async fn a_published_decryption_share_is_scheduled_for_resending() {
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let e3_id = E3id::new("decrypting", 1);
     let (_, share) = local_decryption_share(&e3_id, 4);
@@ -2381,6 +2449,7 @@ fn started_manager() -> (Addr<NetSyncManager>, EventSystem) {
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     (manager, system)
 }
@@ -2574,6 +2643,7 @@ async fn the_restart_rebroadcast_leaves_resends_to_replay() {
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
 
     // Replay, in log order: one E3 ends after this node's share, the other before a late share.
@@ -2855,6 +2925,7 @@ fn start_history_fetch_without_peers(
         NetworkPolicy::local_unrestricted(),
         peer_history_optional,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
@@ -2922,6 +2993,7 @@ async fn a_history_larger_than_one_log_record_reaches_startup() {
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let (failure, mut failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
@@ -2994,6 +3066,7 @@ async fn a_peer_event_beyond_the_clock_drift_allowance_does_not_cost_the_history
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let (failure, mut failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
@@ -3052,6 +3125,7 @@ async fn a_history_that_cannot_be_published_fails_startup() {
         NetworkPolicy::local_unrestricted(),
         false,
         LiveHistory::default(),
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
     );
     let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     bus.publish_without_context(

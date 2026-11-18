@@ -131,6 +131,7 @@ pub fn setup_net_with_limits(
         interface,
         max_buffered_events,
         max_buffered_bytes,
+        e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
         HashMap::new(),
         RecoveredDocumentState::default(),
         false,
@@ -148,10 +149,18 @@ pub fn setup_net_with_limits_and_interests(
     interface: impl NetInterface,
     max_buffered_events: usize,
     max_buffered_bytes: usize,
+    max_sync_fetch_bytes: usize,
     initial_interests: HashMap<E3id, PartyId>,
     recovered_documents: RecoveredDocumentState,
     peer_history_optional: bool,
 ) -> Result<NetEventBufferHandle> {
+    if max_sync_fetch_bytes == 0 {
+        bail!("max_sync_fetch_bytes must be greater than zero");
+    }
+    info!(
+        max_sync_fetch_bytes,
+        "Startup peer-history byte limit configured"
+    );
     if max_buffered_events == 0 || max_buffered_bytes == 0 {
         bail!("network startup buffer limits must both be greater than zero");
     }
@@ -170,6 +179,7 @@ pub fn setup_net_with_limits_and_interests(
         network.clone(),
         peer_history_optional,
         live_history.clone(),
+        max_sync_fetch_bytes,
     );
 
     // Buffer application events until SyncEnded. The producer keeps control events on the raw

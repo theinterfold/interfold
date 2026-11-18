@@ -49,11 +49,13 @@ impl NetSyncManager {
         network: NetworkPolicy,
         peer_history_optional: bool,
         live_history: LiveHistory,
+        max_sync_fetch_bytes: usize,
     ) -> Addr<Self> {
         let mut events = rx.subscribe();
         let mut manager =
             Self::new(bus, tx, rx, eventstore, topic, network).with_live_history(live_history);
         manager.peer_history_optional = peer_history_optional;
+        manager.max_sync_fetch_bytes = max_sync_fetch_bytes;
         let addr = manager.start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());

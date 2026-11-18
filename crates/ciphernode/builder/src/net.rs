@@ -60,6 +60,7 @@ impl CiphernodeBuilder {
             interface,
             self.max_buffered_net_events,
             self.max_buffered_net_bytes,
+            self.max_sync_fetch_bytes,
             selected_party_ids,
             recovered_documents,
             // A bootstrap node uses no E3 history, so it starts without it when no peer can serve

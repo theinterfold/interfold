@@ -96,6 +96,7 @@ pub async fn execute(config: &NodeConfig, bootstrap: bool) -> Result<CiphernodeH
         .with_logging()
         .with_persistence(&config.log_file(), &config.db_file())
         .with_chains(config.chains())
+        .with_max_sync_fetch_bytes(config.max_sync_fetch_bytes())
         .with_startup_buffer_limits(
             config.max_buffered_evm_events(),
             config.max_buffered_net_events(),

@@ -104,6 +104,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
             !self.readiness_all_peers_dialed(),
             self.network.clone(),
             HistoryBounds {
+                max_bytes: self.max_sync_fetch_bytes,
                 latest_ts,
                 eventstore: self.eventstore.clone(),
             },

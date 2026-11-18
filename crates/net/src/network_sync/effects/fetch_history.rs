@@ -50,6 +50,7 @@ const MAX_STORED_CLAIMS: usize = 100_000;
 
 /// What a peer's history must fit at this node.
 pub(in crate::actors::net_sync_manager) struct HistoryBounds {
+    pub(in crate::actors::net_sync_manager) max_bytes: usize,
     /// The latest event time that the node accepts now: the current time plus its clock-drift
     /// allowance. The node publishes the history at its latest event time and applies the
     /// allowance again then; it has only grown since a source was checked.
@@ -63,6 +64,7 @@ pub(in crate::actors::net_sync_manager) struct HistoryBounds {
 pub(in crate::actors::net_sync_manager) struct AggregateHistory {
     range: HistoryRange,
     merged: MergedEvents,
+    limit: HistorySize,
     /// Whether a peer that served the history observed the whole range live: its `observed_from`
     /// is at or before `since`.
     vouched: bool,
@@ -87,9 +89,15 @@ impl AggregateHistory {
                 latest_ts,
             },
             merged: MergedEvents::default(),
+            limit: MAX_KEPT_HISTORY,
             vouched: false,
             further: Vec::new(),
         }
+    }
+
+    fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.limit.bytes = max_bytes;
+        self
     }
 
     pub(in crate::actors::net_sync_manager) fn size(&self) -> HistorySize {
@@ -180,7 +188,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
         let source_time = source_time(later, sources, deadline.remaining()?);
-        let room = MAX_KEPT_HISTORY.minus(held_elsewhere.plus(history.size()));
+        let room = history.limit.minus(held_elsewhere.plus(history.size()));
         let fetched = fetch_validated_history(
             requester,
             peer,
@@ -250,7 +258,7 @@ pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
         let probe_time = Some(PROBE_TIME.min(remaining / 2));
-        let room = MAX_KEPT_HISTORY.minus(held_elsewhere.plus(history.size()));
+        let room = history.limit.minus(held_elsewhere.plus(history.size()));
         let fetched = fetch_validated_history(
             requester, peer, history, deadline, network, probe_time, room,
         )
@@ -506,6 +514,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
             stored.get(&aggregate_id).cloned().unwrap_or_default(),
             bounds.latest_ts.clone(),
         )
+        .with_max_bytes(bounds.max_bytes)
     };
 
     for (aggregate_id, since) in &sync_cursor {

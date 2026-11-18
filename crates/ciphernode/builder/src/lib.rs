@@ -65,6 +65,7 @@ pub struct CiphernodeBuilder {
     ingestion_heartbeat_dir: Option<PathBuf>,
     logging: bool,
     max_buffered_evm_events: usize,
+    max_sync_fetch_bytes: usize,
     max_buffered_net_bytes: usize,
     max_buffered_net_events: usize,
     name: Option<String>,
@@ -131,6 +132,7 @@ impl CiphernodeBuilder {
             logging: false,
             max_buffered_evm_events: 100_000,
             ingestion_heartbeat_dir: None,
+            max_sync_fetch_bytes: e3_ciphernode_config::DEFAULT_MAX_SYNC_FETCH_BYTES,
             max_buffered_net_bytes: 256 * 1024 * 1024,
             max_buffered_net_events: 1_024,
             name: None,
@@ -273,6 +275,12 @@ impl CiphernodeBuilder {
     /// Set the number of concurrent jobs defaults to 1
     pub fn with_multithread_concurrent_jobs(mut self, jobs: usize) -> Self {
         self.multithread_concurrent_jobs = if jobs >= 1 { Some(jobs) } else { None };
+        self
+    }
+
+    /// Set the byte allowance for unique peer history retained during startup.
+    pub fn with_max_sync_fetch_bytes(mut self, bytes: usize) -> Self {
+        self.max_sync_fetch_bytes = bytes;
         self
     }
 
