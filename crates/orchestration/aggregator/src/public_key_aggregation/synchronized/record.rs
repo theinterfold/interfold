@@ -88,7 +88,8 @@ impl PublicationRecord {
                     plan.keyshare(share)?;
                 }
                 if let Some(old) = self.shares.get(&owner) {
-                    if old.pubkey == share.pubkey {
+                    // Before the local plan binds C1, equal native bytes may carry a corrected proof.
+                    if self.plan.is_some() && old.pubkey == share.pubkey {
                         return Ok(());
                     }
                     ensure!(

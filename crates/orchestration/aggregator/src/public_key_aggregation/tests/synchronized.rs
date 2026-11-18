@@ -441,6 +441,45 @@ async fn synchronized_publication_rejects_substitutions_without_reserving_valid_
 }
 
 #[actix::test]
+async fn synchronized_publication_retains_corrected_preplan_c1_with_the_same_native_bytes(
+) -> Result<()> {
+    let f = fixture()?;
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let (node, history) = actor(&f, &store, true, false).await?;
+    let corrected = f.shares[&0].clone();
+    let mut invalid = corrected.clone();
+    let mut payload = invalid
+        .signed_pk_generation_proof
+        .as_ref()
+        .unwrap()
+        .payload
+        .clone();
+    let mut signals = payload.proof.public_signals.to_vec();
+    signals[31] ^= 1;
+    payload.proof.public_signals = ArcBytes::from_bytes(&signals);
+    invalid.signed_pk_generation_proof = Some(SignedProofPayload::sign(payload, &f.signers[0])?);
+    assert_eq!(invalid.pubkey, corrected.pubkey);
+    assert!(f.plan.keyshare(&invalid).is_err());
+    drive(&node, invalid).await?;
+    drive(&node, corrected.clone()).await?;
+    drive(&node, f.shares[&2].clone()).await?;
+    drive(&node, (*f.plan.local).clone()).await?;
+    let saved = node.send(Checkpoint).await?.unwrap();
+    assert_eq!(saved.shares.get(&0), Some(&corrected));
+    drive(&node, EffectsEnabled::new()).await?;
+    let request = requests(&history)
+        .await?
+        .pop()
+        .context("corrected C1 did not enable C5")?;
+    assert_eq!(
+        request.request,
+        ComputeRequestKind::Zk(ZkRequest::PkAggregation(f.plan.c5_request(&f.shares)?))
+    );
+    node.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_consent() -> Result<()>
 {
     let f = fixture()?;
@@ -587,6 +626,111 @@ async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_co
         .is_none());
     drop(node);
     store.shutdown().await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_final_consent_flush_failure_preserves_accepted_progress(
+) -> Result<()> {
+    struct FlushGate(bool);
+    impl Actor for FlushGate {
+        type Context = Context<Self>;
+    }
+    impl Handler<Flush> for FlushGate {
+        type Result = Result<()>;
+        fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
+            ensure!(self.0, "injected final-consent flush failure");
+            Ok(())
+        }
+    }
+    #[derive(Message)]
+    #[rtype(result = "()")]
+    struct AllowFlush(bool);
+    impl Handler<AllowFlush> for FlushGate {
+        type Result = ();
+        fn handle(&mut self, msg: AllowFlush, _: &mut Self::Context) {
+            self.0 = msg.0;
+        }
+    }
+    let f = fixture()?;
+    let flush = FlushGate(true).start();
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start())
+        .with_flush_recipient(flush.clone().recipient());
+    let (node, history) = actor(&f, &store, true, false).await?;
+    seed(&node, &f).await?;
+    drive(&node, EffectsEnabled::new()).await?;
+    let c5 = requests(&history).await?.pop().context("missing C5 work")?;
+    drive(
+        &node,
+        ComputeResponse::zk(
+            ZkResponse::PkAggregation(PkAggregationProofResponse {
+                proof: f.c5.clone(),
+            }),
+            c5.correlation_id,
+            f.selected.e3_id.clone(),
+        ),
+    )
+    .await?;
+    let wrapper = requests(&history)
+        .await?
+        .pop()
+        .context("missing publication work")?;
+    drive(
+        &node,
+        ComputeResponse::zk(
+            ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Publication {
+                proof: f.publication.clone(),
+            }),
+            wrapper.correlation_id,
+            f.selected.e3_id.clone(),
+        ),
+    )
+    .await?;
+    drive(&node, f.consents[0].clone()).await?;
+    let accepted = node.send(Checkpoint).await?.unwrap();
+    assert!(accepted.plan.is_some());
+    assert_eq!(accepted.proof, Some(f.publication.clone()));
+    assert_eq!(
+        accepted.consents.keys().copied().collect::<Vec<_>>(),
+        vec![0]
+    );
+    flush.send(AllowFlush(false)).await?;
+    drive(&node, f.consents[1].clone()).await?;
+    assert_eq!(
+        bincode::serialize(&node.send(Checkpoint).await?.unwrap())?,
+        bincode::serialize(&accepted)?
+    );
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::SynchronizedDkgPublicationReady(_)
+        )));
+    flush.send(AllowFlush(true)).await?;
+    // Replay the exact unacknowledged input; this test does not assume automatic redelivery.
+    drive(&node, f.consents[1].clone()).await?;
+    drive(&node, f.consents[1].clone()).await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let ready = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::SynchronizedDkgPublicationReady(output) => Some(output),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].proof, f.publication);
+    assert_eq!(
+        ready[0].consents,
+        f.consents
+            .into_iter()
+            .map(|message| message.attestation)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(requests(&history).await?.len(), 2);
+    node.send(Die).await?;
     Ok(())
 }
 
