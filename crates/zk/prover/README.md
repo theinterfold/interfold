@@ -98,8 +98,8 @@ correlations; a completed local verdict is retained. Recipient bus refusals retr
 progress, tracking local and signed outputs separately. Missing outcomes trigger fresh-correlated
 redelivery of the same work; the compute gate owns running-job deduplication. The native intent
 fixes C4/C2 provenance and setup context; PK/batch expectations are derived from those authenticated
-dealer rows, not an independent native PK check at this collector. Consent/publication producers
-and the registry writer remain absent; synchronized admission stays disabled.
+dealer rows, not an independent native PK check at this collector. Consent, publication aggregation
+and registry writing have separate owners; synchronized admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
