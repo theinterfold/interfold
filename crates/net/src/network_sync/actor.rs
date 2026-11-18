@@ -29,9 +29,7 @@ use crate::{
     direct_responder::DirectResponder,
     domain::{
         build_sync_batch,
-        net_event_batch::{
-            fetch_all_batched_events_with_budget, FetchEventsSince, SyncFetchBudget,
-        },
+        history_messages::FetchEventsSince,
         sync_coordinator::sync_scan_limit,
         wire::{decode_sync, encode_sync, SyncMessageKind},
         EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
@@ -46,18 +44,6 @@ use crate::{
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
 /// failed before publishing `NetReady` anyway.
 const NET_READY_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Attempts for each history page from a peer that no later peer can replace, and the delay
-/// before the first retry. A replaceable peer gets one attempt.
-const SYNC_FETCH_MAX_RETRIES: u32 = 3;
-const SYNC_FETCH_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// If a historical sync fetch fails, wait this long for a fresh connection
-/// before retrying anyway against currently connected peers.
-const SYNC_RECOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(15);
-
-/// Number of recovery rounds to try for failed aggregates after the initial fetch pass.
-const SYNC_RECOVERY_MAX_ATTEMPTS: usize = 3;
 
 /// Bound remote work independently of the actor mailbox. Per-peer admission prevents one
 /// authenticated transport identity from occupying the global allowance.
@@ -256,7 +242,11 @@ use handlers::{AllPeersDialed, PeerConnected};
 #[cfg(test)]
 use effects::historical_sync::{
     ask_further_peers, eligible_sync_cursor, fetch_historical_events_for_aggregate,
-    fetch_history_from_peers, stored_event_ids, validate_historical_events, AggregateHistory,
+    fetch_history_from_peers, stored_event_ids, AggregateHistory,
+};
+#[cfg(test)]
+use effects::history_source::{
+    FetchDeadline, HistoryRange, HistorySize, MergedEvents, SourceHistory, MAX_KEPT_HISTORY,
 };
 
 #[cfg(test)]

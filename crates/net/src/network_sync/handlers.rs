@@ -2,8 +2,8 @@
 
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
+use super::effects::history_source::LatestTs;
 use super::*;
-use crate::domain::net_event_batch::LatestTs;
 use e3_events::E3Stage;
 use std::sync::Arc;
 
@@ -172,15 +172,16 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
         info!("SYNC REQUEST SUCCEEDED");
         let bus = self.bus.with_ec(msg.get_ctx());
         let (msg, ctx) = msg.into_components();
-        let response = msg.response;
+        let SyncResponseValue { events, ts } = msg.response;
+        // The event log takes a record above its inline limit only from this node: it stores a
+        // large local record beside the log. The history can pass that limit; its events keep
+        // their network source inside.
         if let Err(error) = self.bus.publish_from_remote_as_response(
-            HistoricalNetSyncEventsReceived {
-                events: response.events.to_vec(),
-            },
-            response.ts,
+            HistoricalNetSyncEventsReceived { events },
+            ts,
             ctx,
             None,
-            EventSource::Net,
+            EventSource::Local,
         ) {
             // Startup waits for this history; without it, it would wait until its deadline.
             let error = error.context("failed to publish the fetched peer history");
@@ -306,7 +307,7 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
 
             let fetch_request: FetchEventsSince = pending.responder.try_request_into()?;
             for event in &events {
-                if EventTranslationService::is_forwardable_event(event) {
+                if event.get_data().is_forwardable() {
                     if let Err(error) = self.network.validate_event(event) {
                         pending.responder.respond(ProtocolResponse::Error(
                             "historical sync returned an event outside this network policy"

@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use super::effects::history_source::LatestTs;
 use super::*;
 use crate::actors::{NetEventBuffer, NetEventTranslator};
-use crate::domain::net_event_batch::{BatchCursor, EventBatch, LatestTs};
+use crate::domain::history_messages::{BatchCursor, EventBatch};
 use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use crate::{
     direct_responder::ChannelType,
@@ -731,25 +732,27 @@ async fn fetch_from_fake_peers(
     let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
     let requests = spawn_fake_history_network(peers, commands_rx, events.clone());
     let subscriber = NetEventSubscriber::from(&events);
-    let mut budget = SyncFetchBudget::production();
+    let mut deadline = FetchDeadline::production();
     let policy = NetworkPolicy::local_unrestricted();
     let mut history = if in_order {
         fetch_history_from_peers(
             &commands_tx,
             &subscriber,
             order,
-            AggregateHistory::new(AggregateId::new(1), since, Default::default()),
-            &mut budget,
+            AggregateHistory::new(AggregateId::new(1), since, Default::default(), any_time()),
+            &mut deadline,
             &policy,
+            HistorySize::default(),
         )
         .await
     } else {
         fetch_historical_events_for_aggregate(
             &commands_tx,
             &subscriber,
-            AggregateHistory::new(AggregateId::new(1), since, Default::default()),
-            &mut budget,
+            AggregateHistory::new(AggregateId::new(1), since, Default::default(), any_time()),
+            &mut deadline,
             &policy,
+            HistorySize::default(),
         )
         .await
     }
@@ -758,8 +761,9 @@ async fn fetch_from_fake_peers(
         &mut history,
         &commands_tx,
         &subscriber,
-        &mut budget,
+        &mut deadline,
         &policy,
+        HistorySize::default(),
     )
     .await;
     let requests = requests.lock().unwrap().clone();
@@ -886,6 +890,103 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
         fetched_e3s(&fetched),
         vec![("e5".to_string(), 45), ("e6".to_string(), 60)]
     );
+}
+
+/// Peers that stored each event several times serve every copy. The fetch keeps one copy of each
+/// event, and only the history that it keeps counts against its limit, so the history fits even
+/// when the copies that both sources serve would not.
+#[actix::test]
+async fn copies_that_peers_serve_count_once_against_the_kept_history() {
+    let copies = |offset: u128| {
+        (0..3u128)
+            .flat_map(|copy| {
+                [
+                    received("e1", 10 + 20 * copy + offset),
+                    received("e2", 20 + 20 * copy + offset),
+                ]
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut unique = MergedEvents::default();
+    unique.merge(received("e1", 10)).unwrap();
+    unique.merge(received("e2", 20)).unwrap();
+    // Room for the history once, not for the copies or for a second source's events.
+    let held_elsewhere = MAX_KEPT_HISTORY.minus(unique.size());
+    let peer = |events| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events,
+        observed_from: None,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![peer(copies(0)), peer(copies(1))];
+    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    spawn_fake_history_network(peers, commands_rx, events.clone());
+
+    let history = fetch_history_from_peers(
+        &commands_tx,
+        &NetEventSubscriber::from(&events),
+        order,
+        AggregateHistory::new(AggregateId::new(1), 0, Default::default(), any_time()),
+        &mut FetchDeadline::production(),
+        &NetworkPolicy::local_unrestricted(),
+        held_elsewhere,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        fetched_e3s(&history.into_events()),
+        vec![("e1".to_string(), 10), ("e2".to_string(), 20)]
+    );
+}
+
+/// Each peer stamps an event with the time that it reached the peer, so the second source can hold
+/// earlier copies of the first source's events. Those copies move events and cost no room: the
+/// same history fits whichever peer the node asks first.
+#[actix::test]
+async fn earlier_copies_from_the_second_source_cost_no_room() {
+    let mut unique = MergedEvents::default();
+    unique.merge(received("e1", 10)).unwrap();
+    unique.merge(received("e2", 20)).unwrap();
+    let held_elsewhere = MAX_KEPT_HISTORY.minus(unique.size());
+    for (first, second) in [([10u128, 20], [110u128, 120]), ([110, 120], [10, 20])] {
+        let peer = |times: [u128; 2]| FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e1", times[0]), received("e2", times[1])],
+            observed_from: None,
+            fails: 0,
+            silent: 0,
+            slow: None,
+        };
+        let peers = vec![peer(first), peer(second)];
+        let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+        let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+        let events = NetEventChannel::new(64);
+        let _keep_open = events.subscribe();
+        spawn_fake_history_network(peers, commands_rx, events.clone());
+
+        let history = fetch_history_from_peers(
+            &commands_tx,
+            &NetEventSubscriber::from(&events),
+            order,
+            AggregateHistory::new(AggregateId::new(1), 0, Default::default(), any_time()),
+            &mut FetchDeadline::production(),
+            &NetworkPolicy::local_unrestricted(),
+            held_elsewhere,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            fetched_e3s(&history.into_events()),
+            vec![("e1".to_string(), 10), ("e2".to_string(), 20)]
+        );
+    }
 }
 
 #[actix::test]
@@ -1133,7 +1234,7 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
     let events = NetEventChannel::new(64);
     let _keep_open = events.subscribe();
     spawn_fake_history_network(peers, commands_rx, events.clone());
-    let mut budget = SyncFetchBudget::production();
+    let mut deadline = FetchDeadline::production();
     let subscriber = NetEventSubscriber::from(&events);
     let policy = NetworkPolicy::local_unrestricted();
     let started = tokio::time::Instant::now();
@@ -1142,9 +1243,10 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
         &commands_tx,
         &subscriber,
         order,
-        AggregateHistory::new(AggregateId::new(1), 0, Default::default()),
-        &mut budget,
+        AggregateHistory::new(AggregateId::new(1), 0, Default::default(), any_time()),
+        &mut deadline,
         &policy,
+        HistorySize::default(),
     )
     .await
     .unwrap();
@@ -1152,8 +1254,9 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
         &mut history,
         &commands_tx,
         &subscriber,
-        &mut budget,
+        &mut deadline,
         &policy,
+        HistorySize::default(),
     )
     .await;
     let fetched = history.into_events();
@@ -1165,7 +1268,7 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
     e3s.sort();
     assert_eq!(e3s, vec!["e1", "e2", "e4"]);
     assert!(started.elapsed() <= Duration::from_secs(60));
-    assert!(!budget.is_exhausted());
+    assert!(!deadline.has_passed());
 }
 
 /// With two admitted peers, one that serves an empty history is not enough: when the other fails
@@ -1218,32 +1321,32 @@ async fn a_second_source_that_fails_once_is_asked_again_in_recovery() {
     );
 }
 
-/// Further peers that the node asks only for the live-history hint use what the fetch budget
-/// has left once every aggregate has its sources. Here they use up the page budget, and the next
-/// aggregate's history arrives all the same.
+/// Further peers that the node asks only for the live-history hint use the time that is left once
+/// every aggregate has its sources. Here they would leave too little of the deadline for the next
+/// aggregate's sources, and that history arrives all the same.
 #[actix::test]
-async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
+async fn hint_probes_cannot_take_the_time_of_a_later_aggregate() {
     tokio::time::pause();
-    // Every peer holds the same long history of aggregate 1 (130 pages) and one event of
-    // aggregate 2, and none observed either range live: the node asks all four peers for
-    // aggregate 1, and four such histories exceed the 512-page budget.
-    let peers: Vec<_> = (0..4)
-        .map(|index| FakeHistoryPeer {
-            peer: PeerId::random(),
-            events: (0..260)
-                .map(|ts| received(&format!("a{ts}"), 100 + ts))
-                .chain(std::iter::once(received_on(
-                    2,
-                    &format!("b{index}"),
-                    5 + index,
-                )))
-                .collect(),
-            observed_from: None,
-            fails: 0,
-            silent: 0,
-            slow: None,
-        })
-        .collect();
+    // Each page takes a second. Every peer holds the same history of aggregate 1 (115 pages) and
+    // its own history of aggregate 2 (15 pages), and none observed either range live. The two
+    // sources of aggregate 1 leave 70 s. Aggregate 2's two sources need 30 s; probes of the two
+    // further peers for aggregate 1 would take 50 s of the 70 s first.
+    let peers: Vec<_> =
+        (0..4)
+            .map(|index| FakeHistoryPeer {
+                peer: PeerId::random(),
+                events: (0..230)
+                    .map(|ts| received(&format!("a{ts}"), 100 + ts))
+                    .chain((0..30).map(|ts| {
+                        received_on(2, &format!("b{index}-{ts}"), 1_000 * (index + 1) + ts)
+                    }))
+                    .collect(),
+                observed_from: None,
+                fails: 0,
+                silent: 0,
+                slow: Some((Duration::from_secs(1), usize::MAX)),
+            })
+            .collect();
     let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
     let event_tx = NetEventChannel::new(64);
     let _event_rx = event_tx.subscribe();
@@ -1278,12 +1381,52 @@ async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
             .filter(|event| event.aggregate_id() == AggregateId::new(chain))
             .count()
     };
-    assert_eq!(of(1), 260);
-    assert!(of(2) >= 2, "the second aggregate lacks its sources");
+    assert_eq!(of(1), 230);
+    assert!(of(2) >= 60, "the second aggregate lacks its sources");
+}
+
+/// When an aggregate's history fails every round, startup fails with the reason, not only with the
+/// count of rounds.
+#[actix::test]
+async fn a_history_that_fails_every_round_reports_why() {
+    tokio::time::pause();
+    let peers = vec![FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e1", 10)],
+        observed_from: None,
+        fails: usize::MAX,
+        silent: 0,
+        slow: None,
+    }];
+    let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    spawn_fake_history_network(peers, net_rx, event_tx.clone());
+    let (response_tx, _response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    let error = handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+        no_stored_history(),
+    )
+    .await
+    .unwrap_err();
+
+    let error = format!("{error:#}");
+    assert!(error.contains("recovery attempts"), "{error}");
+    assert!(error.contains("unavailable"), "{error}");
 }
 
 /// Listing the admitted peers counts against the fetch deadline too. With no answer, the fetch of
-/// many aggregates ends at the deadline with the budget exhausted.
+/// many aggregates ends at the fetch deadline.
 #[actix::test]
 async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
     tokio::time::pause();
@@ -1314,23 +1457,52 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
     .await
     .unwrap_err();
 
-    assert!(format!("{error:#}").contains("global budget"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("exceeded total deadline"),
+        "{error:#}"
+    );
     assert!(started.elapsed() <= Duration::from_secs(5 * 60 + 1));
+}
+
+/// A history request of `aggregate_id` after `since` at a node that stores `stored` there.
+fn range(
+    aggregate_id: AggregateId,
+    since: u128,
+    stored: HashMap<u128, TimestampClaim>,
+) -> HistoryRange {
+    HistoryRange {
+        aggregate_id,
+        since,
+        stored: Arc::new(stored),
+        latest_ts: any_time(),
+    }
+}
+
+/// Check `events` as one peer's history of `range`, page by page as the fetch does.
+fn check_source(
+    range: &HistoryRange,
+    events: Vec<InterfoldEvent<Unsequenced>>,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let policy = NetworkPolicy::local_unrestricted();
+    let held = MergedEvents::default();
+    let mut source = SourceHistory::new(range, &held, &policy, MAX_KEPT_HISTORY);
+    events.into_iter().try_for_each(|event| source.add(event))?;
+    let mut merged = MergedEvents::default();
+    merged.extend(source.finish()?)?;
+    Ok(merged.into_events())
 }
 
 #[test]
 fn historical_sync_rejects_non_forwardable_remote_events() {
-    let error = validate_historical_events(
-        &AggregateHistory::new(AggregateId::new(0), 0, Default::default()),
+    let error = check_source(
+        &range(AggregateId::new(0), 0, HashMap::new()),
         vec![remote_unsequenced(local_non_forwardable_event())],
-        &NetworkPolicy::local_unrestricted(),
-        u128::MAX,
     )
     .unwrap_err();
 
     assert!(error
         .to_string()
-        .contains("non-forwardable event type TestEvent"));
+        .contains("TestEvent is not a forwardable protocol event"));
 }
 
 /// A peer's store records its own events as `Local`, and its history response carries that
@@ -1340,11 +1512,9 @@ fn a_peer_history_reaches_the_node_as_network_events() {
     let served = local_forwardable_event("1234").clone_unsequenced();
     assert_eq!(served.source(), EventSource::Local);
 
-    let events = validate_historical_events(
-        &AggregateHistory::new(served.aggregate_id(), 0, Default::default()),
+    let events = check_source(
+        &range(served.aggregate_id(), 0, HashMap::new()),
         vec![served],
-        &NetworkPolicy::local_unrestricted(),
-        u128::MAX,
     )
     .unwrap();
 
@@ -1356,50 +1526,46 @@ fn a_peer_history_reaches_the_node_as_network_events() {
 fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
-    let error = validate_historical_events(
-        &AggregateHistory::new(AggregateId::new(999), 0, Default::default()),
+    let error = check_source(
+        &range(AggregateId::new(999), 0, HashMap::new()),
         vec![event],
-        &NetworkPolicy::local_unrestricted(),
-        u128::MAX,
     )
     .unwrap_err();
 
     assert!(error.to_string().contains("while fetching 999"));
 }
 
-/// A peer serves its history from the requested time, one event at each timestamp, and no event at
-/// the timestamp of another event that the node stores. Its own copy of a stored event, and
-/// several copies of one event, pass.
+/// A peer serves its history from the requested time in timestamp order, and no event at the
+/// timestamp of another event that the node stores. Its own copy of a stored event passes, and
+/// several copies of one event leave one.
 #[test]
 fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
     let stored = received("stored", 30);
     // A record that a node stored before peers' IDs were checked can carry another payload's ID.
     let mislabeled_record = mislabeled("payload", "label", 70);
-    let history = AggregateHistory::new(
+    let range = range(
         AggregateId::new(1),
         10,
-        Arc::new(HashMap::from([
+        HashMap::from([
             (stored.ts(), TimestampClaim::of(&stored).unwrap()),
             (70, TimestampClaim::of(&mislabeled_record).unwrap()),
-        ])),
+        ]),
     );
-    let policy = NetworkPolicy::local_unrestricted();
-    let check = |events| {
-        validate_historical_events(&history, events, &policy, u128::MAX)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    };
+    let check = |events| check_source(&range, events).map_err(|error| error.to_string());
 
     let early = check(vec![received("e1", 5)]).unwrap_err();
     assert!(early.contains("before the requested range"), "{early}");
     let shared = check(vec![received("e1", 40), received("e2", 40)]).unwrap_err();
-    assert!(shared.contains("at the same timestamp"), "{shared}");
+    assert!(shared.contains("after timestamp 40"), "{shared}");
+    let unordered = check(vec![received("e1", 41), received("e2", 40)]).unwrap_err();
+    assert!(unordered.contains("after timestamp 41"), "{unordered}");
     let taken = check(vec![received("e1", 30)]).unwrap_err();
     assert!(taken.contains("this node's event"), "{taken}");
     // The genuine event under the stored record's ID is not the stored event either.
     let relabeled = check(vec![received("label", 70)]).unwrap_err();
     assert!(relabeled.contains("this node's event"), "{relabeled}");
-    check(vec![stored.clone(), received("e1", 40), received("e1", 41)]).unwrap();
+    let kept = check(vec![stored.clone(), received("e1", 40), received("e1", 41)]).unwrap();
+    assert_eq!(kept.len(), 2);
 }
 
 /// The node reads the IDs of its stored events in pages, up to the last one.
@@ -1507,7 +1673,7 @@ async fn a_slow_read_of_the_stored_history_ends_at_the_fetch_deadline() {
 
     assert!(format!("{error:#}").contains("deadline"), "{error:#}");
     assert!(started.elapsed() <= Duration::from_secs(5 * 60 + 1));
-    asked.abort();
+    assert!(!asked.await.unwrap(), "the node asked a peer");
 }
 
 /// Answers startup's request for its historical EVM events with `0` on every chain.
@@ -1655,15 +1821,16 @@ async fn a_source_is_checked_against_the_allowance_when_its_history_is_complete(
     let events = NetEventChannel::new(64);
     let _keep_open = events.subscribe();
     spawn_fake_history_network(peers, commands_rx, events.clone());
-    let mut budget = SyncFetchBudget::production().with_latest_ts(allowance);
+    let mut deadline = FetchDeadline::production();
 
     let history = fetch_history_from_peers(
         &commands_tx,
         &NetEventSubscriber::from(&events),
         order,
-        AggregateHistory::new(AggregateId::new(1), 0, Default::default()),
-        &mut budget,
+        AggregateHistory::new(AggregateId::new(1), 0, Default::default(), allowance),
+        &mut deadline,
         &NetworkPolicy::local_unrestricted(),
+        HistorySize::default(),
     )
     .await
     .unwrap();
@@ -1729,14 +1896,15 @@ async fn a_quarantined_record_keeps_its_timestamp_from_peers() {
     let events = NetEventChannel::new(64);
     let _keep_open = events.subscribe();
     spawn_fake_history_network(peers, commands_rx, events.clone());
-    let mut budget = SyncFetchBudget::production();
+    let mut deadline = FetchDeadline::production();
     let history = fetch_history_from_peers(
         &commands_tx,
         &NetEventSubscriber::from(&events),
         order,
-        AggregateHistory::new(aggregate, 0, Arc::new(stored)),
-        &mut budget,
+        AggregateHistory::new(aggregate, 0, Arc::new(stored), any_time()),
+        &mut deadline,
         &NetworkPolicy::local_unrestricted(),
+        HistorySize::default(),
     )
     .await
     .unwrap();
@@ -1751,55 +1919,6 @@ async fn a_quarantined_record_keeps_its_timestamp_from_peers() {
     }
     bus.flush_event_pipeline().await.unwrap();
     assert_eq!(*failure.borrow(), None);
-}
-
-/// A source that puts another event at the timestamp of an event that the node stores is refused,
-/// and a later peer replaces it.
-#[actix::test]
-async fn a_source_that_takes_a_stored_timestamp_is_replaced() {
-    let stored = received("stored", 30);
-    let peer = |events| FakeHistoryPeer {
-        peer: PeerId::random(),
-        events,
-        observed_from: Some(0),
-        fails: 0,
-        silent: 0,
-        slow: None,
-    };
-    let peers = vec![
-        peer(vec![received("e9", 30)]),
-        peer(vec![received("e1", 40)]),
-        peer(vec![received("e1", 41), received("e2", 50)]),
-    ];
-    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
-    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
-    let events = NetEventChannel::new(64);
-    let _keep_open = events.subscribe();
-    spawn_fake_history_network(peers, commands_rx, events.clone());
-    let mut budget = SyncFetchBudget::production();
-
-    let history = fetch_history_from_peers(
-        &commands_tx,
-        &NetEventSubscriber::from(&events),
-        order,
-        AggregateHistory::new(
-            AggregateId::new(1),
-            0,
-            Arc::new(HashMap::from([(
-                stored.ts(),
-                TimestampClaim::of(&stored).unwrap(),
-            )])),
-        ),
-        &mut budget,
-        &NetworkPolicy::local_unrestricted(),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        fetched_e3s(&history.into_events()),
-        vec![("e1".to_string(), 40), ("e2".to_string(), 50)]
-    );
 }
 
 /// The fetched history reaches the node's event store, which holds one event at a timestamp and
@@ -1850,15 +1969,16 @@ async fn further_peers_cannot_make_the_stored_history_collide() {
     let _keep_open = events.subscribe();
     let requests = spawn_fake_history_network(peers, commands_rx, events.clone());
     let subscriber = NetEventSubscriber::from(&events);
-    let mut budget = SyncFetchBudget::production();
+    let mut deadline = FetchDeadline::production();
     let policy = NetworkPolicy::local_unrestricted();
     let mut history = fetch_history_from_peers(
         &commands_tx,
         &subscriber,
         order.clone(),
-        AggregateHistory::new(aggregate, 0, Arc::new(stored_ids)),
-        &mut budget,
+        AggregateHistory::new(aggregate, 0, Arc::new(stored_ids), any_time()),
+        &mut deadline,
         &policy,
+        HistorySize::default(),
     )
     .await
     .unwrap();
@@ -1866,8 +1986,9 @@ async fn further_peers_cannot_make_the_stored_history_collide() {
         &mut history,
         &commands_tx,
         &subscriber,
-        &mut budget,
+        &mut deadline,
         &policy,
+        HistorySize::default(),
     )
     .await;
     let fetched = history.into_events();
@@ -1977,10 +2098,7 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     ));
 
     // The non-forwardable event must not have produced a second command.
-    assert!(
-        rx.try_recv().is_err(),
-        "non-forwardable event should not be re-broadcast"
-    );
+    assert_nothing_gossiped(&mut rx, "non-forwardable event should not be re-broadcast").await;
 }
 
 #[actix::test]
@@ -2032,10 +2150,7 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
 
     let start = Instant::now();
     manager.reannounce_due(start);
-    assert!(
-        rx.try_recv().is_err(),
-        "nothing is due before the first interval"
-    );
+    assert_nothing_gossiped(&mut rx, "nothing is due before the first interval").await;
 
     manager.reannounce_due(start + DKG_REANNOUNCE_BASE);
     let command = tokio::time::timeout(Duration::from_secs(1), rx.recv())
@@ -2058,10 +2173,7 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
     assert_eq!(message.dealers.len(), 3);
 
     manager.reannounce_due(start + DKG_REANNOUNCE_BASE + Duration::from_secs(1));
-    assert!(
-        rx.try_recv().is_err(),
-        "the second re-send waits for the backoff"
-    );
+    assert_nothing_gossiped(&mut rx, "the second re-send waits for the backoff").await;
 
     manager.reannounce_due(start + DKG_REANNOUNCE_BASE * 4);
     let second = tokio::time::timeout(Duration::from_secs(1), rx.recv())
@@ -2077,7 +2189,7 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
     };
     assert!(second_delivery_id.is_some());
     assert_ne!(first_delivery_id, second_delivery_id);
-    assert!(rx.try_recv().is_err());
+    assert_nothing_gossiped(&mut rx, "only the latest Ready is re-sent").await;
 }
 
 fn local_decryption_share(e3_id: &E3id, party_id: u64) -> (InterfoldEvent, DecryptionshareCreated) {
@@ -2211,16 +2323,13 @@ async fn own_decryption_share_is_resent_with_backoff_until_the_e3_ends() {
     manager.reannounce_due(start + SHARE_REANNOUNCE_BASE);
     assert_eq!(next_gossiped_share(&mut rx).await, share);
     manager.reannounce_due(start + SHARE_REANNOUNCE_BASE * 2);
-    assert!(
-        rx.try_recv().is_err(),
-        "the second re-send waits for the backoff"
-    );
+    assert_nothing_gossiped(&mut rx, "the second re-send waits for the backoff").await;
     manager.reannounce_due(start + SHARE_REANNOUNCE_BASE * 4);
     assert_eq!(next_gossiped_share(&mut rx).await, share);
 
     manager.forget_e3_announcements(&e3_id);
     manager.reannounce_due(start + Duration::from_secs(60 * 60));
-    assert!(rx.try_recv().is_err(), "a finished E3 is not re-sent");
+    assert_nothing_gossiped(&mut rx, "a finished E3 is not re-sent").await;
 }
 
 #[actix::test]
@@ -2250,7 +2359,7 @@ async fn key_publication_keeps_decryption_shares_and_drops_dkg_messages() {
     manager.forget_dkg_coordination(&e3_id);
     manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
     assert_eq!(next_gossiped_share(&mut rx).await, share);
-    assert!(rx.try_recv().is_err(), "the DKG message was forgotten");
+    assert_nothing_gossiped(&mut rx, "the DKG message was forgotten").await;
 }
 
 /// Starts a manager through the production setup.
@@ -2580,17 +2689,11 @@ async fn remote_decryption_shares_and_expired_messages_are_not_resent() {
     let (event, _) = local_decryption_share(&e3_id, 3);
     manager.remember_decryption_share(event.clone().with_source(EventSource::Net));
     manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
-    assert!(
-        rx.try_recv().is_err(),
-        "a peer's share is not re-sent by this node"
-    );
+    assert_nothing_gossiped(&mut rx, "a peer's share is not re-sent by this node").await;
 
     manager.remember_decryption_share(event);
     manager.reannounce_due(Instant::now() + REANNOUNCE_LIFETIME);
-    assert!(
-        rx.try_recv().is_err(),
-        "a message past its lifetime is dropped"
-    );
+    assert_nothing_gossiped(&mut rx, "a message past its lifetime is dropped").await;
 }
 
 #[actix::test]
@@ -2768,6 +2871,90 @@ fn start_history_fetch_without_peers(
         received.await
     };
     (received, failed)
+}
+
+/// A history larger than one event-log record reaches startup. The node stores the history that it
+/// publishes as its own record, which the log keeps beside itself when it is large.
+#[actix::test]
+async fn a_history_larger_than_one_log_record_reaches_startup() {
+    let dir = std::env::temp_dir().join(format!(
+        "e3-net-large-history-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    // Nine events of 4 MiB: 36 MiB in all, two events on each page.
+    let large = |index: u128| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(&vec![index as u8; 4 * 1024 * 1024]),
+                e3_id: E3id::new(index.to_string(), 1),
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
+            }
+            .into(),
+            None,
+            10 + index,
+            None,
+            EventSource::Net,
+        )
+    };
+    let peers = vec![FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: (0..9).map(large).collect(),
+        observed_from: Some(0),
+        fails: 0,
+        silent: 0,
+        slow: None,
+    }];
+    let system = EventSystem::persisted(dir.join("log"), dir.join("sled")).with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    spawn_fake_history_network(peers, rx, evt_tx.clone());
+    NetSyncManager::setup(
+        &bus,
+        &tx,
+        &NetEventSubscriber::from(&evt_tx),
+        StoredHistory(Vec::new()).start().recipient(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+        false,
+        LiveHistory::default(),
+    );
+    let (failure, mut failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
+    let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]))
+            .with_failure_recipient(failure),
+    )
+    .unwrap();
+    let connections = {
+        let evt_tx = evt_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = evt_tx.send(NetEvent::ConnectionEstablished {
+                    connection_id: libp2p::swarm::ConnectionId::new_unchecked(1),
+                });
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    };
+
+    let received = tokio::time::timeout(Duration::from_secs(30), received).await;
+    connections.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+    let received = received
+        .expect("startup must get a history larger than one log record")
+        .unwrap();
+    let InterfoldEventData::HistoricalNetSyncEventsReceived(history) = received.into_data() else {
+        panic!("expected the historical net events");
+    };
+    assert_eq!(history.events.len(), 9);
+    assert!(failed.try_recv().is_err());
 }
 
 /// A further peer that serves an event stamped beyond the clock-drift allowance adds nothing:

@@ -7,12 +7,11 @@
 use anyhow::{ensure, Context, Result};
 use bincode::Error;
 use chrono::{DateTime, Utc};
-use e3_events::{Event, EventContextAccessors, Filter, InterfoldEvent, Unsequenced};
+use e3_events::{EventContextAccessors, Filter, InterfoldEvent, Unsequenced};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    domain::EventTranslationService,
     events::{DocumentPublishedNotification, GossipData},
     network::{GOSSIP_WIRE_MAJOR, SYNC_WIRE_MAJOR},
     NetworkPolicy,
@@ -230,12 +229,7 @@ fn gossip_metadata(data: &GossipData, policy: &NetworkPolicy) -> Result<GossipMe
         GossipData::GossipBytes(bytes) => {
             let event = InterfoldEvent::<Unsequenced>::from_bytes(bytes)
                 .context("failed to deserialize gossip event")?;
-            ensure!(
-                EventTranslationService::is_forwardable_event(&event),
-                "event type {} is not allowed on the protocol gossip topic",
-                event.event_type()
-            );
-            policy.validate_event(&event)?;
+            policy.validate_peer_event(&event)?;
             let chain_id = event
                 .aggregate_id()
                 .to_chain_id()
@@ -311,7 +305,7 @@ pub(crate) mod fixtures {
 mod tests {
     use super::fixtures::{assert_locked_bytes, unsequenced_event};
     use super::*;
-    use crate::domain::net_event_batch::{BatchCursor, EventBatch, FetchEventsSince};
+    use crate::domain::history_messages::{BatchCursor, EventBatch, FetchEventsSince};
     use e3_config::NetworkProfile;
     use e3_events::AggregateId;
 

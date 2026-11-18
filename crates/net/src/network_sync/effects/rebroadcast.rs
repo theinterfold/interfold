@@ -27,7 +27,7 @@ impl NetSyncManager {
     }
 
     fn remember(&mut self, event: InterfoldEvent, base: Duration, cap: Duration) {
-        if event.source() != EventSource::Local {
+        if !EventTranslationService::gossips(&event) {
             return;
         }
         if let Err(error) = self.network.validate_event(&event) {
@@ -192,10 +192,7 @@ impl NetSyncManager {
     ) {
         let mut commands = Vec::new();
         for event in events {
-            if event.source() != EventSource::Local {
-                continue;
-            }
-            if !EventTranslationService::is_forwardable_event(&event) {
+            if !EventTranslationService::gossips(&event) {
                 continue;
             }
             if let Err(error) = self.network.validate_event(&event) {
