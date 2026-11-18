@@ -96,6 +96,9 @@ impl ThresholdKeyshare {
         if self.synchronized_setup.is_some() {
             return self.publish_synchronized_consent_definition(ctx);
         }
+        if self.synchronized_setup_retry.is_some() {
+            return Ok(());
+        }
         let recovery = self.recovery.try_get()?;
         let Some(selected) = recovery.ciphernode_selected else {
             return Ok(());

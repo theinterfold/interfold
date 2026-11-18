@@ -646,6 +646,17 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
     assert!(node.send(SetupCheckpoint).await?.is_none());
     assert!(consents(&bus, &history).await?.is_empty());
     assert_eq!(observed.try_recv()?, 1);
+    node.send(DriveSetup {
+        result: None,
+        effects: true,
+    })
+    .await??;
+    assert!(node.send(SetupCheckpoint).await?.is_none());
+    assert_eq!(
+        flush.send(FlushAttempts).await?,
+        1,
+        "an intervening drive must not retry storage before the backoff expires"
+    );
     for (millis, expected, expect_retry) in [(1101, 2, true), (1000, 2, false), (1201, 3, true)] {
         tokio::time::advance(Duration::from_millis(millis)).await;
         if expect_retry {
