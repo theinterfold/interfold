@@ -22,6 +22,10 @@ use e3_zk_config::synchronized::Configs;
 use fhe::bfv::PublicKey;
 use fhe_traits::DeserializeParametrized;
 
+#[cfg(test)]
+#[path = "execution_tests.rs"]
+mod tests;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutionError {
     #[error(transparent)]
@@ -42,6 +46,9 @@ impl From<anyhow::Error> for ExecutionError {
 fn generated_rejection(rejection: Rejection, mismatch: &'static str) -> ExecutionError {
     match rejection {
         Rejection::Expectations => ExecutionError::InvalidParams(anyhow!(mismatch)),
+        Rejection::Malformed => ExecutionError::Local(anyhow!(
+            "locally generated synchronized proof has malformed public signals"
+        )),
         Rejection::VerificationKey => ExecutionError::Local(anyhow!(
             "locally generated synchronized proof differs from the local verifier keys"
         )),

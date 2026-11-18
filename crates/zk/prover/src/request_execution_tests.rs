@@ -326,6 +326,16 @@ fn synchronized_definition_keeps_corrupt_local_vk_fields_retryable() {
         std::fs::write(&vk, corruption).unwrap();
         let error = execute_definition(&prover, &id, work, "corrupt-local-vk").unwrap_err();
         assert!(matches!(error, ExecutionError::Local(_)), "{error:?}");
+        let ExecutionError::Local(cause) = &error else {
+            unreachable!()
+        };
+        assert!(
+            matches!(
+                cause.downcast_ref::<e3_zk_witness::WitnessError>(),
+                Some(e3_zk_witness::WitnessError::VerificationKey(_))
+            ),
+            "{cause:?}"
+        );
         let error = synchronized_execution_error(&request, error);
         assert_eq!(error.request(), &request);
         assert!(matches!(
@@ -345,6 +355,32 @@ fn synchronized_definition_keeps_corrupt_local_vk_fields_retryable() {
         Err(ExecutionError::InvalidParams(_))
     ));
     assert!(!prover.work_dir().exists());
+    // A tiny loaded ABI isolates shape validation from ACVM/process availability. The production
+    // width must come from the selected artifact, not from a host-side proof-size constant.
+    let compiled = prover
+        .circuits_dir(CircuitVariant::Default, &namespace)
+        .join(CircuitName::NodeFold.dir_path())
+        .join(format!("{}.json", CircuitName::NodeFold.as_str()));
+    std::fs::write(
+        compiled,
+        serde_json::json!({
+            "bytecode": "",
+            "abi": {
+                "parameters": [{
+                    "name": "c1_proof", "visibility": "private",
+                    "type": {"kind": "array", "length": 2, "type": {"kind": "field"}}
+                }],
+                "return_type": null,
+                "error_types": {}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(matches!(
+        execute_definition(&prover, &id, work, "wrong-child-proof-length"),
+        Err(ExecutionError::InvalidParams(_))
+    ));
 }
 
 #[actix::test]

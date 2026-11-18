@@ -205,7 +205,7 @@ pub(super) fn verify_publication_result(
         return Ok(Err(Rejection::Expectations));
     }
     let Ok(public) = PublicSignals::decode(config, proof.circuit, &proof.public_signals) else {
-        return Ok(Err(Rejection::Expectations));
+        return Ok(Err(Rejection::Malformed));
     };
     if public.tree_hash() != Some(tree) || public.c5_key_hash() != Some(keys.c5.key_hash_bytes) {
         return Ok(Err(Rejection::VerificationKey));

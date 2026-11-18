@@ -213,8 +213,24 @@ pub(super) fn prove(
         .join(circuit.dir_path())
         .join(format!("{}.json", circuit.as_str()));
     let compiled = CompiledCircuit::from_file(&path)?;
-    let witness =
-        WitnessGenerator::new().generate_witness(&compiled, inputs_json_to_input_map(&input)?)?;
+    let inputs = inputs_json_to_input_map(&input)?;
+    // Child proofs are caller inputs; their width is owned by this exact recursive artifact.
+    // Other ABI/ACVM failures remain local execution failures.
+    for parameter in &compiled.abi.parameters {
+        if parameter.name.ends_with("_proof") || parameter.name.ends_with("_proofs") {
+            let value = inputs
+                .get(&parameter.name)
+                .context("prepared witness is missing a child proof")?;
+            if !value.matches_abi(&parameter.typ) {
+                return Err(e3_zk_witness::WitnessError::Other(format!(
+                    "{} does not match the selected circuit proof shape",
+                    parameter.name
+                ))
+                .into());
+            }
+        }
+    }
+    let witness = WitnessGenerator::new().generate_witness(&compiled, inputs)?;
     Ok(prover.generate_proof_with_variant(circuit, &witness, job, variant, &directory)?)
 }
 
@@ -271,6 +287,7 @@ pub fn verify_recipient(
 /// Preserve statement rejection separately from a completed cryptographic rejection for workers.
 pub(super) enum Rejection {
     Expectations,
+    Malformed,
     VerificationKey,
     Proof,
 }
@@ -291,7 +308,7 @@ pub(super) fn verify_recipient_result(
         return Ok(Err(Rejection::Expectations));
     }
     let Ok(public) = PublicSignals::decode(config, proof.circuit, &proof.public_signals) else {
-        return Ok(Err(Rejection::Expectations));
+        return Ok(Err(Rejection::Malformed));
     };
     if public.tree_hash() != Some(tree) {
         return Ok(Err(Rejection::VerificationKey));

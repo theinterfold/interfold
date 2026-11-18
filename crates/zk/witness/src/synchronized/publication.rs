@@ -53,13 +53,10 @@ pub fn publication(
     }
     let aggregation = statement(config, &c5, CircuitName::PkAggregation)?;
     let mut batch = None;
+    let mut wrong_tree = false;
     for (&id, child) in roster.iter().zip(recipients) {
         let public = statement(config, child, CircuitName::NodesFold)?;
-        if public.tree_hash() != Some(keys.descendants) {
-            return Err(WitnessError::VerificationKey(
-                "recipient genealogy differs from the local verifier keys".into(),
-            ));
-        }
+        wrong_tree |= public.tree_hash() != Some(keys.descendants);
         if public.binding() != Some(binding)
             || public.party_id() != Some(id)
             || public.dealers().as_deref() != Some(roster)
@@ -73,6 +70,12 @@ pub fn publication(
             return Err(invalid("recipients used different dealer batches"));
         }
         batch = public.dealer_batch();
+    }
+    // A later child's permanent mismatch must not be hidden by an earlier local-key mismatch.
+    if wrong_tree {
+        return Err(WitnessError::VerificationKey(
+            "recipient genealogy differs from the local verifier keys".into(),
+        ));
     }
     let mut input = json!({
         "expected_tree_hash": format!("0x{}", hex::encode(keys.tree()?)),
@@ -177,5 +180,21 @@ mod tests {
         let mut noncanonical = second.clone();
         noncanonical[9 * 32..10 * 32].fill(255);
         assert!(attempt(&first, &noncanonical, &[0, 2]).is_err());
+        let mut wrong_tree = first.clone();
+        wrong_tree[31] ^= 1;
+        assert!(matches!(
+            attempt(&wrong_tree, &second, &[0, 2]),
+            Err(WitnessError::VerificationKey(_))
+        ));
+        // A bad local genealogy in the first row must not mask a permanent fault in a later row.
+        for slot in [1, 3, 5, 6, 8] {
+            let mut altered = second.clone();
+            altered[slot * 32 + 31] ^= 1;
+            let error = attempt(&wrong_tree, &altered, &[0, 2]).unwrap_err();
+            assert!(
+                !matches!(error, WitnessError::VerificationKey(_)),
+                "{error}"
+            );
+        }
     }
 }
