@@ -274,6 +274,181 @@ fn collect(
 }
 
 #[actix::test]
+async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<()> {
+    for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [2, 0, 1]] {
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let (mut actor, input, plan) = fixture(&bus).await?;
+        let id = input.e3_id.clone();
+        let valid = leaves(&plan, &id);
+        let mut wrong = valid[2].clone();
+        let mut public = wrong.proof.public_signals.to_vec();
+        public[63] = 1; // C3 message, while the corresponding C2 slot is zero.
+        wrong.proof.public_signals = ArcBytes::from_bytes(&public);
+        let events = [
+            InterfoldEventData::from(wrong.clone()),
+            input.clone().into(),
+            valid[1].clone().into(),
+        ];
+        for index in order {
+            actor.accept_dealer_input(&events[index], &ec(events[index].clone()))?;
+        }
+        // Simulate serialized recovery of the partial record; matching bytes must survive.
+        let repositories = actor.recovery_repositories.clone().unwrap();
+        repository(&repositories, &id)
+            .write_sync(&actor.dealer.records[&id])
+            .await?;
+        let restored = repository(&repositories, &id).read().await?.unwrap();
+        assert!(
+            !restored.proofs.contains_key(&3),
+            "unqualified C3 cannot reserve a slot"
+        );
+        assert_eq!(restored.proofs[&2], valid[1]);
+        actor.dealer.records.insert(id.clone(), restored);
+        for leaf in &valid {
+            actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
+        }
+        assert!(plan
+            .request(&id, &actor.dealer.records[&id].proofs)?
+            .is_some());
+        assert!(actor
+            .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+            .is_err());
+        let mut reproved = valid[2].clone();
+        reproved.proof.data = ArcBytes::from_bytes(&[99]);
+        actor.accept_dealer_input(&reproved.clone().into(), &ec(reproved))?;
+        assert_eq!(actor.dealer.records[&id].proofs[&3], valid[2]);
+    }
+    Ok(())
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct ReplaceDealerBus(BusHandle);
+impl Handler<ReplaceDealerBus> for NodeProofAggregator {
+    type Result = ();
+    fn handle(&mut self, msg: ReplaceDealerBus, _: &mut Context<Self>) {
+        self.bus = msg.0;
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<InterfoldEventData>")]
+struct SaturateDealerPublication(E3id);
+impl Handler<SaturateDealerPublication> for NodeProofAggregator {
+    type Result = Result<InterfoldEventData>;
+    fn handle(&mut self, msg: SaturateDealerPublication, ctx: &mut Context<Self>) -> Self::Result {
+        for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE {
+            self.bus.publish_without_context(EffectsEnabled::new())?;
+        }
+        self.drive_dealer_publication(&msg.0, ctx);
+        let expected = self.dealer.pending[&msg.0].events[0].clone();
+        self.drive_dealer_publication(&msg.0, ctx);
+        assert_eq!(self.dealer.pending[&msg.0].events[0], expected);
+        assert_eq!(self.dealer.publication_retries.len(), 1);
+        Ok(expected)
+    }
+}
+
+#[actix::test]
+async fn synchronized_dealer_saturation_preserves_correlation_and_retirement_cancels_retry(
+) -> Result<()> {
+    tokio::time::pause();
+    for retire in [false, true] {
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
+        let (mut actor, input, plan) = fixture(&bus).await?;
+        collect(&mut actor, &input, &plan)?;
+        let id = input.e3_id.clone();
+        repository(actor.recovery_repositories.as_ref().unwrap(), &id)
+            .write_sync(&actor.dealer.records[&id])
+            .await?;
+        actor.dealer.effects = true;
+        let addr = actor.start();
+        let expected = addr.send(SaturateDealerPublication(id.clone())).await??;
+        bus.flush_event_pipeline().await?;
+        if retire {
+            addr.send(
+                InterfoldEvent::new_with_timestamp(
+                    E3StageChanged {
+                        e3_id: id.clone(),
+                        previous_stage: E3Stage::CommitteeFinalized,
+                        new_stage: E3Stage::KeyPublished,
+                    }
+                    .into(),
+                    None,
+                    3,
+                    None,
+                    EventSource::Evm,
+                )
+                .into_sequenced(3),
+            )
+            .await?;
+            assert_eq!(addr.send(Inspect(id.clone())).await?, (false, true, false));
+        }
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        addr.send(Inspect(id)).await?;
+        bus.flush_event_pipeline().await?;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.get_data() == &expected)
+                .count(),
+            usize::from(!retire)
+        );
+        addr.send(StopDefinition).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_refused_publications_retry_without_new_input() -> Result<()> {
+    tokio::time::pause();
+    for completed in [false, true] {
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let (mut actor, input, plan) = fixture(&bus).await?;
+        collect(&mut actor, &input, &plan)?;
+        let id = input.e3_id.clone();
+        actor.dealer.effects = true;
+        if completed {
+            actor.publish_dealer_work(&id);
+            let request = actor.dealer.in_flight[&id].clone();
+            let response = ComputeResponse::zk(
+                ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer {
+                    proof: proof(&plan, &id, CircuitName::NodeFold),
+                }),
+                request.correlation_id,
+                id.clone(),
+            );
+            actor.accept_dealer_input(&response.clone().into(), &ec(response))?;
+        }
+        bus.flush_event_pipeline().await?;
+        bus.fail_event_pipeline("injected dealer publication refusal");
+        let addr = actor.start();
+        addr.send(FlushDefinition(id.clone())).await?;
+        addr.send(Inspect(id.clone())).await?;
+        // Test-only bus substitution isolates retry from fatal node-health shutdown policy.
+        let EventFixture {
+            bus: healthy,
+            history,
+            ..
+        } = EventFixture::new()?;
+        addr.send(ReplaceDealerBus(healthy.clone())).await?;
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        addr.send(Inspect(id)).await?;
+        healthy.flush_event_pipeline().await?;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert_eq!(events.len(), 1, "flushed publication must retry");
+        assert!(
+            matches!(events[0].get_data(),
+                InterfoldEventData::SynchronizedDealerProofReady(_) if completed
+            ) || matches!(events[0].get_data(), InterfoldEventData::ComputeRequest(_) if !completed)
+        );
+        addr.send(StopDefinition).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_dealer_plan_requires_canonical_fanout_and_no_ss_lane() -> Result<()> {
     let EventFixture { bus, .. } = EventFixture::new()?;
     let (_, input, plan) = fixture(&bus).await?;

@@ -134,6 +134,7 @@ impl DealerPlan {
         for (&seq, input) in proofs {
             ensure!(seq == input.seq, "dealer slot differs from input");
             self.validate_leaf(id, input)?;
+            self.validate_c3(input, proofs.get(&2))?;
         }
         if proofs.len() != self.circuits.len() {
             return Ok(None);
@@ -152,6 +153,37 @@ impl DealerPlan {
                     .context("missing C3")?,
             },
         }))
+    }
+
+    /// C3 has no setup identity; its planned message is anchored only when native C2 is present.
+    pub(crate) fn validate_c3(
+        &self,
+        input: &DKGInnerProofReady,
+        c2: Option<&DKGInnerProofReady>,
+    ) -> Result<()> {
+        if input.proof.circuit != CircuitName::ShareEncryption {
+            return Ok(());
+        }
+        let Some(c2) = c2 else { return Ok(()) };
+        ensure!(
+            input.seq >= 3
+                && self.circuits.get(input.seq - 1) == Some(&CircuitName::ShareEncryption),
+            "C3 is outside its planned slot"
+        );
+        let config = Configs::for_profile(self.profile, self.committee)?;
+        let l = config.threshold.moduli().len();
+        let slot = input.seq.checked_sub(3).context("invalid C3 slot")?;
+        let recipient = slot / l;
+        let recipient = recipient + usize::from(recipient >= self.context.party_id as usize);
+        let c2 = PublicSignals::decode(&config, c2.proof.circuit, &c2.proof.public_signals)?;
+        let c3 = PublicSignals::decode(&config, input.proof.circuit, &input.proof.public_signals)?;
+        ensure!(
+            c2.message_commitments()
+                .and_then(|fields| fields.get(recipient * l + slot % l))
+                == c3.message_commitments().and_then(|fields| fields.first()),
+            "dealer C2/C3 message differs"
+        );
+        Ok(())
     }
 
     pub fn validate_result(

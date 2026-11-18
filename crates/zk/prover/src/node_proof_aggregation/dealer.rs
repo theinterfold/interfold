@@ -18,7 +18,8 @@ use e3_events::{
 use e3_fhe_params::BfvDecryptionProtocol;
 use e3_request::E3Meta;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::Duration;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct DealerRecord {
@@ -37,7 +38,14 @@ pub(crate) struct DealerCollection {
     pub records: HashMap<E3id, DealerRecord>,
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
+    pending: HashMap<E3id, PendingPublication>,
+    publication_retries: HashMap<E3id, actix::SpawnHandle>,
     effects: bool,
+}
+
+struct PendingPublication {
+    events: VecDeque<InterfoldEventData>,
+    ec: EventContext<Sequenced>,
 }
 
 impl DealerCollection {
@@ -101,11 +109,12 @@ pub(crate) async fn recover(
                 .await?;
             continue;
         }
-        if let Some(record) = e3_data::DataStore::from(repository(repositories, id))
+        if let Some(mut record) = e3_data::DataStore::from(repository(repositories, id))
             .read_checked::<DealerRecord>()
             .await?
         {
             meta.validate_configuration()?;
+            record.qualify_c3(id)?;
             record.validate(id, meta)?;
             records.insert(id.clone(), record);
         }
@@ -176,6 +185,10 @@ impl NodeProofAggregator {
             self.dealer.records.remove(&id);
             self.dealer.in_flight.remove(&id);
             self.dealer.published.remove(&id);
+            self.dealer.pending.remove(&id);
+            if let Some(retry) = self.dealer.publication_retries.remove(&id) {
+                ctx.cancel_future(retry);
+            }
             if let Some(repositories) = &self.recovery_repositories {
                 let store = e3_data::DataStore::from(repository(repositories, &id));
                 ctx.wait(async move { store.remove_sync().await }.into_actor(self).map(
@@ -284,6 +297,7 @@ impl NodeProofAggregator {
                     plan.validate_leaf(&id, proof)?;
                 }
                 record.plan = Some(plan);
+                record.qualify_c3(&id)?;
                 record.ec = ec.clone();
             }
             InterfoldEventData::DKGInnerProofReady(input) => {
@@ -343,6 +357,7 @@ impl NodeProofAggregator {
                     .or_insert_with(|| DealerRecord::new(ec.clone()));
                 if let Some(plan) = &record.plan {
                     plan.validate_leaf(&id, input)?;
+                    plan.validate_c3(input, record.proofs.get(&2))?;
                 }
                 if let Some(old) = record.proofs.get(&input.seq) {
                     ensure!(
@@ -354,6 +369,7 @@ impl NodeProofAggregator {
                     return Ok(()); // Keep the original randomized proof bytes.
                 }
                 record.proofs.insert(input.seq, input.clone());
+                record.qualify_c3(&id)?;
                 record.ec = ec.clone();
             }
             InterfoldEventData::ComputeResponse(response) => {
@@ -432,8 +448,8 @@ impl NodeProofAggregator {
         ctx.wait(
             async move { repository.write_sync(&record).await }
                 .into_actor(self)
-                .map(move |result, actor, _| match result {
-                    Ok(()) => actor.publish_dealer_work(&id),
+                .map(move |result, actor, ctx| match result {
+                    Ok(()) => actor.drive_dealer_publication(&id, ctx),
                     Err(error) => {
                         tracing::error!(%id, %error, "dealer persistence failed; effects withheld")
                     }
@@ -442,29 +458,35 @@ impl NodeProofAggregator {
     }
 
     /// Called only after admission and the exclusive record's flush acknowledgment.
-    fn publish_dealer_work(&mut self, id: &E3id) {
+    fn publish_dealer_work(&mut self, id: &E3id) -> bool {
         if !self.dealer.effects || self.dealer.ended.contains(id) {
-            return;
+            return true;
+        }
+        if self.dealer.pending.contains_key(id) {
+            return self.publish_pending_dealer(id);
         }
         let Some(record) = self.dealer.records.get(id) else {
-            return;
+            return true;
         };
         if let Some(output) = &record.completed {
             if !self.dealer.published.contains(id) {
-                match self.bus.publish(output.clone(), record.ec.clone()) {
-                    Ok(_) => {
-                        self.dealer.published.insert(id.clone());
-                    }
-                    Err(error) => tracing::error!(%id, %error, "dealer output publication failed"),
-                }
+                self.dealer.pending.insert(
+                    id.clone(),
+                    PendingPublication {
+                        events: VecDeque::from([output.clone().into()]),
+                        ec: record.ec.clone(),
+                    },
+                );
             }
         } else if !self.dealer.in_flight.contains_key(id) {
-            let Some(plan) = &record.plan else { return };
+            let Some(plan) = &record.plan else {
+                return true;
+            };
             let work = match plan.request(id, &record.proofs) {
                 Ok(work) => work,
                 Err(error) => {
                     tracing::error!(%id, %error, "saved dealer leaves rejected");
-                    return;
+                    return true;
                 }
             };
             if let Some(work) = work {
@@ -473,20 +495,71 @@ impl NodeProofAggregator {
                     e3_events::CorrelationId::new(),
                     id.clone(),
                 );
-                match self.bus.publish(request.clone(), record.ec.clone()) {
-                    Ok(_) => {
-                        self.dealer.in_flight.insert(id.clone(), request);
-                    }
-                    Err(error) => {
-                        tracing::error!(%id, %error, "dealer dispatch failed; inputs retained")
-                    }
-                }
+                self.dealer.pending.insert(
+                    id.clone(),
+                    PendingPublication {
+                        events: VecDeque::from([request.into()]),
+                        ec: record.ec.clone(),
+                    },
+                );
             }
+        }
+        self.publish_pending_dealer(id)
+    }
+
+    fn publish_pending_dealer(&mut self, id: &E3id) -> bool {
+        let Some(pending) = self.dealer.pending.get_mut(id) else {
+            return true;
+        };
+        while let Some(event) = pending.events.front() {
+            if let Err(error) = self.bus.publish(event.clone(), pending.ec.clone()) {
+                tracing::error!(%id, %error, "dealer publication refused; exact pending effect retained");
+                return false;
+            }
+            if let InterfoldEventData::ComputeRequest(request) = event {
+                self.dealer.in_flight.insert(id.clone(), request.clone());
+            }
+            if matches!(event, InterfoldEventData::SynchronizedDealerProofReady(_)) {
+                self.dealer.published.insert(id.clone());
+            }
+            pending.events.pop_front();
+        }
+        self.dealer.pending.remove(id);
+        true
+    }
+
+    fn drive_dealer_publication(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        if self.publish_dealer_work(id) {
+            if let Some(retry) = self.dealer.publication_retries.remove(id) {
+                ctx.cancel_future(retry);
+            }
+        } else if !self.dealer.publication_retries.contains_key(id) {
+            let retry_id = id.clone();
+            let handle = ctx.run_later(Duration::from_secs(1), move |actor, ctx| {
+                actor.dealer.publication_retries.remove(&retry_id);
+                actor.drive_dealer_publication(&retry_id, ctx);
+            });
+            self.dealer.publication_retries.insert(id.clone(), handle);
         }
     }
 }
 
 impl DealerRecord {
+    fn qualify_c3(&mut self, id: &E3id) -> Result<()> {
+        let Some(plan) = &self.plan else {
+            return Ok(());
+        };
+        let Some(c2) = self.proofs.get(&2).cloned() else {
+            return Ok(());
+        };
+        plan.validate_leaf(id, &c2)?;
+        if self.completed.is_none() {
+            self.proofs
+                .retain(|_, leaf| plan.validate_c3(leaf, Some(&c2)).is_ok());
+        }
+        Ok(())
+    }
+
     fn new(ec: EventContext<Sequenced>) -> Self {
         Self {
             version: 1,
@@ -513,6 +586,7 @@ impl DealerRecord {
             for (&seq, proof) in &self.proofs {
                 ensure!(seq == proof.seq, "saved dealer slot differs");
                 plan.validate_leaf(id, proof)?;
+                plan.validate_c3(proof, self.proofs.get(&2))?;
             }
             if let Some(output) = &self.completed {
                 ensure!(

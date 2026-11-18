@@ -81,9 +81,12 @@ original request for retry, never a peer-invalid verdict.
 The node collector's guarded dealer phase uses `synchronized::dealer::DealerPlan` to collect local
 C1–C3 and check the correlated join result. That definition API checks statements, not cryptographic
 validity, chain authority or runtime admission. The actor checks local source/request/committee,
-flushes its exclusive recovery record before effects and retires at confirmed publication. The local
-dealer output is not a peer-authenticated setup or consent. Recipient/publication producers and the
-registry writer remain absent; synchronized admission stays disabled.
+flushes its exclusive recovery record before effects and retires at confirmed publication. Early C3
+messages stay provisional until the native plan and C2 can qualify their commitments. Refused
+flushed effects retain their exact payload/correlation and causation for a coalesced publication
+retry, cancelled on retirement. The local dealer output is not a peer-authenticated setup or
+consent. Recipient/publication producers and the registry writer remain absent; synchronized
+admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
