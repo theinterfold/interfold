@@ -329,7 +329,15 @@ impl PublicationPlan {
         recipients: &BTreeMap<u32, SynchronizedDkgProofPublished>,
         signed: &SignedSynchronizedDkgAttestation,
     ) -> Result<()> {
-        self.consent_binding(context, native, signed)?;
+        self.consent_binding(context, self.pk_commitment(native)?, signed)?;
+        self.consent_recipient(recipients, signed)
+    }
+
+    pub(crate) fn consent_recipient(
+        &self,
+        recipients: &BTreeMap<u32, SynchronizedDkgProofPublished>,
+        signed: &SignedSynchronizedDkgAttestation,
+    ) -> Result<()> {
         let payload = &signed.payload;
         let recipient = recipients
             .get(&payload.party_id)
@@ -347,7 +355,7 @@ impl PublicationPlan {
     pub(crate) fn consent_binding(
         &self,
         context: SynchronizedDkgContext,
-        native: &PkAggregationProofRequest,
+        pk_commitment: [u8; 32],
         signed: &SignedSynchronizedDkgAttestation,
     ) -> Result<()> {
         let payload = &signed.payload;
@@ -369,7 +377,7 @@ impl PublicationPlan {
                         .0
                 && payload.roster_hash == synchronized_dkg_roster_hash(&self.local.setup.dealers)
                 && payload.dealer_batch == self.local.setup.dealer_batch
-                && payload.pk_commitment == self.pk_commitment(native)?,
+                && payload.pk_commitment == pk_commitment,
             "recipient consent differs from the frozen context or exact publication anchors"
         );
         Ok(())

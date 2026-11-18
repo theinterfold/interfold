@@ -59,7 +59,9 @@ not return a cached failure forever. Successful outcomes and same-correlation de
 The worker backs off on local generation failures at 5/15/60/300 seconds. Requesting actors own
 fresh-correlation redrive, including missing-outcome probes; every attempt still passes shared pool
 and lifecycle gates. A stale error cannot bypass queued/running work. Bus refusal retries the exact
-completed outcome instead of recomputing it. SS outcome reuse is unchanged.
+completed outcome instead of recomputing it. At key publication, new obsolete DKG work is refused,
+but already-forwarded SS attempts can still deliver their outcomes, including to waiting
+correlations.
 
 A replacement publication request cancels the superseded wrapper attempts at the compute gate.
 Cancellation is node/E3/correlation scoped, interrupts worker backoff and skips semaphore/Rayon

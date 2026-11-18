@@ -514,6 +514,19 @@ async fn synchronized_publication_pending_consent_is_not_output_authority() -> R
         2,
         "provisional anchors cannot discard pending evidence"
     );
+    record.validate(f.interfold)?;
+    let mut corrupted = record.clone();
+    let party = f.consents[1].attestation.payload.party_id;
+    let mut wrong_pk = corrupted.consents[&party].payload.clone();
+    wrong_pk.pk_commitment[31] ^= 1;
+    corrupted.consents.insert(
+        party,
+        SignedSynchronizedDkgAttestation::sign(wrong_pk, &f.signers[party as usize])?,
+    );
+    assert_eq!(
+        corrupted.validate(f.interfold).unwrap_err().to_string(),
+        "recipient consent differs from the frozen context or exact publication anchors"
+    );
     record.started = true;
     record.c5 = Some(f.c5.clone());
     record.proof = Some(f.publication.clone());

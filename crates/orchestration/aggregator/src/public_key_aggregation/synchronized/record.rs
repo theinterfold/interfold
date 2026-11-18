@@ -123,32 +123,16 @@ impl PublicationRecord {
             }
             InterfoldEventData::SynchronizedDkgConsentPublished(message) => {
                 let signed = &message.attestation;
-                ensure!(
-                    context.is_none_or(|known| signed.payload.context == known),
-                    "consent differs from the frozen publication domain"
-                );
-                ensure!(
-                    &signed.payload.e3_id == id
-                        && signed.payload.context.crypto_config_id
-                            == self.selected.crypto_config_id
-                        && members.get(signed.payload.party_id as usize)
-                            == Some(&signed.recover_address()?),
-                    "unauthenticated publication consent slot"
-                );
+                self.validate_consent_slot(&members, context, signed)?;
                 if let Some(plan) = &self.plan {
-                    ensure!(
-                        plan.local.setup.dealers.contains(&signed.payload.party_id),
-                        "outside-H recipient cannot consent"
-                    );
                     if let Some(native) = self.native()? {
-                        plan.consent_binding(signed.payload.context, &native, signed)?;
+                        plan.consent_binding(
+                            signed.payload.context,
+                            plan.pk_commitment(&native)?,
+                            signed,
+                        )?;
                         if self.proof.is_some() {
-                            plan.consent(
-                                signed.payload.context,
-                                &native,
-                                &self.recipients,
-                                signed,
-                            )?;
+                            plan.consent_recipient(&self.recipients, signed)?;
                         }
                     }
                 }
@@ -169,6 +153,34 @@ impl PublicationRecord {
         Ok(())
     }
 
+    fn validate_consent_slot(
+        &self,
+        members: &[Address],
+        context: Option<SynchronizedDkgContext>,
+        signed: &SignedSynchronizedDkgAttestation,
+    ) -> Result<()> {
+        let payload = &signed.payload;
+        ensure!(
+            context.is_none_or(|known| payload.context == known),
+            "consent differs from the frozen publication domain"
+        );
+        ensure!(
+            payload.e3_id == self.selected.e3_id
+                && payload.context.crypto_config_id == self.selected.crypto_config_id
+                && members.get(payload.party_id as usize) == Some(&signed.recover_address()?),
+            "unauthenticated publication consent slot"
+        );
+        ensure!(
+            self.plan.as_ref().is_none_or(|plan| plan
+                .local
+                .setup
+                .dealers
+                .contains(&payload.party_id)),
+            "outside-H recipient cannot consent"
+        );
+        Ok(())
+    }
+
     pub(crate) fn native(&self) -> Result<Option<PkAggregationProofRequest>> {
         let Some(plan) = &self.plan else {
             return Ok(None);
@@ -186,7 +198,17 @@ impl PublicationRecord {
     }
 
     pub(crate) fn work(&self) -> Result<Option<SynchronizedDkgProofRequest>> {
-        let (Some(plan), Some(c5), Some(native)) = (&self.plan, &self.c5, self.native()?) else {
+        let Some(native) = self.native()? else {
+            return Ok(None);
+        };
+        self.work_from_native(&native)
+    }
+
+    fn work_from_native(
+        &self,
+        native: &PkAggregationProofRequest,
+    ) -> Result<Option<SynchronizedDkgProofRequest>> {
+        let (Some(plan), Some(c5)) = (&self.plan, &self.c5) else {
             return Ok(None);
         };
         if !plan
@@ -199,7 +221,7 @@ impl PublicationRecord {
             return Ok(None);
         }
         Ok(Some(plan.publication_request(
-            &native,
+            native,
             c5,
             &self.recipients,
         )?))
@@ -215,15 +237,17 @@ impl PublicationRecord {
         let Some(plan) = &self.plan else {
             return Ok(());
         };
+        if self.consents.is_empty() {
+            return Ok(());
+        }
+        let pk_commitment = plan.pk_commitment(&native)?;
         // Peer SK/bundle anchors are provisional until the wrapper is locally verified.
         // Retain early consent across candidate repair, but always enforce independent anchors.
         self.consents.retain(|id, signed| {
-            plan.consent_binding(context, &native, signed).is_ok()
+            plan.consent_binding(context, pk_commitment, signed).is_ok()
                 && (self.proof.is_none()
                     || !self.recipients.contains_key(id)
-                    || plan
-                        .consent(context, &native, &self.recipients, signed)
-                        .is_ok())
+                    || plan.consent_recipient(&self.recipients, signed).is_ok())
         });
         Ok(())
     }
@@ -232,18 +256,22 @@ impl PublicationRecord {
         &self,
         context: SynchronizedDkgContext,
     ) -> Result<Option<SynchronizedDkgPublicationReady>> {
-        let (Some(plan), Some(proof), Some(native), Some(work)) =
-            (&self.plan, &self.proof, self.native()?, self.work()?)
+        let (Some(plan), Some(proof), Some(native)) = (&self.plan, &self.proof, self.native()?)
         else {
             return Ok(None);
         };
+        let Some(work) = self.work_from_native(&native)? else {
+            return Ok(None);
+        };
         plan.validate_publication(&native, &work, proof)?;
+        let pk_commitment = plan.pk_commitment(&native)?;
         let mut consents = Vec::new();
         for id in &plan.local.setup.dealers {
             let Some(signed) = self.consents.get(id) else {
                 return Ok(None);
             };
-            plan.consent(context, &native, &self.recipients, signed)?;
+            plan.consent_binding(context, pk_commitment, signed)?;
+            plan.consent_recipient(&self.recipients, signed)?;
             consents.push(signed.clone());
         }
         let SynchronizedDkgProofJob::Publication { expected, .. } = work.job else {
@@ -312,31 +340,45 @@ impl PublicationRecord {
                 None,
             )?;
         }
+        // The same validated native batch anchors every consent in this pass. Reconstructing the
+        // aggregate for each row repeats all H share checks for each of the H consents.
+        let native = if self.c5.is_some() || !self.consents.is_empty() {
+            inputs.native()?
+        } else {
+            None
+        };
+        let pk_commitment = if self.consents.is_empty() {
+            None
+        } else {
+            inputs
+                .plan
+                .as_ref()
+                .zip(native.as_ref())
+                .map(|(plan, native)| plan.pk_commitment(native))
+                .transpose()?
+        };
         for (&id, signed) in &self.consents {
             ensure!(id == signed.payload.party_id, "saved consent slot differs");
-            inputs.intake(
-                &InterfoldEventData::from(SynchronizedDkgConsentPublished {
-                    attestation: signed.clone(),
-                }),
-                &self.ec,
-                interfold,
-                None,
-            )?;
+            inputs.validate_consent_slot(&members, None, signed)?;
+            if let (Some(plan), Some(pk_commitment)) = (&inputs.plan, pk_commitment) {
+                plan.consent_binding(signed.payload.context, pk_commitment, signed)?;
+            }
         }
         if let Some(c5) = &self.c5 {
             self.plan
                 .as_ref()
                 .context("C5 without local setup")?
-                .validate_c5(&self.native()?.context("C5 without native PK")?, c5)?;
+                .validate_c5(native.as_ref().context("C5 without native PK")?, c5)?;
         }
         if let Some(proof) = &self.proof {
+            let native = native.as_ref().context("publication without native PK")?;
             self.plan
                 .as_ref()
                 .context("publication without local setup")?
                 .validate_publication(
-                    &self.native()?.context("publication without native PK")?,
+                    native,
                     &self
-                        .work()?
+                        .work_from_native(native)?
                         .context("publication without recipient joins")?,
                     proof,
                 )?;

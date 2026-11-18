@@ -44,7 +44,7 @@ use e3_zk_prover::{execute_zk_request, zk_operation_name, ZkBackend, ZkProver};
 use rand::Rng;
 use tracing::{debug, error, info, warn};
 
-use crate::effect_gate::{ComputeEffectGate, RunningJob, RunningJobs};
+use crate::effect_gate::{ComputeEffectGate, ForwardedCompute, RunningJob, RunningJobs};
 
 /// Multithread actor
 pub struct Multithread {
@@ -613,6 +613,24 @@ impl Handler<InterfoldEvent> for Multithread {
 impl Handler<TypedEvent<ComputeRequest>> for Multithread {
     type Result = ResponseFuture<()>;
     fn handle(&mut self, msg: TypedEvent<ComputeRequest>, _: &mut Self::Context) -> Self::Result {
+        let running = self.running.start(&msg.e3_id, msg.correlation_id);
+        self.run_compute(msg, running)
+    }
+}
+
+impl Handler<ForwardedCompute> for Multithread {
+    type Result = ResponseFuture<()>;
+    fn handle(&mut self, msg: ForwardedCompute, _: &mut Self::Context) -> Self::Result {
+        self.run_compute(msg.request, msg.running)
+    }
+}
+
+impl Multithread {
+    fn run_compute(
+        &self,
+        msg: TypedEvent<ComputeRequest>,
+        running: RunningJob,
+    ) -> ResponseFuture<()> {
         let cipher = self.cipher.clone();
         let rng = self.rng.clone();
         let bus = self.bus.clone();
@@ -621,8 +639,6 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let zk_prover = self.zk_prover.clone();
         let task_scope = self.task_scope.clone();
         let retry_logs = self.retry_logs.clone();
-        // The request runs, queued or in a worker, until its future ends.
-        let running = self.running.start(&msg.e3_id, msg.correlation_id);
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
