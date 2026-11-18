@@ -96,6 +96,7 @@ pub fn prove_c5(
         prepare_c5(config, data)?.to_json(),
         job,
         CircuitVariant::Default,
+        None,
     )
 }
 
@@ -167,6 +168,11 @@ pub fn prove_publication(
         prepare_publication(prover, config, context, e3, input)?,
         job,
         CircuitVariant::Evm,
+        Some(super::provenance::PeerProofRows {
+            parameter: "setup_proofs",
+            owners: input.dealers,
+            local_owner: context.party_id,
+        }),
     )
 }
 

@@ -355,8 +355,8 @@ fn synchronized_definition_keeps_corrupt_local_vk_fields_retryable() {
         Err(ExecutionError::InvalidParams(_))
     ));
     assert!(!prover.work_dir().exists());
-    // A tiny loaded ABI isolates shape validation from ACVM/process availability. The production
-    // width must come from the selected artifact, not from a host-side proof-size constant.
+    // A tiny incompatible parent ABI isolates a local artifact mismatch from ACVM availability.
+    // The dealer's C1 is local, not an external child to reject as malformed input.
     let compiled = prover
         .circuits_dir(CircuitVariant::Default, &namespace)
         .join(CircuitName::NodeFold.dir_path())
@@ -377,9 +377,13 @@ fn synchronized_definition_keeps_corrupt_local_vk_fields_retryable() {
         .to_string(),
     )
     .unwrap();
+    let error = execute_definition(&prover, &id, work, "wrong-local-proof-shape").unwrap_err();
+    assert!(matches!(error, ExecutionError::Local(_)), "{error:#}");
+    assert!(error.to_string().contains("c1_proof"));
+    let error = synchronized_execution_error(&request, error);
     assert!(matches!(
-        execute_definition(&prover, &id, work, "wrong-child-proof-length"),
-        Err(ExecutionError::InvalidParams(_))
+        error.get_err(),
+        ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(_))
     ));
 }
 
