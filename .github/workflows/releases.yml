@@ -43,6 +43,8 @@ jobs:
 
       - name: Validate release candidate
         id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/release.mjs prepare
 
   build-ciphernode-image-release:

@@ -9,12 +9,61 @@ import { normalizeVersion, releaseChannel, validateReleaseVersion } from './vers
 /**
  * The branches whose history may contain a release tag: main, and the maintenance branch of the
  * release's minor line (`releases/X.Y.x`). The maintenance branch carries patch releases cut from an
- * earlier tag. Both branches must be protected on GitHub. The prefix is `releases/` because the
- * repository has a branch named `release`, and Git cannot also hold refs under `release/`.
+ * earlier tag. The prefix is `releases/` because the repository has a branch named `release`, and
+ * Git cannot also hold refs under `release/`.
  */
 export function releaseBranches(version) {
   const [major, minor] = normalizeVersion(version).split('.')
   return ['main', `releases/${major}.${minor}.x`]
+}
+
+/** The ruleset rules that make a maintenance branch as trusted as main: changes only through a pull
+ * request, and no force push. */
+const REQUIRED_BRANCH_RULES = ['pull_request', 'non_fast_forward']
+
+/** The rule types that GitHub rulesets enforce on a branch of the workflow's repository. */
+export function githubBranchRules(branch, environment = process.env) {
+  const { GITHUB_REPOSITORY: repository, GITHUB_TOKEN: token } = environment
+  if (!repository || !token) fail('reading branch rules requires GITHUB_REPOSITORY and GITHUB_TOKEN')
+  const output = execFileSync('gh', ['api', `repos/${repository}/rules/branches/${encodeURIComponent(branch)}`, '--jq', '[.[].type]'], {
+    encoding: 'utf8',
+    env: { ...environment, GH_TOKEN: token },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  return JSON.parse(output)
+}
+
+/**
+ * The fetched remote refs whose history may contain the tag of `version`. main is always trusted.
+ * The maintenance branch is trusted only when it exists and `readBranchRules` confirms the required
+ * rules; an error while reading them counts as unprotected.
+ */
+export function trustedReleaseRefs(version, readBranchRules, rootDir = ROOT_DIR) {
+  const refs = []
+  for (const branch of releaseBranches(version)) {
+    const remoteRef = `refs/remotes/origin/${branch}`
+    const refspec = `+refs/heads/${branch}:${remoteRef}`
+    if (branch === 'main') {
+      runGit(['fetch', '--no-tags', 'origin', refspec], rootDir)
+      refs.push(remoteRef)
+      continue
+    }
+    if (!gitSucceeds(['fetch', '--no-tags', 'origin', refspec], rootDir)) continue
+    let rules
+    try {
+      rules = readBranchRules(branch)
+    } catch (error) {
+      console.warn(`Not trusting ${branch}: its branch rules could not be read (${error.message}).`)
+      continue
+    }
+    const missing = REQUIRED_BRANCH_RULES.filter((rule) => !rules.includes(rule))
+    if (missing.length > 0) {
+      console.warn(`Not trusting ${branch}: no ruleset enforces ${missing.join(' and ')} on it.`)
+      continue
+    }
+    refs.push(remoteRef)
+  }
+  return refs
 }
 
 export function verifyReleaseCandidate(tagRef, protectedRefs, expectedRef, cwd = ROOT_DIR) {
@@ -38,7 +87,11 @@ function writeOutput(name, value, outputFile) {
   appendFileSync(outputFile, `${name}=${value}\n`)
 }
 
-export function prepareRelease(environment = process.env, rootDir = ROOT_DIR) {
+export function prepareRelease(
+  environment = process.env,
+  rootDir = ROOT_DIR,
+  readBranchRules = (branch) => githubBranchRules(branch, environment),
+) {
   const { GITHUB_OUTPUT: outputFile, GITHUB_REF: tagRef, GITHUB_REF_NAME: tagName, GITHUB_SHA: eventSha } = environment
 
   if (!outputFile || !tagRef || !tagName || !eventSha) {
@@ -46,15 +99,7 @@ export function prepareRelease(environment = process.env, rootDir = ROOT_DIR) {
   }
 
   const version = normalizeVersion(tagName)
-  const protectedRefs = []
-  for (const branch of releaseBranches(version)) {
-    const remoteRef = `refs/remotes/origin/${branch}`
-    const refspec = `+refs/heads/${branch}:${remoteRef}`
-    // main must exist; the maintenance branch exists only for a minor line with patch releases.
-    if (branch === 'main') runGit(['fetch', '--no-tags', 'origin', refspec], rootDir)
-    else if (!gitSucceeds(['fetch', '--no-tags', 'origin', refspec], rootDir)) continue
-    protectedRefs.push(remoteRef)
-  }
+  const protectedRefs = trustedReleaseRefs(version, readBranchRules, rootDir)
   const candidateSha = verifyReleaseCandidate(tagRef, protectedRefs, eventSha, rootDir)
   validateReleaseVersion(version, rootDir)
 
