@@ -93,13 +93,16 @@ C0/own-C2/C4 and authenticated H dealer joins, including for outside-H recipient
 rows are authenticated candidates, not individually verified proofs. `NodesFold` recursively
 verifies every dealer proof, and the executor verifies that resulting join. A failed join does not
 identify a dishonest peer: local artifacts or a candidate may be at fault. Corrected authenticated
-proof bytes or genealogy can replace a candidate for the same fixed statement, retiring old
-correlations; a completed local verdict is retained. Recipient bus refusals retry from flushed
-progress, tracking local and signed outputs separately. Missing outcomes trigger fresh-correlated
-redelivery of the same work; the compute gate owns running-job deduplication. The native intent
-fixes C4/C2 provenance and setup context; PK/batch expectations are derived from those authenticated
-dealer rows, not an independent native PK check at this collector. Consent, publication aggregation
-and registry writing have separate owners; synchronized admission stays disabled.
+proof bytes or genealogy can repair a fixed statement. During a join, the collector holds at most
+one alternate per dealer, and promotes a compatible repair only after a matching reported worker
+failure, with a per-boot cap per dealer. The active correlation and successful verdict are not
+superseded by new bytes alone. Local retries that have not returned an outcome remain in flight.
+Recipient bus refusals retry from flushed progress without another store write; storage and delivery
+back off separately. Missing outcomes trigger fresh-correlated redelivery of the same work; the
+compute gate owns running-job deduplication. The native intent fixes C4/C2 provenance and setup
+context; PK/batch expectations are derived from those authenticated dealer rows, not an independent
+native PK check at this collector. Consent, publication aggregation and registry writing have
+separate owners; synchronized admission stays disabled.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

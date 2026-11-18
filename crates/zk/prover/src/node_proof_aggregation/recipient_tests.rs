@@ -171,7 +171,9 @@ fn fixture(bus: &BusHandle, recipient: u32) -> Result<Fixture> {
 
 fn accept(actor: &mut NodeProofAggregator, data: impl Into<InterfoldEventData>) -> Result<()> {
     let data = data.into();
-    actor.accept_recipient_input(&data, &ec(data.clone()))
+    actor
+        .accept_recipient_input(&data, &ec(data.clone()))
+        .map(drop)
 }
 
 fn collect(f: &mut Fixture) -> Result<()> {
@@ -216,6 +218,18 @@ fn response(request: &ComputeRequest) -> ComputeResponse {
         }),
         request.correlation_id,
         request.e3_id.clone(),
+    )
+}
+
+fn dealer_reproof(f: &Fixture, byte: u8) -> Result<SynchronizedDkgProofPublished> {
+    let mut message = f.dealers[0].clone();
+    message.proof.data = ArcBytes::from_bytes(&[byte]);
+    SynchronizedDkgProofPublished::sign(
+        message.e3_id,
+        message.context,
+        message.role,
+        message.proof,
+        &f.signers[0],
     )
 }
 
@@ -401,15 +415,6 @@ async fn corrected_authenticated_dealer_proof_retires_stale_recipient_work() -> 
     f.actor.dealer.effects = true;
     f.actor.publish_recipient_work(&id)?;
     let first = f.actor.recipient.in_flight[&id].clone();
-    accept(
-        &mut f.actor,
-        ComputeRequestError::new(
-            ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
-                "recursive join rejected a candidate".into(),
-            )),
-            first.clone(),
-        ),
-    )?;
     let mut corrected = f.dealers[0].clone();
     corrected.proof.data = ArcBytes::from_bytes(&[99]);
     assert!(accept(&mut f.actor, corrected.clone()).is_err()); // changed bytes need authorship
@@ -421,7 +426,21 @@ async fn corrected_authenticated_dealer_proof_retires_stale_recipient_work() -> 
         corrected.proof,
         &f.signers[0],
     )?;
+    let alternate = dealer_reproof(&f, 98)?;
+    accept(&mut f.actor, alternate)?;
     accept(&mut f.actor, corrected.clone())?;
+    f.actor.publish_recipient_work(&id)?;
+    assert_eq!(f.actor.recipient.in_flight.get(&id), Some(&first));
+    assert_eq!(f.actor.recipient.records[&id].dealers[&0], f.dealers[0]);
+    accept(
+        &mut f.actor,
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkError::InvalidParams(
+                "reported recursive join input failure".into(),
+            )),
+            first.clone(),
+        ),
+    )?;
     assert!(!f.actor.recipient.in_flight.contains_key(&id));
     assert_eq!(f.actor.recipient.records[&id].dealers[&0], corrected);
     f.actor.publish_recipient_work(&id)?;
@@ -437,6 +456,41 @@ async fn corrected_authenticated_dealer_proof_retires_stale_recipient_work() -> 
     accept(&mut f.actor, f.dealers[0].clone())?;
     assert_eq!(f.actor.recipient.records[&id].completed, completed);
     assert!(completed.is_some());
+    Ok(())
+}
+
+#[actix::test]
+async fn recipient_activates_a_bounded_number_of_repairs_for_one_dealer() -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor.dealer.effects = true;
+    f.actor.publish_recipient_work(&id)?;
+    for turn in 0..=MAX_JOIN_REPAIRS_PER_DEALER {
+        let request = f.actor.recipient.in_flight[&id].clone();
+        accept(
+            &mut f.actor,
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::InvalidParams(
+                    "recorded fixture failure".into(),
+                )),
+                request,
+            ),
+        )?;
+        let next = dealer_reproof(&f, 50 + turn)?;
+        accept(&mut f.actor, next)?;
+        f.actor.publish_recipient_work(&id)?;
+    }
+    bus.flush_event_pipeline().await?;
+    let delivered = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+            .count(),
+        1 + usize::from(MAX_JOIN_REPAIRS_PER_DEALER),
+    );
     Ok(())
 }
 
@@ -635,6 +689,17 @@ async fn recipient_bus_refusal_retries_flushed_output_without_input_redelivery()
     f.actor.publish_recipient_work(&id)?;
     let request = f.actor.recipient.in_flight[&id].clone();
     accept(&mut f.actor, response(&request))?;
+    let flush = FailedFlush {
+        recovered: true,
+        ..FailedFlush::default()
+    };
+    let attempts = flush.attempts.clone();
+    let repositories = f.actor.recovery_repositories.take().unwrap();
+    f.actor.recovery_repositories = Some(Repositories::new(
+        repositories
+            .store
+            .with_flush_recipient(flush.start().recipient()),
+    ));
     bus.flush_event_pipeline().await?;
     bus.fail_event_pipeline("injected bus refusal");
     let addr = f.actor.start();
@@ -656,6 +721,7 @@ async fn recipient_bus_refusal_retries_flushed_output_without_input_redelivery()
         events.events[0].get_data(),
         InterfoldEventData::SynchronizedRecipientProofReady(_)
     ));
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(matches!(
         events.events[1].get_data(),
         InterfoldEventData::SynchronizedDkgProofPublished(_)
@@ -690,6 +756,7 @@ impl Handler<StopRecipient> for NodeProofAggregator {
 #[derive(Default)]
 struct FailedFlush {
     recovered: bool,
+    attempts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Actor for FailedFlush {
     type Context = Context<Self>;
@@ -697,6 +764,8 @@ impl Actor for FailedFlush {
 impl Handler<Flush> for FailedFlush {
     type Result = Result<()>;
     fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
+        self.attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         ensure!(self.recovered, "injected flush failure");
         Ok(())
     }

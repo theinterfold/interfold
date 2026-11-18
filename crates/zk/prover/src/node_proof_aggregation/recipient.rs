@@ -23,6 +23,9 @@ use std::{
     time::Duration,
 };
 
+// Bound activated repairs, not identical deliveries, for each fixed dealer slot in this boot.
+const MAX_JOIN_REPAIRS_PER_DEALER: u8 = 2;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct RecipientRecord {
     version: u8,
@@ -39,9 +42,35 @@ pub(crate) struct RecipientCollection {
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
     local_published: HashSet<E3id>,
-    flush_retries: HashMap<E3id, SpawnHandle>,
+    unflushed: HashSet<E3id>,
+    flush_retries: HashMap<E3id, EffectRetry>,
+    delivery_retries: HashMap<E3id, EffectRetry>,
     work_retries: HashMap<E3id, SpawnHandle>,
     invalid_work: HashSet<E3id>,
+    failed_work: HashSet<E3id>,
+    repairs: HashMap<E3id, BTreeMap<u32, SynchronizedDkgProofPublished>>,
+    repair_counts: HashMap<E3id, BTreeMap<u32, u8>>,
+}
+
+#[derive(Default)]
+struct EffectRetry {
+    timer: Option<SpawnHandle>,
+    failures: u32,
+}
+
+impl EffectRetry {
+    fn failed(&mut self) -> bool {
+        self.failures = self.failures.saturating_add(1);
+        self.failures == 1
+    }
+
+    fn delay(&self) -> Duration {
+        e3_utils::backoff_delay(
+            Duration::from_secs(1),
+            self.failures,
+            Duration::from_secs(30),
+        )
+    }
 }
 
 pub(crate) fn repository(repositories: &Repositories, id: &E3id) -> Repository<RecipientRecord> {
@@ -151,7 +180,20 @@ impl NodeProofAggregator {
             return false;
         }
         if self.dealer.ended.contains(&id) {
-            if let Some(retry) = self.recipient.flush_retries.remove(&id) {
+            if let Some(retry) = self
+                .recipient
+                .flush_retries
+                .remove(&id)
+                .and_then(|retry| retry.timer)
+            {
+                ctx.cancel_future(retry);
+            }
+            if let Some(retry) = self
+                .recipient
+                .delivery_retries
+                .remove(&id)
+                .and_then(|retry| retry.timer)
+            {
                 ctx.cancel_future(retry);
             }
             if let Some(retry) = self.recipient.work_retries.remove(&id) {
@@ -162,6 +204,10 @@ impl NodeProofAggregator {
             self.recipient.published.remove(&id);
             self.recipient.local_published.remove(&id);
             self.recipient.invalid_work.remove(&id);
+            self.recipient.failed_work.remove(&id);
+            self.recipient.repairs.remove(&id);
+            self.recipient.repair_counts.remove(&id);
+            self.recipient.unflushed.remove(&id);
             if let Some(repositories) = &self.recovery_repositories {
                 let store = e3_data::DataStore::from(repository(repositories, &id));
                 ctx.wait(
@@ -189,11 +235,23 @@ impl NodeProofAggregator {
         if meta.validate_configuration().is_err() {
             return true;
         }
-        if let Err(error) = self.accept_recipient_input(data, ec) {
-            tracing::debug!(%id, %error, "synchronized recipient input rejected");
-            return true;
+        match self.accept_recipient_input(data, ec) {
+            Ok(changed) => {
+                if !self.recipient.in_flight.contains_key(&id)
+                    || self.recipient.invalid_work.contains(&id)
+                {
+                    if let Some(timer) = self.recipient.work_retries.remove(&id) {
+                        ctx.cancel_future(timer);
+                    }
+                }
+                if changed {
+                    self.persist_recipient(&id, ctx);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%id, %error, "synchronized recipient input rejected");
+            }
         }
-        self.persist_recipient(&id, ctx);
         true
     }
 
@@ -258,7 +316,7 @@ impl NodeProofAggregator {
         &mut self,
         data: &InterfoldEventData,
         ec: &EventContext<Sequenced>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let id = data.get_e3_id().context("missing recipient E3")?;
         ensure!(!self.dealer.ended.contains(&id), "recipient DKG has ended");
         let peer = matches!(data, InterfoldEventData::SynchronizedDkgProofPublished(_));
@@ -272,7 +330,7 @@ impl NodeProofAggregator {
             .get(&id)
             .is_some_and(|r| r.completed.is_some())
         {
-            return Ok(());
+            return Ok(false);
         }
         match data {
             InterfoldEventData::SynchronizedRecipientInputsReady(input) => {
@@ -287,6 +345,9 @@ impl NodeProofAggregator {
                     record.plan.as_ref().is_none_or(|old| old == &plan),
                     "native C4 roster is already fixed"
                 );
+                if record.plan.is_some() {
+                    return Ok(false);
+                }
                 // Early rows have authorship but no authority to choose the native setup/roster.
                 record
                     .dealers
@@ -299,7 +360,7 @@ impl NodeProofAggregator {
             }
             InterfoldEventData::SynchronizedDkgProofPublished(message) => {
                 if message.role != SynchronizedDkgProofRole::Dealer {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.authenticate_dealer(message)?;
                 let record = self
@@ -320,7 +381,7 @@ impl NodeProofAggregator {
                             == message.proof.public_signals[4 * 32..]
                     {
                         if old.proof == message.proof {
-                            return Ok(());
+                            return Ok(false);
                         }
                         // Authorship is not proof validity; repaired candidates must still pass
                         // the batch/genealogy and recursive verification boundaries.
@@ -330,8 +391,26 @@ impl NodeProofAggregator {
                             "conflicting authenticated dealer join"
                         );
                     }
-                    self.recipient.in_flight.remove(&id);
-                    self.recipient.invalid_work.remove(&id);
+                    let slot = message.context.party_id;
+                    if self
+                        .recipient
+                        .repair_counts
+                        .get(&id)
+                        .and_then(|counts| counts.get(&slot))
+                        .is_some_and(|&count| count >= MAX_JOIN_REPAIRS_PER_DEALER)
+                    {
+                        return Ok(false);
+                    }
+                    if self.recipient.in_flight.contains_key(&id) {
+                        // Never invalidate a running join merely because an authenticated
+                        // candidate differs. Keep at most one alternate per fixed slot.
+                        self.recipient
+                            .repairs
+                            .entry(id.clone())
+                            .or_default()
+                            .insert(slot, message.clone());
+                        return self.promote_recipient_repairs(&id, ec);
+                    }
                 }
                 record
                     .dealers
@@ -345,7 +424,7 @@ impl NodeProofAggregator {
                         | CircuitName::SkShareComputation
                         | CircuitName::DkgShareDecryption
                 ) {
-                    return Ok(());
+                    return Ok(false);
                 }
                 let committee = self
                     .dealer
@@ -385,14 +464,14 @@ impl NodeProofAggregator {
                         old.proof.public_signals == leaf.proof.public_signals,
                         "conflicting local recipient leaf"
                     );
-                    return Ok(());
+                    return Ok(false);
                 }
                 record.leaves.insert(leaf.seq, leaf.clone());
                 record.ec = ec.clone();
             }
             InterfoldEventData::ComputeResponse(response) => {
                 let Some(request) = self.recipient.in_flight.get(&id) else {
-                    return Ok(());
+                    return Ok(false);
                 };
                 ensure!(
                     response.correlation_id == request.correlation_id,
@@ -423,6 +502,10 @@ impl NodeProofAggregator {
                 });
                 record.ec = ec.clone();
                 self.recipient.in_flight.remove(&id);
+                self.recipient.failed_work.remove(&id);
+                self.recipient.invalid_work.remove(&id);
+                self.recipient.repairs.remove(&id);
+                self.recipient.repair_counts.remove(&id);
             }
             InterfoldEventData::ComputeRequestError(error) => {
                 if let Some(request) = self.recipient.in_flight.get(&id) {
@@ -436,12 +519,72 @@ impl NodeProofAggregator {
                     ) {
                         self.recipient.invalid_work.insert(id.clone());
                     }
+                    self.recipient.failed_work.insert(id.clone());
                     tracing::error!(%id, %error, "recipient join failed; exact request and authenticated candidates retained, not a peer-invalid verdict");
+                    return self.promote_recipient_repairs(&id, ec);
                 }
+                return Ok(false);
             }
-            _ => {}
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
+    }
+
+    fn promote_recipient_repairs(
+        &mut self,
+        id: &E3id,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<bool> {
+        if !self.recipient.failed_work.contains(id) {
+            return Ok(false);
+        }
+        let Some(repairs) = self.recipient.repairs.get(id) else {
+            return Ok(false);
+        };
+        let record = self
+            .recipient
+            .records
+            .get_mut(id)
+            .context("missing recipient record")?;
+        let plan = record.plan.as_ref().context("missing recipient plan")?;
+        let mut dealers = record.dealers.clone();
+        dealers.extend(repairs.clone());
+        // A conflicting tree must not displace a coherent active batch. A complete compatible
+        // repair set can still be made eligible by later arrivals from the other slots.
+        let mut slots = repairs.keys().copied().collect::<Vec<_>>();
+        if !matches!(plan.request(&record.leaves, &dealers), Ok(Some(_))) {
+            // A pending genealogy change from one slot cannot block an unrelated byte-only
+            // repair. Try just the rows that preserve the currently coherent genealogy.
+            dealers.clone_from(&record.dealers);
+            slots.retain(|slot| {
+                let proof = &repairs[slot].proof;
+                proof.public_signals[3 * 32..4 * 32]
+                    == record.dealers[slot].proof.public_signals[3 * 32..4 * 32]
+            });
+            dealers.extend(slots.iter().map(|slot| (*slot, repairs[slot].clone())));
+            if slots.is_empty() || !matches!(plan.request(&record.leaves, &dealers), Ok(Some(_))) {
+                return Ok(false);
+            }
+        }
+        let counts = self.recipient.repair_counts.entry(id.clone()).or_default();
+        let retained = self
+            .recipient
+            .repairs
+            .get_mut(id)
+            .expect("recipients have repairs");
+        for slot in slots {
+            *counts.entry(slot).or_default() += 1;
+            retained.remove(&slot);
+        }
+        record.dealers = dealers;
+        record.ec = ec.clone();
+        if retained.is_empty() {
+            self.recipient.repairs.remove(id);
+        }
+        self.recipient.failed_work.remove(id);
+        self.recipient.in_flight.remove(id);
+        self.recipient.invalid_work.remove(id);
+        Ok(true)
     }
 
     fn persist_recipient(&mut self, id: &E3id, ctx: &mut Context<Self>) {
@@ -481,6 +624,7 @@ impl NodeProofAggregator {
         record: RecipientRecord,
         ctx: &mut Context<Self>,
     ) {
+        self.recipient.unflushed.insert(id.clone());
         // Every writer, including a pending retry, must revalidate its current snapshot.
         if let Err(error) = self.validate_recipient_record(id, &record) {
             tracing::error!(%id, %error, "saved recipient input rejected");
@@ -494,17 +638,16 @@ impl NodeProofAggregator {
         ctx.wait(async move { repository.write_sync(&record).await }.into_actor(self).map(move |result, actor, ctx| {
             match result {
                 Ok(()) => {
-                    if let Some(retry) = actor.recipient.flush_retries.remove(&id) {
+                    actor.recipient.unflushed.remove(&id);
+                    if let Some(retry) = actor.recipient.flush_retries.remove(&id).and_then(|retry| retry.timer) {
                         ctx.cancel_future(retry);
                     }
-                    if let Err(error) = actor.publish_recipient_work(&id) {
-                        tracing::error!(%id, %error, "recipient publication failed; inputs retained");
-                        actor.retry_recipient_flush(&id, ctx);
-                    }
-                    actor.retry_recipient_work(&id, ctx);
+                    actor.drive_recipient_delivery(&id, ctx);
                 }
                 Err(error) => {
-                    tracing::error!(%id, %error, "recipient flush failed; effects withheld until retry succeeds");
+                    if actor.recipient.flush_retries.entry(id.clone()).or_default().failed() {
+                        tracing::warn!(%id, %error, "recipient flush failed; effects withheld until retry succeeds");
+                    }
                     actor.retry_recipient_flush(&id, ctx);
                 }
             }
@@ -512,12 +655,15 @@ impl NodeProofAggregator {
     }
 
     fn retry_recipient_flush(&mut self, id: &E3id, ctx: &mut Context<Self>) {
-        if self.recipient.flush_retries.contains_key(id) {
+        let state = self.recipient.flush_retries.entry(id.clone()).or_default();
+        if state.timer.is_some() {
             return;
         }
         let retry_id = id.clone();
-        let retry = ctx.run_later(Duration::from_secs(1), move |actor, ctx| {
-            actor.recipient.flush_retries.remove(&retry_id);
+        state.timer = Some(ctx.run_later(state.delay(), move |actor, ctx| {
+            if let Some(state) = actor.recipient.flush_retries.get_mut(&retry_id) {
+                state.timer = None;
+            }
             if !actor.dealer.effects || actor.dealer.ended.contains(&retry_id) {
                 return;
             }
@@ -525,8 +671,42 @@ impl NodeProofAggregator {
             if let Some(record) = actor.recipient.records.get(&retry_id).cloned() {
                 actor.flush_recipient_record(&retry_id, record, ctx);
             }
-        });
-        self.recipient.flush_retries.insert(id.clone(), retry);
+        }));
+    }
+
+    fn drive_recipient_delivery(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        if self.recipient.unflushed.contains(id)
+            || self
+                .recipient
+                .delivery_retries
+                .get(id)
+                .is_some_and(|state| state.timer.is_some())
+        {
+            return;
+        }
+        match self.publish_recipient_work(id) {
+            Ok(()) => {
+                self.recipient.delivery_retries.remove(id);
+                self.retry_recipient_work(id, ctx);
+            }
+            Err(error) => {
+                let state = self
+                    .recipient
+                    .delivery_retries
+                    .entry(id.clone())
+                    .or_default();
+                if state.failed() {
+                    tracing::warn!(%id, %error, "recipient publication refused; flushed progress retained");
+                }
+                let retry_id = id.clone();
+                state.timer = Some(ctx.run_later(state.delay(), move |actor, ctx| {
+                    if let Some(state) = actor.recipient.delivery_retries.get_mut(&retry_id) {
+                        state.timer = None;
+                    }
+                    actor.drive_recipient_delivery(&retry_id, ctx);
+                }));
+            }
+        }
     }
 
     fn retry_recipient_work(&mut self, id: &E3id, ctx: &mut Context<Self>) {
@@ -558,6 +738,9 @@ impl NodeProofAggregator {
     }
 
     fn redrive_recipient_work(&mut self, id: &E3id) -> Result<()> {
+        if self.recipient.unflushed.contains(id) {
+            return Ok(());
+        }
         let Some(current) = self.recipient.in_flight.get(id) else {
             return Ok(());
         };
@@ -581,6 +764,7 @@ impl NodeProofAggregator {
         // current correlation until bus admission succeeds, including when admission is saturated.
         self.bus.publish(request.clone(), record.ec.clone())?;
         self.recipient.in_flight.insert(id.clone(), request);
+        self.recipient.failed_work.remove(id);
         Ok(())
     }
 
