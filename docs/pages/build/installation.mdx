@@ -106,13 +106,13 @@ To install a specific release, give the `--version` option to the script, or set
 
 ```bash
 # With the script option
-curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.19.0
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.19.1
 
 # With the environment variable
-curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | INTERFOLD_VERSION=v0.19.0 bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | INTERFOLD_VERSION=v0.19.1 bash
 ```
 
-A tag without the `v` prefix, for example `0.19.0`, also works. To install in another folder, add
+A tag without the `v` prefix, for example `0.19.1`, also works. To install in another folder, add
 `--dir <folder>` or set `INTERFOLD_INSTALL_DIR`. For a folder that your user cannot write to, run
 the script with `sudo bash` instead of `bash`.
 
@@ -208,7 +208,7 @@ archive for your platform from the GitHub release. Use the command to upgrade an
 | Command                              | Result                                                                                                                  |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `interfold update`                   | Installs the latest release.                                                                                            |
-| `interfold update --version v0.19.0` | Installs the release with that tag, newer or older than the installed release. A tag without the `v` prefix also works. |
+| `interfold update --version v0.19.1` | Installs the release with that tag, newer or older than the installed release. A tag without the `v` prefix also works. |
 | `interfold update --version dev`     | Installs the most recently published release, stable or pre-release (the `dev` channel).                                |
 | `interfold uninstall`                | Removes the `interfold` binary. The configuration, the keys, and the node data stay.                                    |
 
@@ -221,7 +221,7 @@ your user cannot write to the folder of the binary, for example `/usr/local/bin`
 with `sudo`.
 
 <Callout type='warning'>
-  Release 0.19.0 and earlier do not have the `update` command. To change the version of such a
+  Releases 0.19.x and earlier do not have the `update` command. To change the version of such a
   release, or to go back to a newer release after a downgrade to such a release, run the install
   script with `--version <TAG>`. If the binary is not in `~/.local/bin`, also give its folder with
   `--dir <folder>`.
@@ -273,7 +273,7 @@ such a binary.
 | Problem                                               | Cause and fix                                                                                                      |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `command not found: interfold`                        | The install folder is not in your `PATH`. Add `~/.local/bin` to your `PATH`.                                       |
-| `unrecognized subcommand 'update'`                    | The installed CLI is release 0.19.0 or earlier. Run the install script.                                            |
+| `unrecognized subcommand 'update'`                    | The installed CLI is release 0.19.x or earlier. Run the install script.                                            |
 | `No compatible binary found for platform: <platform>` | The install script found no `interfold` archive for your platform. Build the CLI from source.                      |
 | `No release archive exists for <os> on <arch>`        | `interfold update` found no archive for your platform. Build the CLI from source.                                  |
 | `GitHub API request for release <tag> failed`         | The tag does not exist, or GitHub is not available. Check the tag on the releases page.                            |

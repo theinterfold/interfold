@@ -101,8 +101,8 @@ Update resolves the running binary's symlinks, stages the download beside that f
 by rename. A running node keeps its old executable until restart. The running-node warning is best
 effort and requires a readable configuration and a responding control port.
 
-`interfold uninstall` removes only the binary. Configuration, keys, and node data stay. Release
-0.19.0 and earlier have no `update` command; use the install script with `--version <TAG>` and, for
+`interfold uninstall` removes only the binary. Configuration, keys, and node data stay. Releases
+0.19.x and earlier have no `update` command; use the install script with `--version <TAG>` and, for
 a nondefault location, `--dir <DIR>`. See the
 [install/update reference](../../docs/pages/reference/cli.mdx#install-and-update) for commands and
 supported platforms.

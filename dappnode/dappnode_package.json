@@ -1,6 +1,6 @@
 {
-  "version": "0.10.0",
-  "upstreamVersion": "0.19.0",
+  "version": "0.10.1",
+  "upstreamVersion": "0.19.1",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",
   "shortDescription": "Interfold ciphernode with setup and monitoring",
