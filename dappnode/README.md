@@ -5,7 +5,8 @@ Run an Interfold ciphernode and monitor it in Dappnode.
 ## Install
 
 1. Select a synced execution client in Dappnode **Stakers**. Enable its WebSocket RPC.
-2. Install the Mainnet or Sepolia package using its IPFS hash.
+2. Install the Mainnet or Sepolia package using its IPFS hash. Each upload records the hash in
+   `package_variants/<network>/releases.json`.
 3. On first installation, upload your `secrets.json` file.
 4. Open the package **Operator Dashboard** link and follow the
    [operator setup steps](getting-started.md).
