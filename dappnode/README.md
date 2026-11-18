@@ -28,7 +28,7 @@ remain. During this wait, the proxy can log `connect() failed (111: Connection r
 dashboard has not started yet. If progress stops or startup fails, inspect the Logs for RPC or
 startup errors.
 
-The official v0.19.0 binary does not support `E3_NODE__MAX_SYNC_FETCH_BYTES`. If a custom package
+The official v0.19.1 binary does not support `E3_NODE__MAX_SYNC_FETCH_BYTES`. If a custom package
 added this setting to **Config**, remove it before updating to the official image.
 
 ## Credentials and backups
@@ -63,7 +63,7 @@ the package in Dappnode. The package restarts the node with the new release.
 
 When a release raises the storage schema, the package resets the node state before the node starts.
 The reset keeps the operator key and the libp2p key, and the node then syncs again from the chain.
-This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.0, use the
+This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.1, use the
 [one-off reset](https://docs.theinterfold.com/operate/upgrades#reset-node-state) instead.
 
 The reset refuses while the node holds a key share for an E3 that it has not seen complete, or slash
