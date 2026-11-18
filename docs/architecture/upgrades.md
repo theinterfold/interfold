@@ -334,10 +334,12 @@ recovery material now retains ordered native PK-share bytes. An exclusive versio
 lives at `synchronized-setup` within the existing per-E3 keyshare recovery-payload scope. It retains
 the local recipient verdict, selection, sealed material and original causal context; snapshot
 batches never write this key. It is flushed before consent and removed at terminal cleanup. These
-encodings extend the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**.
-Intermediate rolling upgrades and old-binary rollback over new journals remain unsupported. Rollback
-requires the prior backup or controlled reset/resync. SS payload encodings, circuits, verifiers,
-signature domains and release counters are unchanged.
+encodings extend the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. The
+embedded optional material changes existing keyshare recovery-row encodings for SS too; sharing
+schema 9 does not make intermediate databases byte-compatible. Intermediate rolling upgrades and
+old-binary rollback over new journals remain unsupported. Rollback requires the prior backup or
+controlled reset/resync. SS peer payload encodings, circuits, verifiers, signature domains and
+release counters are unchanged.
 
 `CanonicalPublicKey` and its typed SS/synchronized anchors are in-memory projections rebuilt from
 confirmed journals, not saved layouts. Full-authority observations retain the existing lossless
