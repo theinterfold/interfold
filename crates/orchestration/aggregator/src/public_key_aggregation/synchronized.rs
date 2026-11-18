@@ -43,18 +43,15 @@ impl PublicationPlan {
         Ok(plan)
     }
 
-    pub(crate) fn config(&self) -> Result<Configs> {
+    fn config(selected: &CiphernodeSelected) -> Result<Configs> {
         Ok(Configs::for_profile(
-            self.selected.params_profile,
-            CiphernodesCommitteeSize::from_threshold(
-                self.selected.threshold_m,
-                self.selected.threshold_n,
-            )?,
+            selected.params_profile,
+            CiphernodesCommitteeSize::from_threshold(selected.threshold_m, selected.threshold_n)?,
         )?)
     }
 
-    pub(crate) fn members(&self) -> Result<Vec<Address>> {
-        self.selected
+    fn members(selected: &CiphernodeSelected) -> Result<Vec<Address>> {
+        selected
             .committee
             .iter()
             .map(|s| s.parse().map_err(Into::into))
@@ -63,8 +60,8 @@ impl PublicationPlan {
 
     pub(crate) fn validate(&self, interfold: Address) -> Result<()> {
         E3Meta::from(&self.selected).validate_identity()?;
-        let config = self.config()?;
-        let members = self.members()?;
+        let config = Self::config(&self.selected)?;
+        let members = Self::members(&self.selected)?;
         ensure!(
             self.local.get_ctx().source() == EventSource::Local
                 && self.local.e3_id == self.selected.e3_id
@@ -102,7 +99,7 @@ impl PublicationPlan {
             context.setup == self.local.context.setup && proof.circuit == CircuitName::NodesFold,
             "recipient join has another context or role"
         );
-        let config = self.config()?;
+        let config = Self::config(&self.selected)?;
         let binding =
             e3_zk_prover::synchronized::request_binding(&config, context, &self.selected.e3_id)?;
         let public = PublicSignals::decode(&config, proof.circuit, &proof.public_signals)?;
@@ -120,7 +117,7 @@ impl PublicationPlan {
         ensure!(
             message.e3_id == self.selected.e3_id
                 && message.role == SynchronizedDkgProofRole::Recipient
-                && self.members()?.get(message.context.party_id as usize)
+                && Self::members(&self.selected)?.get(message.context.party_id as usize)
                     == Some(&message.recover_address()?),
             "recipient join signer does not own the canonical slot"
         );
@@ -138,8 +135,15 @@ impl PublicationPlan {
         Ok(public)
     }
 
-    pub(crate) fn keyshare(&self, message: &KeyshareCreated) -> Result<()> {
-        let members = self.members()?;
+    /// Authenticate and bind C1 before a local recipient verdict exists. Roster membership and
+    /// its expected threshold commitment remain the later plan's responsibility.
+    pub(crate) fn keyshare_input(
+        selected: &CiphernodeSelected,
+        interfold: Address,
+        message: &KeyshareCreated,
+    ) -> Result<[u8; 32]> {
+        E3Meta::from(selected).validate_identity()?;
+        let members = Self::members(selected)?;
         let owner = u32::try_from(message.party_id)?;
         let signer = members
             .get(owner as usize)
@@ -149,15 +153,25 @@ impl PublicationPlan {
             .as_ref()
             .context("missing signed C1")?;
         ensure!(
-            message.e3_id == self.selected.e3_id
+            message.e3_id == selected.e3_id
                 && message.node.parse::<Address>()? == *signer
-                && signed.payload.e3_id == self.selected.e3_id
+                && signed.payload.e3_id == selected.e3_id
                 && signed.payload.proof_type == ProofType::C1PkGeneration
                 && signed.payload.proof.circuit == CircuitName::PkGeneration
                 && signed.verify_address(signer)?,
             "native PK contribution is not authenticated for its slot"
         );
-        let config = self.config()?;
+        let config = Self::config(selected)?;
+        let context = SynchronizedProofContext {
+            party_id: owner,
+            setup: e3_committee_hash::DkgSetupContext {
+                interfold_address: interfold,
+                committee_hash: e3_committee_hash::hash_committee_addresses(&members),
+                crypto_config_id: selected.crypto_config_id.into(),
+            },
+        };
+        let binding =
+            e3_zk_prover::synchronized::request_binding(&config, &context, &selected.e3_id)?;
         let public = PublicSignals::decode(
             &config,
             CircuitName::PkGeneration,
@@ -174,6 +188,22 @@ impl PublicationPlan {
             &config.threshold,
             &crp,
         )?;
+        ensure!(
+            public.binding() == Some(binding)
+                && public.party_id() == Some(owner)
+                && public.pk_commitment() == Some(commitment),
+            "native PK contribution differs from the canonical request or native share"
+        );
+        Ok(commitment)
+    }
+
+    pub(crate) fn keyshare(&self, message: &KeyshareCreated) -> Result<()> {
+        let commitment = Self::keyshare_input(
+            &self.selected,
+            self.local.context.setup.interfold_address,
+            message,
+        )?;
+        let owner = u32::try_from(message.party_id)?;
         let slot = self
             .local
             .setup
@@ -182,10 +212,7 @@ impl PublicationPlan {
             .position(|&id| id == owner)
             .context("native PK contribution is outside the fixed roster")?;
         ensure!(
-            public.binding() == Some(self.local.setup.binding)
-                && public.party_id() == Some(owner)
-                && public.pk_commitment() == Some(commitment)
-                && self.local.setup.threshold_keys[slot] == commitment,
+            self.local.setup.threshold_keys[slot] == commitment,
             "native PK contribution differs from the admitted recipient setup"
         );
         Ok(())
@@ -195,7 +222,7 @@ impl PublicationPlan {
         &self,
         shares: &BTreeMap<u32, KeyshareCreated>,
     ) -> Result<PkAggregationProofRequest> {
-        let config = self.config()?;
+        let config = Self::config(&self.selected)?;
         let crp = e3_fhe_params::create_deterministic_crp_from_default_seed(&config.threshold);
         let mut native = Vec::new();
         let mut bytes = Vec::new();
@@ -225,7 +252,7 @@ impl PublicationPlan {
 
     pub(crate) fn pk_commitment(&self, request: &PkAggregationProofRequest) -> Result<[u8; 32]> {
         use fhe_traits::DeserializeParametrized;
-        let config = self.config()?;
+        let config = Self::config(&self.selected)?;
         let key = PublicKey::from_bytes(&request.aggregated_pk_bytes, &config.threshold)?;
         Ok(
             e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment(
@@ -244,7 +271,11 @@ impl PublicationPlan {
             proof.circuit == CircuitName::PkAggregation,
             "not a C5 proof"
         );
-        let public = PublicSignals::decode(&self.config()?, proof.circuit, &proof.public_signals)?;
+        let public = PublicSignals::decode(
+            &Self::config(&self.selected)?,
+            proof.circuit,
+            &proof.public_signals,
+        )?;
         ensure!(
             public.threshold_keys() == Some(self.local.setup.threshold_keys.as_slice())
                 && public.pk_commitment() == Some(self.pk_commitment(request)?),
@@ -274,7 +305,7 @@ impl PublicationPlan {
         }
         Ok(SynchronizedDkgProofRequest {
             params_profile: self.selected.params_profile,
-            committee_size: self.config()?.committee,
+            committee_size: Self::config(&self.selected)?.committee,
             context: self.local.context.clone(),
             job: SynchronizedDkgProofJob::Publication {
                 recipients: proofs,
@@ -298,16 +329,33 @@ impl PublicationPlan {
         recipients: &BTreeMap<u32, SynchronizedDkgProofPublished>,
         signed: &SignedSynchronizedDkgAttestation,
     ) -> Result<()> {
+        self.consent_binding(context, native, signed)?;
         let payload = &signed.payload;
         let recipient = recipients
             .get(&payload.party_id)
             .context("consent has no recipient join")?;
         let public = self.recipient(recipient)?;
         ensure!(
+            Some(payload.sk_agg_commit) == public.sk_commitment()
+                && Some(payload.key_bundle_commit) == public.key_bundle(),
+            "recipient consent differs from verified publication recipient anchors"
+        );
+        Ok(())
+    }
+
+    /// These anchors are fixed independently of the provisional peer recipient proofs.
+    pub(crate) fn consent_binding(
+        &self,
+        context: SynchronizedDkgContext,
+        native: &PkAggregationProofRequest,
+        signed: &SignedSynchronizedDkgAttestation,
+    ) -> Result<()> {
+        let payload = &signed.payload;
+        ensure!(
             payload.e3_id == self.selected.e3_id
                 && payload.context == context
                 && context.crypto_config_id == self.selected.crypto_config_id
-                && self.members()?.get(payload.party_id as usize)
+                && Self::members(&self.selected)?.get(payload.party_id as usize)
                     == Some(&signed.recover_address()?)
                 && payload.setup_binding
                     == self
@@ -321,9 +369,7 @@ impl PublicationPlan {
                         .0
                 && payload.roster_hash == synchronized_dkg_roster_hash(&self.local.setup.dealers)
                 && payload.dealer_batch == self.local.setup.dealer_batch
-                && payload.pk_commitment == self.pk_commitment(native)?
-                && Some(payload.sk_agg_commit) == public.sk_commitment()
-                && Some(payload.key_bundle_commit) == public.key_bundle(),
+                && payload.pk_commitment == self.pk_commitment(native)?,
             "recipient consent differs from the frozen context or exact publication anchors"
         );
         Ok(())
@@ -342,7 +388,11 @@ impl PublicationPlan {
             proof.circuit == CircuitName::DkgAggregator,
             "not a publication proof"
         );
-        let public = PublicSignals::decode(&self.config()?, proof.circuit, &proof.public_signals)?;
+        let public = PublicSignals::decode(
+            &Self::config(&self.selected)?,
+            proof.circuit,
+            &proof.public_signals,
+        )?;
         ensure!(
             public.binding() == Some(self.local.setup.binding)
                 && public.dealers().as_deref() == Some(expected.dealers.as_slice())

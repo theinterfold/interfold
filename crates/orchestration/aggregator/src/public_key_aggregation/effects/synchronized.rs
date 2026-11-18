@@ -10,6 +10,7 @@ use anyhow::{ensure, Context as _};
 use e3_data::Repository;
 use e3_events::*;
 use e3_request::canonical_key::CanonicalPublicKeys;
+use std::time::Duration;
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -22,6 +23,15 @@ impl Handler<RetireSynchronizedPublication> for PublicKeyAggregator {
             return;
         };
         runtime.in_flight = None;
+        if let Some(timer) = runtime.outcome_timer.take() {
+            ctx.cancel_future(timer);
+        }
+        if let Some(retry) = runtime.retry.take() {
+            ctx.cancel_future(retry);
+        }
+        if let Some(retry) = runtime.flush_retry.take() {
+            ctx.cancel_future(retry);
+        }
         let store = e3_data::DataStore::from(runtime.repository.clone());
         ctx.wait(
             async move { store.remove_sync().await }
@@ -47,6 +57,13 @@ pub(in crate::actors::publickey_aggregator) struct SynchronizedPublication {
     pub interfold: Address,
     in_flight: Option<ComputeRequest>,
     published: bool,
+    retry: Option<actix::SpawnHandle>,
+    retry_delay: Duration,
+    outcome_timer: Option<actix::SpawnHandle>,
+    invalid_work: bool,
+    flush_pending: bool,
+    flush_retry: Option<actix::SpawnHandle>,
+    flush_failures: u32,
 }
 
 impl PublicKeyAggregator {
@@ -67,6 +84,13 @@ impl PublicKeyAggregator {
             interfold,
             in_flight: None,
             published: false,
+            retry: None,
+            retry_delay: Duration::from_secs(1),
+            outcome_timer: None,
+            invalid_work: false,
+            flush_pending: false,
+            flush_retry: None,
+            flush_failures: 0,
         });
         self
     }
@@ -125,7 +149,12 @@ impl PublicKeyAggregator {
             ) {
                 let mut next = record.clone();
                 if next
-                    .intake(data, event.get_ctx(), runtime.interfold)
+                    .intake(
+                        data,
+                        event.get_ctx(),
+                        runtime.interfold,
+                        runtime.keys.synchronized_context(&id),
+                    )
                     .is_ok()
                 {
                     *record = next;
@@ -164,6 +193,25 @@ impl PublicKeyAggregator {
         ec: &EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) -> Result<()> {
+        // Many capabilities share this E3's compute mailbox. Only our current correlation can
+        // answer this phase; unrelated and superseded outcomes are not aggregation errors.
+        let pending = self
+            .synchronized
+            .as_ref()
+            .and_then(|r| r.in_flight.as_ref());
+        match data {
+            InterfoldEventData::ComputeResponse(response)
+                if pending.is_none_or(|p| p.correlation_id != response.correlation_id) =>
+            {
+                return Ok(());
+            }
+            InterfoldEventData::ComputeRequestError(error)
+                if pending.is_none_or(|p| p.correlation_id != *error.correlation_id()) =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
         if !matches!(
             data,
             InterfoldEventData::EffectsEnabled(_)
@@ -229,6 +277,15 @@ impl PublicKeyAggregator {
         };
         if self.key_published || runtime.keys.get(&self.e3_id).is_some() {
             runtime.in_flight = None;
+            if let Some(timer) = runtime.outcome_timer.take() {
+                ctx.cancel_future(timer);
+            }
+            if let Some(retry) = runtime.retry.take() {
+                ctx.cancel_future(retry);
+            }
+            if let Some(retry) = runtime.flush_retry.take() {
+                ctx.cancel_future(retry);
+            }
             return Ok(());
         }
         next.prune_consents(runtime.keys.synchronized_context(&self.e3_id))?;
@@ -276,6 +333,14 @@ impl PublicKeyAggregator {
                     _ => anyhow::bail!("publication response has another phase"),
                 }
                 runtime.in_flight = None;
+                if let Some(timer) = runtime.outcome_timer.take() {
+                    ctx.cancel_future(timer);
+                }
+                if let Some(retry) = runtime.retry.take() {
+                    ctx.cancel_future(retry);
+                }
+                runtime.retry_delay = Duration::from_secs(1);
+                runtime.invalid_work = false;
             }
             InterfoldEventData::ComputeRequestError(error) => {
                 ensure!(
@@ -283,11 +348,31 @@ impl PublicKeyAggregator {
                         && runtime.in_flight.as_ref() == Some(error.request()),
                     "unrelated publication worker error"
                 );
-                // Keep the exact work for a later resume/restart; infrastructure failure is never
-                // an invalid peer-proof verdict or a reason to manufacture a partial-H result.
+                if let Some(timer) = runtime.outcome_timer.take() {
+                    ctx.cancel_future(timer);
+                }
+                runtime.invalid_work = matches!(
+                    error.get_err(),
+                    ComputeRequestErrorKind::Zk(ZkError::InvalidParams(_))
+                );
+                if runtime.invalid_work {
+                    if let Some(retry) = runtime.retry.take() {
+                        ctx.cancel_future(retry);
+                    }
+                }
+                // Keep exact inputs; only local generation failures get a bounded-rate retry.
+                // InvalidParams still waits for repaired inputs or an explicit resume.
                 self.bus
                     .with_ec(ec)
                     .err(EType::PublickeyAggregation, anyhow::anyhow!("{error}"));
+                if matches!(
+                    error.get_err(),
+                    ComputeRequestErrorKind::Zk(
+                        ZkError::ProofGenerationFailed(_) | ZkError::WitnessGenerationFailed(_)
+                    )
+                ) {
+                    self.retry_synchronized_work(ctx);
+                }
                 return Ok(());
             }
             InterfoldEventData::AggregationResumed(resume)
@@ -298,14 +383,36 @@ impl PublicKeyAggregator {
                     "publication resume must be local"
                 );
                 runtime.in_flight = None;
+                runtime.invalid_work = false;
+                if let Some(timer) = runtime.outcome_timer.take() {
+                    ctx.cancel_future(timer);
+                }
             }
-            _ => next.intake(data, ec, runtime.interfold)?,
+            _ => next.intake(
+                data,
+                ec,
+                runtime.interfold,
+                runtime.keys.synchronized_context(&self.e3_id),
+            )?,
         }
+        self.flush_synchronized_publication(next, ctx)
+    }
+
+    fn flush_synchronized_publication(
+        &mut self,
+        mut next: PublicationRecord,
+        ctx: &mut Context<Self>,
+    ) -> Result<()> {
+        let runtime = self
+            .synchronized
+            .as_mut()
+            .context("missing publication owner")?;
         next.prune_consents(runtime.keys.synchronized_context(&self.e3_id))?;
         next.validate(runtime.interfold)?;
         if self.effects_enabled && self.is_aggregator && next.native()?.is_some() {
             next.started = true;
         }
+        let mut replaced_work = false;
         if let Some(ComputeRequest {
             request: ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work)),
             ..
@@ -313,30 +420,152 @@ impl PublicKeyAggregator {
         {
             if next.work()?.as_ref() != Some(work.as_ref()) {
                 runtime.in_flight = None;
+                runtime.invalid_work = false;
+                if let Some(timer) = runtime.outcome_timer.take() {
+                    ctx.cancel_future(timer);
+                }
+                replaced_work = true;
             }
         }
         let repository = runtime.repository.clone();
+        // Keep accepted inputs even if the flush fails; no effects may use this snapshot yet.
+        runtime.record = Some(next.clone());
+        runtime.flush_pending = true;
+        if replaced_work {
+            self.retry_synchronized_work(ctx);
+        }
         ctx.wait(
-            async move {
-                repository.write_sync(&next).await?;
-                Ok::<_, anyhow::Error>(next)
-            }
+            async move { repository.write_sync(&next).await }
             .into_actor(self)
-            .map(|result, actor, _| match result {
-                Ok(next) => {
-                    actor
-                        .synchronized
-                        .as_mut()
-                        .expect("configured owner")
-                        .record = Some(next);
+            .map(|result, actor, ctx| match result {
+                Ok(_) => {
+                    let runtime = actor.synchronized.as_mut().expect("configured owner");
+                    runtime.flush_pending = false;
+                    runtime.flush_failures = 0;
+                    if let Some(retry) = runtime.flush_retry.take() {
+                        ctx.cancel_future(retry);
+                    }
                     if let Err(error) = actor.publish_synchronized_work() {
                         actor.bus.err(EType::PublickeyAggregation, error);
+                        actor.retry_synchronized_flush(ctx);
                     }
+                    actor.watch_synchronized_outcome(ctx);
                 }
-                Err(error) => actor.bus.err(EType::PublickeyAggregation, error),
+                Err(error) => {
+                    let runtime = actor.synchronized.as_mut().expect("configured owner");
+                    runtime.flush_failures = runtime.flush_failures.saturating_add(1);
+                    if runtime.flush_failures == 1 {
+                        actor.bus.err(EType::PublickeyAggregation, error);
+                    } else {
+                        tracing::warn!(%error, "publication storage still unavailable; retry retained");
+                    }
+                    actor.retry_synchronized_flush(ctx);
+                }
             }),
         );
         Ok(())
+    }
+
+    fn watch_synchronized_outcome(&mut self, ctx: &mut Context<Self>) {
+        let Some(runtime) = &mut self.synchronized else {
+            return;
+        };
+        if runtime.outcome_timer.is_some() || runtime.in_flight.is_none() || runtime.invalid_work {
+            return;
+        }
+        runtime.outcome_timer = Some(ctx.run_later(Duration::from_secs(60), |actor, ctx| {
+            let Some(runtime) = &mut actor.synchronized else {
+                return;
+            };
+            runtime.outcome_timer = None;
+            if runtime.in_flight.is_some() {
+                // Fresh-correlated redelivery probes the gate's retained outcome; the gate
+                // refuses to repeat slow work while any matching attempt is queued/running.
+                actor.retry_synchronized_work(ctx);
+            }
+        }));
+    }
+
+    fn retry_synchronized_flush(&mut self, ctx: &mut Context<Self>) {
+        if !self.effects_enabled || self.key_published {
+            return;
+        }
+        let Some(runtime) = &mut self.synchronized else {
+            return;
+        };
+        if runtime.flush_retry.is_some() || runtime.keys.get(&self.e3_id).is_some() {
+            return;
+        }
+        let delay = e3_utils::backoff_delay(
+            Duration::from_secs(1),
+            runtime.flush_failures,
+            Duration::from_secs(30),
+        );
+        runtime.flush_retry = Some(ctx.run_later(delay, |actor, ctx| {
+            let Some(runtime) = &mut actor.synchronized else {
+                return;
+            };
+            runtime.flush_retry = None;
+            if !actor.effects_enabled
+                || actor.key_published
+                || runtime.keys.get(&actor.e3_id).is_some()
+            {
+                return;
+            }
+            let Some(record) = runtime.record.clone() else {
+                return;
+            };
+            // A storage retry also belongs to standbys and must not clear a live worker's
+            // correlation, unlike a worker redrive through AggregationResumed.
+            if let Err(error) = actor.flush_synchronized_publication(record, ctx) {
+                actor.bus.err(EType::PublickeyAggregation, error);
+            }
+        }));
+    }
+
+    fn retry_synchronized_work(&mut self, ctx: &mut Context<Self>) {
+        if !self.effects_enabled || self.key_published {
+            return;
+        }
+        let Some(runtime) = &mut self.synchronized else {
+            return;
+        };
+        if runtime.retry.is_some() || runtime.keys.get(&self.e3_id).is_some() {
+            return;
+        }
+        let delay = runtime.retry_delay;
+        runtime.retry_delay = (delay * 2).min(Duration::from_secs(30));
+        runtime.retry = Some(ctx.run_later(delay, |actor, ctx| {
+            let Some(runtime) = &mut actor.synchronized else {
+                return;
+            };
+            runtime.retry = None;
+            if !actor.effects_enabled
+                || actor.key_published
+                || runtime.keys.get(&actor.e3_id).is_some()
+            {
+                return;
+            }
+            let Some(record) = &runtime.record else {
+                return;
+            };
+            // A standby cannot start; the existing started-owner rule permits finishing after
+            // demotion. Resume revalidates and flushes the latest record before fresh dispatch.
+            if !actor.is_aggregator && !record.started {
+                return;
+            }
+            let ec = record.ec.clone();
+            let resume = AggregationResumed {
+                e3_id: actor.e3_id.clone(),
+                phase: AggregationPhase::PublicKey,
+                correlation_id: CorrelationId::new(),
+            };
+            if let Err(error) =
+                actor.route_synchronized_publication_definition(&resume.into(), &ec, ctx)
+            {
+                actor.bus.err(EType::PublickeyAggregation, error);
+            }
+        }));
     }
 
     fn publish_synchronized_work(&mut self) -> Result<()> {
@@ -348,6 +577,9 @@ impl PublicKeyAggregator {
             .as_mut()
             .context("missing publication owner")?;
         if runtime.keys.get(&self.e3_id).is_some() {
+            return Ok(());
+        }
+        if runtime.flush_pending {
             return Ok(());
         }
         let Some(record) = &runtime.record else {
@@ -375,7 +607,7 @@ impl PublicKeyAggregator {
                 return Ok(());
             }
         }
-        if runtime.in_flight.is_some() || record.proof.is_some() {
+        if runtime.retry.is_some() || runtime.in_flight.is_some() || record.proof.is_some() {
             return Ok(());
         }
         let work = if record.c5.is_none() {

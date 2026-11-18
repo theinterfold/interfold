@@ -13,7 +13,7 @@ use e3_events::{
     InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
@@ -46,24 +46,55 @@ const REFORWARD_AFTER: Duration = Duration::from_secs(10 * 60);
 /// a new one. The gate sends a request to the worker again only when no earlier run of it is left,
 /// so a slow proof under load runs once instead of once per retry.
 #[derive(Clone, Default)]
-pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);
+pub(crate) struct RunningJobs(Arc<Mutex<HashMap<(E3id, CorrelationId), RunningState>>>);
+
+struct RunningState {
+    runs: usize,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl Default for RunningState {
+    fn default() -> Self {
+        Self {
+            runs: 0,
+            cancelled: tokio::sync::watch::channel(false).0,
+        }
+    }
+}
 
 impl RunningJobs {
     /// Note that the worker runs `id` until the returned guard drops.
-    pub(crate) fn start(&self, id: CorrelationId) -> RunningJob {
-        *self.lock().entry(id).or_default() += 1;
+    pub(crate) fn start(&self, e3_id: &E3id, correlation: CorrelationId) -> RunningJob {
+        let id = (e3_id.clone(), correlation);
+        let mut jobs = self.lock();
+        let state = jobs.entry(id.clone()).or_default();
+        state.runs += 1;
         RunningJob {
             jobs: self.clone(),
             id,
+            cancellation: state.cancelled.subscribe(),
         }
     }
 
-    pub(crate) fn any(&self, ids: &[CorrelationId]) -> bool {
+    pub(crate) fn any(&self, e3_id: &E3id, ids: &[CorrelationId]) -> bool {
         let running = self.lock();
-        ids.iter().any(|id| running.contains_key(id))
+        ids.iter().any(|id| {
+            running
+                .get(&(e3_id.clone(), *id))
+                .is_some_and(|state| state.runs > 0)
+        })
     }
 
-    fn lock(&self) -> MutexGuard<'_, HashMap<CorrelationId, usize>> {
+    fn cancel(&self, e3_id: &E3id, id: CorrelationId) {
+        // Keep the marker even if the worker has not consumed the forwarded mailbox item yet.
+        self.lock()
+            .entry((e3_id.clone(), id))
+            .or_default()
+            .cancelled
+            .send_replace(true);
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<(E3id, CorrelationId), RunningState>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -71,15 +102,16 @@ impl RunningJobs {
 /// A compute request that the worker runs. Dropping it ends the run.
 pub(crate) struct RunningJob {
     jobs: RunningJobs,
-    id: CorrelationId,
+    id: (E3id, CorrelationId),
+    pub(crate) cancellation: tokio::sync::watch::Receiver<bool>,
 }
 
 impl Drop for RunningJob {
     fn drop(&mut self) {
         let mut running = self.jobs.lock();
-        if let Some(runs) = running.get_mut(&self.id) {
-            *runs -= 1;
-            if *runs == 0 {
+        if let Some(state) = running.get_mut(&self.id) {
+            state.runs -= 1;
+            if state.runs == 0 {
                 running.remove(&self.id);
             }
         }
@@ -104,6 +136,7 @@ pub(crate) struct ComputeEffectGate {
     pending: HashMap<RequestKey, InterfoldEvent>,
     forwarded: HashMap<RequestKey, ForwardedRequest>,
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
+    superseded: HashSet<(E3id, CorrelationId)>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
@@ -120,6 +153,7 @@ impl ComputeEffectGate {
             pending: HashMap::new(),
             forwarded: HashMap::new(),
             request_keys_by_correlation: HashMap::new(),
+            superseded: HashSet::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
             canonical_keys: Default::default(),
@@ -277,6 +311,10 @@ impl ComputeEffectGate {
                 }
             }
             let correlation_id = request.correlation_id;
+            if self.superseded.contains(&(key.0.clone(), correlation_id)) {
+                return false;
+            }
+            self.supersede_publication(&key);
             self.request_keys_by_correlation
                 .insert(correlation_id, key.clone());
             if let Some(outcome) = self.replayed_responses.get(&key) {
@@ -303,9 +341,9 @@ impl ComputeEffectGate {
                         }
                         None => false,
                     };
-                    if !failed_generation
-                        && (forwarded.forwarded_at.elapsed() < self.reforward_after
-                            || self.running.any(&forwarded.correlation_ids))
+                    if self.running.any(&key.0, &forwarded.correlation_ids)
+                        || (!failed_generation
+                            && forwarded.forwarded_at.elapsed() < self.reforward_after)
                     {
                         if !forwarded.waiting.contains(&correlation_id) {
                             forwarded.waiting.push(correlation_id);
@@ -336,6 +374,42 @@ impl ComputeEffectGate {
         }
         self.target.do_send(event);
         true
+    }
+
+    fn supersede_publication(&mut self, current: &RequestKey) {
+        let publication = |kind: &ComputeRequestKind| {
+            matches!(kind,
+                ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work))
+                    if matches!(work.job, e3_events::SynchronizedDkgProofJob::Publication { .. })
+            )
+        };
+        if !publication(&current.1) {
+            return;
+        }
+        let obsolete = self
+            .forwarded
+            .keys()
+            .filter(|key| key.0 == current.0 && *key != current && publication(&key.1))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in obsolete {
+            if let Some(old) = self.forwarded.remove(&key) {
+                self.superseded.extend(
+                    old.correlation_ids
+                        .iter()
+                        .chain(&old.waiting)
+                        .map(|id| (key.0.clone(), *id)),
+                );
+                if old.outcome.is_none() {
+                    for id in old.correlation_ids {
+                        self.running.cancel(&key.0, id);
+                    }
+                }
+            }
+            self.replayed_responses.remove(&key);
+            self.request_keys_by_correlation
+                .retain(|_, value| value != &key);
+        }
     }
 
     fn on_outcome(&mut self, event: &InterfoldEvent) {
@@ -384,6 +458,12 @@ impl ComputeEffectGate {
             .expect("forwarded key was checked above");
         if matches!(forwarded.outcome, Some(ComputeOutcome::Response(_))) {
             // A request sent to the worker again can finish twice. Keep the first success.
+            return;
+        }
+        if matches!(outcome, ComputeOutcome::Error(_))
+            && forwarded.correlation_ids.last() != Some(&correlation_id)
+        {
+            // A late failure cannot answer a newer attempt or its waiting correlations.
             return;
         }
         forwarded.outcome = Some(outcome.clone());
@@ -490,9 +570,21 @@ impl ComputeEffectGate {
             request_id == e3_id && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
         };
         self.pending.retain(|key, _| !ends(key));
+        for (_, request) in self.forwarded.iter().filter(|(key, _)| ends(key)) {
+            if request.outcome.is_none() {
+                for id in &request.correlation_ids {
+                    self.running.cancel(e3_id, *id);
+                }
+            }
+        }
         self.forwarded.retain(|key, _| !ends(key));
         self.replayed_responses.retain(|key, _| !ends(key));
         self.request_keys_by_correlation.retain(|_, key| !ends(key));
+        if stage.as_ref().is_some_and(|stage| {
+            Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished)
+        }) {
+            self.superseded.retain(|(id, _)| id != e3_id);
+        }
     }
 }
 
@@ -529,9 +621,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::E3StageChanged(stage) => {
                 self.record_stage(stage.e3_id.clone(), stage.new_stage.clone());
-                if stage.new_stage.is_terminal() {
-                    self.cancel(&stage.e3_id);
-                }
+                self.cancel(&stage.e3_id);
             }
             _ => {}
         }
@@ -604,11 +694,24 @@ pub(crate) mod tests {
         }
     }
 
+    impl Handler<e3_events::FlushEventStores> for TestEventStore {
+        type Result = anyhow::Result<()>;
+        fn handle(
+            &mut self,
+            _: e3_events::FlushEventStores,
+            _: &mut Self::Context,
+        ) -> Self::Result {
+            Ok(())
+        }
+    }
+
     pub(crate) fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
         let event_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
         let store = TestEventStore::default().start();
-        let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+        let sequencer =
+            Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient())
+                .start();
         let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("test-gate");
         let history = bus.history();
         (bus, history)
@@ -1130,6 +1233,125 @@ pub(crate) mod tests {
     }
 
     #[actix::test]
+    async fn replacement_publication_cancels_only_superseded_attempts_in_this_node() {
+        use e3_events::{
+            SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedProofContext,
+            SynchronizedPublicationExpectation,
+        };
+        let target = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(target.recipient(), HashMap::new());
+        let work = |correlation_id, byte| {
+            outcome_event(ComputeRequest::zk(
+                ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+                    params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                    context: SynchronizedProofContext {
+                        party_id: 0,
+                        setup: e3_committee_hash::DkgSetupContext {
+                            interfold_address: alloy::primitives::Address::repeat_byte(1),
+                            committee_hash: [2; 32].into(),
+                            crypto_config_id: [3; 32].into(),
+                        },
+                    },
+                    job: SynchronizedDkgProofJob::Publication {
+                        recipients: vec![Proof::new(
+                            CircuitName::NodesFold,
+                            ArcBytes::from_bytes(&[byte]),
+                            ArcBytes::default(),
+                        )],
+                        c5: Proof::new(
+                            CircuitName::PkAggregation,
+                            ArcBytes::default(),
+                            ArcBytes::default(),
+                        ),
+                        expected: SynchronizedPublicationExpectation {
+                            dealers: vec![0, 2],
+                            threshold_keys: vec![[0; 32]; 2],
+                            dealer_batch: [0; 32],
+                            sk_commitments: vec![[0; 32]; 2],
+                            key_bundles: vec![[0; 32]; 2],
+                            public_key: ArcBytes::default(),
+                        },
+                    },
+                })),
+                correlation_id,
+                E3id::new("4", 1),
+            ))
+        };
+        let first = CorrelationId::new();
+        let sibling = CorrelationId::new();
+        let id = E3id::new("4", 1);
+        let other_node = RunningJobs::default().start(&id, first);
+        let other_e3 = gate.running.start(&E3id::new("5", 1), first);
+        let sibling_job = gate.running.start(&id, sibling);
+        assert!(gate.forward(compute(sibling, 10)));
+        assert!(gate.forward(work(first, 1)));
+        let next = CorrelationId::new();
+        assert!(gate.forward(work(next, 2)));
+        // Cancellation also precedes a forwarded mailbox item reaching the worker.
+        let old = gate.running.start(&id, first);
+        assert!(*old.cancellation.borrow());
+        assert!(!*other_node.cancellation.borrow());
+        assert!(!*other_e3.cancellation.borrow());
+        assert!(!*sibling_job.cancellation.borrow());
+        let current = gate.running.start(&id, next);
+        assert!(!*current.cancellation.borrow());
+        assert!(
+            !gate.forward(work(first, 1)),
+            "late delivery cannot resurrect retired work"
+        );
+        assert!(!*current.cancellation.borrow());
+        assert!(
+            gate.running.any(&id, &[first]),
+            "cancellation must not pretend executing work ended"
+        );
+        drop(old);
+        assert!(!gate.running.any(&id, &[first]));
+    }
+
+    #[actix::test]
+    async fn stale_synchronized_error_cannot_bypass_a_new_running_attempt() {
+        let recorder = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(recorder.recipient(), HashMap::new());
+        let running = gate.running.clone();
+        let request = |correlation_id| {
+            ComputeRequest::zk(
+                ZkRequest::PkAggregation(e3_events::PkAggregationProofRequest {
+                    keyshare_bytes: vec![],
+                    aggregated_pk_bytes: ArcBytes::default(),
+                    params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+                    committee_n: 3,
+                    committee_h: 2,
+                    committee_threshold: 1,
+                }),
+                correlation_id,
+                E3id::new("4", 1),
+            )
+        };
+        let failure = |id| {
+            outcome_event(ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
+                    "old local error".into(),
+                )),
+                request(id),
+            ))
+        };
+        let first = CorrelationId::new();
+        let second = CorrelationId::new();
+        assert!(gate.forward(outcome_event(request(first))));
+        gate.on_outcome(&failure(first));
+        assert!(gate.forward(outcome_event(request(second))));
+        let _job = running.start(&E3id::new("4", 1), second);
+        gate.on_outcome(&failure(first));
+        assert!(!gate.forward(outcome_event(request(CorrelationId::new()))));
+        let key = (E3id::new("4", 1), request(second).request);
+        assert!(
+            gate.forwarded[&key].outcome.is_none(),
+            "stale error must not answer current waiters"
+        );
+    }
+
+    #[actix::test]
     async fn late_redriven_request_receives_cached_outcome() {
         let (bus, history) = test_bus();
         let recorder = Recorder::default().start();
@@ -1251,7 +1473,7 @@ pub(crate) mod tests {
 
         // The worker still runs `first` after the window, as a slow proof under load does: a new
         // ID waits for that run.
-        let job = running.start(first);
+        let job = running.start(&E3id::new("4", 1), first);
         gate.send(compute(first, 10)).await.unwrap();
         gate.send(effects_enabled()).await.unwrap();
         actix::clock::sleep(Duration::from_millis(200)).await;
@@ -1276,12 +1498,13 @@ pub(crate) mod tests {
     fn an_id_runs_until_its_last_run_ends() {
         let running = RunningJobs::default();
         let id = CorrelationId::new();
-        let replayed = running.start(id);
-        let new = running.start(id);
+        let e3 = E3id::new("4", 1);
+        let replayed = running.start(&e3, id);
+        let new = running.start(&e3, id);
         drop(replayed);
-        assert!(running.any(&[id]));
+        assert!(running.any(&e3, &[id]));
         drop(new);
-        assert!(!running.any(&[id]));
+        assert!(!running.any(&e3, &[id]));
     }
 
     #[actix::test]

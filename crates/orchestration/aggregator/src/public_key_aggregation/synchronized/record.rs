@@ -47,6 +47,7 @@ impl PublicationRecord {
         data: &InterfoldEventData,
         ec: &EventContext<Sequenced>,
         interfold: Address,
+        context: Option<SynchronizedDkgContext>,
     ) -> Result<()> {
         let members = self.members()?;
         let id = &self.selected.e3_id;
@@ -71,21 +72,10 @@ impl PublicationRecord {
             }
             InterfoldEventData::KeyshareCreated(share) => {
                 let owner = u32::try_from(share.party_id)?;
-                let signed = share
-                    .signed_pk_generation_proof
-                    .as_ref()
-                    .context("missing C1")?;
-                ensure!(
-                    &share.e3_id == id
-                        && &signed.payload.e3_id == id
-                        && signed.payload.proof_type == ProofType::C1PkGeneration
-                        && signed.payload.proof.circuit == CircuitName::PkGeneration
-                        && members.get(owner as usize) == Some(&signed.recover_address()?)
-                        && members.get(owner as usize) == Some(&share.node.parse()?),
-                    "unauthenticated native PK slot"
-                );
                 if let Some(plan) = &self.plan {
                     plan.keyshare(share)?;
+                } else {
+                    PublicationPlan::keyshare_input(&self.selected, interfold, share)?;
                 }
                 if let Some(old) = self.shares.get(&owner) {
                     // Before the local plan binds C1, equal native bytes may carry a corrected proof.
@@ -134,6 +124,10 @@ impl PublicationRecord {
             InterfoldEventData::SynchronizedDkgConsentPublished(message) => {
                 let signed = &message.attestation;
                 ensure!(
+                    context.is_none_or(|known| signed.payload.context == known),
+                    "consent differs from the frozen publication domain"
+                );
+                ensure!(
                     &signed.payload.e3_id == id
                         && signed.payload.context.crypto_config_id
                             == self.selected.crypto_config_id
@@ -147,9 +141,8 @@ impl PublicationRecord {
                         "outside-H recipient cannot consent"
                     );
                     if let Some(native) = self.native()? {
-                        if self.recipients.contains_key(&signed.payload.party_id) {
-                            // Domain equality is rechecked against shared chain authority before
-                            // output; all other anchors must already agree before replacing a slot.
+                        plan.consent_binding(signed.payload.context, &native, signed)?;
+                        if self.proof.is_some() {
                             plan.consent(
                                 signed.payload.context,
                                 &native,
@@ -222,12 +215,15 @@ impl PublicationRecord {
         let Some(plan) = &self.plan else {
             return Ok(());
         };
-        // A missing recipient is not a verdict on a previously authenticated early consent.
+        // Peer SK/bundle anchors are provisional until the wrapper is locally verified.
+        // Retain early consent across candidate repair, but always enforce independent anchors.
         self.consents.retain(|id, signed| {
-            !self.recipients.contains_key(id)
-                || plan
-                    .consent(context, &native, &self.recipients, signed)
-                    .is_ok()
+            plan.consent_binding(context, &native, signed).is_ok()
+                && (self.proof.is_none()
+                    || !self.recipients.contains_key(id)
+                    || plan
+                        .consent(context, &native, &self.recipients, signed)
+                        .is_ok())
         });
         Ok(())
     }
@@ -292,6 +288,7 @@ impl PublicationRecord {
                 &InterfoldEventData::from((*plan.local).clone()),
                 plan.local.get_ctx(),
                 interfold,
+                None,
             )?;
         }
         for (&id, share) in &self.shares {
@@ -303,11 +300,17 @@ impl PublicationRecord {
                 &InterfoldEventData::from(share.clone()),
                 &self.ec,
                 interfold,
+                None,
             )?;
         }
         for (&id, peer) in &self.recipients {
             ensure!(id == peer.context.party_id, "saved recipient slot differs");
-            inputs.intake(&InterfoldEventData::from(peer.clone()), &self.ec, interfold)?;
+            inputs.intake(
+                &InterfoldEventData::from(peer.clone()),
+                &self.ec,
+                interfold,
+                None,
+            )?;
         }
         for (&id, signed) in &self.consents {
             ensure!(id == signed.payload.party_id, "saved consent slot differs");
@@ -317,6 +320,7 @@ impl PublicationRecord {
                 }),
                 &self.ec,
                 interfold,
+                None,
             )?;
         }
         if let Some(c5) = &self.c5 {

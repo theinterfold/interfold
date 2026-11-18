@@ -8,7 +8,7 @@ use crate::workflow::publickey_aggregation::synchronized::{PublicationPlan, Publ
 use crate::PublicKeyRepositoryFactory;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{ensure, Context as _};
-use e3_data::{RepositoriesFactory, SledStore};
+use e3_data::{RepositoriesFactory, SledDb, SledStore};
 use e3_events::*;
 use e3_request::canonical_key::CanonicalPublicKeys;
 use fhe::{bfv::SecretKey, mbfv::PublicKeyShare};
@@ -262,11 +262,47 @@ impl Handler<Checkpoint> for PublicKeyAggregator {
     }
 }
 
+struct FlushGate(bool, u32);
+impl Actor for FlushGate {
+    type Context = Context<Self>;
+}
+impl Handler<Flush> for FlushGate {
+    type Result = Result<()>;
+    fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
+        self.1 += 1;
+        ensure!(self.0, "injected publication flush failure {}", self.1);
+        Ok(())
+    }
+}
+#[derive(Message)]
+#[rtype(result = "u32")]
+struct AllowFlush(bool);
+impl Handler<AllowFlush> for FlushGate {
+    type Result = u32;
+    fn handle(&mut self, msg: AllowFlush, _: &mut Self::Context) -> Self::Result {
+        self.0 = msg.0;
+        self.1
+    }
+}
+
 async fn actor(
     f: &Fixture,
     store: &DataStore,
     active: bool,
     restored: bool,
+) -> Result<(
+    Addr<PublicKeyAggregator>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+)> {
+    actor_with_history(f, store, active, restored, &[]).await
+}
+
+async fn actor_with_history(
+    f: &Fixture,
+    store: &DataStore,
+    active: bool,
+    restored: bool,
+    events: &[InterfoldEvent],
 ) -> Result<(
     Addr<PublicKeyAggregator>,
     Addr<HistoryCollector<InterfoldEvent>>,
@@ -299,7 +335,7 @@ async fn actor(
     if restored {
         actor
             .recover_synchronized_publication(
-                &crate::test_support::history_reader(&[])?,
+                &crate::test_support::history_reader(events)?,
                 &e3_request::E3Meta::from(&f.selected),
             )
             .await?;
@@ -340,8 +376,219 @@ async fn seed(node: &Addr<PublicKeyAggregator>, f: &Fixture) -> Result<()> {
 }
 
 #[actix::test]
+async fn synchronized_publication_wrong_domain_cannot_replace_valid_consent() -> Result<()> {
+    let f = fixture()?;
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let (node, _) = actor(&f, &store, true, false).await?;
+    seed(&node, &f).await?;
+    drive(&node, f.consents[0].clone()).await?;
+    let mut payload = f.consents[0].attestation.payload.clone();
+    payload.context.registry = Address::repeat_byte(99);
+    let bad = SynchronizedDkgConsentPublished {
+        attestation: SignedSynchronizedDkgAttestation::sign(payload, &f.signers[0])?,
+    };
+    assert!(node.send(Drive(bad.clone().into(), ec())).await?.is_err());
+    assert_eq!(
+        node.send(Checkpoint).await?.unwrap().consents[&0],
+        f.consents[0].attestation
+    );
+    node.send(Die).await?;
+    let replayed = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        bad.into(),
+        None,
+        2,
+        None,
+        EventSource::Net,
+    )
+    .into_sequenced(2);
+    let (reopened, _) = actor_with_history(&f, &store, true, true, &[replayed]).await?;
+    assert_eq!(
+        reopened.send(Checkpoint).await?.unwrap().consents[&0],
+        f.consents[0].attestation
+    );
+    reopened.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_provisional_recipient_cannot_erase_early_consent() -> Result<()> {
+    let f = fixture()?;
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let (node, _) = actor(&f, &store, true, false).await?;
+    seed(&node, &f).await?;
+    drive(&node, f.consents[0].clone()).await?;
+    let mut peer = f.peers[&0].clone();
+    let mut signals = peer.proof.public_signals.to_vec();
+    let last = signals.len() - 1;
+    signals[last] ^= 1;
+    peer.proof.public_signals = ArcBytes::from_bytes(&signals);
+    peer = SynchronizedDkgProofPublished::sign(
+        peer.e3_id,
+        peer.context,
+        peer.role,
+        peer.proof,
+        &f.signers[0],
+    )?;
+    drive(&node, peer).await?;
+    assert_eq!(
+        node.send(Checkpoint).await?.unwrap().consents[&0],
+        f.consents[0].attestation
+    );
+    node.send(Die).await?;
+    let (node, history) = actor(&f, &store, true, true).await?;
+    assert_eq!(
+        node.send(Checkpoint).await?.unwrap().consents[&0],
+        f.consents[0].attestation
+    );
+    drive(&node, f.peers[&0].clone()).await?;
+    drive(&node, f.consents[1].clone()).await?;
+    drive(&node, EffectsEnabled::new()).await?;
+    let c5 = requests(&history).await?.pop().unwrap();
+    drive(
+        &node,
+        ComputeResponse::zk(
+            ZkResponse::PkAggregation(PkAggregationProofResponse {
+                proof: f.c5.clone(),
+            }),
+            c5.correlation_id,
+            f.selected.e3_id.clone(),
+        ),
+    )
+    .await?;
+    let wrapper = requests(&history).await?.pop().unwrap();
+    drive(
+        &node,
+        ComputeResponse::zk(
+            ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Publication {
+                proof: f.publication.clone(),
+            }),
+            wrapper.correlation_id,
+            f.selected.e3_id.clone(),
+        ),
+    )
+    .await?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .any(|e| matches!(
+            e.get_data(),
+            InterfoldEventData::SynchronizedDkgPublicationReady(_)
+        )));
+    node.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_pending_consent_is_not_output_authority() -> Result<()> {
+    let f = fixture()?;
+    let context = f.keys.synchronized_context(&f.selected.e3_id).unwrap();
+    let mut record = PublicationRecord::new(f.selected.clone(), ec());
+    record.intake(
+        &(*f.plan.local).clone().into(),
+        &ec(),
+        f.interfold,
+        Some(context),
+    )?;
+    for share in f.shares.values() {
+        record.intake(&share.clone().into(), &ec(), f.interfold, Some(context))?;
+    }
+    for peer in f.peers.values() {
+        record.intake(&peer.clone().into(), &ec(), f.interfold, Some(context))?;
+    }
+    let mut payload = f.consents[0].attestation.payload.clone();
+    payload.key_bundle_commit[31] ^= 1;
+    let pending = SynchronizedDkgConsentPublished {
+        attestation: SignedSynchronizedDkgAttestation::sign(payload, &f.signers[0])?,
+    };
+    record.intake(&pending.into(), &ec(), f.interfold, Some(context))?;
+    record.intake(
+        &f.consents[1].clone().into(),
+        &ec(),
+        f.interfold,
+        Some(context),
+    )?;
+    record.prune_consents(Some(context))?;
+    assert_eq!(
+        record.consents.len(),
+        2,
+        "provisional anchors cannot discard pending evidence"
+    );
+    record.started = true;
+    record.c5 = Some(f.c5.clone());
+    record.proof = Some(f.publication.clone());
+    record.prune_consents(Some(context))?;
+    assert!(!record.consents.contains_key(&0));
+    assert!(record.output(context)?.is_none());
+    record.intake(
+        &f.consents[0].clone().into(),
+        &ec(),
+        f.interfold,
+        Some(context),
+    )?;
+    assert!(record.output(context)?.is_some());
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_missing_outcomes_redrive_both_phases() -> Result<()> {
+    tokio::time::pause();
+    for wrapper in [false, true] {
+        let f = fixture()?;
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let (node, history) = actor(&f, &store, true, false).await?;
+        seed(&node, &f).await?;
+        drive(&node, EffectsEnabled::new()).await?;
+        if wrapper {
+            let c5 = requests(&history).await?.pop().unwrap();
+            drive(
+                &node,
+                ComputeResponse::zk(
+                    ZkResponse::PkAggregation(PkAggregationProofResponse {
+                        proof: f.c5.clone(),
+                    }),
+                    c5.correlation_id,
+                    f.selected.e3_id.clone(),
+                ),
+            )
+            .await?;
+        }
+        let before = requests(&history).await?;
+        tokio::time::advance(std::time::Duration::from_secs(61)).await;
+        node.send(Checkpoint).await?;
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        node.send(Checkpoint).await?;
+        let after = requests(&history).await?;
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(
+            after.last().unwrap().request,
+            before.last().unwrap().request
+        );
+        assert_ne!(
+            after.last().unwrap().correlation_id,
+            before.last().unwrap().correlation_id
+        );
+        drive(
+            &node,
+            E3StageChanged {
+                e3_id: f.selected.e3_id.clone(),
+                previous_stage: E3Stage::CommitteeFinalized,
+                new_stage: E3Stage::KeyPublished,
+            },
+        )
+        .await?;
+        tokio::time::advance(std::time::Duration::from_secs(120)).await;
+        node.send(Checkpoint).await?;
+        assert_eq!(requests(&history).await?.len(), after.len());
+        node.send(Die).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_publication_rejects_substitutions_without_reserving_valid_slots() -> Result<()>
 {
+    tokio::time::pause();
     let f = fixture()?;
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let (node, history) = actor(&f, &store, true, false).await?;
@@ -353,7 +600,7 @@ async fn synchronized_publication_rejects_substitutions_without_reserving_valid_
     share.pubkey = f.shares[&2].pubkey.clone();
     assert!(node.send(Drive(share.into(), ec())).await?.is_err());
     seed(&node, &f).await?;
-    for mutation in 0..4 {
+    for mutation in [0, 1, 3] {
         let mut payload = f.consents[0].attestation.payload.clone();
         match mutation {
             0 => payload.pk_commitment[31] ^= 1,
@@ -377,7 +624,18 @@ async fn synchronized_publication_rejects_substitutions_without_reserving_valid_
         CorrelationId::new(),
         f.selected.e3_id.clone(),
     );
-    assert!(node.send(Drive(wrong.into(), ec())).await?.is_err());
+    drive(&node, wrong).await?;
+    let mut unrelated = req.clone();
+    unrelated.correlation_id = CorrelationId::new();
+    drive(
+        &node,
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("other actor".into())),
+            unrelated,
+        ),
+    )
+    .await?;
+    assert!(node.send(Checkpoint).await?.unwrap().c5.is_none());
     let correct = ComputeResponse::zk(
         ZkResponse::PkAggregation(PkAggregationProofResponse {
             proof: f.c5.clone(),
@@ -405,38 +663,144 @@ async fn synchronized_publication_rejects_substitutions_without_reserving_valid_
         ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(_))
     ));
     let stale = requests(&history).await?.pop().unwrap();
-    let mut replacement = f.peers[&0].proof.clone();
-    replacement.data = ArcBytes::from_bytes(&[2]);
-    drive(
-        &node,
-        SynchronizedDkgProofPublished::sign(
-            f.selected.e3_id.clone(),
-            f.peers[&0].context.clone(),
-            SynchronizedDkgProofRole::Recipient,
-            replacement,
-            &f.signers[0],
-        )?,
-    )
-    .await?;
+    for byte in 2..=5 {
+        let mut replacement = f.peers[&0].proof.clone();
+        replacement.data = ArcBytes::from_bytes(&[byte]);
+        drive(
+            &node,
+            SynchronizedDkgProofPublished::sign(
+                f.selected.e3_id.clone(),
+                f.peers[&0].context.clone(),
+                SynchronizedDkgProofRole::Recipient,
+                replacement,
+                &f.signers[0],
+            )?,
+        )
+        .await?;
+    }
+    assert_eq!(requests(&history).await?.len(), 2);
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    node.send(Checkpoint).await?;
     let current = requests(&history).await?.pop().unwrap();
     assert_ne!(stale.correlation_id, current.correlation_id);
     assert_ne!(stale.request, current.request);
-    assert!(node
-        .send(Drive(
-            ComputeResponse::zk(
-                ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Publication {
-                    proof: f.publication.clone(),
-                }),
-                stale.correlation_id,
-                f.selected.e3_id.clone(),
-            )
-            .into(),
-            ec(),
-        ))
-        .await?
-        .is_err());
+    drive(
+        &node,
+        ComputeResponse::zk(
+            ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Publication {
+                proof: f.publication.clone(),
+            }),
+            stale.correlation_id,
+            f.selected.e3_id.clone(),
+        ),
+    )
+    .await?;
     assert!(node.send(Checkpoint).await?.unwrap().proof.is_none());
     node.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_retries_local_worker_failures_without_restart() -> Result<()> {
+    tokio::time::pause();
+    for wrapper in [false, true] {
+        for terminate in [false, true] {
+            let f = fixture()?;
+            let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+            let (node, history) = actor(&f, &store, false, false).await?;
+            seed(&node, &f).await?;
+            drive(&node, EffectsEnabled::new()).await?;
+            assert!(requests(&history).await?.is_empty());
+            drive(
+                &node,
+                AggregatorChanged {
+                    e3_id: f.selected.e3_id.clone(),
+                    active_party_id: Some(1),
+                    is_aggregator: true,
+                },
+            )
+            .await?;
+            let mut first = requests(&history).await?.pop().unwrap();
+            if wrapper {
+                drive(
+                    &node,
+                    ComputeResponse::zk(
+                        ZkResponse::PkAggregation(PkAggregationProofResponse {
+                            proof: f.c5.clone(),
+                        }),
+                        first.correlation_id,
+                        f.selected.e3_id.clone(),
+                    ),
+                )
+                .await?;
+                first = requests(&history).await?.pop().unwrap();
+            }
+            // The recorded started owner continues its existing work after demotion.
+            drive(
+                &node,
+                AggregatorChanged {
+                    e3_id: f.selected.e3_id.clone(),
+                    active_party_id: Some(0),
+                    is_aggregator: false,
+                },
+            )
+            .await?;
+            let count = requests(&history).await?.len();
+            let failure =
+                |kind| ComputeRequestError::new(ComputeRequestErrorKind::Zk(kind), first.clone());
+            drive(&node, failure(ZkError::InvalidParams("bad input".into()))).await?;
+            tokio::time::advance(std::time::Duration::from_secs(35)).await;
+            node.send(Checkpoint).await?;
+            assert_eq!(requests(&history).await?.len(), count);
+            let transient = failure(ZkError::ProofGenerationFailed(
+                "local VK unavailable".into(),
+            ));
+            drive(&node, transient.clone()).await?;
+            drive(&node, transient).await?; // one coalesced retry, not two
+            assert_eq!(requests(&history).await?.len(), count);
+            if terminate {
+                drive(
+                    &node,
+                    E3StageChanged {
+                        e3_id: f.selected.e3_id.clone(),
+                        previous_stage: E3Stage::CommitteeFinalized,
+                        new_stage: E3Stage::KeyPublished,
+                    },
+                )
+                .await?;
+            }
+            tokio::time::advance(std::time::Duration::from_secs(2)).await;
+            node.send(Checkpoint).await?;
+            let after = requests(&history).await?;
+            assert_eq!(after.len(), count + usize::from(!terminate));
+            if !terminate {
+                let retry = after.last().unwrap();
+                assert_eq!(retry.request, first.request);
+                assert_ne!(retry.correlation_id, first.correlation_id);
+                let response = if wrapper {
+                    ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Publication {
+                        proof: f.publication.clone(),
+                    })
+                } else {
+                    ZkResponse::PkAggregation(PkAggregationProofResponse {
+                        proof: f.c5.clone(),
+                    })
+                };
+                drive(
+                    &node,
+                    ComputeResponse::zk(response, retry.correlation_id, f.selected.e3_id.clone()),
+                )
+                .await?;
+                let saved = node.send(Checkpoint).await?.unwrap();
+                assert!(if wrapper {
+                    saved.proof.is_some()
+                } else {
+                    saved.c5.is_some()
+                });
+            }
+            node.send(Die).await?;
+        }
+    }
     Ok(())
 }
 
@@ -444,8 +808,6 @@ async fn synchronized_publication_rejects_substitutions_without_reserving_valid_
 async fn synchronized_publication_retains_corrected_preplan_c1_with_the_same_native_bytes(
 ) -> Result<()> {
     let f = fixture()?;
-    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-    let (node, history) = actor(&f, &store, true, false).await?;
     let corrected = f.shares[&0].clone();
     let mut invalid = corrected.clone();
     let mut payload = invalid
@@ -460,22 +822,44 @@ async fn synchronized_publication_retains_corrected_preplan_c1_with_the_same_nat
     invalid.signed_pk_generation_proof = Some(SignedProofPayload::sign(payload, &f.signers[0])?);
     assert_eq!(invalid.pubkey, corrected.pubkey);
     assert!(f.plan.keyshare(&invalid).is_err());
-    drive(&node, invalid).await?;
-    drive(&node, corrected.clone()).await?;
-    drive(&node, f.shares[&2].clone()).await?;
-    drive(&node, (*f.plan.local).clone()).await?;
-    let saved = node.send(Checkpoint).await?.unwrap();
-    assert_eq!(saved.shares.get(&0), Some(&corrected));
-    drive(&node, EffectsEnabled::new()).await?;
-    let request = requests(&history)
-        .await?
-        .pop()
-        .context("corrected C1 did not enable C5")?;
-    assert_eq!(
-        request.request,
-        ComputeRequestKind::Zk(ZkRequest::PkAggregation(f.plan.c5_request(&f.shares)?))
-    );
-    node.send(Die).await?;
+    for corrected_first in [false, true] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let (node, history) = actor(&f, &store, true, false).await?;
+        if corrected_first {
+            drive(&node, corrected.clone()).await?;
+        }
+        let error = node
+            .send(Drive(invalid.clone().into(), ec()))
+            .await?
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("canonical request or native share"),
+            "{error:#}"
+        );
+        if !corrected_first {
+            drive(&node, corrected.clone()).await?;
+        }
+        drive(&node, f.shares[&2].clone()).await?;
+        drive(&node, (*f.plan.local).clone()).await?;
+        let saved = node.send(Checkpoint).await?.unwrap();
+        assert_eq!(
+            saved.shares.get(&0),
+            Some(&corrected),
+            "corrected first: {corrected_first}"
+        );
+        drive(&node, EffectsEnabled::new()).await?;
+        let request = requests(&history)
+            .await?
+            .pop()
+            .context("corrected C1 did not enable C5")?;
+        assert_eq!(
+            request.request,
+            ComputeRequestKind::Zk(ZkRequest::PkAggregation(f.plan.c5_request(&f.shares)?))
+        );
+        node.send(Die).await?;
+    }
     Ok(())
 }
 
@@ -489,13 +873,16 @@ async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_co
     let (node, history) = actor(&f, &store, false, false).await?;
     let mut early = f.consents[0].attestation.payload.clone();
     early.context.registry = Address::repeat_byte(99);
-    drive(
-        &node,
-        SynchronizedDkgConsentPublished {
-            attestation: SignedSynchronizedDkgAttestation::sign(early, &f.signers[0])?,
-        },
-    )
-    .await?;
+    assert!(node
+        .send(Drive(
+            SynchronizedDkgConsentPublished {
+                attestation: SignedSynchronizedDkgAttestation::sign(early, &f.signers[0])?,
+            }
+            .into(),
+            ec()
+        ))
+        .await?
+        .is_err());
     seed(&node, &f).await?;
     assert!(node.send(Checkpoint).await?.unwrap().consents.is_empty());
     drive(&node, EffectsEnabled::new()).await?;
@@ -527,6 +914,7 @@ async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_co
     drop(node);
     store.shutdown().await?;
     drop(store);
+    SledDb::close_all_connections();
     let store = DataStore::from_sled_store(&SledStore::new(&bus, &dir.path().to_path_buf())?);
     let (node, history) = actor(&f, &store, false, true).await?;
     assert!(requests(&history).await?.is_empty());
@@ -592,6 +980,7 @@ async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_co
     drop(node);
     store.shutdown().await?;
     drop(store);
+    SledDb::close_all_connections();
     let store = DataStore::from_sled_store(&SledStore::new(&bus, &dir.path().to_path_buf())?);
     let (node, history) = actor(&f, &store, false, true).await?;
     drive(&node, EffectsEnabled::new()).await?;
@@ -626,34 +1015,17 @@ async fn synchronized_publication_standby_promotion_demotion_reopen_and_all_h_co
         .is_none());
     drop(node);
     store.shutdown().await?;
+    drop(store);
+    SledDb::close_all_connections();
     Ok(())
 }
 
 #[actix::test]
 async fn synchronized_publication_final_consent_flush_failure_preserves_accepted_progress(
 ) -> Result<()> {
-    struct FlushGate(bool);
-    impl Actor for FlushGate {
-        type Context = Context<Self>;
-    }
-    impl Handler<Flush> for FlushGate {
-        type Result = Result<()>;
-        fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
-            ensure!(self.0, "injected final-consent flush failure");
-            Ok(())
-        }
-    }
-    #[derive(Message)]
-    #[rtype(result = "()")]
-    struct AllowFlush(bool);
-    impl Handler<AllowFlush> for FlushGate {
-        type Result = ();
-        fn handle(&mut self, msg: AllowFlush, _: &mut Self::Context) {
-            self.0 = msg.0;
-        }
-    }
+    tokio::time::pause();
     let f = fixture()?;
-    let flush = FlushGate(true).start();
+    let flush = FlushGate(true, 0).start();
     let store = DataStore::from_in_mem(&InMemStore::new(false).start())
         .with_flush_recipient(flush.clone().recipient());
     let (node, history) = actor(&f, &store, true, false).await?;
@@ -696,10 +1068,10 @@ async fn synchronized_publication_final_consent_flush_failure_preserves_accepted
     );
     flush.send(AllowFlush(false)).await?;
     drive(&node, f.consents[1].clone()).await?;
-    assert_eq!(
-        bincode::serialize(&node.send(Checkpoint).await?.unwrap())?,
-        bincode::serialize(&accepted)?
-    );
+    let pending = node.send(Checkpoint).await?.unwrap();
+    assert_eq!(pending.plan, accepted.plan);
+    assert_eq!(pending.proof, accepted.proof);
+    assert_eq!(pending.consents.len(), 2);
     assert!(history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
@@ -709,9 +1081,11 @@ async fn synchronized_publication_final_consent_flush_failure_preserves_accepted
             InterfoldEventData::SynchronizedDkgPublicationReady(_)
         )));
     flush.send(AllowFlush(true)).await?;
-    // Replay the exact unacknowledged input; this test does not assume automatic redelivery.
-    drive(&node, f.consents[1].clone()).await?;
-    drive(&node, f.consents[1].clone()).await?;
+    // No redelivery or explicit resume: the owner must retry the retained final consent.
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    node.send(Checkpoint).await?;
+    tokio::time::advance(std::time::Duration::from_secs(35)).await;
+    node.send(Checkpoint).await?;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
     let ready = events
         .iter()
@@ -735,20 +1109,82 @@ async fn synchronized_publication_final_consent_flush_failure_preserves_accepted
 }
 
 #[actix::test]
-async fn synchronized_publication_disabled_route_and_failed_flush_emit_no_work() -> Result<()> {
-    struct FailFlush;
-    impl Actor for FailFlush {
-        type Context = Context<Self>;
-    }
-    impl Handler<Flush> for FailFlush {
-        type Result = Result<()>;
-        fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
-            anyhow::bail!("injected publication flush failure");
+async fn synchronized_publication_flush_retry_preserves_workers_roles_and_termination() -> Result<()>
+{
+    tokio::time::pause();
+    for active in [false, true] {
+        for terminate in [false, true] {
+            let f = fixture()?;
+            let flush = FlushGate(true, 0).start();
+            let store = DataStore::from_in_mem(&InMemStore::new(false).start())
+                .with_flush_recipient(flush.clone().recipient());
+            let (node, history) = actor(&f, &store, active, false).await?;
+            seed(&node, &f).await?;
+            drive(&node, EffectsEnabled::new()).await?;
+            let started = requests(&history).await?;
+            assert_eq!(started.len(), usize::from(active));
+            flush.send(AllowFlush(false)).await?;
+            drive(&node, f.consents[0].clone()).await?;
+            if active {
+                drive(
+                    &node,
+                    AggregatorChanged {
+                        e3_id: f.selected.e3_id.clone(),
+                        active_party_id: Some(0),
+                        is_aggregator: false,
+                    },
+                )
+                .await?;
+            }
+            let attempts = flush.send(AllowFlush(false)).await?;
+            if terminate {
+                drive(
+                    &node,
+                    E3StageChanged {
+                        e3_id: f.selected.e3_id.clone(),
+                        previous_stage: E3Stage::CommitteeFinalized,
+                        new_stage: E3Stage::KeyPublished,
+                    },
+                )
+                .await?;
+            }
+            flush.send(AllowFlush(true)).await?;
+            tokio::time::advance(std::time::Duration::from_secs(2)).await;
+            let record = node.send(Checkpoint).await?.unwrap();
+            assert_eq!(
+                flush.send(AllowFlush(true)).await?,
+                attempts + u32::from(!terminate),
+                "active: {active}, terminated: {terminate}"
+            );
+            assert_eq!(record.consents.len(), 1);
+            assert_eq!(record.started, active);
+            // Neither a standby nor a demoted owner may spuriously start another C5 attempt.
+            assert_eq!(requests(&history).await?.len(), started.len());
+            if active && !terminate {
+                drive(
+                    &node,
+                    ComputeResponse::zk(
+                        ZkResponse::PkAggregation(PkAggregationProofResponse {
+                            proof: f.c5.clone(),
+                        }),
+                        started[0].correlation_id,
+                        f.selected.e3_id.clone(),
+                    ),
+                )
+                .await?;
+                assert_eq!(node.send(Checkpoint).await?.unwrap().c5, Some(f.c5));
+                assert_eq!(requests(&history).await?.len(), 2);
+            }
+            node.send(Die).await?;
         }
     }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_disabled_route_is_independent_of_storage_failure() -> Result<()> {
     let f = fixture()?;
-    let store = DataStore::from_in_mem(&InMemStore::new(false).start())
-        .with_flush_recipient(FailFlush.start().recipient());
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let (node, history) = actor(&f, &store, true, false).await?;
     node.send(
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -762,9 +1198,34 @@ async fn synchronized_publication_disabled_route_and_failed_flush_emit_no_work()
     )
     .await?;
     assert!(node.send(Checkpoint).await?.unwrap().plan.is_none());
+    assert!(requests(&history).await?.is_empty());
+    // The same healthy store works below admission; a flush failure cannot mask this guard.
     seed(&node, &f).await?;
     drive(&node, EffectsEnabled::new()).await?;
-    assert!(node.send(Checkpoint).await?.unwrap().plan.is_none());
+    assert!(node.send(Checkpoint).await?.unwrap().plan.is_some());
+    assert_eq!(requests(&history).await?.len(), 1);
+    node.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_publication_failed_flush_emits_no_work() -> Result<()> {
+    tokio::time::pause();
+    let f = fixture()?;
+    let flush = FlushGate(false, 0).start();
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start())
+        .with_flush_recipient(flush.clone().recipient());
+    let (node, history) = actor(&f, &store, true, false).await?;
+    seed(&node, &f).await?;
+    let attempts = flush.send(AllowFlush(false)).await?;
+    tokio::time::advance(std::time::Duration::from_secs(35)).await;
+    node.send(Checkpoint).await?;
+    assert_eq!(flush.send(AllowFlush(false)).await?, attempts);
+    drive(&node, EffectsEnabled::new()).await?;
+    let retained = node.send(Checkpoint).await?.unwrap();
+    assert!(retained.plan.is_some());
+    assert_eq!(retained.shares.len(), 2);
+    assert_eq!(retained.recipients.len(), 2);
     assert!(history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
