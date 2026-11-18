@@ -1,6 +1,6 @@
 services:
   ciphernode:
-    image: 'interfold-ciphernode-sepolia.dnp.dappnode.eth:0.10.0'
+    image: 'interfold-ciphernode-sepolia.dnp.dappnode.eth:0.10.1'
     build:
       args:
         DAPPNODE_NETWORK: sepolia

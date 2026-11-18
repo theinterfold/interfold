@@ -53,7 +53,7 @@ the package in Dappnode. The package restarts the node with the new release.
 
 When a release raises the storage schema, the package resets the node state before the node starts.
 The reset keeps the operator key and the libp2p key, and the node then syncs again from the chain.
-This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.0, use the
+This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.x, use the
 [one-off reset](https://docs.theinterfold.com/operate/upgrades#reset-node-state) instead.
 
 The reset refuses while the node holds a key share for an E3 that it has not seen complete, or slash
