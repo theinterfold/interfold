@@ -91,14 +91,14 @@ pnpm release:tag X.Y.Z
 ```
 
 A patch release that must not include later `main` work is cut from the earlier tag on the protected
-maintenance branch `release/X.Y.x` (for example `release/0.19.x` for 0.19.1). Merge the backport and
-version pull request into that branch, check it out instead of `main`, and run the same
+maintenance branch `releases/X.Y.x` (for example `releases/0.19.x` for 0.19.1). Merge the backport
+and version pull request into that branch, check it out instead of `main`, and run the same
 `pnpm release:tag X.Y.Z`. The command accepts only `main` or the maintenance branch of the version's
 minor line, and that branch must equal its `origin` copy.
 
 The tag workflow then:
 
-- Confirms that the tag belongs to `origin/main` or to `origin/release/X.Y.x` of its minor line.
+- Confirms that the tag belongs to `origin/main` or to `origin/releases/X.Y.x` of its minor line.
 - Packages and hashes the source-matched circuit archive before binary and ciphernode image builds.
 - Passes `E3_CIRCUITS_ARCHIVE_SHA256` to those builds, including through the Docker build argument.
   The ZK prover binds this pin to the crate version and retains the other `versions.json` pins.

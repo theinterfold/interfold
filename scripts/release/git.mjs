@@ -8,12 +8,13 @@ import { normalizeVersion, releaseChannel, validateReleaseVersion } from './vers
 
 /**
  * The branches whose history may contain a release tag: main, and the maintenance branch of the
- * release's minor line (`release/X.Y.x`). The maintenance branch carries patch releases cut from an
- * earlier tag. Both branches must be protected on GitHub.
+ * release's minor line (`releases/X.Y.x`). The maintenance branch carries patch releases cut from an
+ * earlier tag. Both branches must be protected on GitHub. The prefix is `releases/` because the
+ * repository has a branch named `release`, and Git cannot also hold refs under `release/`.
  */
 export function releaseBranches(version) {
   const [major, minor] = normalizeVersion(version).split('.')
-  return ['main', `release/${major}.${minor}.x`]
+  return ['main', `releases/${major}.${minor}.x`]
 }
 
 export function verifyReleaseCandidate(tagRef, protectedRefs, expectedRef, cwd = ROOT_DIR) {

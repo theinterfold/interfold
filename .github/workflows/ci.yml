@@ -17,7 +17,7 @@ on:
     branches:
       - main
       - dev
-      - 'release/**'
+      - 'releases/**'
 env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
