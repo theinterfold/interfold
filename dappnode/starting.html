@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="15" />
     <title>Interfold node dashboard</title>
     <style>
       body {
@@ -27,8 +28,13 @@
     </style>
   </head>
   <body>
-    <h1>Node dashboard unavailable</h1>
-    <p>Wait for the node to start, then try again. If this continues, check the package Logs in Dappnode.</p>
+    <h1>Waiting for the node dashboard</h1>
+    <p>The dashboard opens after node startup, including historical event syncing.</p>
+    <p>
+      Check the package Logs in Dappnode for sync progress. Increasing chunk numbers mean the node is still fetching history. If progress
+      stops or startup fails, check the Logs for errors.
+    </p>
+    <p>This page retries every 15 seconds. You can leave it open while the node starts.</p>
     <button type="button" onclick="location.reload()">Try again</button>
   </body>
 </html>

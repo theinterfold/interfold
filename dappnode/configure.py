@@ -58,8 +58,9 @@ def render():
             "rpc_url": rpc_url,
             "chain_id": preset["chain_id"],
             "data_availability": {"mode": "avail", "rpc_url": avail_url},
+            # fee_token is not a node reader; its older deployment would extend the history scan.
             "contracts": {name: preset["contracts"][name] for name in (
-                "interfold", "ciphernode_registry", "bonding_registry", "slashing_manager", "fee_token"
+                "interfold", "ciphernode_registry", "bonding_registry", "slashing_manager"
             )},
         }],
     }

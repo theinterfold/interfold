@@ -1,0 +1,33 @@
+{
+  "0.9.0": {
+    "hash": "/ipfs/Qmbcx6vSjWxDZvqSazeZwL4thj5GmGn9KjKzjgQPRvTXxd",
+    "uploadedTo": {
+      "dappnode": "Fri, 09 Oct 2026 14:41:39 GMT"
+    }
+  },
+  "0.10.0": {
+    "hash": "/ipfs/QmUJxGf7vbSga3zfAbdd2aD31GMYmKn2kWAhK9i4QgT6ca",
+    "uploadedTo": {
+      "dappnode": "Fri, 06 Nov 2026 08:48:31 GMT"
+    }
+  },
+  "0.11.0": {
+    "hash": "/ipfs/QmRma3LaVAnwGuPo5ydTHncaU3nRD5qkEeTDcJyAZfcaDG",
+    "uploadedTo": {
+      "dappnode": "Tue, 17 Nov 2026 11:43:30 GMT",
+      "remote": "Tue, 17 Nov 2026 12:05:39 GMT"
+    }
+  },
+  "0.11.1": {
+    "hash": "/ipfs/QmaWujBGtBZjYozC9p1KAoR2n9XVgoYXsWqJbGaoDw9AEJ",
+    "uploadedTo": {
+      "remote": "Tue, 17 Nov 2026 12:16:53 GMT"
+    }
+  },
+  "0.11.2": {
+    "hash": "/ipfs/QmWp8DLwfn3y5dECC9w71pPuEhtyojje5zVMX2bgVX6VZd",
+    "uploadedTo": {
+      "remote": "Tue, 17 Nov 2026 14:22:28 GMT"
+    }
+  }
+}

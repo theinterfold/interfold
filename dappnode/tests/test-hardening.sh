@@ -216,7 +216,7 @@ assert_contains "$success_dir/data/config.yaml" 'autonetkey: false'
 assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
 assert_contains "$success_dir/data/config.yaml" 'chain_id: 1'
 assert_contains "$success_dir/data/config.yaml" 'slashing_manager:'
-assert_contains "$success_dir/data/config.yaml" 'fee_token:'
+assert_not_contains "$success_dir/data/config.yaml" 'fee_token:'
 assert_contains "$success_dir/data/config.yaml" 'https://avail-rpc.publicnode.com/'
 
 # The pinned Avail client uses HTTP JSON-RPC. Rejecting WebSocket URLs at startup avoids a node
@@ -386,8 +386,13 @@ import json, sys, yaml
 config = yaml.safe_load(open(sys.argv[1]))
 expected = json.load(open(sys.argv[2]))['networks'][sys.argv[3]]
 assert config['chains'][0]['chain_id'] == expected['chain_id']
-for name in ('interfold', 'ciphernode_registry', 'bonding_registry', 'slashing_manager', 'fee_token'):
+for name in ('interfold', 'ciphernode_registry', 'bonding_registry', 'slashing_manager'):
     assert config['chains'][0]['contracts'][name] == expected['contracts'][name]
+assert 'fee_token' not in config['chains'][0]['contracts']
+assert min(contract['deploy_block'] for contract in config['chains'][0]['contracts'].values()) == min(
+    expected['contracts'][name]['deploy_block']
+    for name in ('interfold', 'ciphernode_registry', 'bonding_registry', 'slashing_manager')
+)
 assert config['node']['address'] == '0x3333333333333333333333333333333333333333'
 CHECK
 done

@@ -21,6 +21,16 @@ Use the remote **Operator Dashboard** to interact with contracts. Connect throug
 or VPN to open the local **Node dashboard**. The Node dashboard has no login, and every container on
 the Dappnode network can also reach it. If its proxy cannot start, the node runs without it.
 
+The Node dashboard opens after startup finishes, including historical event syncing. Until then, its
+waiting page retries every 15 seconds. In package **Logs**, increasing `Fetched log chunk` numbers
+show that syncing is progressing; `Still waiting for historical events` is expected while chunks
+remain. During this wait, the proxy can log `connect() failed (111: Connection refused)` because the
+dashboard has not started yet. If progress stops or startup fails, inspect the Logs for RPC or
+startup errors.
+
+The official v0.19.0 binary does not support `E3_NODE__MAX_SYNC_FETCH_BYTES`. If a custom package
+added this setting to **Config**, remove it before updating to the official image.
+
 ## Credentials and backups
 
 Create `secrets.json` with an encryption password and a dedicated operator private key:
@@ -98,6 +108,15 @@ pnpm --dir dappnode test
 pnpm --dir dappnode build --skip_upload
 pnpm --dir dappnode test:image
 ```
+
+The package builds from its pinned official image. The build command uses the current context's
+Docker builder; set `BUILDX_BUILDER` to use another builder with the Docker driver.
+
+To test Rust changes locally, use `pnpm --dir dappnode build:upstream` only when this checkout's
+workspace version matches the package's upstream pin. Use a matching checkout for a stable release.
+The command builds a local image and does not publish it. For a release build, set
+`E3_CIRCUITS_ARCHIVE_SHA256` to the qualified circuit archive's digest. Local integration builds do
+not qualify a release.
 
 `build --skip_upload` builds both packages for `linux/amd64` and saves them locally. `test:image`
 then starts the Mainnet image against a test execution client. Run `pnpm --dir dappnode build` to
