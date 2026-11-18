@@ -439,6 +439,93 @@ impl Handler<RecoverFlush> for FailedFlush {
     }
 }
 
+#[derive(Message)]
+#[rtype(result = "Result<()>")]
+struct RetainDealer(SynchronizedDkgProofPublished);
+impl Handler<RetainDealer> for NodeProofAggregator {
+    type Result = Result<()>;
+    fn handle(&mut self, msg: RetainDealer, _: &mut Context<Self>) -> Self::Result {
+        let id = msg.0.e3_id.clone();
+        accept(self, msg.0)?;
+        self.validate_recipient_record(&id, &self.recipient.records[&id])
+    }
+}
+
+#[actix::test]
+async fn recipient_flush_retry_never_persists_a_new_invalid_batch() -> Result<()> {
+    tokio::time::pause();
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let mut f = fixture(&bus, 1)?;
+    collect(&mut f)?;
+    let id = f.plan.inputs.e3_id.clone();
+    f.actor
+        .recipient
+        .records
+        .get_mut(&id)
+        .unwrap()
+        .dealers
+        .remove(&2);
+    let directory = tempfile::tempdir()?;
+    let store = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    let flush = FailedFlush::default().start();
+    f.actor.recovery_repositories = Some(Repositories::new(
+        store
+            .clone()
+            .with_flush_recipient(flush.clone().recipient()),
+    ));
+    f.actor.dealer.effects = true;
+    let addr = f.actor.start();
+    addr.send(FlushRecipient(id.clone())).await?;
+    assert_eq!(
+        addr.send(InspectRecipient(id.clone())).await?,
+        (true, false)
+    );
+    let mut mixed = f.dealers[1].clone();
+    let mut public = mixed.proof.public_signals.to_vec();
+    public[3 * 32 + 31] = 1; // same native C2 provenance, incompatible descendant genealogy
+    mixed.proof.public_signals = ArcBytes::from_bytes(&public);
+    mixed = SynchronizedDkgProofPublished::sign(
+        mixed.e3_id,
+        mixed.context,
+        mixed.role,
+        mixed.proof,
+        &f.signers[2],
+    )?;
+    let error = addr.send(RetainDealer(mixed)).await?.unwrap_err();
+    assert!(
+        error.to_string().contains("mixed dealer genealogy"),
+        "{error:#}"
+    );
+    flush.send(RecoverFlush).await?;
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    addr.send(InspectRecipient(id.clone())).await?;
+    addr.send(StopRecipient).await?;
+    store.shutdown().await?;
+    drop(store);
+    e3_data::SledDb::close_all_connections();
+    let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    let record = repository(&Repositories::new(reopened.clone()), &id)
+        .read()
+        .await?
+        .unwrap();
+    record.validate()?;
+    assert_eq!(record.dealers.len(), 1);
+    bus.flush_event_pipeline().await?;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    reopened.shutdown().await?;
+    e3_data::SledDb::close_all_connections();
+    Ok(())
+}
+
 #[actix::test]
 async fn recipient_failed_flush_resumes_compute_and_publication_without_new_inputs() -> Result<()> {
     tokio::time::pause();

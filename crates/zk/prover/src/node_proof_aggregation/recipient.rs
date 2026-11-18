@@ -433,10 +433,6 @@ impl NodeProofAggregator {
         let Some(record) = self.recipient.records.get(id).cloned() else {
             return;
         };
-        if let Err(error) = self.validate_recipient_record(id, &record) {
-            tracing::error!(%id, %error, "saved recipient input rejected");
-            return;
-        }
         self.flush_recipient_record(id, record, ctx);
     }
 
@@ -459,6 +455,11 @@ impl NodeProofAggregator {
         record: RecipientRecord,
         ctx: &mut Context<Self>,
     ) {
+        // Every writer, including a pending retry, must revalidate its current snapshot.
+        if let Err(error) = self.validate_recipient_record(id, &record) {
+            tracing::error!(%id, %error, "saved recipient input rejected");
+            return;
+        }
         let Some(repositories) = &self.recovery_repositories else {
             return;
         };
