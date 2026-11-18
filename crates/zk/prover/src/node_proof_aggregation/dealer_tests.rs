@@ -291,6 +291,12 @@ async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<
         ];
         for index in order {
             actor.accept_dealer_input(&events[index], &ec(events[index].clone()))?;
+            if index == 0 {
+                // Both candidates arrive while the slot is still provisional. The correct
+                // candidate is journaled only once; no redelivery will rescue a lost slot.
+                actor.accept_dealer_input(&valid[2].clone().into(), &ec(valid[2].clone()))?;
+                assert!(!actor.dealer.inner_proofs()[&id].contains_key(&3));
+            }
         }
         // Simulate serialized recovery of the partial record; matching bytes must survive.
         let repositories = actor.recovery_repositories.clone().unwrap();
@@ -298,13 +304,10 @@ async fn synchronized_dealer_c3_stays_provisional_until_plan_and_c2() -> Result<
             .write_sync(&actor.dealer.records[&id])
             .await?;
         let restored = repository(&repositories, &id).read().await?.unwrap();
-        assert!(
-            !restored.proofs.contains_key(&3),
-            "unqualified C3 cannot reserve a slot"
-        );
+        assert_eq!(restored.proofs[&3], valid[2]);
         assert_eq!(restored.proofs[&2], valid[1]);
         actor.dealer.records.insert(id.clone(), restored);
-        for leaf in &valid {
+        for leaf in valid.iter().filter(|leaf| leaf.seq != 3) {
             actor.accept_dealer_input(&leaf.clone().into(), &ec(leaf.clone()))?;
         }
         assert!(plan
@@ -344,6 +347,7 @@ impl Handler<SaturateDealerPublication> for NodeProofAggregator {
         let expected = self.dealer.pending[&msg.0].events[0].clone();
         self.drive_dealer_publication(&msg.0, ctx);
         assert_eq!(self.dealer.pending[&msg.0].events[0], expected);
+        assert_eq!(self.dealer.pending[&msg.0].failures, 1);
         assert_eq!(self.dealer.publication_retries.len(), 1);
         Ok(expected)
     }
@@ -610,6 +614,64 @@ impl Handler<FlushDefinition> for NodeProofAggregator {
 }
 
 #[actix::test]
+async fn synchronized_dealer_plan_prunes_unbound_early_leaves_after_disk_reopen() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    let id = input.e3_id.clone();
+    let directory = tempfile::tempdir()?;
+    let store = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    let repositories = Repositories::new(store.clone());
+    let valid = leaves(&plan, &id);
+    let mut wrong = valid[0].clone();
+    let mut public = wrong.proof.public_signals.to_vec();
+    public[31] ^= 1;
+    wrong.proof.public_signals = ArcBytes::from_bytes(&public);
+    actor.accept_dealer_input(&wrong.clone().into(), &ec(wrong.clone()))?;
+    actor.accept_dealer_input(&valid[1].clone().into(), &ec(valid[1].clone()))?;
+    repository(&repositories, &id)
+        .write_sync(&actor.dealer.records[&id])
+        .await?;
+    drop(actor);
+    drop(repositories);
+    store.shutdown().await?;
+    drop(store);
+    e3_data::SledDb::close_all_connections();
+
+    let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
+        &bus,
+        &directory.path().to_path_buf(),
+    )?);
+    let record = repository(&Repositories::new(reopened.clone()), &id)
+        .read()
+        .await?
+        .unwrap();
+    let (mut restarted, _, _) = fixture(&bus).await?;
+    record.validate(&id, &restarted.dealer.metadata[&id])?;
+    restarted.dealer.records.insert(id.clone(), record);
+    restarted.accept_dealer_input(&input.clone().into(), &ec(input.clone()))?;
+    assert_eq!(restarted.dealer.records[&id].proofs.len(), 1);
+    assert_eq!(restarted.dealer.records[&id].proofs[&2], valid[1]);
+    // Once the native plan is fixed, the same incompatible leaf is still rejected.
+    assert!(restarted
+        .accept_dealer_input(&wrong.clone().into(), &ec(wrong))
+        .unwrap_err()
+        .to_string()
+        .contains("dealer leaf identity differs"));
+    for leaf in valid {
+        restarted.accept_dealer_input(&leaf.clone().into(), &ec(leaf))?;
+    }
+    assert!(plan
+        .request(&id, &restarted.dealer.records[&id].proofs)?
+        .is_some());
+    reopened.shutdown().await?;
+    e3_data::SledDb::close_all_connections();
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_dealer_flush_restart_reissues_only_unfinished_work() -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
     let (mut actor, input, plan) = fixture(&bus).await?;
@@ -812,6 +874,62 @@ impl Handler<Flush> for FailedFlush {
     fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
         anyhow::bail!("injected flush failure")
     }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<()>")]
+struct DriveDealerDefinition(InterfoldEventData);
+
+impl Handler<DriveDealerDefinition> for NodeProofAggregator {
+    type Result = Result<()>;
+
+    fn handle(&mut self, msg: DriveDealerDefinition, ctx: &mut Context<Self>) -> Self::Result {
+        self.drive_dealer_input(&msg.0, &ec(msg.0.clone()), ctx)
+    }
+}
+
+struct CountDealerFlush(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Actor for CountDealerFlush {
+    type Context = Context<Self>;
+}
+
+impl Handler<Flush> for CountDealerFlush {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: Flush, _: &mut Context<Self>) -> Self::Result {
+        let old = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ensure!(old != 0, "first flush fails");
+        Ok(())
+    }
+}
+
+#[actix::test]
+async fn synchronized_dealer_only_flushes_progress_or_an_unacknowledged_write() -> Result<()> {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let (mut actor, input, _) = fixture(&bus).await?;
+    let id = input.e3_id.clone();
+    let count = Arc::new(AtomicUsize::new(0));
+    let repositories = actor.recovery_repositories.take().unwrap();
+    actor.recovery_repositories =
+        Some(Repositories::new(repositories.store.with_flush_recipient(
+            CountDealerFlush(count.clone()).start().recipient(),
+        )));
+    actor.dealer.effects = true;
+    let node = actor.start();
+    for expected in [1, 2, 2] {
+        node.send(DriveDealerDefinition(input.clone().into()))
+            .await??;
+        node.send(Inspect(id.clone())).await?;
+        assert_eq!(count.load(Ordering::SeqCst), expected);
+    }
+    node.send(StopDefinition).await?;
+    Ok(())
 }
 
 #[actix::test]

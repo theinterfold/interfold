@@ -100,6 +100,33 @@ impl DealerPlan {
     }
 
     pub fn validate_leaf(&self, id: &E3id, input: &DKGInnerProofReady) -> Result<()> {
+        let config = self.config()?;
+        self.decode_leaf(id, &config, input).map(drop)
+    }
+
+    pub(crate) fn config(&self) -> Result<Configs> {
+        Ok(Configs::for_profile(self.profile, self.committee)?)
+    }
+
+    pub(crate) fn decode_leaf(
+        &self,
+        id: &E3id,
+        config: &Configs,
+        input: &DKGInnerProofReady,
+    ) -> Result<PublicSignals> {
+        let public =
+            PublicSignals::decode(config, input.proof.circuit, &input.proof.public_signals)?;
+        self.validate_leaf_statement(id, config, input, &public)?;
+        Ok(public)
+    }
+
+    pub(crate) fn validate_leaf_statement(
+        &self,
+        id: &E3id,
+        config: &Configs,
+        input: &DKGInnerProofReady,
+        public: &PublicSignals,
+    ) -> Result<()> {
         ensure!(
             &input.e3_id == id && input.party_id == u64::from(self.context.party_id),
             "dealer leaf belongs to another E3 or party"
@@ -108,14 +135,11 @@ impl DealerPlan {
             input.seq > 0 && self.circuits.get(input.seq - 1) == Some(&input.proof.circuit),
             "dealer leaf is outside its planned slot"
         );
-        let config = Configs::for_profile(self.profile, self.committee)?;
-        let public =
-            PublicSignals::decode(&config, input.proof.circuit, &input.proof.public_signals)?;
         if input.proof.circuit != CircuitName::ShareEncryption {
             ensure!(
                 public.binding()
                     == Some(crate::synchronized::request_binding(
-                        &config,
+                        config,
                         &self.context,
                         id
                     )?)
@@ -131,11 +155,7 @@ impl DealerPlan {
         id: &E3id,
         proofs: &BTreeMap<usize, DKGInnerProofReady>,
     ) -> Result<Option<SynchronizedDkgProofRequest>> {
-        for (&seq, input) in proofs {
-            ensure!(seq == input.seq, "dealer slot differs from input");
-            self.validate_leaf(id, input)?;
-            self.validate_c3(input, proofs.get(&2))?;
-        }
+        self.validate_leaves(id, proofs)?;
         if proofs.len() != self.circuits.len() {
             return Ok(None);
         }
@@ -155,32 +175,49 @@ impl DealerPlan {
         }))
     }
 
-    /// C3 has no setup identity; its planned message is anchored only when native C2 is present.
-    pub(crate) fn validate_c3(
+    pub(crate) fn validate_leaves(
         &self,
-        input: &DKGInnerProofReady,
-        c2: Option<&DKGInnerProofReady>,
+        id: &E3id,
+        proofs: &BTreeMap<usize, DKGInnerProofReady>,
     ) -> Result<()> {
-        if input.proof.circuit != CircuitName::ShareEncryption {
-            return Ok(());
+        let config = self.config()?;
+        let sharing = proofs
+            .get(&2)
+            .map(|leaf| self.decode_leaf(id, &config, leaf))
+            .transpose()?;
+        for (&seq, leaf) in proofs {
+            ensure!(seq == leaf.seq, "dealer slot differs from input");
+            if seq != 2 {
+                let public = self.decode_leaf(id, &config, leaf)?;
+                if let Some(sharing) = sharing.as_ref().filter(|_| seq >= 3) {
+                    self.validate_c3_message(&config, seq, &public, sharing)?;
+                }
+            }
         }
-        let Some(c2) = c2 else { return Ok(()) };
-        ensure!(
-            input.seq >= 3
-                && self.circuits.get(input.seq - 1) == Some(&CircuitName::ShareEncryption),
-            "C3 is outside its planned slot"
-        );
-        let config = Configs::for_profile(self.profile, self.committee)?;
+        Ok(())
+    }
+
+    /// C3 has no setup identity. A validated C2 anchors the planned recipient/CRT message.
+    pub(crate) fn validate_c3_message(
+        &self,
+        config: &Configs,
+        seq: usize,
+        public: &PublicSignals,
+        sharing: &PublicSignals,
+    ) -> Result<()> {
         let l = config.threshold.moduli().len();
-        let slot = input.seq.checked_sub(3).context("invalid C3 slot")?;
+        let slot = seq.checked_sub(3).context("invalid C3 slot")?;
         let recipient = slot / l;
         let recipient = recipient + usize::from(recipient >= self.context.party_id as usize);
-        let c2 = PublicSignals::decode(&config, c2.proof.circuit, &c2.proof.public_signals)?;
-        let c3 = PublicSignals::decode(&config, input.proof.circuit, &input.proof.public_signals)?;
+        let message = sharing
+            .message_commitments()
+            .and_then(|fields| fields.get(recipient * l + slot % l))
+            .context("missing C2 message for the planned C3 slot")?;
         ensure!(
-            c2.message_commitments()
-                .and_then(|fields| fields.get(recipient * l + slot % l))
-                == c3.message_commitments().and_then(|fields| fields.first()),
+            Some(message)
+                == public
+                    .message_commitments()
+                    .and_then(|fields| fields.first()),
             "dealer C2/C3 message differs"
         );
         Ok(())
