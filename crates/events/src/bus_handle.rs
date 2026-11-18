@@ -283,6 +283,12 @@ impl BusHandle<Enabled> {
 }
 
 impl<S> BusHandle<S> {
+    /// Whether this boot has begun shutting down. This does not reflect replayed `Shutdown`
+    /// events, temporary admission saturation, or an unexpectedly stopped sequencer.
+    pub fn is_shutting_down(&self) -> bool {
+        self.admission.is_closed()
+    }
+
     fn ensure_sequencer(&self) -> Result<()> {
         ensure!(
             self.sequencer.connected(),

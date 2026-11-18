@@ -51,6 +51,16 @@ current-boot effects and the shared chain-frozen domain. Only H recipients sign.
 against shared confirmed authority, including outside-H recipients. This is the read-only #2050
 boundary; C5/publication aggregation and the registry writer remain unfinished.
 
+A closed setup store stops automatic attempts for the current boot. Outside shutdown, check the
+storage service before restarting; closure does not indicate damaged data. An intent that cannot be
+decoded or validated is left untouched. Stop the node and preserve the store, aggregate logs, and
+matching key configuration. If recovery is needed, use a verified, schema-compatible backup for the
+same node with matching logs and key material, or escalate if none exists. Do not delete or patch
+the row to resume an active committee: replay cannot recreate secret shares. See
+[state recovery and rollback](../../../docs/architecture/upgrades.md#controlled-state-reset-never-directory-deletion).
+Retryable storage failures retain the candidate and back off only with current-boot effects, with
+one journal error per failure episode.
+
 The threshold-share soft checkpoint can advance when every missing dealer lacked a C0 key at
 key-collection closure. Verification still needs H−1 external shares, and collection remains open
 until completion or the canonical DKG deadline.

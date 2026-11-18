@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::synchronized::SynchronizedSetupIntent;
-use e3_data::SledStore;
+use e3_data::{SledDb, SledStore};
 use e3_events::{SynchronizedRecipientProofReady, SynchronizedSetupAnchors};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial;
@@ -37,6 +37,28 @@ impl Handler<SetupCheckpoint> for ThresholdKeyshare {
     type Result = actix::MessageResult<SetupCheckpoint>;
     fn handle(&mut self, _: SetupCheckpoint, _: &mut Self::Context) -> Self::Result {
         actix::MessageResult(self.synchronized_setup.clone())
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "bool")]
+struct SetupRetryPending;
+impl Handler<SetupRetryPending> for ThresholdKeyshare {
+    type Result = bool;
+    fn handle(&mut self, _: SetupRetryPending, _: &mut Self::Context) -> Self::Result {
+        self.synchronized_setup_retry.is_some()
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "(BusHandle, bool)")]
+struct SetupStorageState;
+
+impl Handler<SetupStorageState> for ThresholdKeyshare {
+    type Result = actix::MessageResult<SetupStorageState>;
+
+    fn handle(&mut self, _: SetupStorageState, _: &mut Self::Context) -> Self::Result {
+        actix::MessageResult((self.bus.clone(), self.synchronized_setup_blocked))
     }
 }
 
@@ -195,7 +217,19 @@ async fn synchronized_setup_rejects_peer_and_substituted_native_anchors_before_r
             &setup.cipher,
         )
     };
-    for mutation in 0..7 {
+    for (mutation, expected) in [
+        "setup intent is not this recipient's local verdict",
+        "setup intent is not this recipient's local verdict",
+        "verified setup does not match the recovered private material",
+        "recipient setup differs from independently retained native PK shares",
+        "saved synchronized native PK shares differ from the fixed roster",
+        "recipient setup differs from independently retained native PK shares",
+        "invalid synchronized public-signal layout",
+        "local recipient proof differs from the setup verdict",
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let mut material = material.clone();
         let mut candidate = valid.clone();
         let mut ec = test_ec(30);
@@ -207,7 +241,15 @@ async fn synchronized_setup_rejects_peer_and_substituted_native_anchors_before_r
             }
             1 => candidate.e3_id = E3id::new("999", 1),
             2 => candidate.setup.key_bundle[31] ^= 1,
-            3 => candidate.setup.threshold_keys.swap(0, 1),
+            3 => {
+                candidate.setup.threshold_keys.swap(0, 1);
+                let mut public = candidate.proof.public_signals.to_vec();
+                let first = (4 + candidate.setup.dealers.len()) * 32;
+                for byte in 0..32 {
+                    public.swap(first + byte, first + 32 + byte);
+                }
+                candidate.proof.public_signals = ArcBytes::from_bytes(&public);
+            }
             4 => {
                 material.threshold_pk_shares.remove(&2);
             }
@@ -216,25 +258,177 @@ async fn synchronized_setup_rejects_peer_and_substituted_native_anchors_before_r
                     .threshold_pk_shares
                     .insert(2, setup.pending[1].full_share.pk_share.clone());
             }
-            _ => candidate.proof.public_signals = ArcBytes::from_bytes(&[]),
+            6 => candidate.proof.public_signals = ArcBytes::from_bytes(&[]),
+            _ => candidate.setup.dealer_batch[31] ^= 1,
         }
-        assert!(intent(material, TypedEvent::new(candidate, ec)).is_err());
+        let error = intent(material, TypedEvent::new(candidate, ec)).unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "mutation {mutation}: {error:#}"
+        );
     }
     assert!(intent(material, TypedEvent::new(valid, test_ec(30))).is_ok());
     Ok(())
 }
 
 #[actix::test]
+async fn closed_setup_storage_is_not_corruption_and_is_ignored_at_shutdown() -> Result<()> {
+    let setup = Setup::new().await?;
+    for shutdown in [false, true] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let (node, history) = actor(
+            &store,
+            ThresholdKeyshareRecoveryState {
+                ciphernode_selected: Some(TypedEvent::new(setup.selected[0].clone(), test_ec(1))),
+                ..Default::default()
+            },
+            setup.signers[0].clone(),
+            setup.cipher.clone(),
+            setup.interfold,
+            CanonicalPublicKeys::default(),
+        )
+        .await?;
+        let (bus, _) = node.send(SetupStorageState).await?;
+        if shutdown {
+            bus.publish_shutdown_and_wait().await?;
+        }
+        store.shutdown().await?;
+        for _ in 0..2 {
+            node.send(DriveSetup {
+                result: None,
+                effects: true,
+            })
+            .await??;
+            let (_, blocked) = node.send(SetupStorageState).await?;
+            assert!(!node.send(SetupRetryPending).await?);
+            assert_eq!(blocked, !shutdown);
+        }
+        if !shutdown {
+            let events = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+            assert!(!events.timed_out);
+            let InterfoldEventData::InterfoldError(error) = events.events[0].get_data() else {
+                panic!("expected a storage closure report");
+            };
+            assert!(
+                error.message.contains("setup storage is closed"),
+                "{}",
+                error.message
+            );
+            assert!(!error.message.contains("operator repair"));
+        }
+        node.send(Die).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_setup_permanent_saved_errors_are_reported_once_without_redrive() -> Result<()>
+{
+    tokio::time::pause();
+    let setup = Setup::new().await?;
+    let DecryptionKeyPlan::Proceed {
+        synchronized: Some(material),
+        ..
+    } = setup.plan(0)?
+    else {
+        unreachable!()
+    };
+    let intent = SynchronizedSetupIntent::new(
+        setup.selected[0].clone(),
+        material.clone(),
+        TypedEvent::new(result(&setup, &material, 0)?, test_ec(30)),
+        setup.interfold,
+        &setup.cipher,
+    )?;
+    for malformed_bytes in [true, false] {
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let row = store
+            .repositories()
+            .threshold_keyshare_recovery_payloads(&setup.selected[0].e3_id)
+            .scope("synchronized-setup");
+        if malformed_bytes {
+            row.write_sync([1_u8]).await?;
+        } else {
+            let mut encoded = bincode::serialize(&intent)?;
+            assert_eq!(encoded[0], 1); // the durable intent's version byte
+            encoded[0] = 2;
+            row.write_sync(e3_utils::deserialize_exact::<SynchronizedSetupIntent>(
+                &encoded,
+            )?)
+            .await?;
+        }
+        let (node, history) = actor(
+            &store,
+            ThresholdKeyshareRecoveryState {
+                ciphernode_selected: Some(TypedEvent::new(setup.selected[0].clone(), test_ec(1))),
+                synchronized: Some(material.clone()),
+                ..Default::default()
+            },
+            setup.signers[0].clone(),
+            setup.cipher.clone(),
+            setup.interfold,
+            CanonicalPublicKeys::default(),
+        )
+        .await?;
+        for seconds in [0, 2, 8, 40] {
+            tokio::time::advance(std::time::Duration::from_secs(seconds)).await;
+            node.send(DriveSetup {
+                result: None,
+                effects: true,
+            })
+            .await??;
+            assert!(node.send(SetupCheckpoint).await?.is_none());
+            assert!(
+                !node.send(SetupRetryPending).await?,
+                "malformed bytes: {malformed_bytes}"
+            );
+        }
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        let errors = events
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::InterfoldError(error) => Some(error.message.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1, "malformed bytes: {malformed_bytes}");
+        assert!(errors[0].contains("saved setup cannot be decoded or validated"));
+        assert!(consents(&history).await?.is_empty());
+        node.send(Die).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_input() -> Result<()> {
-    struct FailFlush(bool);
+    tokio::time::pause();
+    #[derive(Default)]
+    struct FailFlush {
+        recovered: bool,
+        attempts: u32,
+    }
     impl Actor for FailFlush {
         type Context = actix::Context<Self>;
     }
     impl Handler<e3_events::Flush> for FailFlush {
         type Result = Result<()>;
         fn handle(&mut self, _: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
-            ensure!(self.0, "injected setup flush failure");
+            self.attempts += 1;
+            ensure!(
+                self.recovered,
+                "injected setup flush failure {}",
+                self.attempts
+            );
             Ok(())
+        }
+    }
+    #[derive(Message)]
+    #[rtype(result = "u32")]
+    struct FlushAttempts;
+    impl Handler<FlushAttempts> for FailFlush {
+        type Result = u32;
+        fn handle(&mut self, _: FlushAttempts, _: &mut Self::Context) -> Self::Result {
+            self.attempts
         }
     }
     #[derive(Message)]
@@ -243,7 +437,7 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
     impl Handler<RecoverFlush> for FailFlush {
         type Result = ();
         fn handle(&mut self, _: RecoverFlush, _: &mut Self::Context) {
-            self.0 = true;
+            self.recovered = true;
         }
     }
     let setup = Setup::new().await?;
@@ -269,7 +463,7 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
         synchronized: Some(material),
         ..Default::default()
     };
-    let flush = FailFlush(false).start();
+    let flush = FailFlush::default().start();
     let store = DataStore::from_in_mem(&InMemStore::new(false).start())
         .with_flush_recipient(flush.clone().recipient());
     let (node, history) = actor(
@@ -288,7 +482,23 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
     .await??;
     assert!(node.send(SetupCheckpoint).await?.is_none());
     assert!(consents(&history).await?.is_empty());
+    assert_eq!(flush.send(FlushAttempts).await?, 1);
+    for (millis, attempts) in [(1101, 2), (1000, 2), (1201, 3)] {
+        tokio::time::advance(std::time::Duration::from_millis(millis)).await;
+        assert!(node.send(SetupCheckpoint).await?.is_none());
+        assert_eq!(flush.send(FlushAttempts).await?, attempts);
+        assert!(consents(&history).await?.is_empty());
+    }
+    let errors = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .into_iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::InterfoldError(_)))
+        .count();
+    // Every injected error differs, so journal deduplication cannot hide repeated reports.
+    assert_eq!(errors, 1);
     flush.send(RecoverFlush).await?;
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
     let consent = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let next = history
@@ -496,6 +706,7 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         drop(node);
         store.shutdown().await?;
         drop(store);
+        SledDb::close_all_connections();
         let store = DataStore::from_sled_store(&SledStore::new(&bus, &dir.path().to_path_buf())?);
         let (node, history) = actor(
             &store,
@@ -506,8 +717,13 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
             keys.clone(),
         )
         .await?;
+        let mut stale = (**saved.result()).clone();
+        stale.proof.data = ArcBytes::from_bytes(&[88]);
+        if owner == 1 {
+            stale.setup.key_bundle[31] ^= 1;
+        }
         node.send(DriveSetup {
-            result: None,
+            result: Some(TypedEvent::new(stale, test_ec(31))),
             effects: false,
         })
         .await??;
@@ -532,6 +748,8 @@ async fn synchronized_consent_waits_for_context_and_effects_then_reopens_exact_i
         node.send(Die).await?;
         drop(node);
         store.shutdown().await?;
+        drop(store);
+        SledDb::close_all_connections();
     }
     Ok(())
 }

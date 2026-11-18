@@ -87,14 +87,18 @@ impl EventAdmission {
         let _ = self.failure_signal.set(signal);
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        !self.accepting.load(Ordering::Acquire)
+    }
+
     pub(crate) fn enter(self: &Arc<Self>) -> Result<EventAdmissionGuard> {
-        if !self.accepting.load(Ordering::Acquire) {
+        if self.is_closed() {
             bail!(AdmissionClosed);
         }
 
         self.in_flight.fetch_add(1, Ordering::AcqRel);
         let guard = EventAdmissionGuard(Arc::clone(self));
-        if !self.accepting.load(Ordering::Acquire) {
+        if self.is_closed() {
             drop(guard);
             bail!(AdmissionClosed);
         }

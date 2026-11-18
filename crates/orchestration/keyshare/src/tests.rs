@@ -5848,6 +5848,49 @@ async fn start_ended(
 }
 
 #[actix::test]
+async fn synchronized_setup_failure_does_not_keep_ss_or_sync_bfv_keys() -> Result<()> {
+    for profile in [
+        e3_fhe_params::BfvProfile::SsInsecure64,
+        e3_fhe_params::BfvProfile::SyncDecInsecure64,
+    ] {
+        let e3_id = E3id::new("terminal-setup-failure", 1);
+        let (mut keyshare, _, _, _) = build_actor(
+            &e3_id,
+            collecting_encryption_keys_state(&e3_id),
+            7_200,
+            7_200,
+            &[],
+        )
+        .await?;
+        keyshare.params_profile = profile;
+        let keys = test_bfv_key();
+        keys.record(&BfvKeyIntent {
+            sk_bfv: SensitiveBytes::from_encrypted(&[1]),
+            pk_bfv: ArcBytes::from_bytes(&[2]),
+        })
+        .await?;
+        keyshare.bfv_keys = keys.clone();
+        let flushes = StoppedStore.start();
+        actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        keyshare.recovery_payloads = ThresholdKeyshareRecoveryPayloads::new(
+            DataStore::from_in_mem(&InMemStore::new(false).start())
+                .with_flush_recipient(flushes.recipient()),
+        );
+        let node = keyshare.start();
+        node.send(keyshare_event(
+            E3RequestComplete { e3_id },
+            1,
+            EventSource::Local,
+        ))
+        .await?;
+        // This mailbox barrier runs after the failed cleanup's async attempt.
+        node.send(Die).await?;
+        assert!(keys.restore().await?.is_none(), "{profile}");
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn a_late_encryption_key_batch_starts_no_share_generation_for_an_ended_e3() -> Result<()> {
     let e3_id = E3id::new("100", 1);
     let (keyshare, repo, _, _) = build_actor(

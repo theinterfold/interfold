@@ -452,13 +452,16 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         let setup = self.recovery_payloads.synchronized_setup();
         ctx.wait(
             async move {
-                setup.settle().await?;
-                keys.settle().await
+                keys.settle().await.context("BFV keypair removal failed")?;
+                setup
+                    .settle()
+                    .await
+                    .context("synchronized setup removal failed")
             }
             .into_actor(self)
             .map(move |settled, actor, ctx| {
                 if let Err(error) = settled {
-                    error!(%error, "Could not remove the BFV key of an ended E3");
+                    error!(error = %format!("{error:#}"), "Could not finish ended E3 key cleanup");
                     ctx.notify_later(event, std::time::Duration::from_secs(1));
                     return;
                 }
