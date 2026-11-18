@@ -6,17 +6,28 @@ import { appendFileSync } from 'node:fs'
 import { ROOT_DIR, fail, gitSucceeds, resolveCommit, runGit } from './core.mjs'
 import { normalizeVersion, releaseChannel, validateReleaseVersion } from './version.mjs'
 
-export function verifyReleaseCandidate(tagRef, protectedRef, expectedRef, cwd = ROOT_DIR) {
+/**
+ * The branches whose history may contain a release tag: main, and the maintenance branch of the
+ * release's minor line (`release/X.Y.x`). The maintenance branch carries patch releases cut from an
+ * earlier tag. Both branches must be protected on GitHub.
+ */
+export function releaseBranches(version) {
+  const [major, minor] = normalizeVersion(version).split('.')
+  return ['main', `release/${major}.${minor}.x`]
+}
+
+export function verifyReleaseCandidate(tagRef, protectedRefs, expectedRef, cwd = ROOT_DIR) {
   const tagCommit = resolveCommit(tagRef, cwd)
-  const protectedCommit = resolveCommit(protectedRef, cwd)
   const expectedCommit = resolveCommit(expectedRef, cwd)
 
   if (tagCommit !== expectedCommit) {
     fail(`tag ${tagRef} resolves to ${tagCommit}, not event commit ${expectedCommit}`)
   }
 
-  if (!gitSucceeds(['merge-base', '--is-ancestor', tagCommit, protectedCommit], cwd)) {
-    fail(`tag commit ${tagCommit} is not in protected history ${protectedRef}`)
+  const refs = [protectedRefs].flat()
+  const inHistory = refs.some((ref) => gitSucceeds(['merge-base', '--is-ancestor', tagCommit, resolveCommit(ref, cwd)], cwd))
+  if (!inHistory) {
+    fail(`tag commit ${tagCommit} is not in protected history ${refs.join(' or ')}`)
   }
 
   return tagCommit
@@ -34,8 +45,16 @@ export function prepareRelease(environment = process.env, rootDir = ROOT_DIR) {
   }
 
   const version = normalizeVersion(tagName)
-  runGit(['fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'], rootDir)
-  const candidateSha = verifyReleaseCandidate(tagRef, 'refs/remotes/origin/main', eventSha, rootDir)
+  const protectedRefs = []
+  for (const branch of releaseBranches(version)) {
+    const remoteRef = `refs/remotes/origin/${branch}`
+    const refspec = `+refs/heads/${branch}:${remoteRef}`
+    // main must exist; the maintenance branch exists only for a minor line with patch releases.
+    if (branch === 'main') runGit(['fetch', '--no-tags', 'origin', refspec], rootDir)
+    else if (!gitSucceeds(['fetch', '--no-tags', 'origin', refspec], rootDir)) continue
+    protectedRefs.push(remoteRef)
+  }
+  const candidateSha = verifyReleaseCandidate(tagRef, protectedRefs, eventSha, rootDir)
   validateReleaseVersion(version, rootDir)
 
   const isPrerelease = version.includes('-')
@@ -44,7 +63,7 @@ export function prepareRelease(environment = process.env, rootDir = ROOT_DIR) {
   writeOutput('channel', releaseChannel(version), outputFile)
   writeOutput('candidate_sha', candidateSha, outputFile)
 
-  console.log(`Validated v${version} at ${candidateSha} in origin/main.`)
+  console.log(`Validated v${version} at ${candidateSha} in ${protectedRefs.join(' or ')}.`)
   return { candidateSha, isPrerelease, version }
 }
 
@@ -63,16 +82,17 @@ export function tagRelease(versionInput, rootDir = ROOT_DIR) {
     branch = ''
   }
 
-  if (branch !== 'main') {
-    fail(`run this command on main, not ${branch || 'a detached commit'}`)
+  const branches = releaseBranches(version)
+  if (!branches.includes(branch)) {
+    fail(`run this command on ${branches.join(' or ')}, not ${branch || 'a detached commit'}`)
   }
 
-  runGit(['fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'], rootDir)
+  runGit(['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], rootDir)
   const localSha = runGit(['rev-parse', 'HEAD'], rootDir)
-  const remoteSha = runGit(['rev-parse', 'refs/remotes/origin/main'], rootDir)
+  const remoteSha = runGit(['rev-parse', `refs/remotes/origin/${branch}`], rootDir)
 
   if (localSha !== remoteSha) {
-    fail(`local main is ${localSha}, but origin/main is ${remoteSha}`)
+    fail(`local ${branch} is ${localSha}, but origin/${branch} is ${remoteSha}`)
   }
 
   validateReleaseVersion(version, rootDir)

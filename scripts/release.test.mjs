@@ -61,6 +61,28 @@ describe('release candidate ancestry', () => {
     assert.throws(() => verifyReleaseCandidate('v2.0.0', 'main', divergent, repository), /not in protected history/)
   })
 
+  test('accepts a patch tag only in the history of a listed maintenance branch', () => {
+    const repository = temporaryDirectory('interfold-release-maintenance')
+    git(repository, 'init', '--quiet', '--initial-branch=main')
+    git(repository, 'config', 'user.name', 'Release Test')
+    git(repository, 'config', 'user.email', 'release-test@example.invalid')
+
+    writeFileSync(join(repository, 'artifact'), 'release\n')
+    git(repository, 'add', 'artifact')
+    git(repository, 'commit', '--quiet', '-m', 'release')
+    git(repository, 'branch', 'release/1.0.x')
+    writeFileSync(join(repository, 'artifact'), 'main advanced\n')
+    git(repository, 'commit', '--quiet', '-am', 'advance main')
+    git(repository, 'checkout', '--quiet', 'release/1.0.x')
+    writeFileSync(join(repository, 'artifact'), 'backported fix\n')
+    git(repository, 'commit', '--quiet', '-am', 'backport')
+    const patch = git(repository, 'rev-parse', 'HEAD')
+    git(repository, 'tag', 'v1.0.1', patch)
+
+    assert.equal(verifyReleaseCandidate('v1.0.1', ['main', 'release/1.0.x'], patch, repository), patch)
+    assert.throws(() => verifyReleaseCandidate('v1.0.1', ['main'], patch, repository), /not in protected history main$/)
+  })
+
   test('promotes the validated commit to the remote stable tag', () => {
     const repository = temporaryDirectory('interfold-stable-source')
     const remote = temporaryDirectory('interfold-stable-remote')
