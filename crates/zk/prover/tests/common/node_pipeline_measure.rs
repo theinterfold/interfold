@@ -38,7 +38,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::common::active_bin_committee;
 use crate::node_fold_witness;
 use e3_committee::{CiphernodesCommittee, CiphernodesCommitteeSize};
-use e3_events::{CircuitName, Proof};
+use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_task_pool::{TaskPool, TaskTimeouts};
 use e3_zk_config::DkgInputType;
@@ -820,13 +820,16 @@ pub fn run_decryption(
         e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&c7_config, preset)
             .expect("C7 sample")
     });
+    // Production proves C7 non-ZK (`handle_decrypted_shares_aggregation_proof`): the decryption
+    // aggregator verifies it in-circuit.
     aggregator.run("c7", || {
         measure("c7", || {
-            DecryptedSharesAggregationCircuit.prove(
+            DecryptedSharesAggregationCircuit.prove_with_variant(
                 prover,
                 &c7_config,
                 &c7_data,
                 "measure-c7",
+                CircuitVariant::Default,
                 artifacts_dir,
             )
         })
