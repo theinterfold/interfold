@@ -186,6 +186,25 @@ impl Multithread {
     }
 }
 
+/// Light jobs that run at once. Together they take the whole pool: all admission units and all
+/// threads, split evenly.
+const LIGHT_JOBS_AT_ONCE: u32 = 4;
+
+/// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
+/// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
+/// batch faster than one at a time on every thread. A C3 job takes a quarter of the pool's units,
+/// so at most four run at once and nothing else is admitted beside them. Every other job takes one
+/// slot and every thread, as before.
+fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
+    match request {
+        ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_)) => (
+            pool.capacity_units() / LIGHT_JOBS_AT_ONCE,
+            Some(pool.threads() / LIGHT_JOBS_AT_ONCE as usize),
+        ),
+        _ => (e3_task_pool::SLOT_UNITS, None),
+    }
+}
+
 fn task_group(scope: &str, e3_id: &E3id) -> String {
     e3_task_pool::scoped_task_group(scope, e3_id)
 }
@@ -670,6 +689,7 @@ async fn handle_compute_request_event(
     let mut cancellation = _running.cancellation.clone();
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
+    let (units, light_job_threads) = job_weight(&request_snapshot.request, &pool);
     let retries_local_worker_failures =
         is_zk || is_retryable_trbfv_request(&request_snapshot.request);
     let mut attempt = 1usize;
@@ -686,6 +706,12 @@ async fn handle_compute_request_event(
         } else {
             zk_prover.clone()
         };
+        let prover_for_worker = match light_job_threads {
+            Some(threads) => {
+                prover_for_worker.map(|prover| Arc::new(prover.with_bb_threads(threads)))
+            }
+            None => prover_for_worker,
+        };
         let request_for_worker = request_snapshot.clone();
         let report_for_worker = report.clone();
         let rng_for_worker = rng.clone();
@@ -696,6 +722,7 @@ async fn handle_compute_request_event(
                 cancellation.clone(),
                 job_name.clone(),
                 TaskTimeouts::default(),
+                units,
                 move || {
                     handle_compute_request(
                         rng_for_worker,
