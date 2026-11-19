@@ -13,6 +13,7 @@ case "$1" in
   *) exit 2 ;;
 esac
 E3_CUSTOM_BB=$(command -v bb) || { echo "bb not found" >&2; exit 2; }
+if ! solc --version | grep -q '^Version: 0\.8\.28+'; then echo "solc 0.8.28 required" >&2; exit 2; fi
 export E3_CUSTOM_BB E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1
 guard=(python3 scripts/circuits/guard-proof-rss.py)
 "${guard[@]}" cargo test --locked -p e3-trbfv --test synchronized_dkg threshold_decryption:: -- --ignored --nocapture
