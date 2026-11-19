@@ -220,7 +220,7 @@ fn check_exact_l_commitments(
     // C4's outputs (the aggregate commitment, then the limb key tree) follow the rows.
     let c4_row_start = src_idx * l * FIELD_BYTE_LEN;
     let c4_row_end = c4_row_start + l * FIELD_BYTE_LEN;
-    if target_public_signals.len() < c4_row_end + FIELD_BYTE_LEN {
+    if target_public_signals.len() < c4_row_end + 2 * FIELD_BYTE_LEN {
         return false;
     }
 
