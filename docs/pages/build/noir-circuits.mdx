@@ -92,17 +92,17 @@ All binary packages depend on one shared library. The Nargo package name of the 
   </FileTree.Folder>
 </FileTree>
 
-| Directory                   | Contents                                                                                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                 |
-| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.            |
-| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files. |
+| Directory                   | Contents                                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                                  |
+| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.                             |
+| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                  |
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4), and the C2 chunk circuits those two verify. |
-| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).               |
-| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 Chonk stacks.                                                                                                     |
-| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                    |
-| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                      |
-| `benchmarks`                | Timing scripts and reports.                                                                                                                                            |
+| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).                                |
+| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 Chonk stacks.                                                                                                                      |
+| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                     |
+| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                                       |
+| `benchmarks`                | Timing scripts and reports.                                                                                                                                                             |
 
 The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
 example, `CircuitName::PkBfv` is `pk`, and `CircuitName::DkgAggregator` is `dkg_aggregator`. The
