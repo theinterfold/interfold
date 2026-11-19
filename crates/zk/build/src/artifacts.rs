@@ -1458,6 +1458,25 @@ mod tests {
             r#"{"required_bb_version":"0.0.0-invalid"}"#,
         )
         .unwrap();
+        // The Chonk workspace exists before the markers are placed, so its markers land in the
+        // workspace target, where nargo writes them.
+        let chonk = root.join("circuits/bin/chonk");
+        fs::create_dir_all(chonk.join("c3_chonk_app/src")).unwrap();
+        fs::write(
+            chonk.join("Nargo.toml"),
+            "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/Nargo.toml"),
+            "[package]\nname = \"c3_chonk_app\"\ntype = \"bin\"\nauthors = []\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/src/main.nr"),
+            "fn main(x: Field, y: Field) -> pub Field { x + y }\n",
+        )
+        .unwrap();
         for marker in dist_markers(&pair)
             .into_iter()
             .chain(bin_markers(root).unwrap())
@@ -1518,23 +1537,6 @@ mod tests {
         // A Chonk circuit is built with `write_vk --scheme chonk`, which writes no hash. The
         // qualification must derive its key and hash the way the build does.
         crate::tests::write_pins(root);
-        let chonk = root.join("circuits/bin/chonk");
-        fs::create_dir_all(chonk.join("c3_chonk_app/src")).unwrap();
-        fs::write(
-            chonk.join("Nargo.toml"),
-            "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
-        )
-        .unwrap();
-        fs::write(
-            chonk.join("c3_chonk_app/Nargo.toml"),
-            "[package]\nname = \"c3_chonk_app\"\ntype = \"bin\"\nauthors = []\n",
-        )
-        .unwrap();
-        fs::write(
-            chonk.join("c3_chonk_app/src/main.nr"),
-            "fn main(x: Field, y: Field) -> pub Field { x + y }\n",
-        )
-        .unwrap();
         let mut only_chonk = request();
         only_chonk.groups =
             super::super::GroupSelection::Selected(vec![super::super::Group::Chonk]);
