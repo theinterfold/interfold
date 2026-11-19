@@ -63,9 +63,11 @@ test('deployment routes retain chain policy and order while projecting owner met
       ['insecure-64', 'minimum'],
       ['insecure-64', 'micro'],
       ['insecure-64', 'small'],
+      ['insecure-64', 'large'],
       ['secure-8192', 'minimum'],
       ['secure-8192', 'micro'],
       ['secure-8192', 'small'],
+      ['secure-8192', 'large'],
     ],
   )
   assert.deepEqual(

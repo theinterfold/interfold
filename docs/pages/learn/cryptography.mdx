@@ -275,8 +275,8 @@ deployment script refuses to deploy it on a chain that is not a known test or lo
 | Chain            | Chain ID    | Presets                      | Committee sizes in the circuit build |
 | ---------------- | ----------- | ---------------------------- | ------------------------------------ |
 | Ethereum mainnet | 1           | `secure-8192`                | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
-| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`, `Large` |
+| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`, `Large` |
 
 Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and
