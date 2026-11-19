@@ -44,6 +44,8 @@ fn cap_honest_party_ids(
 
 #[path = "state.rs"]
 mod state;
+#[path = "synchronized.rs"]
+pub mod synchronized;
 #[path = "transitions.rs"]
 mod transitions;
 #[path = "validation.rs"]

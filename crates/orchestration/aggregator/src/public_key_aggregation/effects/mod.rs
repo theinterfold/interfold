@@ -15,6 +15,7 @@ mod fold_node_proofs;
 mod handle_compute_results;
 mod publish_result;
 mod recovery;
+pub(super) mod synchronized;
 mod verify_key_proofs;
 
 impl PublicKeyAggregator {

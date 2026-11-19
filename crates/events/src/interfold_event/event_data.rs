@@ -163,6 +163,7 @@ interfold_event_data!(
     SynchronizedRecipientInputsReady,
     SynchronizedRecipientProofReady,
     SynchronizedDkgConsentPublished,
+    SynchronizedDkgPublicationReady,
 );
 
 impl fmt::Display for EventType {
@@ -305,6 +306,9 @@ impl InterfoldEventData {
             }
             InterfoldEventData::SynchronizedDkgConsentPublished(ref data) => {
                 Some(data.attestation.payload.e3_id.clone())
+            }
+            InterfoldEventData::SynchronizedDkgPublicationReady(ref data) => {
+                Some(data.e3_id.clone())
             }
             InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
                 Some(data.e3_id.clone())

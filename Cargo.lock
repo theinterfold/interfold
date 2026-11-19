@@ -3593,6 +3593,8 @@ dependencies = [
  "futures",
  "rand 0.9.5",
  "serde",
+ "tempfile",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4197,6 +4199,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "e3-aggregator",
  "e3-bfv-client",
  "e3-committee",
  "e3-committee-hash",

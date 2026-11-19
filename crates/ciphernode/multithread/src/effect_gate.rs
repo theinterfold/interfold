@@ -8,12 +8,13 @@
 
 use actix::{Actor, Context, Handler, Recipient};
 use e3_events::{
-    BusHandle, ComputeRequestError, ComputeRequestKind, ComputeResponse, CorrelationId, E3Stage,
-    E3id, Event, EventContextAccessors, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
+    BusHandle, ComputeRequest, ComputeRequestError, ComputeRequestKind, ComputeResponse,
+    CorrelationId, E3Stage, E3id, Event, EventContextAccessors, EventPublisher, EventSubscriber,
+    EventType, InterfoldEvent, InterfoldEventData, ProofType, TypedEvent, VerifyShareProofsRequest,
+    ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
@@ -41,29 +42,55 @@ struct ForwardedRequest {
 /// later ID waiting for good.
 const REFORWARD_AFTER: Duration = Duration::from_secs(10 * 60);
 
-/// The compute requests that the worker runs, queued ones included, by correlation ID with the
-/// number of runs: IDs restart from 1 in each process, so a replayed request can share its ID with
-/// a new one. The gate sends a request to the worker again only when no earlier run of it is left,
-/// so a slow proof under load runs once instead of once per retry.
+/// Attempts from mailbox handoff through completion. IDs restart each boot, so more than one
+/// attempt can share an E3/correlation. A guard owns every entry, even before worker intake.
 #[derive(Clone, Default)]
-pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);
+pub(crate) struct RunningJobs(Arc<Mutex<HashMap<(E3id, CorrelationId), RunningState>>>);
+
+struct RunningState {
+    runs: usize,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl Default for RunningState {
+    fn default() -> Self {
+        Self {
+            runs: 0,
+            cancelled: tokio::sync::watch::channel(false).0,
+        }
+    }
+}
 
 impl RunningJobs {
-    /// Note that the worker runs `id` until the returned guard drops.
-    pub(crate) fn start(&self, id: CorrelationId) -> RunningJob {
-        *self.lock().entry(id).or_default() += 1;
+    /// Track an attempt until its mailbox item or worker future drops.
+    pub(crate) fn start(&self, e3_id: &E3id, correlation: CorrelationId) -> RunningJob {
+        let id = (e3_id.clone(), correlation);
+        let mut jobs = self.lock();
+        let state = jobs.entry(id.clone()).or_default();
+        state.runs += 1;
         RunningJob {
             jobs: self.clone(),
             id,
+            cancellation: state.cancelled.subscribe(),
         }
     }
 
-    pub(crate) fn any(&self, ids: &[CorrelationId]) -> bool {
+    pub(crate) fn any(&self, e3_id: &E3id, ids: &[CorrelationId]) -> bool {
         let running = self.lock();
-        ids.iter().any(|id| running.contains_key(id))
+        ids.iter().any(|id| {
+            running
+                .get(&(e3_id.clone(), *id))
+                .is_some_and(|state| state.runs > 0)
+        })
     }
 
-    fn lock(&self) -> MutexGuard<'_, HashMap<CorrelationId, usize>> {
+    fn cancel(&self, e3_id: &E3id, id: CorrelationId) {
+        if let Some(state) = self.lock().get(&(e3_id.clone(), id)) {
+            state.cancelled.send_replace(true);
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<(E3id, CorrelationId), RunningState>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -71,19 +98,27 @@ impl RunningJobs {
 /// A compute request that the worker runs. Dropping it ends the run.
 pub(crate) struct RunningJob {
     jobs: RunningJobs,
-    id: CorrelationId,
+    id: (E3id, CorrelationId),
+    pub(crate) cancellation: tokio::sync::watch::Receiver<bool>,
 }
 
 impl Drop for RunningJob {
     fn drop(&mut self) {
         let mut running = self.jobs.lock();
-        if let Some(runs) = running.get_mut(&self.id) {
-            *runs -= 1;
-            if *runs == 0 {
+        if let Some(state) = running.get_mut(&self.id) {
+            state.runs -= 1;
+            if state.runs == 0 {
                 running.remove(&self.id);
             }
         }
     }
+}
+
+#[derive(actix::Message)]
+#[rtype(result = "()")]
+pub(crate) struct ForwardedCompute {
+    pub(crate) request: TypedEvent<ComputeRequest>,
+    pub(crate) running: RunningJob,
 }
 
 /// Buffers compute effects observed during EventStore replay. Identical
@@ -98,12 +133,13 @@ impl Drop for RunningJob {
 /// correlation ID, including IDs created after restart. Terminal events clear
 /// the per-E3 keys.
 pub(crate) struct ComputeEffectGate {
-    target: Recipient<InterfoldEvent>,
+    target: Recipient<ForwardedCompute>,
     bus: Option<BusHandle>,
     enabled: bool,
     pending: HashMap<RequestKey, InterfoldEvent>,
     forwarded: HashMap<RequestKey, ForwardedRequest>,
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
+    superseded: HashSet<(E3id, CorrelationId)>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
@@ -112,7 +148,7 @@ pub(crate) struct ComputeEffectGate {
 }
 
 impl ComputeEffectGate {
-    fn new(target: Recipient<InterfoldEvent>, initial_stages: HashMap<E3id, E3Stage>) -> Self {
+    fn new(target: Recipient<ForwardedCompute>, initial_stages: HashMap<E3id, E3Stage>) -> Self {
         Self {
             target,
             bus: None,
@@ -120,6 +156,7 @@ impl ComputeEffectGate {
             pending: HashMap::new(),
             forwarded: HashMap::new(),
             request_keys_by_correlation: HashMap::new(),
+            superseded: HashSet::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
             canonical_keys: Default::default(),
@@ -247,6 +284,17 @@ impl ComputeEffectGate {
         }
     }
 
+    fn synchronized_generation(kind: &ComputeRequestKind) -> bool {
+        match kind {
+            ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(_)) => true,
+            ComputeRequestKind::Zk(ZkRequest::PkAggregation(request)) => {
+                request.params_profile.protocol()
+                    == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+            }
+            _ => false,
+        }
+    }
+
     /// Forward a compute once. Send its outcome to later request IDs.
     fn forward(&mut self, event: InterfoldEvent) -> bool {
         if let Some(key) = Self::request_key(&event) {
@@ -266,6 +314,10 @@ impl ComputeEffectGate {
                 }
             }
             let correlation_id = request.correlation_id;
+            if self.superseded.contains(&(key.0.clone(), correlation_id)) {
+                return false;
+            }
+            self.supersede_publication(&key);
             self.request_keys_by_correlation
                 .insert(correlation_id, key.clone());
             if let Some(outcome) = self.replayed_responses.get(&key) {
@@ -282,12 +334,19 @@ impl ComputeEffectGate {
                     return false;
                 }
                 Some(forwarded) => {
-                    if let Some(outcome) = forwarded.outcome.clone() {
-                        self.publish_outcome(&outcome, correlation_id, &event);
-                        return false;
-                    }
-                    if forwarded.forwarded_at.elapsed() < self.reforward_after
-                        || self.running.any(&forwarded.correlation_ids)
+                    let failed_generation = match forwarded.outcome.clone() {
+                        Some(ComputeOutcome::Error(_)) if Self::synchronized_generation(&key.1) => {
+                            true
+                        }
+                        Some(outcome) => {
+                            self.publish_outcome(&outcome, correlation_id, &event);
+                            return false;
+                        }
+                        None => false,
+                    };
+                    if self.running.any(&key.0, &forwarded.correlation_ids)
+                        || (!failed_generation
+                            && forwarded.forwarded_at.elapsed() < self.reforward_after)
                     {
                         if !forwarded.waiting.contains(&correlation_id) {
                             forwarded.waiting.push(correlation_id);
@@ -296,10 +355,12 @@ impl ComputeEffectGate {
                     }
                     info!(
                         e3_id = %key.0,
-                        "Sending a compute request to the worker again: its result has not reached the gate"
+                        failed_generation,
+                        "Sending a fresh correlated compute attempt to the worker"
                     );
                     forwarded.correlation_ids.push(correlation_id);
                     forwarded.forwarded_at = Instant::now();
+                    forwarded.outcome = None;
                 }
                 None => {
                     self.forwarded.insert(
@@ -313,9 +374,54 @@ impl ComputeEffectGate {
                     );
                 }
             }
+            let running = self.running.start(&request.e3_id, correlation_id);
+            let (data, ec) = event.into_components();
+            let InterfoldEventData::ComputeRequest(request) = data else {
+                unreachable!("checked compute request above")
+            };
+            self.target.do_send(ForwardedCompute {
+                request: TypedEvent::new(request, ec),
+                running,
+            });
+            return true;
         }
-        self.target.do_send(event);
-        true
+        false
+    }
+
+    fn supersede_publication(&mut self, current: &RequestKey) {
+        let publication = |kind: &ComputeRequestKind| {
+            matches!(kind,
+                ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work))
+                    if matches!(work.job, e3_events::SynchronizedDkgProofJob::Publication { .. })
+            )
+        };
+        if !publication(&current.1) {
+            return;
+        }
+        let obsolete = self
+            .forwarded
+            .keys()
+            .filter(|key| key.0 == current.0 && *key != current && publication(&key.1))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in obsolete {
+            if let Some(old) = self.forwarded.remove(&key) {
+                self.superseded.extend(
+                    old.correlation_ids
+                        .iter()
+                        .chain(&old.waiting)
+                        .map(|id| (key.0.clone(), *id)),
+                );
+                if old.outcome.is_none() {
+                    for id in old.correlation_ids {
+                        self.running.cancel(&key.0, id);
+                    }
+                }
+            }
+            self.replayed_responses.remove(&key);
+            self.request_keys_by_correlation
+                .retain(|_, value| value != &key);
+        }
     }
 
     fn on_outcome(&mut self, event: &InterfoldEvent) {
@@ -366,6 +472,12 @@ impl ComputeEffectGate {
             // A request sent to the worker again can finish twice. Keep the first success.
             return;
         }
+        if matches!(outcome, ComputeOutcome::Error(_))
+            && forwarded.correlation_ids.last() != Some(&correlation_id)
+        {
+            // A late failure cannot answer a newer attempt or its waiting correlations.
+            return;
+        }
         forwarded.outcome = Some(outcome.clone());
         // The worker answers each ID it ran itself.
         let waiting = std::mem::take(&mut forwarded.waiting);
@@ -408,7 +520,7 @@ impl ComputeEffectGate {
 
     pub(crate) fn attach(
         bus: &BusHandle,
-        target: Recipient<InterfoldEvent>,
+        target: Recipient<ForwardedCompute>,
         initial_stages: HashMap<E3id, E3Stage>,
         canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
         running: RunningJobs,
@@ -467,12 +579,29 @@ impl ComputeEffectGate {
     fn cancel(&mut self, e3_id: &E3id) {
         let stage = self.stages.get(e3_id).cloned();
         let ends = |(request_id, kind): &RequestKey| {
-            request_id == e3_id && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
+            // Publication still stops new obsolete DKG requests, but must not suppress the
+            // outcomes (including waiting correlations) of already-dispatched SS work.
+            request_id == e3_id
+                && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
+                && (stage.as_ref().is_some_and(E3Stage::is_terminal)
+                    || Self::synchronized_generation(kind))
         };
         self.pending.retain(|key, _| !ends(key));
+        for (_, request) in self.forwarded.iter().filter(|(key, _)| ends(key)) {
+            if request.outcome.is_none() {
+                for id in &request.correlation_ids {
+                    self.running.cancel(e3_id, *id);
+                }
+            }
+        }
         self.forwarded.retain(|key, _| !ends(key));
         self.replayed_responses.retain(|key, _| !ends(key));
         self.request_keys_by_correlation.retain(|_, key| !ends(key));
+        if stage.as_ref().is_some_and(|stage| {
+            Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished)
+        }) {
+            self.superseded.retain(|(id, _)| id != e3_id);
+        }
     }
 }
 
@@ -509,9 +638,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::E3StageChanged(stage) => {
                 self.record_stage(stage.e3_id.clone(), stage.new_stage.clone());
-                if stage.new_stage.is_terminal() {
-                    self.cancel(&stage.e3_id);
-                }
+                self.cancel(&stage.e3_id);
             }
             _ => {}
         }
@@ -524,11 +651,11 @@ pub(crate) mod tests {
     use actix::{Addr, Message, ResponseFuture};
     use e3_committee::CiphernodesCommitteeSize;
     use e3_events::{
-        hlc_factory::HlcFactory, ComputeRequest, ComputeRequestErrorKind, ComputeResponseKind,
-        E3RequestComplete, EffectsEnabled, EventBus, EventBusConfig, EventConstructorWithTimestamp,
-        EventSource, HistoryCollector, PartyProofsToVerify, PkBfvProofRequest, Proof, ProofPayload,
-        Sequencer, SignedProofPayload, StoreEventRequested, TakeEvents, Unsequenced,
-        VerifyShareProofsRequest, ZkError, ZkRequest, ZkResponse,
+        hlc_factory::HlcFactory, ComputeRequestErrorKind, ComputeResponseKind, E3RequestComplete,
+        EffectsEnabled, EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource,
+        HistoryCollector, PartyProofsToVerify, PkBfvProofRequest, Proof, ProofPayload, Sequencer,
+        SignedProofPayload, StoreEventRequested, TakeEvents, Unsequenced, VerifyShareProofsRequest,
+        ZkError, ZkRequest, ZkResponse,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
@@ -545,13 +672,11 @@ pub(crate) mod tests {
         type Context = Context<Self>;
     }
 
-    impl Handler<InterfoldEvent> for Recorder {
+    impl Handler<ForwardedCompute> for Recorder {
         type Result = ();
 
-        fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
-            if let InterfoldEventData::ComputeRequest(request) = event.get_data() {
-                self.0.push(request.correlation_id);
-            }
+        fn handle(&mut self, msg: ForwardedCompute, _: &mut Self::Context) {
+            self.0.push(msg.request.correlation_id);
         }
     }
 
@@ -584,11 +709,24 @@ pub(crate) mod tests {
         }
     }
 
+    impl Handler<e3_events::FlushEventStores> for TestEventStore {
+        type Result = anyhow::Result<()>;
+        fn handle(
+            &mut self,
+            _: e3_events::FlushEventStores,
+            _: &mut Self::Context,
+        ) -> Self::Result {
+            Ok(())
+        }
+    }
+
     pub(crate) fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
         let event_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
         let store = TestEventStore::default().start();
-        let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+        let sequencer =
+            Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient())
+                .start();
         let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("test-gate");
         let history = bus.history();
         (bus, history)
@@ -1025,6 +1163,216 @@ pub(crate) mod tests {
     }
 
     #[actix::test]
+    async fn live_synchronized_generation_failures_allow_fresh_correlated_attempts() {
+        use e3_events::{
+            PkAggregationProofRequest, SynchronizedDkgProofJob, SynchronizedDkgProofRequest,
+            SynchronizedProofContext,
+        };
+        use e3_fhe_params::BfvProfile;
+        let c5 = |params_profile| {
+            ZkRequest::PkAggregation(PkAggregationProofRequest {
+                keyshare_bytes: vec![],
+                aggregated_pk_bytes: ArcBytes::default(),
+                params_profile,
+                committee_n: 3,
+                committee_h: 2,
+                committee_threshold: 1,
+            })
+        };
+        let proof = Proof::new(
+            CircuitName::PkGeneration,
+            ArcBytes::default(),
+            ArcBytes::default(),
+        );
+        let join = ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+            params_profile: BfvProfile::SyncDecInsecure64,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            context: SynchronizedProofContext {
+                party_id: 0,
+                setup: e3_committee_hash::DkgSetupContext {
+                    interfold_address: alloy::primitives::Address::repeat_byte(1),
+                    committee_hash: [2; 32].into(),
+                    crypto_config_id: [3; 32].into(),
+                },
+            },
+            job: SynchronizedDkgProofJob::Dealer {
+                c1: proof.clone(),
+                c2: proof,
+                c3: vec![],
+            },
+        }));
+        for (job, rerun) in [
+            (join, true),
+            (c5(BfvProfile::SyncDecInsecure64), true),
+            (c5(BfvProfile::SsInsecure64), false),
+        ] {
+            let (bus, _) = test_bus();
+            let recorder = Recorder::default().start();
+            let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+                .with_bus(bus)
+                .start();
+            let first = CorrelationId::new();
+            let retry = CorrelationId::new();
+            let request = |id| ComputeRequest::zk(job.clone(), id, E3id::new("4", 1));
+            let work = |id| {
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    request(id).into(),
+                    None,
+                    10,
+                    None,
+                    EventSource::Local,
+                )
+                .into_sequenced(1)
+            };
+            gate.send(effects_enabled()).await.unwrap();
+            gate.send(work(first)).await.unwrap();
+            gate.send(outcome_event(ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
+                    "missing local VK".into(),
+                )),
+                request(first),
+            )))
+            .await
+            .unwrap();
+            gate.send(work(first)).await.unwrap(); // same-correlation dedup remains intact
+            gate.send(work(retry)).await.unwrap();
+            assert_eq!(
+                recorder.send(Received).await.unwrap(),
+                if rerun {
+                    vec![first, retry]
+                } else {
+                    vec![first]
+                },
+            );
+        }
+    }
+
+    #[actix::test]
+    async fn replacement_publication_cancels_only_superseded_attempts_in_this_node() {
+        use e3_events::{
+            SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedProofContext,
+            SynchronizedPublicationExpectation,
+        };
+        let target = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(target.clone().recipient(), HashMap::new());
+        let work = |correlation_id, byte| {
+            outcome_event(ComputeRequest::zk(
+                ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+                    params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                    context: SynchronizedProofContext {
+                        party_id: 0,
+                        setup: e3_committee_hash::DkgSetupContext {
+                            interfold_address: alloy::primitives::Address::repeat_byte(1),
+                            committee_hash: [2; 32].into(),
+                            crypto_config_id: [3; 32].into(),
+                        },
+                    },
+                    job: SynchronizedDkgProofJob::Publication {
+                        recipients: vec![Proof::new(
+                            CircuitName::NodesFold,
+                            ArcBytes::from_bytes(&[byte]),
+                            ArcBytes::default(),
+                        )],
+                        c5: Proof::new(
+                            CircuitName::PkAggregation,
+                            ArcBytes::default(),
+                            ArcBytes::default(),
+                        ),
+                        expected: SynchronizedPublicationExpectation {
+                            dealers: vec![0, 2],
+                            threshold_keys: vec![[0; 32]; 2],
+                            dealer_batch: [0; 32],
+                            sk_commitments: vec![[0; 32]; 2],
+                            key_bundles: vec![[0; 32]; 2],
+                            public_key: ArcBytes::default(),
+                        },
+                    },
+                })),
+                correlation_id,
+                E3id::new("4", 1),
+            ))
+        };
+        let first = CorrelationId::new();
+        let sibling = CorrelationId::new();
+        let id = E3id::new("4", 1);
+        let other_node = RunningJobs::default().start(&id, first);
+        let other_e3 = gate.running.start(&E3id::new("5", 1), first);
+        let sibling_job = gate.running.start(&id, sibling);
+        assert!(gate.forward(compute(sibling, 10)));
+        assert!(gate.forward(work(first, 1)));
+        let next = CorrelationId::new();
+        assert!(gate.forward(work(next, 2)));
+        // Cancellation also precedes a forwarded mailbox item reaching the worker.
+        let old = gate.running.start(&id, first);
+        assert!(*old.cancellation.borrow());
+        assert!(!*other_node.cancellation.borrow());
+        assert!(!*other_e3.cancellation.borrow());
+        assert!(!*sibling_job.cancellation.borrow());
+        let current = gate.running.start(&id, next);
+        assert!(!*current.cancellation.borrow());
+        assert!(
+            !gate.forward(work(first, 1)),
+            "late delivery cannot resurrect retired work"
+        );
+        assert!(!*current.cancellation.borrow());
+        assert!(
+            gate.running.any(&id, &[first]),
+            "cancellation must not pretend executing work ended"
+        );
+        drop(old);
+        // Intake of the actual mailbox item releases the reservation even if work never starts.
+        assert_eq!(
+            target.send(Received).await.unwrap(),
+            vec![sibling, first, next]
+        );
+        assert!(!gate.running.any(&id, &[first]));
+    }
+
+    #[actix::test]
+    async fn stale_synchronized_error_cannot_bypass_a_new_running_attempt() {
+        let recorder = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new());
+        let running = gate.running.clone();
+        let request = |correlation_id| {
+            ComputeRequest::zk(
+                ZkRequest::PkAggregation(e3_events::PkAggregationProofRequest {
+                    keyshare_bytes: vec![],
+                    aggregated_pk_bytes: ArcBytes::default(),
+                    params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+                    committee_n: 3,
+                    committee_h: 2,
+                    committee_threshold: 1,
+                }),
+                correlation_id,
+                E3id::new("4", 1),
+            )
+        };
+        let failure = |id| {
+            outcome_event(ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed(
+                    "old local error".into(),
+                )),
+                request(id),
+            ))
+        };
+        let first = CorrelationId::new();
+        let second = CorrelationId::new();
+        assert!(gate.forward(outcome_event(request(first))));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
+        gate.on_outcome(&failure(first));
+        assert!(gate.forward(outcome_event(request(second))));
+        let _job = running.start(&E3id::new("4", 1), second);
+        gate.on_outcome(&failure(first));
+        assert!(!gate.forward(outcome_event(request(CorrelationId::new()))));
+        let key = (E3id::new("4", 1), request(second).request);
+        assert!(
+            gate.forwarded[&key].outcome.is_none(),
+            "stale error must not answer current waiters"
+        );
+    }
+
+    #[actix::test]
     async fn late_redriven_request_receives_cached_outcome() {
         let (bus, history) = test_bus();
         let recorder = Recorder::default().start();
@@ -1146,7 +1494,7 @@ pub(crate) mod tests {
 
         // The worker still runs `first` after the window, as a slow proof under load does: a new
         // ID waits for that run.
-        let job = running.start(first);
+        let job = running.start(&E3id::new("4", 1), first);
         gate.send(compute(first, 10)).await.unwrap();
         gate.send(effects_enabled()).await.unwrap();
         actix::clock::sleep(Duration::from_millis(200)).await;
@@ -1171,12 +1519,49 @@ pub(crate) mod tests {
     fn an_id_runs_until_its_last_run_ends() {
         let running = RunningJobs::default();
         let id = CorrelationId::new();
-        let replayed = running.start(id);
-        let new = running.start(id);
+        let e3 = E3id::new("4", 1);
+        let replayed = running.start(&e3, id);
+        let new = running.start(&e3, id);
         drop(replayed);
-        assert!(running.any(&[id]));
+        assert!(running.any(&e3, &[id]));
         drop(new);
-        assert!(!running.any(&[id]));
+        assert!(!running.any(&e3, &[id]));
+    }
+
+    #[actix::test]
+    async fn publication_keeps_already_forwarded_ss_outcomes_and_waiters() {
+        let (bus, history) = test_bus();
+        let worker = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(worker.recipient(), HashMap::new()).with_bus(bus);
+        let id = E3id::new("4", 1);
+        let first = CorrelationId::new();
+        let waiting = CorrelationId::new();
+        assert!(gate.forward(compute(first, 10)));
+        let job = gate.running.start(&id, first);
+        assert!(!gate.forward(compute(waiting, 20)));
+
+        gate.record_stage(id.clone(), E3Stage::KeyPublished);
+        gate.cancel(&id);
+        assert!(
+            !*job.cancellation.borrow(),
+            "key publication must not cancel work already sent for SS"
+        );
+        assert!(!gate.forward(compute(CorrelationId::new(), 30)));
+        gate.on_outcome(&outcome_event(response(first)));
+        assert!(matches!(
+            next_outcome(&history).await.into_data(),
+            InterfoldEventData::ComputeResponse(result) if result.correlation_id == waiting
+        ));
+    }
+
+    #[test]
+    fn cancelling_an_already_finished_correlation_leaves_no_entry() {
+        let running = RunningJobs::default();
+        let id = E3id::new("4", 1);
+        let correlation = CorrelationId::new();
+        drop(running.start(&id, correlation));
+        running.cancel(&id, correlation);
+        assert!(running.lock().is_empty());
     }
 
     #[actix::test]

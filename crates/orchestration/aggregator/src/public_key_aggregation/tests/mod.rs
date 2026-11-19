@@ -18,6 +18,8 @@ use e3_fhe_params::BfvPreset;
 use e3_zk_config::CircuitName;
 use std::collections::{BTreeSet, HashMap};
 
+mod synchronized;
+
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
 }

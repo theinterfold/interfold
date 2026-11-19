@@ -40,6 +40,7 @@ pub use crate::workflow::publickey_aggregation::{
 };
 
 pub struct PublicKeyAggregator {
+    synchronized: Option<effects::synchronized::SynchronizedPublication>,
     fhe: Arc<Fhe>,
     bus: BusHandle,
     e3_id: E3id,
@@ -101,6 +102,7 @@ impl PublicKeyAggregator {
                 .get()
                 .is_some_and(|recovery| recovery.started_as_aggregator);
         let mut actor = PublicKeyAggregator {
+            synchronized: None,
             fhe: params.fhe,
             bus: params.bus,
             e3_id: params.e3_id,

@@ -70,7 +70,8 @@ impl TaskPool {
     where
         OP: FnOnce() -> T + Send + 'static,
     {
-        self.spawn_inner(None, task_name, timed_logs, op).await
+        self.spawn_inner(None, None, task_name, timed_logs, op)
+            .await
     }
 
     /// Execute within a caller-defined group, rejecting cancellation before admission or execution.
@@ -85,7 +86,24 @@ impl TaskPool {
     where
         OP: FnOnce() -> T + Send + 'static,
     {
-        self.spawn_inner(Some(group), task_name, timed_logs, op)
+        self.spawn_inner(Some(group), None, task_name, timed_logs, op)
+            .await
+    }
+
+    /// Add caller-owned cancellation of one attempt without cancelling its whole group.
+    /// Like group cancellation, this does not preempt an executing native closure.
+    pub async fn spawn_cancellable_in_group<OP, T: Debug + Send + 'static>(
+        &self,
+        group: String,
+        cancellation: watch::Receiver<bool>,
+        task_name: String,
+        timed_logs: impl Into<TaskTimeouts>,
+        op: OP,
+    ) -> Result<T, TaskPoolError>
+    where
+        OP: FnOnce() -> T + Send + 'static,
+    {
+        self.spawn_inner(Some(group), Some(cancellation), task_name, timed_logs, op)
             .await
     }
 
@@ -128,6 +146,7 @@ impl TaskPool {
     async fn spawn_inner<OP, T: Debug + Send + 'static>(
         &self,
         group: Option<String>,
+        mut attempt_cancellation: Option<watch::Receiver<bool>>,
         task_name: String,
         timed_logs: impl Into<TaskTimeouts>,
         op: OP,
@@ -140,6 +159,9 @@ impl TaskPool {
         if cancellation
             .as_ref()
             .is_some_and(|receiver| *receiver.borrow())
+            || attempt_cancellation
+                .as_ref()
+                .is_some_and(|receiver| *receiver.borrow())
         {
             return Err(TaskPoolError::Cancelled(
                 group.as_deref().expect("group is present").to_owned(),
@@ -149,6 +171,11 @@ impl TaskPool {
         let _permit = if let Some(receiver) = cancellation.as_mut() {
             tokio::select! {
                 biased;
+                _ = cancelled(&mut attempt_cancellation) => {
+                    return Err(TaskPoolError::Cancelled(
+                        group.as_deref().expect("group is present").to_owned(),
+                    ));
+                }
                 _ = receiver.changed() => {
                     return Err(TaskPoolError::Cancelled(
                         group.as_deref().expect("group is present").to_owned(),
@@ -168,6 +195,9 @@ impl TaskPool {
         if cancellation
             .as_ref()
             .is_some_and(|receiver| *receiver.borrow())
+            || attempt_cancellation
+                .as_ref()
+                .is_some_and(|receiver| *receiver.borrow())
         {
             return Err(TaskPoolError::Cancelled(
                 group.as_deref().expect("group is present").to_owned(),
@@ -217,6 +247,9 @@ impl TaskPool {
             if worker_cancellation
                 .as_ref()
                 .is_some_and(|receiver| *receiver.borrow())
+                || attempt_cancellation
+                    .as_ref()
+                    .is_some_and(|receiver| *receiver.borrow())
             {
                 let _ = tx.send(Err(TaskPoolError::Cancelled(
                     worker_group.expect("group is present"),
@@ -253,6 +286,16 @@ impl TaskPool {
         let output = rx.await.map_err(TaskPoolError::RecvError).and_then(|v| v);
         warning_handle.abort();
         output
+    }
+}
+
+async fn cancelled(receiver: &mut Option<watch::Receiver<bool>>) {
+    let Some(receiver) = receiver else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    if !*receiver.borrow() {
+        let _ = receiver.changed().await;
     }
 }
 
@@ -301,7 +344,11 @@ mod tests {
     use std::sync::{Condvar, Mutex};
     use tokio::time::timeout;
 
-    async fn assert_group_cancellation(max_tasks: usize, wait_for_rayon_queue: bool) {
+    async fn assert_group_cancellation(
+        max_tasks: usize,
+        wait_for_rayon_queue: bool,
+        attempt_only: bool,
+    ) {
         let pool = TaskPool::new(1, max_tasks);
         let release = Arc::new((Mutex::new(false), Condvar::new()));
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -334,12 +381,14 @@ mod tests {
             .expect("running task dropped its start signal");
 
         let queued_ran = Arc::new(AtomicBool::new(false));
+        let (cancel_attempt, attempt) = watch::channel(false);
         let queued = {
             let pool = pool.clone();
             let queued_ran = queued_ran.clone();
             tokio::spawn(async move {
-                pool.spawn_in_group(
+                pool.spawn_cancellable_in_group(
                     "terminal-e3".to_owned(),
+                    attempt,
                     "queued".to_owned(),
                     TaskTimeouts::new(Vec::new()),
                     move || {
@@ -362,7 +411,11 @@ mod tests {
             tokio::task::yield_now().await;
         }
 
-        pool.cancel_group("terminal-e3");
+        if attempt_only {
+            cancel_attempt.send_replace(true);
+        } else {
+            pool.cancel_group("terminal-e3");
+        }
         {
             let (lock, wake) = &*release;
             *lock.lock().expect("release lock poisoned") = true;
@@ -386,16 +439,23 @@ mod tests {
         ));
         assert!(!queued_ran.load(Ordering::SeqCst));
 
-        assert!(matches!(
-            pool.spawn_in_group(
+        let late = pool
+            .spawn_in_group(
                 "terminal-e3".to_owned(),
                 "late".to_owned(),
                 TaskTimeouts::new(Vec::new()),
                 || 3_u8,
             )
-            .await,
-            Err(TaskPoolError::Cancelled(group)) if group == "terminal-e3"
-        ));
+            .await;
+        if attempt_only {
+            assert_eq!(
+                late.unwrap(),
+                3,
+                "other work in the same group must survive"
+            );
+        } else {
+            assert!(matches!(late, Err(TaskPoolError::Cancelled(group)) if group == "terminal-e3"));
+        }
 
         let fresh = pool
             .spawn_in_group(
@@ -411,12 +471,18 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_a_group_drops_semaphore_queued_work() {
-        assert_group_cancellation(1, false).await;
+        assert_group_cancellation(1, false, false).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_a_group_skips_work_queued_inside_rayon() {
-        assert_group_cancellation(2, true).await;
+        assert_group_cancellation(2, true, false).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attempt_cancellation_skips_both_queues_without_cancelling_sibling_work() {
+        assert_group_cancellation(1, false, true).await;
+        assert_group_cancellation(2, true, true).await;
     }
 
     #[tokio::test]

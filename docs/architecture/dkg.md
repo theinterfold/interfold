@@ -108,11 +108,11 @@ This handoff only reads setup that already reached the durable checkpoint. Today
 against the same confirmed H batch without making all N setups a condition of publication or
 restarting consent.
 
-This remains unactivated: guarded C5/publication aggregation and writer phases, full-node
-synchronized startup and synchronized C6 are absent. The capability replay fixture below does not
-enable production admission. Synchronized runtime folding/publication and decryption paths still
-refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and setup
-derivation require human protocol review before consumers freeze them.
+This remains unactivated: the registry writer, full-node synchronized startup and synchronized C6
+are absent. The capability replay fixture below does not enable production admission. Synchronized
+runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
+root/bundle/batch schemas, attestation domain and setup derivation require human protocol review
+before consumers freeze them.
 
 Typed local dealer/recipient/publication work uses a separate synchronized executor, not SS fold
 requests. Runtime admission rejects the disabled profile before touching proof artifacts; isolated
@@ -167,8 +167,43 @@ restores the original result and causal context before considering a differing r
 that candidate cannot replace or block the durable verdict. Selected H recipients publish signed
 consent through gossip/history; outside-H recipients retain their own setup without acquiring a
 consent slot. Canonical publication ends consent production but retains setup until the E3 ends.
-C5/publication aggregation still needs these outputs. Admission stays disabled; below-admission
-actor tests and real-proof qualification do not admit production effects.
+
+Public-key aggregation consumes the local verdict to fix the batch, authenticates native C1
+contributions against its threshold-PK commitments, and joins exactly the selected H recipient
+proofs. Before that verdict, C1 already checks the canonical request binding, signer/slot and native
+PK commitment, so a late wrong-binding replay cannot overwrite a corrected contribution. The
+existing C5 and synchronized publication workers produce the proof; all H consents must match its
+native PK, batch, recipient anchors and shared frozen context before a local publication intent is
+emitted. A known frozen domain is checked before replacing a consent slot, including on replay.
+Provisional peer SK/bundle anchors cannot invalidate retained early consent before local wrapper
+verification. Standbys retain authenticated inputs without dispatching work; an owner that started
+C5 continues after demotion. Exclusive flushes precede readiness, compute and output, and restart
+reuses successful proof bytes with fresh worker correlations. The local-intent registry writer
+remains unfinished. Admission stays disabled; below-admission actor tests and real-proof
+qualification do not admit production effects.
+
+Publication workers ignore unrelated correlations. Local generation failures and changed recipient
+candidates share one coalesced, capped-backoff retry per actor; repaired children retire stale work
+without immediately dispatching on every delivery. Invalid parameters do not automatically retry.
+Successful progress or canonical DKG termination cancels the timer; no timer starts during replay.
+The existing started-owner rule still permits finishing after demotion.
+
+Missing recipient/C5/publication outcomes trigger fresh-correlated redelivery; the shared compute
+gate waits for matching queued/running work before another execution. Stale errors cannot bypass
+that guard. A flushed replacement wrapper reaching the gate cancels its superseded attempts using
+node/E3/correlation-scoped cancellation, including queued work and worker backoff; executing native
+closures are not preempted. Refused worker outcomes retain the exact completed value for delivery
+retry rather than recomputing randomized material. These memory-only guards are not an outbox.
+
+Publication flush failures retain the latest validated inputs/results and retry independently from
+worker redrive, including on standbys. Storage retry revalidates that snapshot without clearing
+unrelated in-flight correlations. Readiness and effects stay fenced until flush acknowledgment;
+canonical publication/termination cancels both retry owners.
+
+This disabled publication route does not yet retire directly on `CommitteeMemberExpelled`. The
+registry still requires every fixed-H signer to be active, so expulsion cannot authorize a partial-H
+publication or a replacement roster; local proof work may continue until terminal lifecycle
+delivery. Direct expulsion retirement remains an activation prerequisite.
 
 Retryable setup storage failures retain the candidate. Retries wait for current-boot effects and
 back off from one to thirty seconds plus jitter, with one journal error per failure episode. Invalid

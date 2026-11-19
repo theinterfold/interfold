@@ -1,0 +1,388 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Exclusive publication recovery record. No snapshot batching writes this record.
+
+use super::*;
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PublicationRecord {
+    version: u8,
+    pub(crate) selected: CiphernodeSelected,
+    pub(crate) plan: Option<PublicationPlan>,
+    pub(crate) shares: BTreeMap<u32, KeyshareCreated>,
+    pub(crate) recipients: BTreeMap<u32, SynchronizedDkgProofPublished>,
+    pub(crate) consents: BTreeMap<u32, SignedSynchronizedDkgAttestation>,
+    pub(crate) c5: Option<Proof>,
+    pub(crate) proof: Option<Proof>,
+    pub(crate) started: bool,
+    pub(crate) ec: EventContext<Sequenced>,
+}
+
+impl PublicationRecord {
+    pub(crate) fn new(selected: CiphernodeSelected, ec: EventContext<Sequenced>) -> Self {
+        Self {
+            version: 1,
+            selected,
+            plan: None,
+            shares: BTreeMap::new(),
+            recipients: BTreeMap::new(),
+            consents: BTreeMap::new(),
+            c5: None,
+            proof: None,
+            started: false,
+            ec,
+        }
+    }
+
+    fn members(&self) -> Result<Vec<Address>> {
+        self.selected
+            .committee
+            .iter()
+            .map(|s| s.parse().map_err(Into::into))
+            .collect()
+    }
+
+    pub(crate) fn intake(
+        &mut self,
+        data: &InterfoldEventData,
+        ec: &EventContext<Sequenced>,
+        interfold: Address,
+        context: Option<SynchronizedDkgContext>,
+    ) -> Result<()> {
+        let members = self.members()?;
+        let id = &self.selected.e3_id;
+        match data {
+            InterfoldEventData::SynchronizedRecipientProofReady(local) => {
+                let plan = PublicationPlan::new(
+                    self.selected.clone(),
+                    TypedEvent::new(local.clone(), ec.clone()),
+                    interfold,
+                )?;
+                if let Some(old) = &self.plan {
+                    ensure!(*old.local == *local, "conflicting local publication batch");
+                } else {
+                    self.shares.retain(|_, share| plan.keyshare(share).is_ok());
+                    self.recipients
+                        .retain(|_, peer| plan.recipient(peer).is_ok());
+                    self.consents
+                        .retain(|id, _| plan.local.setup.dealers.contains(id));
+                    self.ec = ec.clone();
+                    self.plan = Some(plan);
+                }
+            }
+            InterfoldEventData::KeyshareCreated(share) => {
+                let owner = u32::try_from(share.party_id)?;
+                if let Some(plan) = &self.plan {
+                    plan.keyshare(share)?;
+                } else {
+                    PublicationPlan::keyshare_input(&self.selected, interfold, share)?;
+                }
+                if let Some(old) = self.shares.get(&owner) {
+                    // Before the local plan binds C1, equal native bytes may carry a corrected proof.
+                    if self.plan.is_some() && old.pubkey == share.pubkey {
+                        return Ok(());
+                    }
+                    ensure!(
+                        self.plan.is_none(),
+                        "fixed native PK contribution cannot change"
+                    );
+                }
+                self.shares.insert(owner, share.clone());
+            }
+            InterfoldEventData::SynchronizedDkgProofPublished(peer) => {
+                ensure!(
+                    &peer.e3_id == id
+                        && peer.role == SynchronizedDkgProofRole::Recipient
+                        && peer.context.setup.interfold_address == interfold
+                        && peer.context.setup.committee_hash
+                            == e3_committee_hash::hash_committee_addresses(&members)
+                        && peer.context.setup.crypto_config_id.as_slice()
+                            == self.selected.crypto_config_id
+                        && members.get(peer.context.party_id as usize)
+                            == Some(&peer.recover_address()?),
+                    "unauthenticated recipient slot"
+                );
+                if let Some(plan) = &self.plan {
+                    plan.recipient(peer)?;
+                }
+                if let Some(old) = self.recipients.get(&peer.context.party_id) {
+                    if old == peer {
+                        return Ok(());
+                    }
+                    if self.proof.is_some() {
+                        ensure!(
+                            old.proof.public_signals == peer.proof.public_signals,
+                            "completed publication recipient cannot change"
+                        );
+                        return Ok(());
+                    }
+                }
+                // Before a successful wrapper, a signer may replace invalid proof bytes. Any
+                // changed child invalidates the process-local publication correlation.
+                self.recipients.insert(peer.context.party_id, peer.clone());
+            }
+            InterfoldEventData::SynchronizedDkgConsentPublished(message) => {
+                let signed = &message.attestation;
+                self.validate_consent_slot(&members, context, signed)?;
+                if let Some(plan) = &self.plan {
+                    if let Some(native) = self.native()? {
+                        plan.consent_binding(
+                            signed.payload.context,
+                            plan.pk_commitment(&native)?,
+                            signed,
+                        )?;
+                        if self.proof.is_some() {
+                            plan.consent_recipient(&self.recipients, signed)?;
+                        }
+                    }
+                }
+                if let Some(old) = self.consents.get(&signed.payload.party_id) {
+                    if old.payload == signed.payload {
+                        return Ok(());
+                    }
+                    ensure!(
+                        self.proof.is_none(),
+                        "completed publication consent cannot change"
+                    );
+                }
+                self.consents
+                    .insert(signed.payload.party_id, signed.clone());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn validate_consent_slot(
+        &self,
+        members: &[Address],
+        context: Option<SynchronizedDkgContext>,
+        signed: &SignedSynchronizedDkgAttestation,
+    ) -> Result<()> {
+        let payload = &signed.payload;
+        ensure!(
+            context.is_none_or(|known| payload.context == known),
+            "consent differs from the frozen publication domain"
+        );
+        ensure!(
+            payload.e3_id == self.selected.e3_id
+                && payload.context.crypto_config_id == self.selected.crypto_config_id
+                && members.get(payload.party_id as usize) == Some(&signed.recover_address()?),
+            "unauthenticated publication consent slot"
+        );
+        ensure!(
+            self.plan.as_ref().is_none_or(|plan| plan
+                .local
+                .setup
+                .dealers
+                .contains(&payload.party_id)),
+            "outside-H recipient cannot consent"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn native(&self) -> Result<Option<PkAggregationProofRequest>> {
+        let Some(plan) = &self.plan else {
+            return Ok(None);
+        };
+        if !plan
+            .local
+            .setup
+            .dealers
+            .iter()
+            .all(|id| self.shares.contains_key(id))
+        {
+            return Ok(None);
+        }
+        Ok(Some(plan.c5_request(&self.shares)?))
+    }
+
+    pub(crate) fn work(&self) -> Result<Option<SynchronizedDkgProofRequest>> {
+        let Some(native) = self.native()? else {
+            return Ok(None);
+        };
+        self.work_from_native(&native)
+    }
+
+    fn work_from_native(
+        &self,
+        native: &PkAggregationProofRequest,
+    ) -> Result<Option<SynchronizedDkgProofRequest>> {
+        let (Some(plan), Some(c5)) = (&self.plan, &self.c5) else {
+            return Ok(None);
+        };
+        if !plan
+            .local
+            .setup
+            .dealers
+            .iter()
+            .all(|id| self.recipients.contains_key(id))
+        {
+            return Ok(None);
+        }
+        Ok(Some(plan.publication_request(
+            native,
+            c5,
+            &self.recipients,
+        )?))
+    }
+
+    pub(crate) fn prune_consents(&mut self, context: Option<SynchronizedDkgContext>) -> Result<()> {
+        let Some(context) = context else {
+            return Ok(());
+        };
+        let Some(native) = self.native()? else {
+            return Ok(());
+        };
+        let Some(plan) = &self.plan else {
+            return Ok(());
+        };
+        if self.consents.is_empty() {
+            return Ok(());
+        }
+        let pk_commitment = plan.pk_commitment(&native)?;
+        // Peer SK/bundle anchors are provisional until the wrapper is locally verified.
+        // Retain early consent across candidate repair, but always enforce independent anchors.
+        self.consents.retain(|id, signed| {
+            plan.consent_binding(context, pk_commitment, signed).is_ok()
+                && (self.proof.is_none()
+                    || !self.recipients.contains_key(id)
+                    || plan.consent_recipient(&self.recipients, signed).is_ok())
+        });
+        Ok(())
+    }
+
+    pub(crate) fn output(
+        &self,
+        context: SynchronizedDkgContext,
+    ) -> Result<Option<SynchronizedDkgPublicationReady>> {
+        let (Some(plan), Some(proof), Some(native)) = (&self.plan, &self.proof, self.native()?)
+        else {
+            return Ok(None);
+        };
+        let Some(work) = self.work_from_native(&native)? else {
+            return Ok(None);
+        };
+        plan.validate_publication(&native, &work, proof)?;
+        let pk_commitment = plan.pk_commitment(&native)?;
+        let mut consents = Vec::new();
+        for id in &plan.local.setup.dealers {
+            let Some(signed) = self.consents.get(id) else {
+                return Ok(None);
+            };
+            plan.consent_binding(context, pk_commitment, signed)?;
+            plan.consent_recipient(&self.recipients, signed)?;
+            consents.push(signed.clone());
+        }
+        let SynchronizedDkgProofJob::Publication { expected, .. } = work.job else {
+            unreachable!()
+        };
+        Ok(Some(SynchronizedDkgPublicationReady {
+            e3_id: self.selected.e3_id.clone(),
+            params_profile: work.params_profile,
+            committee_size: work.committee_size,
+            context: work.context,
+            expected,
+            proof: proof.clone(),
+            consents,
+        }))
+    }
+
+    pub(crate) fn validate(&self, interfold: Address) -> Result<()> {
+        ensure!(
+            self.version == 1,
+            "unsupported synchronized publication record version"
+        );
+        E3Meta::from(&self.selected).validate_identity()?;
+        ensure!(
+            self.started || (self.c5.is_none() && self.proof.is_none()),
+            "publication results lack a started-owner record"
+        );
+        let members = self.members()?;
+        ensure!(
+            members.len() == self.selected.threshold_n
+                && members.windows(2).all(|pair| pair[0] < pair[1])
+                && usize::try_from(self.selected.party_id)? < members.len(),
+            "publication selection has invalid canonical slots"
+        );
+        let mut inputs = Self::new(self.selected.clone(), self.ec.clone());
+        if let Some(plan) = &self.plan {
+            plan.validate(interfold)?;
+            ensure!(
+                plan.selected == self.selected,
+                "publication record selection differs"
+            );
+            inputs.intake(
+                &InterfoldEventData::from((*plan.local).clone()),
+                plan.local.get_ctx(),
+                interfold,
+                None,
+            )?;
+        }
+        for (&id, share) in &self.shares {
+            ensure!(
+                u64::from(id) == share.party_id,
+                "saved native PK slot differs"
+            );
+            inputs.intake(
+                &InterfoldEventData::from(share.clone()),
+                &self.ec,
+                interfold,
+                None,
+            )?;
+        }
+        for (&id, peer) in &self.recipients {
+            ensure!(id == peer.context.party_id, "saved recipient slot differs");
+            inputs.intake(
+                &InterfoldEventData::from(peer.clone()),
+                &self.ec,
+                interfold,
+                None,
+            )?;
+        }
+        // The same validated native batch anchors every consent in this pass. Reconstructing the
+        // aggregate for each row repeats all H share checks for each of the H consents.
+        let native = if self.c5.is_some() || !self.consents.is_empty() {
+            inputs.native()?
+        } else {
+            None
+        };
+        let pk_commitment = if self.consents.is_empty() {
+            None
+        } else {
+            inputs
+                .plan
+                .as_ref()
+                .zip(native.as_ref())
+                .map(|(plan, native)| plan.pk_commitment(native))
+                .transpose()?
+        };
+        for (&id, signed) in &self.consents {
+            ensure!(id == signed.payload.party_id, "saved consent slot differs");
+            inputs.validate_consent_slot(&members, None, signed)?;
+            if let (Some(plan), Some(pk_commitment)) = (&inputs.plan, pk_commitment) {
+                plan.consent_binding(signed.payload.context, pk_commitment, signed)?;
+            }
+        }
+        if let Some(c5) = &self.c5 {
+            self.plan
+                .as_ref()
+                .context("C5 without local setup")?
+                .validate_c5(native.as_ref().context("C5 without native PK")?, c5)?;
+        }
+        if let Some(proof) = &self.proof {
+            let native = native.as_ref().context("publication without native PK")?;
+            self.plan
+                .as_ref()
+                .context("publication without local setup")?
+                .validate_publication(
+                    native,
+                    &self
+                        .work_from_native(native)?
+                        .context("publication without recipient joins")?,
+                    proof,
+                )?;
+        }
+        Ok(())
+    }
+}

@@ -91,7 +91,7 @@ impl CiphernodeBuilder {
                 bus,
                 &self.cipher,
                 addr,
-                interfold_addresses,
+                interfold_addresses.clone(),
                 dkg_timing_reader,
                 signer.clone(),
                 canonical_keys.clone(),
@@ -117,7 +117,12 @@ impl CiphernodeBuilder {
         info!("Setting up PublicKeyAggregationExtension");
         e3_builder = e3_builder.with_recipient(
             "publickey",
-            PublicKeyAggregatorExtension::create(bus, storage.seq_eventstore.clone()),
+            PublicKeyAggregatorExtension::create(
+                bus,
+                storage.seq_eventstore.clone(),
+                canonical_keys.clone(),
+                interfold_addresses,
+            ),
         );
 
         // ── Threshold plaintext aggregation ──

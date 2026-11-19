@@ -44,7 +44,7 @@ use e3_zk_prover::{execute_zk_request, zk_operation_name, ZkBackend, ZkProver};
 use rand::Rng;
 use tracing::{debug, error, info, warn};
 
-use crate::effect_gate::{ComputeEffectGate, RunningJob, RunningJobs};
+use crate::effect_gate::{ComputeEffectGate, ForwardedCompute, RunningJob, RunningJobs};
 
 /// Multithread actor
 pub struct Multithread {
@@ -410,13 +410,16 @@ mod task_group_tests {
             )
             .await?;
         actix::clock::sleep(Duration::from_millis(100)).await;
-        assert!(running.any(&[id]), "a queued request runs");
+        assert!(
+            running.any(&E3id::new("7", 1), &[id]),
+            "a queued request runs"
+        );
 
         // Without a prover, the request ends with an error result once it gets the thread.
         blocked.await?.map_err(|error| anyhow::anyhow!("{error}"))?;
         actix::clock::sleep(Duration::from_millis(200)).await;
         assert!(
-            !running.any(&[id]),
+            !running.any(&E3id::new("7", 1), &[id]),
             "a request with a result no longer runs"
         );
         Ok(())
@@ -438,6 +441,90 @@ mod task_group_tests {
         assert_eq!(compute_retry_delay(4), Duration::from_secs(300));
         assert_eq!(compute_retry_delay(5), Duration::from_secs(300));
         assert_eq!(compute_retry_delay(100), Duration::from_secs(300));
+    }
+
+    #[actix::test]
+    async fn superseded_attempt_interrupts_worker_retry_without_cancelling_its_e3() {
+        let pool = TaskPool::new(1, 1);
+        let (cancel, mut receiver) = tokio::sync::watch::channel(false);
+        let waiting =
+            wait_for_compute_retry(&pool, "node:e3", Duration::from_secs(300), &mut receiver);
+        tokio::pin!(waiting);
+        tokio::select! {
+            biased;
+            _ = &mut waiting => panic!("retry finished before cancellation"),
+            _ = std::future::ready(()) => {}
+        }
+        cancel.send_replace(true);
+        assert!(matches!(waiting.await, Err(TaskPoolError::Cancelled(_))));
+        assert_eq!(
+            pool.spawn_in_group(
+                "node:e3".into(),
+                "sibling".into(),
+                TaskTimeouts::default(),
+                || 7
+            )
+            .await
+            .unwrap(),
+            7
+        );
+    }
+
+    #[actix::test]
+    async fn refused_outcome_is_retried_as_the_exact_completed_value() -> Result<()> {
+        use e3_events::{EffectsEnabled, Event, EventContext, GetEvents, Sequenced, Unsequenced};
+        tokio::time::pause();
+        let (bus, history) = crate::effect_gate::tests::test_bus();
+        let context =
+            EventContext::<Unsequenced>::from(InterfoldEventData::from(EffectsEnabled::new()))
+                .sequence(1);
+        let outcome: InterfoldEventData = ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams("completed verdict".into())),
+            ComputeRequest::zk(
+                ZkRequest::PkBfv(PkBfvProofRequest::new(
+                    e3_utils::ArcBytes::default(),
+                    BfvProfile::SsInsecure64,
+                    CiphernodesCommitteeSize::Minimum,
+                )),
+                e3_events::CorrelationId::new(),
+                E3id::new("delivery", 1),
+            ),
+        )
+        .into();
+        for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE {
+            bus.publish_without_context(EffectsEnabled::new())?;
+        }
+        let pool = TaskPool::new(1, 1);
+        let (_cancel, mut receiver) = tokio::sync::watch::channel(false);
+        let delivery = publish_compute_outcome(
+            &bus,
+            outcome.clone(),
+            context,
+            &pool,
+            "node:e3",
+            &mut receiver,
+        );
+        tokio::pin!(delivery);
+        tokio::select! {
+            biased;
+            _ = &mut delivery => panic!("full admission window must defer outcome"),
+            _ = std::future::ready(()) => {}
+        }
+        bus.flush_event_pipeline().await?;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        delivery.await?;
+        bus.flush_event_pipeline().await?;
+        let events = history
+            .send(GetEvents::<InterfoldEvent<Sequenced>>::new())
+            .await?;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.get_data() == &outcome)
+                .count(),
+            1
+        );
+        Ok(())
     }
 
     #[test]
@@ -526,6 +613,24 @@ impl Handler<InterfoldEvent> for Multithread {
 impl Handler<TypedEvent<ComputeRequest>> for Multithread {
     type Result = ResponseFuture<()>;
     fn handle(&mut self, msg: TypedEvent<ComputeRequest>, _: &mut Self::Context) -> Self::Result {
+        let running = self.running.start(&msg.e3_id, msg.correlation_id);
+        self.run_compute(msg, running)
+    }
+}
+
+impl Handler<ForwardedCompute> for Multithread {
+    type Result = ResponseFuture<()>;
+    fn handle(&mut self, msg: ForwardedCompute, _: &mut Self::Context) -> Self::Result {
+        self.run_compute(msg.request, msg.running)
+    }
+}
+
+impl Multithread {
+    fn run_compute(
+        &self,
+        msg: TypedEvent<ComputeRequest>,
+        running: RunningJob,
+    ) -> ResponseFuture<()> {
         let cipher = self.cipher.clone();
         let rng = self.rng.clone();
         let bus = self.bus.clone();
@@ -534,8 +639,6 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let zk_prover = self.zk_prover.clone();
         let task_scope = self.task_scope.clone();
         let retry_logs = self.retry_logs.clone();
-        // The request runs, queued or in a worker, until its future ends.
-        let running = self.running.start(msg.correlation_id);
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
@@ -564,6 +667,7 @@ async fn handle_compute_request_event(
     let (msg, ctx) = msg.into_components();
     let request_snapshot = msg.clone();
     let task_group = request_task_group(&task_scope, &msg);
+    let mut cancellation = _running.cancellation.clone();
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
     let retries_local_worker_failures =
@@ -587,8 +691,9 @@ async fn handle_compute_request_event(
         let rng_for_worker = rng.clone();
         let cipher_for_worker = cipher.clone();
         let pool_result = pool
-            .spawn_in_group(
+            .spawn_cancellable_in_group(
                 task_group.clone(),
+                cancellation.clone(),
                 job_name.clone(),
                 TaskTimeouts::default(),
                 move || {
@@ -603,13 +708,13 @@ async fn handle_compute_request_event(
             )
             .await;
 
+        if *cancellation.borrow() {
+            return Ok(());
+        }
         let (result, duration) = match pool_result {
             Ok(value) => value,
             Err(TaskPoolError::Cancelled(group)) => {
-                info!(
-                    task_group = group,
-                    "Dropped compute request for a terminal E3"
-                );
+                info!(task_group = group, "Dropped cancelled compute attempt");
                 return Ok(());
             }
             Err(pool_error) => {
@@ -624,7 +729,7 @@ async fn handle_compute_request_event(
                         &format!("task pool error: {pool_error}"),
                     );
                     if let Err(TaskPoolError::Cancelled(group)) =
-                        pool.wait_for_retry(&task_group, delay).await
+                        wait_for_compute_retry(&pool, &task_group, delay, &mut cancellation).await
                     {
                         info!(
                             task_group = group,
@@ -643,7 +748,15 @@ async fn handle_compute_request_event(
                     "Compute worker exhausted its recovery attempts"
                 );
                 let error_kind = pool_error_kind(&request_snapshot, &pool_error);
-                bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;
+                publish_compute_outcome(
+                    &bus,
+                    ComputeRequestError::new(error_kind, request_snapshot).into(),
+                    ctx,
+                    &pool,
+                    &task_group,
+                    &mut cancellation,
+                )
+                .await?;
                 return Ok(());
             }
         };
@@ -663,7 +776,15 @@ async fn handle_compute_request_event(
                 if let Some(report) = report.as_ref() {
                     report.do_send(TrackDuration::new(msg_string, total_duration));
                 }
-                bus.publish(value, ctx)?;
+                publish_compute_outcome(
+                    &bus,
+                    value.into(),
+                    ctx,
+                    &pool,
+                    &task_group,
+                    &mut cancellation,
+                )
+                .await?;
                 return Ok(());
             }
             Err(compute_error) if is_retryable_compute_error(&compute_error) => {
@@ -677,7 +798,7 @@ async fn handle_compute_request_event(
                     &bounded_error(&compute_error),
                 );
                 if let Err(TaskPoolError::Cancelled(group)) =
-                    pool.wait_for_retry(&task_group, delay).await
+                    wait_for_compute_retry(&pool, &task_group, delay, &mut cancellation).await
                 {
                     info!(
                         task_group = group,
@@ -689,8 +810,65 @@ async fn handle_compute_request_event(
                 continue;
             }
             Err(compute_error) => {
-                bus.publish(compute_error, ctx)?;
+                publish_compute_outcome(
+                    &bus,
+                    compute_error.into(),
+                    ctx,
+                    &pool,
+                    &task_group,
+                    &mut cancellation,
+                )
+                .await?;
                 return Ok(());
+            }
+        }
+    }
+}
+
+async fn wait_for_compute_retry(
+    pool: &TaskPool,
+    group: &str,
+    delay: Duration,
+    cancellation: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<(), TaskPoolError> {
+    if *cancellation.borrow() {
+        return Err(TaskPoolError::Cancelled(group.to_owned()));
+    }
+    tokio::select! {
+        biased;
+        _ = cancellation.changed() => Err(TaskPoolError::Cancelled(group.to_owned())),
+        result = pool.wait_for_retry(group, delay) => result,
+    }
+}
+
+async fn publish_compute_outcome(
+    bus: &BusHandle,
+    outcome: InterfoldEventData,
+    context: e3_events::EventContext<e3_events::Sequenced>,
+    pool: &TaskPool,
+    group: &str,
+    cancellation: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    let mut attempt = 1;
+    loop {
+        if *cancellation.borrow() {
+            return Ok(());
+        }
+        match bus.publish(outcome.clone(), context.clone()) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                // Retain the exact completed value, especially randomized native results. Bus
+                // saturation is a delivery retry, never a reason to repeat the computation.
+                if attempt == 1 {
+                    warn!(%error, "compute outcome admission refused; retaining result for retry");
+                }
+                if wait_for_compute_retry(pool, group, compute_retry_delay(attempt), cancellation)
+                    .await
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                attempt = attempt.saturating_add(1);
             }
         }
     }

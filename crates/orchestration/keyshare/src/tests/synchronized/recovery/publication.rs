@@ -4,10 +4,7 @@
 //! sample. This remains below disabled hydration/worker/publication admission.
 
 use super::*;
-use e3_events::{
-    SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedDkgProofResponse,
-    SynchronizedPublicationExpectation, SynchronizedSetupAnchors,
-};
+use e3_events::{SynchronizedDkgProofJob, SynchronizedDkgProofResponse, SynchronizedSetupAnchors};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::CircuitVariant;
@@ -22,6 +19,12 @@ use serde_json::json;
 use std::{fs, process::Command};
 
 pub(super) type Recovered = (ThresholdKeyshareRecoveryState, crate::ReadyForDecryption);
+
+pub(super) struct PlannedPublication {
+    pub plan: e3_aggregator::SynchronizedPublicationPlan,
+    pub native: e3_events::PkAggregationProofRequest,
+    pub peers: BTreeMap<u32, e3_events::SynchronizedDkgProofPublished>,
+}
 
 fn authenticated(
     selected: &CiphernodeSelected,
@@ -186,6 +189,7 @@ pub(super) async fn qualify(
             );
         }
     }
+    let mut native_shares = BTreeMap::new();
     let mut nodes = Vec::new();
     for &id in &ids {
         let (root, state) = &recovered[id as usize];
@@ -204,6 +208,16 @@ pub(super) async fn qualify(
             .iter()
             .map(|proof| authenticated(selection, id, ProofType::C3aSkShareEncryption, proof))
             .collect::<Result<Vec<_>>>()?;
+        native_shares.insert(
+            id,
+            e3_events::KeyshareCreated {
+                e3_id: e3.clone(),
+                party_id: id as u64,
+                node: selection.committee[id as usize].clone(),
+                pubkey: state.pk_share.clone(),
+                signed_pk_generation_proof: state.signed_pk_generation_proof.clone(),
+            },
+        );
         let plan =
             e3_zk_prover::synchronized::dealer::DealerPlan::from_pending(&pending[id as usize])?;
         let proofs = [c1, c2[id as usize].clone()]
@@ -371,6 +385,36 @@ pub(super) async fn qualify(
         setups.push(result);
         recipients.push(proof);
     }
+    let plan = e3_aggregator::SynchronizedPublicationPlan::new(
+        (**selected).clone(),
+        TypedEvent::new(
+            e3_events::SynchronizedRecipientProofReady {
+                e3_id: e3.clone(),
+                context: material[0].context.clone(),
+                proof: recipients[0].clone(),
+                setup: setups[0].clone(),
+            },
+            test_ec(800),
+        ),
+        context.setup.interfold_address,
+    )?;
+    let native_request = plan.c5_request(&native_shares)?;
+    ensure!(&*native_request.aggregated_pk_bytes == public_key.to_bytes().as_slice());
+    let recipient_messages = ids
+        .iter()
+        .map(|&id| {
+            Ok((
+                id,
+                e3_events::SynchronizedDkgProofPublished::sign(
+                    e3.clone(),
+                    material[id as usize].context.clone(),
+                    e3_events::SynchronizedDkgProofRole::Recipient,
+                    recipients[id as usize].clone(),
+                    &signers[id as usize],
+                )?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let c5 = prove_c5(prover, &config, &data, "restored-c5")?;
     ensure!(prover.verify_fold_proof(&c5, "restored-c5", 0, &namespace)?);
     let selected_recipients: Vec<_> = ids
@@ -385,27 +429,17 @@ pub(super) async fn qualify(
     let prepared = prepare_publication(prover, &config, &context, e3, &join)?;
     let selected_sk: Vec<_> = ids.iter().map(|&id| sk[id as usize]).collect();
     let selected_bundles: Vec<_> = ids.iter().map(|&id| bundles[id as usize]).collect();
-    let request = SynchronizedDkgProofRequest {
-        params_profile: PROFILE,
-        committee_size: COMMITTEE,
-        context: context.clone(),
-        job: SynchronizedDkgProofJob::Publication {
-            recipients: selected_recipients,
-            c5,
-            expected: SynchronizedPublicationExpectation {
-                dealers: ids.clone(),
-                threshold_keys: keys.clone(),
-                dealer_batch: batch,
-                sk_commitments: selected_sk.clone(),
-                key_bundles: selected_bundles.clone(),
-                public_key: ArcBytes::from_bytes(&public_key.to_bytes()),
-            },
-        },
-    };
+    let request = plan.publication_request(&native_request, &c5, &recipient_messages)?;
     let SynchronizedDkgProofResponse::Publication { proof: publication } =
         execute_definition(prover, e3, &request, "restored-publication")?
     else {
         anyhow::bail!("wrong synchronized publication response");
+    };
+    plan.validate_publication(&native_request, &request, &publication)?;
+    let planned = PlannedPublication {
+        plan,
+        native: native_request,
+        peers: recipient_messages,
     };
     let verified = verify_publication(
         prover,
@@ -488,6 +522,7 @@ pub(super) async fn qualify(
             recovered,
             &setups,
             &recipients,
+            &planned,
             &public_key,
             &publication,
             directory,

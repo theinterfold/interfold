@@ -54,6 +54,19 @@ failures belong to `trbfv`. The dispatcher only wraps native results with their 
 identity; it contains no circuit or threshold calculation. The memory-only gate is not a
 transactional outbox.
 
+Synchronized DKG/C5 owners can retry a failed generation under a fresh correlation; the gate does
+not return a cached failure forever. Successful outcomes and same-correlation dedup remain intact.
+The worker backs off on local generation failures at 5/15/60/300 seconds. Requesting actors own
+fresh-correlation redrive, including missing-outcome probes; every attempt still passes shared pool
+and lifecycle gates. A stale error cannot bypass queued/running work. Bus refusal retries the exact
+completed outcome instead of recomputing it. At key publication, new obsolete DKG work is refused,
+but already-forwarded SS attempts can still deliver their outcomes, including to waiting
+correlations.
+
+A replacement publication request cancels the superseded wrapper attempts at the compute gate.
+Cancellation is node/E3/correlation scoped, interrupts worker backoff and skips semaphore/Rayon
+queued closures. It does not preempt an executing native closure; its late result is discarded.
+
 The extraction preserves the existing pool-type re-exports and changes no persisted/event/wire
 encoding or cryptographic statement. `setup_zk_actors` and `ZkActor::new` now require the shared
 pool and node scope, so direct Rust callers must supply them when constructing the runtime. No

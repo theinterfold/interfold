@@ -15,6 +15,9 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        if self.route_synchronized_publication(&msg, &ec, ctx) {
+            return;
+        }
         match msg {
             InterfoldEventData::KeyshareCreated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
