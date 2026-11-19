@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Static definitions for the disabled synchronized DKG leaf statements.
+//! Static definitions for the disabled synchronized DKG leaves and provenance joins.
 
 use crate::{dkg, field::join_display, threshold, CircuitName, ConfigError};
 use e3_committee::CiphernodesCommitteeSize;
@@ -122,6 +122,8 @@ impl Configs {
             CircuitName::DkgShareDecryption => {
                 Some(4 + values.h * (1 + self.threshold.moduli().len()))
             }
+            CircuitName::NodeFold => Some(3),
+            CircuitName::NodesFold => Some(4 + values.h),
             _ => None,
         }
     }
@@ -133,6 +135,11 @@ impl Configs {
             CircuitName::SkShareComputation => {
                 Some(self.committee.values().n * self.threshold.moduli().len() + 1)
             }
+            CircuitName::NodeFold => {
+                let n = self.committee.values().n;
+                Some(3 + n + 2 * n * self.threshold.moduli().len())
+            }
+            CircuitName::NodesFold => Some(self.committee.values().h + 2),
             _ => None,
         }
     }
@@ -205,6 +212,10 @@ mod tests {
             config.public_outputs(CircuitName::SkShareComputation),
             Some(10)
         );
+        assert_eq!(config.public_inputs(CircuitName::NodeFold), Some(3));
+        assert_eq!(config.public_outputs(CircuitName::NodeFold), Some(24));
+        assert_eq!(config.public_inputs(CircuitName::NodesFold), Some(6));
+        assert_eq!(config.public_outputs(CircuitName::NodesFold), Some(4));
         assert_eq!(
             config.public_outputs(CircuitName::ThresholdShareDecryption),
             None

@@ -99,11 +99,11 @@ release matrix is a separate required subset. The Rust builder calls `e3-zk-conf
 configuration; files on disk are derived artifacts, not hand-tuned data.
 
 The legacy `--preset` spelling selects a `BfvProfile`; SS names/paths remain unchanged.
-`sync-insecure-64/minimum` has isolated C0–C4 definitions but is excluded from the live policy.
-`sync-sources` regenerates its configuration without switching SS selectors. Seeded test policies
-can build explicit sync leaves, never a complete/hydrated set or recursive anchors. For real leaf
-proof coverage independent of the build policy, use `pnpm rust:test:sync-dkg:proofs` with pinned
-Nargo/BB; this does not publish or qualify runtime admission.
+`sync-insecure-64/minimum` has C0–C4 and draft dealer/recipient joins but is excluded from the live
+policy. `sync-sources` regenerates its configuration without switching SS selectors. Seeded test
+policies can build explicit sync definitions, never a complete/hydrated set or recursive anchors.
+For real DKG proof coverage independent of the build policy, use `pnpm rust:test:sync-dkg:proofs`
+with pinned Nargo/BB; this does not publish or qualify runtime admission.
 
 The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
 compare `active.nr` and `utils.ts`; a different hydrated cache is only a note. Switching committee

@@ -3,6 +3,8 @@
 //! Encrypted-request preparation for the isolated synchronized DKG leaves. These adapters do not
 //! admit the profile or authenticate caller-supplied chain context.
 
+pub mod provenance;
+
 use crate::{Provable, ZkError};
 use anyhow::{ensure, Context, Result};
 use e3_crypto::Cipher;

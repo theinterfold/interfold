@@ -1,0 +1,2 @@
+[workspace]
+members = ["node_fold", "nodes_fold"]

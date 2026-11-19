@@ -129,7 +129,7 @@ behavior.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
-`circuits/bin/synchronized/` exposes C0–C4 only for `sync-insecure-64/minimum`. C0 and C3 reuse the
+`circuits/bin/synchronized/` defines C0–C4 only for `sync-insecure-64/minimum`. C0 and C3 reuse the
 SS arithmetic with the separate transport parameters. C1 proves a bounded threshold-key contribution
 without SS's dealt smudging branch. C2 proves the existing degree-T sharing relation, then commits
 the native packed messages and an N-wide outgoing-key root. C4 opens those packed messages, extracts
@@ -154,7 +154,10 @@ SAFE domain uses a leading absorbed role (directed key 1, outgoing root 2, bundl
 Directed keys bind profile, context, N, key width, dealer and recipient. The root orders all N
 recipients. The bundle binds its owner, aggregate SK, exact sorted H dealer IDs and both key
 directions for each; outgoing keys are indexed by full-committee ID, not roster position. Own
-incoming/outgoing keys must agree. H is not trimmed to the designated T+1 set.
+incoming/outgoing keys must agree. H is not trimmed to the designated T+1 set. The generic C4
+opening supports H≤N, while the current recursive joins require H<N. The supported profile fixes N=3
+and H=2; H=N is not an admitted configuration. Broadening that boundary requires new recursive and
+publication qualification, not just the generic C4 constraint.
 
 Before runtime use, reviewed recursive joins must authenticate the canonical E3-derived context and
 H-roster, connect C1's SK to C2, C2's exact recipient/CRT message to C3 and C4, C3's key to C0 and
@@ -162,22 +165,63 @@ ciphertext to the signed transport, and the owner's C2 outgoing root to C4. C6 m
 aggregate SK and bundle. A consistent context/dealer substitution can produce a valid isolated leaf
 with different public fields/outputs; it is not evidence of authentication. Canonical context
 derivation now has a [draft native owner](dkg.md#exchange-and-verification-boundaries), and keyshare
-checks signed transport and complete C2-batch openings. That is not recursive enforcement: recursive
-topology, final-verifier enforcement, and synchronized C6 are unimplemented. No dummy ESM statements
-stand in for these missing consumers. The root/bundle schema and setup derivation require protocol
-review before those consumers freeze them.
+checks signed transport and complete C2-batch openings. The draft joins below add recursive
+enforcement of child consistency, not chain authority or final C5/publication enforcement.
+Synchronized C6 remains unimplemented; no dummy ESM statements stand in for missing consumers. The
+joins, root/bundle schema and setup derivation require protocol review before consumers freeze them.
 
 `pnpm rust:test:sync-dkg:proofs` exercises the actual typed encoders and native encrypted transport,
-including non-prefix H, self/outside-H recipients, real private-input leaf proofs, altered public
-fields and malformed witnesses. It does not qualify recursive, contract, recovery, secure-profile,
-replacement-set or repeated-decryption behavior.
+including non-prefix H, self/outside-H recipients, real private-input leaf and join proofs, altered
+public fields and malformed witnesses. Its provenance child verifies independently valid but
+mismatched children before checking their rejection by the parent. It does not qualify contract,
+recovery, secure-profile, replacement-set or repeated-decryption behavior.
 
 The [keyshare preparation proof test](../../crates/orchestration/keyshare/README.md#tests)
 additionally starts from production native generation and encrypted runtime work plans, exercises
 the C1/C2/C4 request adapters, and verifies their leaf proofs, including self/outside-H recipients.
 Native keyshare tests cover saved key/bundle validation, exact work-plan reload and authenticated
-rejection before slot reservation. Neither suite is a complete crash-recovery or
-recursive/runtime/contract qualification of synchronized execution.
+rejection before slot reservation. Neither suite qualifies complete crash recovery or
+runtime/contract execution of the synchronized protocol.
+
+### Draft synchronized provenance joins (not admitted)
+
+The synchronized `NodeFold` is a **dealer join**, not the SS C0–C4 node fold. It verifies C1, C2 and
+exactly `(N−1)×L_THRESHOLD` ZK C3 proofs in recipient/CRT order, omitting self without a dummy
+proof. It joins C1's SK to C2, every non-self C2 message to C3, and every encrypted CRT row to the
+same recipient key. It exports context/dealer, descendant VK hash, threshold PK, outgoing root,
+N-wide messages, recipient keys and ciphertexts. Self C3 slots are zero; self C2 messages remain
+present.
+
+The synchronized `NodesFold` is a **per-recipient setup join**, not an SS sequential accumulator or
+the C5/publication wrapper. It verifies H dealer joins plus that recipient's C0, C2 and C4. Its
+public inputs are the expected descendant-tree hash, setup binding, recipient and exact sorted
+H-roster. Each H-row's C2 message at the full-committee recipient slot must equal C4's opening for
+every threshold CRT row. Every non-self dealer's C3 key must equal the recipient's C0; the dealer
+join has already constrained this across all encrypted rows. C4's outgoing root must equal the
+recipient's own C2, including for recipients outside H. A selected recipient's own C2 messages/root
+must also equal its dealer join. The return is H threshold-PK commitments, aggregate-SK commitment
+and bidirectional key-bundle commitment. Those commitments are a draft handoff, not a C6 witness.
+
+For the current definition, dealer IO is **3 inputs/24 outputs**; recipient IO is **6/4**. These
+layouts are profile-specific; no identity enum discriminant or SS layout changes. The complete
+genealogy is `dealer = VK_HASH(C1,C2,C3)` and `setup = VK_HASH(NodeFold,dealer,C0,C2,C4)`. All H
+dealer hashes must agree, and the recipient circuit compares the complete setup hash with input
+zero. The verifier derives that expected hash from its local artifact keys, never from the received
+proof. Pinning only NodeFold's VK would leave its private leaf VKs unanchored. The C0 commitment
+authenticates neither a recipient identity nor possession of its secret key. The runtime must
+independently admit the recipient's signed C0 under its full-committee owner; recipient execution
+must use its locally planned C0 slot. Recursive consistency with a caller-supplied C0 alone is
+insufficient.
+
+The explicit prover API checks request-derived binding, recipient, roster, exact field layouts and
+genealogy before returning verified setup commitments. It also requires the caller's previously
+admitted C4 aggregate-SK/bundle and selected C1/C5 threshold-key commitments to match; candidate
+outputs cannot supply their own authority. It does **not** authenticate those expected values or
+caller-supplied chain context/roster, or replace signature admission. A different consistently
+selected setup is not rejected without canonical external authority. These joins prove neither C4's
+BFV decryption equation nor C5/contract publication. The runtime still refuses synchronized
+folding/publication; human protocol review, publication wiring, persistent multi-party actor restart
+evidence and C6 remain open.
 
 ## Commitments, packing, and Fiat-Shamir
 

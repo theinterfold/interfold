@@ -103,13 +103,24 @@ pub enum CircuitName {
 }
 
 impl CircuitName {
-    /// Implemented synchronized leaves only. Missing descendants must not fall back to SS.
-    pub const SYNCHRONIZED_DKG: [Self; 5] = [
+    pub const SYNCHRONIZED_DKG_LEAVES: [Self; 5] = [
         Self::PkBfv,
         Self::PkGeneration,
         Self::SkShareComputation,
         Self::ShareEncryption,
         Self::DkgShareDecryption,
+    ];
+
+    /// Disabled definitions, not an admitted or publishable protocol. Missing descendants never
+    /// fall back to SS. NodeFold is the dealer join; NodesFold is the per-recipient setup join.
+    pub const SYNCHRONIZED_DKG: [Self; 7] = [
+        Self::PkBfv,
+        Self::PkGeneration,
+        Self::SkShareComputation,
+        Self::ShareEncryption,
+        Self::DkgShareDecryption,
+        Self::NodeFold,
+        Self::NodesFold,
     ];
 
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
@@ -148,6 +159,9 @@ impl CircuitName {
                         },
                     ],
                 }
+            }
+            (BfvDecryptionProtocol::Synchronized, Self::NodeFold | Self::NodesFold) => {
+                CircuitOutputLayout::Dynamic
             }
             _ => self.output_layout(),
         })

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Independent native encrypted transport -> production encoders -> isolated Noir leaves.
-//! These tests do not supply the missing authenticated recursive joins or enable admission.
+//! Independent native encrypted transport -> production encoders -> Noir leaves.
+//! The provenance child exercises draft recursive joins, not admission or canonical publication.
+
+#[path = "synchronized_dkg/provenance.rs"]
+mod provenance;
 
 use anyhow::{ensure, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
@@ -46,16 +49,22 @@ struct Leaf {
     inputs: Value,
     outputs: Vec<BigInt>,
     prove: bool,
+    transport_slot: Option<(u32, u32, usize)>,
 }
 
 struct Fixture {
     config: Configs,
     leaves: Vec<Leaf>,
     openings: Vec<share_decryption::Data>,
+    recipient_public: Vec<PublicKey>,
 }
 
 impl Fixture {
     fn native() -> Result<Self> {
+        Self::native_at(BINDING)
+    }
+
+    fn native_at(binding: SetupBinding) -> Result<Self> {
         let config = Configs::for_profile(PROFILE, CiphernodesCommitteeSize::Minimum)?;
         let values = config.committee.values();
         let mut rng = ChaCha8Rng::seed_from_u64(245602);
@@ -74,7 +83,7 @@ impl Fixture {
         let roots = outgoing
             .iter()
             .enumerate()
-            .map(|(owner, row)| commitments::outgoing_root(&config, BINDING, owner as u32, row))
+            .map(|(owner, row)| commitments::outgoing_root(&config, binding, owner as u32, row))
             .collect::<Result<Vec<_>, _>>()?;
         let recipient_secrets: Vec<_> = (0..values.n)
             .map(|_| SecretKey::random(&config.transport, &mut rng))
@@ -95,6 +104,7 @@ impl Fixture {
                 inputs: inputs.to_json(),
                 outputs: vec![expected],
                 prove: recipient == 2,
+                transport_slot: None,
             });
         }
         let mut messages = vec![Vec::new(); values.n];
@@ -108,7 +118,7 @@ impl Fixture {
                 PublicKeyShare::new_with_intermediates(&secret, crp.clone(), &mut rng)?;
             let generation = pk_generation::Inputs::compute(
                 &config,
-                BINDING,
+                binding,
                 dealer as u32,
                 &pk_generation::Data {
                     pk0_share: CrtPolynomial::from_fhe_polynomial(public.p0_share()),
@@ -122,7 +132,7 @@ impl Fixture {
             secret_crt.center(config.threshold.moduli())?;
             let sharing = share_computation::Inputs::compute(
                 &config,
-                BINDING,
+                binding,
                 dealer as u32,
                 share_computation::Data {
                     secret: secret_crt,
@@ -146,6 +156,7 @@ impl Fixture {
                     ),
                 ],
                 prove: DEALERS.contains(&(dealer as u32)),
+                transport_slot: None,
             });
             let mut packed_commitments = Vec::new();
             for recipient in 0..values.n {
@@ -219,6 +230,7 @@ impl Fixture {
                             config.share_encryption.bits.ct_bit,
                         )],
                         prove: dealer == 0 && recipient == 2,
+                        transport_slot: Some((dealer as u32, recipient as u32, limb)),
                     });
                 }
             }
@@ -228,6 +240,7 @@ impl Fixture {
                 inputs: sharing.to_json(),
                 outputs: packed_commitments,
                 prove: DEALERS.contains(&(dealer as u32)),
+                transport_slot: None,
             });
         }
         let mut openings = Vec::new();
@@ -239,7 +252,7 @@ impl Fixture {
             let sk = compute_aggregated_shares_commitment(&aggregate, config.aggregate_bit);
             let bundle = commitments::key_bundle(
                 &config,
-                BINDING,
+                binding,
                 recipient as u32,
                 &DEALERS,
                 &sk,
@@ -255,12 +268,13 @@ impl Fixture {
                 outgoing_keys: outgoing[recipient].clone().into(),
                 incoming_keys: received_keys[recipient].clone().into(),
             };
-            let inputs = share_decryption::Inputs::compute(&config, BINDING, copy_opening(&data))?;
+            let inputs = share_decryption::Inputs::compute(&config, binding, copy_opening(&data))?;
             leaves.push(Leaf {
                 role: CircuitName::DkgShareDecryption,
                 inputs: inputs.to_json(),
                 outputs: vec![sk, bundle],
                 prove: true,
+                transport_slot: None,
             });
             openings.push(data);
         }
@@ -268,6 +282,7 @@ impl Fixture {
             config,
             leaves,
             openings,
+            recipient_public,
         })
     }
 }
@@ -364,12 +379,17 @@ impl CircuitJob {
     fn new(root: &Path, role: CircuitName) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("src"))?;
+        let source = root
+            .join("circuits/bin")
+            .join(role.source_path(PROFILE).context("Missing sync source")?);
+        let mut manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(source.join("Nargo.toml"))?)?;
+        manifest["package"]["name"] = toml::Value::String("sync_leaf".into());
+        manifest["dependencies"]["lib"]["path"] =
+            toml::Value::String(root.join("circuits/lib").to_string_lossy().into());
         fs::write(
             directory.path().join("Nargo.toml"),
-            format!(
-                "[package]\nname=\"sync_leaf\"\ntype=\"bin\"\nauthors=[]\n[dependencies]\nlib={{path={:?}}}\n",
-                root.join("circuits/lib")
-            ),
+            toml::to_string(&manifest)?,
         )?;
         fs::copy(
             root.join("circuits/bin")
@@ -516,7 +536,7 @@ fn private_native_dkg_leaves_prove_and_reject_substitutions() -> Result<()> {
     let bb = check_tools(&root)?;
     let fixture = Fixture::native()?;
     let mut jobs = BTreeMap::new();
-    for role in CircuitName::SYNCHRONIZED_DKG {
+    for role in CircuitName::SYNCHRONIZED_DKG_LEAVES {
         jobs.insert(role.dir_path(), CircuitJob::new(&root, role)?);
     }
     for leaf in &fixture.leaves {

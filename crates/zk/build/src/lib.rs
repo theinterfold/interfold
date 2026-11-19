@@ -280,7 +280,7 @@ impl Request {
                 Operation::Build | Operation::Hash | Operation::SyncPreset
             )
         {
-            bail!("Synchronized deployment bindings, recursive artifacts and qualification are not implemented");
+            bail!("Synchronized deployment bindings and complete artifact qualification are not implemented");
         }
         if self.operation == Operation::Build
             && synchronized
