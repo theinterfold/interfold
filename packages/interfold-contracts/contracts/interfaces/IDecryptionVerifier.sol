@@ -8,7 +8,7 @@ pragma solidity 0.8.28;
 /**
  * @title IDecryptionVerifier
  * @notice Interface for the DecryptionAggregator (EVM) proof verifier.
- * @dev The DecryptionAggregator circuit internally verifies the C6-fold and C7
+ * @dev The DecryptionAggregator circuit internally verifies the c6_chonk_root and C7
  *      (decrypted_shares_aggregation) sub-proofs; this on-chain wrapper verifies
  *      the final EVM proof and enforces:
  *        - the immutable recursive sub-circuit VK hashes
