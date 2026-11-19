@@ -86,7 +86,7 @@ by [scripts/release/](scripts/release/). It serializes release promotions and:
 
 1. Validates candidate ancestry and all shared version values.
 2. Pulls the newest source-matching circuit artifact revision, not an unrelated branch-tip build.
-   `verify-release` requires all six supported pairs, build stamps, and checked manifests.
+   `verify-release` requires all eight supported pairs, build stamps, and checked manifests.
 3. Packages circuits once and hashes the **exact archive bytes** before compiling binaries and the
    ciphernode image. `E3_CIRCUITS_ARCHIVE_SHA256` binds that archive to the binary's release
    version; binary/image `interfold noir status` checks must match. Do not repack it afterward.
