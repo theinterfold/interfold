@@ -102,8 +102,10 @@ fn canonical_key() -> CanonicalPublicKey {
         params_profile: BfvProfile::SsInsecure64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: test_decryption_domain().interfold_address,
-        sk_agg_commits: vec![],
-        esm_agg_commits: vec![],
+        dkg_anchors: e3_request::canonical_key::CanonicalDkgAnchors::SecretShared {
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        },
     }
 }
 
@@ -512,8 +514,10 @@ fn recovery_key() -> CanonicalPublicKey {
     let mut key = canonical_key();
     key.committee.sort();
     key.honest_committee = vec![key.committee[0], key.committee[2]];
-    key.sk_agg_commits = vec![[0; 32]; 2];
-    key.esm_agg_commits = vec![[0; 32]; 2];
+    key.dkg_anchors = e3_request::canonical_key::CanonicalDkgAnchors::SecretShared {
+        sk_agg_commits: vec![[0; 32]; 2],
+        esm_agg_commits: vec![[0; 32]; 2],
+    };
     key
 }
 

@@ -43,6 +43,13 @@ The crate exports actor construction parameters, recovery payload/state types, a
 dealer-key collection boundary. Canonical-key types are shared from `e3-request`; a local aggregate
 intent is not permission to decrypt under an unconfirmed key.
 
+The disabled `synchronized` capability also exposes publication consent and a read-only
+`ConfirmedSynchronizedDkgSetup` handoff for later C6 work. Callers supply a locally verified,
+source/correlation-admitted recipient setup; the DTO itself carries no proof authority. Consent uses
+the shared chain-frozen domain and independent native PK. Handoff rechecks the recovered sealed
+keys/setup against the shared confirmed authority, including outside-H recipients, without enabling
+decryption or returning plaintext PRF keys. Production actor/writer callers remain unfinished.
+
 The threshold-share soft checkpoint can advance when every missing dealer lacked a C0 key at
 key-collection closure. Verification still needs H−1 external shares, and collection remains open
 until completion or the canonical DKG deadline.
@@ -75,7 +82,9 @@ The proof commands require pinned nargo/bb and stage explicit variants in tempor
 preserving source dependency pins. The second verifies ten real C1/C2/C3/C4 proofs. The recovery
 command verifies 37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient
 joins, C5 and publication from their reopened signed artifacts, sealed keys and native PK-share
-bytes. It requires `pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH;
+bytes. It then publishes native H consents to a locally deployed registry, checks authority and
+PK-chunk readback, and rebuilds the shared authority from a reopened journal for all N handoffs. It
+requires Anvil, `pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH;
 generated Honk/Solidity acceptance and substitution rejection are mandatory, not skipped when
 unavailable. It tests orderly stop/flush/cache eviction/reopen, exact saved work, non-prefix H
 `[0,2]`, self/outside-H recipients and authenticated replacement. Its ordinary variant and
@@ -91,8 +100,10 @@ alone does not drain buffered snapshots.
 These private fixtures load checkpoints through production repositories/payloads below the disabled
 extension-hydration and generation/calculation dispatch guards. Replay supplies empty historical
 EVM/network adapters; real proofs are driven explicitly, not by production proof workers. Neither
-fixture establishes whole-node startup, live registry publication/attestations, network delivery,
-process-crash durability, secure-profile qualification or repeated-decryption assurance.
+fixture establishes whole-node startup, guarded production publication/attestation orchestration,
+network delivery, process-crash durability, secure-profile qualification or repeated-decryption
+assurance. The local registry campaign seeds its finalized committee/controller lifecycle below
+disabled admission; it does not test the production request/sortition path.
 
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,

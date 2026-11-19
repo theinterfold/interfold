@@ -89,6 +89,20 @@ impl SetupCommitments {
     }
 }
 
+impl From<&SetupCommitments> for e3_events::SynchronizedSetupAnchors {
+    fn from(setup: &SetupCommitments) -> Self {
+        Self {
+            binding: setup.binding(),
+            recipient: setup.recipient(),
+            dealers: setup.dealers().to_vec(),
+            threshold_keys: setup.threshold_keys().to_vec(),
+            dealer_batch: setup.dealer_batch(),
+            sk_commitment: setup.sk_commitment(),
+            key_bundle: setup.key_bundle(),
+        }
+    }
+}
+
 pub(super) struct Keys {
     c0: VkArtifacts,
     c1: VkArtifacts,

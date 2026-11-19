@@ -46,6 +46,7 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+e3-committee-hash.workspace = true
 alloy = { workspace = true, features = ["json-rpc"] }
 alloy-dyn-abi = { workspace = true }
 bincode = { workspace = true }

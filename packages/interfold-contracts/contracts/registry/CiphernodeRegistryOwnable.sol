@@ -310,19 +310,28 @@ contract CiphernodeRegistryOwnable is
         dependencies.interfoldContract = IInterfold(msg.sender);
         dependencies.bonding = bondingRegistry;
         dependencies.slashManager = slashingManager;
-        require(
-            address(dkgFoldAttestationVerifier) != address(0),
-            FoldAttestationVerifierNotSet()
+        bool synchronizedRequest = DkgPublicationLib.establishRequestContext(
+            dependencies.interfoldContract,
+            e3Id
         );
-        dependencies.dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
+        if (!synchronizedRequest) {
+            require(
+                address(dkgFoldAttestationVerifier) != address(0),
+                FoldAttestationVerifierNotSet()
+            );
+            dependencies
+                .dkgFoldAttestationVerifier = dkgFoldAttestationVerifier;
+        }
         dependencies.slashManager.snapshotE3Dependencies(e3Id);
         dependencies.bonding.setCommitteeObligation(e3Id, address(0), true);
         unreleasedCommitteeCount++;
-        emit DkgFoldAttestationContextEstablished(
-            e3Id,
-            address(this),
-            address(dependencies.dkgFoldAttestationVerifier)
-        );
+        if (!synchronizedRequest) {
+            emit DkgFoldAttestationContextEstablished(
+                e3Id,
+                address(this),
+                address(dependencies.dkgFoldAttestationVerifier)
+            );
+        }
 
         c.requestBlock = block.timestamp;
         (, uint256 activeCount) = dependencies.bonding.eligibilityAt(

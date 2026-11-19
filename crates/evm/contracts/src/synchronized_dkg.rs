@@ -29,6 +29,9 @@ alloy_sol_types::sol! {
 
         function publishSynchronizedCommittee(uint256 e3Id, Publication calldata publication) external;
         function getSynchronizedDkgAuthority(uint256 e3Id) external view returns (Authority memory authority);
+        event SynchronizedDkgContextEstablished(
+            uint256 indexed e3Id, address registry, address verifier, bytes32 cryptoConfigId
+        );
         event SynchronizedDkgAuthorityPublished(uint256 indexed e3Id, Authority authority);
         error InvalidSynchronizedDkgPublication();
         error SynchronizedDkgPublicationRequired();

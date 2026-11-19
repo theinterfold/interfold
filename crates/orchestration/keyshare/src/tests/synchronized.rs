@@ -45,6 +45,7 @@ const COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Minimum;
 const DEALERS: [u64; 2] = [0, 2];
 
 struct Setup {
+    interfold: Address,
     cipher: Arc<Cipher>,
     ciphers: Vec<Arc<Cipher>>,
     config: Configs,
@@ -89,6 +90,10 @@ impl Setup {
     }
 
     async fn with_ciphers(ciphers: Vec<Arc<Cipher>>) -> Result<Self> {
+        Self::with_ciphers_at(ciphers, Address::repeat_byte(0x11)).await
+    }
+
+    async fn with_ciphers_at(ciphers: Vec<Arc<Cipher>>, interfold: Address) -> Result<Self> {
         ensure!(ciphers.len() == 3);
         let cipher = ciphers[0].clone();
         let config = Configs::for_profile(PROFILE, COMMITTEE)?;
@@ -103,7 +108,12 @@ impl Setup {
             .collect();
         let selected: Vec<_> = (0..3)
             .map(|owner| CiphernodeSelected {
-                e3_id: E3id::new("245603", 31337),
+                e3_id: E3id::new(
+                    ((alloy::primitives::U256::from_be_slice(interfold.as_slice()) << 96usize)
+                        | alloy::primitives::U256::from(245603))
+                    .to_string(),
+                    31337,
+                ),
                 party_id: owner,
                 threshold_m: 1,
                 threshold_n: 3,
@@ -141,7 +151,7 @@ impl Setup {
         for selection in &selected {
             let owner = selection.party_id as usize;
             let cipher = &ciphers[owner];
-            let context = proof_context(selection, Address::repeat_byte(0x11))?;
+            let context = proof_context(selection, interfold)?;
             let output = gen_pk_share_and_sk_sss(
                 &mut rngs[owner],
                 cipher,
@@ -175,7 +185,7 @@ impl Setup {
                 key_bundle: None,
                 c2_statements: Default::default(),
             };
-            saved.validate(selection, Address::repeat_byte(0x11), cipher)?;
+            saved.validate(selection, interfold, cipher)?;
             let plan = build_shares_generated_plan(
                 cipher,
                 PROFILE,
@@ -211,6 +221,7 @@ impl Setup {
             pending.push(event);
         }
         let mut setup = Self {
+            interfold,
             cipher,
             ciphers,
             config,

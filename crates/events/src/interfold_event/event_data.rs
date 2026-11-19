@@ -157,6 +157,7 @@ interfold_event_data!(
     BondingAssetConfigUpdated,
     BondingAssetConfigUpdatedAt,
     AggregationResumed,
+    SynchronizedDkgContextEstablished,
 );
 
 impl fmt::Display for EventType {
@@ -282,6 +283,9 @@ impl InterfoldEventData {
             InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
             InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::SynchronizedDkgContextEstablished(ref data) => {
                 Some(data.e3_id.clone())
             }
             InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {

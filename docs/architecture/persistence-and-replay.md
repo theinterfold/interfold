@@ -136,6 +136,12 @@ deferred history, and result repair. Missing authority must not block unrelated 
 into authority. The EVM writer seeds terminal IDs from confirmed history and discards later
 publication work for those IDs.
 
+The same canonical-key projection retains the unactivated synchronized signing context and joins its
+confirmed authority/proof rows. These are dormant DKG facts, not an admitted request or permission
+to decrypt. No separate authority snapshot or RPC cache is introduced. Its appended chain-context
+event and intermediate-binary rollback limits follow the
+[schema-9 cutover](upgrades.md#bfv-profile-cutover).
+
 The E3LifecycleCoordinator observes monotonically and emits no protocol events. Its stage map feeds
 cleanup, writer, and compute recovery, so its schema/update order is durability-critical despite
 being a projection. Dashboard projections are disposable: page logs to derive stages, committees,

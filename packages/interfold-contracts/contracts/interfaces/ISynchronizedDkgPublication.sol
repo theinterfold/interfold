@@ -30,6 +30,14 @@ interface ISynchronizedDkgPublication {
         bytes32[] keyBundleCommits;
     }
 
+    /// @notice Signing domain frozen before committee formation; never the SS attestation verifier.
+    event SynchronizedDkgContextEstablished(
+        uint256 indexed e3Id,
+        address registry,
+        address verifier,
+        bytes32 cryptoConfigId
+    );
+
     event SynchronizedDkgAuthorityPublished(
         uint256 indexed e3Id,
         Authority authority

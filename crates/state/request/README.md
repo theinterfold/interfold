@@ -58,6 +58,10 @@ projection establishes authority; a local `PublicKeyAggregated` intent cannot. R
 traits expose typed context, metadata, lifecycle, and router-checkpoint storage to startup/recovery
 consumers.
 
+Typed synchronized setup anchors and the frozen signing context share that authority owner, without
+reusing SS ESM fields. Dormant DKG key-byte validation does not enable ordinary key admission,
+decryption domains or C6 request repair for a disabled profile.
+
 See [persistence and replay](../../../docs/architecture/persistence-and-replay.md) for checkpoint,
 deferred-queue, overflow, and teardown limits.
 

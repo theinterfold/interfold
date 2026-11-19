@@ -40,6 +40,7 @@ num-bigint = { workspace = true }
 [dev-dependencies]
 e3-zk-prover = { workspace = true }
 e3-evm.workspace = true
+e3-evm-contracts.workspace = true
 e3-event-system.workspace = true
 e3-sync.workspace = true
 e3-zk-build.workspace = true

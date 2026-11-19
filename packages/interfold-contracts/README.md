@@ -57,8 +57,9 @@ The draft `SynchronizedDkgPublicationVerifier` is **not** a deployment route or
 an `IPkVerifier` implementation. Its separate registry entry requires H
 recipient signatures and stores versioned SK/key-bundle authority, never SS ESM
 anchors. Synchronized admission remains disabled; do not register this wrapper
-as the SS PK-verifier default. Native authority/recovery wiring, human protocol
-review and separate rollout decisions remain required.
+as the SS PK-verifier default. The separate request-context event freezes the
+synchronized wrapper for native signing/recovery. Guarded runtime orchestration,
+human protocol review and separate rollout decisions remain required.
 
 Registry implementations now link `DkgPublicationLib` as well as the existing
 sortition/Poseidon libraries. Preparation scripts record that library address;

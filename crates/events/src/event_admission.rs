@@ -201,15 +201,20 @@ impl EventAdmission {
     fn report_loss(&self, event_type: &str) {
         let reason =
             format!("an admitted {event_type} event was lost before its EventBus fanout ended");
+        self.fail(reason);
+    }
+
+    pub(crate) fn fail(&self, reason: String) {
         if self.loss.set(reason.clone()).is_err() {
-            debug!(%reason, "Event pipeline lost another admitted event");
+            debug!(%reason, "Event pipeline reported another failure");
             return;
         }
-        error!(%reason, "Event pipeline lost an admitted event");
+        error!(%reason, "Event pipeline failed");
         if let Some(signal) = self.failure_signal.get() {
             // Keeps an earlier reason, such as the storage failure that caused this loss.
             record_failure(signal, reason);
         }
+        self.released.notify_waiters();
     }
 }
 

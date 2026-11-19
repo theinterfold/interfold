@@ -21,6 +21,30 @@ import {
 
 /// @notice Called by the registry with request-frozen facts, never caller-selected authority.
 library DkgPublicationLib {
+    /// @dev The controller has already stored the request's verifier and crypto identity.
+    function establishRequestContext(
+        IInterfold controller,
+        uint256 e3Id
+    ) external returns (bool) {
+        bytes32 identity = ISynchronizedDkgRequestContext(address(controller))
+            .e3CryptoConfigIds(e3Id);
+        if (identity != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID)
+            return false;
+        E3 memory e3 = controller.getE3(e3Id);
+        _synchronizedVerifier(
+            address(controller),
+            address(e3.pkVerifier),
+            identity
+        );
+        emit ISynchronizedDkgPublication.SynchronizedDkgContextEstablished(
+            e3Id,
+            address(this),
+            address(e3.pkVerifier),
+            identity
+        );
+        return true;
+    }
+
     struct SecretSharedContext {
         uint256 e3Id;
         IInterfold controller;
@@ -204,16 +228,14 @@ library DkgPublicationLib {
         view
         returns (ISynchronizedDkgPublication.Authority memory authority)
     {
-        ISynchronizedDkgPublicationVerifier verifier = ISynchronizedDkgPublicationVerifier(
-                verifierAddress
-            );
+        ISynchronizedDkgPublicationVerifier verifier = _synchronizedVerifier(
+            interfold,
+            verifierAddress,
+            cryptoConfigId
+        );
         if (
-            cryptoConfigId != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
-            verifier.INTERFOLD() != interfold ||
-            verifier.CRYPTO_CONFIG_ID() != cryptoConfigId ||
-            verifier.N() != committee.length ||
+            committee.length != BfvProtocol.MINIMUM_N ||
             publication.partyIds.length != BfvProtocol.MINIMUM_H ||
-            publication.partyIds.length != verifier.H() ||
             publication.signatures.length != publication.partyIds.length
         )
             revert ISynchronizedDkgPublication
@@ -239,6 +261,23 @@ library DkgPublicationLib {
             publication.proof
         );
         _verifyConsent(e3Id, committee, publication.signatures, authority);
+    }
+
+    function _synchronizedVerifier(
+        address interfold,
+        address verifierAddress,
+        bytes32 cryptoConfigId
+    ) private view returns (ISynchronizedDkgPublicationVerifier verifier) {
+        verifier = ISynchronizedDkgPublicationVerifier(verifierAddress);
+        if (
+            cryptoConfigId != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            verifier.INTERFOLD() != interfold ||
+            verifier.CRYPTO_CONFIG_ID() != cryptoConfigId ||
+            verifier.N() != BfvProtocol.MINIMUM_N ||
+            verifier.H() != BfvProtocol.MINIMUM_H
+        )
+            revert ISynchronizedDkgPublication
+                .InvalidSynchronizedDkgPublication();
     }
 
     function _verifyConsent(

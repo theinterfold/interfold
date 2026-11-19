@@ -15,15 +15,19 @@ use e3_events::{
     EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData,
     PublicKeyAggregated, SeqAgg, SubscribePreFanout,
 };
-use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+use e3_request::canonical_key::{CanonicalDkgAnchors, CanonicalPublicKey, CanonicalPublicKeys};
 use e3_utils::{actix::channel, ArcBytes};
 use std::collections::{HashMap, HashSet};
 
 use crate::{actors::data_availability::KeyAssembly, ICiphernodeRegistry};
 
+mod synchronized;
+use synchronized::SynchronizedPublicationObservation;
+
 type Candidate = (E3id, String, [u8; 32]);
 
 pub struct CanonicalKeyProjection {
+    bus: Option<BusHandle>,
     keys: CanonicalPublicKeys,
     interfold_addresses: HashMap<u64, Address>,
     requests: HashMap<E3id, E3Requested>,
@@ -32,11 +36,15 @@ pub struct CanonicalKeyProjection {
     candidates: HashMap<E3id, Vec<PublicKeyAggregated>>,
     closed: HashMap<E3id, bool>,
     hydrating_contexts: HashSet<E3id>,
+    synchronized_authorities:
+        HashMap<E3id, crate::contracts::ISynchronizedDkgPublication::Authority>,
+    synchronized_proofs: HashMap<E3id, SynchronizedPublicationObservation>,
 }
 
 impl CanonicalKeyProjection {
     pub fn new(keys: CanonicalPublicKeys, interfold_addresses: HashMap<u64, Address>) -> Self {
         Self {
+            bus: None,
             keys,
             interfold_addresses,
             requests: HashMap::new(),
@@ -45,6 +53,8 @@ impl CanonicalKeyProjection {
             candidates: HashMap::new(),
             closed: HashMap::new(),
             hydrating_contexts: HashSet::new(),
+            synchronized_authorities: HashMap::new(),
+            synchronized_proofs: HashMap::new(),
         }
     }
 
@@ -92,7 +102,8 @@ impl CanonicalKeyProjection {
         Ok(())
     }
 
-    pub async fn attach(self, bus: &BusHandle) -> Result<()> {
+    pub async fn attach(mut self, bus: &BusHandle) -> Result<()> {
+        self.bus = Some(bus.clone());
         bus.event_bus()
             .send(SubscribePreFanout::new(self.start().recipient()))
             .await?;
@@ -135,6 +146,8 @@ impl CanonicalKeyProjection {
             self.publications.remove(&id);
             self.candidates.remove(&id);
             self.assemblies.retain(|candidate, _| candidate.0 != id);
+            self.synchronized_authorities.remove(&id);
+            self.synchronized_proofs.remove(&id);
             self.closed
                 .entry(id)
                 .and_modify(|confirmed| *confirmed |= chain_fact)
@@ -156,18 +169,44 @@ impl CanonicalKeyProjection {
                     .remember_ciphertexts(&output.e3_id, &output.ciphertext_output)?;
             }
             InterfoldEventData::E3Requested(request) if chain_fact => {
-                // Chain ingestion admits only the profiles that this release admits. A retained
-                // request of a profile disabled since then gets no authority, so it cannot stop
-                // recovery.
+                // Dormant synchronized setup facts can be read without admitting an E3 or effects.
+                // The reader/router/worker admission guards remain in force.
+                let dormant_setup = request.params_profile.protocol()
+                    == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+                    && e3_request::E3Meta::from(request)
+                        .validate_identity()
+                        .is_ok();
                 if self
                     .interfold_addresses
                     .contains_key(&request.e3_id.chain_id())
-                    && request.params_profile.admission_enabled()
+                    && (request.params_profile.admission_enabled() || dormant_setup)
                 {
+                    if let Some(previous) = self.requests.get(&request.e3_id) {
+                        if dormant_setup
+                            || previous.params_profile.protocol()
+                                == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+                        {
+                            ensure!(
+                                previous == request,
+                                "confirmed synchronized request changed"
+                            );
+                        }
+                    }
                     self.requests
                         .entry(request.e3_id.clone())
                         .or_insert_with(|| request.clone());
+                    self.finish_synchronized(&request.e3_id)?;
                 }
+            }
+            InterfoldEventData::SynchronizedDkgContextEstablished(context) if chain_fact => {
+                self.record_synchronized_context(context)?;
+            }
+            InterfoldEventData::EvmLogObserved(log)
+                if chain_fact
+                    && log.contract == "CiphernodeRegistry"
+                    && log.event_name == "SynchronizedDkgAuthorityPublished" =>
+            {
+                self.record_synchronized_authority(event, log)?;
             }
             InterfoldEventData::EvmLogObserved(log)
                 if chain_fact
@@ -300,6 +339,9 @@ impl CanonicalKeyProjection {
         let Some(request) = self.requests.get(id) else {
             return Ok(());
         };
+        if request.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            return self.record_synchronized_proof(id, committee, commitment, proof);
+        }
         let committee_size =
             CiphernodesCommitteeSize::from_threshold(request.threshold_m, request.threshold_n)?;
         let h = committee_size.values().h;
@@ -333,8 +375,10 @@ impl CanonicalKeyProjection {
                 params_profile: request.params_profile,
                 committee_size,
                 interfold_address: self.interfold_addresses[&id.chain_id()],
-                sk_agg_commits: inputs[5 + h..5 + 2 * h].iter().map(|v| v.0).collect(),
-                esm_agg_commits: inputs[5 + 2 * h..5 + 3 * h].iter().map(|v| v.0).collect(),
+                dkg_anchors: CanonicalDkgAnchors::SecretShared {
+                    sk_agg_commits: inputs[5 + h..5 + 2 * h].iter().map(|v| v.0).collect(),
+                    esm_agg_commits: inputs[5 + 2 * h..5 + 3 * h].iter().map(|v| v.0).collect(),
+                },
             },
         )
     }
@@ -349,8 +393,8 @@ impl CanonicalKeyProjection {
                 .iter()
                 .map(|node| node.parse::<Address>())
                 .collect::<Result<Vec<_>, _>>()?;
-            if nodes == key.committee && key.validate_key(&publication.public_key).is_ok() {
-                self.keys.remember_key(id, publication.public_key)?;
+            if nodes == key.committee && key.validate_dkg_key(&publication.public_key).is_ok() {
+                self.keys.remember_dkg_key(id, publication.public_key)?;
             }
         }
         if let Some(candidates) = self.candidates.remove(id) {
@@ -371,7 +415,8 @@ impl CanonicalKeyProjection {
                 continue;
             };
             if assembly.matches_authority(&key.committee, key.pk_commitment) {
-                self.keys.remember_key(id, ArcBytes::from_bytes(&bytes))?;
+                self.keys
+                    .remember_dkg_key(id, ArcBytes::from_bytes(&bytes))?;
                 break;
             }
         }
@@ -389,6 +434,11 @@ impl Handler<InterfoldEvent> for CanonicalKeyProjection {
     type Result = ();
     fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
         if let Err(error) = self.observe(&event) {
+            if error.is::<synchronized::UnsupportedVersion>() {
+                if let Some(bus) = &self.bus {
+                    bus.fail_event_pipeline(format!("canonical key projection: {error:#}"));
+                }
+            }
             tracing::warn!(%error, "Rejected inconsistent chain key observation");
         }
     }

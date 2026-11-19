@@ -1292,7 +1292,15 @@ jobs:
         if: matrix.leg == 'sync-dkg-proofs'
         run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
 
-      - name: Qualify synchronized DKG replay and recovered-runtime publication proofs
+      - name: Install Anvil for recovered synchronized publication
+        if: matrix.leg == 'sync-dkg-recovery'
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+
+      - name: Build registry artifacts for recovered synchronized publication
+        if: matrix.leg == 'sync-dkg-recovery'
+        run: pnpm evm:build
+
+      - name: Qualify synchronized DKG replay, native consents and real registry publication
         if: matrix.leg == 'sync-dkg-recovery'
         run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:qualification
 

@@ -16,7 +16,7 @@ use fhe::mbfv::{Aggregate as _, PublicKeyShare};
 use serde_json::json;
 use std::{fs, process::Command};
 
-type Recovered = (ThresholdKeyshareRecoveryState, crate::ReadyForDecryption);
+pub(super) type Recovered = (ThresholdKeyshareRecoveryState, crate::ReadyForDecryption);
 
 fn authenticated(
     selected: &CiphernodeSelected,
@@ -46,6 +46,8 @@ pub(super) async fn qualify(
     local_c4: &[DecryptionKeyShared],
     prover: &ZkProver,
     directory: &Path,
+    chain: &super::chain::Chain,
+    signers: &[PrivateKeySigner],
 ) -> Result<()> {
     let selected = recovered[0]
         .0
@@ -53,7 +55,7 @@ pub(super) async fn qualify(
         .as_ref()
         .context("lost selection")?;
     let config = Configs::for_profile(selected.params_profile, COMMITTEE)?;
-    let context = proof_context(selected, Address::repeat_byte(0x11))?;
+    let context = proof_context(selected, chain.controller)?;
     let e3 = &selected.e3_id;
     let binding = setup_binding(&context, e3)?;
     let ids: Vec<_> = DEALERS.iter().map(|&id| id as u32).collect();
@@ -62,7 +64,7 @@ pub(super) async fn qualify(
         .dkg_roster
         .as_ref()
         .context("lost accepted roster")?;
-    ensure!(roster.e3_id == *e3 && roster.interfold_address == Address::repeat_byte(0x11));
+    ensure!(roster.e3_id == *e3 && roster.interfold_address == chain.controller);
     ensure!(
         roster.kind == DkgCoordinationKind::Roster && roster.has_canonical_dealers(recovered.len())
     );
@@ -103,7 +105,7 @@ pub(super) async fn qualify(
         ensure!(selection.committee == selected.committee && selection.e3_id == *e3);
         ensure!(root.dkg_roster.as_ref() == Some(roster));
         let saved = root.synchronized.as_ref().context("lost sealed material")?;
-        ensure!(saved.context == proof_context(selection, Address::repeat_byte(0x11))?);
+        ensure!(saved.context == proof_context(selection, chain.controller)?);
         let key = root.encryption_keys[&(owner as u64)]
             .key
             .signed_payload
@@ -135,7 +137,7 @@ pub(super) async fn qualify(
             .unwrap_or(&local_c4[owner]);
         crate::synchronized::validate_c4_message(
             selection,
-            Address::repeat_byte(0x11),
+            chain.controller,
             message,
             Some(&DEALERS.into()),
             Some(saved),
@@ -249,6 +251,7 @@ pub(super) async fn qualify(
         .map(|saved| saved.key_bundle.context("lost bundle"))
         .collect::<Result<Vec<_>>>()?;
     let mut recipients = Vec::new();
+    let mut setups = Vec::new();
     for owner in 0..recovered.len() {
         let proof = prove_recipient(
             prover,
@@ -264,7 +267,7 @@ pub(super) async fn qualify(
             },
             &format!("restored-recipient-{owner}"),
         )?;
-        ensure!(verify_recipient(
+        let setup = verify_recipient(
             prover,
             &config,
             &material[owner].context,
@@ -277,9 +280,10 @@ pub(super) async fn qualify(
                 key_bundle: bundles[owner],
             },
             &proof,
-            "restored-recipient"
+            "restored-recipient",
         )?
-        .is_some());
+        .context("recovered recipient setup rejected")?;
+        setups.push(e3_events::SynchronizedSetupAnchors::from(&setup));
         recipients.push(proof);
     }
     let c5 = prove_c5(prover, &config, &data, "restored-c5")?;
@@ -374,5 +378,15 @@ pub(super) async fn qualify(
         .current_dir(root);
     let output = run(&mut command)?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
+    chain
+        .qualify(
+            recovered,
+            &setups,
+            &public_key,
+            &publication,
+            directory,
+            signers,
+        )
+        .await?;
     Ok(())
 }

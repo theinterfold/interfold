@@ -5,6 +5,9 @@ use e3_events::{EventConstructorWithTimestamp, Unsequenced};
 use e3_fhe_params::{BfvParamSet, BfvPreset, BfvProfile};
 use e3_utils::OrderedSet;
 
+#[path = "synchronized_tests.rs"]
+mod synchronized;
+
 fn event(
     data: impl Into<InterfoldEventData>,
     source: EventSource,
@@ -122,8 +125,13 @@ async fn confirmed_observations_admit_publications_in_either_order() -> Result<(
         let key = keys.get(&id).expect("confirmed key authority");
         assert_eq!(key.committee, nodes);
         assert_eq!(key.honest_committee, vec![nodes[0], nodes[2]]);
-        assert_eq!(key.sk_agg_commits, vec![[3; 32], [4; 32]]);
-        assert_eq!(key.esm_agg_commits, vec![[5; 32], [6; 32]]);
+        assert_eq!(
+            key.dkg_anchors,
+            CanonicalDkgAnchors::SecretShared {
+                sk_agg_commits: vec![[3; 32], [4; 32]],
+                esm_agg_commits: vec![[5; 32], [6; 32]],
+            }
+        );
         assert_eq!(keys.public_key(&id), Some(publication.pubkey.clone()));
         let mut mismatch = publication.clone();
         mismatch.pk_commitment = [7; 32];

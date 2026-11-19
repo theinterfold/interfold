@@ -232,7 +232,7 @@ candidate outputs cannot supply their own authority. It does **not** authenticat
 values or caller-supplied chain context/roster, or replace signature admission. A different
 consistently selected setup is not rejected without canonical external authority. These joins prove
 neither C4's BFV decryption equation nor publication authority. The runtime still refuses
-synchronized folding/publication; human protocol review, native authority/recovery wiring, full-node
+synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
 replay and C6 remain open.
 
 ### Draft synchronized C5/publication boundary (not admitted)
@@ -277,6 +277,11 @@ packed address hash. Exact field types/order are owned by
 [`SynchronizedDkgAttestationLib`](../../packages/interfold-contracts/contracts/lib/SynchronizedDkgAttestationLib.sol);
 no SS signature/domain or ESM commitment is reused.
 
+At request time `SynchronizedDkgContextEstablished` supplies that domain from the frozen request
+wrapper, separately from the SS context event. Native EIP-712 encoding has an independent ethers
+digest/signature vector with an E3 ID above 2²⁰⁰, and rejects high-S/non-EVM signature encodings
+rather than normalizing them.
+
 The registry stores
 [Authority v1](../../packages/interfold-contracts/contracts/interfaces/ISynchronizedDkgPublication.sol)
 in append-only storage, with the three commitment columns in selected H order, and emits the full
@@ -286,12 +291,22 @@ authority and key writes. The ordinary SS entry rejects the synchronized identit
 checks, anchors and existing ERC-165 identities are preserved; linked `DkgPublicationLib` owns both
 publication paths to fit EIP-170 under the normal compiler settings.
 
+The shared native projection requires confirmed request/context, authority and proof observations to
+agree on configuration, setup binding, ordered roster, batch and every commitment column. It does
+not reverify a confirmed chain proof or obtain authority from gossip, an aggregation intent or an
+opportunistic registry read. Terminal history removes the retained setup/context and key bytes, with
+the existing snapshot-hydration roster exception. Unsupported context/authority versions fail
+recovery and signal fatal event-pipeline health live, closing subsequent admission without creating
+authority. This does not synchronously cancel fanout of the already-admitted event.
+
 Mock-proof registry tests establish consent/rollback/storage behavior, not proof soundness. The
-prepared real-proof suite checks the wrapper with an actual generated verifier. Neither establishes
-native confirmed-authority ingestion/restart, a whole-node synchronized workflow, C6 or a
-source-bound release. Admission stays disabled. The domain, authority schema and deployment/rollback
-decisions remain unratified protocol interfaces requiring human cryptographic and compatibility
-review.
+prepared recovery suite also uses an actual generated verifier and a locally deployed registry, with
+native H signatures, authority readback, chain PK chunks and a reopened confirmed journal. The
+finalized selection/controller lifecycle are test harnesses below disabled request admission, and
+proofs are driven explicitly. This is not a guarded production actor/writer workflow, whole-node
+startup, reorg/hard-crash assurance, C6 or a source-bound release. Admission stays disabled. The
+domain, authority schema and deployment/rollback decisions remain unratified protocol interfaces
+requiring human cryptographic and compatibility review.
 
 ## Commitments, packing, and Fiat-Shamir
 

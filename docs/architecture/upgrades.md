@@ -276,18 +276,32 @@ historical record is migrated. The draft wrapper's return tuple adds threshold-k
 changing proof bytes or public fields; earlier experimental wrapper consumers must update together.
 No deployed synchronized wrapper is supported.
 
-This slice adds only contract ABI/storage and unused Rust ABI declarations: no node event/snapshot
-encoding, gossip/sync major or additional protocol/generation counter change. It does not relax the
-unreleased schema-9 drain/reset decision above or qualify mixed intermediate nodes. Native
-authority/recovery encodings require their own compatibility decision. Synchronized admission stays
-off, so old SS nodes do not consume new synchronized publications in a supported deployment. New
-registry implementations must link `DkgPublicationLib`; new deployment/upgrade records retain that
-address while pre-extension records remain readable. No deployment record is rewritten here.
-Rollback of this unactivated extension preserves legacy SS storage and uses the reviewed prior
-implementation; once synchronized records can exist, rollback needs a separate drain/backup and
-consumer decision rather than ignoring them. Human review must approve the signed encoding,
-authority schema, artifact pins and governance rollout/rollback before deployment. Implementation
-direction approval and passing tests are not that review.
+The contract-authority extension does not change old node payloads. Its native handoff follow-up
+appends `SynchronizedDkgContextEstablished` to the durable event enum; existing variant positions
+and SS encodings remain unchanged. A new binary reads those earlier encodings, but an older binary
+cannot read the new variant. This remains within the **unreleased schema-9, protocol-9/generation-2
+cutover**, with no additional counter change, active-state migration or supported rolling upgrade
+between intermediate builds. Drain/reset/resync and rollback retain the backup/reset requirements
+above; do not open new-variant journals with the previous binary.
+
+The signing/setup DTOs have no production event/snapshot callers yet. `CanonicalPublicKey` and its
+typed SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
+layouts. Full-authority observations retain the existing lossless raw-log payload. The new typed
+chain-context event is excluded from peer forwarding, so gossip/sync majors and existing SS network
+bytes remain unchanged; introducing peer consent/setup messages needs a separate wire decision.
+Synchronized admission stays off. New registry implementations must link `DkgPublicationLib`; new
+deployment/upgrade records retain that address while pre-extension records remain readable. No
+deployment record is rewritten here. Rollback of this unactivated extension preserves legacy SS
+storage and uses the reviewed prior implementation; once synchronized records can exist, rollback
+needs a separate drain/backup and consumer decision rather than ignoring them. Human review must
+approve the signed encoding, authority schema, artifact pins and governance rollout/rollback before
+deployment. Implementation direction approval and passing tests are not that review.
+
+The request-time context event binds the synchronized wrapper rather than the SS fold-attestation
+verifier; it adds no storage slot or initializer. SS requests retain their previous context event.
+An earlier intermediate registry with no synchronized context event cannot supply a frozen native
+signing domain from its journal: no current-global-verifier or RPC fallback is permitted. Do not
+deploy that intermediate route or infer mixed-version support from read-only authority recovery.
 
 The appended `BfvPreset::InsecureSyncDkg64` keeps all prior preset discriminants. The
 data-availability recovery layout lock includes its enum row even though that projection records
@@ -329,10 +343,10 @@ generated `packages/interfold-contracts/crypto-config.json`, which records it. T
 pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all six pairs
 of `scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push`
 and qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
-Regenerate the sources with `pnpm generate:crypto-config`. The generated `BfvProtocol.sol` then
-drops the `*_CONFIG_ID` constants of the profile, so `ActiveCryptoConfig.sol` must have stopped
-using them in step 1, or the contracts no longer compile. `pnpm check:crypto-config` fails until
-both generated files match the release.
+Regenerate the sources with `pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity
+constants even for disabled profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop
+referencing retired identities in step 1. `pnpm check:crypto-config` checks all identity constants
+separately from exactly admitted request identities.
 
 If a node of that release still refuses to start, it still owes work under the profile, such as
 accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not

@@ -845,8 +845,10 @@ mod tests {
                 params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
                 interfold_address: contract,
-                sk_agg_commits: vec![],
-                esm_agg_commits: vec![],
+                dkg_anchors: e3_request::canonical_key::CanonicalDkgAnchors::SecretShared {
+                    sk_agg_commits: vec![],
+                    esm_agg_commits: vec![],
+                },
             };
             let ciphertext = vec![ArcBytes::from_bytes(&[3])];
             keys.insert(id.clone(), key.clone())?;

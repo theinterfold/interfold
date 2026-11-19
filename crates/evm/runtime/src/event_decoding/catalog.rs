@@ -528,6 +528,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "SynchronizedDkgContextEstablished",
+        ISynchronizedDkgPublication::SynchronizedDkgContextEstablished::SIGNATURE,
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "SynchronizedDkgAuthorityPublished",
         ISynchronizedDkgPublication::SynchronizedDkgAuthorityPublished::SIGNATURE,
         Some(1),
