@@ -473,13 +473,12 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C6 and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across predecessors.
-The kernel proves the chain's first leaves at their slots; every fold step carries its predecessor's
-rows forward, the kernel's included, and adds its leaves to empty slots. A C6 step takes one leaf,
-so a chain of `n >= 2` leaves is one kernel and `n - 1` fold proofs; a nodes step takes up to three.
-The first step verifies the kernel; continuation verifies the fold; the final consumer binds the
-declared fold hash to the verified VK. C3ab covers both complete C3 chains. Node-fold covers child
-folds and their nested keys. DKG aggregation requires one node-tree hash across every selected row.
+The sequential nodes fold keeps `(leaf, fold, kernel)` VK hashes constant across predecessors. The
+kernel proves the chain's first leaves at their slots; every fold step carries its predecessor's
+rows forward, the kernel's included, and adds up to three leaves to empty slots. The first step
+verifies the kernel; continuation verifies the fold; the final consumer binds the declared fold hash
+to the verified VK. C3ab covers both complete C3 chains. Node-fold covers child folds and their
+nested keys. DKG aggregation requires one node-tree hash across every selected row.
 
 `nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
 (`lib::math::nodes_fold`); a row must be all zero before it is written. An empty place in a step
@@ -491,25 +490,36 @@ once all their proofs are buffered, and `nodes_fold_step_len` fixes that count s
 its response handler agree without extra state. A chain of at most three nodes splits one and the
 rest, so it never ends on the kernel.
 
-C3 chains do not fold sequentially: they run over Chonk (`lib::math::chonk`). A stack is
-`c3_chonk_app`, which verifies `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding
-kernels; `c3_chonk_tube` verifies the stack's Chonk proof as a rollup proof, and
-`c3_chonk_accumulate` merges an accumulator or tube on the left with a tube on the right.
-`c3ab_fold` verifies each chain's last accumulator as a root rollup, which closes its IPA claim.
-Every stage verifies against a witness key and appends that key's hash to the data it passes on, so
-each tube or accumulator exposes seven key hashes: its own, the tube, the hiding kernel's Chonk key,
-then C3, app, init and tail. Merging requires equal keys on both sides; `c3ab_fold` hashes each
-chain's seven keys into the C3 tree, which the anchor pins. The Chonk and Mega key hashes are
-Barretenberg's Poseidon2 hash of the key fields, which the builder writes beside
-`write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app, kernel and
-hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends on an
-accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
+C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
+`C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
+the stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube
+on the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
+rollup, which closes its IPA claim. Every stage verifies against a witness key and appends that
+key's hash to the data it passes on, so each tube or accumulator exposes seven key hashes: its own,
+the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on
+both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which the anchor pins. The
+Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
+writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app,
+kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
+on an accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
 
 Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
 verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
 proof that verifies under the leaf key; the prover repeats the stack's first leaf, but the circuit
 does not require that choice, and the place adds no row. Within a stack every written slot must be
 empty, and merging rejects a slot filled on both sides, so no row is overwritten or duplicated.
+
+A decryption's C6 proofs run over the same Chonk stack design, all in one stack: `c6_chonk_app`
+verifies all `T + 1` of them, checks they share the first leaf's domain and places their sk, esm, ct
+and d commitments by slot (`lib::math::c6_chonk_rows`), so `T + 1` must stay within the stack's
+ECCVM bound (24 C3-sized proofs). `c6_chonk_tube` verifies the stack as a rollup proof and
+`c6_chonk_root` closes its IPA claim. A root rollup closes exactly two claims, so the root takes the
+tube twice under the tube key and states only the first; its final IPA check fails unless both
+claims are valid. The root ends by exposing the hash of the tube's seven key hashes before the data.
+The decryption aggregator verifies the root and requires `hash(root key, key-list hash)` to equal
+the anchored C6 tree, and the ciphertext commitment in every slot, so no slot stays empty. The C6
+tree anchor keeps the retired `c6_fold` artifact path, which `BfvDecryptionVerifier` deployments
+read.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
@@ -522,7 +532,8 @@ C3 tree    = hash(C3a chain, C3b chain)
 C4 tree    = hash(C4a, C4b)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
 nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
-C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
+C6 chain   = hash(c6_chonk_tube, c6_chonk_tube, hiding kernel, C6, app, init, tail)
+C6 tree    = hash(c6_chonk_root, C6 chain)
 ```
 
 Final public input zero is the complete nodes/C6 tree, pinned immutably from `.vk_tree_hash`, not

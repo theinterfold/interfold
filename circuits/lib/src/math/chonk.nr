@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chonk (Barretenberg client IVC) types and the C3 Chonk accumulator.
+//! Chonk (Barretenberg client IVC) types, the C3 Chonk accumulator and the C6 Chonk stack.
 //!
 //! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`) verifies
 //! a batch of C3 proofs and writes their rows; each kernel verifies the circuit before it and
@@ -19,6 +19,12 @@
 //!
 //! **Rollups.** The tube and `c3_chonk_accumulate` are rollup proofs: each carries an IPA claim,
 //! the accumulate step merges two into one, and `c3ab_fold` closes both chains' claims once.
+//!
+//! **C6 over Chonk.** A decryption's `T + 1` C6 proofs fit one stack (`c6_chonk_app`, with its own
+//! init, tail and hiding kernels), so there is nothing to accumulate: `c6_chonk_tube` verifies the
+//! stack and `c6_chonk_root` closes the tube's IPA claim for `decryption_aggregator`.
+
+use crate::configs::default::T;
 
 /// Mega verification keys, as a kernel verifies the circuit before it. bb 6 derives app keys
 /// (`MegaAppFlavor`) and kernel keys (`MegaKernelFlavor`) separately; both are 151 fields.
@@ -60,6 +66,12 @@ pub global C3_CHONK_LEAVES: u32 = 24;
 pub global C3_CHONK_KEYS: u32 = 7;
 pub global C3_CHONK_OWN_KEY: u32 = 0;
 pub global C3_CHONK_TUBE_KEY: u32 = 1;
+
+/// C6 proofs one `c6_chonk_app` verifies: a decryption's whole column, one per slot. One stack
+/// holds it while `T + 1` stays within `C3_CHONK_LEAVES`, the ECCVM bound.
+pub global C6_CHONK_LEAVES: u32 = T + 1;
+/// Data a C6 Chonk stack carries: the two domain limbs, then the sk, esm, ct and d columns.
+pub global C6_CHONK_DATA_LEN: u32 = 2 + 4 * (T + 1);
 
 /// Merges two disjoint row sets. A slot may be filled on at most one side.
 pub fn merge_rows<let ROWS: u32>(left: [Field; ROWS], right: [Field; ROWS]) -> [Field; ROWS] {

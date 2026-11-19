@@ -5,10 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Accumulation integration tests: a node's C3 batch through the C3 Chonk stacks, tubes and
-//! accumulate proofs ([`generate_c3_chonk_chain`]), and sequential [`generate_sequential_c6_fold`]
-//! (prove + [`ZkProver::verify_fold_proof`]) with the slot count read from the compiled `c6_fold`
-//! ABI and artifacts staged under [`CircuitVariant::Default`] (`noir-recursive-no-zk` VKs — see
-//! `crates/zk/build`).
+//! accumulate proofs ([`generate_c3_chonk_chain`]), and a decryption's C6 column through the C6
+//! Chonk stack, tube and root ([`generate_c6_chonk_root`]), proven and verified natively under
+//! [`CircuitVariant::Default`] (`noir-recursive-no-zk` VKs — see `crates/zk/build`), with slot
+//! counts read from the compiled circuits.
 //!
 //! The node-fold pipeline ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`]), which consumes
 //! the C3 Chonk chains, is proven in `node_fold_correlated_e2e_tests.rs`.
@@ -20,16 +20,21 @@
 //! - [`c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind`]: an accumulator merges a
 //!   third tube as the left child; the accumulate step and `c3ab_fold` reject children of the
 //!   wrong kind, and a tube under the accumulator's key.
-//! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
+//! - [`c6_chonk_root_proves_and_binds_the_decryption_aggregator`]: `T + 1` inner
+//!   `ThresholdShareDecryption` proofs → [`generate_c6_chonk_root`], whose key list hashes to the
+//!   anchored C6 tree the decryption aggregator pins; a root under another key cannot claim it.
+//! - [`c6_chonk_rejects_a_corrupted_leaf_or_a_substituted_key`]: a leaf whose claimed row differs
+//!   from its proof, or a stack stage handed another stage's key, never yields a root.
+//! - [`c6_chonk_app_rejects_a_shared_slot_an_out_of_range_slot_and_a_foreign_domain`]: the app
+//!   constrains slots and the domain, each next to an honest twin that solves.
 
 mod common;
+#[allow(dead_code)]
 #[path = "common/recursive_vk_substitution.rs"]
 mod recursive_vk_substitution;
 
-use std::path::PathBuf;
-
 use common::{
-    find_bb, setup_c3_chonk_circuits, setup_compiled_circuit,
+    find_bb, setup_c3_chonk_circuits, setup_c6_chonk_circuits, setup_compiled_circuit,
     setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
@@ -40,388 +45,17 @@ use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, generate_c3_chonk_accumulate,
-    generate_c3_chonk_chain_with_substituted_key, generate_c3_chonk_tubes, load_vk_artifacts,
+    generate_c3_chonk_chain_with_substituted_key, generate_c3_chonk_tubes,
+    generate_c6_chonk_root_with_substituted_key, load_vk_artifacts,
 };
 use e3_zk_prover::{
-    generate_c3_chonk_chain, generate_sequential_c6_fold, Provable, ZkBackend, ZkError, ZkProver,
+    generate_c3_chonk_chain, generate_c6_chonk_root, Provable, ZkBackend, ZkError, ZkProver,
 };
 use e3_zk_prover::{
     ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,
 };
-use e3_zk_witness::threshold::share_decryption::ShareDecryptionCircuitData;
-use recursive_vk_substitution::{assert_fold_rejected, fields, substitute_proof, vk_hash, witness};
+use recursive_vk_substitution::{fields, substitute_proof, vk_hash, witness};
 use serde_json::json;
-
-fn c6_fold_json_path() -> PathBuf {
-    e3_zk_prover::test_utils::workspace_root()
-        .join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
-}
-
-/// Reads slot count from the compiled `c6_fold` ABI
-/// (`acc_public_inputs` length is `7 + 4 * slots`: five fold parameters and two domain limbs).
-fn c6_fold_total_slots_from_compiled_json() -> usize {
-    let path = c6_fold_json_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "read {}: {} (run `pnpm build:circuits --group recursive_aggregation`)",
-            path.display(),
-            e
-        )
-    });
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
-    let len = v["abi"]["parameters"]
-        .as_array()
-        .and_then(|ps| {
-            ps.iter()
-                .find(|p| {
-                    p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into()))
-                })
-                .and_then(|p| p.get("type")?.get("length")?.as_u64())
-        })
-        .expect("c6_fold.json: abi.parameters.acc_public_inputs.length") as usize;
-    assert!(
-        len >= 7 && (len - 7).is_multiple_of(4),
-        "unexpected acc_public_inputs length {} (expected 7 + 4 * slots)",
-        len
-    );
-    (len - 7) / 4
-}
-
-/// Expected C6 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
-const MINIMUM_C6_FOLD_SLOTS: usize = 2;
-
-fn assert_recursive_vk_binding(
-    prover: &ZkProver,
-    fold: CircuitName,
-    kernel: CircuitName,
-    inners: &[Proof],
-    folded: &Proof,
-    total_slots: usize,
-    artifacts_dir: &str,
-) {
-    let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-    let recursive_dir = prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir);
-    let leaf_vk = load_vk_artifacts(&recursive_dir, inners[0].circuit).unwrap();
-    let fold_vk = load_vk_artifacts(&default_dir, fold).unwrap();
-    let kernel_vk = load_vk_artifacts(&default_dir, kernel).unwrap();
-    let fold_path = default_dir
-        .join(fold.dir_path())
-        .join(format!("{}.json", fold.as_str()));
-    let kernel_path = default_dir
-        .join(kernel.dir_path())
-        .join(format!("{}.json", kernel.as_str()));
-    // The kernel proves the chain's first leaf at slot 0.
-    let mut input = json!({
-        "inner_vk": leaf_vk.verification_key,
-        "inner_proof": fold_witness_field_strings(&inners[0].data).unwrap(),
-        "acc_vk": kernel_vk.verification_key,
-        "acc_proof": vec!["0"; folded.data.len() / 32],
-        "acc_public_inputs": vec!["0"; fields(folded).len()],
-        "inner_key_hash": leaf_vk.key_hash,
-        "fold_key_hash": fold_vk.key_hash,
-        "kernel_key_hash": kernel_vk.key_hash,
-        "is_first_step": true,
-        "slot_index": 0,
-    });
-    input["c6_public_inputs"] = json!(fields(&inners[0]));
-    let kernel_witness = witness(&kernel_path, &input).expect("honest genesis witness");
-    let genesis = prover
-        .generate_recursive_aggregation_bin_proof(
-            kernel,
-            &kernel_witness,
-            "vk-binding-genesis",
-            artifacts_dir,
-        )
-        .expect("honest genesis proof");
-
-    // The first fold step adds the second leaf at slot 1 on top of the kernel proof.
-    input["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
-    input["acc_public_inputs"] = json!(fields(&genesis));
-    input["inner_proof"] = json!(fold_witness_field_strings(&inners[1].data).unwrap());
-    input["c6_public_inputs"] = json!(fields(&inners[1]));
-    input["slot_index"] = json!(1);
-    let first_witness = witness(&fold_path, &input).expect("honest first-step witness");
-    let first = prover
-        .generate_recursive_aggregation_bin_proof(
-            fold,
-            &first_witness,
-            "vk-binding-first",
-            artifacts_dir,
-        )
-        .expect("honest first-step proof");
-
-    let mut reused_slot = input.clone();
-    reused_slot["slot_index"] = json!(0);
-    assert!(
-        witness(&fold_path, &reused_slot).is_err(),
-        "the first fold step must not refill the kernel's slot"
-    );
-
-    // A substituted predecessor carries the honest predecessor's public inputs, so the step's own
-    // constraints, slot 1 still empty included, hold: the witness solves, and only the recursive
-    // verification of the predecessor under its VK can reject it.
-    let fake_kernel = substitute_proof(
-        prover,
-        kernel,
-        CircuitVariant::Default,
-        &fields(&genesis),
-        None,
-        "kernel-predecessor",
-    );
-    let mut fake_genesis = input.clone();
-    fake_genesis["acc_vk"] = json!(fake_kernel.vk);
-    fake_genesis["acc_proof"] = json!(fold_witness_field_strings(&fake_kernel.proof.data).unwrap());
-    fake_genesis["acc_public_inputs"] = json!(fields(&fake_kernel.proof));
-    witness(&fold_path, &fake_genesis).expect("a substituted kernel leaves the step satisfiable");
-    assert_fold_rejected(
-        prover,
-        fold,
-        &fold_path,
-        &fake_genesis,
-        artifacts_dir,
-        "substituted-genesis",
-    );
-
-    let fake_acc = substitute_proof(
-        prover,
-        fold,
-        CircuitVariant::Default,
-        &fields(&first),
-        None,
-        "predecessor",
-    );
-
-    // With a third slot, a continuation verifies a fold predecessor under the fold key.
-    let mut steps = vec![(input.clone(), 1)];
-    if total_slots >= 3 {
-        let mut continuation = input.clone();
-        continuation["acc_vk"] = json!(fold_vk.verification_key);
-        continuation["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
-        continuation["acc_public_inputs"] = json!(fields(&first));
-        continuation["inner_proof"] = json!(fold_witness_field_strings(&inners[0].data).unwrap());
-        continuation["c6_public_inputs"] = json!(fields(&inners[0]));
-        continuation["is_first_step"] = json!(false);
-        continuation["slot_index"] = json!(2);
-        witness(&fold_path, &continuation).expect("honest continuation witness");
-
-        let mut fake_prior = continuation.clone();
-        fake_prior["acc_vk"] = json!(fake_acc.vk);
-        fake_prior["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
-        fake_prior["acc_public_inputs"] = json!(fields(&fake_acc.proof));
-        witness(&fold_path, &fake_prior)
-            .expect("a substituted fold predecessor leaves the step satisfiable");
-        assert_fold_rejected(
-            prover,
-            fold,
-            &fold_path,
-            &fake_prior,
-            artifacts_dir,
-            "substituted-predecessor",
-        );
-        steps.push((continuation, 0));
-    }
-
-    for (step, leaf) in steps {
-        let fake_leaf = substitute_proof(
-            prover,
-            inners[leaf].circuit,
-            CircuitVariant::Recursive,
-            &fields(&inners[leaf]),
-            None,
-            "leaf",
-        );
-        let mut changed_leaf = step.clone();
-        changed_leaf["inner_vk"] = json!(fake_leaf.vk);
-        changed_leaf["inner_proof"] =
-            json!(fold_witness_field_strings(&fake_leaf.proof.data).unwrap());
-        changed_leaf["inner_key_hash"] = json!(fake_leaf.key_hash);
-        assert!(
-            witness(&fold_path, &changed_leaf).is_err(),
-            "a fold step must retain its predecessor's leaf VK hash"
-        );
-        for key in ["fold_key_hash", "kernel_key_hash"] {
-            let mut changed_key = step.clone();
-            changed_key[key] = json!(fake_acc.key_hash);
-            assert!(
-                witness(&fold_path, &changed_key).is_err(),
-                "a fold step must retain its predecessor's {key}"
-            );
-        }
-    }
-}
-
-fn assert_final_c6_tree_binding(
-    prover: &ZkProver,
-    inner: &Proof,
-    folded: &Proof,
-    artifacts_dir: &str,
-) {
-    let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-    let leaf_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        inner.circuit,
-    )
-    .unwrap();
-    let fold_vk = load_vk_artifacts(&default_dir, CircuitName::C6Fold).unwrap();
-    let kernel_vk = load_vk_artifacts(&default_dir, CircuitName::C6FoldKernel).unwrap();
-    let fold_path = default_dir.join("recursive_aggregation/c6_fold/c6_fold.json");
-    let kernel_path = default_dir.join("recursive_aggregation/c6_fold_kernel/c6_fold_kernel.json");
-    let final_path =
-        default_dir.join("recursive_aggregation/decryption_aggregator/decryption_aggregator.json");
-    let canonical_tree = format!(
-        "0x{}",
-        hex::encode(
-            std::fs::read(default_dir.join("recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
-                .unwrap()
-        )
-    );
-    let leaf_public = fields(inner);
-    let fake_leaf = substitute_proof(
-        prover,
-        inner.circuit,
-        CircuitVariant::Recursive,
-        &leaf_public,
-        None,
-        "c6-tree-leaf",
-    );
-    let mut genesis_public = vec!["0".to_owned(); fields(folded).len()];
-    genesis_public[..3].clone_from_slice(&[
-        leaf_vk.key_hash.clone(),
-        fold_vk.key_hash.clone(),
-        kernel_vk.key_hash.clone(),
-    ]);
-    // Every fold step checks the predecessor's domain and keeps its rows, the first one included, so
-    // the substituted genesis carries the leaf in slot 0 as a real kernel proof would. Layout: seven
-    // prefix fields, then the sk, e_sm, ct and d columns of `slots` entries each.
-    genesis_public[5] = leaf_public[3].clone();
-    genesis_public[6] = leaf_public[4].clone();
-    let slots = (genesis_public.len() - 7) / 4;
-    for (column, leaf_field) in [0, 1, 2, 5].into_iter().enumerate() {
-        genesis_public[7 + column * slots] = leaf_public[leaf_field].clone();
-    }
-    let fake_genesis = substitute_proof(
-        prover,
-        CircuitName::C6FoldKernel,
-        CircuitVariant::Default,
-        &genesis_public,
-        Some(2),
-        "c6-tree-genesis",
-    );
-
-    // This alternate C7 relation isolates the C6 tree boundary. The EVM suite checks the separate C7 pin.
-    let mut c7_public = vec![
-        leaf_public[5].clone(),
-        leaf_public[5].clone(),
-        "1".into(),
-        "2".into(),
-    ];
-    c7_public.extend(vec!["0".to_owned(); MAX_MSG_NON_ZERO_COEFFS]);
-    let c7 = substitute_proof(
-        prover,
-        CircuitName::DecryptedSharesAggregation,
-        CircuitVariant::Default,
-        &c7_public,
-        None,
-        "c6-tree-c7",
-    );
-    let addresses: Vec<_> = (1..=3)
-        .map(|i| alloy::primitives::Address::from_word(alloy::primitives::U256::from(i).into()))
-        .collect();
-    let (committee_hi, committee_lo) = e3_committee_hash::committee_hash_field_hex(&addresses);
-
-    for replace_genesis in [true, false] {
-        let mut step = json!({
-            "inner_vk": if replace_genesis { &leaf_vk.verification_key } else { &fake_leaf.vk },
-            "inner_proof": fold_witness_field_strings(if replace_genesis { &inner.data } else { &fake_leaf.proof.data }).unwrap(),
-            "c6_public_inputs": leaf_public,
-            "acc_vk": kernel_vk.verification_key,
-            "acc_proof": vec!["0"; folded.data.len() / 32],
-            "acc_public_inputs": vec!["0"; fields(folded).len()],
-            "inner_key_hash": if replace_genesis { &leaf_vk.key_hash } else { &fake_leaf.key_hash },
-            "fold_key_hash": fold_vk.key_hash,
-            "kernel_key_hash": if replace_genesis { &fake_genesis.key_hash } else { &kernel_vk.key_hash },
-            "is_first_step": true,
-            "slot_index": 0,
-        });
-        let genesis = if replace_genesis {
-            fake_genesis.proof.clone()
-        } else {
-            let kernel_witness = witness(&kernel_path, &step).unwrap();
-            prover
-                .generate_recursive_aggregation_bin_proof(
-                    CircuitName::C6FoldKernel,
-                    &kernel_witness,
-                    "c6-tree-kernel",
-                    artifacts_dir,
-                )
-                .unwrap()
-        };
-        step["acc_vk"] = if replace_genesis {
-            json!(fake_genesis.vk)
-        } else {
-            json!(kernel_vk.verification_key)
-        };
-        // The first fold step fills the second slot on top of the genesis proof.
-        step["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
-        step["acc_public_inputs"] = json!(fields(&genesis));
-        step["slot_index"] = json!(1);
-        let second_witness = witness(&fold_path, &step).unwrap();
-        let changed_fold = prover
-            .generate_recursive_aggregation_bin_proof(
-                CircuitName::C6Fold,
-                &second_witness,
-                "c6-tree-second",
-                artifacts_dir,
-            )
-            .unwrap();
-        assert!(prover
-            .verify_fold_proof(&changed_fold, "c6-tree-second", 0, artifacts_dir)
-            .unwrap());
-        let public = fields(&changed_fold);
-        let tree = vk_hash(&[
-            fold_vk.key_hash.clone(),
-            public[2].clone(),
-            public[0].clone(),
-        ]);
-        assert_ne!(tree, canonical_tree);
-        let mut final_input = json!({
-            "c6_fold_vk": fold_vk.verification_key,
-            "c6_fold_vk_hash": fold_vk.key_hash,
-            "c6_fold_proof": fold_witness_field_strings(&changed_fold.data).unwrap(),
-            "c6_fold_public": public,
-            "c7_vk": c7.vk,
-            "c7_proof": fold_witness_field_strings(&c7.proof.data).unwrap(),
-            "c7_public": fields(&c7.proof),
-            "c6_fold_key_hash": tree,
-            "c7_key_hash": c7.key_hash,
-            "committee_members": ["1", "2", "3"],
-            "committee_hash_hi": committee_hi,
-            "committee_hash_lo": committee_lo,
-            "domain_hi": leaf_public[3],
-            "domain_lo": leaf_public[4],
-            "ciphertext_commitment": leaf_public[2],
-        });
-        let control_witness =
-            witness(&final_path, &final_input).expect("alternate tree is internally consistent");
-        let control = prover
-            .generate_recursive_aggregation_bin_proof(
-                CircuitName::DecryptionAggregator,
-                &control_witness,
-                "c6-tree-final",
-                artifacts_dir,
-            )
-            .unwrap();
-        assert!(prover
-            .verify_fold_proof(&control, "c6-tree-final", 0, artifacts_dir)
-            .unwrap());
-        final_input["c6_fold_key_hash"] = json!(canonical_tree);
-        assert!(
-            witness(&final_path, &final_input).is_err(),
-            "a substituted leaf or genesis must not claim the deployment's canonical tree anchor"
-        );
-    }
-}
 
 /// Expected C3 slot count when circuits are compiled for the minimum committee (N=3, T=1): one
 /// slot per party and insecure-64 threshold modulus (3 × 3).
@@ -835,127 +469,366 @@ async fn c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind() {
     }
 }
 
-async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
-    ZkBackend,
-    tempfile::TempDir,
-    ZkProver,
-    ShareDecryptionCircuit,
-    ShareDecryptionCircuitData,
-    ShareDecryptionCircuitData,
-    BfvPreset,
-)> {
-    let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold64;
-    let bb = find_bb().await?;
-    let (backend, temp) = setup_test_prover(&bb).await;
+/// Expected C6 slot count when circuits are compiled for the minimum committee (N=3, T=1): one slot
+/// per party that reconstructs, `T + 1`.
+const MINIMUM_C6_SLOTS: usize = 2;
 
-    setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6Fold).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::DecryptionAggregator).await;
-
-    let (params, _) = preset.build_pair().ok()?;
-    let sample_a =
-        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee.clone())
-            .ok()?;
-    let sample_b =
-        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee).ok()?;
-    let prover = ZkProver::new(&backend);
-
-    Some((
-        backend,
-        temp,
-        prover,
-        ShareDecryptionCircuit,
-        sample_a,
-        sample_b,
-        preset,
-    ))
+/// Reads `T + 1` from the compiled `c6_chonk_app` ABI (the length of `slot_indices`).
+fn c6_total_slots_from_compiled_json() -> usize {
+    let path = e3_zk_prover::test_utils::workspace_root()
+        .join("circuits/bin/chonk/target/c6_chonk_app.json");
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "read {}: {} (run `pnpm build:circuits --group chonk`)",
+            path.display(),
+            e
+        )
+    });
+    let v: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
+    v["abi"]["parameters"]
+        .as_array()
+        .and_then(|ps| {
+            ps.iter()
+                .find(|p| p.get("name") == Some(&serde_json::Value::String("slot_indices".into())))
+                .and_then(|p| p.get("type")?.get("length")?.as_u64())
+        })
+        .expect("c6_chonk_app.json: abi.parameters.slot_indices.length") as usize
 }
 
+/// A prover with the C6 Chonk circuits set up, and one inner C6 proof.
+struct C6Fixture {
+    prover: ZkProver,
+    inner: Proof,
+    total_slots: usize,
+    artifacts_dir: String,
+    _backend: ZkBackend,
+    _temp: tempfile::TempDir,
+}
+
+async fn c6_fixture() -> C6Fixture {
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let preset = BfvPreset::InsecureThreshold64;
+    let bb = find_bb()
+        .await
+        .expect("missing required test prerequisite: bb not found");
+    let (backend, temp) = setup_test_prover(&bb).await;
+    setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::DecryptionAggregator).await;
+    setup_c6_chonk_circuits(&backend).await;
+    let prover = ZkProver::new(&backend);
+
+    let total_slots = c6_total_slots_from_compiled_json();
+    assert_eq!(
+        total_slots, MINIMUM_C6_SLOTS,
+        "circuits compiled for a non-minimum committee; rebuild with `pnpm build:circuits --committee minimum`"
+    );
+    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
+    let (params, _) = preset.build_pair().unwrap();
+    let sample =
+        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee).unwrap();
+    let inner = ShareDecryptionCircuit
+        .prove_with_variant(
+            &prover,
+            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
+            &sample,
+            "e3-c6chonk-inner",
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("inner ThresholdShareDecryption proof");
+    assert_eq!(inner.circuit, CircuitName::ThresholdShareDecryption);
+    C6Fixture {
+        prover,
+        inner,
+        total_slots,
+        artifacts_dir,
+        _backend: backend,
+        _temp: temp,
+    }
+}
+
+/// One inner proof in every slot, so every slot commits to the same ciphertext.
+fn c6_leaves(f: &C6Fixture) -> (Vec<Proof>, Vec<u32>) {
+    (
+        vec![f.inner.clone(); f.total_slots],
+        (0..f.total_slots as u32).collect(),
+    )
+}
+
+/// The root of a decryption's `T + 1` leaves carries their columns and a key list hashing to the
+/// anchored C6 tree, which `decryption_aggregator` pins. A root under another key verifies in the
+/// aggregator's own constraints but cannot claim that tree.
 #[tokio::test]
 #[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn c6_fold_sequential_proves_and_verifies() {
-    let Some((_backend, _temp, prover, circuit, sample_a, sample_b, preset)) =
-        setup_c6_fold_with_inner_threshold_share_decryption().await
-    else {
-        panic!("missing required test prerequisite: bb not found or prerequisites missing");
-    };
+async fn c6_chonk_root_proves_and_binds_the_decryption_aggregator() {
+    let f = c6_fixture().await;
+    let default_dir = f
+        .prover
+        .circuits_dir(CircuitVariant::Default, &f.artifacts_dir);
+    let final_path =
+        default_dir.join("recursive_aggregation/decryption_aggregator/decryption_aggregator.json");
+    let canonical_tree = format!(
+        "0x{}",
+        hex::encode(
+            std::fs::read(default_dir.join("recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
+                .unwrap()
+        )
+    );
+    let (inners, slots) = c6_leaves(&f);
+    let root = generate_c6_chonk_root(
+        &f.prover,
+        &inners,
+        &slots,
+        f.total_slots,
+        "e3-c6chonk-root",
+        &f.artifacts_dir,
+    )
+    .expect("C6 Chonk root");
+    assert_eq!(root.circuit, CircuitName::C6ChonkRoot);
+    assert!(
+        f.prover
+            .verify_fold_proof(&root, "e3-c6chonk-root", 0, &f.artifacts_dir)
+            .expect("verify_fold_proof invocation"),
+        "the root proof should verify under its VK"
+    );
 
-    let total_slots = c6_fold_total_slots_from_compiled_json();
-    if total_slots != MINIMUM_C6_FOLD_SLOTS {
-        panic!(
-            "c6_fold_sequential_proves_and_verifies: circuits compiled for \
-             non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C6_FOLD_SLOTS}). \
-             Rebuild with `pnpm build:circuits --committee minimum` to run this test."
+    // The root exposes the key list hash, the domain limbs, then the sk, esm, ct and d columns.
+    let leaf = fields(&f.inner);
+    let public = fields(&root);
+    assert_eq!(public.len(), 3 + 4 * f.total_slots);
+    assert_eq!(public[1..3], leaf[3..5]);
+    for (column, field) in [0, 1, 2, 5].into_iter().enumerate() {
+        for slot in 0..f.total_slots {
+            assert_eq!(
+                public[3 + column * f.total_slots + slot],
+                leaf[field],
+                "column {column}, slot {slot}"
+            );
+        }
+    }
+    let root_vk = load_vk_artifacts(&default_dir, CircuitName::C6ChonkRoot).unwrap();
+    assert_eq!(
+        vk_hash(&[root_vk.key_hash.clone(), public[0].clone()]),
+        canonical_tree,
+        "the real C6 Chonk circuits must hash to the anchored C6 tree"
+    );
+
+    // This alternate C7 relation isolates the C6 tree boundary. The EVM suite checks the separate
+    // C7 pin.
+    let mut c7_public = vec![leaf[5].clone(); f.total_slots];
+    c7_public.extend((1..=f.total_slots).map(|id| id.to_string()));
+    c7_public.extend(vec!["0".to_owned(); MAX_MSG_NON_ZERO_COEFFS]);
+    let c7 = substitute_proof(
+        &f.prover,
+        CircuitName::DecryptedSharesAggregation,
+        CircuitVariant::Default,
+        &c7_public,
+        None,
+        "c6-tree-c7",
+    );
+    let addresses: Vec<_> = (1..=3)
+        .map(|i| alloy::primitives::Address::from_word(alloy::primitives::U256::from(i).into()))
+        .collect();
+    let (committee_hi, committee_lo) = e3_committee_hash::committee_hash_field_hex(&addresses);
+    let final_input = |vk: &[String], vk_hash: &str, proof: &Proof, tree: &str| {
+        json!({
+            "c6_root_vk": vk,
+            "c6_root_vk_hash": vk_hash,
+            "c6_root_proof": fold_witness_field_strings(&proof.data).unwrap(),
+            "c6_root_public": fields(proof),
+            "c7_vk": c7.vk,
+            "c7_proof": fold_witness_field_strings(&c7.proof.data).unwrap(),
+            "c7_public": fields(&c7.proof),
+            "c6_fold_key_hash": tree,
+            "c7_key_hash": c7.key_hash,
+            "committee_members": ["1", "2", "3"],
+            "committee_hash_hi": committee_hi,
+            "committee_hash_lo": committee_lo,
+            "domain_hi": leaf[3],
+            "domain_lo": leaf[4],
+            "ciphertext_commitment": leaf[2],
+        })
+    };
+    witness(
+        &final_path,
+        &final_input(
+            &root_vk.verification_key,
+            &root_vk.key_hash,
+            &root,
+            &canonical_tree,
+        ),
+    )
+    .expect("the real C6 Chonk root claims the canonical tree");
+
+    let fake_root = substitute_proof(
+        &f.prover,
+        CircuitName::C6ChonkRoot,
+        CircuitVariant::Default,
+        &public,
+        None,
+        "c6-tree-root",
+    );
+    let fake_tree = vk_hash(&[fake_root.key_hash.clone(), public[0].clone()]);
+    witness(
+        &final_path,
+        &final_input(
+            &fake_root.vk,
+            &fake_root.key_hash,
+            &fake_root.proof,
+            &fake_tree,
+        ),
+    )
+    .expect("a substituted root is internally consistent under its own tree");
+    assert_witness_rejected(
+        witness(
+            &final_path,
+            &final_input(
+                &fake_root.vk,
+                &fake_root.key_hash,
+                &fake_root.proof,
+                &canonical_tree,
+            ),
+        ),
+        "a substituted C6 root must not claim the deployment's canonical tree anchor",
+    );
+    f.prover.cleanup("e3-c6chonk-inner").unwrap();
+}
+
+/// A stack cannot carry a leaf whose claimed row differs from what it proved, nor a stage passed
+/// off under another stage's key: bb rejects the stack, or cannot even accumulate it.
+#[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
+async fn c6_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
+    let f = c6_fixture().await;
+    let (inners, slots) = c6_leaves(&f);
+
+    // The leaf's last public signal is its `d_commitment`, a column the stack writes for it.
+    let mut signals = f.inner.public_signals.extract_bytes();
+    *signals.last_mut().unwrap() ^= 1;
+    let corrupted = Proof::new(
+        f.inner.circuit,
+        f.inner.data.clone(),
+        e3_utils::ArcBytes::from_bytes(&signals),
+    );
+    let mut with_corrupted = inners.clone();
+    with_corrupted[f.total_slots - 1] = corrupted;
+    let error = generate_c6_chonk_root(
+        &f.prover,
+        &with_corrupted,
+        &slots,
+        f.total_slots,
+        "c6-corrupted-leaf",
+        &f.artifacts_dir,
+    )
+    .expect_err("a leaf whose claimed row differs from its proof must not reach a root");
+    assert!(
+        matches!(&error, ZkError::ProofRejected(message)
+            if message.contains("Failed to verify the generated proof")),
+        "{error:?}"
+    );
+
+    // The init kernel's key has a different number of public inputs than the app's, so bb cannot
+    // accumulate the stack. The kernels share a shape: the stack proves, and bb rejects it.
+    let error = generate_c6_chonk_root_with_substituted_key(
+        &f.prover,
+        &inners,
+        &slots,
+        f.total_slots,
+        (0, 1),
+        "c6-key-0-as-1",
+        &f.artifacts_dir,
+    )
+    .expect_err("the app claimed under the init kernel's key must not reach a root");
+    assert!(
+        matches!(&error, ZkError::ProveFailed(message) if message.contains("IO size mismatch")),
+        "{error:?}"
+    );
+    for (stage, from) in [(1, 2), (2, 1)] {
+        let error = generate_c6_chonk_root_with_substituted_key(
+            &f.prover,
+            &inners,
+            &slots,
+            f.total_slots,
+            (stage, from),
+            &format!("c6-key-{stage}-as-{from}"),
+            &f.artifacts_dir,
+        )
+        .expect_err("a kernel claimed under the other kernel's key must not reach a root");
+        assert!(
+            matches!(&error, ZkError::ProofRejected(message)
+                if message.contains("Failed to verify the generated proof")),
+            "stage {stage} as {from}: {error:?}"
         );
     }
-    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
-    let inner_e3_a = "e3-c6fold-inner-0";
-    let inner_e3_b = "e3-c6fold-inner-1";
-    let fold_e3 = "e3-c6fold-step";
 
-    let inner_a = circuit
-        .prove_with_variant(
-            &prover,
-            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
-            &sample_a,
-            inner_e3_a,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("inner ThresholdShareDecryption proof 0");
-    assert_eq!(inner_a.circuit, CircuitName::ThresholdShareDecryption);
-
-    let inner_b = circuit
-        .prove_with_variant(
-            &prover,
-            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
-            &sample_b,
-            inner_e3_b,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("inner ThresholdShareDecryption proof 1");
-    assert_eq!(inner_b.circuit, CircuitName::ThresholdShareDecryption);
-
-    let inners = [inner_a, inner_b];
-    let folded = generate_sequential_c6_fold(
-        &prover,
+    // The honest leaves, unchanged but for those edits, make a root that verifies.
+    let root = generate_c6_chonk_root(
+        &f.prover,
         &inners,
-        &[0u32, 1u32],
-        total_slots,
-        fold_e3,
-        &artifacts_dir,
+        &slots,
+        f.total_slots,
+        "c6-honest-twin",
+        &f.artifacts_dir,
     )
-    .expect("c6_fold sequential fold");
-    assert_eq!(folded.circuit, CircuitName::C6Fold);
-    assert!(
-        !folded.data.is_empty(),
-        "fold proof data should not be empty"
-    );
-    assert!(
-        !folded.public_signals.is_empty(),
-        "fold public signals should not be empty"
-    );
+    .expect("honest twin");
+    assert!(f
+        .prover
+        .verify_fold_proof(&root, "c6-honest-twin", 0, &f.artifacts_dir)
+        .unwrap());
+    f.prover.cleanup("e3-c6chonk-inner").unwrap();
+}
 
-    let party_id = 1u64;
-    let ok = prover
-        .verify_fold_proof(&folded, fold_e3, party_id, &artifacts_dir)
-        .expect("verify_fold_proof invocation");
-    assert!(ok, "c6_fold proof should verify under Default VK layout");
-    assert_recursive_vk_binding(
-        &prover,
-        CircuitName::C6Fold,
-        CircuitName::C6FoldKernel,
-        &inners,
-        &folded,
-        total_slots,
-        &artifacts_dir,
-    );
-    assert_final_c6_tree_binding(&prover, &inners[0], &folded, &artifacts_dir);
+/// The app places each leaf in its own slot of `0..T + 1` and takes one domain for all of them.
+/// The checks are constraints of the circuit, so each witness fails where its honest twin, which
+/// differs in the one edit under test, solves.
+#[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
+async fn c6_chonk_app_rejects_a_shared_slot_an_out_of_range_slot_and_a_foreign_domain() {
+    let f = c6_fixture().await;
+    let leaf_vk = load_vk_artifacts(
+        &f.prover
+            .circuits_dir(CircuitVariant::Recursive, &f.artifacts_dir),
+        CircuitName::ThresholdShareDecryption,
+    )
+    .unwrap();
+    let app_path = e3_zk_prover::test_utils::workspace_root()
+        .join("circuits/bin/chonk/target/c6_chonk_app.json");
+    let leaf = fields(&f.inner);
+    let app_input = |publics: Vec<Vec<String>>, slots: Vec<u32>| {
+        json!({
+            "leaf_vk": leaf_vk.verification_key,
+            "leaf_key_hash": leaf_vk.key_hash,
+            "proofs": vec![fold_witness_field_strings(&f.inner.data).unwrap(); f.total_slots],
+            "c6_public_inputs": publics,
+            "slot_indices": slots,
+        })
+    };
+    let honest_publics = vec![leaf.clone(); f.total_slots];
+    let honest_slots: Vec<u32> = (0..f.total_slots as u32).collect();
+    witness(
+        &app_path,
+        &app_input(honest_publics.clone(), honest_slots.clone()),
+    )
+    .expect("honest app witness");
 
-    prover.cleanup(inner_e3_a).unwrap();
-    prover.cleanup(inner_e3_b).unwrap();
-    prover.cleanup(fold_e3).unwrap();
+    let mut shared = honest_slots.clone();
+    shared[1] = shared[0];
+    assert_witness_rejected(
+        witness(&app_path, &app_input(honest_publics.clone(), shared)),
+        "two leaves cannot share a slot",
+    );
+    let mut out_of_range = honest_slots.clone();
+    out_of_range[1] = f.total_slots as u32;
+    assert_witness_rejected(
+        witness(&app_path, &app_input(honest_publics.clone(), out_of_range)),
+        "a slot past the last is rejected",
+    );
+    let mut foreign = honest_publics.clone();
+    foreign[1][4] = "1".to_owned();
+    assert_witness_rejected(
+        witness(&app_path, &app_input(foreign, honest_slots)),
+        "every leaf must carry the first leaf's domain",
+    );
+    f.prover.cleanup("e3-c6chonk-inner").unwrap();
 }
