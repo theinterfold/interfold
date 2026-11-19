@@ -235,7 +235,6 @@ const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
             ("json", "json"),
             ("vk", "vk_recursive"),
             ("vk_hash", "vk_recursive_hash"),
-            ("vk_tree_hash", "vk_tree_hash"),
         ],
     ),
     ("evm", &[("vk", "vk"), ("vk_hash", "vk_hash")]),
@@ -244,6 +243,26 @@ const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
         &[("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
     ),
 ];
+
+/// The VK-tree anchors, by the name each is published under. An anchor is placed by this name and
+/// not with a circuit [`discover`] lists: the C6 tree anchor keeps the retired `c6_fold` path, which
+/// holds no circuit.
+const ANCHORS: [&str; 2] = ["nodes_fold", "c6_fold"];
+
+/// Where the anchor `name` is published in `pair`.
+fn published_anchor(pair: &Path, name: &str) -> PathBuf {
+    pair.join("default/recursive_aggregation")
+        .join(name)
+        .join(format!("{name}.vk_tree_hash"))
+}
+
+/// Where a build or [`hydrate`] leaves the anchor `name` under `bin` (`circuits/bin`).
+fn built_anchor(bin: &Path, name: &str) -> PathBuf {
+    bin.join("recursive_aggregation")
+        .join(name)
+        .join("target")
+        .join(format!("{name}.vk_tree_hash"))
+}
 
 /// The required artifacts of a pair. A pair is complete, current or hydratable only with all of
 /// them: a tree built before the inventory gained an artifact must not pass.
@@ -267,6 +286,9 @@ pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
             let (package, extension) = file
                 .split_once('.')
                 .with_context(|| format!("Required artifact {required} has no extension"))?;
+            if extension == "vk_tree_hash" {
+                return Ok(built_anchor(&root.join("circuits/bin"), name));
+            }
             let extension = if extension == "json" {
                 "json"
             } else {
@@ -392,6 +414,19 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
                     fs::copy(source, target.join(format!("{}.{to}", circuit.package)))?;
                 }
             }
+        }
+    }
+    // `clean_targets` reaches only the targets of circuits, so an anchor at a path that holds no
+    // circuit is replaced here.
+    for name in ANCHORS {
+        let built = built_anchor(&root.join("circuits/bin"), name);
+        if built.exists() {
+            fs::remove_file(&built)?;
+        }
+        let published = published_anchor(pair, name);
+        if published.is_file() {
+            fs::create_dir_all(built.parent().context("Anchor parent")?)?;
+            fs::copy(published, built)?;
         }
     }
     active_stamp(root, &stamp.preset, &stamp.committee, &stamp.source_hash)
@@ -559,19 +594,19 @@ pub fn stage_bin(root: &Path, pair: &Path) -> Result<()> {
             let dist = pair.join(variant).join(&circuit.group).join(&circuit.name);
             fs::create_dir_all(&dist)?;
             fs::copy(&compiled, dist.join(format!("{}.json", circuit.package)))?;
-            let mut files = vk_files(extension).to_vec();
-            if variant == "default" {
-                // Only the folding circuits carry a VK-tree anchor.
-                let anchor = target.join(format!("{}.vk_tree_hash", circuit.package));
-                if anchor.is_file() {
-                    files.push(("vk_tree_hash", "vk_tree_hash".to_string()));
-                }
-            }
-            for (file, suffix) in files {
+            for (file, suffix) in vk_files(extension) {
                 let source = target.join(format!("{}.{suffix}", circuit.package));
                 fs::copy(&source, dist.join(format!("{}.{file}", circuit.package)))
                     .with_context(|| format!("Cannot stage {}", source.display()))?;
             }
+        }
+    }
+    for name in ANCHORS {
+        let built = built_anchor(&root.join("circuits/bin"), name);
+        if built.is_file() {
+            let published = published_anchor(pair, name);
+            fs::create_dir_all(published.parent().context("Anchor parent")?)?;
+            fs::copy(built, published)?;
         }
     }
     Ok(())
@@ -690,16 +725,8 @@ pub fn refresh_anchors(
             fs::remove_file(stamp)?;
         }
     }
-    for name in ["nodes_fold", "c6_fold"] {
-        for path in [
-            pair.join("default/recursive_aggregation")
-                .join(name)
-                .join(format!("{name}.vk_tree_hash")),
-            bin.join("recursive_aggregation")
-                .join(name)
-                .join("target")
-                .join(format!("{name}.vk_tree_hash")),
-        ] {
+    for name in ANCHORS {
+        for path in [published_anchor(pair, name), built_anchor(&bin, name)] {
             if path.exists() {
                 fs::remove_file(path)?;
             }
@@ -707,12 +734,9 @@ pub fn refresh_anchors(
     }
     if complete {
         for (name, bytes) in vk_tree::hashes(pair)? {
-            for directory in [
-                pair.join("default/recursive_aggregation").join(name),
-                bin.join("recursive_aggregation").join(name).join("target"),
-            ] {
-                fs::create_dir_all(&directory)?;
-                fs::write(directory.join(format!("{name}.vk_tree_hash")), bytes)?;
+            for path in [published_anchor(pair, name), built_anchor(&bin, name)] {
+                fs::create_dir_all(path.parent().context("Anchor parent")?)?;
+                fs::write(path, bytes)?;
             }
         }
     }
