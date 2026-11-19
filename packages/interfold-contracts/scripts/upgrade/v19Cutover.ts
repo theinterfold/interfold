@@ -67,6 +67,7 @@ import type {
 import {
   address,
   encodeBfvParams,
+  isMissingFunctionError,
   loadConfig,
   requireContract,
 } from "../protocol/values";
@@ -639,13 +640,19 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   const thresholds: V19CutoverDecisions["committeeThresholds"] = [];
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
-    const [quorum, total] = await Promise.all([
+    // The implementation that the batch replaces reverts without data on a size that its
+    // `CommitteeSize` lacks. The batch upgrades first, so it sets that size.
+    const current = await Promise.all([
       interfold.committeeThresholds(size, 0n),
       interfold.committeeThresholds(size, 1n),
-    ]);
+    ]).catch((error) => {
+      if (isMissingFunctionError(error)) return undefined;
+      throw error;
+    });
     if (
-      quorum !== BigInt(threshold.quorum) ||
-      total !== BigInt(threshold.total)
+      !current ||
+      current[0] !== BigInt(threshold.quorum) ||
+      current[1] !== BigInt(threshold.total)
     ) {
       thresholds.push({
         size,
