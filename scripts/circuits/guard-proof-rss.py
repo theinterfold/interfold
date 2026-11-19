@@ -11,9 +11,18 @@ import time
 def run(command):
     start = time.monotonic()
     peak = 0
+    interrupted = None
+
+    def stop(signum, _frame):
+        nonlocal interrupted
+        interrupted = signum
+
+    # Record cancellation even if it arrives while Popen is creating the process group.
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     with subprocess.Popen(command, start_new_session=True) as process:
         try:
-            while process.poll() is None:
+            while interrupted is None and process.poll() is None:
                 rows = subprocess.check_output(["ps", "-axo", "pid=,ppid=,rss="], text=True)
                 stats = [tuple(map(int, row.split())) for row in rows.splitlines() if row.strip()]
                 family = {process.pid}
@@ -27,12 +36,15 @@ def run(command):
                     print("32 GiB sampled RSS guard reached", file=sys.stderr)
                     return 125
                 time.sleep(0.5)
-            return process.returncode
         finally:
-            if process.poll() is None:
+            # A completed leader can leave live workers in its group.
+            try:
                 os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+            except ProcessLookupError:
+                pass
+            process.wait()
             print(f"{command[0]}: {time.monotonic()-start:.1f}s; peak sampled RSS {peak/1024**2:.2f} GiB", file=sys.stderr)
+    return 128 + interrupted if interrupted is not None else process.returncode
 
 
 if __name__ == "__main__":

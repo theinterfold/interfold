@@ -108,7 +108,8 @@ impl Opening<'_> {
             let c1 = fhe_poly_to_crt_centered(&ct1, moduli)?;
             let secret = fhe_poly_to_crt_centered(self.sk, moduli)?;
             let prime = e3_zk_config::field::get_zkp_modulus();
-            let products: Vec<_> = c1
+            // Move the decimal strings directly into the private witness JSON.
+            result["product"] = c1
                 .limbs
                 .iter()
                 .zip(&secret.limbs)
@@ -118,15 +119,14 @@ impl Opening<'_> {
                     product
                         .coefficients()
                         .iter()
-                        .map(|v| ((v % &prime + &prime) % &prime).to_string())
-                        .collect::<Vec<_>>()
+                        .map(|v| Value::String(((v % &prime + &prime) % &prime).to_string()))
+                        .collect::<Value>()
                 })
                 .collect();
-            result["product"] = json!(products);
-            result["shifted_noise"] = json!(noise
+            result["shifted_noise"] = noise
                 .iter()
-                .map(|e| (e + &bound).to_string())
-                .collect::<Vec<_>>());
+                .map(|e| Value::String((e + &bound).to_string()))
+                .collect();
             return Ok(result);
         }
         let shifted = zeroize::Zeroizing::new(

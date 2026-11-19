@@ -16,8 +16,11 @@ digests and tool versions of the qualified build. The complete circuit JSON incl
 information. The key pins, targets and rendered verifier identify the cryptographic artifacts; a new
 source snapshot is not authority to restamp or replace an older candidate.
 
-Both Minimum profiles have the same public **shape**: two child VK hashes, then the exact ordered C7
-fields. A consumer must compare both pins with independently selected artifacts and verify the
-confirmed setup, roster, domain, ciphertext, SK/key-bundle commitments and plaintext. The outer Honk
-verifier alone cannot authenticate any of that chain state. No release counter or deployment changes
-here. Activation, rollback and fresh-noise/retry policy require separate review.
+Both Minimum profiles use the same outer source. Its `T` and C6 row width come from the generated
+degree-64 Minimum configuration: they describe the designated set and public row, not the polynomial
+degree. Reuse is valid only while both profiles have that exact public **shape**: two child VK
+hashes, then the exact ordered C7 fields. A consumer must compare both pins with independently
+selected artifacts and verify the confirmed setup, roster, domain, ciphertext, SK/key-bundle
+commitments and plaintext. The outer Honk verifier alone cannot authenticate any of that chain
+state. No release counter or deployment changes here. Activation, rollback and fresh-noise/retry
+policy require separate review.

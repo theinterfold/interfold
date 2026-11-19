@@ -101,7 +101,7 @@ impl FromStr for Operation {
             "sync-sources" => Ok(Self::SyncSources),
             "decryption-candidate" => Ok(Self::DecryptionCandidate),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, or sync-sources"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, sync-sources, or decryption-candidate"
             )),
         }
     }

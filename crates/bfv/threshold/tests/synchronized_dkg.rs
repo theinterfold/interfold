@@ -418,7 +418,7 @@ fn run(command: &mut Command) -> Result<Output> {
     let output = command
         .output()
         .with_context(|| format!("Start {command:?}"))?;
-    if std::env::var_os("E3_SYNC_SECURE_QUALIFICATION").is_some() {
+    if std::env::var("E3_SYNC_SECURE_QUALIFICATION").as_deref() == Ok("1") {
         eprintln!(
             "{} {:?}: {:.2}s",
             command.get_program().to_string_lossy(),
