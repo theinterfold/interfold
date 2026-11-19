@@ -190,9 +190,11 @@ checks this before it publishes binaries or `circuits-<version>.tar.gz`.
 pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
+pnpm build:circuits --preset insecure-64 --committee large
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
+pnpm build:circuits --preset secure-8192 --committee large
 pnpm store:circuits push
 
 # Pull circuits from git branch (used by releases)
@@ -245,9 +247,11 @@ Circuits are built locally and stored in a git branch:
 pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
+pnpm build:circuits --preset insecure-64 --committee large
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
+pnpm build:circuits --preset secure-8192 --committee large
 pnpm store:circuits push
 ```
 
@@ -258,8 +262,8 @@ pnpm store:circuits push
 The release archive must include:
 
 - `insecure-64/{minimum,micro,small,large}` for Sepolia and local rehearsals
-- `secure-8192/{minimum,micro,small,large}` for Sepolia secure-parameter tests and mainnet
-  committees
+- `secure-8192/{minimum,micro,small,large}` for Sepolia secure-parameter tests. Mainnet committees
+  use only `minimum`, `micro` and `small`
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
 set and committee size.
