@@ -679,6 +679,7 @@ mod tests {
             (CiphernodesCommitteeSize::Minimum, 2, 3),
             (CiphernodesCommitteeSize::Micro, 5, 9),
             (CiphernodesCommitteeSize::Small, 14, 19),
+            (CiphernodesCommitteeSize::Large, 34, 45),
         ] {
             let party_ids: Vec<u64> = (0..h as u64).collect();
             validate_dkg_aggregation_shape(h, &party_ids, n, committee)
