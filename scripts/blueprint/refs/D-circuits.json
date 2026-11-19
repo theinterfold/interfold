@@ -53,7 +53,7 @@
       "circuits/bin/chonk/c6_chonk_app/src/main.nr@30@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]",
       "circuits/bin/recursive_aggregation/c6_chonk_tube/src/main.nr@22@std::verify_proof_with_type(",
       "circuits/bin/recursive_aggregation/c6_chonk_root/src/main.nr@30@verify_root_rolluphonk_proof(tube_vk, tube_proofs[k]",
-      "crates/zk/prover/src/circuits/aggregation/c6_chonk.rs@29@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "crates/zk/prover/src/circuits/aggregation/c6_chonk.rs@30@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
       "verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k], leaf_key_hash);",
