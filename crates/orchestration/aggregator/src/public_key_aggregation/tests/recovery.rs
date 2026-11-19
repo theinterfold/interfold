@@ -170,8 +170,14 @@ async fn restart_during_c1_verification_keeps_the_received_folds() -> Result<()>
 
     assert_eq!(persisted_fold_parties(states.read().await?), honest);
     let step = nodes_fold_step_requested(&history).await?;
-    assert_eq!(step.slot_index, 0);
-    assert_eq!(step.inner_proof, node_fold_proof(0, threshold_n, circuit_h));
+    let step_len = nodes_fold_step_len(0, circuit_h);
+    assert_eq!(step.slot_indices, (0..step_len as u32).collect::<Vec<_>>());
+    assert_eq!(
+        step.inner_proofs,
+        (0..step_len as u64)
+            .map(|party| node_fold_proof(party, threshold_n, circuit_h))
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
@@ -227,11 +233,15 @@ async fn restart_during_c5_proof_generation_keeps_the_received_folds() -> Result
         .send(bus.event_from(effects_enabled, None)?.into_sequenced(0))
         .await?;
     let step = nodes_fold_step_requested(&history).await?;
-    assert_eq!(step.slot_index, 0);
-    let first = *honest.first().expect("an honest party");
+    let step_len = nodes_fold_step_len(0, committee_h);
+    assert_eq!(step.slot_indices, (0..step_len as u32).collect::<Vec<_>>());
     assert_eq!(
-        step.inner_proof,
-        node_fold_proof(first, committee_n, committee_h)
+        step.inner_proofs,
+        honest
+            .iter()
+            .take(step_len)
+            .map(|&party| node_fold_proof(party, committee_n, committee_h))
+            .collect::<Vec<_>>()
     );
     Ok(())
 }

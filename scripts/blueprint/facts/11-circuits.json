@@ -775,67 +775,67 @@
         {
           "name": "private: nodes_fold_vk",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@52@nodes_fold_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@53@nodes_fold_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: nodes_fold_proof",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@53@nodes_fold_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@54@nodes_fold_proof: UltraHonkProof"
         },
         {
           "name": "private: nodes_fold_public",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@54@nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@55@nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN]"
         },
         {
           "name": "private: nodes_fold_vk_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@55@nodes_fold_vk_hash: Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@56@nodes_fold_vk_hash: Field"
         },
         {
           "name": "private: c5_vk",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@56@c5_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@57@c5_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: c5_proof",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@57@c5_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@58@c5_proof: UltraHonkProof"
         },
         {
           "name": "private: c5_public",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@58@c5_public: [Field; H + 1]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@59@c5_public: [Field; H + 1]"
         },
         {
           "name": "public: nodes_fold_key_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@59@nodes_fold_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@60@nodes_fold_key_hash: pub Field"
         },
         {
           "name": "public: c5_key_hash",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@60@c5_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@61@c5_key_hash: pub Field"
         },
         {
           "name": "public: party_ids",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@61@party_ids: pub [Field; H]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@62@party_ids: pub [Field; H]"
         },
         {
           "name": "private: committee_members",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@62@committee_members: [Field; N_PARTIES]"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@63@committee_members: [Field; N_PARTIES]"
         },
         {
           "name": "public: committee_hash_hi",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@63@committee_hash_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@64@committee_hash_hi: pub Field"
         },
         {
           "name": "public: committee_hash_lo",
           "by": "dkg_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@64@committee_hash_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@65@committee_hash_lo: pub Field"
         },
         {
           "name": "private: c6_fold_vk",
@@ -930,11 +930,11 @@
       "read_first": [
         {
           "why": "dkg_aggregator entry point: the committee-key proof the contract verifies",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@51@fn main("
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@52@fn main("
         },
         {
           "why": "dkg_aggregator folds the C5 proof in-circuit",
-          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);"
+          "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);"
         },
         {
           "why": "decryption_aggregator entry point: the plaintext proof the contract verifies",
@@ -946,7 +946,7 @@
         },
         {
           "why": "node_fold entry point: one member's C0 to C4 proofs and their same-party links",
-          "ref": "circuits/bin/recursive_aggregation/node_fold/src/main.nr@83@fn main("
+          "ref": "circuits/bin/recursive_aggregation/node_fold/src/main.nr@85@fn main("
         }
       ],
       "rust_patterns": [],
