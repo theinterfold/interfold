@@ -9,7 +9,7 @@ use super::{
     Options,
 };
 use anyhow::{bail, Result};
-use e3_zk_prover::{WitnessGenerator, ZkProver};
+use e3_zk_prover::{Provable, ShareComputationCircuit, WitnessGenerator, ZkProver};
 use std::{fs, path::Path, process::Command, time::Instant};
 
 #[allow(clippy::too_many_arguments)]
@@ -128,16 +128,26 @@ pub(crate) fn benchmark(
         let proof = proof?;
         record.proof_bytes(&proof.data, &proof.public_signals);
         let start = Instant::now();
-        let result = prover
-            .verify_proof_with_variant(&proof, "benchmark", 1, variant, pair)
-            .map_err(anyhow::Error::from)
-            .and_then(|valid| {
-                if valid {
-                    Ok(())
-                } else {
-                    bail!("Production verifier rejected the proof")
-                }
-            });
+        // A final C2 proof is valid only over the chunk key tree of the selected pair.
+        let verified = if e3_zk_prover::chunk_circuits(name).is_some() {
+            ShareComputationCircuit.verify_with_variant(
+                prover,
+                &proof,
+                "benchmark",
+                1,
+                variant,
+                pair,
+            )
+        } else {
+            prover.verify_proof_with_variant(&proof, "benchmark", 1, variant, pair)
+        };
+        let result = verified.map_err(anyhow::Error::from).and_then(|valid| {
+            if valid {
+                Ok(())
+            } else {
+                bail!("Production verifier rejected the proof")
+            }
+        });
         record.verification.finish(start.elapsed(), &result);
         result?;
     } else {

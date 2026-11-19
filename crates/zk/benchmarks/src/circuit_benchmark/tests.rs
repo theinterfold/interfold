@@ -490,6 +490,98 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
 }
 
 #[test]
+fn final_c2_loader_rejects_chunk_artifacts_from_another_build() {
+    use e3_zk_config::CircuitName;
+    let temp = tempfile::tempdir().unwrap();
+    let dist = temp.path().join("dist/circuits");
+    let pair = dist.join("insecure-64/minimum");
+    fs::create_dir_all(&pair).unwrap();
+    write_json(
+        &pair.join(".build-stamp.json"),
+        &serde_json::json!({"preset":"insecure-64","committee":"minimum","sourceHash":"published"}),
+    )
+    .unwrap();
+    let compiled = include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json");
+    let document: serde_json::Value = serde_json::from_str(compiled).unwrap();
+    let noir = document["noir_version"]
+        .as_str()
+        .unwrap()
+        .split('+')
+        .next()
+        .unwrap();
+    let mut files = serde_json::Map::new();
+    for (circuit, extensions) in [
+        (CircuitName::SkShareComputation, &["json", "vk"][..]),
+        (
+            CircuitName::SkShareComputationChain,
+            &["json", "vk", "vk_hash"][..],
+        ),
+        (
+            CircuitName::SkShareComputationChainLast,
+            &["json", "vk", "vk_hash"][..],
+        ),
+    ] {
+        for extension in extensions {
+            let relative = format!(
+                "insecure-64/minimum/default/{}/{}.{extension}",
+                circuit.dir_path(),
+                circuit.as_str()
+            );
+            let path = dist.join(&relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                &path,
+                if *extension == "json" {
+                    compiled
+                } else {
+                    "key"
+                },
+            )
+            .unwrap();
+            files.insert(relative, artifacts::digest(&path).unwrap().into());
+        }
+    }
+    write_json(
+        &dist.join("checksums.json"),
+        &serde_json::json!({"algorithm":"sha256","files":files}),
+    )
+    .unwrap();
+    let backend = e3_zk_prover::ZkBackend::new(
+        e3_zk_prover::BBPath::Custom(temp.path().join("bb")),
+        dist.clone(),
+        temp.path().join("work"),
+    );
+    let prover = e3_zk_prover::ZkProver::new(&backend);
+    let load = || {
+        artifacts::load(
+            temp.path(),
+            &prover,
+            "insecure-64/minimum",
+            Case::Named(CircuitName::SkShareComputation),
+            e3_zk_config::CircuitVariant::Default,
+            noir,
+            true,
+        )
+    };
+    load().unwrap();
+    let last = CircuitName::SkShareComputationChainLast;
+    fs::write(
+        pair.join(format!(
+            "default/{}/{}.vk_hash",
+            last.dir_path(),
+            last.as_str()
+        )),
+        "another build's key",
+    )
+    .unwrap();
+    let error = format!("{:#}", load().unwrap_err());
+    assert!(
+        error.contains("sk_share_computation_chain_last.vk_hash"),
+        "{error}"
+    );
+}
+
+#[test]
 #[ignore = "requires pinned nargo; compiles one tiny temporary config package, not the circuit matrix"]
 fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity() {
     let temp = tempfile::tempdir().unwrap();
