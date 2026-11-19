@@ -239,7 +239,7 @@ required `paramSet` field (`number`) in its place, for example `paramSet: 0` for
 - `paramSet` and `expectedCryptoConfigId` come from `profile` and `committeeSize`. Only
   `'ss-insecure-64'` and `'ss-secure-8192'` are accepted. Other profiles fail, including
   `'sync-insecure-64'`, which this release disables.
-- `committeeSize` must be 0, 1, or 2.
+- `committeeSize` must be 0, 1, 2, or 3.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3
 ID, watch `InterfoldEventType.E3_REQUESTED` and read `event.data.e3Id`. For the contract rules
