@@ -270,9 +270,9 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
    `bin/recursive_aggregation` with `nargo compile`.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
    `noir-recursive-no-zk`, and `noir-recursive` keys. Each fold circuit gets a
-   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key. The C3 Chonk app and
-   kernels get `--scheme chonk` keys with a Poseidon2 key hash, and `c3_chonk_tube` and
-   `c3_chonk_accumulate` get `noir-rollup-no-zk` keys.
+   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key. The C3 and C6 Chonk
+   apps and kernels get `--scheme chonk` keys with a Poseidon2 key hash, and `c3_chonk_tube`,
+   `c3_chonk_accumulate` and `c6_chonk_tube` get `noir-rollup-no-zk` keys.
 6. It copies the artifacts to `dist/circuits/<preset>/<committee>/`, with one directory for each
    variant (`default`, `recursive`, `evm`). Then it writes `SHA256SUMS` and `checksums.json`.
 
