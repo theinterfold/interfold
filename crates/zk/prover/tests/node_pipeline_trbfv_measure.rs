@@ -180,7 +180,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
         let env_usize = |name: &str, default: usize| {
             std::env::var(name).map_or(default, |v| v.parse().expect(name))
         };
-        let started = std::time::Instant::now();
+        let started = Phases::start("c3");
         let mut sets = pipeline::prove_c3_sets_pooled(
             &prover,
             PRESET,
@@ -195,7 +195,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
             env_usize("MEASURE_POOL_JOBS", 2),
         )
         .await;
-        phases.record("c3", started.elapsed().as_secs_f64());
+        phases.end("c3", started);
         let (c3b, slots_b) = sets.pop().expect("C3b");
         let (c3a, slots_a) = sets.pop().expect("C3a");
         assert_eq!(slots_a, slots_b);
@@ -387,7 +387,7 @@ async fn trbfv_c3_chonk_stack_measure() {
         let label = app
             .file_name()
             .map_or("app".into(), |n| n.to_string_lossy().into_owned());
-        measure(&format!("c3_chain {label}"), || {
+        measure(&format!("c3_chain[{label}]"), || {
             generate_c3_chonk_chain(
                 &prover,
                 &c3_proofs,
