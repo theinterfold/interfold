@@ -15,7 +15,10 @@
 //! Output format and parallelism: `common/node_pipeline_measure.rs`.
 //!
 //! Run with the matching active artifacts (`pnpm build:circuits --preset secure-8192 --committee
-//! small`), `MEASURE_RUN=1`, `--release -- --nocapture --test-threads=1`.
+//! small`), `MEASURE_RUN=1`, `--release -- --nocapture --test-threads=1`. Set
+//! `E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1` as well: without it this crate's build script can run
+//! `pnpm build:circuits --skip-if-built` for the default pair, which makes insecure-64/minimum the
+//! active artifacts, and every measurement then skips.
 
 mod common;
 #[allow(dead_code)]

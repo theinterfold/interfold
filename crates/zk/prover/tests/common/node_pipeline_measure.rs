@@ -7,6 +7,10 @@
 //! Support for the per-node trBFV DKG pipeline measurement (`node_pipeline_trbfv_measure.rs`).
 //!
 //! Output lines:
+//! - `skipping: <reason>` (a flag is not set) or `SKIP <reason>` (`MEASURE_RUN=1`, but the active
+//!   circuit artifacts are for another preset or committee): the test passes without measuring.
+//!   `measure: preset=<preset> committee=<committee> n=<n> h=<h> t=<t> party=<id>` opens a
+//!   measurement.
 //! - `MEASURE <label> start <unix_ms>` / `MEASURE <label> done <s>s`: one top-level prover call,
 //!   witness generation included.
 //! - `BB <circuit>#<k> start <unix_ms>` / `BB <circuit>#<k> done <s>s job=<job>`: one `bb prove`
@@ -16,15 +20,16 @@
 //! - `STEP <label>/<step> <s>s`: sub-step wall times that a production function reports.
 //!   `STEP c3 proofs=<count>` is the number of C3 proofs in the `c3` phase.
 //! - `PREP <label> <s>s`: native witness preparation, outside every phase.
-//! - `PHASE <name> start <unix_ms>` / `PHASE <name> <s>s`, then `TOTAL <who> <s>s`.
+//! - `PHASE <name> start <unix_ms>` / `PHASE <name> <s>s`, then `TOTAL <who> <s>s`. The `c3`
+//!   phase also covers the native encryption of each C3's share row, which has no line.
 //! - `NOTE <text>`: a deviation from the production pipeline.
 //! - `FAIL <label>: <error>`: the prover call that ended the measurement.
 //!
-//! The measurements prove sequentially. Only the production function that runs work in parallel
-//! does so here: `prove_node_dkg_fold` runs C2ab || C3a chain || C3b chain with `rayon::join`.
-//! Set `RAYON_NUM_THREADS=1` to serialize it too. Production also runs independent proof requests
-//! (for example the C3 proofs) concurrently on its task pool, up to its configured limit;
-//! `MEASURE_C3_POOL=1` proves the node's C3 batch that way.
+//! Apart from `trbfv_c3_concurrency_measure`, the measurements prove sequentially. Only the
+//! production function that runs work in parallel does so here: `prove_node_dkg_fold` runs C2ab ||
+//! C3a chain || C3b chain with `rayon::join`. Set `RAYON_NUM_THREADS=1` to serialize it too.
+//! Production also runs independent proof requests (for example the C3 proofs) concurrently on its
+//! task pool, up to its configured limit; `MEASURE_C3_POOL=1` proves the node's C3 batch that way.
 //!
 //! Staging: the shared `setup_compiled_circuit*` helpers in `common/helpers.rs` always stage under
 //! `insecure-64/<committee>`. [`stage`] stages the active `circuits/bin` artifacts under the
@@ -111,7 +116,7 @@ pub fn gate(
         || active_bin_committee().as_deref() != Some(committee.as_str())
     {
         println!(
-            "SKIP active circuit artifacts are {:?}/{:?}; this measurement needs {expected_preset}/{} (pnpm build:circuits --preset {expected_preset} --committee {})",
+            "SKIP active circuit artifacts are {:?}/{:?}; this measurement needs {expected_preset}/{} (pnpm build:circuits --preset {expected_preset} --committee {}, then run cargo with E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 so its build script keeps them active)",
             active_bin_preset(),
             active_bin_committee(),
             committee.as_str(),
