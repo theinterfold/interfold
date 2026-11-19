@@ -9,6 +9,7 @@ import test from 'node:test'
 import { isPresetCommitteeSupported } from './constants'
 import {
   findArtifactRevision,
+  findCompatibleRevision,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
@@ -154,6 +155,10 @@ test('artifact selection uses the newest matching build, not another source tree
     git('init', '-q')
     writeFileSync(join(dir, 'artifact.json'), '{}')
     commit('legacy build without source metadata')
+    mkdirSync(join(dir, 'circuits'))
+    writeFileSync(join(dir, 'circuits/vk-commitments.json'), 'expected')
+    assert.throws(() => findCompatibleRevision(dir, 'HEAD'), /No published circuit artifacts match/)
+    writeFileSync(join(dir, 'vk-commitments.json'), 'expected')
     assert.throws(() => findArtifactRevision(dir, 'HEAD', 'requested-source'), /No published circuit artifacts match/)
     writeFileSync(join(dir, 'SOURCE_HASH'), 'requested-source\n')
     commit('requested build')
@@ -161,8 +166,10 @@ test('artifact selection uses the newest matching build, not another source tree
     const rebuilt = commit('same source with updated artifacts')
     assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
     writeFileSync(join(dir, 'SOURCE_HASH'), 'other-source\n')
+    writeFileSync(join(dir, 'vk-commitments.json'), 'unmerged graph')
     const newer = commit('build for another source tree')
     assert.equal(findArtifactRevision(dir, 'HEAD'), newer)
+    assert.equal(findCompatibleRevision(dir, 'HEAD'), rebuilt)
     assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
     assert.equal(findArtifactRevision(dir, 'HEAD', 'other-source'), newer)
     assert.throws(() => findArtifactRevision(dir, 'HEAD', 'unpublished-source'), /No published circuit artifacts match/)

@@ -45,7 +45,7 @@ mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   # Full-proof tests use published artifacts without requiring a local source-hash match.
-  (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
+  (cd "$ROOT_DIR" && pnpm store:circuits pull --compatible)
   (cd "$ROOT_DIR" && pnpm build:circuits \
     --preset insecure-64 \
     --committee minimum \
