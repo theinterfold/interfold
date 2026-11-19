@@ -12,7 +12,7 @@ profiles are disabled. Do not select by degree, basename, or outer VK alone.
 
 Use the [candidate builder](../../scripts/circuits/README.md#synchronized-decryption-candidates) to
 recreate the artifacts and proof checks. For these manifests, check out
-`134f21efdfd923dd2f60336a3a4e83676b81342e` before rebuilding. `sourceHash` identifies the builder's
+`1ef1f79c5302af256a48925e41b472c6b0e2e17a` before rebuilding. `sourceHash` identifies the builder's
 selected inputs, including shared sources; it is neither a Git commit nor a VK pin. The earlier
 manifests and timing measurements predate the SS chunk-chain merge (#2500); the original records are
 in `38f5b81394c526cca49f3f648f2b1d30b55c22a5`. The complete circuit JSON includes debug information.
