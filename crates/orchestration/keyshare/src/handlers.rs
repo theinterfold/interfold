@@ -437,6 +437,10 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         // No event, collector result or deadline, or selection starts work and no decryption
         // work is redelivered after the end, also while the cleanup below retries.
         self.ended = true;
+        if let Some(retry) = self.synchronized_setup_retry.take() {
+            ctx.cancel_future(retry);
+        }
+        self.pending.synchronized_consent = None;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {
@@ -446,10 +450,24 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         }
         // The BFV keypair lives until the E3 ends. The actor stops only once its removal is on disk.
         let keys = self.bfv_keys.clone();
-        ctx.wait(async move { keys.settle().await }.into_actor(self).map(
-            move |settled, actor, ctx| {
+        let setup = (self.params_profile.protocol()
+            == e3_fhe_params::BfvDecryptionProtocol::Synchronized)
+            .then(|| self.recovery_payloads.synchronized_setup());
+        ctx.wait(
+            async move {
+                keys.settle().await.context("BFV keypair removal failed")?;
+                if let Some(setup) = setup {
+                    setup
+                        .settle()
+                        .await
+                        .context("synchronized setup removal failed")?;
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .into_actor(self)
+            .map(move |settled, actor, ctx| {
                 if let Err(error) = settled {
-                    error!(%error, "Could not remove the BFV key of an ended E3");
+                    error!(error = %format!("{error:#}"), "Could not finish ended E3 key cleanup");
                     ctx.notify_later(event, std::time::Duration::from_secs(1));
                     return;
                 }
@@ -458,8 +476,8 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
                 actor.decryption_key_shared_collector = None;
                 actor.pending = PendingKeyshareWork::default();
                 actor.notify_sync(ctx, Die);
-            },
-        ));
+            }),
+        );
     }
 }
 

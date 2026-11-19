@@ -171,7 +171,7 @@ impl Get {
 }
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<()>")]
 pub struct Remove(pub Vec<u8>);
 impl Remove {
     pub fn new<K: IntoKey>(key: K) -> Self {

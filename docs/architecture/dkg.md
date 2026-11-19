@@ -93,14 +93,22 @@ existing shared canonical-key projection, including retained history before snap
 authority is typed separately from SS anchors; it permits dormant DKG byte validation, not
 decryption-domain repair or profile admission.
 
-The keyshare consent helper requires an independently aggregated native PK, verified recipient setup
-and recovered sealed material. Its read-only #2050 handoff joins the recipient's setup to confirmed
-batch/threshold-key authority and checked PK bytes, reopens its sealed keys and checks their bundle.
-An outside-H recipient uses its own verified setup for the same batch; it does not acquire an H
-publication-consent slot. A setup DTO alone is not a proof verdict: callers must admit the local
-worker source/correlation and cryptographic result before either helper.
+Keyshare retains the exact native PK shares from the authenticated fixed C4 dealer batch before
+retiring encrypted transport. The consent boundary independently aggregates those bytes and checks
+each selected threshold-PK commitment against the locally admitted recipient result. Its read-only
+#2050 handoff joins the recipient's setup to confirmed batch/threshold-key authority and checked PK
+bytes, reopens its sealed keys and checks their bundle. An outside-H recipient uses its own verified
+setup for the same batch; it does not acquire an H publication-consent slot. A setup DTO alone is
+not a proof verdict: callers must admit the local worker source/correlation and cryptographic result
+before either helper.
 
-This remains unactivated: guarded C5/consent/publication actor and writer phases, full-node
+This handoff only reads setup that already reached the durable checkpoint. Today confirmed
+`KeyPublished` retires unfinished recipient work, including outside H.
+[#2461](https://github.com/theinterfold/interfold/issues/2461) requires qualifying a continuation
+against the same confirmed H batch without making all N setups a condition of publication or
+restarting consent.
+
+This remains unactivated: guarded C5/publication aggregation and writer phases, full-node
 synchronized startup and synchronized C6 are absent. The capability replay fixture below does not
 enable production admission. Synchronized runtime folding/publication and decryption paths still
 refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and setup
@@ -146,13 +154,29 @@ failure is not a localized peer-invalid verdict. PK/batch expectations are deriv
 rows; this collector does not independently compare native PK shares. Its exclusive record flushes
 before work or output, preserves completed output, replaces restart correlations, and retires at
 canonical DKG termination. A peer setup is never a local recipient verdict. Only the correlated
-local worker result produces the local setup event and signed peer setup. Downstream
-consent/publication producers still need to consume these outputs. Admission stays disabled;
-below-admission actor tests and real-proof qualification do not admit production effects.
+local worker result produces the local setup event and signed peer setup.
 
 Recipient storage and bus delivery back off independently. Storage retry validates the latest
 retained record without dispatching unflushed work. Refused delivery retries from acknowledged
 progress without another write. Confirmed retirement cancels both timers.
+
+Keyshare consumes only the local result, checks request/owner, native PK and sealed-material
+anchors, and records an exclusive setup intent before consent. Replay records that intent without
+signing; current-boot effects and the request-frozen context must both be available. Restart
+restores the original result and causal context before considering a differing replayed candidate;
+that candidate cannot replace or block the durable verdict. Selected H recipients publish signed
+consent through gossip/history; outside-H recipients retain their own setup without acquiring a
+consent slot. Canonical publication ends consent production but retains setup until the E3 ends.
+C5/publication aggregation still needs these outputs. Admission stays disabled; below-admission
+actor tests and real-proof qualification do not admit production effects.
+
+Retryable setup storage failures retain the candidate. Retries wait for current-boot effects and
+back off from one to thirty seconds plus jitter, with one journal error per failure episode. Invalid
+saved intents remain untouched. An unexpectedly closed store stops setup attempts for the boot
+without labeling saved data corrupt; known shutdown starts no new attempts or repair diagnostics.
+See [keyshare recovery guidance](../../crates/orchestration/keyshare/README.md#runtime-integration).
+A rejected new candidate does not block a later corrected candidate. Effects remain withheld until a
+flush succeeds, and consent publication is guarded once per boot.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

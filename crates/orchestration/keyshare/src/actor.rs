@@ -151,6 +151,8 @@ pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
 struct PendingKeyshareWork {
+    synchronized_result: Option<TypedEvent<e3_events::SynchronizedRecipientProofReady>>,
+    synchronized_consent: Option<e3_events::SynchronizedDkgConsentPublished>,
     /// Replayed key-generation output waiting for encryption-key recovery.
     gen_pk_response: Option<TypedEvent<ComputeResponse>>,
     /// Replayed ESI output waiting for key-generation recovery.
@@ -203,6 +205,11 @@ pub(crate) const MAX_DECRYPTION_REDELIVERIES: u32 = 6;
 pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
 
 pub struct ThresholdKeyshare {
+    synchronized_setup: Option<crate::synchronized::SynchronizedSetupIntent>,
+    synchronized_setup_retry: Option<SpawnHandle>,
+    synchronized_setup_blocked: bool,
+    synchronized_setup_failures: u32,
+    synchronized_consent_published: bool,
     canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     bus: BusHandle,
     cipher: Arc<Cipher>,
@@ -278,6 +285,11 @@ impl ThresholdKeyshare {
                 .collect()
         });
         Self {
+            synchronized_setup: None,
+            synchronized_setup_retry: None,
+            synchronized_setup_blocked: false,
+            synchronized_setup_failures: 0,
+            synchronized_consent_published: false,
             canonical_keys: Default::default(),
             bus: params.bus,
             cipher: params.cipher,

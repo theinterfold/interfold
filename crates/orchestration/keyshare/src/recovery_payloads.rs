@@ -61,6 +61,13 @@ impl ThresholdKeyshareRecoveryPayloads {
         self.pending.as_ref()
     }
 
+    /// Exclusive flushed record: snapshot batches never write this key.
+    pub fn synchronized_setup(
+        &self,
+    ) -> e3_data::DurableIntent<crate::synchronized::SynchronizedSetupIntent> {
+        e3_data::DurableIntent::new(self.store.scope("synchronized-setup"))
+    }
+
     pub fn shares(&self) -> &BTreeMap<u64, TypedEvent<ThresholdShareCreated>> {
         &self.shares
     }

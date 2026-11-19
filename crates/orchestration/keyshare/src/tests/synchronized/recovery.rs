@@ -25,7 +25,7 @@ mod replay;
 
 // These are this crate's only Sled fixtures. Close all three stores before evicting the process
 // cache; serialize the variants so one cannot evict the other's still-open database handles.
-static DISK_RECOVERY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(super) static DISK_RECOVERY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn cipher(owner: usize) -> Result<Arc<Cipher>> {
     Ok(Arc::new(

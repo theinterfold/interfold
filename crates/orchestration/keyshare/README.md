@@ -43,12 +43,26 @@ The crate exports actor construction parameters, recovery payload/state types, a
 dealer-key collection boundary. Canonical-key types are shared from `e3-request`; a local aggregate
 intent is not permission to decrypt under an unconfirmed key.
 
-The disabled `synchronized` capability also exposes publication consent and a read-only
-`ConfirmedSynchronizedDkgSetup` handoff for later C6 work. Callers supply a locally verified,
-source/correlation-admitted recipient setup; the DTO itself carries no proof authority. Consent uses
-the shared chain-frozen domain and independent native PK. Handoff rechecks the recovered sealed
-keys/setup against the shared confirmed authority, including outside-H recipients, without enabling
-decryption or returning plaintext PRF keys. Production actor/writer callers remain unfinished.
+The disabled `synchronized` capability retains the node collector's locally admitted recipient
+result in an exclusive flushed setup intent before producing consent. Native PK shares come from the
+authenticated fixed C4 batch and survive retirement of encrypted transport. Consent waits for
+current-boot effects and the shared chain-frozen domain. Only H recipients sign. If event admission
+refuses consent, retry the signed payload from the flushed intent with its original causation.
+Confirmed publication, terminal cleanup and shutdown stop those attempts. SS terminal cleanup does
+not access the synchronized setup store. A restored `SynchronizedSetupIntent::confirmed_setup`
+rechecks native PK bytes, sealed keys and local anchors against shared confirmed authority,
+including outside-H recipients. This is the read-only #2050 boundary; C5/publication aggregation and
+the registry writer remain unfinished.
+
+A closed setup store stops automatic attempts for the current boot. Outside shutdown, check the
+storage service before restarting; closure does not indicate damaged data. An intent that cannot be
+decoded or validated is left untouched. Stop the node and preserve the store, aggregate logs, and
+matching key configuration. If recovery is needed, use a verified, schema-compatible backup for the
+same node with matching logs and key material, or escalate if none exists. Do not delete or patch
+the row to resume an active committee: replay cannot recreate secret shares. See
+[state recovery and rollback](../../../docs/architecture/upgrades.md#controlled-state-reset-never-directory-deletion).
+Retryable storage failures retain the candidate and back off only with current-boot effects, with
+one journal error per failure episode.
 
 The threshold-share soft checkpoint can advance when every missing dealer lacked a C0 key at
 key-collection closure. Verification still needs H−1 external shares, and collection remains open
@@ -82,13 +96,14 @@ The proof commands require pinned nargo/bb and stage explicit variants in tempor
 preserving source dependency pins. The second verifies ten real C1/C2/C3/C4 proofs. The recovery
 command verifies 37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient
 joins, C5 and publication from their reopened signed artifacts, sealed keys and native PK-share
-bytes. It then publishes native H consents to a locally deployed registry, checks authority and
-PK-chunk readback, and rebuilds the shared authority from a reopened journal for all N handoffs. It
-requires Anvil, `pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH;
-generated Honk/Solidity acceptance and substitution rejection are mandatory, not skipped when
-unavailable. It tests orderly stop/flush/cache eviction/reopen, exact saved work, non-prefix H
-`[0,2]`, self/outside-H recipients and authenticated replacement. Its ordinary variant and
-provisional negatives use synthetic signed statements, not valid proofs.
+bytes. It reopens exclusive local setup intents and consumes actor-produced H consents for a locally
+deployed registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a
+reopened journal for all N handoffs. It requires Anvil, `pnpm install --frozen-lockfile`,
+`pnpm evm:build` and solc 0.8.28 on PATH; generated Honk/Solidity acceptance and substitution
+rejection are mandatory, not skipped when unavailable. It tests orderly stop/flush/cache
+eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/outside-H recipients and authenticated
+replacement. Its ordinary variant and provisional negatives use synthetic signed statements, not
+valid proofs.
 
 The qualification command selects all synchronized keyshare cases, including recovery and a
 complementary ordinary durable-log replay test. That test reopens actual commit logs through
@@ -100,10 +115,10 @@ alone does not drain buffered snapshots.
 These private fixtures load checkpoints through production repositories/payloads below the disabled
 extension-hydration and generation/calculation dispatch guards. Replay supplies empty historical
 EVM/network adapters; real proofs are driven explicitly, not by production proof workers. Neither
-fixture establishes whole-node startup, guarded production publication/attestation orchestration,
-network delivery, process-crash durability, secure-profile qualification or repeated-decryption
-assurance. The local registry campaign seeds its finalized committee/controller lifecycle below
-disabled admission; it does not test the production request/sortition path.
+fixture establishes whole-node startup, admitted production publication orchestration, network
+delivery, process-crash durability, secure-profile qualification or repeated-decryption assurance.
+The local registry campaign seeds its finalized committee/controller lifecycle below disabled
+admission; it does not test the production request/sortition path.
 
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,

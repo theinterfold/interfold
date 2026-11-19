@@ -411,6 +411,7 @@ impl ThresholdKeyshare {
                 sk_commitment: None,
                 key_bundle: None,
                 c2_statements: Default::default(),
+                threshold_pk_shares: Default::default(),
             };
             material.validate(&selected, self.interfold_address, &self.cipher)?;
             self.recovery.try_mutate(&ec, |mut recovery| {

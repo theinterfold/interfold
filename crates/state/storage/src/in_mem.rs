@@ -166,10 +166,11 @@ impl Handler<InsertSync> for InMemStore {
 }
 
 impl Handler<Remove> for InMemStore {
-    type Result = ();
-    fn handle(&mut self, event: Remove, _: &mut Self::Context) {
+    type Result = Result<()>;
+    fn handle(&mut self, event: Remove, _: &mut Self::Context) -> Self::Result {
         let key = event.key().to_vec();
         self.store.remove(&key, Some(DataOp::Remove(event)));
+        Ok(())
     }
 }
 

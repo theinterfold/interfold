@@ -372,9 +372,10 @@ mod tests {
     }
 
     impl Handler<Remove> for MockConnector {
-        type Result = ();
+        type Result = anyhow::Result<()>;
         fn handle(&mut self, _msg: Remove, _ctx: &mut Self::Context) -> Self::Result {
             self.events.push(Evts::Remove);
+            Ok(())
         }
     }
 

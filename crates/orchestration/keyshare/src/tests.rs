@@ -928,8 +928,10 @@ impl Handler<Insert> for StoppedStore {
 }
 
 impl Handler<Remove> for StoppedStore {
-    type Result = ();
-    fn handle(&mut self, _: Remove, _: &mut Self::Context) {}
+    type Result = Result<()>;
+    fn handle(&mut self, _: Remove, _: &mut Self::Context) -> Self::Result {
+        Ok(())
+    }
 }
 
 impl Handler<e3_events::Flush> for StoppedStore {
@@ -1573,9 +1575,24 @@ impl Handler<StoreEventRequested> for TestEventStore {
 }
 
 fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
-    let event_bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+    test_bus_with_deduplication(true)
+}
+
+impl Handler<e3_events::FlushEventStores> for TestEventStore {
+    type Result = Result<()>;
+
+    fn handle(&mut self, _: e3_events::FlushEventStores, _: &mut Self::Context) -> Self::Result {
+        Ok(())
+    }
+}
+
+fn test_bus_with_deduplication(
+    deduplicate: bool,
+) -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+    let event_bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate }).start();
     let store = TestEventStore::default().start();
-    let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+    let sequencer =
+        Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient()).start();
     let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("test-keyshare");
     let history = bus.history();
     (bus, history)
@@ -5845,6 +5862,61 @@ async fn start_ended(
         ))
         .await?;
     Ok((actor, bfv_key))
+}
+
+#[actix::test]
+async fn synchronized_setup_failure_does_not_keep_ss_or_sync_bfv_keys() -> Result<()> {
+    for profile in [
+        e3_fhe_params::BfvProfile::SsInsecure64,
+        e3_fhe_params::BfvProfile::SyncDecInsecure64,
+    ] {
+        let e3_id = E3id::new("terminal-setup-failure", 1);
+        let (mut keyshare, _, _, _) = build_actor(
+            &e3_id,
+            collecting_encryption_keys_state(&e3_id),
+            7_200,
+            7_200,
+            &[],
+        )
+        .await?;
+        keyshare.params_profile = profile;
+        let keys = test_bfv_key();
+        keys.record(&BfvKeyIntent {
+            sk_bfv: SensitiveBytes::from_encrypted(&[1]),
+            pk_bfv: ArcBytes::from_bytes(&[2]),
+        })
+        .await?;
+        keyshare.bfv_keys = keys.clone();
+        let flushes = StoppedStore.start();
+        actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        keyshare.recovery_payloads = ThresholdKeyshareRecoveryPayloads::new(
+            DataStore::from_in_mem(&InMemStore::new(false).start())
+                .with_flush_recipient(flushes.recipient()),
+        );
+        let node = keyshare.start();
+        node.send(keyshare_event(
+            E3RequestComplete { e3_id },
+            1,
+            EventSource::Local,
+        ))
+        .await?;
+        // The BFV key is settled first in both cases. Only synchronized cleanup depends on the
+        // other store and therefore keeps the actor alive after its injected failure.
+        let still_running = node
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await
+            .is_ok();
+        assert_eq!(
+            still_running,
+            profile == e3_fhe_params::BfvProfile::SyncDecInsecure64,
+            "{profile}"
+        );
+        assert!(keys.restore().await?.is_none(), "{profile}");
+        if still_running {
+            node.send(Die).await?;
+        }
+    }
+    Ok(())
 }
 
 #[actix::test]

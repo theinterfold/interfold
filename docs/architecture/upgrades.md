@@ -327,19 +327,33 @@ role fixes the join circuit; both byte hashes use Keccak-256. This does not exte
 on-chain slash reasons or the separate H-consent domain. Review of this encoding and cutover remains
 required.
 
-Consent DTOs remain without production event/snapshot callers. `CanonicalPublicKey` and its typed
-SS/synchronized anchors are in-memory projections rebuilt from confirmed journals, not saved
-layouts. Full-authority observations retain the existing lossless raw-log payload. Local compute
-requests/responses/errors and the new typed chain-context event are excluded from peer forwarding,
-and existing SS payload bytes remain unchanged. Peer join/setup transport uses the cutover above;
-peer publication consent still needs integration. Synchronized admission stays off. New registry
-implementations must link `DkgPublicationLib`; new deployment/upgrade records retain that address
-while pre-extension records remain readable. No deployment record is rewritten here. Rollback of
-this unactivated extension preserves legacy SS storage and uses the reviewed prior implementation;
-once synchronized records can exist, rollback needs a separate drain/backup and consumer decision
-rather than ignoring them. Human review must approve the signed encoding, authority schema, artifact
-pins and governance rollout/rollback before deployment. Implementation direction approval and
-passing tests are not that review.
+The consent follow-up appends `SynchronizedDkgConsentPublished`, carrying the existing signed
+attestation without changing its EIP-712 encoding. Gossip/sync majors advance from **6/5 to 7/6**;
+earlier envelopes are rejected before payload decode, including unchanged SS messages. The keyshare
+recovery material now retains ordered native PK-share bytes. An exclusive version-1 setup intent
+lives at `synchronized-setup` within the existing per-E3 keyshare recovery-payload scope. It retains
+the local recipient verdict, selection, sealed material and original causal context; snapshot
+batches never write this key. It is flushed before consent and removed at terminal cleanup. These
+encodings extend the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. The
+embedded optional material changes existing keyshare recovery-row encodings for SS too; sharing
+schema 9 does not make intermediate databases byte-compatible. Intermediate rolling upgrades and
+old-binary rollback over new journals remain unsupported. Rollback requires the prior backup or
+controlled reset/resync. SS peer payload encodings, circuits, verifiers, signature domains and
+release counters are unchanged.
+
+`CanonicalPublicKey` and its typed SS/synchronized anchors are in-memory projections rebuilt from
+confirmed journals, not saved layouts. Full-authority observations retain the existing lossless
+raw-log payload. Local compute requests/responses/errors and the new typed chain-context event are
+excluded from peer forwarding, and existing SS payload bytes remain unchanged. Peer join/setup
+transport uses the cutover above; publication aggregation and its local-intent writer still need
+integration. Synchronized admission stays off. New registry implementations must link
+`DkgPublicationLib`; new deployment/upgrade records retain that address while pre-extension records
+remain readable. No deployment record is rewritten here. Rollback of this unactivated extension
+preserves legacy SS storage and uses the reviewed prior implementation; once synchronized records
+can exist, rollback needs a separate drain/backup and consumer decision rather than ignoring them.
+Human review must approve the signed encoding, authority schema, artifact pins and governance
+rollout/rollback before deployment. Implementation direction approval and passing tests are not that
+review.
 
 The request-time context event binds the synchronized wrapper rather than the SS fold-attestation
 verifier; it adds no storage slot or initializer. SS requests retain their previous context event.

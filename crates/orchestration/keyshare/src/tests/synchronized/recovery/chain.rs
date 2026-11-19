@@ -223,6 +223,7 @@ impl Chain {
         &self,
         recovered: &[Recovered],
         setups: &[SynchronizedSetupAnchors],
+        recipients: &[Proof],
         public_key: &PublicKey,
         proof: &Proof,
         directory: &Path,
@@ -371,29 +372,76 @@ impl Chain {
             .await?;
         ensure!(keys.get(id).is_none());
         let mut signatures = Vec::new();
-        for &party in &setups[0].dealers {
-            let owner = party as usize;
-            let saved = recovered[owner]
-                .0
-                .synchronized
-                .as_ref()
-                .context("missing material")?;
-            let selection = recovered[owner].0.ciphernode_selected.as_ref().unwrap();
-            let cipher = cipher(owner).await?;
-            ensure!(saved
-                .confirmed_setup(selection, self.controller, &keys, &setups[owner], &cipher)
-                .is_err());
-            let signed = saved.attest_publication(
-                selection,
+        let mut local_setups = Vec::new();
+        for owner in 0..recovered.len() {
+            use super::super::publication::{actor, consents, DriveSetup, SetupCheckpoint};
+            let path = directory.join(format!("consent-{owner}"));
+            let store = DataStore::from_sled_store(&SledStore::new(&bus, &path)?);
+            let root = recovered[owner].0.clone();
+            let material = root.synchronized.as_ref().context("missing material")?;
+            let result = e3_events::SynchronizedRecipientProofReady {
+                e3_id: id.clone(),
+                context: material.context.clone(),
+                proof: recipients[owner].clone(),
+                setup: setups[owner].clone(),
+            };
+            let (node, setup_bus, history) = actor(
+                &store,
+                root.clone(),
+                signers[owner].clone(),
+                cipher(owner).await?,
                 self.controller,
-                &keys,
-                &setups[owner],
-                public_key,
-                &signers[owner],
-                &cipher,
-            )?;
-            ensure!(signed.recover_address()? == committee[owner]);
-            signatures.push(Bytes::copy_from_slice(&signed.signature));
+                keys.clone(),
+            )
+            .await?;
+            node.send(DriveSetup {
+                result: Some(TypedEvent::new(result, test_ec(700))),
+                effects: false,
+            })
+            .await??;
+            let saved = node
+                .send(SetupCheckpoint)
+                .await?
+                .context("local setup was not retained")?;
+            ensure!(consents(&setup_bus, &history).await?.is_empty());
+            node.send(Die).await?;
+            drop(node);
+            store.shutdown().await?;
+            drop(store);
+            // The consent producer must recover its own verdict without another worker result.
+            let store = DataStore::from_sled_store(&SledStore::new(&bus, &path)?);
+            let (node, setup_bus, history) = actor(
+                &store,
+                root,
+                signers[owner].clone(),
+                cipher(owner).await?,
+                self.controller,
+                keys.clone(),
+            )
+            .await?;
+            node.send(DriveSetup {
+                result: None,
+                effects: true,
+            })
+            .await??;
+            ensure!(node.send(SetupCheckpoint).await?.as_ref() == Some(&saved));
+            ensure!(saved
+                .confirmed_setup(self.controller, &keys, &*cipher(owner).await?)
+                .is_err());
+            let output = consents(&setup_bus, &history).await?;
+            ensure!(output.len() == usize::from(setups[0].dealers.contains(&(owner as u32))));
+            if let Some(event) = output.first() {
+                let InterfoldEventData::SynchronizedDkgConsentPublished(message) = event.get_data()
+                else {
+                    unreachable!()
+                };
+                ensure!(message.attestation.recover_address()? == committee[owner]);
+                signatures.push(Bytes::copy_from_slice(&message.attestation.signature));
+            }
+            local_setups.push(saved);
+            node.send(Die).await?;
+            drop(node);
+            store.shutdown().await?;
         }
         let setup = &setups[0];
         let commitment =
@@ -500,13 +548,8 @@ impl Chain {
             let saved = root.synchronized.as_ref().unwrap();
             let selection = root.ciphernode_selected.as_ref().unwrap();
             let cipher = cipher(owner).await?;
-            let handoff = saved.confirmed_setup(
-                selection,
-                self.controller,
-                &recovered_keys,
-                &setups[owner],
-                &cipher,
-            )?;
+            let handoff =
+                local_setups[owner].confirmed_setup(self.controller, &recovered_keys, &cipher)?;
             ensure!(
                 handoff.recipient() == owner as u32
                     && handoff.public_key()[..] == bytes

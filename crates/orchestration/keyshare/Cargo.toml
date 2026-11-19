@@ -20,6 +20,8 @@ e3-events = { workspace = true }
 e3-fhe = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-multithread = { workspace = true }
+e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
 e3-request = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-utils = { workspace = true }
@@ -44,9 +46,7 @@ e3-evm-contracts.workspace = true
 e3-event-system.workspace = true
 e3-sync.workspace = true
 e3-zk-build.workspace = true
-e3-polynomial.workspace = true
-e3-polynomial-fhe.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true

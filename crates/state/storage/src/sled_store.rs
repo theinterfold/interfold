@@ -126,15 +126,15 @@ impl Handler<InsertSync> for SledStore {
 }
 
 impl Handler<Remove> for SledStore {
-    type Result = ();
+    type Result = Result<()>;
 
     fn handle(&mut self, event: Remove, _: &mut Self::Context) -> Self::Result {
-        if let Some(ref mut db) = &mut self.db {
-            if let Err(err) = db.remove(event) {
-                self.record_write_failure(&err);
-                self.bus.err(EType::Data, err)
-            }
+        let db = self.db.as_mut().context("SledStore is closed")?;
+        if let Err(error) = db.remove(event) {
+            self.report_write_failure(&error);
+            return Err(error);
         }
+        Ok(())
     }
 }
 

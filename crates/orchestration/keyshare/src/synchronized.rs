@@ -13,6 +13,8 @@ use e3_trbfv::synchronized::SealedPrfKeys;
 
 mod publication;
 pub use publication::ConfirmedSynchronizedDkgSetup;
+mod setup;
+pub use setup::SynchronizedSetupIntent;
 
 pub fn decode_statement(
     config: &e3_zk_config::synchronized::Configs,
@@ -237,6 +239,9 @@ pub struct SynchronizedDkgRecovery {
     /// Public statements copied only from the exact verified dealer batch, before large transport
     /// payloads retire. C4 compares every selected row, not an absence in a partial proof cache.
     pub c2_statements: std::collections::BTreeMap<u32, e3_utils::ArcBytes>,
+    /// Exact native PK shares from the fixed, authenticated dealer batch, retained after encrypted
+    /// transport retires. Recipient results must match commitments derived from these bytes.
+    pub threshold_pk_shares: std::collections::BTreeMap<u32, e3_utils::ArcBytes>,
 }
 
 pub fn proof_context(
@@ -426,6 +431,10 @@ impl SynchronizedDkgRecovery {
                     == expected,
                 "saved synchronized C2 provenance is incomplete"
             );
+            ensure!(
+                self.threshold_pk_shares.keys().copied().collect::<Vec<_>>() == self.dealer_ids,
+                "saved synchronized native PK shares differ from the fixed roster"
+            );
             for (&party, statement) in &self.c2_statements {
                 let signals = e3_zk_config::synchronized::public_signals::PublicSignals::decode(
                     &config,
@@ -457,7 +466,8 @@ impl SynchronizedDkgRecovery {
                 self.dealer_ids.is_empty()
                     && self.sk_commitment.is_none()
                     && self.key_bundle.is_none()
-                    && self.c2_statements.is_empty(),
+                    && self.c2_statements.is_empty()
+                    && self.threshold_pk_shares.is_empty(),
                 "saved synchronized C4 material has no incoming keys"
             );
         }
