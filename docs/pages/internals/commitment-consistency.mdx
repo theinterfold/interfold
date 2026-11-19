@@ -190,14 +190,16 @@ only link that depends on the accepted roster.
 
 ### Public signal layouts
 
-C2 (`sk_share_computation` or `e_sm_share_computation`) has $1 + N \cdot L$ fields in party-major
-order:
+C2 (`sk_share_computation` or `e_sm_share_computation`) has $2 + N \cdot L$ fields: the expected
+secret commitment, the $N \cdot L$ share commitments in party-major order, and the hash of the chunk
+keys.
 
 ```text
 [expected_secret_commitment]                        <- skipped by extract_share_commitments
 [party_0_mod_0] ... [party_0_mod_{L-1}]
 [party_1_mod_0] ...
 [party_{N-1}_mod_{L-1}]
+[key_tree]                                          <- skipped by extract_share_commitments
 ```
 
 C4 (`share_decryption`) has $H \cdot L + 1$ fields. The rows follow the accepted roster order, not

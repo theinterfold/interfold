@@ -12,13 +12,18 @@ fn make_field(val: u8) -> [u8; 32] {
     f
 }
 
-/// C2 inner signals: [expected_secret_commitment] + share commitments (row-major: party, mod).
+/// The chunk key-tree hash a final C2 proof exposes last.
+const KEY_TREE: u8 = 0xEE;
+
+/// Final C2 signals: [expected_secret_commitment] + share commitments (row-major: party, mod)
+/// + [key_tree].
 fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(&make_field(0xFF)); // expected_secret_commitment (skipped)
     for c in share_commits {
         v.extend_from_slice(c);
     }
+    v.extend_from_slice(&make_field(KEY_TREE));
     v
 }
 
@@ -44,6 +49,15 @@ fn extract_share_commitments_from_c2() {
     assert_eq!(values.len(), 6);
     assert_eq!(values[0], make_field(1));
     assert_eq!(values[5], make_field(6));
+}
+
+#[test]
+fn extract_skips_the_trailing_key_tree() {
+    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let commits: Vec<[u8; 32]> = (1u8..=6).map(make_field).collect();
+    let values = link.extract_source_values(&c2_signals(&commits));
+    assert_eq!(values, commits);
+    assert!(!values.contains(&make_field(KEY_TREE)));
 }
 
 #[test]
