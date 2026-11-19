@@ -106,7 +106,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       committeeSize: 0,
       inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
       e3Program: await e3Program.getAddress(),
-      paramSet: 0,
+      paramSet: 4,
       computeProviderParams: abiCoder.encode(
         ["address"],
         [await decryptionVerifier.getAddress()],

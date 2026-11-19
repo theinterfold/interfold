@@ -7,7 +7,7 @@
     "presets": [
       {
         "preset": "insecure-64",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",
@@ -46,7 +46,7 @@
       },
       {
         "preset": "secure-8192",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
@@ -90,7 +90,7 @@
         "profile": "ss-insecure-64",
         "protocol": "secret-shared",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",
@@ -139,7 +139,7 @@
         "profile": "ss-secure-8192",
         "protocol": "secret-shared",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
@@ -188,7 +188,7 @@
         "profile": "sync-insecure-64",
         "protocol": "synchronized",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",

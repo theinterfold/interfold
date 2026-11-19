@@ -553,7 +553,7 @@ export async function deployInterfoldSystem(
   if (!(await interfold.e3Programs(await e3Program.getAddress()))) {
     await interfold.registerE3Program(await e3Program.getAddress());
   }
-  await interfold.setParamSet(0, BFV_PARAMS_DEFAULT);
+  await interfold.setParamSet(4, BFV_PARAMS_DEFAULT);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,
     await decryptionVerifier.getAddress(),
@@ -618,7 +618,7 @@ export async function deployInterfoldSystem(
     committeeSize: COMMITTEE_SIZE_MINIMUM,
     inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
     e3Program: await e3Program.getAddress(),
-    paramSet: 0,
+    paramSet: 4,
     computeProviderParams: abiCoder.encode(
       ["address"],
       [await decryptionVerifier.getAddress()],

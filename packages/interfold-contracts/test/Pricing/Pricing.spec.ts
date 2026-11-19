@@ -467,7 +467,7 @@ describe("E3 Pricing", function () {
           number,
         ],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
@@ -571,7 +571,7 @@ describe("E3 Pricing", function () {
           number,
         ],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
