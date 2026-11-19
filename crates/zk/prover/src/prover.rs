@@ -454,7 +454,13 @@ impl ZkProver {
         if self.slow_low_memory {
             args.push("--slow_low_memory");
         }
-        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
+        let output = run_bb(
+            &self.bb_binary,
+            &args,
+            &job_dir,
+            self.bb_timeout,
+            self.bb_threads,
+        )?;
         if !output.status.success() {
             return Err(bb_prove_failure(&output));
         }
