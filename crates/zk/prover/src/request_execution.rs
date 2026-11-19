@@ -1202,10 +1202,12 @@ fn prove_synchronized_leaf<C: Provable<Config = e3_zk_config::synchronized::Conf
 
 /// ZK-verify a share proof (inner recursive circuits).
 ///
-/// A C2 proof is the final circuit of a chunk chain: it verifies its chunk proofs against keys it
-/// only exposes, so the exposed key tree must match this node's chunk circuits.
+/// A secret-shared C2 proof is the final circuit of a chunk chain: it verifies its chunk proofs
+/// against keys it only exposes, so the exposed key tree must match this node's chunk circuits. A
+/// synchronized C2 is one circuit with no key tree.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
+    profile: BfvProfile,
     proof: &Proof,
     e3_id_str: &str,
     party_id: u64,
@@ -1214,7 +1216,9 @@ fn zk_verify_share_proof_bundle(
     if !prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)? {
         return Ok(false);
     }
-    if crate::circuits::aggregation::chain_keys::chunk_circuits(proof.circuit).is_some() {
+    if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared
+        && crate::circuits::aggregation::chain_keys::chunk_circuits(proof.circuit).is_some()
+    {
         return crate::circuits::aggregation::chain_keys::check_key_tree(
             prover,
             proof,
@@ -1265,7 +1269,14 @@ fn handle_verify_share_proofs(
             // 2. A cryptographically invalid proof returns `Ok(false)`. A verifier process
             // failure is local infrastructure failure and must not accuse the proof sender.
             let proof = &signed_proof.payload.proof;
-            match zk_verify_share_proof_bundle(prover, proof, &e3_id_str, sender, &artifacts_dir) {
+            match zk_verify_share_proof_bundle(
+                prover,
+                req.params_profile,
+                proof,
+                &e3_id_str,
+                sender,
+                &artifacts_dir,
+            ) {
                 Ok(true) => {}
                 Ok(false) => {
                     info!(
