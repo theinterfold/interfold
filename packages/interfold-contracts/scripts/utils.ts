@@ -195,11 +195,7 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
 ] as const;
 
 /** Local artifact selection, independent of the production/testnet admission defaults. */
-const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
-  (config) =>
-    config.preset === ACTIVE_BFV_PRESET &&
-    config.committee === ACTIVE_BFV_COMMITTEE,
-)!;
+const ACTIVE_BFV_CONFIG = bfvConfig(ACTIVE_BFV_PRESET, ACTIVE_BFV_COMMITTEE);
 
 export const BFV_DKG_H = ACTIVE_BFV_CONFIG.h;
 export const BFV_THRESHOLD_T = ACTIVE_BFV_CONFIG.t;
