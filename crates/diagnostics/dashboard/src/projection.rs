@@ -43,6 +43,20 @@ impl E3Phase {
         Self::Settlement,
     ];
 
+    /// The serialized name, also the `phase` label of the metrics.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Committee => "committee",
+            Self::DkgSetup => "dkg_setup",
+            Self::DkgShares => "dkg_shares",
+            Self::KeyPublication => "key_publication",
+            Self::Computation => "computation",
+            Self::Decryption => "decryption",
+            Self::Settlement => "settlement",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Request => "Request",

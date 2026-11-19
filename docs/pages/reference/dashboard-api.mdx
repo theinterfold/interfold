@@ -35,6 +35,9 @@ JSON. The server can compress a response when the client asks for it.
   host of the node, or connect through an SSH tunnel. Do not forward the port to a public interface.
 </Callout>
 
+For Prometheus, the node serves metrics on a separate listener, not on this API. See
+[Prometheus metrics](/operate/dashboard#prometheus-metrics).
+
 A path that is not an endpoint returns the dashboard HTML page with HTTP 200. A monitoring check
 must parse the body as JSON. A check of the status code only does not find a wrong path.
 

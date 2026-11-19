@@ -11,6 +11,7 @@ event history and network status; it does not participate in protocol decisions.
 | ------------------------------------ | ------------------------------------------------------------------------------ |
 | [`lib.rs`](src/lib.rs)               | HTTP routes, aggregate cursors, runtime state, and cached operator RPC status. |
 | [`projection.rs`](src/projection.rs) | Event-to-E3/committee/reward views and protocol summaries.                     |
+| [`metrics.rs`](src/metrics.rs)       | Prometheus `/metrics` listener rendered from the same state as the API.        |
 | [`updates.rs`](src/updates.rs)       | Release metadata and version comparison.                                       |
 | [`assets/`](assets)                  | Embedded browser UI, scripts, styles, and logo.                                |
 
@@ -28,6 +29,14 @@ and network status for the remaining runtime inputs. The CLI's
 
 Open `http://127.0.0.1:<port>/`. The server deliberately binds loopback: its API is unauthenticated
 and exposes detailed operational/protocol data.
+
+## Serve metrics
+
+Call `metrics_server(address, state)` with the same `DashboardState`, after `with_ingestion_status`
+and `with_task_pool`, to bind `GET /metrics` (OpenMetrics text), then await the returned server. It
+binds before it returns, so an address in use is an error at startup. It is a separate listener so
+that it can bind a non-loopback address: it renders aggregate numbers only. Each scrape builds a
+fresh registry, so series of a removed chain or status disappear.
 
 ## HTTP API
 
@@ -49,5 +58,6 @@ Run `cargo test --locked -p e3-dashboard` after preparing the
 public chain.
 
 Inline [`projection.rs`](src/projection.rs) tests feed synthetic histories into summaries/traces;
-[`updates.rs`](src/updates.rs) tests release/version handling. These do not exercise a browser or
-authenticate the HTTP service. [AGENTS.md](AGENTS.md) describes projection changes.
+[`metrics.rs`](src/metrics.rs) tests render synthetic inputs; [`updates.rs`](src/updates.rs) tests
+release/version handling. These do not exercise a browser or authenticate the HTTP service.
+[AGENTS.md](AGENTS.md) describes projection changes.

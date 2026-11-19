@@ -4,6 +4,8 @@ Keep the operator dashboard a read-only projection, not an alternate source of p
 
 - The HTTP API deliberately binds to loopback and is unauthenticated; it exposes detailed event and
   operational data. Do not broaden the binding without designing access control.
+- The metrics listener may bind any address because it serves aggregate numbers and node identity
+  only. Keep event payloads, log text, and error strings off it; add them to the API instead.
 - Refresh incrementally from each aggregate's sequence cursor. Paging must advance from observed
   sequences, not wall-clock time; a dashboard query must not publish or replay protocol effects.
 - Operator RPC status is cached diagnostic data, not canonical eligibility or lifecycle authority.

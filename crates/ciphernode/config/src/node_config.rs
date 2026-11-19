@@ -12,7 +12,12 @@ use anyhow::Result;
 use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 
 /// The structure within the app configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -49,6 +54,11 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Optional listen address of the Prometheus metrics endpoint, for example `127.0.0.1:9095`.
+    /// When set, serves `GET /metrics` there. Unlike the dashboard it may bind a non-loopback
+    /// interface, because it serves aggregate numbers only, so a scraper outside a container can
+    /// reach it.
+    pub metrics_addr: Option<SocketAddr>,
     /// Run this profile as a bootstrap peer: networking and chain reads only, as
     /// `interfold start --bootstrap`. `interfold nodes up` reads it for each profile it starts.
     #[serde(default)]
@@ -134,6 +144,7 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            metrics_addr: None,
             bootstrap: false,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
@@ -213,6 +224,18 @@ impl NodeConfig {
         }
         if node.max_buffered_net_bytes == 0 {
             bail!("node.max_buffered_net_bytes must be greater than zero");
+        }
+        if let Some(addr) = node.metrics_addr {
+            // The dashboard and the control port listen on 127.0.0.1 over TCP. A metrics address on
+            // the same port that covers loopback would take the port from them at startup.
+            let covers_loopback =
+                addr.ip().is_unspecified() || addr.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST);
+            if covers_loopback && node.dashboard_port == Some(addr.port()) {
+                bail!("node.metrics_addr and node.dashboard_port must not use the same port");
+            }
+            if covers_loopback && node.ctrl_port == addr.port() {
+                bail!("node.metrics_addr and node.ctrl_port must not use the same port");
+            }
         }
 
         let network =
@@ -402,6 +425,11 @@ impl NodeConfig {
     /// Get the optional dashboard port
     pub fn dashboard_port(&self) -> Option<u16> {
         self.node_def().dashboard_port
+    }
+
+    /// Get the optional listen address of the Prometheus metrics endpoint
+    pub fn metrics_addr(&self) -> Option<SocketAddr> {
+        self.node_def().metrics_addr
     }
 
     /// CPUs reserved for non-compute work (Actix, networking, RPC).
@@ -747,6 +775,34 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert!(!default.skip_proof_aggregation());
+        Ok(())
+    }
+
+    /// A metrics address that covers loopback must not take the dashboard or the control port,
+    /// which listen on 127.0.0.1; the same port on another interface is allowed.
+    #[test]
+    fn metrics_addr_must_not_take_a_loopback_listener_port() -> Result<()> {
+        let scoped = |yaml: &str| {
+            serde_yaml::from_str::<UnscopedNodeConfig>(yaml)
+                .map_err(anyhow::Error::from)?
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+        };
+
+        let dashboard = scoped("node:\n  dashboard_port: 9092\n  metrics_addr: \"0.0.0.0:9092\"\n");
+        assert!(format!("{:#}", dashboard.unwrap_err()).contains("dashboard_port"));
+        let ctrl = scoped("node:\n  metrics_addr: \"127.0.0.1:50505\"\n");
+        assert!(format!("{:#}", ctrl.unwrap_err()).contains("ctrl_port"));
+        let other_interface =
+            scoped("node:\n  dashboard_port: 9092\n  metrics_addr: \"10.0.0.5:9092\"\n")?;
+        assert_eq!(
+            other_interface.metrics_addr(),
+            Some("10.0.0.5:9092".parse().unwrap())
+        );
         Ok(())
     }
 
