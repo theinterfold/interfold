@@ -7,8 +7,8 @@
 
 import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { join, relative, resolve } from 'path'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { dirname, join, relative, resolve } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './constants'
 import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
 import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
@@ -339,6 +339,9 @@ export function findArtifactRevision(root: string, reference: string, sourceHash
 }
 
 async function pull() {
+  const latest = process.argv.includes('--latest')
+  const compatible = process.argv.includes('--compatible')
+  if (latest && compatible) throw new Error('Select --latest or --compatible, not both')
   try {
     run(`git fetch origin ${BRANCH}`)
   } catch (e: any) {
@@ -353,7 +356,25 @@ async function pull() {
   }
 
   // Non-release consumers can use the newest published build. Release pulls stay source-bound.
-  const latest = process.argv.includes('--latest')
+  if (compatible) {
+    const revision = findCompatibleRevision(ROOT, `origin/${BRANCH}`)
+    mkdirSync(dirname(DIST), { recursive: true })
+    const staged = mkdtempSync(join(dirname(DIST), '.published-circuits-'))
+    try {
+      execFileSync('bash', ['-o', 'pipefail', '-c', 'git archive "$1" | tar -x -C "$2"', 'extract', revision, staged], { cwd: ROOT })
+      validateChecksums(staged)
+      execFileSync('pnpm', ['build:circuits', 'check-vk-commitments', '--preset', 'all', '--committee', 'all', '--output', staged], {
+        cwd: ROOT,
+        stdio: 'inherit',
+      })
+      rmSync(DIST, { recursive: true, force: true })
+      renameSync(staged, DIST)
+    } finally {
+      rmSync(staged, { recursive: true, force: true })
+    }
+    console.log(`Verified published ${revision} against ${join(ROOT, 'circuits/vk-commitments.json')}`)
+    return
+  }
   const hash = latest ? undefined : run('pnpm --silent build:circuits hash')
   const revision = findArtifactRevision(ROOT, `origin/${BRANCH}`, hash)
 
@@ -362,6 +383,16 @@ async function pull() {
 
   runV(`git archive ${revision} | tar -x -C "${DIST}"`)
   console.log(`✅ Pulled ${revision} (SOURCE_HASH=${readFileSync(join(DIST, 'SOURCE_HASH'), 'utf8').trim()}) to ${DIST}`)
+}
+
+/** CI may reuse a different source revision, but never a different verifier genealogy. */
+export function findCompatibleRevision(root: string, reference: string): string {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const expected = git('hash-object', 'circuits/vk-commitments.json')
+  for (const revision of git('rev-list', '--first-parent', reference).split('\n')) {
+    if (git('ls-tree', '--object-only', revision, '--', 'vk-commitments.json') === expected) return revision
+  }
+  throw new Error('No published circuit artifacts match the checkout VK catalogue')
 }
 
 async function verifyRelease() {
@@ -388,6 +419,6 @@ if (require.main === module) {
   else if (cmd === 'checksums') refreshChecksums(resolve(argValue('--dir') ?? DIST))
   else
     console.log(
-      'Usage: pnpm store:circuits [push [--replace]|pull [--latest]|verify-release [--source-hash <hash>]|checksums [--dir <path>]|restamp --expect-source-hash <hash>]',
+      'Usage: pnpm store:circuits [push [--replace]|pull [--latest | --compatible]|verify-release [--source-hash <hash>]|checksums [--dir <path>]|restamp --expect-source-hash <hash>]',
     )
 }
