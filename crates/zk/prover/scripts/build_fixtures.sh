@@ -10,31 +10,17 @@ if ! command -v nargo &> /dev/null; then
     exit 0
 fi
 
-# In a clean checkout, build the circuit artifacts used by integration tests.
-# Check every artifact the tests actually open, not merely that some JSON exists:
-# a stale, partial, or different-preset tree would otherwise skip the build and
-# leave the tests reading artifacts that do not match the current toolchain.
-required_artifacts=(
-    ./circuits/bin/.active-preset.json
-    ./circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json
-    ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json
-    ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json
-)
-
-missing_artifacts=()
-for artifact in "${required_artifacts[@]}"; do
-    [[ -f "$artifact" ]] || missing_artifacts+=("$artifact")
-done
-
-if (( ${#missing_artifacts[@]} > 0 )); then
-    if ! command -v bb &> /dev/null; then
-        exit 0
-    fi
-    echo "Building circuits (missing: ${missing_artifacts[*]})..."
-    pnpm install --frozen-lockfile
+# Build or repair the circuit artifacts the integration tests open. `--skip-if-built` reuses
+# `circuits/bin` only when it is stamped for the current sources and holds every artifact in
+# `crates/zk/prover/required-artifacts.json`; otherwise it hydrates it from a current
+# `dist/circuits`, or builds the pair.
+if command -v bb &> /dev/null; then
+    # Only a rebuild needs the Node dependencies (it renders the verifiers with tsx).
+    [[ -d node_modules ]] || pnpm install --frozen-lockfile
     # build:circuits runs Cargo. This script can run inside a Cargo build script, which holds the
     # target-directory lock, so use a separate target directory.
-    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/e3-zk-prover-fixtures" pnpm build:circuits
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/e3-zk-prover-fixtures" \
+        pnpm build:circuits --skip-if-built
 fi
 
 # Keep the integration-test fixture in sync with the current Noir serialization format.
