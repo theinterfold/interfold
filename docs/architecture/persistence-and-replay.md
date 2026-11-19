@@ -332,6 +332,12 @@ the changed meaning. Testnet nodes must reset state against a fresh testnet stac
 [upgrades](upgrades.md#insecure-testnet-preset-reset) describes. Future changes to a persisted
 discriminant's parameters require a schema increase or an explicit, coordinated reset requirement.
 
+`CircuitName` is encoded by position in every persisted or gossiped bincode encoding: the event log,
+the keyshare, threshold-keyshare, TRBFV-plaintext, and public-key layouts and their recovery
+documents, DHT documents, and slashing records (see the layout lock above). Append new variants
+after the last one. Never remove or reorder one: a retired circuit keeps its variant in place,
+documented as retired.
+
 `node validate` opens no absent store, reports unreadable cursors/projections as failed checks, and
 detects recoverable tails read-only. With node stopped, `--repair` applies narrowly bounded
 tail/index recovery and reconciles derived sortition membership/history against intact logs without

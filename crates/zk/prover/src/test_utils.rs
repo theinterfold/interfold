@@ -13,6 +13,10 @@ use tempfile::TempDir;
 
 use crate::error::ZkError;
 
+pub use crate::circuits::aggregation::c3_chonk::{
+    generate_c3_chonk_accumulate, generate_c3_chonk_chain_with_substituted_key,
+    generate_c3_chonk_tubes,
+};
 pub use crate::circuits::vk::load_vk_artifacts;
 
 /// Repository root for prover tests and their shared artifacts.

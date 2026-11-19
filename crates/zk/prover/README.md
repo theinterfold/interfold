@@ -18,11 +18,12 @@ define a second owner.
 | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | [`backend/`](src/backend), [`config.rs`](src/config.rs)                                                  | Version/checksum admission, downloads, transactional artifact installation, and backend status.           |
 | [`witness.rs`](src/witness.rs), [`prover.rs`](src/prover.rs)                                             | Noir execution and bounded/deadlined Barretenberg subprocesses.                                           |
+| [`chonk.rs`](src/chonk.rs)                                                                               | The `bb prove --scheme chonk` input of a Chonk stack, which `prover.rs` runs like any proof.              |
 | [`actor_system.rs`](src/actor_system.rs)                                                                 | Node-wide proof actor composition and recovery inputs.                                                    |
 | [`request_execution.rs`](src/request_execution.rs)                                                       | Correlated C0–C7, batch verification and recursive request execution, including local witness decryption. |
 | [`proof_request/`](src/proof_request), [`proof_verification/`](src/proof_verification)                   | Local proof planning/signing and authenticated key-proof verification/recovery.                           |
 | [`share_verification/`](src/share_verification), [`node_proof_aggregation/`](src/node_proof_aggregation) | Signed share bundles, per-batch outcomes, and node-fold accumulation/recovery.                            |
-| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds and cross-proof public-value links.                                                       |
+| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds, C3 Chonk chains, and cross-proof links.                                                  |
 | [`tests/`](tests)                                                                                        | Prepared local, recursive-fold, network/download, and proof-to-slash suites.                              |
 
 A capability actor records a proof/verification plan and requests compute work. Shared workers
