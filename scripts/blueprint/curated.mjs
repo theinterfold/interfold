@@ -618,7 +618,7 @@ function circuits() {
         title: 'node_fold',
         lines: ['one proof per member:', 'C0 · C1 · c2ab', 'c3ab · c4ab'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@107@verify_honk_proof(c0_vk, c0_proof`,
+        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@109@verify_honk_proof(c0_vk, c0_proof`,
       },
       {
         id: 'c5',
@@ -640,7 +640,7 @@ function circuits() {
         title: 'nodes_fold',
         lines: ["all H members' node proofs"],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@61@verify_honk_proof_non_zk(acc_vk, acc_proof`,
+        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@66@verify_honk_proof_non_zk(acc_vk, acc_proof`,
       },
       {
         id: 'dkgagg',
@@ -651,7 +651,7 @@ function circuits() {
         title: 'dkg_aggregator',
         lines: ['nodes_fold + C5', 'one DKG proof'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof`,
+        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof`,
       },
       {
         id: 'dkgver',

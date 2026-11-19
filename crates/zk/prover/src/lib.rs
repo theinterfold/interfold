@@ -40,7 +40,8 @@ pub use circuits::aggregation::node_dkg_fold::{
     NodeDkgFoldProveResult,
 };
 pub use circuits::aggregation::nodes_fold_accumulator::{
-    generate_nodes_fold_step, generate_sequential_nodes_fold,
+    generate_nodes_fold_step, generate_sequential_nodes_fold, nodes_fold_step_len,
+    NODES_FOLD_LEAVES,
 };
 pub use circuits::dkg::pk::PkCircuit;
 pub use circuits::dkg::share_computation::ShareComputationCircuit;

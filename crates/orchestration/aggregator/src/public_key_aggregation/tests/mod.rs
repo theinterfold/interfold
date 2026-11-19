@@ -1103,6 +1103,93 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
     Ok(())
 }
 
+/// The fold streams the honest parties' proofs in canonical slot order, three slots a step. A
+/// step's result advances the fold by the slots that the step took, and the next step verifies
+/// that result.
+#[actix::test]
+async fn the_nodes_fold_takes_three_slots_a_step_and_chains_its_accumulator() -> Result<()> {
+    let honest = [0u64, 2, 3, 5, 6];
+    let proof = |circuit, tag: u64| {
+        Proof::new(
+            circuit,
+            ArcBytes::from_bytes(&[tag as u8]),
+            ArcBytes::from_bytes(&[2]),
+        )
+    };
+    let mut state = generating_c5_state(CorrelationId::new());
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        honest_party_ids,
+        dkg_node_proofs,
+        dkg_aggregation_correlation,
+        c5_proof_pending,
+        last_ec,
+        ..
+    } = &mut state
+    else {
+        unreachable!()
+    };
+    *honest_party_ids = BTreeSet::from(honest);
+    *dkg_node_proofs = honest
+        .iter()
+        .map(|&party| (party, Some(proof(CircuitName::NodeFold, party))))
+        .collect();
+    *dkg_aggregation_correlation = None;
+    // Without the C5 proof the final aggregation waits, so only the fold runs.
+    *c5_proof_pending = None;
+    *last_ec = Some(test_ctx(EffectsEnabled::new()));
+    let (mut aggregator, history, e3_id) = build_public_key_aggregator(state).await?;
+
+    aggregator.try_dispatch_nodes_fold_step(&test_ctx(EffectsEnabled::new()))?;
+    let mut accumulator = None;
+    for (slots, parties) in [(vec![0, 1, 2], &honest[..3]), (vec![3, 4], &honest[3..])] {
+        let InterfoldEventData::ComputeRequest(ComputeRequest {
+            request: e3_events::ComputeRequestKind::Zk(ZkRequest::NodesFoldStep(step)),
+            correlation_id,
+            ..
+        }) = next_event(&history).await?.into_data()
+        else {
+            panic!("expected a nodes fold step");
+        };
+        assert_eq!(step.slot_indices, slots);
+        assert_eq!(
+            step.inner_proofs,
+            parties
+                .iter()
+                .map(|&party| proof(CircuitName::NodeFold, party))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(step.prior_accumulator, accumulator);
+        assert_eq!(step.total_slots, honest.len());
+
+        let result = proof(CircuitName::NodesFold, slots.len() as u64);
+        aggregator.handle_compute_response(TypedEvent::new(
+            ComputeResponse::zk(
+                ZkResponse::NodesFoldStep(e3_events::NodesFoldStepResponse {
+                    accumulator_proof: result.clone(),
+                }),
+                correlation_id,
+                e3_id.clone(),
+            ),
+            test_ctx(EffectsEnabled::new()),
+        ))?;
+        accumulator = Some(result);
+    }
+
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        nodes_fold_accumulator,
+        nodes_fold_completed_slots,
+        nodes_fold_step_correlation,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof state");
+    };
+    assert_eq!(nodes_fold_completed_slots as usize, honest.len());
+    assert_eq!(nodes_fold_accumulator, accumulator);
+    assert!(nodes_fold_step_correlation.is_none());
+    Ok(())
+}
+
 mod attestations;
 mod failures;
 mod recovery;

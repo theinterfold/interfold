@@ -402,25 +402,34 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 ## Recursive trust and exported values
 
 Sequential C6 and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across predecessors.
-The kernel proves the chain's first leaf at that leaf's slot; every fold step carries its
-predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain of
-`n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
-continuation verifies the fold; the final consumer binds the declared fold hash to the verified VK.
-C3ab covers both complete C3 chains. Node-fold covers child folds and their nested keys. DKG
-aggregation requires one node-tree hash across every selected row.
+The kernel proves the chain's first leaves at their slots; every fold step carries its predecessor's
+rows forward, the kernel's included, and adds its leaves to empty slots. A C6 step takes one leaf,
+so a chain of `n >= 2` leaves is one kernel and `n - 1` fold proofs; a nodes step takes up to three.
+The first step verifies the kernel; continuation verifies the fold; the final consumer binds the
+declared fold hash to the verified VK. C3ab covers both complete C3 chains. Node-fold covers child
+folds and their nested keys. DKG aggregation requires one node-tree hash across every selected row.
 
-C3 chains run over Chonk (`lib::math::chonk`) instead. A stack is `c3_chonk_app`, which verifies
-`C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
-the stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube
-on the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
-rollup, which closes its IPA claim. Every stage verifies against a witness key and appends that
-key's hash to the data it passes on, so each tube or accumulator exposes seven key hashes: its own,
-the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on
-both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which the anchor pins. The
-Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
-writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app,
-kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
-on an accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
+`nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
+(`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries
+every party's rows, so a fourth node takes a step past 2^22 gates (4.28M at 39 parties), while three
+stay within it. The aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots
+in canonical order once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so
+the dispatcher and its response handler agree without extra state. A chain of at most three nodes
+splits one and the rest, so it never ends on the kernel.
+
+C3 chains do not fold sequentially: they run over Chonk (`lib::math::chonk`). A stack is
+`c3_chonk_app`, which verifies `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding
+kernels; `c3_chonk_tube` verifies the stack's Chonk proof as a rollup proof, and
+`c3_chonk_accumulate` merges an accumulator or tube on the left with a tube on the right.
+`c3ab_fold` verifies each chain's last accumulator as a root rollup, which closes its IPA claim.
+Every stage verifies against a witness key and appends that key's hash to the data it passes on, so
+each tube or accumulator exposes seven key hashes: its own, the tube, the hiding kernel's Chonk key,
+then C3, app, init and tail. Merging requires equal keys on both sides; `c3ab_fold` hashes each
+chain's seven keys into the C3 tree, which the anchor pins. The Chonk and Mega key hashes are
+Barretenberg's Poseidon2 hash of the key fields, which the builder writes beside
+`write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app, kernel and
+hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends on an
+accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
 
 Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
 verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
