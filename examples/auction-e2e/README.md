@@ -15,7 +15,15 @@ The creator selects the auction type:
 For a second-price auction, the winning bid stays secret. For a first-price auction, the price is
 the winning bid, so that bid is public. A tie at the top always goes to the tied bidder whose
 counted bid was submitted first (see "Bid updates"). All three types resolve a tie inside the
-computation and do not show it. The computation of all three types cannot fail by chance.
+computation and do not show it. The first-price type and the mask-provider type cannot fail by
+chance. A round of the no-providers type ends with no result with a small probability, which the
+plaintext modulus sets (see "The program: the no-providers type").
+
+**Status of this branch.** The FHE program (`program/`) runs the no-providers type only, in the form
+that "The program: the no-providers type" describes. The contract, the SDK, the web app and the
+circuits still carry all three types, and the sections on the first-price type and the mask-provider
+type describe the program before this change. The web app still shows the earlier explanation of the
+no-providers type.
 
 The first-price type is a priority-expanded first-price auction. The result has one lane of 16 slots
 for each bidder. Above the price, every slot is 0. At the price, the lane of the winner is exactly 1
@@ -32,10 +40,11 @@ its mask (see "Send a mask").
 The no-providers type also gives the second-price result. It needs no mask provider and no trusted
 party. Each bidder sends two random shares with the bid, and the program makes the random factor
 from the sum of the shares of all bidders. A bid has four ciphertexts. Privacy needs one bidder that
-draws its shares at random. The price: the random factor is not exactly uniform, so the numbers that
-are not 0 in the result leak a small statistical hint about the losing bids. The hint is larger on
-the small parameters of this demo than on secure parameters (see "The program: the no-providers
-type").
+draws its shares at random. The random factor is then exactly uniform over the numbers that are not
+0, so the numbers in the result show nothing. The price: the factor is 0 in a slot with probability
+`1 / t^2` for the plaintext modulus `t`, and the round then ends with no result. On the parameters
+of this demo (`t = 257`) that is at most 1 round in 516. The parameter search gives a larger `t` for
+any failure probability (see "The program: the no-providers type").
 
 | Step           | What happens                                                                                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -369,11 +378,13 @@ at `p`. With `s` the second-highest bid:
 
 Every non-zero `g` is a whole number from 1 to `n`, and every non-zero `c (c - 1)` is a whole number
 from 2 to `n (n - 1)`. Both are below 257, and 257 is prime. So `tests` is not 0 mod 257 exactly
-where it is not 0 as a whole number. The program multiplies `tests` by a factor `r` that is 0 in no
-slot of a lane that exists. So the output is 0 exactly where `tests` is 0, and the result always
-reads. The result is a function of the winner and `s` only. It does not show the winning bid, the
-other bids, a count or a tie. The three ciphertext products of `tests` are at depth 2. The types
-differ in how they make `r`.
+where it is not 0 as a whole number. The program multiplies `tests` by a random factor `r`. Where
+`r` is not 0, the output is 0 exactly where `tests` is 0. In the mask-provider type, `r` is 0 in no
+slot of a lane that exists, so the result always reads. In the no-providers type, `r` is 0 in a slot
+with probability `1 / t^2` (see "The program: the no-providers type"). The result is a function of
+the winner and `s` only. It does not show the winning bid, the other bids, a count or a tie. In the
+mask-provider type, the three ciphertext products of `tests` are at depth 2. The types differ in how
+they make `r` and in the order of the products.
 
 ### The program: the mask-provider type
 
@@ -400,40 +411,140 @@ winner and the price. A provider never sees a bid, and a provider cannot bid.
 
 ### The program: the no-providers type
 
-The no-providers type gives the same result as the mask-provider type and does not fail by chance,
-like it. It needs no mask provider. The creation has no provider list (`providers` must be empty,
-and the configuration input is `"interfold-auction-config-v1" || uint8(2)`). The program selects
-bids with the rule of "The program: which bids count", and there are no mask inputs. A bid has four
-ciphertexts: `ge`, `gt` and the two shares `s1` and `s2`. The program computes:
+The no-providers type gives the second-price result with no mask provider. The creation has no
+provider list (`providers` must be empty, and the configuration input is
+`"interfold-auction-config-v1" || uint8(2)`). The program selects bids with the rule of "The
+program: which bids count", and there are no mask inputs. A bid has four ciphertexts: `ge`, `gt` and
+the two shares `s1` and `s2`. Every slot of a share is a random number in 0 to 256 that the bidder
+draws. The program computes:
 
 ```text
 S1  = the sum of s1 over the selected bids
 S2  = the sum of s2 over the selected bids
-r   = ((S1 * S1 - 3) * used) * (S2 * S2 - 3)
-out = tests * r
+r   = S1 * S1 - 3 * (S2 * S2)
+out = g * (c * (c - 1) * r)
 ```
 
-The depth is 3: the squares have depth 1, `r` has depth 2, `tests` has depth 2 and `out` has
-depth 3. There are 7 ciphertext products. The constant 3 is the plaintext with the value 3 in every
-slot. `decodeResult` of `@interfold/auction-qnr-second-price` reads the result with the same rule as
-the other second-price type.
+`g` and `c` are the two parts of `tests` (see "The program: the second-price tests"), so `out` is
+`tests * r`. The program makes `g` with `used`, so `g` and `out` are 0 in the lanes that do not
+exist. The number 3 is the smallest number that is not a square modulo the plaintext modulus `t`.
+The program finds it (`non_residue`): it is 3 for 257, for 65537 and for 12451841.
 
-**Why it cannot fail.** The number 3 is not a square modulo 257 (a check of all 257 values, also
-done for 65537). So `S^2 - 3` is not 0 for any `S`, and `r` is not 0 in any slot, whatever the
-bidders send. A slot of `out` is thus 0 only where `tests` is 0, for any shares. A bidder that sends
-bad shares on purpose cannot change the winner or the price. It can only change the random numbers
-in the slots that are not 0. Because of this, a share needs no proof other than the normal
-encryption proof.
+There are 6 ciphertext products: one inside `g` (the ties), `c * (c - 1)`, the two squares, the
+product with `r` and the last product. The depth is 3: `g`, `c * (c - 1)` and `r` have depth 1,
+`c * (c - 1) * r` has depth 2 and `out` has depth 3. `g` is the last factor on purpose. The program
+makes it with the lane selectors, which are products with a plaintext, so it carries the most noise.
+As the last factor, that noise goes through one ciphertext product and not through two.
+`decodeResult` of `@interfold/auction-qnr-second-price` reads the result with the same rule as the
+other second-price type.
 
-**What it leaks.** If at least one bidder draws its shares at random and keeps them secret, `S1` and
-`S2` are uniform and unknown to everyone else, even if all the other bidders agree on their shares.
-No trusted party is needed. But `S^2 - 3` takes only 129 of the 257 values, so `r` is close to
-uniform, and not uniform. A slot of `out` that is not 0 is `tests * r`, and its distribution depends
-a little on the number in `tests`. The numbers that are not 0 thus leak a small statistical hint
-about the counts in `tests`, which are a function of the losing bids. The zero pattern shows the
-winner and the price, as in the mask-provider type. The hint is larger on the small modulus of this
-demo than on a secure parameter set, which has a much larger modulus. The mask-provider type has no
-such hint: its mask is exactly uniform and not 0.
+**When `r` is 0.** `r` is 0 in a slot only when `S1` and `S2` are both 0 in that slot. If `S2` is
+not 0, `r = 0` means `(S1 / S2)^2 = 3`, and no number has the square 3 modulo 257 (a check of all
+257 values). If `S2` is 0, `r` is `S1 * S1`, which is 0 only for `S1 = 0`. Of the 66,049 pairs
+`(S1, S2)`, one gives 0, and each value from 1 to 256 comes from exactly 258 pairs. So when `S1` and
+`S2` are uniform, `r` is 0 with probability 1 / 66,049, and otherwise it is uniform in 1 to 256.
+
+**Why it stays private.** If at least one bidder draws its shares at random and keeps them secret,
+`S1` and `S2` are uniform and unknown to everyone else in every slot, even if all the other bidders
+agree on their shares. No trusted party is needed. A slot of `out` that is not 0 is a number of
+`tests` that is not 0, times `r`. The number 257 is prime, so that slot is uniform in 1 to 256 too.
+The numbers of the result that are not 0 thus show nothing. Only the zero pattern is left, and it is
+a function of the winner and the price. It does not show the winning bid, the other bids, a count or
+a tie. If all the bidders share their shares, they can compute `r`, divide `out` by it and read the
+numbers in `tests`.
+
+A bidder that sends shares that are not random cannot change the winner or the price with them. It
+cannot make `r` zero either, as long as one other bidder keeps random shares secret: the shares of
+the others are encrypted, so it cannot choose its own to cancel them. Because of this, a share needs
+no proof other than the normal encryption proof.
+
+**When it fails.** A slot where `r` is 0 reads as 0, whatever `tests` holds there. An auction of `n`
+bidders has `16 n` slots, so `r` is 0 in one of them with probability at most `16 n / t^2`. For 8
+bidders and `t = 257` this is 128 / 66,049, about 1 round in 516. The decoder checks the whole
+pattern (the three rules of "The program: the second-price tests"). One wrong zero breaks the
+pattern, and the decoder then returns no winner and no price. It does not return another winner or
+another price: that needs a wrong zero in two or more chosen slots at once (as many slots as
+bidders), which has a probability of at most about `2 / t^4`, below 10^-9 for `t = 257`. A zero of
+`r` in a slot where `tests` is 0 changes nothing.
+
+**The modulus sets the failure probability.** The parameter search of `crates/fhe-params` takes the
+most bidders, the number of levels and the failure probability, and returns a parameter set for this
+program (see "Auction" in [`crates/fhe-params/README.md`](../../crates/fhe-params/README.md)):
+
+```sh
+# from the repository root
+cargo run --release -p e3-fhe-params --bin search_params -- --bidders 8 --levels 16 --failure-bits 40
+```
+
+For 8 bidders, 16 levels and a failure probability of 2^-40, with a committee of 20 and λ = 31, it
+returns the ring degree 16384, `t = 12451841` and 6 moduli of 52 bits. `program/tests/threshold.rs`
+runs the program on these parameters with a committee and threshold decryption. This example still
+runs on the demo parameters (N = 128, `t = 257`). A preset and circuit configurations for a searched
+set do not exist yet.
+
+**A worked example.** To keep the tables small, this example has 3 bidders and 4 levels (the app has
+16 levels), on the modulus 257. The bidder at position 0 bids level 2, position 1 bids level 3 and
+position 2 bids level 1. The highest bid is at position 1, and the second-highest bid is level 2.
+
+Each bidder sends the two thermometers of its bid and two shares of random numbers. Every lane holds
+the same copy of a thermometer:
+
+```text
+position   bid   ge at levels 0 1 2 3   gt at levels 0 1 2 3
+0          2     1 1 1 0                1 1 0 0
+1          3     1 1 1 1                1 1 1 0
+2          1     1 1 0 0                1 0 0 0
+```
+
+The program counts. `c` is the number of bids at or above a level: 3, 3, 2 and 1, so `c * (c - 1)`
+is 6, 6, 2 and 0. `g` is 0 where the bidder of the lane beats every other bidder at the level:
+
+```text
+                 level 0   level 1   level 2   level 3
+g      lane 0       2         1         1         1
+       lane 1       2         1         0         0
+       lane 2       2         2         2         1
+c * (c - 1)         6         6         2         0
+tests  lane 0      12         6         2         0
+       lane 1      12         6         0         0
+       lane 2      12        12         4         0
+```
+
+At level 2, lane 1 has `g = 0`: no other bid is above level 2, and the bid of position 1 is not
+below it. Lane 0 has `g = 1`, because one other bid is above level 2. Lane 2 has `g = 2`: one other
+bid is above level 2, and its own bid is below it. At level 3 only one bid is left, so `c * (c - 1)`
+is 0 in every lane.
+
+The mask hides the numbers. Take the slot of lane 0 at level 2. The three bidders drew 52, 149 and
+52 for `s1` in that slot, and 5, 255 and 256 for `s2`:
+
+```text
+S1  = 52 + 149 + 52 = 253
+S2  = 5 + 255 + 256 = 516 = 2 mod 257
+r   = 253 * 253 - 3 * 2 * 2 = 63997 = 4 mod 257
+out = tests * r = 2 * 4 = 8
+```
+
+The committee decrypts this output. The numbers are those of one run: other shares give other
+numbers and the same zeros.
+
+```text
+         level 0   level 1   level 2   level 3
+lane 0      37        48         8         0
+lane 1      62       178         0         0
+lane 2     211        41        31         0
+```
+
+The decoder reads the zeros. Level 3 is 0 in every lane, so the price is below level 3. Level 2 is 0
+in lane 1 only: the price is level 2, and the winner is the bidder at position 1. Every slot below
+level 2 is not 0. The winning bid (level 3) and the losing bid (level 1) do not show.
+
+A tie does not show either. The bids 2, 1, 2 (a tie at the top, which position 0 wins) and the bids
+3, 1, 2 (no tie) give the same zeros: lane 0 from level 2, and every lane at level 3.
+
+A failure looks like this. If `S1` and `S2` were both 0 in the slot of lane 0 at level 2, that slot
+would be 0 as well. Level 2 would then be 0 in two lanes. No winner and price give that pattern, so
+the decoder would return no result.
 
 ## What is proven
 
@@ -481,9 +592,10 @@ inner circuits make recursive proofs. Together, the circuits check these facts:
   public input and is not zero.
 - **The shares.** `auction_bid_shares` checks the two encryption proofs of the roles 2 and 3 and
   their binding, and no other rule. A share is any plaintext, because the program does not need a
-  property of it: no value of `S` makes `S^2 - 3` zero (see "The program: the no-providers type").
-  The mask of the first-price type has no rule either: the program reads the result whatever the
-  mask holds (see "The program: the first-price type").
+  property of one share: the factor `r` is 0 in a slot only when both share sums are 0 there, and
+  one bidder with random, secret shares makes the sums uniform (see "The program: the no-providers
+  type"). The mask of the first-price type has no rule either: the program reads the result whatever
+  the mask holds (see "The program: the first-price type").
 
 The public inputs of the bid proof, in order, are: the `K` ciphertext commitments, `bidder`,
 `levels`, the committee key commitment and the VK anchor. That is `K + 4` values. The contract
@@ -697,8 +809,9 @@ it works**.
    level. For the first-price type, the grid shows that the lane of the winner is exactly 1 at the
    price level, every lane before it is 0 and every slot above the price is 0. The page shows an
    error when the output does not have the pattern of a result. This does not happen for any bids
-   and any masks (first-price type), when every mask is valid (mask-provider type) and for any
-   shares (no-providers type).
+   and any masks (first-price type) and when every mask is valid (mask-provider type). For the
+   no-providers type it happens when the factor `r` is 0 in a slot that the pattern needs: at most 1
+   round in 516 on the parameters of this demo.
 
 An auction needs 2 bidders at least, and 8 at most. A bidder counts only if one of its bids opens
 its commitments. With fewer than 2 such bidders, the server computes nothing, and the E3 fails at
@@ -709,7 +822,8 @@ compute deadline. The other two types need nothing more.
 ## Test
 
 ```sh
-cargo test --release -p e3-user-program   # the FHE program and its input policy, all three types, against a local l-BFV key
+cargo test --release -p e3-user-program   # the FHE program (the no-providers type) and its input policy, against a local l-BFV key
+cargo test --release -p e3-user-program -- --include-ignored   # also the committee tests on searched parameters (degree 16384)
 (cd circuits/bid && nargo test)           # the bid validity rules (the shared library)
 hardhat test                              # the contract and the allowlist gate (with a mock bid verifier)
 pnpm test:server                          # the server and the SDK packages
@@ -768,11 +882,15 @@ noise. `pnpm test:server` covers the input assembly with masks, the rule that st
 
 The tests of the no-providers type are these. `hardhat test` covers the creation (providers are
 rejected), the role count (4) and the bidder limit (8), and the anchor rule: a bid of this type must
-carry `vkAnchorQnr`. `cargo test` covers the result for 2 to 8 bidders, all bid patterns with the
-top ties, and shares that the bidders choose against the program (so that `S` takes every value from
-0 to 256): the result is always exact. It runs the FHE computation for a set of bidder counts.
-`pnpm test:server` covers the layout, the decoder and the rule for providers, and the input assembly
-and the rule that starts a computation for 4 ciphertexts and no masks.
+carry `vkAnchorQnr`. `cargo test` covers the formulas for every bid set of 2 and 3 bidders and for 2
+to 8 bidders, with the top ties, and for every value of the share sums. It runs the FHE computation
+for every bidder count, also with shares that the bidders choose against the program. It checks that
+a zero of `r` ends the round with no result and never with another result.
+`program/tests/threshold.rs` runs the program with a committee on parameters from the parameter
+search: key generation by the parties, the smudging noise of fhe.rs and threshold decryption. It
+checks the winner and the price, and the noise against its bounds. Its tests at degree 16384 are
+ignored by default. `pnpm test:server` covers the layout, the decoder and the rule for providers,
+and the input assembly and the rule that starts a computation for 4 ciphertexts and no masks.
 
 ## Deploy to Sepolia
 
@@ -1146,9 +1264,10 @@ older figures were for a proof of each ciphertext, and they do not apply.
 - A first-price bid has a third ciphertext, the mask, so a bid makes two proofs after the
   encryptions (the pair proof and the bid proof), as a mask-provider bid does. A no-providers bid
   makes three: the pair proof, the shares proof and the bid proof.
-- The first-price type and the two second-price types cannot read a slot as zero by error. In the
+- The first-price type and the mask-provider type cannot read a slot as zero by error. In the
   first-price type, the mask touches only the slots that the reader does not need. In the
-  second-price types, the factor `r` is never zero in a slot that exists.
+  mask-provider type, the factor `r` is never zero in a slot that exists. In the no-providers type,
+  `r` is zero in a slot with probability `1 / t^2`, and the decoder then finds no result.
 - Privacy of the first-price type needs one bidder that draws its mask at random and keeps it
   secret. If all the bidders share their masks, they can read the numbers `G + E`, which show more
   than the winner and the price (for example, how many bidders bid above a level). The result alone
@@ -1171,13 +1290,13 @@ older figures were for a proof of each ciphertext, and they do not apply.
 - A no-providers bid has four ciphertexts: the two thermometers and two shares. The shares need no
   provider and no proof other than the encryption proof, and a bid makes three proofs after the
   encryptions (the pair proof, the shares proof and the bid proof).
-- The no-providers type needs no trusted party and cannot fail by chance, whatever the bidders send.
-  The price is a small statistical hint. `S^2 - 3` takes only 129 of the 257 values, so the factor
-  `r` is not exactly uniform, and the numbers of the result that are not 0 leak a little about the
-  counts in `tests`, which depend on the losing bids. The hint is larger on the small modulus of
-  this demo than on a secure parameter set. The result alone does not show a bid, but this type is
-  not the choice if the losing bids must stay completely hidden. Privacy needs one bidder that draws
-  its shares at random and keeps them secret. If all the bidders share their shares, they can
-  compute `r`.
+- The no-providers type needs no trusted party. Privacy needs one bidder that draws its shares at
+  random and keeps them secret. The factor `r` is then exactly uniform over the numbers that are not
+  0, so the numbers of the result show nothing about the bids. If all the bidders share their
+  shares, they can compute `r`. The price is a failure probability: a round of `n` bidders ends with
+  no result with probability at most `16 n / t^2`, which is 1 round in 516 for 8 bidders on the
+  modulus 257 of this demo. A larger modulus makes it as small as needed (2^-40 for `t = 12451841`,
+  which the parameter search returns for 8 bidders). This example does not run on such a parameter
+  set yet: a preset and circuit configurations for it do not exist.
 - The committee publishes 128 coefficients (the whole ring) for this preset. Other presets
   publish 50.

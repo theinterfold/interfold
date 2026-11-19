@@ -45,6 +45,9 @@ pub enum ValidationError {
     /// Smallest prime bit-length outside the range that the search supports
     #[error("Invalid minimum prime size: {bits} bits - {reason}")]
     InvalidPrimeBits { bits: u8, reason: String },
+    /// Auction shape or failure target that the auction search cannot serve
+    #[error("Invalid auction inputs: {reason}")]
+    InvalidAuction { reason: String },
 }
 
 /// Search error type for parameter search failures
@@ -53,6 +56,13 @@ pub enum SearchError {
     /// No feasible parameters found
     #[error("No feasible BFV parameters found for the given constraints")]
     NoFeasibleParameters,
+    /// The smudging formula of fhe.rs cannot cover the noise of the auction
+    #[error(
+        "The smudging bound of fhe.rs cannot cover the auction at these inputs: the \
+         relinearization noise dominates the fresh noise, so no ciphertext count z makes the \
+         bound large enough. Use a larger λ"
+    )]
+    RelinearizationDominates,
 }
 
 // Conversion implementations for better error handling

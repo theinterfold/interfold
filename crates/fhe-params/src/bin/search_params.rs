@@ -7,14 +7,23 @@
 //! BFV Parameter Search CLI
 //!
 //! Standalone command-line tool for searching BFV parameters using NTT-friendly primes.
+//!
+//! With `--bidders`, `--levels` and `--failure-bits` it searches the parameters of the
+//! second-price auction of `examples/auction-e2e` (see `e3_fhe_params::search::auction`):
+//!
+//! ```text
+//! cargo run -p e3-fhe-params --bin search_params -- --bidders 8 --levels 16 --failure-bits 40
+//! ```
 
 use clap::Parser;
-use e3_fhe_params::constants::defaults::DEFAULT_SECURE_LAMBDA;
+use e3_fhe_params::constants::defaults::{DEFAULT_SECURE_16384_LAMBDA, DEFAULT_SECURE_LAMBDA};
 use e3_fhe_params::constants::search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z};
+use e3_fhe_params::search::auction::{auction_search, AuctionSearchConfig, AuctionSearchResult};
 use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
 use e3_fhe_params::search::constants::{DEFAULT_MIN_PRIME_BITS, K_MAX, MIN_MARGIN_BITS};
+use e3_fhe_params::search::errors::{BfvParamsError, SearchError};
 use e3_fhe_params::search::prime::{build_prime_items, build_prime_items_for_second};
 use e3_fhe_params::search::security::{max_log2_q, LimitSource};
 use e3_fhe_params::search::utils::{
@@ -37,9 +46,10 @@ struct Args {
     #[arg(long, default_value_t = SEARCH_K)]
     k: u128,
 
-    /// Statistical security parameter λ (negl(λ)=2^{-λ}).
-    #[arg(long, default_value_t = DEFAULT_SECURE_LAMBDA as u32)]
-    lambda: u32,
+    /// Statistical security parameter λ (negl(λ)=2^{-λ}). Defaults to 45, and in auction mode
+    /// to 31, the λ of the depth-3 preset SecureThreshold16384.
+    #[arg(long)]
+    lambda: Option<u32>,
 
     /// Bound B on the error distribution ψ used to generate e1 when encrypting (20 for CBD with σ≈3.2).
     #[arg(long, default_value_t = B)]
@@ -73,6 +83,80 @@ struct Args {
     /// Verbose per-candidate logging
     #[arg(long, default_value_t = false)]
     verbose: bool,
+
+    /// Auction mode: the most bidders of an auction. With --levels and --failure-bits, the
+    /// search derives k, z and the depth of the auction program, and ignores --k, --z and
+    /// --mult-depth.
+    #[arg(long, requires_all = ["levels", "failure_bits"])]
+    bidders: Option<u32>,
+
+    /// Auction mode: the number of price levels (a bid is in 0..levels).
+    #[arg(long, requires_all = ["bidders", "failure_bits"])]
+    levels: Option<u32>,
+
+    /// Auction mode: the auction may fail with probability at most 2^-failure_bits.
+    #[arg(long, requires_all = ["bidders", "levels"])]
+    failure_bits: Option<u32>,
+}
+
+/// The inputs of the auction search, when the three auction arguments are present.
+fn auction_config(args: &Args, lambda: u32) -> Option<AuctionSearchConfig> {
+    Some(AuctionSearchConfig {
+        bidders: args.bidders?,
+        levels: args.levels?,
+        failure_bits: args.failure_bits?,
+        n: args.n,
+        lambda,
+        b: args.b,
+        b_chi: args.b_chi,
+        min_margin: args.min_margin,
+        d: args.d,
+        insecure: args.insecure,
+        min_prime_bits: args.min_prime_bits,
+        verbose: args.verbose,
+    })
+}
+
+/// What the auction search derived, and what the auction program and fhe.rs need from it.
+fn print_auction(config: &AuctionSearchConfig, result: &AuctionSearchResult) {
+    println!();
+    println!("=== AUCTION ===");
+    println!();
+    println!("  bidders (most)        = {}", config.bidders);
+    println!("  levels                = {}", config.levels);
+    println!("  slots used            = {}", result.slots);
+    println!("  failure target        = 2^-{}", config.failure_bits);
+    println!(
+        "  failure bound         = slots / k^2 = 2^{:.2}",
+        result.failure_log2
+    );
+    println!();
+    println!(
+        "  k (plaintext modulus) = {} ({:.2} bits)",
+        result.plaintext_modulus,
+        (result.plaintext_modulus as f64).log2()
+    );
+    println!(
+        "  c (non-residue)       = {}  [mask = S1^2 - c S2^2]",
+        result.non_residue
+    );
+    println!(
+        "  mult depth            = {}  [smudging: mult_depth]",
+        result.mult_depth
+    );
+    println!(
+        "  z                     = {}  [smudging: num_ciphertexts]",
+        result.z
+    );
+    println!();
+    println!(
+        "  B_C of the auction    = {}",
+        fmt_big_summary(&result.b_c_auction)
+    );
+    println!(
+        "  B_C of fhe.rs (z)     = {}",
+        fmt_big_summary(&result.bfv.b_c_final)
+    );
 }
 
 fn variance_uniform_str(b: u128) -> String {
@@ -186,6 +270,13 @@ fn print_param_set(
 
 fn main() {
     let args = Args::parse();
+    let auction_mode = args.bidders.is_some();
+    let lambda = args.lambda.unwrap_or(if auction_mode {
+        DEFAULT_SECURE_16384_LAMBDA as u32
+    } else {
+        DEFAULT_SECURE_LAMBDA as u32
+    });
+    let auction = auction_config(&args, lambda);
 
     println!("================================================================================");
     println!("                    BFV Parameter Search (NTT-friendly primes)");
@@ -193,10 +284,16 @@ fn main() {
     println!();
     println!("Inputs:");
     println!("  n (ciphernodes)     = {}", args.n);
-    println!("  z (votes)           = {}", args.z);
-    println!("  mult depth          = {}", args.mult_depth);
-    println!("  k (plaintext space) = {}", args.k);
-    println!("  λ (statistical sec) = {}", args.lambda);
+    if let Some(auction) = &auction {
+        println!("  bidders (most)      = {}", auction.bidders);
+        println!("  levels              = {}", auction.levels);
+        println!("  failure target      = 2^-{}", auction.failure_bits);
+    } else {
+        println!("  z (votes)           = {}", args.z);
+        println!("  mult depth          = {}", args.mult_depth);
+        println!("  k (plaintext space) = {}", args.k);
+    }
+    println!("  λ (statistical sec) = {}", lambda);
     println!("  B (error bound)     = {}", args.b);
     println!("  B_χ (secret bound)  = {}", args.b_chi);
     if let Some(d) = args.d {
@@ -208,21 +305,23 @@ fn main() {
         println!();
     }
 
-    // Enforce constraints on z and k
-    if args.z == 0 {
-        eprintln!("ERROR: z must be positive.");
-        std::process::exit(1);
-    }
-    if args.z > K_MAX {
-        eprintln!(
-            "ERROR: too many votes — z = {} exceeds 2^25 = {}.",
-            args.z, K_MAX
-        );
-        std::process::exit(1);
-    }
-    if args.k == 0 {
-        eprintln!("ERROR: user-supplied plaintext space k must be positive.");
-        std::process::exit(1);
+    // Enforce constraints on z and k. The auction search derives both.
+    if !auction_mode {
+        if args.z == 0 {
+            eprintln!("ERROR: z must be positive.");
+            std::process::exit(1);
+        }
+        if args.z > K_MAX {
+            eprintln!(
+                "ERROR: too many votes — z = {} exceeds 2^25 = {}.",
+                args.z, K_MAX
+            );
+            std::process::exit(1);
+        }
+        if args.k == 0 {
+            eprintln!("ERROR: user-supplied plaintext space k must be positive.");
+            std::process::exit(1);
+        }
     }
 
     if !args.min_margin.is_finite() || args.min_margin < 0.0 {
@@ -230,11 +329,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    let config = BfvSearchConfig {
+    let mut config = BfvSearchConfig {
         n: args.n,
         z: args.z,
         k: args.k,
-        lambda: args.lambda,
+        lambda,
         b: args.b,
         b_chi: args.b_chi,
         min_margin: args.min_margin,
@@ -271,12 +370,34 @@ fn main() {
         );
     }
 
-    let bfv = match bfv_search(&config) {
-        Ok(bfv) => bfv,
-        Err(e) => {
-            eprintln!("\nERROR: {e}");
-            eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
-            std::process::exit(1);
+    let mut auction_result = None;
+    let bfv = if let Some(auction) = &auction {
+        match auction_search(auction) {
+            Ok(result) => {
+                // The first set is the one `bfv_search` returns for the derived k, z and depth.
+                config = result.bfv_config.clone();
+                let bfv = result.bfv.clone();
+                auction_result = Some(result);
+                bfv
+            }
+            Err(e) => {
+                eprintln!("\nERROR: {e}");
+                // The other errors say what to change.
+                let no_set: BfvParamsError = SearchError::NoFeasibleParameters.into();
+                if e.to_string() == no_set.to_string() {
+                    eprintln!("Try fewer bidders or levels, fewer failure bits, or a smaller n.");
+                }
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match bfv_search(&config) {
+            Ok(bfv) => bfv,
+            Err(e) => {
+                eprintln!("\nERROR: {e}");
+                eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
+                std::process::exit(1);
+            }
         }
     };
 
@@ -319,6 +440,10 @@ fn main() {
     println!("================================================================================");
     println!("                            FINAL PARAMETER SETS");
     println!("================================================================================");
+
+    if let (Some(auction), Some(result)) = (&auction, &auction_result) {
+        print_auction(auction, result);
+    }
 
     print_param_set(
         "FIRST BFV PARAMETER SET",

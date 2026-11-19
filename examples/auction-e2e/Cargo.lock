@@ -2027,6 +2027,7 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "hex",
+ "ndarray",
  "openvm-sha2",
  "rand 0.9.5",
  "sha2 0.10.9",

@@ -172,6 +172,42 @@ cargo run --bin search_params --package e3-fhe-params -- \
     --n 20 --k 1000 --z 3 --mult-depth 3 --lambda 50
 ```
 
+#### Auction
+
+`search::auction::auction_search` searches the parameters of the sealed-bid second-price auction of
+[`examples/auction-e2e`](../../examples/auction-e2e/program/src/lib.rs). Its inputs are the most
+bidders, the number of price levels and the failure probability `2^-failure_bits` an auction may
+have. It derives `k`, `z` and the depth:
+
+- **Plaintext modulus**: the mask of the auction is `S1² − c·S2²` (`c` a quadratic non-residue mod
+  `k`), which is zero in a slot with probability `1/k²`. The search takes the smallest prime
+  `k ≡ 1 (mod 2d)` with `k² ≥ slots · 2^failure_bits` (`slots = bidders · levels`) and
+  `k > bidders · (bidders − 1)`.
+- **Noise**: `auction_noise_bound` follows the program product by product (6 ciphertext products at
+  depth 3, and the plaintext products of the lane selectors), which the model of the
+  Multiplication section does not cover.
+- **z**: fhe.rs sizes the smudging noise from a ciphertext count and a depth, with the model of the
+  Multiplication section. The search returns the smallest `z` for which that model is at least the
+  bound of the auction, and checks correctness with the value of the model. The committee then
+  uses `SmudgingConfig::new(params, n, z, λ)` with `mult_depth = 3`, and the search, fhe.rs and the
+  circuit configuration hold one bound.
+- **Primes**: up to 8 primes at a ring dimension (`bfv_search` stops at 6), with the same prime
+  sizes and security limit.
+
+`z` must stay at or below `k`, because `bfv_search` uses `max(k, z)` as the plaintext modulus. The
+search returns `SearchError::RelinearizationDominates` when no `z` covers the auction, which
+happens when λ is so small that the relinearization noise is above the fresh noise.
+
+```bash
+# 8 bidders, 16 levels, failure 2^-40, n = 20, λ = 31:
+# d = 16384, k = 12451841, c = 3, z = 11, 6 × 52-bit primes
+cargo run --bin search_params --package e3-fhe-params -- \
+    --bidders 8 --levels 16 --failure-bits 40
+```
+
+`examples/auction-e2e/program/tests/threshold.rs` runs the auction on searched parameters with a
+committee, the smudging noise of fhe.rs and threshold decryption.
+
 #### Search Algorithm
 
 The `bfv_search()` function implements a search algorithm that:
@@ -307,7 +343,8 @@ The defaults are the search inputs of `SecureThreshold8192` (`constants::search_
 - `--z <Z>`: Number of fresh ciphertext additions (number of votes). The search uses `max(k, z)` as
   the plaintext modulus. Default: `100000`
 - `--k <K>`: Plaintext modulus (plaintext space). Default: `17000000`
-- `--lambda <LAMBDA>`: Statistical security parameter λ (negl(λ) = 2^{-λ}). Default: `45`
+- `--lambda <LAMBDA>`: Statistical security parameter λ (negl(λ) = 2^{-λ}). Default: `45`, and `31`
+  in auction mode (the λ of `SecureThreshold16384`)
 - `--b <B>`: Bound on error distribution ψ (e.g., 20 for CBD with σ≈3.2). Default: `20`
 - `--b-chi <B_CHI>`: Bound on distribution χ for secret key generation. Default: `1`
 - `--min-margin <BITS>`: Minimum correctness margin in bits. Default: `2`
@@ -316,6 +353,9 @@ The defaults are the search inputs of `SecureThreshold8192` (`constants::search_
   `false`
 - `--min-prime-bits <BITS>`: Smallest prime bit-length for both parameter sets. Default: `50`
 - `--mult-depth <D>`: Levels of multiplication after the `z` additions. Default: `0`
+- `--bidders <N>`, `--levels <L>`, `--failure-bits <BITS>`: Auction mode (all three together): the
+  most bidders, the number of price levels, and the failure probability `2^-BITS` of an auction.
+  The search derives `k`, `z` and the depth, and ignores `--k`, `--z` and `--mult-depth`
 - `--verbose`: Enable verbose output showing detailed search process
 - `--help`: Show help message
 - `--version`: Show version information

@@ -28,7 +28,7 @@ use std::collections::HashSet;
 
 /// Smallest ring dimension served by the prime table, and the first d that the search tries
 /// when `BfvSearchConfig::d` is `None`. Smaller ring dimensions generate their primes.
-const RING_DIM: u64 = 8192;
+pub(crate) const RING_DIM: u64 = 8192;
 
 /// First-set largest prime bit-size. The 60-bit cap leaves 61/62-bit primes for the second set
 /// (centered-RNS gap requirement). `BfvSearchConfig::min_prime_bits` sets the floor of both sets.
@@ -135,6 +135,19 @@ impl BfvSearchResult {
 /// Note: Some resulting parameter sets from this search are hardcoded as presets
 /// in the `presets.rs` file for production use (e.g., `BfvPreset::SecureThreshold8192`).
 pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSearchResult> {
+    bfv_search_with_max_primes(bfv_search_config, FIRST_MAX_NUM_PRIMES)
+}
+
+/// [`bfv_search`] with a caller-chosen largest number of primes.
+///
+/// `bfv_search` stops at 6 primes and then moves to the next ring dimension. A circuit with a
+/// large plaintext modulus can need more primes at a ring dimension that still has room under
+/// the security limit, so [`crate::search::auction::auction_search`] raises the limit. Every
+/// bit-length of the prime table holds 12 primes, which bounds `max_num_primes`.
+pub fn bfv_search_with_max_primes(
+    bfv_search_config: &BfvSearchConfig,
+    max_num_primes: usize,
+) -> BfvParamsResult<BfvSearchResult> {
     // Quick checks on k := z
     if bfv_search_config.z == 0 || bfv_search_config.z > K_MAX {
         return Err(ValidationError::InvalidVotes {
@@ -237,7 +250,7 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
 
         // Try the fewest primes first, then the smallest prime bit-size that
         // meets the correctness bound. This mirrors the reference bucket scan.
-        for num_primes in FIRST_TARGET_NUM_PRIMES..=FIRST_MAX_NUM_PRIMES {
+        for num_primes in FIRST_TARGET_NUM_PRIMES..=max_num_primes.max(FIRST_TARGET_NUM_PRIMES) {
             // Two passes per prime count. Pass 1 takes, in each bucket, the largest primes under
             // the security cap, as the presets do. Pass 2 runs only when pass 1 finds nothing and
             // scans every window, so a smaller window whose r_k(q) = q mod k passes still counts
