@@ -129,12 +129,13 @@ behavior.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
-`circuits/bin/synchronized/` defines C0–C4 only for `sync-insecure-64/minimum`. C0 and C3 reuse the
-SS arithmetic with the separate transport parameters. C1 proves a bounded threshold-key contribution
-without SS's dealt smudging branch. C2 proves the existing degree-T sharing relation, then commits
-the native packed messages and an N-wide outgoing-key root. C4 opens those packed messages, extracts
-incoming keys, and commits the centered sum of unpacked SK residues plus a bidirectional H-wide key
-bundle. **C4 does not prove a BFV decryption equation.**
+`circuits/bin/synchronized/` defines C0–C5 and draft setup/publication joins only for
+`sync-insecure-64/minimum`. C0 and C3 reuse the SS arithmetic with the separate transport
+parameters. C1 proves a bounded threshold-key contribution without SS's dealt smudging branch. C2
+proves the existing degree-T sharing relation, then commits the native packed messages and an N-wide
+outgoing-key root. C4 opens those packed messages, extracts incoming keys, and commits the centered
+sum of unpacked SK residues plus a bidirectional H-wide key bundle. **C4 does not prove a BFV
+decryption equation.**
 
 Public fields flatten in declaration order; return values follow inputs:
 
@@ -149,12 +150,12 @@ Public fields flatten in declaration order; return values follow inputs:
 The profile ID is the profile/committee crypto-config ID split into high/low 128-bit big-endian
 limbs, compiled into these packages. `SetupBinding = [u128; 2]` is an opaque **caller-supplied**
 context: the leaves only bound it, not derive or authenticate it. The draft `interfold:sync-dkg:v1`
-SAFE domain uses a leading absorbed role (directed key 1, outgoing root 2, bundle 3, C1 challenge
-4). Key commitments absorb all 32 bytes as separate fields, not the PRF's lossy key-to-field map.
-Directed keys bind profile, context, N, key width, dealer and recipient. The root orders all N
-recipients. The bundle binds its owner, aggregate SK, exact sorted H dealer IDs and both key
-directions for each; outgoing keys are indexed by full-committee ID, not roster position. Own
-incoming/outgoing keys must agree. H is not trimmed to the designated T+1 set. The generic C4
+SAFE domain uses a leading absorbed role (directed key 1, outgoing root 2, bundle 3, C1 challenge 4,
+dealer batch 5). Key commitments absorb all 32 bytes as separate fields, not the PRF's lossy
+key-to-field map. Directed keys bind profile, context, N, key width, dealer and recipient. The root
+orders all N recipients. The bundle binds its owner, aggregate SK, exact sorted H dealer IDs and
+both key directions for each; outgoing keys are indexed by full-committee ID, not roster position.
+Own incoming/outgoing keys must agree. H is not trimmed to the designated T+1 set. The generic C4
 opening supports H≤N, while the current recursive joins require H<N. The supported profile fixes N=3
 and H=2; H=N is not an admitted configuration. Broadening that boundary requires new recursive and
 publication qualification, not just the generic C4 constraint.
@@ -166,15 +167,17 @@ aggregate SK and bundle. A consistent context/dealer substitution can produce a 
 with different public fields/outputs; it is not evidence of authentication. Canonical context
 derivation now has a [draft native owner](dkg.md#exchange-and-verification-boundaries), and keyshare
 checks signed transport and complete C2-batch openings. The draft joins below add recursive
-enforcement of child consistency, not chain authority or final C5/publication enforcement.
+enforcement of child consistency, not chain authority or registry publication authorization.
 Synchronized C6 remains unimplemented; no dummy ESM statements stand in for missing consumers. The
-joins, root/bundle schema and setup derivation require protocol review before consumers freeze them.
+joins, root/bundle/batch schema and setup derivation require protocol review before consumers freeze
+them.
 
 `pnpm rust:test:sync-dkg:proofs` exercises the actual typed encoders and native encrypted transport,
-including non-prefix H, self/outside-H recipients, real private-input leaf and join proofs, altered
-public fields and malformed witnesses. Its provenance child verifies independently valid but
-mismatched children before checking their rejection by the parent. It does not qualify contract,
-recovery, secure-profile, replacement-set or repeated-decryption behavior.
+including non-prefix H, self/outside-H recipients, real private-input leaf and join/publication
+proofs, altered public fields and malformed witnesses. Its provenance child verifies independently
+valid but mismatched children before checking their rejection by the parent. The publication case
+also checks the real EVM proof through the draft Solidity wrapper. It does not qualify registry
+publication/attestations, recovery, secure-profile, replacement-set or repeated-decryption behavior.
 
 The [keyshare preparation proof test](../../crates/orchestration/keyshare/README.md#tests)
 additionally starts from production native generation and encrypted runtime work plans, exercises
@@ -200,9 +203,15 @@ every threshold CRT row. Every non-self dealer's C3 key must equal the recipient
 join has already constrained this across all encrypted rows. C4's outgoing root must equal the
 recipient's own C2, including for recipients outside H. A selected recipient's own C2 messages/root
 must also equal its dealer join. The return is H threshold-PK commitments, aggregate-SK commitment
-and bidirectional key-bundle commitment. Those commitments are a draft handoff, not a C6 witness.
+and bidirectional key-bundle commitment, together with a commitment to the complete H ordered dealer
+public rows. That batch anchor includes the exact C2 messages/roots and C3 key/ciphertext
+commitments; a matching threshold PK alone does not identify the successful randomized fan-out. Its
+SAFE payload is
+`[5, profile[2], setup_binding[2], N, KEY_BITS, H, L_THRESHOLD, flatten(H complete dealer public rows)]`
+in the existing DKG domain. Proof bytes are not hashed: reproving the same public contribution does
+not replace the batch. Those commitments are a draft handoff, not a C6 witness.
 
-For the current definition, dealer IO is **3 inputs/24 outputs**; recipient IO is **6/4**. These
+For the current definition, dealer IO is **3 inputs/24 outputs**; recipient IO is **6/5**. These
 layouts are profile-specific; no identity enum discriminant or SS layout changes. The complete
 genealogy is `dealer = VK_HASH(C1,C2,C3)` and `setup = VK_HASH(NodeFold,dealer,C0,C2,C4)`. All H
 dealer hashes must agree, and the recipient circuit compares the complete setup hash with input
@@ -215,13 +224,36 @@ insufficient.
 
 The explicit prover API checks request-derived binding, recipient, roster, exact field layouts and
 genealogy before returning verified setup commitments. It also requires the caller's previously
-admitted C4 aggregate-SK/bundle and selected C1/C5 threshold-key commitments to match; candidate
-outputs cannot supply their own authority. It does **not** authenticate those expected values or
-caller-supplied chain context/roster, or replace signature admission. A different consistently
-selected setup is not rejected without canonical external authority. These joins prove neither C4's
-BFV decryption equation nor C5/contract publication. The runtime still refuses synchronized
-folding/publication; human protocol review, publication wiring, persistent multi-party actor restart
-evidence and C6 remain open.
+admitted C4 aggregate-SK/bundle, dealer-batch and selected C1/C5 threshold-key commitments to match;
+candidate outputs cannot supply their own authority. It does **not** authenticate those expected
+values or caller-supplied chain context/roster, or replace signature admission. A different
+consistently selected setup is not rejected without canonical external authority. These joins prove
+neither C4's BFV decryption equation nor registry publication. The runtime still refuses
+synchronized folding/publication; human protocol review, registry/attestation wiring, full-node
+replay and C6 remain open.
+
+### Draft synchronized C5/publication boundary (not admitted)
+
+C5 reuses the bounded public-key aggregation statement with the synchronized profile's threshold
+parameters and CRS. The final `DkgAggregator` verifies exactly H recipient setup proofs in the
+selected dealer order and one C5 proof. All recipient rows must name the same context, roster,
+complete descendant tree, threshold keys and **dealer batch**; C5 opens those exact ordered keys. It
+needs no N-wide C4 set and no SS smudging placeholder.
+
+The full setup pin is `VK_HASH(NodesFold, setup-descendants)`; C5's non-ZK VK is pinned separately.
+The final EVM public inputs are these two pins, setup binding `[2]` and dealer IDs `[H]`. Outputs
+are batch, threshold keys `[H]`, aggregate SK anchors `[H]`, key bundles `[H]` and aggregate PK
+commitment: **6 inputs/8 outputs** at H=2, or **6+4H** total fields. No ESM lane is reinterpreted.
+
+Rust verification compares the native expected PK commitment, admitted C1/C4/batch anchors and
+canonical context/roster before returning a read-only handoff. The isolated
+`SynchronizedDkgPublicationVerifier` recomputes the setup binding from chain ID, configured
+Interfold/configuration ID, full E3 ID and raw-address committee hash, checks the expected roster,
+batch/PK and complete VK pins, then verifies the EVM proof. The caller still authenticates the
+request-frozen facts. This contract is deliberately not an `IPkVerifier` route, does not implement
+fold attestations or store anchors, and is absent from deployments. Registry integration needs a
+reviewed SK/key-bundle publication/attestation schema; the SS registry's ESM field cannot stand in
+for a bundle.
 
 ## Commitments, packing, and Fiat-Shamir
 

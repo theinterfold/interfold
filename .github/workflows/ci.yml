@@ -1288,7 +1288,7 @@ jobs:
         if: matrix.leg == 'suites'
         run: cargo test --locked -p e3-zk-prover --test witness_compatibility -- --include-ignored --nocapture
 
-      - name: Prove synchronized DKG leaves and provenance joins from native encrypted transport
+      - name: Prove synchronized DKG leaves, joins and isolated publication verification
         if: matrix.leg == 'sync-dkg-proofs'
         run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
 

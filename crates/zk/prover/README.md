@@ -64,9 +64,10 @@ DKG joins, separate from worker dispatch and SS folding. Callers supply authenti
 canonical request context and the accepted H-roster. Preparation uses the witness owner; proving
 uses the profile's isolated artifacts. Verification checks the full descendant VK pin and exact
 context/recipient/roster before returning aggregate-SK/key-bundle commitments. It requires matching
-previously admitted C4 and selected threshold-key anchors, not expected values taken from the
-candidate proof. It neither authenticates caller-supplied authority nor enables admission, C5
-publication or C6.
+previously admitted C4, dealer-batch and selected threshold-key anchors, not expected values taken
+from the candidate proof. `synchronized::publication` adds bounded C5 and a separate EVM wrapper
+over H recipient proofs, preserving that batch and the SK/key-bundle handoff. Both APIs require
+canonical caller-supplied authority; neither enables worker dispatch, registry publication or C6.
 
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0

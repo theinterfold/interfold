@@ -330,6 +330,20 @@ pnpm generate:verifiers --dry-run
 pnpm generate:verifiers --no-compile
 ```
 
+### Isolated synchronized publication qualification
+
+`E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:publication` prepares native DKG/C5 and
+publication proofs, then checks the draft wrapper with solc 0.8.28 and Hardhat. It does not install,
+stamp or publish artifacts or enable a registry route. The caller-authority limits are in
+[proof contracts](../../docs/architecture/proof-statements.md#draft-synchronized-c5publication-boundary-not-admitted).
+
+On contract qualification failure the Rust test retains its temporary fixture and VKs. Retry only
+that boundary with `pnpm test:sync-dkg:contract <retained-directory>/publication.json`; the
+canonical renderer reads the fixture's explicit VK and writes `SynchronizedHonk.sol` beside it,
+never over a committed verifier. The command requires pinned BB, solc 0.8.28 and workspace
+dependencies, and propagates renderer/compiler/test failures. This temporary output is not a release
+artifact.
+
 ### What it does
 
 Automates the full pipeline from Noir circuits to on-chain Solidity verifiers:

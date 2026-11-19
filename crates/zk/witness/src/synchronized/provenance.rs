@@ -40,7 +40,7 @@ pub struct VerificationKeys<'a> {
     pub node: VerificationKey<'a>,
 }
 
-fn hash(fields: &[Field]) -> Result<Field, WitnessError> {
+pub(crate) fn hash(fields: &[Field]) -> Result<Field, WitnessError> {
     for field in fields {
         canonical(field)?;
     }
@@ -76,7 +76,7 @@ fn canonical(field: &Field) -> Result<(), WitnessError> {
     Ok(())
 }
 
-fn fields(bytes: &[u8]) -> Result<Value, WitnessError> {
+pub(crate) fn fields(bytes: &[u8]) -> Result<Value, WitnessError> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(32) {
         return Err(invalid("recursive fields must be nonempty 32-byte scalars"));
     }
@@ -88,7 +88,7 @@ fn fields(bytes: &[u8]) -> Result<Value, WitnessError> {
     Ok(json!(result))
 }
 
-fn statement(
+pub(crate) fn statement(
     config: &Configs,
     child: &Child<'_>,
     expected: CircuitName,
@@ -107,7 +107,7 @@ fn identity(public: &PublicSignals, binding: SetupBinding, id: u32) -> Result<()
     Ok(())
 }
 
-fn insert_child(
+pub(crate) fn insert_child(
     json: &mut Value,
     prefix: &str,
     child: &Child<'_>,
@@ -119,6 +119,45 @@ fn insert_child(
     json[format!("{prefix}_proof")] = fields(child.proof)?;
     json[format!("{prefix}_public")] = fields(child.public_signals)?;
     Ok(())
+}
+
+/// Only public statements are hashed. Cryptographic verification/authentication belongs to the
+/// caller; malformed layouts, identity, shape, order and mixed genealogy are rejected here.
+pub fn dealer_batch(
+    config: &Configs,
+    binding: SetupBinding,
+    roster: &[u32],
+    nodes: &[Child<'_>],
+) -> Result<Field, WitnessError> {
+    dealers(config, roster)?;
+    if nodes.len() != roster.len() {
+        return Err(invalid("incomplete dealer batch"));
+    }
+    let mut payload = super::commitments::prefix(5, config, binding);
+    payload.extend([
+        Fr::from(roster.len() as u64),
+        Fr::from(config.threshold.moduli().len() as u64),
+    ]);
+    let mut tree = None;
+    for (&id, node) in roster.iter().zip(nodes) {
+        let public = statement(config, node, CircuitName::NodeFold)?;
+        identity(&public, binding, id)?;
+        if tree.is_some_and(|expected| public.tree_hash() != Some(expected)) {
+            return Err(invalid("mixed dealer genealogy"));
+        }
+        tree = public.tree_hash();
+        payload.extend(
+            public
+                .fields()
+                .iter()
+                .map(|field| Fr::from_be_bytes_mod_order(field)),
+        );
+    }
+    let value = super::commitments::commit(payload);
+    let (_, bytes) = value.to_bytes_be();
+    let mut field = [0; 32];
+    field[32 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(field)
 }
 
 /// Complete non-self C3 fan-out, recipient-major then threshold CRT-major. Explicit slot metadata
@@ -367,5 +406,47 @@ mod tests {
         transport.swap(0, 1);
         transport[5][31] += 1;
         assert!(attempt(&transport).is_err());
+    }
+
+    #[test]
+    fn batch_commits_every_public_slot_not_only_the_threshold_keys() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let mut rows = vec![vec![0; 27 * 32]; 2];
+        for (row, bytes) in rows.iter_mut().enumerate() {
+            bytes[31] = 10;
+            bytes[63] = 20;
+            bytes[95] = (2 * row) as u8;
+            bytes[127] = 100;
+        }
+        let attempt = |rows: &[Vec<u8>]| {
+            dealer_batch(
+                &config,
+                [10, 20],
+                &[0, 2],
+                &rows
+                    .iter()
+                    .map(|bytes| Child {
+                        circuit: CircuitName::NodeFold,
+                        proof: &[],
+                        public_signals: bytes,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let original = attempt(&rows).unwrap();
+        for row in 0..2 {
+            for slot in 4..27 {
+                let mut altered = rows.clone();
+                altered[row][slot * 32 + 31] ^= 1;
+                assert_ne!(attempt(&altered).unwrap(), original);
+            }
+        }
+        assert!(attempt(&rows[..1]).is_err());
+        rows.swap(0, 1);
+        assert!(attempt(&rows).is_err());
     }
 }

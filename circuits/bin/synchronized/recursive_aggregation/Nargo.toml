@@ -1,2 +1,2 @@
 [workspace]
-members = ["node_fold", "nodes_fold"]
+members = ["node_fold", "nodes_fold", "dkg_aggregator"]

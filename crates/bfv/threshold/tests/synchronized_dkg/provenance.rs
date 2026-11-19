@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 //! Real native contributions and independently verified mismatched children. Temporary artifacts
-//! exercise the production preparation/prover API; no runtime admission, release stamp or C5.
+//! exercise the production preparation/prover API and isolated publication verifier, not admission.
 
 use super::*;
 use e3_events::{E3id, Proof, SynchronizedProofContext};
@@ -20,8 +20,13 @@ fn field(value: &BigInt) -> [u8; 32] {
 }
 
 fn variant(role: CircuitName) -> CircuitVariant {
-    if matches!(role, CircuitName::NodeFold | CircuitName::NodesFold) {
+    if matches!(
+        role,
+        CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::PkAggregation
+    ) {
         CircuitVariant::Default
+    } else if role == CircuitName::DkgAggregator {
+        CircuitVariant::Evm
     } else {
         CircuitVariant::Recursive
     }
@@ -98,7 +103,39 @@ fn replace_child(input: &mut Value, prefix: &str, proof: &Proof) -> Result<()> {
 }
 
 #[test]
-#[ignore = "requires pinned nargo/bb; real sync DKG joins, not C5/contract/runtime admission"]
+fn c5_preparation_requires_complete_threshold_shares_and_the_profile_crs() -> Result<()> {
+    use e3_zk_prover::synchronized::publication::prepare_c5;
+    use e3_zk_witness::threshold::pk_aggregation::PkAggregationCircuitData;
+
+    let fixture = Fixture::native()?;
+    let selected: Vec<_> = DEALERS
+        .iter()
+        .map(|&id| fixture.threshold_shares[id as usize].clone())
+        .collect();
+    let data = PkAggregationCircuitData {
+        public_key: PublicKey::from_shares(selected.clone())?,
+        pk0_shares: selected
+            .iter()
+            .map(|share| CrtPolynomial::from_fhe_polynomial(share.p0_share()))
+            .collect(),
+    };
+    prepare_c5(&fixture.config, &data)?;
+    let mut incomplete = data.clone();
+    incomplete.pk0_shares.pop();
+    ensure!(prepare_c5(&fixture.config, &incomplete).is_err());
+    let mut other_crs = data.clone();
+    other_crs.public_key.c[1] = other_crs.public_key.c[0].clone();
+    ensure!(prepare_c5(&fixture.config, &other_crs).is_err());
+    let other_profile = PkAggregationCircuitData {
+        public_key: fixture.recipient_public[0].clone(),
+        ..data
+    };
+    ensure!(prepare_c5(&fixture.config, &other_profile).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires pinned nargo/bb, solc 0.8.28 and pnpm; isolated publication, not registry/runtime admission"]
 fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -114,7 +151,11 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
     let context = SynchronizedProofContext {
         setup: e3_committee_hash::DkgSetupContext {
             interfold_address: [0x11; 20].into(),
-            committee_hash: [0x22; 32].into(),
+            committee_hash: e3_committee_hash::hash_committee_addresses(&[
+                [1; 20].into(),
+                [2; 20].into(),
+                [3; 20].into(),
+            ]),
             crypto_config_id: PROFILE.crypto_config_id(CiphernodesCommitteeSize::Minimum)?,
         },
         party_id: 0,
@@ -307,6 +348,20 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
     )?;
 
     let mut recipient_inputs = Vec::new();
+    let mut recipients = Vec::new();
+    let batch = e3_zk_witness::synchronized::provenance::dealer_batch(
+        &config,
+        binding,
+        &DEALERS,
+        &nodes
+            .iter()
+            .map(|proof| e3_zk_witness::synchronized::provenance::Child {
+                circuit: proof.circuit,
+                proof: &proof.data,
+                public_signals: &proof.public_signals,
+            })
+            .collect::<Vec<_>>(),
+    )?;
     for recipient in 0..config.committee.values().n as u32 {
         let local = SynchronizedProofContext {
             party_id: recipient,
@@ -339,6 +394,7 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
         let expected = ExpectedSetup {
             dealers: &DEALERS,
             threshold_keys: &threshold_keys,
+            dealer_batch: batch,
             sk_commitment: opening.sk_commitment().unwrap(),
             key_bundle: opening.key_bundle().unwrap(),
         };
@@ -358,6 +414,7 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
         ensure!(commitments.sk_commitment() == opening.sk_commitment().unwrap());
         ensure!(commitments.key_bundle() == opening.key_bundle().unwrap());
         ensure!(commitments.threshold_keys() == threshold_keys);
+        ensure!(commitments.dealer_batch() == batch);
         ensure!(verify_recipient(
             &prover,
             &config,
@@ -381,7 +438,7 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
             "wrong-e3"
         )?
         .is_none());
-        for field in 0..3 {
+        for field in 0..4 {
             let mut expected = expected;
             let mut keys = threshold_keys.clone();
             match field {
@@ -390,7 +447,8 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
                     expected.threshold_keys = &keys;
                 }
                 1 => expected.sk_commitment[31] ^= 1,
-                _ => expected.key_bundle[31] ^= 1,
+                2 => expected.key_bundle[31] ^= 1,
+                _ => expected.dealer_batch[31] ^= 1,
             }
             ensure!(verify_recipient(
                 &prover,
@@ -403,7 +461,367 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
             )?
             .is_none());
         }
+        recipients.push(proof);
     }
+
+    use e3_zk_prover::synchronized::publication::*;
+    use e3_zk_witness::threshold::pk_aggregation::PkAggregationCircuitData;
+    let selected_shares: Vec<_> = DEALERS
+        .iter()
+        .map(|&id| fixture.threshold_shares[id as usize].clone())
+        .collect();
+    let public_key = PublicKey::from_shares(selected_shares.clone())?;
+    let data = PkAggregationCircuitData {
+        public_key: public_key.clone(),
+        pk0_shares: selected_shares
+            .iter()
+            .map(|share| CrtPolynomial::from_fhe_polynomial(share.p0_share()))
+            .collect(),
+    };
+    let c5 = prove_c5(&prover, &config, &data, "publication-c5")?;
+    ensure!(prover.verify_proof_with_variant(
+        &c5,
+        "c5",
+        0,
+        CircuitVariant::Default,
+        &PROFILE.artifacts_dir_for_committee(config.committee)?
+    )?);
+    let selected_setups: Vec<_> = DEALERS
+        .iter()
+        .map(|&id| recipients[id as usize].clone())
+        .collect();
+    let join = PublicationJoin {
+        dealers: &DEALERS,
+        recipients: &selected_setups,
+        c5: &c5,
+    };
+    let publication_input = prepare_publication(&prover, &config, &context, &e3_id, &join)?;
+    let publication = prove_publication(&prover, &config, &context, &e3_id, &join, "publication")?;
+    let threshold_keys: Vec<_> = DEALERS
+        .iter()
+        .map(|&id| {
+            PublicSignals::decode(
+                &config,
+                CircuitName::PkGeneration,
+                &get(CircuitName::PkGeneration, id).public_signals,
+            )
+            .unwrap()
+            .pk_commitment()
+            .unwrap()
+        })
+        .collect();
+    let openings: Vec<_> = DEALERS
+        .iter()
+        .map(|&id| {
+            PublicSignals::decode(
+                &config,
+                CircuitName::DkgShareDecryption,
+                &get(CircuitName::DkgShareDecryption, id).public_signals,
+            )
+            .unwrap()
+        })
+        .collect();
+    let sk: Vec<_> = openings
+        .iter()
+        .map(|public| public.sk_commitment().unwrap())
+        .collect();
+    let bundles: Vec<_> = openings
+        .iter()
+        .map(|public| public.key_bundle().unwrap())
+        .collect();
+    let expected = ExpectedPublication {
+        dealers: &DEALERS,
+        threshold_keys: &threshold_keys,
+        dealer_batch: batch,
+        sk_commitments: &sk,
+        key_bundles: &bundles,
+        public_key: &public_key,
+    };
+    let verified = verify_publication(
+        &prover,
+        &config,
+        &context,
+        &e3_id,
+        &expected,
+        &publication,
+        "admit-publication",
+    )?
+    .context("valid publication rejected")?;
+    ensure!(verified.binding() == binding && verified.dealers() == DEALERS);
+    ensure!(verified.threshold_keys() == threshold_keys && verified.dealer_batch() == batch);
+    ensure!(verified.sk_commitments() == sk && verified.key_bundles() == bundles);
+    let mut corrupted = publication.data.to_vec();
+    *corrupted.last_mut().unwrap() ^= 1;
+    let corrupted = Proof::new(
+        CircuitName::DkgAggregator,
+        e3_utils::utility_types::ArcBytes::from_bytes(&corrupted),
+        publication.public_signals.clone(),
+    );
+    // An off-curve encoding fails BB parsing, not its completed invalid-proof verdict.
+    // Keep that local error distinct from a cryptographically rejected statement.
+    ensure!(verify_publication(
+        &prover,
+        &config,
+        &context,
+        &e3_id,
+        &expected,
+        &corrupted,
+        "invalid-publication-proof",
+    )
+    .is_err());
+    let mut altered_signals = publication.public_signals.to_vec();
+    altered_signals[(5 + DEALERS.len()) * 32 + 31] ^= 1;
+    let altered = Proof::new(
+        CircuitName::DkgAggregator,
+        publication.data.clone(),
+        e3_utils::utility_types::ArcBytes::from_bytes(&altered_signals),
+    );
+    let mut altered_keys = threshold_keys.clone();
+    altered_keys[0][31] ^= 1;
+    ensure!(verify_publication(
+        &prover,
+        &config,
+        &context,
+        &e3_id,
+        &ExpectedPublication {
+            threshold_keys: &altered_keys,
+            ..expected
+        },
+        &altered,
+        "completed-invalid-publication",
+    )?
+    .is_none());
+    let mut malformed_key = public_key.clone();
+    let mut components = public_key.c.to_vec();
+    components.push(components[0].clone());
+    malformed_key.c = fhe::bfv::Ciphertext::new(components, &config.threshold)?;
+    ensure!(verify_publication(
+        &prover,
+        &config,
+        &context,
+        &e3_id,
+        &ExpectedPublication {
+            public_key: &malformed_key,
+            ..expected
+        },
+        &publication,
+        "malformed-local-authority",
+    )
+    .is_err());
+    // Outside-H setup can now use the verified publication's batch/key authority, not its own outputs.
+    let outside = PublicSignals::decode(
+        &config,
+        CircuitName::DkgShareDecryption,
+        &get(CircuitName::DkgShareDecryption, 1).public_signals,
+    )?;
+    ensure!(verify_recipient(
+        &prover,
+        &config,
+        &SynchronizedProofContext {
+            party_id: 1,
+            ..context.clone()
+        },
+        &e3_id,
+        &ExpectedSetup {
+            dealers: verified.dealers(),
+            threshold_keys: verified.threshold_keys(),
+            dealer_batch: verified.dealer_batch(),
+            sk_commitment: outside.sk_commitment().unwrap(),
+            key_bundle: outside.key_bundle().unwrap(),
+        },
+        &recipients[1],
+        "publication-handoff"
+    )?
+    .is_some());
+    ensure!(verify_publication(
+        &prover,
+        &config,
+        &context,
+        &E3id::new("245905", 31337),
+        &expected,
+        &publication,
+        "other-request"
+    )?
+    .is_none());
+    ensure!(verify_publication(
+        &prover,
+        &config,
+        &context,
+        &E3id::new("245904", 1),
+        &expected,
+        &publication,
+        "other-chain",
+    )?
+    .is_none());
+    let other_public_key = PublicKey::from_shares(vec![
+        fixture.threshold_shares[0].clone(),
+        fixture.threshold_shares[1].clone(),
+    ])?;
+    for slot in 0..6 {
+        let mut keys = threshold_keys.clone();
+        let mut sk = sk.clone();
+        let mut bundles = bundles.clone();
+        let mut expected = ExpectedPublication { ..expected };
+        match slot {
+            0 => {
+                keys[1][31] ^= 1;
+                expected.threshold_keys = &keys;
+            }
+            1 => expected.dealer_batch[31] ^= 1,
+            2 => {
+                sk[1][31] ^= 1;
+                expected.sk_commitments = &sk;
+            }
+            3 => {
+                bundles[1][31] ^= 1;
+                expected.key_bundles = &bundles;
+            }
+            4 => expected.dealers = &[1, 2],
+            _ => expected.public_key = &other_public_key,
+        }
+        let result = verify_publication(
+            &prover,
+            &config,
+            &context,
+            &e3_id,
+            &expected,
+            &publication,
+            "wrong-admitted-publication",
+        );
+        ensure!(result?.is_none());
+    }
+    let mut changed = publication_input.clone();
+    changed["setup_proofs"].as_array_mut().unwrap().swap(0, 1);
+    changed["setup_public"].as_array_mut().unwrap().swap(0, 1);
+    reject_join(
+        &compiled[&CircuitName::DkgAggregator.dir_path()],
+        &changed,
+        "Recipient slot differs",
+    )?;
+    let mut different_data = data.clone();
+    different_data.pk0_shares.reverse();
+    let different_c5 = prove_c5(&prover, &config, &different_data, "reordered-c5")?;
+    ensure!(prover.verify_proof_with_variant(
+        &different_c5,
+        "reordered-c5",
+        0,
+        CircuitVariant::Default,
+        &PROFILE.artifacts_dir_for_committee(config.committee)?
+    )?);
+    let mut changed = publication_input.clone();
+    replace_child(&mut changed, "c5", &different_c5)?;
+    reject_join(
+        &compiled[&CircuitName::DkgAggregator.dir_path()],
+        &changed,
+        "C5 contribution differs",
+    )?;
+
+    // A fresh, valid C3 encryption of the *same* packed message changes no threshold PK or key.
+    // Both recipient setup proofs remain independently valid under the canonical VK/tree. Only
+    // the batch anchor prevents a publication from combining different successful fan-outs.
+    let packed = ShamirShare::new(Array2::from_shape_vec(
+        (l, config.threshold.degree()),
+        fixture.openings[1].packed_shares[0].concat(),
+    )?);
+    let (_, witnesses) = BfvEncryptedShare::encrypt_extended(
+        &packed,
+        &fixture.recipient_public[1],
+        &config.transport,
+        &mut ChaCha8Rng::seed_from_u64(245906),
+    )?;
+    let fresh = witnesses.into_iter().next().unwrap();
+    let fresh_input = share_encryption::Inputs::compute(
+        &config.share_encryption,
+        &share_encryption::ShareEncryptionCircuitData {
+            plaintext: Plaintext::try_encode(
+                &fresh.share_row,
+                Encoding::poly(),
+                &config.transport,
+            )?,
+            ciphertext: fresh.ciphertext,
+            public_key: fixture.recipient_public[1].clone(),
+            u_rns: fresh.u_rns,
+            e0_rns: fresh.e0_rns,
+            e1_rns: fresh.e1_rns,
+        },
+    )?;
+    let fresh = prove_json(
+        &prover,
+        CircuitName::ShareEncryption,
+        &fresh_input.to_json(),
+        "fresh-c3",
+    )?;
+    let mut fresh_dealer = dealer_inputs[0].clone();
+    fresh_dealer["c3_proofs"][0] = json!(e3_zk_prover::test_utils::fold_witness_field_strings(
+        &fresh.data
+    )?);
+    fresh_dealer["c3_public"][0] = json!(e3_zk_prover::test_utils::fold_witness_field_strings(
+        &fresh.public_signals
+    )?);
+    let fresh_dealer = prove_json(
+        &prover,
+        CircuitName::NodeFold,
+        &fresh_dealer,
+        "fresh-dealer",
+    )?;
+    let mut fresh_recipient = recipient_inputs[2].clone();
+    fresh_recipient["node_proofs"][0] = json!(
+        e3_zk_prover::test_utils::fold_witness_field_strings(&fresh_dealer.data)?
+    );
+    fresh_recipient["node_public"][0] = json!(
+        e3_zk_prover::test_utils::fold_witness_field_strings(&fresh_dealer.public_signals)?
+    );
+    let fresh_recipient = prove_json(
+        &prover,
+        CircuitName::NodesFold,
+        &fresh_recipient,
+        "fresh-recipient",
+    )?;
+    let fresh_public = PublicSignals::decode(
+        &config,
+        CircuitName::NodesFold,
+        &fresh_recipient.public_signals,
+    )?;
+    let original_public = PublicSignals::decode(
+        &config,
+        CircuitName::NodesFold,
+        &recipients[2].public_signals,
+    )?;
+    ensure!(fresh_public.dealer_batch() != original_public.dealer_batch());
+    ensure!(fresh_public.threshold_keys() == original_public.threshold_keys());
+    ensure!(fresh_public.sk_commitment() == original_public.sk_commitment());
+    ensure!(fresh_public.key_bundle() == original_public.key_bundle());
+    let mut changed = publication_input.clone();
+    changed["setup_proofs"][1] = json!(e3_zk_prover::test_utils::fold_witness_field_strings(
+        &fresh_recipient.data
+    )?);
+    changed["setup_public"][1] = json!(e3_zk_prover::test_utils::fold_witness_field_strings(
+        &fresh_recipient.public_signals
+    )?);
+    reject_join(
+        &compiled[&CircuitName::DkgAggregator.dir_path()],
+        &changed,
+        "Dealer batch differs",
+    )?;
+    if let Err(error) = verify_publication_contract(
+        &root,
+        &bb,
+        temp.path(),
+        &prover,
+        &config,
+        &context,
+        &e3_id,
+        &publication_input,
+        &publication,
+        &verified,
+    ) {
+        let evidence = temp.keep();
+        return Err(error.context(format!(
+            "Publication qualification retained at {}",
+            evidence.display()
+        )));
+    }
+
     let setup_path = &compiled[&CircuitName::NodesFold.dir_path()];
     let mut changed = recipient_inputs[1].clone(); // Recipient outside H.
     replace_child(&mut changed, "c0", c0[2])?;
@@ -555,5 +973,77 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
         )?);
     }
     reject_join(setup_path, &changed, "Unanchored DKG descendant VK")?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_publication_contract(
+    root: &Path,
+    bb: &Path,
+    directory: &Path,
+    prover: &ZkProver,
+    config: &Configs,
+    context: &SynchronizedProofContext,
+    e3: &E3id,
+    prepared: &Value,
+    proof: &Proof,
+    verified: &e3_zk_prover::synchronized::publication::PublicationCommitments,
+) -> Result<()> {
+    let namespace = PROFILE.artifacts_dir_for_committee(config.committee)?;
+    let vk = prover
+        .circuits_dir(CircuitVariant::Evm, &namespace)
+        .join(CircuitName::DkgAggregator.dir_path())
+        .join("dkg_aggregator.vk");
+    let c5 = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, &namespace),
+        CircuitName::PkAggregation,
+    )?;
+    let encode = |field: &[u8; 32]| {
+        format!(
+            "0x{}",
+            field
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    };
+    let fixture = directory.join("publication.json");
+    fs::write(
+        &fixture,
+        serde_json::to_vec(&json!({
+            "vk": vk,
+            "interfold": context.setup.interfold_address.to_string(),
+            "crypto_config_id": context.setup.crypto_config_id.to_string(),
+            "setup_tree": prepared["expected_tree_hash"],
+            "c5_key_hash": c5.key_hash,
+            "e3_id": e3.e3_id(),
+            "committee": [
+                "0x0101010101010101010101010101010101010101",
+                "0x0202020202020202020202020202020202020202",
+                "0x0303030303030303030303030303030303030303",
+            ],
+            "dealers": DEALERS,
+            "dealer_batch": encode(&verified.dealer_batch()),
+            "pk_commitment": encode(&verified.pk_commitment()),
+            "sk_commitments": verified.sk_commitments().iter().map(encode).collect::<Vec<_>>(),
+            "key_bundles": verified.key_bundles().iter().map(encode).collect::<Vec<_>>(),
+            "proof": format!("0x{}", proof.data.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+            "public_inputs": proof.public_signals.chunks_exact(32)
+                .map(|bytes| encode(bytes.try_into().unwrap())).collect::<Vec<_>>(),
+        }))?,
+    )?;
+    // Resolve a selected path before the child changes directory; bare names still use PATH.
+    let bb = if bb.parent().is_some_and(|path| !path.as_os_str().is_empty()) {
+        bb.canonicalize()?
+    } else {
+        bb.to_path_buf()
+    };
+    let mut command = Command::new("pnpm");
+    command
+        .arg("test:sync-dkg:contract")
+        .arg(&fixture)
+        .env("E3_CUSTOM_BB", bb)
+        .current_dir(root);
+    run(&mut command)?;
     Ok(())
 }

@@ -21,6 +21,7 @@ pub struct Configs {
     pub transport: Arc<BfvParameters>,
     pub pk: dkg::pk::Configs,
     pub pk_generation: threshold::pk_generation::Configs,
+    pub pk_aggregation: threshold::pk_aggregation::Configs,
     pub share_computation: dkg::share_computation::Configs,
     pub share_encryption: dkg::share_encryption::Configs,
     pub key_bits: usize,
@@ -82,6 +83,7 @@ impl Configs {
                 threshold,
                 committee,
             )?,
+            pk_aggregation: threshold::pk_aggregation::Configs::new(threshold, committee)?,
             share_computation: dkg::share_computation::Configs::new(
                 profile.threshold_preset(),
                 threshold,
@@ -124,6 +126,8 @@ impl Configs {
             }
             CircuitName::NodeFold => Some(3),
             CircuitName::NodesFold => Some(4 + values.h),
+            CircuitName::PkAggregation => Some(values.h),
+            CircuitName::DkgAggregator => Some(4 + values.h),
             _ => None,
         }
     }
@@ -139,7 +143,9 @@ impl Configs {
                 let n = self.committee.values().n;
                 Some(3 + n + 2 * n * self.threshold.moduli().len())
             }
-            CircuitName::NodesFold => Some(self.committee.values().h + 2),
+            CircuitName::NodesFold => Some(self.committee.values().h + 3),
+            CircuitName::PkAggregation => Some(1),
+            CircuitName::DkgAggregator => Some(3 * self.committee.values().h + 2),
             _ => None,
         }
     }
@@ -215,7 +221,11 @@ mod tests {
         assert_eq!(config.public_inputs(CircuitName::NodeFold), Some(3));
         assert_eq!(config.public_outputs(CircuitName::NodeFold), Some(24));
         assert_eq!(config.public_inputs(CircuitName::NodesFold), Some(6));
-        assert_eq!(config.public_outputs(CircuitName::NodesFold), Some(4));
+        assert_eq!(config.public_outputs(CircuitName::NodesFold), Some(5));
+        assert_eq!(config.public_inputs(CircuitName::PkAggregation), Some(2));
+        assert_eq!(config.public_outputs(CircuitName::PkAggregation), Some(1));
+        assert_eq!(config.public_inputs(CircuitName::DkgAggregator), Some(6));
+        assert_eq!(config.public_outputs(CircuitName::DkgAggregator), Some(8));
         assert_eq!(
             config.public_outputs(CircuitName::ThresholdShareDecryption),
             None

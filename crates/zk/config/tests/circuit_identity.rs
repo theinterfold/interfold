@@ -100,7 +100,7 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
             );
             let expected = match circuit {
                 CircuitName::PkGeneration | CircuitName::DkgShareDecryption => Some(2),
-                CircuitName::NodeFold | CircuitName::NodesFold => None,
+                CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::DkgAggregator => None,
                 _ => outputs,
             };
             assert_eq!(

@@ -53,6 +53,21 @@ examples.
 
 ## To deploy
 
+The draft `SynchronizedDkgPublicationVerifier` is **not** a deployment route: it
+is a stateless qualification boundary, not an `IPkVerifier` implementation or
+registry/attestation integration. Its SK/key-bundle outputs must not replace the
+SS registry's ESM anchors. Protocol review and separate rollout decisions remain
+required.
+
+From the repository root,
+`E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:publication` prepares real
+native setup/C5 proofs, generates the matching temporary Honk verifier through
+the canonical generator, and runs the Solidity acceptance test. It needs pinned
+Nargo/BB, solc 0.8.28 and installed workspace dependencies. Ordinary contract
+runs skip the missing prepared fixture rather than use mocks. See
+[proof contracts](../../docs/architecture/proof-statements.md#draft-synchronized-c5publication-boundary-not-admitted)
+for the caller-authority and deployment limits.
+
 Deployment commands in this README run from `packages/interfold-contracts`. From
 the repository root, use `pnpm --dir packages/interfold-contracts <command>`.
 Protocol/circuit cutovers additionally follow

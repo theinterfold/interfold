@@ -103,6 +103,7 @@ pub enum CircuitName {
 }
 
 impl CircuitName {
+    /// Private-input ZK C0–C4 leaves. C5 is a separate non-ZK public aggregation.
     pub const SYNCHRONIZED_DKG_LEAVES: [Self; 5] = [
         Self::PkBfv,
         Self::PkGeneration,
@@ -113,7 +114,7 @@ impl CircuitName {
 
     /// Disabled definitions, not an admitted or publishable protocol. Missing descendants never
     /// fall back to SS. NodeFold is the dealer join; NodesFold is the per-recipient setup join.
-    pub const SYNCHRONIZED_DKG: [Self; 7] = [
+    pub const SYNCHRONIZED_DKG: [Self; 9] = [
         Self::PkBfv,
         Self::PkGeneration,
         Self::SkShareComputation,
@@ -121,6 +122,8 @@ impl CircuitName {
         Self::DkgShareDecryption,
         Self::NodeFold,
         Self::NodesFold,
+        Self::PkAggregation,
+        Self::DkgAggregator,
     ];
 
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
@@ -160,9 +163,10 @@ impl CircuitName {
                     ],
                 }
             }
-            (BfvDecryptionProtocol::Synchronized, Self::NodeFold | Self::NodesFold) => {
-                CircuitOutputLayout::Dynamic
-            }
+            (
+                BfvDecryptionProtocol::Synchronized,
+                Self::NodeFold | Self::NodesFold | Self::DkgAggregator,
+            ) => CircuitOutputLayout::Dynamic,
             _ => self.output_layout(),
         })
     }
