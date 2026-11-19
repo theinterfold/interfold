@@ -26,7 +26,7 @@ mod node_fold_witness;
 mod pipeline;
 
 use common::{find_bb, setup_test_prover};
-use e3_events::CircuitName;
+use e3_events::{CircuitName, CircuitVariant};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
@@ -537,8 +537,8 @@ async fn trbfv_decryption_measure() {
 }
 
 /// The aggregator's trBFV DKG proof: C5 (`pk_aggregation`) over the `H` honest parties' public key
-/// shares, as `aggregation_proofs.rs` requests it. The Π_DKG fold over the nodes' `node_fold`
-/// proofs (`nodes_fold` chain and `dkg_aggregator`) is not proved here.
+/// shares, non-ZK as `handle_pk_aggregation_proof` proves it. `dkg_aggregator` is not proved here;
+/// `trbfv_node_dkg_pipeline_measure` times the `nodes_fold` chain with `MEASURE_NODES_FOLD=1`.
 #[tokio::test]
 async fn trbfv_aggregator_pk_aggregation_measure() {
     let Some((committee_size, committee_name)) = pipeline::gate(PRESET, Some("MEASURE_AGGREGATOR"))
@@ -561,7 +561,14 @@ async fn trbfv_aggregator_pk_aggregation_measure() {
     let mut phases = Phases::new("aggregator");
     phases.run("c5", || {
         measure("c5", || {
-            PkAggregationCircuit.prove(&prover, &config, &data, "measure-c5", &artifacts_dir)
+            PkAggregationCircuit.prove_with_variant(
+                &prover,
+                &config,
+                &data,
+                "measure-c5",
+                CircuitVariant::Default,
+                &artifacts_dir,
+            )
         })
     });
     phases.finish();
