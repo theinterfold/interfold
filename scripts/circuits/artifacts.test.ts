@@ -10,6 +10,7 @@ import { isPresetCommitteeSupported } from './constants'
 import {
   findArtifactRevision,
   findCompatibleRevision,
+  installVerifiedArtifacts,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
@@ -25,6 +26,20 @@ test('every release pair is a supported build pair', () => {
   assert.ok(RELEASE_REQUIRED_PAIRS.length > 0)
   for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
     assert.ok(isPresetCommitteeSupported(preset, committee), `${preset}/${committee} cannot be built`)
+  }
+})
+
+test('failed promotion restores the previous verified installation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'interfold-artifacts-rollback-'))
+  try {
+    const dist = join(root, 'installed'),
+      backup = join(root, 'backup')
+    mkdirSync(dist)
+    writeFileSync(join(dist, 'proof-key'), 'previous bytes')
+    assert.throws(() => installVerifiedArtifacts(join(root, 'missing'), dist, backup), /ENOENT/)
+    assert.equal(readFileSync(join(dist, 'proof-key'), 'utf8'), 'previous bytes')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
