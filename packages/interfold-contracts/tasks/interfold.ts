@@ -193,7 +193,7 @@ export const requestCommittee = task(
   })
   .addOption({
     name: "committeeSize",
-    description: "committee size (0=Minimum, 1=Micro, 2=Small)",
+    description: "committee size (0=Minimum, 1=Micro, 2=Small, 3=Large)",
     defaultValue: 0,
     type: ArgumentType.INT,
   })
@@ -254,9 +254,9 @@ export const requestCommittee = task(
       },
       hre,
     ) => {
-      if (![0, 1, 2].includes(committeeSize)) {
+      if (![0, 1, 2, 3].includes(committeeSize)) {
         throw new Error(
-          "Invalid committee size - expected 0 (Minimum), 1 (Micro), or 2 (Small).",
+          "Invalid committee size - expected 0 (Minimum), 1 (Micro), 2 (Small), or 3 (Large).",
         );
       }
       const { paramSet, configId: expectedCryptoConfigId } = bfvConfiguration(

@@ -46,7 +46,7 @@ done
 if [[ ! -f "$ACTIVE_NR" ]]; then
   fail "missing $ACTIVE_NR"
 fi
-ACTIVE_COMMITTEE=$(grep -oE 'crate::configs::committee::(minimum|micro|small)::N_PARTIES' "$ACTIVE_NR" \
+ACTIVE_COMMITTEE=$(grep -oE 'crate::configs::committee::(minimum|micro|small|large)::N_PARTIES' "$ACTIVE_NR" \
   | head -n1 \
   | sed -E 's|.*committee::([a-z]+)::N_PARTIES|\1|')
 if [[ -z "${ACTIVE_COMMITTEE:-}" ]]; then
@@ -119,6 +119,7 @@ check_sol_committee() {
 check_sol_committee minimum MINIMUM 0
 check_sol_committee micro MICRO 1
 check_sol_committee small SMALL 2
+check_sol_committee large LARGE 3
 
 # 5. The complete threshold parameter tuple must match across deployment tooling, ciphernodes,
 #    and Noir. The error variance is represented in Noir by the generated encryption bound.
@@ -325,7 +326,7 @@ if [[ -f "$STAMP" ]]; then
 fi
 
 # 8. Check owner-exported committee records against their Noir modules, without parsing Rust.
-for committee in minimum micro small; do
+for committee in minimum micro small large; do
   mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
   [[ -f "$mod_file" ]] || fail "missing $mod_file"
 

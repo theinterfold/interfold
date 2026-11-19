@@ -41,6 +41,12 @@ library ActiveCryptoConfig {
     uint32 internal constant SMALL_H = BfvProtocol.SMALL_H;
     uint32 internal constant SMALL_N = BfvProtocol.SMALL_N;
 
+    uint8 internal constant LARGE_COMMITTEE_SIZE =
+        BfvProtocol.LARGE_COMMITTEE_SIZE;
+    uint32 internal constant LARGE_T = BfvProtocol.LARGE_T;
+    uint32 internal constant LARGE_H = BfvProtocol.LARGE_H;
+    uint32 internal constant LARGE_N = BfvProtocol.LARGE_N;
+
     // Production default. The public MAX_COMMITTEE_SIZE constant reads N.
     bytes32 internal constant CONFIG_ID =
         BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID;
@@ -77,7 +83,8 @@ library ActiveCryptoConfig {
                     committeeSize,
                     BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID,
                     BfvProtocol.SS_INSECURE_64_MICRO_CONFIG_ID,
-                    BfvProtocol.SS_INSECURE_64_SMALL_CONFIG_ID
+                    BfvProtocol.SS_INSECURE_64_SMALL_CONFIG_ID,
+                    BfvProtocol.SS_INSECURE_64_LARGE_CONFIG_ID
                 );
         }
         if (paramSet == SECURE_PARAM_SET) {
@@ -86,7 +93,8 @@ library ActiveCryptoConfig {
                     committeeSize,
                     BfvProtocol.SS_SECURE_8192_MINIMUM_CONFIG_ID,
                     BfvProtocol.SS_SECURE_8192_MICRO_CONFIG_ID,
-                    BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID
+                    BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID,
+                    BfvProtocol.SS_SECURE_8192_LARGE_CONFIG_ID
                 );
         }
         revert IInterfold.UnsupportedCryptoConfig();
@@ -114,7 +122,8 @@ library ActiveCryptoConfig {
         return
             committeeSize == MINIMUM_COMMITTEE_SIZE ||
             committeeSize == MICRO_COMMITTEE_SIZE ||
-            committeeSize == SMALL_COMMITTEE_SIZE;
+            committeeSize == SMALL_COMMITTEE_SIZE ||
+            committeeSize == LARGE_COMMITTEE_SIZE;
     }
 
     function committeeParams(
@@ -128,6 +137,9 @@ library ActiveCryptoConfig {
         }
         if (committeeSize == SMALL_COMMITTEE_SIZE) {
             return (SMALL_T, SMALL_H, SMALL_N);
+        }
+        if (committeeSize == LARGE_COMMITTEE_SIZE) {
+            return (LARGE_T, LARGE_H, LARGE_N);
         }
         revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -165,11 +177,13 @@ library ActiveCryptoConfig {
         uint8 committeeSize,
         bytes32 minimumConfigId,
         bytes32 microConfigId,
-        bytes32 smallConfigId
+        bytes32 smallConfigId,
+        bytes32 largeConfigId
     ) private pure returns (bytes32) {
         if (committeeSize == MINIMUM_COMMITTEE_SIZE) return minimumConfigId;
         if (committeeSize == MICRO_COMMITTEE_SIZE) return microConfigId;
         if (committeeSize == SMALL_COMMITTEE_SIZE) return smallConfigId;
+        if (committeeSize == LARGE_COMMITTEE_SIZE) return largeConfigId;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 }
