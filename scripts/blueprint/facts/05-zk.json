@@ -386,7 +386,7 @@
         {
           "pattern": "enum-match",
           "note": "CircuitName maps static identities to artifact names without runtime dependencies.",
-          "ref": "crates/zk/config/src/circuit.rs@241@CircuitName::PkBfv => \"pk\","
+          "ref": "crates/zk/config/src/circuit.rs@247@CircuitName::PkBfv => \"pk\","
         }
       ],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe"],

@@ -37,8 +37,8 @@
     "id": "D3",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof",
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@31@verify_honk_proof(c4b_vk, c4b_proof"
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof",
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@33@verify_honk_proof(c4b_vk, c4b_proof"
     ],
     "line_text": [
       "verify_honk_proof(c4a_vk, c4a_proof, c4a_public, c4a_key_hash);",
