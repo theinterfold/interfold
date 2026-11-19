@@ -38,9 +38,10 @@ contract FakeInterfold {
     cryptoConfigOverrides[e3Id] = configId;
   }
 
+  // Without an override, an E3 is a current request: parameter set 4 under the ss-insecure-64/minimum identity.
   function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32) {
     if (cryptoConfigOverrides[e3Id] != bytes32(0)) return cryptoConfigOverrides[e3Id];
-    return 0x5d12098e317ec9918b099e134da06000a91d7c2bff731cc37c630b8b671a724b;
+    return 0xd76c4f521394e6cbe1df28036cc5dd5590c6630a403525b5c2b052f9b91507f4;
   }
 
   // Emit InputPublished event with passed test data
@@ -89,7 +90,7 @@ contract FakeInterfold {
       e3Program: 0x7F3E4df648B8Cb96C1D343be976b91B97CaD5c21,
       decryptionVerifier: 0x4B0D8c2E5f7a6c832f8b16d3aB0e7F5d9E9B24b1,
       pkVerifier: 0x5C1e9D3f8A7B6c932F9C27e4Ab1F8F6e0F0C35c2,
-      paramSet: paramSetOverrides[_e3Id],
+      paramSet: cryptoConfigOverrides[_e3Id] == bytes32(0) ? 4 : paramSetOverrides[_e3Id],
       customParams: abi.encode("custom_params"),
       committeePublicKey: bytes32(keccak256("committee_public_key")),
       ciphertextOutput: bytes32(keccak256("encrypted_data")),

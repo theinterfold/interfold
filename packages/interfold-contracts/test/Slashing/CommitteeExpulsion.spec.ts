@@ -156,7 +156,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         committeeSize,
         inputWindow: [startTime + 100, startTime + ONE_DAY] as [number, number],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
