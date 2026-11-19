@@ -21,10 +21,16 @@ pub fn scoped_task_group(scope: &str, key: impl std::fmt::Display) -> String {
     format!("{scope}:{key}")
 }
 
+/// Admission units one full task takes. The pool holds `SLOT_UNITS` per concurrent task; a task
+/// spawned with [`TaskPool::spawn_cancellable_in_group`] takes any number of units.
+pub const SLOT_UNITS: u32 = 4;
+
 /// A bounded executor for CPU-bound tasks backed by a Rayon thread pool.
 #[derive(Debug, Clone)]
 pub struct TaskPool {
     semaphore: Arc<Semaphore>,
+    /// Admission units across all task slots: `max_tasks * SLOT_UNITS`.
+    capacity_units: u32,
     thread_pool: Arc<ThreadPool>,
     task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
 }
@@ -45,16 +51,22 @@ pub enum TaskPoolError {
 }
 
 impl TaskPool {
-    /// Creates a new pool with `threads` worker threads and at most `max_tasks` concurrent tasks.
+    /// Creates a new pool with `threads` worker threads and at most `max_tasks` concurrent full
+    /// tasks.
     pub fn new(threads: usize, max_tasks: usize) -> TaskPool {
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()
             .expect("Failed to build thread pool");
+        let capacity_units = u32::try_from(max_tasks)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(SLOT_UNITS)
+            .min(u32::try_from(Semaphore::MAX_PERMITS).unwrap_or(u32::MAX));
 
         Self {
             thread_pool: Arc::new(thread_pool),
-            semaphore: Arc::new(Semaphore::new(max_tasks)),
+            semaphore: Arc::new(Semaphore::new(capacity_units as usize)),
+            capacity_units,
             task_groups: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -70,7 +82,7 @@ impl TaskPool {
     where
         OP: FnOnce() -> T + Send + 'static,
     {
-        self.spawn_inner(None, None, task_name, timed_logs, op)
+        self.spawn_inner(None, None, task_name, timed_logs, SLOT_UNITS, op)
             .await
     }
 
@@ -86,25 +98,47 @@ impl TaskPool {
     where
         OP: FnOnce() -> T + Send + 'static,
     {
-        self.spawn_inner(Some(group), None, task_name, timed_logs, op)
+        self.spawn_inner(Some(group), None, task_name, timed_logs, SLOT_UNITS, op)
             .await
     }
 
     /// Add caller-owned cancellation of one attempt without cancelling its whole group.
     /// Like group cancellation, this does not preempt an executing native closure.
+    ///
+    /// The task takes `units` of the pool's [`Self::capacity_units`] instead of the
+    /// [`SLOT_UNITS`] of a full task. The caller sizes the task's own threads and memory to that
+    /// share.
     pub async fn spawn_cancellable_in_group<OP, T: Debug + Send + 'static>(
         &self,
         group: String,
         cancellation: watch::Receiver<bool>,
         task_name: String,
         timed_logs: impl Into<TaskTimeouts>,
+        units: u32,
         op: OP,
     ) -> Result<T, TaskPoolError>
     where
         OP: FnOnce() -> T + Send + 'static,
     {
-        self.spawn_inner(Some(group), Some(cancellation), task_name, timed_logs, op)
-            .await
+        self.spawn_inner(
+            Some(group),
+            Some(cancellation),
+            task_name,
+            timed_logs,
+            units,
+            op,
+        )
+        .await
+    }
+
+    /// Admission units across every task slot.
+    pub fn capacity_units(&self) -> u32 {
+        self.capacity_units
+    }
+
+    /// Worker threads of the Rayon pool.
+    pub fn threads(&self) -> usize {
+        self.thread_pool.current_num_threads()
     }
 
     /// Permanently cancel queued, waiting and future work in this group across every pool clone.
@@ -149,12 +183,14 @@ impl TaskPool {
         mut attempt_cancellation: Option<watch::Receiver<bool>>,
         task_name: String,
         timed_logs: impl Into<TaskTimeouts>,
+        units: u32,
         op: OP,
     ) -> Result<T, TaskPoolError>
     where
         OP: FnOnce() -> T + Send + 'static,
     {
         let timeouts = timed_logs.into();
+        let units = units.clamp(1, self.capacity_units.max(1));
         let mut cancellation = group.as_deref().map(|group| self.subscribe_group(group));
         if cancellation
             .as_ref()
@@ -181,13 +217,13 @@ impl TaskPool {
                         group.as_deref().expect("group is present").to_owned(),
                     ));
                 }
-                permit = self.semaphore.acquire() => {
+                permit = self.semaphore.acquire_many(units) => {
                     permit.map_err(|_| TaskPoolError::SemaphoreError(task_name.to_owned()))?
                 }
             }
         } else {
             self.semaphore
-                .acquire()
+                .acquire_many(units)
                 .await
                 .map_err(|_| TaskPoolError::SemaphoreError(task_name.to_owned()))?
         };
@@ -391,6 +427,7 @@ mod tests {
                     attempt,
                     "queued".to_owned(),
                     TaskTimeouts::new(Vec::new()),
+                    SLOT_UNITS,
                     move || {
                         queued_ran.store(true, Ordering::SeqCst);
                         2_u8
@@ -524,5 +561,41 @@ mod tests {
             result,
             Err(TaskPoolError::Panic(message)) if message == "planned panic"
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn light_tasks_share_one_slot() {
+        // One full slot. Four quarter-weight tasks only finish if all four run at once.
+        let pool = TaskPool::new(4, 1);
+        let barrier = Arc::new(std::sync::Barrier::new(SLOT_UNITS as usize));
+        let (_keep_attempt, attempt) = watch::channel(false);
+        let tasks: Vec<_> = (0..SLOT_UNITS)
+            .map(|i| {
+                let pool = pool.clone();
+                let barrier = barrier.clone();
+                let attempt = attempt.clone();
+                tokio::spawn(async move {
+                    pool.spawn_cancellable_in_group(
+                        "e3".to_owned(),
+                        attempt,
+                        format!("light-{i}"),
+                        TaskTimeouts::new(Vec::new()),
+                        1,
+                        move || barrier.wait().is_leader(),
+                    )
+                    .await
+                })
+            })
+            .collect();
+        let leaders = timeout(Duration::from_secs(10), async {
+            let mut leaders = 0;
+            for task in tasks {
+                leaders += usize::from(task.await.unwrap().unwrap());
+            }
+            leaders
+        })
+        .await
+        .expect("light tasks must run concurrently");
+        assert_eq!(leaders, 1);
     }
 }
