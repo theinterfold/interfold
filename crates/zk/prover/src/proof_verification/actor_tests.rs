@@ -97,7 +97,8 @@ fn signed_c0_key(
     let secret_key = SecretKey::random(&dkg_params, &mut rng);
     let public_key = PublicKey::new(&secret_key, &mut rng);
     let public_key_bytes = public_key.to_bytes();
-    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&public_key_bytes, preset)
+    let config = e3_zk_config::dkg::pk::Configs::new(&dkg_params).unwrap();
+    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&public_key_bytes, &config)
         .expect("compute C0 key commitment");
     let proof = Proof::new(
         ProofType::C0PkBfv.circuit_names()[0],

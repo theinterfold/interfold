@@ -27,6 +27,15 @@ noise owner is consumed by that calculation; persisted copies must not mask anot
 Independent outputs need separately committed/dealt noise and matching proofs. Keep the
 vector-shaped payloads for encoding compatibility, not as authorization to reuse noise for a batch.
 
+The `synchronized` module carries directed PRF keys through DKG's encrypted SK-share packing.
+Synchronized admission remains disabled. Designated-set selection, ciphertext-share generation and
+reconstruction, and the consuming C6/C7 statements are separate work, not DKG transport primitives.
+
+PRF keys and packed SK shares are secret material. Key objects zeroize on drop and redact Debug, but
+copying their bytes or packing them into an existing share does not make the copies safe to log or
+store unencrypted. Authenticated DKG and proof provenance remain prerequisites for runtime use.
+Successful randomized DKG outputs must be retained and retransmitted, not resampled on restart.
+
 ## Calculation surface
 
 Each public module exposes a typed request/response and its calculation function:
@@ -74,3 +83,7 @@ private share fixtures under `tests/common` and shared
 [ballots](../../testing/bfv-support/README.md). See [DKG](../../../docs/architecture/dkg.md) and
 [threshold decryption](../../../docs/architecture/threshold-decryption.md) for dimensions and
 proofs. See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.
+
+[`tests/synchronized.rs`](tests/synchronized.rs) checks canonical key packing and real encrypted
+SK-share transport from non-prefix dealers to every full-committee recipient. These are native DKG
+transport tests, not synchronized ciphertext-decryption, C6/C7, or complete proof-chain coverage.

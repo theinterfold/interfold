@@ -12,7 +12,6 @@
 
 use ark_bn254::Fr as Field;
 use ark_ff::{BigInt as FieldInteger, BigInteger, PrimeField};
-use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_safe::SafeSponge;
@@ -213,14 +212,11 @@ pub fn compute_dkg_pk_commitment(pk0: &CrtPolynomial, pk1: &CrtPolynomial, bit_p
 /// different key bytes.
 pub fn compute_dkg_pk_commitment_from_public_key_bytes(
     public_key_bytes: &[u8],
-    preset: BfvPreset,
+    config: &e3_zk_config::dkg::pk::Configs,
 ) -> Result<[u8; 32], crate::WitnessError> {
-    // `build_pair_for_preset` accepts the threshold member of a preset pair. Callers may already
-    // have resolved the DKG counterpart, so normalize either representation here.
-    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
-    let (_, dkg_params) = build_pair_for_preset(threshold_preset)
-        .map_err(|e| crate::WitnessError::Other(format!("BFV preset pair: {e}")))?;
-    let public_key = PublicKey::from_bytes(public_key_bytes, &dkg_params)
+    // SS and synchronized profiles share threshold parameters, but not transport parameters.
+    let dkg_params = &config.params;
+    let public_key = PublicKey::from_bytes(public_key_bytes, dkg_params)
         .map_err(|e| crate::WitnessError::Other(format!("PublicKey deserialize: {e:?}")))?;
 
     let pk0 = public_key
@@ -236,11 +232,7 @@ pub fn compute_dkg_pk_commitment_from_public_key_bytes(
         .map_err(|e| crate::WitnessError::Other(format!("pk0 conversion: {e}")))?;
     let pk1 = crate::encoding::fhe_poly_to_crt_centered(pk1, moduli)
         .map_err(|e| crate::WitnessError::Other(format!("pk1 conversion: {e}")))?;
-    let commitment = compute_dkg_pk_commitment(
-        &pk0,
-        &pk1,
-        e3_fhe_params::utils::compute_modulus_bit(&dkg_params),
-    );
+    let commitment = compute_dkg_pk_commitment(&pk0, &pk1, config.pk_bit);
 
     let (_, be_bytes) = commitment.to_bytes_be();
     if be_bytes.len() > 32 {
@@ -995,37 +987,41 @@ mod tests {
     #[test]
     fn compute_dkg_pk_commitment_from_public_key_bytes_matches_circuit_inputs() {
         use crate::dkg::pk::Inputs;
-        use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+        use e3_fhe_params::BfvProfile;
         use e3_zk_config::dkg::pk::Configs;
         use fhe::bfv::{PublicKey, SecretKey};
         use fhe_traits::Serialize;
 
-        let preset = BfvPreset::InsecureThreshold64;
-        let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
-        let mut rng = rand::rng();
-        let secret_key = SecretKey::random(&dkg_params, &mut rng);
-        let public_key = PublicKey::new(&secret_key, &mut rng);
-        let public_key_bytes = public_key.to_bytes();
+        for profile in [BfvProfile::SsInsecure64, BfvProfile::SyncDecInsecure64] {
+            let (_, dkg_params) = profile.build_pair().unwrap();
+            let mut rng = rand::rng();
+            let secret_key = SecretKey::random(&dkg_params, &mut rng);
+            let public_key = PublicKey::new(&secret_key, &mut rng);
+            let public_key_bytes = public_key.to_bytes();
 
-        let actual =
-            compute_dkg_pk_commitment_from_public_key_bytes(&public_key_bytes, preset).unwrap();
+            let config = Configs::new(&dkg_params).unwrap();
+            let actual =
+                compute_dkg_pk_commitment_from_public_key_bytes(&public_key_bytes, &config)
+                    .unwrap();
+            let inputs = Inputs::compute(&config, &public_key).unwrap();
+            let expected = compute_dkg_pk_commitment(&inputs.pk0is, &inputs.pk1is, config.pk_bit);
+            let (_, expected_bytes) = expected.to_bytes_be();
+            let mut expected_padded = [0u8; 32];
+            expected_padded[32 - expected_bytes.len()..].copy_from_slice(&expected_bytes);
 
-        let config = Configs::new(&dkg_params).unwrap();
-        let inputs = Inputs::compute(&config, &public_key).unwrap();
-        let expected = compute_dkg_pk_commitment(&inputs.pk0is, &inputs.pk1is, config.pk_bit);
-        let (_, expected_bytes) = expected.to_bytes_be();
-        let mut expected_padded = [0u8; 32];
-        expected_padded[32 - expected_bytes.len()..].copy_from_slice(&expected_bytes);
-
-        assert_eq!(actual, expected_padded);
+            assert_eq!(actual, expected_padded);
+        }
     }
 
     #[test]
     fn compute_dkg_pk_commitment_rejects_malformed_public_key() {
-        assert!(compute_dkg_pk_commitment_from_public_key_bytes(
-            b"not a BFV public key",
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
-        )
-        .is_err());
+        let (_, params) = e3_fhe_params::BfvProfile::SsInsecure64
+            .build_pair()
+            .unwrap();
+        let config = e3_zk_config::dkg::pk::Configs::new(&params).unwrap();
+        assert!(
+            compute_dkg_pk_commitment_from_public_key_bytes(b"not a BFV public key", &config,)
+                .is_err()
+        );
     }
 }

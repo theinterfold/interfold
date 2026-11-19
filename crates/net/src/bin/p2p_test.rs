@@ -13,6 +13,7 @@ use e3_net::events::{GossipData, NetCommand, NetEvent};
 use e3_net::{ContentHash, Libp2pKeypair, Libp2pNetInterface, NetInterface};
 use e3_utils::ArcBytes;
 use libp2p::gossipsub::IdentTopic;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use std::{env, process};
@@ -38,6 +39,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
             .await?;
         receive_until_collect(
             &mut peer.rx,
+            &mut peer.pending,
             |e| matches!(e, NetEvent::DhtPutRecordSucceeded { .. }),
             Duration::from_secs(15),
         )
@@ -52,6 +54,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
         .await?;
     let events = receive_until_collect(
         &mut peer.rx,
+        &mut peer.pending,
         |e| matches!(e, NetEvent::DhtGetRecordSucceeded { .. }),
         Duration::from_secs(15),
     )
@@ -72,6 +75,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
 
 async fn receive_until_collect<T, F>(
     rx: &mut broadcast::Receiver<T>,
+    pending: &mut VecDeque<T>,
     predicate: F,
     timeout_duration: Duration,
 ) -> Result<Vec<T>>
@@ -82,7 +86,10 @@ where
     let result = timeout(timeout_duration, async {
         let mut results = Vec::new();
         loop {
-            let value = rx.recv().await?;
+            let value = match pending.pop_front() {
+                Some(value) => value,
+                None => rx.recv().await?,
+            };
             let matches = predicate(&value);
             results.push(value);
             if matches {
@@ -125,6 +132,7 @@ struct TestPeer {
     name: String,
     sync_threshold: usize,
     rx: broadcast::Receiver<NetEvent>,
+    pending: VecDeque<NetEvent>,
     tx: mpsc::Sender<NetCommand>,
     topic: IdentTopic,
     test_timeout: Option<Duration>,
@@ -183,6 +191,7 @@ impl TestPeer {
     pub async fn wait_for_msg(&mut self, marker: &[u8], id: u8) -> Result<Vec<NetEvent>> {
         receive_until_collect(
             &mut self.rx,
+            &mut self.pending,
             |e| match e {
                 NetEvent::GossipData(data) | NetEvent::GossipIngress { data, .. } => {
                     is_network_signal(data, marker, id)
@@ -235,7 +244,10 @@ impl TestPeer {
         });
 
         println!("WAIT FOR MESH READY...");
-        wait_for_mesh_ready(60, 3, &mut rx, &topic).await?;
+        // Allow bootstrap redial. Readiness is local: retain an early leader barrier until this
+        // peer's subscriptions are ready too.
+        let pending =
+            wait_for_mesh_ready(90, sync_threshold.saturating_sub(1), &mut rx, &topic).await?;
         println!("MESH READY!");
 
         // Give network time to initialize
@@ -245,6 +257,7 @@ impl TestPeer {
             name,
             tx,
             rx,
+            pending,
             sync_threshold,
             topic,
             test_timeout: None,
@@ -297,13 +310,101 @@ fn signal_payload(marker: &[u8], id: u8) -> Vec<u8> {
     payload
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_received_during_readiness_survives_until_message_wait() -> Result<()> {
+        let topic = IdentTopic::new("barrier-regression");
+        let (events, rx) = broadcast::channel(16);
+        let (tx, _) = mpsc::channel(1);
+        let mut peer = TestPeer {
+            name: "follower".into(),
+            sync_threshold: 3,
+            rx,
+            pending: VecDeque::new(),
+            tx,
+            topic: topic.clone(),
+            test_timeout: Some(Duration::from_secs(1)),
+        };
+        events.send(NetEvent::GossipSubscribed {
+            count: 2,
+            topic: IdentTopic::new("other-topic").hash(),
+        })?;
+        events.send(NetEvent::GossipData(network_signal(
+            "leader", START_SYNC, 0,
+        )?))?;
+        events.send(NetEvent::GossipSubscribed {
+            count: 1,
+            topic: topic.hash(),
+        })?;
+        let propagation_source = libp2p::PeerId::random();
+        events.send(NetEvent::GossipIngress {
+            propagation_source,
+            data: network_signal("leader", END_SYNC, 0)?,
+        })?;
+        events.send(NetEvent::GossipSubscribed {
+            count: 2,
+            topic: topic.hash(),
+        })?;
+        peer.pending = wait_for_mesh_ready(1, 2, &mut peer.rx, &topic).await?;
+        events.send(NetEvent::GossipData(network_signal("next", START_SYNC, 1)?))?;
+
+        // Both events consumed before readiness must precede the still-live next round.
+        assert_eq!(peer.wait_for_msg(START_SYNC, 0).await?.len(), 1);
+        let end = peer.wait_for_msg(END_SYNC, 0).await?;
+        assert!(matches!(
+            end.as_slice(),
+            [NetEvent::GossipIngress { propagation_source: source, .. }] if *source == propagation_source
+        ));
+        assert_eq!(peer.wait_for_msg(START_SYNC, 1).await?.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_requires_the_matching_topic_and_peer_count() -> Result<()> {
+        let topic = IdentTopic::new("barrier-regression");
+        let (events, mut rx) = broadcast::channel(16);
+        events.send(NetEvent::GossipSubscribed {
+            count: 2,
+            topic: IdentTopic::new("other-topic").hash(),
+        })?;
+        events.send(NetEvent::GossipSubscribed {
+            count: 1,
+            topic: topic.hash(),
+        })?;
+        assert!(wait_for_mesh_ready(1, 2, &mut rx, &topic).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn readiness_does_not_accept_a_closed_or_lagged_event_stream() {
+        let topic = IdentTopic::new("barrier-regression");
+        let (events, mut rx) = broadcast::channel(1);
+        for _ in 0..2 {
+            events
+                .send(NetEvent::GossipSubscribed {
+                    count: 2,
+                    topic: topic.hash(),
+                })
+                .unwrap();
+        }
+        assert!(wait_for_mesh_ready(1, 2, &mut rx, &topic).await.is_err());
+        rx.recv().await.unwrap();
+        drop(events);
+        assert!(wait_for_mesh_ready(1, 2, &mut rx, &topic).await.is_err());
+    }
+}
+
 async fn wait_for_mesh_ready(
     seconds: u64,
     min_size: usize,
     rx: &mut broadcast::Receiver<NetEvent>,
     topic: &IdentTopic,
-) -> Result<()> {
+) -> Result<VecDeque<NetEvent>> {
     let topic_hash = topic.hash();
+    let mut pending = VecDeque::new();
     loop {
         match timeout(Duration::from_secs(seconds), rx.recv()).await {
             Ok(Ok(NetEvent::GossipSubscribed { count, topic })) => {
@@ -315,12 +416,12 @@ async fn wait_for_mesh_ready(
                     break;
                 }
             }
-            Ok(Err(_)) => break,
+            Ok(Ok(event)) => pending.push_back(event),
+            Ok(Err(error)) => return Err(error).context("Mesh readiness event stream failed"),
             Err(_e) => return Err(anyhow::anyhow!("MESH SYNC FAILED!")),
-            _ => (),
         }
     }
-    Ok(())
+    Ok(pending)
 }
 
 #[tokio::main]

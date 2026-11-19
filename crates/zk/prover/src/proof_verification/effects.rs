@@ -68,14 +68,13 @@ impl ProofVerificationActor {
             );
             return;
         };
-        let validated =
-            match validate_received_key(&msg, &expected_signer, profile.threshold_preset()) {
-                Ok(validated) => validated,
-                Err(reason) => {
-                    error!("{reason}");
-                    return;
-                }
-            };
+        let validated = match validate_received_key(&msg, &expected_signer, profile) {
+            Ok(validated) => validated,
+            Err(reason) => {
+                error!("{reason}");
+                return;
+            }
+        };
         let proof = msg
             .key
             .proof

@@ -12,7 +12,7 @@
 
 use alloy::primitives::Address;
 use e3_events::{E3Stage, E3id, EncryptionKeyReceived, Proof, ProofType, SignedProofPayload};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 
 /// A validated external key, ready to be queued for ZK verification.
@@ -30,7 +30,7 @@ pub(crate) fn dkg_has_ended(stage: &E3Stage) -> bool {
 pub(crate) fn validate_received_key(
     input: &EncryptionKeyReceived,
     expected_signer: &Address,
-    preset: BfvPreset,
+    profile: BfvProfile,
 ) -> Result<ValidatedExternalKey, String> {
     let validated = validate_external_key(
         &input.e3_id,
@@ -39,7 +39,10 @@ pub(crate) fn validate_received_key(
         input.key.proof.as_ref(),
         input.key.signed_payload.as_ref(),
     )?;
-    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&input.key.pk_bfv, preset)
+    let (_, transport) = profile.build_pair().map_err(|error| error.to_string())?;
+    let config =
+        e3_zk_config::dkg::pk::Configs::new(&transport).map_err(|error| error.to_string())?;
+    let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&input.key.pk_bfv, &config)
         .map_err(|error| format!("Could not bind C0 proof to advertised BFV key: {error}"))?;
     validate_external_key_commitment(
         input.key.party_id,
