@@ -402,12 +402,12 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 ## Recursive trust and exported values
 
 Sequential C6 and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across predecessors.
-The kernel proves the chain's first leaf at that leaf's slot; every fold step carries its
-predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain of
-`n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
-continuation verifies the fold; the final consumer binds the declared fold hash to the verified VK.
-C3ab covers both complete C3 chains. Node-fold covers child folds and their nested keys. DKG
-aggregation requires one node-tree hash across every selected row.
+The kernel proves the chain's first leaves at their slots; every fold step carries its predecessor's
+rows forward, the kernel's included, and adds its leaves to empty slots. A C6 step takes one leaf,
+so a chain of `n >= 2` leaves is one kernel and `n - 1` fold proofs; a nodes step takes up to three.
+The first step verifies the kernel; continuation verifies the fold; the final consumer binds the
+declared fold hash to the verified VK. C3ab covers both complete C3 chains. Node-fold covers child
+folds and their nested keys. DKG aggregation requires one node-tree hash across every selected row.
 
 `nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
 (`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries

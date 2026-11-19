@@ -41,8 +41,7 @@ impl PublicKeyAggregator {
             return self.try_dispatch_dkg_aggregation(ec);
         }
 
-        // A step takes the next slots in canonical order, so it waits for each of their proofs;
-        // folding one slot at a time waited the same way, one slot at a time.
+        // A step takes the next slots in canonical order, so it waits for each of their proofs.
         let len = nodes_fold_step_len(next_slot as usize, total_slots);
         let mut inner_proofs = Vec::with_capacity(len);
         for party_id in honest_party_ids.iter().skip(next_slot as usize).take(len) {
