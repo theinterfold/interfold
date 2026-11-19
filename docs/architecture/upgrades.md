@@ -282,6 +282,15 @@ through a current profile identity. It reads indices 0, 1 and 2 from the append-
 and accepts only the frozen threshold-only ID of those exact bytes: v5 at indices 0 and 2, v1 at
 indices 0 and 1. `crates/bfv/params/tests/fixtures/bfv_protocol.json` freezes these vectors.
 
+The Large committee slice routes `insecure-64/large` and `secure-8192/large` on Sepolia and local
+chains only; Mainnet routes and configuration are unchanged. On Sepolia, `upgrade:v19` deploys both
+routes and adds `setCommitteeThresholds(3, [34, 45])` from the configuration. The call follows the
+upgrade in the batch, because the earlier implementation reverts on size 3. `upgrade:v19` does not
+change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s
+of DKG, so a Sepolia batch must add `setTimeoutConfig` with the configured windows, which raise
+`dkgWindow` to 7200 s. A fresh deployment sets them from the configuration. Check
+`getTimeoutConfig()` before resume.
+
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
 synchronized context, sealed keys and public provenance). These positional layouts also share the
