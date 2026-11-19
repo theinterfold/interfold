@@ -14,7 +14,7 @@ use std::{
 };
 
 mod synchronized;
-pub use synchronized::SynchronizedDkgAuthority;
+pub use synchronized::{SynchronizedDkgAuthority, SynchronizedDkgSelection};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CanonicalDkgAnchors {
@@ -78,6 +78,7 @@ struct CanonicalKeyState {
     bytes: HashMap<E3id, ArcBytes>,
     ciphertext_hashes: HashMap<E3id, Vec<B256>>,
     synchronized_contexts: HashMap<E3id, e3_events::SynchronizedDkgContext>,
+    synchronized_selections: HashMap<E3id, SynchronizedDkgSelection>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -139,6 +140,7 @@ impl CanonicalPublicKeys {
         keys.bytes.remove(id);
         keys.ciphertext_hashes.remove(id);
         keys.synchronized_contexts.remove(id);
+        keys.synchronized_selections.remove(id);
     }
 
     /// Retain ciphertext bindings from the confirmed output ingestion path.

@@ -38,7 +38,8 @@ mod slashing_writer_restart_backfill;
 pub use bonding_registry_sol::BondingRegistrySolReader;
 pub use ciphernode_registry_sol::{
     fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, fetch_randomness_provider,
-    fetch_randomness_providers, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
+    fetch_randomness_providers, publish_synchronized_committee_definition,
+    recover_synchronized_publications, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
     CiphernodeRegistrySolWriter,
 };
 pub use data_availability::{

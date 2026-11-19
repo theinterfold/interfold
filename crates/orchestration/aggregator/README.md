@@ -50,7 +50,7 @@ successful proof bytes and original causation across restart. Worker correlation
 Unrelated compute outcomes are ignored. Local generation failures and recipient-proof repairs use a
 coalesced, capped-backoff actor retry; malformed parameters do not automatically retry. A standby
 cannot start work, but a recorded started owner can finish after demotion. This path emits a local
-publication intent; registry writing and activation remain unfinished.
+publication intent consumed by the registry writer. Production admission remains disabled.
 
 Failed flushes retain validated progress and retry with current-boot effects, including on standbys,
 but emit no readiness, compute or publication intent until the flush succeeds. Storage retries

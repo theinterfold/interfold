@@ -20,6 +20,44 @@ struct Fixture {
     bytes: ArcBytes,
 }
 
+#[test]
+fn publication_selection_requires_confirmed_finalization_and_is_immutable() -> Result<()> {
+    let f = Fixture::new()?;
+    let (keys, mut projection) = f.projection();
+    let id = &f.request.e3_id;
+    projection.observe(&event(f.request.clone(), EventSource::Evm, Some(1)))?;
+    let finalized = e3_events::CommitteeFinalized {
+        e3_id: id.clone(),
+        committee: f.committee.iter().map(ToString::to_string).collect(),
+        scores: Vec::new(),
+        chain_id: 1,
+    };
+    for (source, block) in [
+        (EventSource::Net, Some(2)),
+        (EventSource::Local, Some(2)),
+        (EventSource::Evm, None),
+    ] {
+        projection.observe(&event(finalized.clone(), source, block))?;
+        assert!(keys.synchronized_selection(id).is_none());
+    }
+    projection.observe(&event(finalized.clone(), EventSource::Evm, Some(2)))?;
+    let saved = keys.synchronized_selection(id).unwrap();
+    assert_eq!(saved.committee, f.committee);
+    let mut changed = finalized;
+    changed.committee[2] = Address::repeat_byte(4).to_string();
+    assert!(projection
+        .observe(&event(changed, EventSource::Evm, Some(3)))
+        .is_err());
+    assert_eq!(keys.synchronized_selection(id), Some(saved));
+    projection.observe(&event(
+        e3_events::E3RequestComplete { e3_id: id.clone() },
+        EventSource::Evm,
+        Some(4),
+    ))?;
+    assert!(keys.synchronized_selection(id).is_none());
+    Ok(())
+}
+
 impl Fixture {
     fn new() -> Result<Self> {
         let profile = BfvProfile::SyncDecInsecure64;
