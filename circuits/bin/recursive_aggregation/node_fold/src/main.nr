@@ -23,12 +23,14 @@ pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
 /// Prefix (two inner key hashes + combined hash) before six `C3_SLOTS` columns in `c3ab_fold` public IO.
 pub global C3AB_PREFIX_LEN: u32 = C3AB_FOLD_PUBLIC_LEN - (6 * C3_SLOTS);
-pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
-pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
+/// C4's public inputs as `c4ab_fold` passes them on, likewise without the key tree
+/// (`c4ab_fold::C4_PUBLIC_LEN` is one field more).
+pub global C4_FOLDED_LEN: u32 = (H * L_THRESHOLD) + 1;
+pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_FOLDED_LEN);
 
 /// Key-hash prefix length in `c2ab_fold` / `c4ab_fold` flattened public IO.
 pub global C2AB_PREFIX_LEN: u32 = C2AB_FOLD_PUBLIC_LEN - (2 * C2_FOLDED_LEN);
-pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_PUBLIC_LEN);
+pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_FOLDED_LEN);
 
 /// Inner C2 / C4 column offsets inside `c2ab_public` / `c4ab_public`
 /// (parallel to `NF_*` in `dkg_aggregator`; keep in sync).
@@ -38,7 +40,7 @@ pub global C2A_SHARES_START: u32 = C2A_INNER_START + 1;
 pub global C2B_SHARES_START: u32 = C2B_INNER_START + 1;
 
 pub global C4A_INNER_START: u32 = C4AB_PREFIX_LEN;
-pub global C4B_INNER_START: u32 = C4AB_PREFIX_LEN + C4_PUBLIC_LEN;
+pub global C4B_INNER_START: u32 = C4AB_PREFIX_LEN + C4_FOLDED_LEN;
 pub global SK_AGG_INDEX: u32 = C4A_INNER_START + (H * L_THRESHOLD);
 pub global ESM_AGG_INDEX: u32 = C4B_INNER_START + (H * L_THRESHOLD);
 
