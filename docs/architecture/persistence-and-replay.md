@@ -263,6 +263,15 @@ ciphertext fails before key use. These are part of the
 [unreleased BFV profile storage cutover](upgrades.md#bfv-profile-cutover), not an old-data
 migration.
 
+The disabled synchronized DKG
+[capability fixture](../../crates/orchestration/keyshare/README.md#tests) checks a real commit-log
+suffix through production startup sync into a manually hydrated keyshare actor. It preserves
+aggregate sequence under decreasing HLC, filters old boot controls and retains authenticated
+replacements without pre-enable effects. Its persistence assertions explicitly drain buffered
+snapshots before reading/reopening them; event-log flush is not a snapshot drain. Empty historical
+adapters and fixture checkpoint hydration do not establish whole-node startup, network recovery or
+hard-crash durability.
+
 Shutdown's barrier covers delivery of persisted Shutdown to current subscribers, event flush, open
 snapshot drain, and backing-store flush. It does not own every detached task; process exit can
 cancel unowned work. Node deadline is 60 seconds (30-second fanout plus flush margin); swarm/Docker

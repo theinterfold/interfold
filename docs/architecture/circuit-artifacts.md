@@ -112,6 +112,12 @@ installable or release-qualified. An isolated C5/publication wrapper and context
 verifier now exist, but no release manifest, registry/attestation integration, deployed route or
 hydration path does; the existing six SS pairs and their anchors are unchanged.
 
+The keyshare [recovery qualification](../../crates/orchestration/keyshare/README.md#tests) stages
+explicit leaf/Default/EVM variants and VK hashes in private temporary directories, retaining the
+source Nargo dependency pins. Its final proof drives mandatory generated-Solidity acceptance under
+the production compiler settings. Those temporary artifacts are neither installed nor published and
+do not qualify a source-bound release or the secure profile.
+
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
 manifests, and required artifacts before publication. Non-release CI/full-proof integration can use

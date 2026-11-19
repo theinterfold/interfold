@@ -183,8 +183,11 @@ The [keyshare preparation proof test](../../crates/orchestration/keyshare/README
 additionally starts from production native generation and encrypted runtime work plans, exercises
 the C1/C2/C4 request adapters, and verifies their leaf proofs, including self/outside-H recipients.
 Native keyshare tests cover saved key/bundle validation, exact work-plan reload and authenticated
-rejection before slot reservation. Neither suite qualifies complete crash recovery or
-runtime/contract execution of the synchronized protocol.
+rejection before slot reservation. The explicit recovery qualification also joins reopened runtime
+artifacts through C5/publication verification in Rust and Solidity, comparing independently
+recovered/native C1/C4/key/batch expectations. Its complementary durable-log replay case uses
+synthetic statements. Neither qualifies hard-crash recovery, whole-node startup or live registry
+execution of the synchronized protocol.
 
 ### Draft synchronized provenance joins (not admitted)
 
