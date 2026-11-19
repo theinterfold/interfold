@@ -43,21 +43,10 @@ fn prepare_job_dir(job_dir: &Path) -> Result<JobDirGuard, std::io::Error> {
     Ok(JobDirGuard(job_dir.to_path_buf()))
 }
 
+/// The end of a finished process's output: bb's verdict comes last, after any `-v` progress.
 fn bounded_process_output(output: &[u8]) -> String {
-    let value = String::from_utf8_lossy(output);
-    if value.len() <= PROCESS_OUTPUT_LIMIT {
-        return value.into_owned();
-    }
-
-    let mut end = PROCESS_OUTPUT_LIMIT;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!(
-        "{}\n... truncated {} byte(s)",
-        &value[..end],
-        value.len() - end
-    )
+    bounded_tail(&mut io::Cursor::new(output), output.len() as u64)
+        .expect("reading an in-memory buffer cannot fail")
 }
 
 /// The end of a process output file, for a process that was killed: its last lines say what it
@@ -956,11 +945,11 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
-    #[test]
-    fn a_failed_chonk_stack_reports_the_exit_status_and_stderr() {
+    /// The error of a one-circuit Chonk stack proved by a fake bb running `script`.
+    fn chonk_stack_error(script: &str) -> ZkError {
         let temp = get_tempdir().unwrap();
         let bb = temp.path().join("bb");
-        fs::write(&bb, "#!/bin/sh\necho 'bad witness' >&2\nexit 3\n").unwrap();
+        fs::write(&bb, script).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -983,12 +972,35 @@ mod tests {
             witness: b"witness",
         }];
 
-        let error = ZkProver::new(&backend)
+        ZkProver::new(&backend)
             .generate_chonk_proof(&stack, "e3-1")
-            .unwrap_err();
+            .unwrap_err()
+    }
+
+    #[test]
+    fn a_failed_chonk_stack_reports_the_exit_status_and_stderr() {
+        let error = chonk_stack_error("#!/bin/sh\necho 'bad witness' >&2\nexit 3\n");
 
         assert!(matches!(&error, ZkError::ProveFailed(_)), "{error:?}");
         assert!(format!("{error}").contains("bad witness"), "{error}");
+    }
+
+    #[test]
+    fn a_verbose_rejection_keeps_bb_verdict() {
+        // `-v` progress fills more than the kept output before bb reports its own check failed.
+        let error = chonk_stack_error(&format!(
+            "#!/bin/sh\nhead -c {} /dev/zero | tr '\\0' 'x' >&2\n\
+             echo >&2\necho 'Failed to verify the generated proof!' >&2\nexit 1\n",
+            2 * PROCESS_OUTPUT_LIMIT
+        ));
+
+        assert!(matches!(&error, ZkError::ProofRejected(_)), "{error:?}");
+        let message = format!("{error}");
+        assert!(
+            message.contains("Failed to verify the generated proof"),
+            "{message}"
+        );
+        assert!(message.contains("truncated"), "{message}");
     }
 
     #[test]
