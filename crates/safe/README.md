@@ -42,6 +42,10 @@ carry `(state, absorb_pos)` between the pieces of one ABSORB, matching Noir `lib
 split gives the digest of one `absorb` of the whole stream. They do not count elements against the
 pattern, so the caller must absorb exactly the pattern's ABSORB total.
 
+`bb_poseidon2_hash` is not SAFE: it is Barretenberg's Poseidon2 field-sponge hash, which bb uses for
+verification-key hashes such as a Chonk kernel's `MegaVerificationKey.hash`. It exists to recompute
+those hashes natively and is not a commitment format.
+
 ## Native and guest builds
 
 Default builds use the native Poseidon2 implementation. The `openvm` feature enables guest

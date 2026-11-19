@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::backend::ZkBackend;
+use crate::chonk::{ivc_inputs, ChonkStackCircuit};
 use crate::error::ZkError;
 use e3_events::Proof;
 use e3_utils::utility_types::ArcBytes;
@@ -42,21 +43,10 @@ fn prepare_job_dir(job_dir: &Path) -> Result<JobDirGuard, std::io::Error> {
     Ok(JobDirGuard(job_dir.to_path_buf()))
 }
 
+/// The end of a finished process's output: bb's verdict comes last, after any `-v` progress.
 fn bounded_process_output(output: &[u8]) -> String {
-    let value = String::from_utf8_lossy(output);
-    if value.len() <= PROCESS_OUTPUT_LIMIT {
-        return value.into_owned();
-    }
-
-    let mut end = PROCESS_OUTPUT_LIMIT;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!(
-        "{}\n... truncated {} byte(s)",
-        &value[..end],
-        value.len() - end
-    )
+    bounded_tail(&mut io::Cursor::new(output), output.len() as u64)
+        .expect("reading an in-memory buffer cannot fail")
 }
 
 /// The end of a process output file, for a process that was killed: its last lines say what it
@@ -91,8 +81,30 @@ fn bounded_tail<R: io::Read + io::Seek>(output: &mut R, len: u64) -> io::Result<
     Ok(format!("... truncated {skipped} byte(s)\n{value}"))
 }
 
+/// `bb prove` verifies the proof it wrote and says so on stderr when that check fails. A Chonk
+/// run reports "Failed to verify the generated proof!" in place of the UltraHonk message.
 fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
-    stderr.contains("Proof verification failed") || stdout.contains("Proof verification failed")
+    [stderr, stdout].into_iter().any(|stream| {
+        stream.contains("Proof verification failed")
+            || stream.contains("Failed to verify the generated proof")
+    })
+}
+
+/// The error for a `bb prove` that exited unsuccessfully: a proof bb rejected on its own
+/// verification, or any other failure, each with the end of its output.
+fn bb_prove_failure(output: &Output) -> ZkError {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let message = format!(
+        "bb prove failed:\nstderr: {}\nstdout: {}",
+        bounded_process_output(&output.stderr),
+        bounded_process_output(&output.stdout)
+    );
+    if verifier_reported_invalid_proof(&stderr, &stdout) {
+        ZkError::ProofRejected(message)
+    } else {
+        ZkError::ProveFailed(message)
+    }
 }
 
 /// Runs bb and kills it at `timeout`. Output goes to files in `job_dir` so a full pipe
@@ -268,8 +280,27 @@ impl ZkProver {
             witness_data,
             e3_id,
             dir_path,
-            variant,
+            variant.verifier_target(),
             self.circuits_dir(variant, artifacts_dir),
+        )
+    }
+
+    /// Proof for a rollup bin circuit (`noir-rollup-no-zk`): a Default-variant artifact whose
+    /// proof carries an IPA claim for a later root rollup to close.
+    pub fn generate_rollup_proof(
+        &self,
+        circuit: CircuitName,
+        witness_data: &[u8],
+        e3_id: &str,
+        artifacts_dir: &str,
+    ) -> Result<Proof, ZkError> {
+        self.generate_proof_impl_with_dir(
+            circuit,
+            witness_data,
+            e3_id,
+            &circuit.dir_path(),
+            "noir-rollup-no-zk",
+            self.circuits_dir(CircuitVariant::Default, artifacts_dir),
         )
     }
 
@@ -279,14 +310,12 @@ impl ZkProver {
         witness_data: &[u8],
         e3_id: &str,
         dir_path: &str,
-        variant: CircuitVariant,
+        verifier_target: &str,
         base_dir: std::path::PathBuf,
     ) -> Result<Proof, ZkError> {
         if !self.bb_binary.exists() {
             return Err(ZkError::BbNotInstalled);
         }
-
-        let verifier_target = variant.verifier_target();
 
         let circuit_dir = base_dir.join(dir_path);
         let circuit_path = circuit_dir.join(format!("{}.json", circuit.as_str()));
@@ -355,18 +384,7 @@ impl ZkProver {
         )?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let message = format!(
-                "bb prove failed:\nstderr: {}\nstdout: {}",
-                bounded_process_output(&output.stderr),
-                bounded_process_output(&output.stdout)
-            );
-            return Err(if verifier_reported_invalid_proof(&stderr, &stdout) {
-                ZkError::ProofRejected(message)
-            } else {
-                ZkError::ProveFailed(message)
-            });
+            return Err(bb_prove_failure(&output));
         }
 
         let proof_path = output_dir.join("proof");
@@ -394,6 +412,67 @@ impl ZkProver {
             ArcBytes::from_bytes(&proof_data),
             ArcBytes::from_bytes(&public_signals),
         ))
+    }
+
+    /// Proves one Chonk stack with `bb prove --scheme chonk`. Returns the Chonk proof's fields with
+    /// its public inputs first, as one byte string of 32-byte fields. bb verifies the proof it
+    /// writes. The run goes through [`run_bb`], so it has the timeout, the stderr tail and the
+    /// low-memory retry of every other proof.
+    pub(crate) fn generate_chonk_proof(
+        &self,
+        stack: &[ChonkStackCircuit<'_>],
+        e3_id: &str,
+    ) -> Result<Vec<u8>, ZkError> {
+        if !self.bb_binary.exists() {
+            return Err(ZkError::BbNotInstalled);
+        }
+        let label = stack
+            .first()
+            .map_or("chonk", |entry| entry.circuit.as_str());
+        let job_dir = self
+            .work_dir
+            .join(e3_id)
+            .join(next_bb_work_subdir(&format!("prove_{label}")));
+        let _job_dir_guard = prepare_job_dir(&job_dir)?;
+        let inputs_path = job_dir.join("ivc-inputs.msgpack");
+        let output_dir = job_dir.join("out");
+        fs::write(&inputs_path, ivc_inputs(stack)?)?;
+
+        debug!("generating proof for circuit {label} (Chonk stack)");
+        let inputs_path_s = inputs_path.to_string_lossy();
+        let output_dir_s = output_dir.to_string_lossy();
+        let mut args = vec![
+            "prove",
+            "--scheme",
+            "chonk",
+            "--ivc_inputs_path",
+            inputs_path_s.as_ref(),
+            "-o",
+            output_dir_s.as_ref(),
+            "-v",
+        ];
+        if self.slow_low_memory {
+            args.push("--slow_low_memory");
+        }
+        let output = run_bb(
+            &self.bb_binary,
+            &args,
+            &job_dir,
+            self.bb_timeout,
+            self.bb_threads,
+        )?;
+        if !output.status.success() {
+            return Err(bb_prove_failure(&output));
+        }
+        let proof_path = output_dir.join("proof");
+        let proof = fs::read(&proof_path).map_err(|e| {
+            ZkError::OutputReadError(format!("bb output {}: {e}", proof_path.display()))
+        })?;
+        info!(
+            "generated proof ({} bytes) for {label} / {e3_id}",
+            proof.len()
+        );
+        Ok(proof)
     }
 
     /// Verifies a proof (Recursive variant, matching `prove()`).
@@ -429,6 +508,31 @@ impl ZkProver {
             e3_id,
             party_id,
             variant,
+            variant.verifier_target(),
+            artifacts_dir,
+        )
+    }
+
+    /// Verifies a rollup bin proof (`noir-rollup-no-zk`, Default variant), as
+    /// [`Self::generate_rollup_proof`] proves it. bb checks the pairing and then the proof's IPA
+    /// claim against its appended IPA proof (`UltraVerifier_::verify_ipa`, bb v6.0.0). In the
+    /// protocol no node verifies a rollup proof natively: the root rollup (`c3ab_fold`) closes the
+    /// claim in-circuit.
+    pub fn verify_rollup_proof(
+        &self,
+        proof: &Proof,
+        e3_id: &str,
+        artifacts_dir: &str,
+    ) -> Result<bool, ZkError> {
+        self.verify_proof_impl(
+            proof.circuit,
+            &proof.data,
+            &proof.public_signals,
+            proof.circuit.dir_path(),
+            e3_id,
+            0,
+            CircuitVariant::Default,
+            "noir-rollup-no-zk",
             artifacts_dir,
         )
     }
@@ -460,13 +564,13 @@ impl ZkProver {
         e3_id: &str,
         party_id: u64,
         variant: CircuitVariant,
+        verifier_target: &str,
         artifacts_dir: &str,
     ) -> Result<bool, ZkError> {
         if !self.bb_binary.exists() {
             return Err(ZkError::BbNotInstalled);
         }
 
-        let verifier_target = variant.verifier_target();
         let vk_path = self
             .circuits_dir(variant, artifacts_dir)
             .join(&dir_path)
@@ -559,7 +663,9 @@ impl ZkProver {
 mod tests {
     use super::*;
     use crate::backend::DEFAULT_BB_TIMEOUT;
+    use crate::chonk::ChonkKind;
     use crate::test_utils::get_tempdir;
+    use crate::witness::CompiledCircuit;
     use crate::BBPath;
 
     #[test]
@@ -638,6 +744,10 @@ mod tests {
         assert!(verifier_reported_invalid_proof(
             "",
             "Proof verification failed: invalid proof size"
+        ));
+        assert!(verifier_reported_invalid_proof(
+            "ChonkVerifier: verification failed\nFailed to verify the generated proof!\n",
+            ""
         ));
         assert!(!verifier_reported_invalid_proof("std::bad_alloc", ""));
         assert!(!verifier_reported_invalid_proof(
@@ -795,6 +905,108 @@ mod tests {
         let message = format!("{error}");
         assert!(message.contains("was killed after"), "{message}");
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_configured_cap_stops_a_hung_chonk_stack() {
+        // A Chonk stack goes through the same bounded bb run as every other proof.
+        let temp = get_tempdir().unwrap();
+        let bb = temp.path().join("bb");
+        fs::write(&bb, "#!/bin/sh\necho 'accumulating' >&2\nsleep 30\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bb, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let backend = ZkBackend::new(
+            BBPath::Default(bb),
+            temp.path().join("circuits"),
+            temp.path().join("work"),
+        )
+        .with_bb_timeout(Duration::from_millis(300));
+        let compiled = CompiledCircuit::from_json(
+            r#"{"bytecode":"AAAA","abi":{"parameters":[],"return_type":null,"error_types":{}}}"#,
+        )
+        .unwrap();
+        let stack = [ChonkStackCircuit {
+            circuit: CircuitName::C3ChonkApp,
+            kind: ChonkKind::App,
+            compiled: &compiled,
+            verification_key: b"vk",
+            witness: b"witness",
+        }];
+
+        let started = Instant::now();
+        let error = ZkProver::new(&backend)
+            .generate_chonk_proof(&stack, "e3-1")
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, ZkError::IoError(e) if e.kind() == io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
+        let message = format!("{error}");
+        assert!(message.contains("was killed after"), "{message}");
+        assert!(message.contains("accumulating"), "{message}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// The error of a one-circuit Chonk stack proved by a fake bb running `script`.
+    fn chonk_stack_error(script: &str) -> ZkError {
+        let temp = get_tempdir().unwrap();
+        let bb = temp.path().join("bb");
+        fs::write(&bb, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bb, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let backend = ZkBackend::new(
+            BBPath::Default(bb),
+            temp.path().join("circuits"),
+            temp.path().join("work"),
+        );
+        let compiled = CompiledCircuit::from_json(
+            r#"{"bytecode":"AAAA","abi":{"parameters":[],"return_type":null,"error_types":{}}}"#,
+        )
+        .unwrap();
+        let stack = [ChonkStackCircuit {
+            circuit: CircuitName::C3ChonkApp,
+            kind: ChonkKind::App,
+            compiled: &compiled,
+            verification_key: b"vk",
+            witness: b"witness",
+        }];
+
+        ZkProver::new(&backend)
+            .generate_chonk_proof(&stack, "e3-1")
+            .unwrap_err()
+    }
+
+    #[test]
+    fn a_failed_chonk_stack_reports_the_exit_status_and_stderr() {
+        let error = chonk_stack_error("#!/bin/sh\necho 'bad witness' >&2\nexit 3\n");
+
+        assert!(matches!(&error, ZkError::ProveFailed(_)), "{error:?}");
+        assert!(format!("{error}").contains("bad witness"), "{error}");
+    }
+
+    #[test]
+    fn a_verbose_rejection_keeps_bb_verdict() {
+        // `-v` progress fills more than the kept output before bb reports its own check failed.
+        let error = chonk_stack_error(&format!(
+            "#!/bin/sh\nhead -c {} /dev/zero | tr '\\0' 'x' >&2\n\
+             echo >&2\necho 'Failed to verify the generated proof!' >&2\nexit 1\n",
+            2 * PROCESS_OUTPUT_LIMIT
+        ));
+
+        assert!(matches!(&error, ZkError::ProofRejected(_)), "{error:?}");
+        let message = format!("{error}");
+        assert!(
+            message.contains("Failed to verify the generated proof"),
+            "{message}"
+        );
+        assert!(message.contains("truncated"), "{message}");
     }
 
     #[test]

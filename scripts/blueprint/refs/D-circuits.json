@@ -16,22 +16,22 @@
     "id": "D2",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/c3_fold/src/main.nr@42@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
-      "circuits/bin/recursive_aggregation/c3_fold/src/main.nr@51@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/c3_fold_kernel/src/main.nr@36@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
-      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@36@verify_honk_proof_non_zk(c3a_vk, c3a_proof",
-      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@37@verify_honk_proof_non_zk(c3b_vk, c3b_proof",
-      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@126@if proof.circuit != CircuitName::ShareEncryption {"
+      "circuits/bin/chonk/c3_chonk_app/src/main.nr@27@verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k]",
+      "circuits/bin/recursive_aggregation/c3_chonk_tube/src/main.nr@24@std::verify_proof_with_type(",
+      "circuits/bin/recursive_aggregation/c3_chonk_accumulate/src/main.nr@34@verify_rolluphonk_proof(right_vk, right_proof",
+      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@62@verify_root_rolluphonk_proof(c3a_vk, c3a_proof",
+      "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@63@verify_root_rolluphonk_proof(c3b_vk, c3b_proof",
+      "crates/zk/prover/src/circuits/aggregation/c3_chonk.rs@78@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
-      "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
-      "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);",
-      "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
-      "verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);",
-      "verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);",
+      "verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k], leaf_key_hash);",
+      "std::verify_proof_with_type(",
+      "verify_rolluphonk_proof(right_vk, right_proof, right_public, right_key);",
+      "verify_root_rolluphonk_proof(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);",
+      "verify_root_rolluphonk_proof(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);",
       "if proof.circuit != CircuitName::ShareEncryption {"
     ],
-    "note": "c3_fold and c3_fold_kernel verify the inner ShareEncryption proof each step (enforced in c3_accumulator.rs), but c3ab_fold verifies only the two final c3_fold chains (sk and e_sm), not raw C3 leaves."
+    "note": "c3_chonk_app verifies each stack's C3 proofs (24 per stack) and writes their rows; c3_chonk_tube verifies the stack's Chonk proof as a rollup, c3_chonk_accumulate merges tubes, and c3ab_fold closes both chains' IPA claims as root rollups."
   },
   {
     "id": "D3",
