@@ -262,6 +262,21 @@ metadata format is version 2 and no longer presents a threshold-only ID as a cur
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
 
+The n = 45 parameter-search slice, unlike the profile slice above, changes SS threshold parameter
+bytes: the `error1_variance` of both threshold tuples, so their hashes, every profile configuration
+ID, and every verification key and verifier. DKG tuples are unchanged. The tuples keep registry
+indices 0 and 2. **Unresolved gap; it needs a human rollout decision before release.** `setParamSet`
+is append-only, and live registries already hold the v0.19 tuples at those indices: Mainnet index 2
+(`0x1b2620f6…2317`), Sepolia index 0 (`0xaff065a7…ab1e`) and index 2 (`0x1b2620f6…2317`). Such a
+deployment cannot register the new bytes in place. `requestE3` does not compare the registered bytes
+with the `BfvProtocol` hash, so after an in-place upgrade it binds the old bytes under a new
+configuration ID, and nodes skip every such request because the parameter bytes do not match the
+profile. The indexer derives the threshold-only v5 ID of indices 0 and 2 from the local tuple, so it
+also stops reading v0.19 E3s at those indices. This breaks the
+[v0.19 rule](#v019-protocolcrypto-cutover) never to overwrite or reinterpret old E3 records. Either
+deploy a new stack, or, as v0.19 did for index 1, register the new tuples at new indices and keep
+indices 0 and 2 as historical registry-byte reads with frozen v5 IDs and fixture vectors.
+
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
 synchronized context, sealed keys and public provenance). These positional layouts also share the
