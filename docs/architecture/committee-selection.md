@@ -37,7 +37,8 @@ matching artifacts and contracts. Requests and saved contexts must retain the id
 their selected profile; shared threshold bytes do not authorize profile substitution.
 Confirmed-chain ingestion resolves the exact request identity. Synchronized profiles and older
 threshold-only identities are not admitted. [Upgrades](upgrades.md) preserves historical
-parameter-set index 1 and new secure index 2; never reinterpret old requests.
+parameter-set indices 0, 1 and 2 and registers the current tuples at indices 3 and 4; never
+reinterpret old requests.
 
 Recovery re-derives the profile/committee identity and requires the exact threshold parameter bytes
 before metadata seeds restored work. Recovered local selections must also agree with the hydrated
