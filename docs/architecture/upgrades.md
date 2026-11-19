@@ -85,7 +85,7 @@ indices 0, 1 and 2 historical and sets the current indices. Unsupported IDs are 
 storing keys so catch-up can reach supported rounds.
 
 `upgrade:v19` / `scripts/upgrade/v19Cutover.ts prepare` deploys linked Interfold implementation and
-BFV routes, then prepares one batch: upgrade Interfold; register missing secure index/thresholds;
+BFV routes, then prepares one batch: upgrade Interfold; register missing param sets/thresholds;
 install PK/decryption routers/OpenVM ciphertext verifier; register/bind new CRISP and retire earlier
 programs; require protocol 8/generation 2; keep paused. Mainnet requires `--openvm-identity`.
 Preparation verifies drain/pause, records against live implementation, CRISP owner/binding, common
@@ -276,8 +276,8 @@ hash for the ciphertext verifier while nodes prove with the new tuple.
 Cutover procedure, in the paused/drained governance batch that upgrades Interfold and its linked
 `ActiveCryptoConfig`: call `setParamSet(3, …)` with the secure tuple on Mainnet and Sepolia, and
 `setParamSet(4, …)` with the insecure tuple on Sepolia. A fresh deployment registers both through
-`registerActiveBfvParamSet`. `upgrade:v19` prepares only the secure index; a Sepolia batch must add
-index 4. Before resume, check that `keccak256(paramSetRegistry(3))` is
+`registerActiveBfvParamSet`. `upgrade:v19` prepares each index that the chain lacks, and its
+`validate` checks them. Before resume, check that `keccak256(paramSetRegistry(3))` is
 `BfvProtocol.SECURE_PARAM_SET_HASH` (`0x4f402598…08c3`), that `keccak256(paramSetRegistry(4))` is
 `INSECURE_PARAM_SET_HASH` (`0x2898f8a9…a844`), and that indices 0, 1 and 2 still hold the bytes
 above. Never overwrite or reinterpret indices 0, 1 and 2. After the upgrade `getE3Quote` and
