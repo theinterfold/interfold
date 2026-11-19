@@ -11,8 +11,8 @@
 //!   witness generation included.
 //! - `BB <circuit>#<k> start <unix_ms>` / `BB <circuit>#<k> done <s>s job=<job>`: one `bb prove`
 //!   run, read from the prover's tracing events. These lines also cover the proofs that run inside
-//!   production functions (C3 Chonk chains, C4 limb chains, node folds, the C6 Chonk root), so they do not add to
-//!   the `MEASURE` lines.
+//!   production functions (C2 chunk chains, C3 Chonk chains, C4 limb chains, node folds, the C6
+//!   Chonk root), so they do not add to the `MEASURE` lines.
 //! - `STEP <label>/<step> <s>s`: sub-step wall times that a production function reports.
 //! - `PHASE <name> start <unix_ms>` / `PHASE <name> <s>s`, then `TOTAL <who> <s>s`.
 //! - `NOTE <text>`: a deviation from the production pipeline.
@@ -24,7 +24,8 @@
 //!
 //! Staging: the shared `setup_compiled_circuit*` helpers in `common/helpers.rs` always stage under
 //! `insecure-64/<committee>`. [`stage`] stages the active `circuits/bin` artifacts under the
-//! directory that `BfvPreset::artifacts_dir_for_committee` gives for the measured preset and committee.
+//! directory that `BfvPreset::artifacts_dir_for_committee` gives for the measured preset and
+//! committee.
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -42,7 +43,7 @@ use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_task_pool::{TaskPool, TaskTimeouts};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
-    generate_c6_chonk_root, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
+    chunk_circuits, generate_c6_chonk_root, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
     FoldProveStepTiming, NodeDkgFoldInput, Provable, ShareEncryptionCircuit,
     ThresholdShareDecryptionCircuit, ZkBackend, ZkProver,
 };
@@ -151,7 +152,8 @@ pub fn active_bin_preset() -> Option<String> {
 
 /// Stages the active compiled circuits from `circuits/bin` into the temporary backend, under
 /// `artifacts_dir` (`preset.artifacts_dir_for_committee(committee)`, the directory the
-/// production handlers prove from). The file layout is the one `common/helpers.rs` stages.
+/// production handlers prove from). The file layout is the one `common/helpers.rs` stages. A
+/// chunked leaf (C2, C4) also gets the chunk circuits it is proven through.
 pub async fn stage(
     backend: &ZkBackend,
     artifacts_dir: &str,
@@ -174,6 +176,9 @@ pub async fn stage(
     let preset_dir = backend.circuits_dir.join(artifacts_dir);
     for circuit in leaves {
         stage_leaf(&preset_dir, *circuit).await;
+        for chunk in chunk_circuits(*circuit).unwrap_or_default() {
+            stage_chunk(&preset_dir, *chunk).await;
+        }
     }
     for circuit in folds {
         stage_fold(&preset_dir, *circuit).await;
@@ -253,6 +258,29 @@ async fn stage_leaf(preset_dir: &Path, circuit: CircuitName) {
         &json,
         recursive_vk,
         recursive_hash,
+    )
+    .await;
+}
+
+/// A C2 chunk or C4 limb circuit: the build emits only its `default` key (noir-recursive-no-zk),
+/// as `setup_chunked_dkg_circuits` stages it.
+async fn stage_chunk(preset_dir: &Path, circuit: CircuitName) {
+    let name = circuit.as_str();
+    let target = circuits_build_root().join(circuit.group()).join("target");
+    let file = |ext: &str| target.join(format!("{name}.{ext}"));
+    let (json, vk) = (file("json"), file("vk_recursive"));
+    assert!(
+        json.exists() && vk.exists(),
+        "compiled chunk circuit {name} not found under {} (run `pnpm build:circuits`)",
+        target.display()
+    );
+    stage_variant(
+        preset_dir,
+        "default",
+        circuit,
+        &json,
+        &vk,
+        &file("vk_recursive_hash"),
     )
     .await;
 }
@@ -704,7 +732,8 @@ pub fn c4_data(
 pub fn prove_node_fold(prover: &ZkProver, input: &NodeDkgFoldInput, artifacts_dir: &str) -> Proof {
     note(
         "node_dkg_fold runs c2ab || c3a chain || c3b chain concurrently (rayon::join, as in production); \
-         its per-proof times are the BB lines (c3_chonk_tube*, c3_chonk_accumulate*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
+         its per-proof times are the BB lines (c3_chonk_app per Chonk stack, c3_chonk_tube, c3_chonk_accumulate, \
+         c2ab_fold, c3ab_fold, c4ab_fold, node_fold)",
     );
     let result = measure("node_dkg_fold", || {
         prove_node_dkg_fold(prover, input, "measure-node-fold", artifacts_dir)
