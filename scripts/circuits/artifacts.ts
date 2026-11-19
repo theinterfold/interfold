@@ -359,18 +359,20 @@ async function pull() {
   if (compatible) {
     const revision = findCompatibleRevision(ROOT, `origin/${BRANCH}`)
     mkdirSync(dirname(DIST), { recursive: true })
-    const staged = mkdtempSync(join(dirname(DIST), '.published-circuits-'))
+    const job = mkdtempSync(join(dirname(DIST), '.published-circuits-'))
+    const staged = join(job, 'new')
+    const backup = join(job, 'previous')
     try {
+      mkdirSync(staged)
       execFileSync('bash', ['-o', 'pipefail', '-c', 'git archive "$1" | tar -x -C "$2"', 'extract', revision, staged], { cwd: ROOT })
       validateChecksums(staged)
       execFileSync('pnpm', ['build:circuits', 'check-vk-commitments', '--preset', 'all', '--committee', 'all', '--output', staged], {
         cwd: ROOT,
         stdio: 'inherit',
       })
-      rmSync(DIST, { recursive: true, force: true })
-      renameSync(staged, DIST)
+      installVerifiedArtifacts(staged, DIST, backup)
     } finally {
-      rmSync(staged, { recursive: true, force: true })
+      if (!existsSync(backup)) rmSync(job, { recursive: true, force: true })
     }
     console.log(`Verified published ${revision} against ${join(ROOT, 'circuits/vk-commitments.json')}`)
     return
@@ -383,6 +385,23 @@ async function pull() {
 
   runV(`git archive ${revision} | tar -x -C "${DIST}"`)
   console.log(`✅ Pulled ${revision} (SOURCE_HASH=${readFileSync(join(DIST, 'SOURCE_HASH'), 'utf8').trim()}) to ${DIST}`)
+}
+
+/** Keep the old installation recoverable until promotion succeeds. All paths are on one filesystem. */
+export function installVerifiedArtifacts(staged: string, destination: string, backup: string): void {
+  if (!existsSync(destination)) return renameSync(staged, destination)
+  renameSync(destination, backup)
+  try {
+    renameSync(staged, destination)
+  } catch (error) {
+    try {
+      renameSync(backup, destination)
+    } catch (restore) {
+      throw new AggregateError([error, restore], `Could not restore circuit artifacts. Recovery paths: ${backup}, ${staged}`)
+    }
+    throw error
+  }
+  rmSync(backup, { recursive: true })
 }
 
 /** CI may reuse a different source revision, but never a different verifier genealogy. */
