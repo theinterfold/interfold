@@ -1203,8 +1203,8 @@ fn prove_synchronized_leaf<C: Provable<Config = e3_zk_config::synchronized::Conf
 
 /// ZK-verify a share proof (inner recursive circuits).
 ///
-/// A secret-shared C2 proof goes through [`ShareComputationCircuit`]'s verifier, which also pins
-/// its chunk key tree. A synchronized C2 is one circuit with no key tree.
+/// A secret-shared C2 or C4 proof goes through its circuit's verifier, which also pins its chunk
+/// key tree. A synchronized C2 or C4 is one circuit with no key tree.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
     profile: BfvProfile,
@@ -1213,12 +1213,31 @@ fn zk_verify_share_proof_bundle(
     party_id: u64,
     artifacts_dir: &str,
 ) -> Result<bool, ZkError> {
-    if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared
-        && ShareComputationCircuit
+    if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared {
+        if ShareComputationCircuit
             .valid_circuits()
             .contains(&proof.circuit)
-    {
-        return ShareComputationCircuit.verify(prover, proof, e3_id_str, party_id, artifacts_dir);
+        {
+            return ShareComputationCircuit.verify(
+                prover,
+                proof,
+                e3_id_str,
+                party_id,
+                artifacts_dir,
+            );
+        }
+        if ShareDecryptionCircuit
+            .valid_circuits()
+            .contains(&proof.circuit)
+        {
+            return ShareDecryptionCircuit.verify(
+                prover,
+                proof,
+                e3_id_str,
+                party_id,
+                artifacts_dir,
+            );
+        }
     }
     prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)
 }
@@ -1354,7 +1373,14 @@ fn handle_verify_share_decryption_proofs(
             }
 
             let proof = &signed_proof.payload.proof;
-            match prover.verify_proof(proof, &e3_id_str, sender, &artifacts_dir) {
+            match zk_verify_share_proof_bundle(
+                prover,
+                req.params_profile,
+                proof,
+                &e3_id_str,
+                sender,
+                &artifacts_dir,
+            ) {
                 Ok(true) => {}
                 Ok(false) => {
                     info!(

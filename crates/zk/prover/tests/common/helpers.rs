@@ -146,13 +146,14 @@ pub async fn setup_compiled_circuit_for_committee(
     }
 }
 
-/// Sets up both final C2 circuits in every variant and the four chunk circuits they are proven
-/// through in the `default` variant only, as `pnpm build:circuits` publishes them.
+/// Sets up the final C2 and C4 circuits in every variant and the chunk and limb circuits they are
+/// proven through in the `default` variant only, as `pnpm build:circuits` publishes them.
 #[allow(dead_code)]
 pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
     for circuit in [
         CircuitName::SkShareComputation,
         CircuitName::ESmShareComputation,
+        CircuitName::DkgShareDecryption,
     ] {
         setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
     }
@@ -163,6 +164,9 @@ pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
             CircuitName::SkShareComputationChainLast,
             CircuitName::ESmShareComputationChain,
             CircuitName::ESmShareComputationChainLast,
+            CircuitName::DkgShareDecryptionLimb0,
+            CircuitName::DkgShareDecryptionLimb1,
+            CircuitName::DkgShareDecryptionLimb2,
         ],
     )
     .await;
