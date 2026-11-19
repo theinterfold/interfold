@@ -4611,6 +4611,7 @@ dependencies = [
 name = "e3-trbfv"
 version = "0.20.0-dev.3"
 dependencies = [
+ "alloy",
  "anyhow",
  "bincode",
  "derivative",

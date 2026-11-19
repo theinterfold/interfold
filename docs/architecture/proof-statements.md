@@ -168,9 +168,13 @@ descendants: this definition uses neither the SS sequential fold nor any SS VK.
 The [native verifier](../../crates/zk/prover/src/synchronized/decryption.rs) compares both pins with
 local synchronized artifacts; it checks the roster, setup, domain, ciphertext, designated SK/bundle
 anchors and plaintext against independent expectations before verifying the outer proof. A generated
-Honk verifier alone authenticates no chain state. An application wrapper must enforce those pins and
-obtain the expected context and anchors from the confirmed request and synchronized DKG authority
-before activation.
+Honk verifier alone authenticates no chain state. The isolated
+[synchronized Solidity wrapper](../../packages/interfold-contracts/contracts/verifiers/bfv/SynchronizedDecryptionVerifier.sol)
+pins both child VK hashes and resolves v1 Minimum authority and the published committee hash from
+its fixed registry by E3 ID. It checks every designated row against the published setup, roster and
+SK/bundle columns, and checks the lifecycle-supplied domain, SAFE ciphertext commitment and hash of
+the 400-byte little-endian plaintext. The recursive proof authenticates the share and `c0` openings.
+This wrapper has no deployed route.
 
 At `sync-insecure-64/minimum`, bb 6.0.0 measured 2,242,265 gates for the outer circuit. Its
 generated Solidity verifier (solc 0.8.28) accepted the real 76-field statement and rejected a
@@ -283,7 +287,7 @@ values or caller-supplied chain context/roster, or replace signature admission. 
 consistently selected setup is not rejected without canonical external authority. These joins prove
 neither C4's BFV decryption equation nor publication authority. The runtime still refuses
 synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
-replay and on-chain decryption authority binding remain open.
+replay and activation of the synchronized decryption route remain open.
 
 The typed local definition executor reuses these proof/verification owners. Recipient results must
 match independently supplied setup/owner and C1/C4/batch anchors; publication results must also

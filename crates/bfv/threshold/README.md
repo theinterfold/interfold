@@ -102,3 +102,9 @@ alone; it creates only temporary proof and verifier artifacts. Ordinary contract
 missing fixture rather than substituting mocks. Canonical context/roster authority, registry
 publication/attestations and persistent actor restart remain outside this suite; see
 [proof contracts](../../../docs/architecture/proof-statements.md#draft-synchronized-provenance-joins-not-admitted).
+
+`pnpm test:sync-decryption:contract` runs that suite for one Hardhat request, then publishes the
+real DKG proof with both selected recipients' signatures and checks the real C6/C7 aggregate against
+the resulting registry state. It requires the same pinned tools. The test uses generated Honk
+verifiers in a temporary directory and a finalized-committee harness; it does not install artifacts
+or enable synchronized requests.

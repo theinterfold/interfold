@@ -17,7 +17,7 @@ pub(super) fn qualify(
     partials: &[Proof],
     c7: &Proof,
     alternate: &Proof,
-    domain: [u128; 2],
+    request: super::threshold_decryption::Request,
     ciphertext: &BigInt,
     message: &[u64],
 ) -> Result<()> {
@@ -56,8 +56,8 @@ pub(super) fn qualify(
         bundles.push(field(&leaf.outputs[1]));
     }
     let expected = ExpectedDecryption {
-        setup: BINDING,
-        domain,
+        setup: request.setup,
+        domain: request.domain,
         roster: &DEALERS,
         ciphertext_commitment: field(ciphertext),
         sk_commitments: &sk,
@@ -81,6 +81,19 @@ pub(super) fn qualify(
         )?;
         fs::write(directory.join("proof"), &outer.data[..])?;
         fs::write(directory.join("public_inputs"), &outer.public_signals[..])?;
+        let namespace = PROFILE.artifacts_dir_for_committee(config.committee)?;
+        let keys = prover.circuits_dir(e3_zk_config::CircuitVariant::Recursive, &namespace);
+        let key = |role| e3_zk_prover::test_utils::load_vk_artifacts(&keys, role);
+        fs::write(
+            directory.join("expected.json"),
+            serde_json::to_vec(&json!({
+                "pins": [key(CircuitName::ThresholdShareDecryption)?.key_hash,
+                         key(CircuitName::DecryptedSharesAggregation)?.key_hash],
+                "sk": sk, "bundles": bundles, "ciphertext": expected.ciphertext_commitment,
+                "pk": request.pk, "ciphertext_hash": request.ciphertext_hash,
+                "plaintext": message.iter().flat_map(|c| c.to_le_bytes()).collect::<Vec<_>>()
+            }))?,
+        )?;
     }
     let other_bundles = [bundles[1], bundles[0]];
     let other_sk = [sk[1], sk[0]];

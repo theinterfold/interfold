@@ -1292,9 +1292,9 @@ jobs:
         if: matrix.leg == 'sync-dkg-proofs'
         run: pnpm test:sync-prf
 
-      - name: Prove synchronized DKG leaves, joins and isolated publication verification
+      - name: Prove synchronized Minimum DKG and verify decryption against its signed publication
         if: matrix.leg == 'sync-dkg-proofs'
-        run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
+        run: E3_CUSTOM_BB=$(command -v bb) pnpm test:sync-decryption:contract
 
       - name: Install Anvil for recovered synchronized publication
         if: matrix.leg == 'sync-dkg-recovery'

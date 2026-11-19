@@ -48,6 +48,36 @@ const PROFILE: BfvProfile = BfvProfile::SyncDecInsecure64;
 const BINDING: SetupBinding = [0x2456, u128::MAX - 7];
 const DEALERS: [u32; 2] = [0, 2];
 
+/// The explicit EVM campaign seeds both proof fixtures from one request, before publication.
+#[derive(serde::Deserialize)]
+struct Chain {
+    chain_id: u64,
+    e3_id: alloy::primitives::U256,
+    interfold: alloy::primitives::Address,
+    nodes: [alloy::primitives::Address; 3],
+}
+
+impl Chain {
+    fn fixture() -> Result<Self> {
+        match std::env::var_os("E3_SYNC_DECRYPTION_CONTEXT") {
+            Some(path) => Ok(serde_json::from_slice(&fs::read(path)?)?),
+            None => Ok(Self {
+                chain_id: 31337,
+                e3_id: alloy::primitives::U256::from(245904u64),
+                interfold: [0x11; 20].into(),
+                nodes: [[1; 20].into(), [2; 20].into(), [3; 20].into()],
+            }),
+        }
+    }
+    fn setup(&self) -> Result<e3_committee_hash::DkgSetupContext> {
+        Ok(e3_committee_hash::DkgSetupContext {
+            interfold_address: self.interfold,
+            committee_hash: e3_committee_hash::hash_committee_addresses(&self.nodes),
+            crypto_config_id: PROFILE.crypto_config_id(CiphernodesCommitteeSize::Minimum)?,
+        })
+    }
+}
+
 struct Leaf {
     role: CircuitName,
     inputs: Value,
