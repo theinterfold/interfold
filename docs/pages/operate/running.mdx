@@ -949,10 +949,11 @@ payload byte. Shared bytes retain no spare capacity, and deferred copies compact
 shared keys and threshold shares. Each entry also reserves twice its inline event size for queue
 capacity.
 
-These limits cover four concurrent E3s with the largest supported committee (N=19, H=14) and the
-secure 8192-degree preset. The slashing recipients start at committee finalization. Keyshare and
-public-key recipients start at local selection. Only the plaintext recipient retains the complete
-local DKG history until ciphertext output arrives.
+These limits cover four concurrent E3s with the `small` committee (N=19, H=14), the largest on
+mainnet, and the secure 8192-degree preset. They are not sized for the `large` committee (N=45,
+H=34) that Sepolia and local chains also route. The slashing recipients start at committee
+finalization. Keyshare and public-key recipients start at local selection. Only the plaintext
+recipient retains the complete local DKG history until ciphertext output arrives.
 
 The late-recipient allowance is 1,536 records and 640 MiB per E3. It includes the C1–C3 witnesses,
 the complete request payloads retained by computation failures, C4 inputs, peer shares, and document
