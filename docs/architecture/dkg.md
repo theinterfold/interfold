@@ -82,10 +82,9 @@ proofs or changing the accepted dealer roster.
 
 This is not a complete admitted setup protocol. The explicit proof API verifies a supplied canonical
 context/roster; it does not establish their chain/signature authority. Final C5/publication
-enforcement, persistent multi-party actor restart evidence and synchronized C6 remain absent.
-Synchronized runtime folding/publication and decryption paths still refuse the SS implementations.
-The joins, root/bundle schemas and setup derivation require human protocol review before consumers
-freeze them.
+enforcement, full-node synchronized startup/replay and synchronized C6 remain absent. Synchronized
+runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
+root/bundle schemas and setup derivation require human protocol review before consumers freeze them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -260,6 +259,16 @@ records are provisional until the complete C2 batch is available; recheck and di
 before collector admission so they cannot reserve a recovered slot against a valid replacement.
 These records still use the existing snapshot/payload write boundaries, not a new durable-flush
 guarantee.
+
+The private
+[disk recovery fixture](../../crates/orchestration/keyshare/src/tests/synchronized/recovery.rs)
+stops, flushes and physically reopens three independent stores and keyshare actors with fresh
+password-derived ciphers. It checks exact reissued work and saved artifacts, H `[0,2]` including an
+outside-H recipient, provisional C4 retirement and authenticated replacement after restart. Its
+explicit real-proof variant verifies C0–C4 and proves C4 from the restored request. This is orderly
+actor/store recovery below disabled production hydration/compute admission, not durable-log replay,
+full-node restart, hard-crash durability or publication acceptance. See the
+[test commands](../../crates/orchestration/keyshare/README.md#tests).
 
 Dealer identity binds public statement (E3, proof type, circuit, signals), not randomized proof
 bytes. Replacing a proof plan invalidates all old correlations first. C2/C3 verification outcomes

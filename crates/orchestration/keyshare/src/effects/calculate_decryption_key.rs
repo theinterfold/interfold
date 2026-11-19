@@ -13,6 +13,14 @@ impl ThresholdKeyshare {
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         self.params_profile.ensure_admission_enabled()?;
+        let plan = self.decryption_key_plan(dishonest_parties)?;
+        self.apply_decryption_key_plan(plan, ec)
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn decryption_key_plan(
+        &self,
+        dishonest_parties: Option<HashSet<u64>>,
+    ) -> Result<DecryptionKeyPlan> {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let trbfv_config = state.get_trbfv_config();
@@ -66,7 +74,7 @@ impl ThresholdKeyshare {
             );
         }
 
-        let plan = build_decryption_key_plan(
+        build_decryption_key_plan(
             &self.cipher,
             self.params_profile,
             state.party_id,
@@ -79,8 +87,16 @@ impl ThresholdKeyshare {
             e3_id,
             recovery.synchronized.as_ref(),
             &c2_proofs,
-        )?;
+        )
+    }
 
+    pub(in crate::actors::threshold_keyshare) fn apply_decryption_key_plan(
+        &mut self,
+        plan: DecryptionKeyPlan,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        let e3_id = state.get_e3_id();
         match plan {
             DecryptionKeyPlan::Insufficient => {
                 self.pending.shares.clear();
