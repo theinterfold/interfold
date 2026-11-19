@@ -565,20 +565,40 @@ fn final_c2_loader_rejects_chunk_artifacts_from_another_build() {
     };
     load().unwrap();
     let last = CircuitName::SkShareComputationChainLast;
-    fs::write(
-        pair.join(format!(
-            "default/{}/{}.vk_hash",
-            last.dir_path(),
-            last.as_str()
-        )),
-        "another build's key",
-    )
-    .unwrap();
+    let last_hash = pair.join(format!(
+        "default/{}/{}.vk_hash",
+        last.dir_path(),
+        last.as_str()
+    ));
+    fs::write(&last_hash, "another build's key").unwrap();
     let error = format!("{:#}", load().unwrap_err());
     assert!(
         error.contains("sk_share_computation_chain_last.vk_hash"),
         "{error}"
     );
+    fs::write(&last_hash, "key").unwrap();
+
+    // A chunk the manifest covers, compiled by another Noir.
+    let full = CircuitName::SkShareComputationChain;
+    let relative = format!(
+        "insecure-64/minimum/default/{}/{}.json",
+        full.dir_path(),
+        full.as_str()
+    );
+    let mut other = document.clone();
+    other["noir_version"] = "0.0.1".into();
+    fs::write(dist.join(&relative), serde_json::to_vec(&other).unwrap()).unwrap();
+    files.insert(
+        relative.clone(),
+        artifacts::digest(&dist.join(&relative)).unwrap().into(),
+    );
+    write_json(
+        &dist.join("checksums.json"),
+        &serde_json::json!({"algorithm":"sha256","files":files}),
+    )
+    .unwrap();
+    let error = format!("{:#}", load().unwrap_err());
+    assert!(error.contains("Noir version 0.0.1"), "{error}");
 }
 
 #[test]

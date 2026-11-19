@@ -57,12 +57,48 @@ fn prove_circuit(
     prover.generate_proof_with_variant(circuit, &witness, job_id, variant, artifacts_dir)
 }
 
-/// Proves the chunk chain of C2 for `input` and returns the final circuit and its inputs: the
-/// secret and its commitment, plus the chunk keys, proofs, links and the chain's outputs.
+/// The chunk circuits of one final C2 circuit, loaded for proving: each chunk's compiled program
+/// and its `default` key.
+pub struct ChunkCircuits {
+    final_circuit: CircuitName,
+    full: (CircuitName, CompiledCircuit, vk::VkArtifacts),
+    last: (CircuitName, CompiledCircuit, vk::VkArtifacts),
+}
+
+impl ChunkCircuits {
+    /// Loads the chunk circuits of the final C2 circuit for `input_type`.
+    pub fn load(
+        prover: &ZkProver,
+        input_type: DkgInputType,
+        artifacts_dir: &str,
+    ) -> Result<Self, ZkError> {
+        let final_circuit = final_circuit(input_type);
+        let chunks = super::chain_keys::chunk_circuits(final_circuit)
+            .expect("final C2 circuits are chunked");
+        let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
+        let load = |circuit| -> Result<_, ZkError> {
+            Ok((
+                circuit,
+                load_compiled(prover, circuit, CircuitVariant::Default, artifacts_dir)?,
+                vk::load_vk_artifacts(&default_dir, circuit)?,
+            ))
+        };
+        Ok(Self {
+            final_circuit,
+            full: load(chunks[0])?,
+            last: load(chunks[1])?,
+        })
+    }
+}
+
+/// Proves the chunk chain of C2 for `input` with `chunks` and returns the final circuit and its
+/// inputs: the secret and its commitment, plus the chunk keys, proofs, links and the chain's
+/// outputs.
 pub fn final_circuit_inputs(
     prover: &ZkProver,
     config: &Configs,
     input: &ShareComputationCircuitData,
+    chunks: &ChunkCircuits,
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<(CircuitName, Value), ZkError> {
@@ -71,11 +107,12 @@ pub fn final_circuit_inputs(
     let chain = Chain::compute(config, &inputs)
         .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
     let circuit = final_circuit(inputs.dkg_input_type);
-    let chunks = super::chain_keys::chunk_circuits(circuit).expect("final C2 circuits are chunked");
-    let (full, last) = (chunks[0], chunks[1]);
-    let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-    let full_vk = vk::load_vk_artifacts(&default_dir, full)?;
-    let last_vk = vk::load_vk_artifacts(&default_dir, last)?;
+    if chunks.final_circuit != circuit {
+        return Err(ZkError::InvalidInput(format!(
+            "chunk circuits of {} cannot prove {circuit}",
+            chunks.final_circuit
+        )));
+    }
     let tag = match inputs.dkg_input_type {
         DkgInputType::SecretKey => "c2a",
         DkgInputType::SmudgingNoise => "c2b",
@@ -83,18 +120,16 @@ pub fn final_circuit_inputs(
 
     let mut chunk_proofs = Vec::with_capacity(chain.chunks.len());
     let mut chunk_links = Vec::with_capacity(chain.chunks.len());
-    let full_compiled = load_compiled(prover, full, CircuitVariant::Default, artifacts_dir)?;
-    let last_compiled = load_compiled(prover, last, CircuitVariant::Default, artifacts_dir)?;
     for (c, chunk) in chain.chunks.iter().enumerate() {
-        let (chunk_circuit, compiled) = if chunk.is_last {
-            (last, &last_compiled)
+        let (chunk_circuit, compiled, _) = if chunk.is_last {
+            &chunks.last
         } else {
-            (full, &full_compiled)
+            &chunks.full
         };
         let job_id = format!("{e3_id}-{tag}-chunk-{c}");
         let proof = prove_circuit(
             prover,
-            chunk_circuit,
+            *chunk_circuit,
             compiled,
             CircuitVariant::Default,
             &chunk.to_json(),
@@ -106,6 +141,7 @@ pub fn final_circuit_inputs(
         chunk_links.push(bytes_to_field_strings(&proof.public_signals)?);
     }
 
+    let (full_vk, last_vk) = (&chunks.full.2, &chunks.last.2);
     let mut final_inputs = inputs.to_json();
     let fields = final_inputs
         .as_object_mut()
@@ -129,8 +165,9 @@ pub fn prove_share_computation_chain(
     variant: CircuitVariant,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
+    let chunks = ChunkCircuits::load(prover, input.dkg_input_type, artifacts_dir)?;
     let (circuit, final_inputs) =
-        final_circuit_inputs(prover, config, input, e3_id, artifacts_dir)?;
+        final_circuit_inputs(prover, config, input, &chunks, e3_id, artifacts_dir)?;
     let compiled = load_compiled(prover, circuit, variant, artifacts_dir)?;
     prove_circuit(
         prover,

@@ -274,7 +274,7 @@ pub(crate) fn load(
     }
     if let Case::Named(name) = case {
         // A final C2 proof is built from its chunk circuits, which the prover loads by itself:
-        // they must come from the same manifest as the circuit measured.
+        // they must come from the same manifest and compiler as the circuit measured.
         for chunk in e3_zk_prover::chunk_circuits(name).unwrap_or_default() {
             let directory = prover
                 .circuits_dir(e3_zk_config::CircuitVariant::Default, pair)
@@ -284,6 +284,15 @@ pub(crate) fn load(
                 let bytes = fs::read(&path)
                     .with_context(|| format!("Chunk artifact {} is unavailable", path.display()))?;
                 verify_manifest_file(prover, e3_zk_config::CircuitVariant::Default, &path, &bytes)?;
+                if extension == "json" {
+                    let document: serde_json::Value = serde_json::from_slice(&bytes)?;
+                    let version = document["noir_version"]
+                        .as_str()
+                        .with_context(|| format!("Chunk circuit {chunk} has no Noir version"))?;
+                    if !e3_zk_build::reports_version(version, noir_pin) {
+                        bail!("Chunk circuit {chunk} Noir version {version} does not match Rust Noir {noir_pin}");
+                    }
+                }
             }
         }
     }

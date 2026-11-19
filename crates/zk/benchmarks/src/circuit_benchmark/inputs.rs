@@ -139,17 +139,22 @@ pub(crate) fn prepare(
                 name,
                 CircuitName::SkShareComputation | CircuitName::ESmShareComputation
             );
-            if is_final {
-                // The final circuit's inputs are the chunk proofs, so preparing them proves the chain.
+            // The final circuit's inputs are the chunk proofs, so preparing them proves the chain.
+            // Its chunk circuits are artifacts: they load before the timer starts.
+            let chunks = if is_final {
                 record.preparation.metric = "chunk_chain_proving_and_input_projection_wall".into();
-            }
+                Some(e3_zk_prover::ChunkCircuits::load(prover, input_type, pair)?)
+            } else {
+                None
+            };
             let start = Instant::now();
             let result = (|| -> Result<InputMap> {
-                if is_final {
+                if let Some(chunks) = &chunks {
                     let (_, json) = e3_zk_prover::final_circuit_inputs(
                         prover,
                         &config,
                         &sample,
+                        chunks,
                         "benchmark-c2",
                         pair,
                     )?;
