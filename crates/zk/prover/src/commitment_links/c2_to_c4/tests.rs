@@ -166,6 +166,8 @@ fn consistency_does_not_match_aggregated_output() {
     let c4 = c4_signals(&[vec![make_field(5)]], make_field(99));
 
     assert!(!link.check_consistency(&source_values, &c4, 0, 0));
+    // The row one past the roster is the aggregated output: both outputs must follow a row.
+    assert!(!link.check_consistency(&source_values, &c4, 1, 0));
 }
 
 #[test]
