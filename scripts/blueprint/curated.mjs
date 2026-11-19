@@ -607,7 +607,7 @@ function circuits() {
         title: 'c4ab_fold',
         lines: ['C4a + C4b'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof`,
+        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof`,
       },
       {
         id: 'node',
