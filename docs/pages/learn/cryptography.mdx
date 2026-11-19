@@ -247,11 +247,12 @@ anchors, which the on-chain decryption verifier compares.
 Domain-separation labels (`DS_*` in `circuits/lib/src/math/commitments.nr`) keep different kinds of
 commitments apart.
 
-Recursive verification also binds the complete VK tree. Each sequential fold (C6, nodes) carries
-fixed leaf, fold, and kernel key hashes. Each C3 Chonk stage appends the hash of the key it
-verified, and `c3ab_fold` hashes each chain's seven-key list. The final proof commits to every
-nested key at public input zero. Deployment pins that commitment from the matching artifact pair's
-`.vk_tree_hash`, so a prover cannot substitute another circuit within the proof tree.
+Recursive verification also binds the complete VK tree. The sequential nodes fold carries fixed
+leaf, fold, and kernel key hashes. Each C3 and C6 Chonk stage appends the hash of the key it
+verified. `c3ab_fold` hashes each C3 chain's seven-key list, and `c6_chonk_root` hashes the C6
+list. The final proof commits to every nested key at public input zero. Deployment pins that
+commitment from the matching artifact pair's `.vk_tree_hash`, so a prover cannot substitute another
+circuit within the proof tree.
 
 ## BFV presets
 
