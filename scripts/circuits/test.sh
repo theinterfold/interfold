@@ -25,12 +25,12 @@ trap restore_active_config EXIT
 
 # The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD. Both presets have
 # L_THRESHOLD = 3. These pairs run each committee once and each preset at least once.
-for pair in minimum:insecure micro:secure small:secure; do
+for pair in minimum:insecure micro:secure small:secure large:insecure; do
   committee="${pair%%:*}"
   preset="${pair##*:}"
   sed -E \
-    -e "s/committee: (minimum|micro|small)/committee: $committee/g" \
-    -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
+    -e "s/committee: (minimum|micro|small|large)/committee: $committee/g" \
+    -e "s/committee::(minimum|micro|small|large)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
   preset_name="${preset}-64"
