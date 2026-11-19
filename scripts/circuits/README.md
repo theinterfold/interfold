@@ -105,6 +105,22 @@ policies can build explicit sync definitions, never a complete/hydrated set or r
 For real DKG proof coverage independent of the build policy, use `pnpm rust:test:sync-dkg:proofs`
 with pinned Nargo/BB; this does not publish or qualify runtime admission.
 
+### Synchronized decryption candidates
+
+Run `bash scripts/circuits/qualify-sync-decryption.sh sync-secure-8192 NEW_EXPORT_DIRECTORY` with
+the pinned Nargo, bb and solc 0.8.28, installed workspace dependencies, and capacity for the 32 GiB
+sampled process-tree RSS guard. Use `sync-insecure-64` for the development profile. The runner
+proves one fixed Minimum set against native `fhe.rs`, rebuilds the exact C6/C7/outer keys from
+source, checks both leaf pins and verifies the proof in bb and the generated Solidity verifier. The
+new directory contains only public proof material and the `candidate/manifest.json` with its
+artifacts; do not pass a live install directory. Given an existing public proof export,
+`pnpm build:circuits decryption-candidate --preset PROFILE --output EXPORT` runs just the rebuild
+and native verification step. An existing candidate is never overwritten.
+
+Both profiles are disabled. Only the insecure fixture also proves synchronized DKG and exercises the
+request-aware Solidity wrapper with signed registry publication. Secure Minimum qualifies decryption
+from native setup openings; secure DKG publication and runtime admission are separate.
+
 The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
 compare `active.nr` and `utils.ts`; a different hydrated cache is only a note. Switching committee
 always goes through `pnpm build:circuits --committee` — never edit `active.nr` or `utils.ts` by

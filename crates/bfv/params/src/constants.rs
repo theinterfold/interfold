@@ -69,6 +69,13 @@ pub mod secure_8192 {
         pub const MODULI: &[u64] = &[0x2000000000104001, 0x200000000013c001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
+
+    // Candidate synchronized transport from 35d7ef7c, not the deployed SS DKG.
+    pub mod synchronized_dkg {
+        pub const PLAINTEXT_MODULUS: u64 = 2 * super::threshold::MODULI[0];
+        pub const MODULI: &[u64] = &[0x24c2230d75cdc001, 0x260dfc1463740001];
+        pub const ERROR1_VARIANCE: &str = "10";
+    }
 }
 
 /// Common search defaults shared across presets

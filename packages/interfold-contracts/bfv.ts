@@ -55,6 +55,7 @@ export const BFV_PROFILES = {
   "ss-insecure-64": profile("ss-insecure-64"),
   "ss-secure-8192": profile("ss-secure-8192"),
   "sync-insecure-64": profile("sync-insecure-64"),
+  "sync-secure-8192": profile("sync-secure-8192"),
 };
 export type BfvProfile = keyof typeof BFV_PROFILES;
 

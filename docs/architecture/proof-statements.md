@@ -182,6 +182,20 @@ changed plaintext coefficient. To export the public inputs, proof and VK for ver
 the ignored `threshold_decryption::` test in `synchronized_dkg` with `E3_SYNC_DECRYPTION_EXPORT` set
 to a new directory path. This evidence covers the disabled Minimum definition only.
 
+The disabled
+[secure Minimum C6](../../circuits/bin/synchronized_secure/threshold/share_decryption/src/main.nr)
+uses the same public contract, with 256-bit directed keys and degree-8192 threshold parameters. Its
+private product is the centered negacyclic `c1 * sk` in descending coefficient order. C6 absorbs the
+profile, a separate product tag, the checked SK and `c1` commitments and **all** product fields
+before deriving its evaluation point. Each limb must match the negacyclic kernel at that point. This
+probabilistic polynomial identity replaces the degree-64 quadratic loop; it does not replace any PRF
+evaluation or per-coefficient noise/share check. Signed local noise uses one field per coefficient
+(`0 <= shifted <= 2B`), not a `u64` or independent CRT draws. For the fixed parameters,
+`N*q^3 + B + 2q` and the signed quotient times `q` both fit below the scalar modulus. The private
+evaluation challenge and integer argument require independent cryptographic review. Secure C7 shares
+the same sum/decode implementation. A common outer verifier shape does not imply interchangeable
+child VK pins.
+
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
 `circuits/bin/synchronized/` defines C0–C5 and draft setup/publication joins only for

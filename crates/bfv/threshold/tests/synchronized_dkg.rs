@@ -105,14 +105,22 @@ impl Fixture {
     }
 
     fn native_with_roster(binding: SetupBinding, roster: [u32; 2]) -> Result<Self> {
-        let config = Configs::for_profile(PROFILE, CiphernodesCommitteeSize::Minimum)?;
+        Self::native_profile(PROFILE, binding, roster)
+    }
+
+    fn native_profile(
+        profile: BfvProfile,
+        binding: SetupBinding,
+        roster: [u32; 2],
+    ) -> Result<Self> {
+        let config = Configs::for_profile(profile, CiphernodesCommitteeSize::Minimum)?;
         let values = config.committee.values();
         let mut rng = ChaCha8Rng::seed_from_u64(245602);
         let mut manager = ShareManager::new(values.n, values.threshold, config.threshold.clone())?;
         let keys = (0..values.n)
             .map(|_| {
                 (0..values.n)
-                    .map(|_| PrfKey::random(PROFILE, &mut rng))
+                    .map(|_| PrfKey::random(profile, &mut rng))
                     .collect::<Result<Vec<_>>>()
             })
             .collect::<Result<Vec<_>>>()?;
@@ -206,7 +214,7 @@ impl Fixture {
                     (config.threshold.moduli().len(), config.threshold.degree()),
                     |(limb, coefficient)| shares[limb][[recipient, coefficient]],
                 ));
-                let packed = pack_key(PROFILE, &share, &keys[dealer][recipient])?;
+                let packed = pack_key(profile, &share, &keys[dealer][recipient])?;
                 let expected: Vec<_> = packed
                     .rows()
                     .into_iter()
@@ -234,7 +242,7 @@ impl Fixture {
                     &config.transport,
                     config.threshold.degree(),
                 )?;
-                let (unpacked, incoming) = unpack_key(PROFILE, &decoded)?;
+                let (unpacked, incoming) = unpack_key(profile, &decoded)?;
                 ensure!(unpacked == share, "Native transport changed the SK share");
                 ensure!(
                     incoming.as_bytes() == keys[dealer][recipient].as_bytes(),
@@ -406,9 +414,18 @@ struct CircuitJob {
 }
 
 fn run(command: &mut Command) -> Result<Output> {
+    let start = std::time::Instant::now();
     let output = command
         .output()
         .with_context(|| format!("Start {command:?}"))?;
+    if std::env::var_os("E3_SYNC_SECURE_QUALIFICATION").is_some() {
+        eprintln!(
+            "{} {:?}: {:.2}s",
+            command.get_program().to_string_lossy(),
+            command.get_args().next(),
+            start.elapsed().as_secs_f64()
+        );
+    }
     let diagnostic = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -432,11 +449,15 @@ impl CircuitJob {
     }
 
     fn new(root: &Path, role: CircuitName) -> Result<Self> {
+        Self::for_profile(root, role, PROFILE)
+    }
+
+    fn for_profile(root: &Path, role: CircuitName, profile: BfvProfile) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("src"))?;
         let source = root
             .join("circuits/bin")
-            .join(role.source_path(PROFILE).context("Missing sync source")?);
+            .join(role.source_path(profile).context("Missing sync source")?);
         let mut manifest: toml::Value =
             toml::from_str(&fs::read_to_string(source.join("Nargo.toml"))?)?;
         manifest["package"]["name"] = toml::Value::String("sync_leaf".into());
@@ -447,9 +468,7 @@ impl CircuitJob {
             toml::to_string(&manifest)?,
         )?;
         fs::copy(
-            root.join("circuits/bin")
-                .join(role.source_path(PROFILE).context("Missing sync source")?)
-                .join("src/main.nr"),
+            source.join("src/main.nr"),
             directory.path().join("src/main.nr"),
         )?;
         Ok(Self { directory })

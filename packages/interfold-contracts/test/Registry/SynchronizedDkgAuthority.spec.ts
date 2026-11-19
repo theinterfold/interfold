@@ -16,6 +16,7 @@ import {
   ethers,
   networkHelpers,
 } from "../fixtures";
+import { decryptionCandidate } from "../fixtures/synchronizedCandidate";
 import {
   synchronizedDkgAttestationDomain,
   synchronizedDkgAttestationTypes,
@@ -241,7 +242,14 @@ describe("Synchronized DKG registry authority", function () {
         });
         execFileSync(
           "pnpm",
-          ["exec", "tsx", "scripts/circuits/render-sync-honk.ts", fixture],
+          [
+            "build:circuits",
+            "decryption-candidate",
+            "--preset",
+            "sync-insecure-64",
+            "--output",
+            fixture,
+          ],
           { cwd: root, stdio: "inherit" },
         );
         const source = "SynchronizedHonk.sol";
@@ -252,7 +260,14 @@ describe("Synchronized DKG registry authority", function () {
             }),
             f.signers[0]!,
           )(source, name);
-        const honk = await deployHonk(fixture, "DecryptionAggregatorVerifier");
+        decryptionCandidate(join(fixture, "candidate"), "sync-insecure-64");
+        const honk = await deployHonk(
+          join(
+            fixture,
+            "candidate/evm/recursive_aggregation/decryption_aggregator",
+          ),
+          "DecryptionAggregatorVerifier",
+        );
         const expected = JSON.parse(
           readFileSync(join(fixture, "expected.json"), "utf8"),
         );

@@ -21,14 +21,17 @@ use super::{commitments::key_bundle, prf};
 
 // The C4 and ciphertext commitments use centered, descending coefficients. The PRF and native
 // calculation must use the same values, but in ascending canonical residue order.
-fn centered(rows: [[u64; N]; L]) -> [Polynomial<N>; L] {
-    let mut result = [Polynomial::new([0; N]); L];
-    for l in 0..L {
-        let q = QIS_THRESHOLD[l] as u64;
-        for j in 0..N {
+pub fn centered_for<let D: u32, let M: u32>(
+    rows: [[u64; D]; M],
+    qis: [Field; M],
+) -> [Polynomial<D>; M] {
+    let mut result = [Polynomial::new([0; D]); M];
+    for l in 0..M {
+        let q = qis[l] as u64;
+        for j in 0..D {
             let r = rows[l][j];
             assert(r < q);
-            result[l].coefficients[N - 1 - j] = r as Field - (r > q / 2) as Field * q as Field;
+            result[l].coefficients[D - 1 - j] = r as Field - (r > q / 2) as Field * q as Field;
         }
     }
     result
@@ -36,12 +39,12 @@ fn centered(rows: [[u64; N]; L]) -> [Polynomial<N>; L] {
 
 pub fn component_commitment(rows: [[u64; N]; L]) -> Field {
     compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(
-        centered(rows),
+        centered_for(rows, QIS_THRESHOLD),
         DS_CIPHERTEXT,
     )
 }
 
-fn designated<let R: u32, let S: u32>(owner: u32, roster: [u32; R]) -> ([u32; S], u32) {
+pub fn designated<let R: u32, let S: u32>(owner: u32, roster: [u32; R]) -> ([u32; S], u32) {
     assert(S > 0);
     assert(S <= R);
     let mut ids = [0; S];
@@ -71,7 +74,10 @@ pub fn execute(
     d: [[u64; N]; L],
 ) -> (Field, Field) {
     assert(
-        compute_aggregated_shares_commitment_checked::<N, L, AGGREGATE_BIT>(centered(sk))
+        compute_aggregated_shares_commitment_checked::<N, L, AGGREGATE_BIT>(centered_for(
+            sk,
+            QIS_THRESHOLD,
+        ))
             == expected_sk,
     );
     assert(

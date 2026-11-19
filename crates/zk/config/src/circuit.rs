@@ -135,6 +135,18 @@ impl CircuitName {
     }
 
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
+        // Source discovery must not substitute the degree-64 definition for a secure circuit.
+        if profile == BfvProfile::SyncDecSecure8192 {
+            return match self {
+                Self::ThresholdShareDecryption | Self::DecryptedSharesAggregation => {
+                    Some(format!("synchronized_secure/{}", self.dir_path()))
+                }
+                // Same Minimum ABI and verification algorithm. Child pins and stored artifacts
+                // still belong to the secure namespace; never load an insecure VK by fallback.
+                Self::DecryptionAggregator => Some(format!("synchronized/{}", self.dir_path())),
+                _ => None,
+            };
+        }
         match profile.protocol() {
             BfvDecryptionProtocol::SecretShared => Some(self.dir_path()),
             BfvDecryptionProtocol::Synchronized

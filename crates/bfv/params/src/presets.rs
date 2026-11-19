@@ -63,6 +63,8 @@ pub enum BfvPreset {
     SecureDkg8192,
     /// Testing-only synchronized share transport (degree 64), with room for PRF-key bits.
     InsecureSyncDkg64,
+    /// Candidate transport for disabled synchronized secure Minimum.
+    SecureSyncDkg8192,
 }
 
 impl BfvPreset {
@@ -297,12 +299,13 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 5] = [
+    pub const ALL: [BfvPreset; 6] = [
         BfvPreset::InsecureThreshold64,
         BfvPreset::InsecureDkg64,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureDkg8192,
         BfvPreset::InsecureSyncDkg64,
+        BfvPreset::SecureSyncDkg8192,
     ];
 
     pub const PAIR_PRESETS: [BfvPreset; 2] = [
@@ -318,6 +321,7 @@ impl BfvPreset {
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
             "INSECURE_SYNCHRONIZED_DKG_64" => Ok(Self::InsecureSyncDkg64),
+            "SECURE_SYNCHRONIZED_DKG_8192" => Ok(Self::SecureSyncDkg8192),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
         }
     }
@@ -329,6 +333,7 @@ impl BfvPreset {
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
             BfvPreset::InsecureSyncDkg64 => "INSECURE_SYNCHRONIZED_DKG_64",
+            BfvPreset::SecureSyncDkg8192 => "SECURE_SYNCHRONIZED_DKG_8192",
         }
     }
 
@@ -385,9 +390,10 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold64 => Some(BfvPreset::InsecureDkg64),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
-            BfvPreset::InsecureDkg64 | BfvPreset::SecureDkg8192 | BfvPreset::InsecureSyncDkg64 => {
-                None
-            }
+            BfvPreset::InsecureDkg64
+            | BfvPreset::SecureDkg8192
+            | BfvPreset::InsecureSyncDkg64
+            | BfvPreset::SecureSyncDkg8192 => None,
         }
     }
 
@@ -401,7 +407,9 @@ impl BfvPreset {
             BfvPreset::InsecureDkg64 | BfvPreset::InsecureSyncDkg64 => {
                 Some(BfvPreset::InsecureThreshold64)
             }
-            BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
+            BfvPreset::SecureDkg8192 | BfvPreset::SecureSyncDkg8192 => {
+                Some(BfvPreset::SecureThreshold8192)
+            }
             BfvPreset::InsecureThreshold64 | BfvPreset::SecureThreshold8192 => None,
         }
     }
@@ -435,10 +443,10 @@ impl BfvPreset {
                 parameter_type: ParameterType::THRESHOLD,
                 security: SecurityTier::SECURE,
             },
-            BfvPreset::SecureDkg8192 => PresetMetadata {
+            BfvPreset::SecureDkg8192 | BfvPreset::SecureSyncDkg8192 => PresetMetadata {
                 name: self.name(),
                 degree: secure_8192::DEGREE,
-                num_moduli: secure_8192::dkg::MODULI.len(),
+                num_moduli: BfvParamSet::from(*self).moduli.len(),
                 num_parties: secure_8192::NUM_PARTIES,
                 lambda: DEFAULT_SECURE_LAMBDA,
                 parameter_type: ParameterType::DKG,
@@ -486,6 +494,9 @@ impl BfvPreset {
     /// Returns the base directory name for circuit artifacts (e.g. `"insecure-64"`, `"secure-8192"`).
     /// The synchronized DKG must never fall back to the SS artifact namespace.
     pub fn artifacts_dir(&self) -> String {
+        if *self == Self::SecureSyncDkg8192 {
+            return "sync-secure-8192".into();
+        }
         if *self == Self::InsecureSyncDkg64 {
             return "sync-insecure-64".into();
         }
@@ -586,6 +597,12 @@ impl From<BfvPreset> for BfvParamSet {
                 plaintext_modulus: insecure_64::synchronized_dkg::PLAINTEXT_MODULUS,
                 moduli: insecure_64::synchronized_dkg::MODULI,
                 error1_variance: Some(insecure_64::synchronized_dkg::ERROR1_VARIANCE),
+            },
+            BfvPreset::SecureSyncDkg8192 => BfvParamSet {
+                degree: secure_8192::DEGREE,
+                plaintext_modulus: secure_8192::synchronized_dkg::PLAINTEXT_MODULUS,
+                moduli: secure_8192::synchronized_dkg::MODULI,
+                error1_variance: Some(secure_8192::synchronized_dkg::ERROR1_VARIANCE),
             },
         }
     }

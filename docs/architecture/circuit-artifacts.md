@@ -115,6 +115,21 @@ release manifest, deployed synchronized route or hydration path exists; the exis
 and their anchors are unchanged. Emitting a disabled profile's canonical Solidity identity is not
 artifact or request admission.
 
+For synchronized **decryption only**, `decryption-candidate` rebuilds both ZK leaf VKs and the EVM
+outer VK in isolation. It publishes a local manifest only after the two ordered public pins match
+and the outer proof verifies against the rebuilt key. It records the profile/config ID, source
+identity, tool versions, roles, targets, gates and checksums of ACIR JSON, VKs and rendered
+Solidity. The role includes the circuit group: `dkg/share_decryption` is not C6. These candidates
+have no complete-pair stamp, archive hydration, active route, or SS fallback. See the
+[qualification runner](../../scripts/circuits/qualify-sync-decryption.sh).
+
+The reserved secure profile and transport append enum variants. The layout fixtures add rows only
+for those variants: prior persisted and wire encodings remain unchanged. The indexer rejects a
+disabled profile before request delivery; no old peer is expected to decode a new-profile request or
+recover new-profile work. No `protocol_version`, `node_generation` or schema bump, deployment or
+archive replacement is part of qualification. Removing these disabled definitions requires no
+production resync. Enabling them later needs its own compatibility and rollback decision.
+
 The keyshare [recovery qualification](../../crates/orchestration/keyshare/README.md#tests) stages
 explicit leaf/Default/EVM variants and VK hashes in private temporary directories, retaining the
 source Nargo dependency pins. Its final proof drives mandatory generated-Solidity acceptance under
