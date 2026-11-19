@@ -16,6 +16,7 @@ use crate::circuits::utils::bytes_to_field_strings;
 use crate::circuits::vk::{self, VkArtifacts};
 use crate::error::ZkError;
 use crate::prover::ZkProver;
+use crate::witness::CompiledCircuit;
 use e3_events::Proof;
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
@@ -48,7 +49,9 @@ pub(crate) struct C6ChonkCircuits {
     leaf: VkArtifacts,
     stack: ChonkStack,
     tube: VkArtifacts,
+    tube_compiled: CompiledCircuit,
     pub(crate) root: VkArtifacts,
+    root_compiled: CompiledCircuit,
 }
 
 impl C6ChonkCircuits {
@@ -70,7 +73,9 @@ impl C6ChonkCircuits {
                 ],
             )?,
             tube: vk::load_vk_artifacts(&default, CircuitName::C6ChonkTube)?,
+            tube_compiled: load_compiled(prover, CircuitName::C6ChonkTube, artifacts_dir)?,
             root: vk::load_vk_artifacts(&default, CircuitName::C6ChonkRoot)?,
+            root_compiled: load_compiled(prover, CircuitName::C6ChonkRoot, artifacts_dir)?,
         })
     }
 }
@@ -170,7 +175,7 @@ pub(crate) fn generate_c6_chonk(
     )?;
 
     let tube_witness = witness(
-        &load_compiled(prover, CircuitName::C6ChonkTube, artifacts_dir)?,
+        &circuits.tube_compiled,
         &TubeInput {
             chonk_vk: circuits.stack.chonk_key().verification_key.clone(),
             chonk_key_hash: circuits.stack.chonk_key().key_hash.clone(),
@@ -189,7 +194,7 @@ pub(crate) fn generate_c6_chonk(
     let tube_proof = bytes_to_field_strings(&tube.data)?;
     let tube_public = bytes_to_field_strings(&tube.public_signals)?;
     let root_witness = witness(
-        &load_compiled(prover, CircuitName::C6ChonkRoot, artifacts_dir)?,
+        &circuits.root_compiled,
         &RootInput {
             tube_vk: circuits.tube.verification_key.clone(),
             tube_proofs: [tube_proof.clone(), tube_proof],
