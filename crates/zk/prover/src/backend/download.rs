@@ -107,14 +107,53 @@ fn is_plain_relative_path(path: &str) -> bool {
             .all(|part| matches!(part, Component::Normal(_)))
 }
 
+/// The first artifact of the current required inventory that a configuration in `circuits_dir`
+/// lacks, relative to `circuits_dir`. The configurations are `required` and every supported
+/// configuration present on disk, so an extra configuration in a subset archive, or one left by an
+/// earlier installation, must also be complete.
+fn missing_required_artifact(circuits_dir: &Path, required: &[(&str, &str)]) -> Option<String> {
+    let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
+        .expect("invalid required circuit artifact inventory");
+    let mut configurations: HashSet<PathBuf> = required
+        .iter()
+        .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
+        .collect();
+    for (preset, committee) in supported_configurations() {
+        let preset_dir = circuits_dir.join(preset);
+        let pair_dir = preset_dir.join(committee);
+        if pair_dir.is_dir() {
+            configurations.insert(pair_dir);
+        }
+        if CIRCUIT_VARIANT_DIRS
+            .iter()
+            .any(|variant| preset_dir.join(variant).is_dir())
+        {
+            configurations.insert(preset_dir);
+        }
+    }
+    configurations.iter().find_map(|configuration| {
+        artifacts.iter().find_map(|artifact| {
+            let path = configuration.join(artifact);
+            (!path.is_file()).then(|| {
+                path.strip_prefix(circuits_dir)
+                    .expect("configuration is inside circuits directory")
+                    .display()
+                    .to_string()
+            })
+        })
+    })
+}
+
 impl ZkBackend {
-    /// Check the exact artifact paths selected during installation.
+    /// Check the exact artifact paths selected during installation, and that every installed
+    /// configuration holds the current required inventory: a release can require new artifacts
+    /// under the same circuits version, which the recorded inventory predates.
     pub(super) fn circuits_files_exist(&self, version_info: &VersionInfo) -> bool {
         if version_info.circuits.is_empty() {
             warn!("circuit artifact inventory is missing");
             return false;
         }
-        version_info.circuits.iter().all(|(key, circuit)| {
+        let recorded = version_info.circuits.iter().all(|(key, circuit)| {
             let valid = is_plain_relative_path(key)
                 && is_plain_relative_path(&circuit.file)
                 && self.circuits_dir.join(&circuit.file).is_file();
@@ -122,7 +161,17 @@ impl ZkBackend {
                 warn!(artifact = %circuit.file, "recorded circuit artifact is missing or invalid");
             }
             valid
-        })
+        });
+        if !recorded {
+            return false;
+        }
+        match missing_required_artifact(&self.circuits_dir, &[]) {
+            Some(artifact) => {
+                warn!(%artifact, "installed circuits lack a required artifact");
+                false
+            }
+            None => true,
+        }
     }
 
     /// Resolve a `checksums.json` entry to an on-disk path (legacy flat or per-committee layout).
@@ -594,38 +643,8 @@ async fn verify_circuits_dir(
         );
     }
 
-    let required: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
-        .expect("invalid required circuit artifact inventory");
-    let mut configurations: HashSet<PathBuf> = required_configurations
-        .iter()
-        .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
-        .collect();
-    for (preset, committee) in supported {
-        let preset_dir = circuits_dir.join(preset);
-        let pair_dir = preset_dir.join(committee);
-        // Additional configurations in a subset archive must also be complete.
-        if pair_dir.is_dir() {
-            configurations.insert(pair_dir);
-        }
-        if CIRCUIT_VARIANT_DIRS
-            .iter()
-            .any(|variant| preset_dir.join(variant).is_dir())
-        {
-            configurations.insert(preset_dir);
-        }
-    }
-    for configuration in configurations {
-        for artifact in &required {
-            let path = configuration.join(artifact);
-            if !path.is_file() {
-                return Err(ZkError::CircuitNotFound(
-                    path.strip_prefix(circuits_dir)
-                        .unwrap()
-                        .display()
-                        .to_string(),
-                ));
-            }
-        }
+    if let Some(missing) = missing_required_artifact(circuits_dir, required_configurations) {
+        return Err(ZkError::CircuitNotFound(missing));
     }
 
     for entry in WalkDir::new(circuits_dir) {
@@ -958,6 +977,42 @@ mod tests {
         let version = backend.load_version_info().await;
         assert!(version.circuits_match("candidate"));
         assert!(backend.circuits_files_exist(&version));
+    }
+
+    #[tokio::test]
+    async fn an_installation_predating_a_required_artifact_needs_the_same_version_again() {
+        let temp = TempDir::new().unwrap();
+        let backend = test_backend(&temp);
+        let source = temp.path().join("source");
+        write_circuits_dir(&source, b"circuit");
+        backend
+            .install_circuits_dir(&source, &supported_configurations())
+            .await
+            .unwrap();
+
+        // The same circuits version installed before the inventory required this artifact: it
+        // is neither on disk nor in the recorded inventory.
+        let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
+        let added = artifacts.last().unwrap();
+        let mut version = backend.load_version_info().await;
+        version.circuits.retain(|key, circuit| {
+            let predates = key.ends_with(added);
+            if predates {
+                fs::remove_file(backend.circuits_dir.join(&circuit.file)).unwrap();
+            }
+            !predates
+        });
+        version.save(&backend.version_file()).await.unwrap();
+
+        let version = backend.load_version_info().await;
+        assert!(version.circuits_match("candidate"));
+        assert!(!backend.circuits_files_exist(&version));
+
+        backend
+            .install_circuits_dir(&source, &supported_configurations())
+            .await
+            .unwrap();
+        assert!(backend.circuits_files_exist(&backend.load_version_info().await));
     }
 
     #[tokio::test]

@@ -8,7 +8,6 @@
 
 use crate::commitments::compute_share_computation_e_sm_commitment;
 use crate::commitments::compute_share_computation_sk_commitment;
-use crate::encoding::bigint_3d_to_json_values;
 use crate::encoding::crt_polynomial_to_toml_json;
 use crate::encoding::poly_coefficients_to_toml_json;
 use crate::WitnessError;
@@ -135,7 +134,8 @@ impl Inputs {
         })
     }
 
-    // Used as input for Nargo execution.
+    /// The final C2 circuit's own inputs: the secret and its commitment. The share grid `y` goes
+    /// to the chunk circuits through [`crate::dkg::share_computation_chain::Chain`].
     pub fn to_json(&self) -> serde_json::Value {
         let (key, value) = match self.dkg_input_type {
             DkgInputType::SecretKey => (
@@ -147,14 +147,9 @@ impl Inputs {
                 serde_json::Value::Array(crt_polynomial_to_toml_json(&self.secret_crt)),
             ),
         };
-
-        let mut json = serde_json::json!({
-            "y": bigint_3d_to_json_values(&self.y),
+        serde_json::json!({
             "expected_secret_commitment": self.expected_secret_commitment.to_string(),
-        });
-
-        json.as_object_mut().unwrap().insert(key.to_string(), value);
-
-        json
+            key: value,
+        })
     }
 }

@@ -24,50 +24,24 @@ impl<let L: u32> Configs<L> {
     }
 }
 
-/// Correct Threshold Secret Key Share Computation (Circuit 2a).
+/// The unchunked C2a statement over every coefficient in one circuit. The secret-shared C2a is
+/// proved as a chunk chain (`lib::core::dkg::share_computation_chain`); the synchronized C2
+/// (`lib::core::synchronized::share_computation`) still proves its sharing with this one.
 ///
 /// Verifies:
-/// 1. secret commitment: verify secret hashes to expected_secret_commitment
-/// 2. secret consistency: y[i][j][0] == sk_secret[i] for all i, j
-/// 3. Range check: shares are in [0, q_j)
-/// 4. Shamir check: y[i][j][0..=N_PARTIES] lie on one polynomial of degree <= T mod q_j
-///
-/// For SK: sk_secret is the trinary coefficients
+/// 1. secret commitment: the secret opens C1's `expected_secret_commitment`
+///    ([`verify_sk_secret_commitment`])
+/// 2. secret consistency: `y[i][j][0] == sk_secret[i]` for all i, j
+/// 3. range check: shares are in `[0, q_j)`
+/// 4. Shamir check: `y[i][j][0..=N_PARTIES]` lie on one polynomial of degree <= T mod `q_j`
 pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
     configs: Configs<L>,
-    /// Expected commitment to secret (from C1)
-    /// (public witness)
+    /// Commitment to the secret from C1 (public witness).
     expected_secret_commitment: Field,
-    /// Secret key polynomial: Polynomial<N>
-    /// trinary coefficients
-    /// (secret witness)
+    /// Secret key polynomial with trinary coefficients, lowest-degree first (secret witness).
     sk_secret: Polynomial<N>,
-    /// Shares: y[coeff_idx][mod_idx][0..N_PARTIES+1]
-    /// y[i][j][0] = sk_secret[i] = f(0), y[i][j][k] = f(k) for k = 1..N_PARTIES
-    /// (secret witnesses)
-    y: [[[Field; N_PARTIES + 1]; L]; N],
-}
-
-/// Correct Threshold Smudging Noise Share Computation (Circuit 2b).
-///
-/// Verifies:
-/// 1. secret commitment: verify secret hashes to expected_secret_commitment
-/// 2. secret consistency: y[i][j][0] == e_sm[j][i] for all i, j
-/// 3. Range check: shares are in [0, q_j)
-/// 4. Shamir check: y[i][j][0..=N_PARTIES] lie on one polynomial of degree <= T mod q_j
-///
-/// For ESM: e_sm[j] is the RNS representation at modulus j
-pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
-    configs: Configs<L>,
-    /// Expected commitment to secret (from C1)
-    /// This is computed from all L RNS polynomials (matching
-    /// multiple_polynomial_payload's behavior which hashes all L modulus polynomials)
-    expected_secret_commitment: Field,
-    /// Smudging noise polynomial per modulus: [Polynomial<N>; L]
-    /// For ESM: each modulus has its own polynomial (RNS representation)
-    e_sm_secret: [Polynomial<N>; L],
-    /// Shares: y[coeff_idx][mod_idx][0..N_PARTIES+1]
-    /// y[i][j][0] = e_sm[j][i] = f(0), y[i][j][k] = f(k) for k = 1..N_PARTIES
+    /// Shares: `y[i][j][0] = sk_secret[i] = f(0)`, `y[i][j][k] = f(k)` for `k = 1..N_PARTIES`
+    /// (secret witnesses).
     y: [[[Field; N_PARTIES + 1]; L]; N],
 }
 
@@ -81,157 +55,84 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         SecretKeyShareComputation { configs, expected_secret_commitment, sk_secret, y }
     }
 
-    /// Main verification function
+    /// Runs every check and returns the commitment to each party's shares.
     pub fn execute(self) -> [[Field; L]; N_PARTIES] {
-        // Step 1: Verify secret commitment matches expected
-        self.verify_secret_commitment();
-
-        // Step 2: Verify secret consistency
-        self.verify_secret_consistency();
-
-        // Step 3: Range checks
-        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
-
-        // Step 4: Verify the shares lie on one degree-T polynomial
-        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
-
-        // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
-    }
-
-    /// Verifies that secret hashes to expected_secret_commitment.
-    ///
-    /// Reverses `sk_secret` coefficients before hashing to match C1 (PkGeneration)'s
-    /// convention, which passes sk in highest-degree-first order. This ensures
-    /// `C1.sk_commitment == C2a.expected_secret_commitment` for the same sk.
-    ///
-    /// Opens with the checked packing helper. `sk_secret` carries no range check of its own here:
-    /// `check_range_bounds` covers the shares (`party_idx >= 1`), not the secret. Asserting each
-    /// packed digit fits its slot makes the opening unique, so the witness must equal the trinary
-    /// `sk` C1 committed. Without it the slot at `BIT_SECRET = 1` is only `radix = 2^8`, so a
-    /// coefficient of 240 or more overflows into the next and gives the commitment a second
-    /// opening -- the prover could Shamir-split a secret other than the one in the public key.
-    fn verify_secret_commitment(self) {
-        let mut reversed_coeffs: [Field; N] = [0; N];
-        for i in 0..N {
-            reversed_coeffs[i] = self.sk_secret.coefficients[N - 1 - i];
-        }
-        let reversed_sk = Polynomial::new(reversed_coeffs);
-        assert(
-            compute_share_computation_sk_commitment_checked::<N, BIT_SECRET>(reversed_sk)
-                == self.expected_secret_commitment,
-            "SK commitment mismatch",
+        verify_sk_secret_commitment::<N, BIT_SECRET>(
+            self.sk_secret,
+            self.expected_secret_commitment,
         );
-    }
-
-    /// Verifies secret consistency: `y[i][j][0] == sk_secret[i]` for all i, j.
-    ///
-    /// This function ensures that for each coefficient i and CRT basis j, the share
-    /// at party ID 0 equals the corresponding secret coefficient for that modulus.
-    /// This is a fundamental property of Shamir secret sharing where the secret is the
-    /// evaluation of the sharing polynomial at point 0.
-    ///
-    /// sk_secret is the trinary coefficients, so y[i][j][0] is the same for all j.
-    ///
-    /// # Panics
-    /// The circuit will fail if secret consistency doesn't hold for any
-    /// coefficient or CRT basis.
-    fn verify_secret_consistency(self) {
+        // sk is trinary, so the secret column is the same at every modulus.
         for coeff_idx in 0..N {
-            let secret_coeff = self.sk_secret.coefficients[coeff_idx];
-
             for mod_idx in 0..L {
-                assert(self.y[coeff_idx][mod_idx][0] == secret_coeff);
+                assert(self.y[coeff_idx][mod_idx][0] == self.sk_secret.coefficients[coeff_idx]);
             }
         }
+        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
+        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
     }
 }
 
-impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SmudgingNoiseShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
-    pub fn new(
-        configs: Configs<L>,
-        expected_secret_commitment: Field,
-        e_sm_secret: [Polynomial<N>; L],
-        y: [[[Field; N_PARTIES + 1]; L]; N],
-    ) -> Self {
-        SmudgingNoiseShareComputation { configs, expected_secret_commitment, e_sm_secret, y }
+/// Opens C1's `sk` commitment with `sk_secret`, which C2a holds lowest-degree first.
+///
+/// Reverses the coefficients to C1's highest-degree-first order, so
+/// `C1.sk_commitment == C2a.expected_secret_commitment` for the same sk, then hashes with the
+/// checked packing helper. `sk_secret` carries no range check of its own here: `check_range_bounds`
+/// covers the shares (`party_idx >= 1`), not the secret. Asserting each packed digit fits its slot
+/// makes the opening unique, so the witness must equal the trinary `sk` C1 committed. Without it
+/// the slot at `BIT_SECRET = 1` is only `radix = 2^8`, so a coefficient of 240 or more overflows
+/// into the next and gives the commitment a second opening -- the prover could Shamir-split a
+/// secret other than the one in the public key.
+pub fn verify_sk_secret_commitment<let N: u32, let BIT_SECRET: u32>(
+    sk_secret: Polynomial<N>,
+    expected_secret_commitment: Field,
+) {
+    let mut reversed_coeffs: [Field; N] = [0; N];
+    for i in 0..N {
+        reversed_coeffs[i] = sk_secret.coefficients[N - 1 - i];
     }
+    let reversed_sk = Polynomial::new(reversed_coeffs);
+    assert(
+        compute_share_computation_sk_commitment_checked::<N, BIT_SECRET>(reversed_sk)
+            == expected_secret_commitment,
+        "SK commitment mismatch",
+    );
+}
 
-    /// Main verification function
-    pub fn execute(self) -> [[Field; L]; N_PARTIES] {
-        // Step 1: Verify secret commitment matches expected
-        self.verify_secret_commitment();
-
-        // Step 2: Verify secret consistency
-        self.verify_secret_consistency();
-
-        // Step 3: Range checks
-        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
-
-        // Step 4: Verify the shares lie on one degree-T polynomial
-        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
-
-        // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
-    }
-
-    /// Verifies that secret hashes to expected_secret_commitment.
-    ///
-    /// Reverses and centers each `e_sm_secret` limb before hashing to match C1 (PkGeneration)'s
-    /// convention: C1 passes e_sm reversed+centered (highest-degree-first, coefficients in
-    /// `[-(q-1)/2, (q-1)/2]`). `e_sm_secret` here is in `[0, q)`, so we apply the same
-    /// reverse+center transform before hashing.
-    ///
-    /// Opens with the checked packing helper. The `as u64` cast below bounds each coefficient to
-    /// `2^64`, which is not tight enough for injectivity: at `BIT_SECRET = 57` the slot is
-    /// `radix = 2^64` and `base = 2^60`, so a digit can exceed it. Asserting the digit fits forces
-    /// the witness to equal the centered residues C1 committed and bounded.
-    fn verify_secret_commitment(self) {
-        let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
-        for j in 0..L {
-            let q = self.configs.qis[j];
-            let half = (q - 1) / 2;
-            let mut coeffs: [Field; N] = [0; N];
-            for i in 0..N {
-                // Reverse: position i gets the coefficient from N-1-i.
-                let c = self.e_sm_secret[j].coefficients[N - 1 - i];
-                // Center: shift [0, q) to [-(q-1)/2, (q-1)/2].
-                // c = e_sm_secret coeff in [0, q) < 2^62; half < 2^61: u64 saves 22 gates.
-                let centered = if (c as u64) > (half as u64) { c - q } else { c };
-                coeffs[i] = centered;
-            }
-            normalized[j] = Polynomial::new(coeffs);
+/// Opens C1's `e_sm` commitment with `e_sm_secret`, whose limbs C2b holds in `[0, q)` and
+/// lowest-degree first.
+///
+/// Reverses and centers each limb to C1's convention (highest-degree-first, coefficients in
+/// `[-(q-1)/2, (q-1)/2]`), then hashes with the checked packing helper. The `as u64` cast below
+/// bounds each coefficient to `2^64`, which is not tight enough for injectivity: at
+/// `BIT_SECRET = 57` the slot is `radix = 2^64` and `base = 2^60`, so a digit can exceed it.
+/// Asserting the digit fits forces the witness to equal the centered residues C1 committed and
+/// bounded.
+pub fn verify_e_sm_secret_commitment<let N: u32, let L: u32, let BIT_SECRET: u32>(
+    qis: [Field; L],
+    e_sm_secret: [Polynomial<N>; L],
+    expected_secret_commitment: Field,
+) {
+    let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
+    for j in 0..L {
+        let q = qis[j];
+        let half = (q - 1) / 2;
+        let mut coeffs: [Field; N] = [0; N];
+        for i in 0..N {
+            // Reverse: position i gets the coefficient from N-1-i.
+            let c = e_sm_secret[j].coefficients[N - 1 - i];
+            // Center: shift [0, q) to [-(q-1)/2, (q-1)/2].
+            // c = e_sm_secret coeff in [0, q) < 2^62; half < 2^61: u64 saves 22 gates.
+            let centered = if (c as u64) > (half as u64) { c - q } else { c };
+            coeffs[i] = centered;
         }
-        assert(
-            compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)
-                == self.expected_secret_commitment,
-            "ESM commitment mismatch",
-        );
+        normalized[j] = Polynomial::new(coeffs);
     }
-
-    /// Verifies secret consistency: `y[i][j][0] == e_sm_secret[j][i]` for all i, j.
-    ///
-    /// This function ensures that for each coefficient i and CRT basis j, the share
-    /// at party ID 0 equals the corresponding secret coefficient for that modulus.
-    /// This is a fundamental property of Shamir secret sharing where the secret is the
-    /// evaluation of the sharing polynomial at point 0.
-    ///
-    /// e_sm_secret[j] is the RNS representation at modulus j, so y[i][j][0] varies per modulus.
-    ///
-    /// # Panics
-    /// The circuit will fail if secret consistency doesn't hold for any
-    /// coefficient or CRT basis.
-    fn verify_secret_consistency(self) {
-        for coeff_idx in 0..N {
-            for mod_idx in 0..L {
-                let secret_coeff = self.e_sm_secret[mod_idx].coefficients[coeff_idx];
-                assert(
-                    self.y[coeff_idx][mod_idx][0] == secret_coeff,
-                    "Secret consistency check failed",
-                );
-            }
-        }
-    }
+    assert(
+        compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)
+            == expected_secret_commitment,
+        "ESM commitment mismatch",
+    );
 }
 
 /// Performs range checks on secret key and share values.
@@ -274,8 +175,10 @@ pub fn check_range_bounds<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SH
 /// per row instead of `N_PARTIES + 1`, and the weights are small integers, so each divisibility
 /// quotient is `T + 3` bits instead of a full `u64`.
 ///
-/// Bounds: the caller range-checks the shares to `[0, q_j)` and pins the secret column below `2 q_j`
-/// in magnitude (each C2 circuit opens it through a checked commitment). The weights sum to
+/// Bounds: the caller range-checks the shares to `[0, q_j)`. The secret column is below `2 q_j` in
+/// magnitude because every caller opens C1's secret through a checked commitment: the chunked C2's
+/// final circuit, which also checks the chunks absorbed that same secret into their chain digest
+/// (`lib::core::dkg::share_computation_chain`), and [`SecretKeyShareComputation`]. The weights sum to
 /// `2^(T + 1)` in absolute value, so a window's integer sum lies in `(-2^(T + 2) q_j, 2^(T + 2) q_j)`;
 /// the offset `2^(T + 2) q_j` makes it non-negative and its quotient below `2^(T + 3)`. Every term stays
 /// far below the field prime, so the field equation `sum + offset == quotient * q_j` is the integer

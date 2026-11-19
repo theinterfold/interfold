@@ -11,8 +11,8 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 11);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 10);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 15);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 14);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
@@ -27,6 +27,40 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
     assert!(config
         .select("secure", &["threshold/user_data_encryption_ct0".into()])
         .is_err());
+}
+
+#[test]
+fn c2_chunk_cases_always_run_in_the_default_variant() {
+    use e3_zk_config::{CircuitName, CircuitVariant};
+    for chunk in [
+        CircuitName::SkShareComputationChain,
+        CircuitName::SkShareComputationChainLast,
+        CircuitName::ESmShareComputationChain,
+        CircuitName::ESmShareComputationChainLast,
+    ] {
+        for requested in [
+            CircuitVariant::Recursive,
+            CircuitVariant::Default,
+            CircuitVariant::Evm,
+        ] {
+            let case = Case::Named(chunk);
+            assert_eq!(case.variant(requested), CircuitVariant::Default);
+            let record = Record::new(case, "insecure", case.variant(requested));
+            assert_eq!(record.variant, "default");
+        }
+    }
+    // Every other case, the final C2 circuits included, runs in the requested variant.
+    for case in [
+        Case::Named(CircuitName::SkShareComputation),
+        Case::Named(CircuitName::ESmShareComputation),
+        Case::Named(CircuitName::PkBfv),
+        Case::Ude,
+    ] {
+        assert_eq!(
+            case.variant(CircuitVariant::Recursive),
+            CircuitVariant::Recursive
+        );
+    }
 }
 
 #[test]
@@ -453,6 +487,118 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
         .unwrap_err()
         .to_string()
         .contains("digest differs"));
+}
+
+#[test]
+fn final_c2_loader_rejects_chunk_artifacts_from_another_build() {
+    use e3_zk_config::CircuitName;
+    let temp = tempfile::tempdir().unwrap();
+    let dist = temp.path().join("dist/circuits");
+    let pair = dist.join("insecure-64/minimum");
+    fs::create_dir_all(&pair).unwrap();
+    write_json(
+        &pair.join(".build-stamp.json"),
+        &serde_json::json!({"preset":"insecure-64","committee":"minimum","sourceHash":"published"}),
+    )
+    .unwrap();
+    let compiled = include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json");
+    let document: serde_json::Value = serde_json::from_str(compiled).unwrap();
+    let noir = document["noir_version"]
+        .as_str()
+        .unwrap()
+        .split('+')
+        .next()
+        .unwrap();
+    let mut files = serde_json::Map::new();
+    for (circuit, extensions) in [
+        (CircuitName::SkShareComputation, &["json", "vk"][..]),
+        (
+            CircuitName::SkShareComputationChain,
+            &["json", "vk", "vk_hash"][..],
+        ),
+        (
+            CircuitName::SkShareComputationChainLast,
+            &["json", "vk", "vk_hash"][..],
+        ),
+    ] {
+        for extension in extensions {
+            let relative = format!(
+                "insecure-64/minimum/default/{}/{}.{extension}",
+                circuit.dir_path(),
+                circuit.as_str()
+            );
+            let path = dist.join(&relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                &path,
+                if *extension == "json" {
+                    compiled
+                } else {
+                    "key"
+                },
+            )
+            .unwrap();
+            files.insert(relative, artifacts::digest(&path).unwrap().into());
+        }
+    }
+    write_json(
+        &dist.join("checksums.json"),
+        &serde_json::json!({"algorithm":"sha256","files":files}),
+    )
+    .unwrap();
+    let backend = e3_zk_prover::ZkBackend::new(
+        e3_zk_prover::BBPath::Custom(temp.path().join("bb")),
+        dist.clone(),
+        temp.path().join("work"),
+    );
+    let prover = e3_zk_prover::ZkProver::new(&backend);
+    let load = || {
+        artifacts::load(
+            temp.path(),
+            &prover,
+            "insecure-64/minimum",
+            Case::Named(CircuitName::SkShareComputation),
+            e3_zk_config::CircuitVariant::Default,
+            noir,
+            true,
+        )
+    };
+    load().unwrap();
+    let last = CircuitName::SkShareComputationChainLast;
+    let last_hash = pair.join(format!(
+        "default/{}/{}.vk_hash",
+        last.dir_path(),
+        last.as_str()
+    ));
+    fs::write(&last_hash, "another build's key").unwrap();
+    let error = format!("{:#}", load().unwrap_err());
+    assert!(
+        error.contains("sk_share_computation_chain_last.vk_hash"),
+        "{error}"
+    );
+    fs::write(&last_hash, "key").unwrap();
+
+    // A chunk the manifest covers, compiled by another Noir.
+    let full = CircuitName::SkShareComputationChain;
+    let relative = format!(
+        "insecure-64/minimum/default/{}/{}.json",
+        full.dir_path(),
+        full.as_str()
+    );
+    let mut other = document.clone();
+    other["noir_version"] = "0.0.1".into();
+    fs::write(dist.join(&relative), serde_json::to_vec(&other).unwrap()).unwrap();
+    files.insert(
+        relative.clone(),
+        artifacts::digest(&dist.join(&relative)).unwrap().into(),
+    );
+    write_json(
+        &dist.join("checksums.json"),
+        &serde_json::json!({"algorithm":"sha256","files":files}),
+    )
+    .unwrap();
+    let error = format!("{:#}", load().unwrap_err());
+    assert!(error.contains("Noir version 0.0.1"), "{error}");
 }
 
 #[test]

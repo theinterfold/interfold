@@ -272,6 +272,30 @@ pub(crate) fn load(
     if case != Case::Config && vk_path.is_file() {
         verify_manifest_file(prover, variant, &vk_path, &fs::read(&vk_path)?)?;
     }
+    if let Case::Named(name) = case {
+        // A final C2 proof is built from its chunk circuits, which the prover loads by itself:
+        // they must come from the same manifest and compiler as the circuit measured.
+        for chunk in e3_zk_prover::chunk_circuits(name).unwrap_or_default() {
+            let directory = prover
+                .circuits_dir(e3_zk_config::CircuitVariant::Default, pair)
+                .join(chunk.dir_path());
+            for extension in ["json", "vk", "vk_hash"] {
+                let path = directory.join(format!("{}.{extension}", chunk.as_str()));
+                let bytes = fs::read(&path)
+                    .with_context(|| format!("Chunk artifact {} is unavailable", path.display()))?;
+                verify_manifest_file(prover, e3_zk_config::CircuitVariant::Default, &path, &bytes)?;
+                if extension == "json" {
+                    let document: serde_json::Value = serde_json::from_slice(&bytes)?;
+                    let version = document["noir_version"]
+                        .as_str()
+                        .with_context(|| format!("Chunk circuit {chunk} has no Noir version"))?;
+                    if !e3_zk_build::reports_version(version, noir_pin) {
+                        bail!("Chunk circuit {chunk} Noir version {version} does not match Rust Noir {noir_pin}");
+                    }
+                }
+            }
+        }
+    }
     let vk_sha256 = if vk_path.is_file() && case == Case::Config {
         let actual = digest(&vk_path)?;
         if source_stamp["vk_sha256"][variant.as_str()] == actual {
