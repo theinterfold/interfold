@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Key trees of the chunked circuits. A final C2 proof verifies its chunk proofs against keys the
-//! prover passes and exposes their hash as its last public field, so the proof alone does not pin
-//! them. `c2ab_fold` anchors the hash in the VK tree for the on-chain path; a peer verifying a C2
-//! directly compares it here.
+//! Key trees of the chunked circuits. A final C2 or C4 proof verifies its chunk proofs against
+//! keys the prover passes and exposes their hash as its last public field, so the proof alone does
+//! not pin them. `c2ab_fold` and `c4ab_fold` anchor the hash in the VK tree for the on-chain path;
+//! a peer verifying a C2 or C4 directly compares it here.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::circuits::vk;
@@ -27,6 +27,11 @@ pub fn chunk_circuits(final_circuit: CircuitName) -> Option<&'static [CircuitNam
         CircuitName::ESmShareComputation => Some(&[
             CircuitName::ESmShareComputationChain,
             CircuitName::ESmShareComputationChainLast,
+        ]),
+        CircuitName::DkgShareDecryption => Some(&[
+            CircuitName::DkgShareDecryptionLimb0,
+            CircuitName::DkgShareDecryptionLimb1,
+            CircuitName::DkgShareDecryptionLimb2,
         ]),
         _ => None,
     }

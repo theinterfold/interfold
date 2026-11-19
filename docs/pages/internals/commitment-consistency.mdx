@@ -202,14 +202,16 @@ keys.
 [key_tree]                                          <- skipped by extract_share_commitments
 ```
 
-C4 (`share_decryption`) has $H \cdot L + 1$ fields. The rows follow the accepted roster order, not
-the full committee order:
+C4 (`share_decryption`) has $H \cdot L + 2$ fields: the expected commitments, the aggregate
+commitment and the hash of the limb keys. The rows follow the accepted roster order, not the full
+committee order:
 
 ```text
 [expected_commitments[0][0]] ... [expected_commitments[0][L-1]]
 ...
 [expected_commitments[H-1][0]] ... [expected_commitments[H-1][L-1]]
 [commitment]                                        <- aggregate, not compared
+[key_tree]                                          <- not compared
 ```
 
 ### Check logic

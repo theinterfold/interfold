@@ -353,7 +353,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let artifacts_dir =
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
 
-    for name in ["pk", "share_encryption", "share_decryption"] {
+    for name in ["pk", "share_encryption"] {
         setup_compiled_circuit(&backend, "dkg", name).await;
     }
     setup_chunked_dkg_circuits(&backend).await;
