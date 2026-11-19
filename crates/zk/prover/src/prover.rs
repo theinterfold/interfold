@@ -523,8 +523,8 @@ impl ZkProver {
     /// Verifies a rollup bin proof (`noir-rollup-no-zk`, Default variant), as
     /// [`Self::generate_rollup_proof`] proves it. bb checks the pairing and then the proof's IPA
     /// claim against its appended IPA proof (`UltraVerifier_::verify_ipa`, bb v6.0.0). In the
-    /// protocol no node verifies a rollup proof natively: the root rollup (`c3ab_fold`) closes the
-    /// claim in-circuit.
+    /// protocol no node verifies a rollup proof natively: a root rollup (`c3ab_fold`,
+    /// `c6_chonk_root`) closes the claim in-circuit.
     pub fn verify_rollup_proof(
         &self,
         proof: &Proof,
