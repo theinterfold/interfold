@@ -49,7 +49,9 @@ bb verify -k target/vk -p target/proof -i target/public_inputs -t noir-recursive
 `secure-minimum`, `secure-micro` and `secure-small` select degree-8192 threshold parameters with the
 respective committee dimensions. These probes expose an expected _synthetic_ mask for equality
 checking; they measure neither a C6 statement nor an admitted secure profile. Report gate count and
-proving time separately from compilation, witness solving, VK generation and verification.
+proving time separately from compilation, witness solving, VK generation and verification. With bb
+6.0.0, the monolithic secure Small probe needs 26 rounds and cannot prove within the backend's
+25-round limit. See the [sizing results](../../../circuits/benchmarks/synchronized-prf.md).
 
 ## Map and use
 

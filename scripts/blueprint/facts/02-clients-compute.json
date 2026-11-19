@@ -831,7 +831,7 @@
         {
           "name": "task pool: Tokio semaphore, Rayon pool, and a cancellation sender per task group",
           "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
+          "ref": "crates/task-pool/src/lib.rs@35@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
         },
         {
           "name": "requests the worker is running, counted per correlation ID",
@@ -848,12 +848,12 @@
         {
           "name": "TaskPool",
           "what": "bounded executor: spawn() takes a Tokio permit, runs the closure on Rayon, and returns its result or a TaskPoolError",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         },
         {
           "name": "TaskPoolError",
           "what": "pool failures: semaphore, receive, a panic in the closure, or a cancelled group",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
+          "ref": "crates/task-pool/src/lib.rs@39@pub enum TaskPoolError {"
         },
         {
           "name": "ComputeCapacity",
@@ -877,27 +877,27 @@
         },
         {
           "why": "the actor's request handler and its retry loop",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@550@async fn handle_compute_request_event("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@672@async fn handle_compute_request_event("
         },
         {
           "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+          "ref": "crates/task-pool/src/lib.rs@180@async fn spawn_inner<OP, T: Debug + Send + 'static>("
         },
         {
           "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@856@fn handle_compute_request("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@1061@fn handle_compute_request("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@505@impl Actor for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@611@impl Actor for Multithread {"
         },
         {
           "pattern": "actix-handler",
           "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@512@impl Handler<InterfoldEvent> for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@618@impl Handler<InterfoldEvent> for Multithread {"
         },
         {
           "pattern": "actix-recipient",
@@ -907,17 +907,17 @@
         {
           "pattern": "channel",
           "note": "a oneshot channel carries each Rayon result back to the async caller",
-          "ref": "crates/task-pool/src/lib.rs@213@let (tx, rx) = tokio::sync::oneshot::channel();"
+          "ref": "crates/task-pool/src/lib.rs@279@let (tx, rx) = tokio::sync::oneshot::channel();"
         },
         {
           "pattern": "tokio-select",
           "note": "the pool waits for either a group cancellation or a free semaphore permit",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
+          "ref": "crates/task-pool/src/lib.rs@163@tokio::select! {"
         },
         {
           "pattern": "tokio-spawn",
           "note": "a warning task logs long jobs and is aborted when the result arrives",
-          "ref": "crates/task-pool/src/lib.rs@178@let warning_handle = tokio::spawn(async move {"
+          "ref": "crates/task-pool/src/lib.rs@244@let warning_handle = tokio::spawn(async move {"
         }
       ],
       "depends_on": ["e3-request", "e3-trbfv", "e3-crypto", "e3-events", "e3-task-pool", "e3-utils", "e3-zk-prover"],
