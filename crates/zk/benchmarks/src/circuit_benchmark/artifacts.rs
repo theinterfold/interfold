@@ -273,8 +273,8 @@ pub(crate) fn load(
         verify_manifest_file(prover, variant, &vk_path, &fs::read(&vk_path)?)?;
     }
     if let Case::Named(name) = case {
-        // A final C2 proof is built from its chunk circuits, which the prover loads by itself:
-        // they must come from the same manifest and compiler as the circuit measured.
+        // A final C2 or C4 proof is built from its chunk or limb circuits, which the prover loads
+        // by itself: they must come from the same manifest and compiler as the circuit measured.
         for chunk in e3_zk_prover::chunk_circuits(name).unwrap_or_default() {
             let directory = prover
                 .circuits_dir(e3_zk_config::CircuitVariant::Default, pair)
