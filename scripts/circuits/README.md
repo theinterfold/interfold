@@ -285,8 +285,9 @@ pnpm store:circuits push
 
 The release archive must include:
 
-- `insecure-64/{minimum,micro,small}` for Sepolia and local rehearsals
-- `secure-8192/{minimum,micro,small}` for Sepolia secure-parameter tests and mainnet committees
+- `insecure-64/{minimum,micro,small,large}` for Sepolia and local rehearsals
+- `secure-8192/{minimum,micro,small,large}` for Sepolia secure-parameter tests and mainnet
+  committees
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
 set and committee size.
