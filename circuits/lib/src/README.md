@@ -37,18 +37,18 @@ flowchart LR
 
 ## core
 
-| Module                                       | Circuits  | Role                                                                                                                                |
-| -------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `dkg/pk`                                     | C0        | Individual pk commitment                                                                                                            |
-| `dkg/share_computation.nr`                   | C2a / C2b | Checks the C2 chunks and finals share: secret commitment openings, range checks, degree-T finite differences, and share commitments |
-| `dkg/share_computation_chain.nr`             | C2a / C2b | Chunk chain over C2's coefficient ranges: chunk statements, SAFE sponge links, and the final circuit's checks                       |
-| `dkg/share_encryption`                       | C3        | Encrypt share under recipient pk                                                                                                    |
-| `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                               |
-| `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                                  |
-| `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                                 |
-| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs; `bin/threshold/user_data_encryption` runs both                                                                |
-| `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                          |
-| `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                     |
+| Module                                       | Circuits  | Role                                                                                                                                                                                                           |
+| -------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dkg/pk`                                     | C0        | Individual pk commitment                                                                                                                                                                                       |
+| `dkg/share_computation.nr`                   | C2a / C2b | Checks the C2 chunks and finals share: secret commitment openings, range checks, degree-T finite differences, and share commitments; `SecretKeyShareComputation`, the unchunked C2a the synchronized C2 reuses |
+| `dkg/share_computation_chain.nr`             | C2a / C2b | Chunk chain over C2's coefficient ranges: chunk statements, SAFE sponge links, and the final circuit's checks                                                                                                  |
+| `dkg/share_encryption`                       | C3        | Encrypt share under recipient pk                                                                                                                                                                               |
+| `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                                                                                                          |
+| `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                                                                                                             |
+| `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                                                                                                            |
+| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs; `bin/threshold/user_data_encryption` runs both                                                                                                                                           |
+| `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                                                                                                     |
+| `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                                                                                                |
 
 ## configs
 

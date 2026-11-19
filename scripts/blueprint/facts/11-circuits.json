@@ -196,7 +196,7 @@
         },
         {
           "why": "the parity check: each window of T + 2 shares, weighted by alternating binomial coefficients, is zero modulo each prime",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@169@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@218@q_j.assert_zero_mod_bounded::<T + 3>(sum);"
         }
       ],
       "rust_patterns": [],
@@ -253,7 +253,7 @@
         },
         {
           "why": "the noise commitment check, after centering each modulus",
-          "ref": "circuits/lib/src/core/dkg/share_computation.nr@83@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
+          "ref": "circuits/lib/src/core/dkg/share_computation.nr@132@compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)"
         }
       ],
       "rust_patterns": [],

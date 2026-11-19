@@ -24,6 +24,55 @@ impl<let L: u32> Configs<L> {
     }
 }
 
+/// The unchunked C2a statement over every coefficient in one circuit. The secret-shared C2a is
+/// proved as a chunk chain (`lib::core::dkg::share_computation_chain`); the synchronized C2
+/// (`lib::core::synchronized::share_computation`) still proves its sharing with this one.
+///
+/// Verifies:
+/// 1. secret commitment: the secret opens C1's `expected_secret_commitment`
+///    ([`verify_sk_secret_commitment`])
+/// 2. secret consistency: `y[i][j][0] == sk_secret[i]` for all i, j
+/// 3. range check: shares are in `[0, q_j)`
+/// 4. Shamir check: `y[i][j][0..=N_PARTIES]` lie on one polynomial of degree <= T mod `q_j`
+pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
+    configs: Configs<L>,
+    /// Commitment to the secret from C1 (public witness).
+    expected_secret_commitment: Field,
+    /// Secret key polynomial with trinary coefficients, lowest-degree first (secret witness).
+    sk_secret: Polynomial<N>,
+    /// Shares: `y[i][j][0] = sk_secret[i] = f(0)`, `y[i][j][k] = f(k)` for `k = 1..N_PARTIES`
+    /// (secret witnesses).
+    y: [[[Field; N_PARTIES + 1]; L]; N],
+}
+
+impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SecretKeyShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
+    pub fn new(
+        configs: Configs<L>,
+        expected_secret_commitment: Field,
+        sk_secret: Polynomial<N>,
+        y: [[[Field; N_PARTIES + 1]; L]; N],
+    ) -> Self {
+        SecretKeyShareComputation { configs, expected_secret_commitment, sk_secret, y }
+    }
+
+    /// Runs every check and returns the commitment to each party's shares.
+    pub fn execute(self) -> [[Field; L]; N_PARTIES] {
+        verify_sk_secret_commitment::<N, BIT_SECRET>(
+            self.sk_secret,
+            self.expected_secret_commitment,
+        );
+        // sk is trinary, so the secret column is the same at every modulus.
+        for coeff_idx in 0..N {
+            for mod_idx in 0..L {
+                assert(self.y[coeff_idx][mod_idx][0] == self.sk_secret.coefficients[coeff_idx]);
+            }
+        }
+        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
+        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+    }
+}
+
 /// Opens C1's `sk` commitment with `sk_secret`, which C2a holds lowest-degree first.
 ///
 /// Reverses the coefficients to C1's highest-degree-first order, so
@@ -127,9 +176,9 @@ pub fn check_range_bounds<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SH
 /// quotient is `T + 3` bits instead of a full `u64`.
 ///
 /// Bounds: the caller range-checks the shares to `[0, q_j)`. The secret column is below `2 q_j` in
-/// magnitude because the final C2 circuit opens C1's secret through a checked commitment and checks
-/// the chunks absorbed that same secret into their chain digest
-/// (`lib::core::dkg::share_computation_chain`). The weights sum to
+/// magnitude because every caller opens C1's secret through a checked commitment: the chunked C2's
+/// final circuit, which also checks the chunks absorbed that same secret into their chain digest
+/// (`lib::core::dkg::share_computation_chain`), and [`SecretKeyShareComputation`]. The weights sum to
 /// `2^(T + 1)` in absolute value, so a window's integer sum lies in `(-2^(T + 2) q_j, 2^(T + 2) q_j)`;
 /// the offset `2^(T + 2) q_j` makes it non-negative and its quotient below `2^(T + 3)`. Every term stays
 /// far below the field prime, so the field equation `sum + offset == quotient * q_j` is the integer
