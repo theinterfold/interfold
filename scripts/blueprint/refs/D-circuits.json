@@ -133,7 +133,7 @@
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
       "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@218@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@223@circuitVerifier.verify(rawProof, publicInputs)",
       "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
@@ -142,7 +142,7 @@
       "if (!circuitVerifier.verify(rawProof, publicInputs)) {",
       "contract DecryptionAggregatorVerifier is"
     ],
-    "note": "Interfold passes its decryption verifier to InterfoldLifecycle, which calls verify (line 332), and BfvDecryptionVerifier forwards the proof to the DecryptionAggregatorVerifier Honk contract (line 218)."
+    "note": "Interfold passes its decryption verifier to InterfoldLifecycle, which calls verify (line 332), and BfvDecryptionVerifier forwards the proof to the DecryptionAggregatorVerifier Honk contract (line 223)."
   },
   {
     "id": "D12",
