@@ -48,6 +48,7 @@ check_committee_sizes "$2" "$3"
     ['minimum', '0'],
     ['micro', '1'],
     ['small', '2'],
+    ['large', '3'],
   ]) {
     select(name)
     const result = check('true', size)
