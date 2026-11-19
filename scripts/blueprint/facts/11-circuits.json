@@ -924,7 +924,7 @@
         {
           "name": "predecessor_key_hash",
           "what": "checks the prior keys are the leaf, fold and genesis keys, then returns the genesis key on step one and the fold key after",
-          "ref": "circuits/lib/src/math/recursive_vk.nr@10@pub fn predecessor_key_hash("
+          "ref": "circuits/lib/src/math/recursive_vk.nr@8@pub fn predecessor_key_hash("
         }
       ],
       "read_first": [
