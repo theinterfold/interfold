@@ -125,6 +125,7 @@ mod tests {
                 CiphernodesCommitteeSize::Minimum,
                 CiphernodesCommitteeSize::Micro,
                 CiphernodesCommitteeSize::Small,
+                CiphernodesCommitteeSize::Large,
             ] {
                 let c1 =
                     threshold::pk_generation::Configs::new(preset, &params, committee).unwrap();
