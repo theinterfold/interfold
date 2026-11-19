@@ -9,8 +9,8 @@ budget. `spawn` executes ordinary work; `spawn_in_group` also checks cancellatio
 and before the queued closure starts. `spawn_cancellable_in_group` adds a caller-owned cancellation
 for one attempt and admits a task that takes `units` of the pool's `capacity_units()` instead of the
 `SLOT_UNITS` of a full task; the caller sizes its threads and memory to that share. `cancel_group`
-permanently cancels that caller-defined group, and `wait_for_retry` makes retry waits
-interruptible. Running closures are not preempted.
+permanently cancels that caller-defined group, and `wait_for_retry` makes retry waits interruptible.
+Running closures are not preempted.
 
 The caller owns group identity, retry classification, result correlation, terminal filtering, and
 capacity policy. `TaskTimeouts` schedules diagnostic logs, not execution deadlines. Panics return a

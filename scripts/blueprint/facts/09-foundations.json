@@ -33,7 +33,7 @@
         { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {" },
         {
           "why": "Admission, queued cancellation and worker execution",
-          "ref": "crates/task-pool/src/lib.rs@169@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+          "ref": "crates/task-pool/src/lib.rs@180@async fn spawn_inner<OP, T: Debug + Send + 'static>("
         }
       ],
       "rust_patterns": [
@@ -45,7 +45,7 @@
         {
           "pattern": "tokio-select",
           "note": "Admission waits for a permit or cancellation",
-          "ref": "crates/task-pool/src/lib.rs@152@tokio::select! {"
+          "ref": "crates/task-pool/src/lib.rs@163@tokio::select! {"
         }
       ],
       "depends_on": [],
