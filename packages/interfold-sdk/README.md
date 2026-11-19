@@ -494,8 +494,8 @@ on-chain `paramSet` index registered in the Interfold contract:
 
 | Preset name               | On-chain `paramSet` index | Use case                                                                 |
 | ------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_64'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
-| `'SECURE_THRESHOLD_8192'` | `2`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
+| `'INSECURE_THRESHOLD_64'` | `4`                       | Fast local or testnet work. This preset is not cryptographically secure. |
+| `'SECURE_THRESHOLD_8192'` | `3`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
 
 | Network           | Supported presets                                       |
 | ----------------- | ------------------------------------------------------- |

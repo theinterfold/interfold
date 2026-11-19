@@ -261,8 +261,8 @@ set for the individual keys. The values come from `crates/bfv/params/src/constan
 
 | Preset        | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
 | ------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
-| `insecure-64` |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
-| `secure-8192` |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| `insecure-64` |          4 |               64 |                    3 |            17,000,000 |         64 |              2 |
+| `secure-8192` |          3 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
 
 `insecure-64` is for development and tests only. The code marks it as not for production. The
 deployment script refuses to deploy it on a chain that is not a known test or local chain.
