@@ -272,27 +272,67 @@ pub(super) async fn qualify(
         .collect::<Result<Vec<_>>>()?;
     let mut recipients = Vec::new();
     let mut setups = Vec::new();
+    let dealers = ids
+        .iter()
+        .zip(&nodes)
+        .map(|(&id, proof)| {
+            let signed = e3_events::SynchronizedDkgProofPublished::sign(
+                e3.clone(),
+                material[id as usize].context.clone(),
+                e3_events::SynchronizedDkgProofRole::Dealer,
+                proof.clone(),
+                &signers[id as usize],
+            )?;
+            let signed: e3_events::SynchronizedDkgProofPublished =
+                bincode::deserialize(&bincode::serialize(&signed)?)?;
+            ensure!(
+                signed.recover_address()? == selected.committee[id as usize].parse::<Address>()?
+            );
+            Ok((id, signed))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
     for owner in 0..recovered.len() {
-        let request = SynchronizedDkgProofRequest {
-            params_profile: PROFILE,
-            committee_size: COMMITTEE,
-            context: material[owner].context.clone(),
-            job: SynchronizedDkgProofJob::Recipient {
-                c0: c0[owner].clone(),
-                own_c2: c2[owner].clone(),
-                c4: c4[owner].clone(),
-                dealers: nodes.clone(),
-                expected: SynchronizedSetupAnchors {
-                    binding,
-                    recipient: owner as u32,
-                    dealers: ids.clone(),
-                    threshold_keys: keys.clone(),
-                    dealer_batch: batch,
-                    sk_commitment: sk[owner],
-                    key_bundle: bundles[owner],
+        use fhe_traits::DeserializeParametrized;
+        let root = &recovered[owner].0;
+        let transport = PublicKey::from_bytes(
+            &root.encryption_keys[&(owner as u64)].key.pk_bfv,
+            &config.transport,
+        )?;
+        let inputs = material[owner].recipient_inputs(
+            root.ciphernode_selected.as_ref().unwrap(),
+            chain.controller,
+            &transport,
+            &*cipher(owner).await?,
+        )?;
+        let plan = e3_zk_prover::synchronized::recipient::RecipientPlan::new(inputs)?;
+        let leaves = [
+            (0, c0[owner].clone()),
+            (2, c2[owner].clone()),
+            (
+                3 + (recovered.len() - 1) * config.threshold.moduli().len(),
+                c4[owner].clone(),
+            ),
+        ]
+        .into_iter()
+        .map(|(seq, proof)| {
+            (
+                seq,
+                e3_events::DKGInnerProofReady {
+                    e3_id: e3.clone(),
+                    party_id: owner as u64,
+                    seq,
+                    proof,
                 },
-            },
+            )
+        })
+        .collect();
+        let request = plan
+            .request(&leaves, &dealers)?
+            .context("reopened recipient collection is incomplete")?;
+        let SynchronizedDkgProofJob::Recipient { expected, .. } = &request.job else {
+            anyhow::bail!("wrong recipient job")
         };
+        ensure!(expected.threshold_keys == keys && expected.dealer_batch == batch);
         // Exercise the typed local request contract without enabling the production profile gate.
         let request = bincode::deserialize(&bincode::serialize(&request)?)?;
         let SynchronizedDkgProofResponse::Recipient {
@@ -302,6 +342,15 @@ pub(super) async fn qualify(
         else {
             anyhow::bail!("wrong synchronized recipient response");
         };
+        plan.validate_result(&request, &proof, &result)?;
+        let signed = e3_events::SynchronizedDkgProofPublished::sign(
+            e3.clone(),
+            material[owner].context.clone(),
+            e3_events::SynchronizedDkgProofRole::Recipient,
+            proof.clone(),
+            &signers[owner],
+        )?;
+        ensure!(signed.recover_address()? == selected.committee[owner].parse::<Address>()?);
         let setup = verify_recipient(
             prover,
             &config,

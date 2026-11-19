@@ -769,7 +769,11 @@ async fn synchronized_dealer_refused_publications_retry_without_new_input() -> R
         addr.send(Inspect(id)).await?;
         healthy.flush_event_pipeline().await?;
         let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-        assert_eq!(events.len(), 1, "flushed publication must retry");
+        assert_eq!(
+            events.len(),
+            if completed { 2 } else { 1 },
+            "flushed publication must retry"
+        );
         assert!(
             matches!(events[0].get_data(),
                 InterfoldEventData::SynchronizedDealerProofReady(_) if completed
@@ -777,6 +781,56 @@ async fn synchronized_dealer_refused_publications_retry_without_new_input() -> R
         );
         addr.send(StopDefinition).await?;
     }
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_dealer_partial_output_retry_only_admits_the_remaining_signed_effect(
+) -> Result<()> {
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
+    let (mut actor, input, plan) = fixture(&bus).await?;
+    collect(&mut actor, &input, &plan)?;
+    let id = input.e3_id.clone();
+    actor.dealer.effects = true;
+    assert!(actor.publish_dealer_work(&id));
+    let request = actor.dealer.in_flight[&id].clone();
+    let response = ComputeResponse::zk(
+        ZkResponse::SynchronizedDkg(SynchronizedDkgProofResponse::Dealer {
+            proof: proof(&plan, &id, CircuitName::NodeFold),
+        }),
+        request.correlation_id,
+        id.clone(),
+    );
+    actor.accept_dealer_input(&response.clone().into(), &ec(response))?;
+    bus.flush_event_pipeline().await?;
+    for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE - 1 {
+        bus.publish_without_context(EffectsEnabled::new())?;
+    }
+    assert!(!actor.publish_dealer_work(&id));
+    let pending = &actor.dealer.pending[&id];
+    assert_eq!(pending.events.len(), 1);
+    assert!(matches!(
+        pending.events[0],
+        InterfoldEventData::SynchronizedDkgProofPublished(_)
+    ));
+    let expected = pending.events[0].clone();
+    bus.flush_event_pipeline().await?;
+    for _ in 0..e3_utils::MAILBOX_LIMIT_LARGE - 1 {
+        bus.publish_without_context(EffectsEnabled::new())?;
+    }
+    assert!(
+        actor.publish_dealer_work(&id),
+        "retry must not spend its single admission slot on the local output again"
+    );
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.get_data() == &expected)
+            .count(),
+        1
+    );
     Ok(())
 }
 
@@ -1210,15 +1264,20 @@ async fn synchronized_dealer_completed_result_is_flushed_before_republication() 
     let events = resumed_history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?;
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0].get_data(), &InterfoldEventData::from(expected));
+    let InterfoldEventData::SynchronizedDkgProofPublished(signed) = events[1].get_data() else {
+        panic!("missing authenticated dealer output");
+    };
+    assert_eq!(signed.recover_address()?, restarted.signer.address());
+    assert_eq!(signed.role, SynchronizedDkgProofRole::Dealer);
     bus.flush_event_pipeline().await?;
     assert_eq!(
         history
             .send(GetEvents::<InterfoldEvent>::new())
             .await?
             .len(),
-        1
+        2
     );
     Ok(())
 }

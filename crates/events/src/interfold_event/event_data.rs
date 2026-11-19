@@ -159,6 +159,9 @@ interfold_event_data!(
     AggregationResumed,
     SynchronizedDkgContextEstablished,
     SynchronizedDealerProofReady,
+    SynchronizedDkgProofPublished,
+    SynchronizedRecipientInputsReady,
+    SynchronizedRecipientProofReady,
 );
 
 impl fmt::Display for EventType {
@@ -197,6 +200,7 @@ impl InterfoldEventData {
             self,
             InterfoldEventData::DecryptionshareCreated(_)
                 | InterfoldEventData::DkgCoordination(_)
+                | InterfoldEventData::SynchronizedDkgProofPublished(_)
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
@@ -290,6 +294,13 @@ impl InterfoldEventData {
                 Some(data.e3_id.clone())
             }
             InterfoldEventData::SynchronizedDealerProofReady(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::SynchronizedDkgProofPublished(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::SynchronizedRecipientInputsReady(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::SynchronizedRecipientProofReady(ref data) => {
+                Some(data.e3_id.clone())
+            }
             InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
                 Some(data.e3_id.clone())
             }

@@ -100,11 +100,11 @@ An outside-H recipient uses its own verified setup for the same batch; it does n
 publication-consent slot. A setup DTO alone is not a proof verdict: callers must admit the local
 worker source/correlation and cryptographic result before either helper.
 
-This remains unactivated: guarded recipient/C5/consent/publication actor and writer phases,
-full-node synchronized startup and synchronized C6 are absent. The capability replay fixture below
-does not enable production admission. Synchronized runtime folding/publication and decryption paths
-still refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and
-setup derivation require human protocol review before consumers freeze them.
+This remains unactivated: guarded C5/consent/publication actor and writer phases, full-node
+synchronized startup and synchronized C6 are absent. The capability replay fixture below does not
+enable production admission. Synchronized runtime folding/publication and decryption paths still
+refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and setup
+derivation require human protocol review before consumers freeze them.
 
 Typed local dealer/recipient/publication work uses a separate synchronized executor, not SS fold
 requests. Runtime admission rejects the disabled profile before touching proof artifacts; isolated
@@ -123,9 +123,36 @@ provisional alternates without changing the snapshot encoding. It rejects saved 
 without a configured journal. Replay waits for current-boot effects, restart preserves qualified
 proof bytes and replaces compute correlations, and confirmed key publication retires the phase.
 Local generation errors retain the exact request rather than accusing peers.
-`SynchronizedDealerProofReady` is local provenance only: authenticated peer delivery and recipient
-collection remain absent. Admission stays disabled; the explicit collection definition and
-real-proof qualification do not admit production effects.
+
+Dealer and recipient joins have a separate signed peer envelope, not an extension of the on-chain
+fault-attribution roles. Its `InterfoldSynchronizedDkgProof` EIP-712 domain (version `1`) binds the
+chain and Interfold controller; the statement binds the full uint256 E3 ID, committee hash,
+configuration, party, role and hashes of both proof and public-signal bytes. Dealer/recipient roles
+map exclusively to their respective join circuits. Low-S and canonical 27/28 parity are required.
+The exact encoding and wire cutover are described in [upgrades](upgrades.md).
+
+The same node collector owns recipient collection. It authenticates dealer authorship against the
+finalized committee before reserving a bounded slot. Early authenticated rows cannot choose a
+roster: native keyshare's C4 intent supplies the fixed H roster, verified C2 provenance,
+transport-key and SK/bundle anchors. Before that intent, the signed controller domain is provisional
+too. Incompatible early rows are discarded when the native intent arrives. C0, own C2 and C4 must
+come from local planned slots; all N recipients, including outside H, join exactly those H dealers.
+Retained peer rows are authenticated candidates; `NodesFold` recursively verifies their proofs, and
+the executor verifies the join. Proof bytes or genealogy can repair a candidate without changing its
+fixed statement. During a join, each dealer slot holds one alternate at most. Only a matching
+reported failure can promote a compatible repair and retire its correlation, within a per-boot
+budget per dealer. Neither new bytes nor local worker retries invalidate a running join. A join
+failure is not a localized peer-invalid verdict. PK/batch expectations are derived from those dealer
+rows; this collector does not independently compare native PK shares. Its exclusive record flushes
+before work or output, preserves completed output, replaces restart correlations, and retires at
+canonical DKG termination. A peer setup is never a local recipient verdict. Only the correlated
+local worker result produces the local setup event and signed peer setup. Downstream
+consent/publication producers still need to consume these outputs. Admission stays disabled;
+below-admission actor tests and real-proof qualification do not admit production effects.
+
+Recipient storage and bus delivery back off independently. Storage retry validates the latest
+retained record without dispatching unflushed work. Refused delivery retries from acknowledged
+progress without another write. Confirmed retirement cancels both timers.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

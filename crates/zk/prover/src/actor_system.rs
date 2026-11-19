@@ -21,6 +21,7 @@ use e3_task_pool::TaskPool;
 use std::collections::{HashMap, HashSet};
 
 use crate::actors::node_proof_aggregator::dealer::{self, DealerCollection, DealerRecovery};
+use crate::actors::node_proof_aggregator::recipient::{self, RecipientCollection, RecipientRecord};
 use crate::actors::node_proof_aggregator::recovery::NodeProofRecovery;
 use crate::actors::{
     NodeProofAggregator, ProofRequestActor, ProofVerificationActor, ShareVerificationActor,
@@ -40,6 +41,7 @@ pub struct ZkActorRecovery {
     node_proofs: NodeProofRecovery,
     dealer: DealerRecovery,
     interfold_addresses: HashMap<u64, Address>,
+    recipient_records: HashMap<E3id, RecipientRecord>,
     pending_c0: Vec<TypedEvent<EncryptionKeyReceived>>,
     /// E3s whose DKG ended before startup, also when they failed. The replay can bring back their
     /// C0 inputs, and the verifier does not admit them.
@@ -60,6 +62,7 @@ impl ZkActorRecovery {
             node_proofs: NodeProofRecovery::default(),
             dealer: DealerRecovery::default(),
             interfold_addresses: HashMap::new(),
+            recipient_records: HashMap::new(),
             pending_c0: Vec::new(),
             dkg_ended: HashSet::new(),
             canonical_keys: Default::default(),
@@ -113,6 +116,8 @@ impl ZkActorRecovery {
             aggregates,
         )
         .await?;
+        self.recipient_records =
+            recipient::recover(repositories, &self.e3_metadata, &self.dkg_ended).await?;
         self.pending_c0 = Box::pin(
             crate::actors::proof_verification::recovery::recover_pending_verifications(
                 eventstore,
@@ -172,6 +177,8 @@ pub fn setup_zk_actors(
         std::mem::take(&mut recovery.dealer),
     );
     let proof_verification = recovery.setup_proof_verification(bus, zk_actor.clone().recipient());
+    let recipient =
+        RecipientCollection::from_records(std::mem::take(&mut recovery.recipient_records));
     let ZkActorRecovery {
         finalized_committees,
         dkg_fold_attestation_contexts,
@@ -182,6 +189,9 @@ pub fn setup_zk_actors(
 
     let mut inner_proofs = node_proofs.proofs.clone();
     inner_proofs.extend(dealer.inner_proofs());
+    for (id, proofs) in recipient.inner_proofs() {
+        inner_proofs.entry(id).or_default().extend(proofs);
+    }
     let proof_request = ProofRequestActor::setup_with_recovery(
         bus,
         signer.clone(),
@@ -199,6 +209,7 @@ pub fn setup_zk_actors(
         repositories,
         node_proofs,
         dealer,
+        recipient,
     );
 
     ZkActors {

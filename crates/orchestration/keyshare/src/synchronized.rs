@@ -292,6 +292,46 @@ pub fn setup_binding(context: &SynchronizedProofContext, e3_id: &E3id) -> Result
 }
 
 impl SynchronizedDkgRecovery {
+    /// Public native intent for recipient collection. The caller still owns runtime admission,
+    /// local event source and effect fencing; this definition API never signs or dispatches.
+    pub fn recipient_inputs(
+        &self,
+        selected: &CiphernodeSelected,
+        interfold: Address,
+        transport_key: &fhe::bfv::PublicKey,
+        cipher: &Cipher,
+    ) -> Result<e3_events::SynchronizedRecipientInputsReady> {
+        self.validate(selected, interfold, cipher)?;
+        let committee =
+            CiphernodesCommitteeSize::from_threshold(selected.threshold_m, selected.threshold_n)?;
+        let config =
+            e3_zk_config::synchronized::Configs::for_profile(selected.params_profile, committee)?;
+        ensure!(
+            transport_key.params == config.transport && transport_key.c.len() == 2,
+            "recipient transport key belongs to another profile"
+        );
+        let key = e3_zk_witness::dkg::pk::Inputs::compute(&config.pk, transport_key)?;
+        Ok(e3_events::SynchronizedRecipientInputsReady {
+            e3_id: selected.e3_id.clone(),
+            params_profile: selected.params_profile,
+            committee_size: committee,
+            context: self.context.clone(),
+            dealers: self.dealer_ids.clone(),
+            transport_key: commitment_field(&e3_zk_witness::compute_dkg_pk_commitment(
+                &key.pk0is,
+                &key.pk1is,
+                config.pk.pk_bit,
+            ))?,
+            sk_commitment: self
+                .sk_commitment
+                .context("recipient intent has no native SK anchor")?,
+            key_bundle: self
+                .key_bundle
+                .context("recipient intent has no native bundle anchor")?,
+            c2_statements: self.c2_statements.clone(),
+        })
+    }
+
     pub fn validate(
         &self,
         selected: &CiphernodeSelected,

@@ -282,6 +282,7 @@ impl ThresholdKeyshare {
         self.recovery_payloads.forget_shares();
 
         // Publish DecryptionShareProofsPending to ProofRequestActor.
+        self.publish_synchronized_recipient_inputs(ec.clone())?;
         self.bus.publish(event, ec.clone())?;
 
         // Create collector and replay any early-arriving DecryptionKeyShared events

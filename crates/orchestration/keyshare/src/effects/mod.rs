@@ -16,6 +16,7 @@ mod generate_threshold_share;
 mod initialize_dkg;
 mod recovery;
 mod route_events;
+mod synchronized_recipient;
 mod track_proofs;
 mod verify_decryption_key;
 mod verify_threshold_shares;

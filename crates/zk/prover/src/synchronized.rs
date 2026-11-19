@@ -7,6 +7,7 @@ pub mod dealer;
 pub mod execution;
 pub mod provenance;
 pub mod publication;
+pub mod recipient;
 
 use crate::{Provable, ZkError};
 use anyhow::{ensure, Context, Result};
