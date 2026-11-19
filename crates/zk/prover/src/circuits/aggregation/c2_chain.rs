@@ -29,7 +29,7 @@ pub fn final_circuit(input_type: DkgInputType) -> CircuitName {
     }
 }
 
-fn load_compiled(
+pub(super) fn load_compiled(
     prover: &ZkProver,
     circuit: CircuitName,
     variant: CircuitVariant,
@@ -42,7 +42,7 @@ fn load_compiled(
     CompiledCircuit::from_file(&path)
 }
 
-fn prove_circuit(
+pub(super) fn prove_circuit(
     prover: &ZkProver,
     circuit: CircuitName,
     compiled: &CompiledCircuit,

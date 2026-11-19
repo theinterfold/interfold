@@ -191,7 +191,14 @@ pub(crate) fn prepare(
             )?;
             prepared(e3_zk_prover::ShareEncryptionCircuit, config, sample, record)
         }
-        Case::Named(CircuitName::DkgShareDecryption) => {
+        Case::Named(
+            name @ (CircuitName::DkgShareDecryption
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2),
+        ) => {
+            // C4 is proven as a limb chain: the final circuit's inputs are the limb proofs, and
+            // each limb circuit is measured on its own limb of the same sample.
             let config = dkg::share_decryption::Configs::new(&m.threshold, &m.dkg)?;
             let sample = e3_zk_samples::dkg::share_decryption::generate(
                 &config,
@@ -199,12 +206,42 @@ pub(crate) fn prepare(
                 m.committee.values(),
                 DkgInputType::SecretKey,
             )?;
-            prepared(
-                e3_zk_prover::DkgShareDecryptionCircuit,
-                config,
-                sample,
-                record,
-            )
+            // The limb circuits are artifacts: they load before the timer starts.
+            let limbs = if name == CircuitName::DkgShareDecryption {
+                record.preparation.metric = "limb_chain_proving_and_input_projection_wall".into();
+                Some(e3_zk_prover::LimbCircuits::load(prover, pair)?)
+            } else {
+                None
+            };
+            let start = Instant::now();
+            let result = (|| -> Result<InputMap> {
+                if let Some(limbs) = &limbs {
+                    let json = e3_zk_prover::final_share_decryption_inputs(
+                        prover,
+                        &config,
+                        &sample,
+                        limbs,
+                        "benchmark-c4",
+                        pair,
+                    )?;
+                    return Ok(e3_zk_prover::inputs_json_to_input_map(&json)?);
+                }
+                let inputs =
+                    e3_zk_witness::dkg::share_decryption::Inputs::compute(&config, &sample)?;
+                let chain = e3_zk_witness::dkg::share_decryption_chain::LimbChain::compute(
+                    &config, &inputs,
+                )?;
+                let limb = match name {
+                    CircuitName::DkgShareDecryptionLimb0 => 0,
+                    CircuitName::DkgShareDecryptionLimb1 => 1,
+                    _ => 2,
+                };
+                Ok(e3_zk_prover::inputs_json_to_input_map(
+                    &chain.limbs[limb].to_json(),
+                )?)
+            })();
+            record.preparation.finish(start.elapsed(), &result);
+            result
         }
         Case::Named(CircuitName::PkGeneration) => {
             let config =

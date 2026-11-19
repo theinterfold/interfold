@@ -27,6 +27,9 @@ impl Case {
                 CircuitName::ESmShareComputationChainLast,
                 CircuitName::ShareEncryption,
                 CircuitName::DkgShareDecryption,
+                CircuitName::DkgShareDecryptionLimb0,
+                CircuitName::DkgShareDecryptionLimb1,
+                CircuitName::DkgShareDecryptionLimb2,
                 CircuitName::PkGeneration,
                 CircuitName::PkAggregation,
                 CircuitName::ThresholdShareDecryption,
@@ -48,15 +51,18 @@ impl Case {
     pub fn name(self) -> String {
         self.path().rsplit('/').next().unwrap().to_string()
     }
-    /// The variant this case runs in. The C2 chunk circuits are only built, proven and verified
-    /// non-ZK (`default`), whichever variant the run requests.
+    /// The variant this case runs in. The C2 chunk and C4 limb circuits are only built, proven and
+    /// verified non-ZK (`default`), whichever variant the run requests.
     pub fn variant(self, requested: CircuitVariant) -> CircuitVariant {
         match self {
             Self::Named(
                 CircuitName::SkShareComputationChain
                 | CircuitName::SkShareComputationChainLast
                 | CircuitName::ESmShareComputationChain
-                | CircuitName::ESmShareComputationChainLast,
+                | CircuitName::ESmShareComputationChainLast
+                | CircuitName::DkgShareDecryptionLimb0
+                | CircuitName::DkgShareDecryptionLimb1
+                | CircuitName::DkgShareDecryptionLimb2,
             ) => CircuitVariant::Default,
             _ => requested,
         }

@@ -51,6 +51,12 @@ chunks, so its proof is the one peers and `c2ab_fold` consume, and its share com
 unchunked C2's. Gossip and threshold signing use that final proof. `c2ab_fold` verifies the final
 C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 
+**C4** is proven the same way, one CRT limb per proof: `share_decryption` (**C4a**, **C4b**) is the
+final circuit over `share_decryption_limb_0`, `_1` and `_2`, which each run C4's statement for one
+limb and carry the aggregate commitment sponge between them. Its commitments equal the unchunked
+C4's, so C6 is unchanged. `c4ab_fold` verifies the final C4a and C4b proofs and hashes each one's
+limb key tree into its key hash.
+
 ### DKG (`bin/dkg/`)
 
 | Path                                | ID        | `CircuitName`                  | Role                                                               |
@@ -63,7 +69,10 @@ C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 | `e_sm_share_computation_chain`      | C2b chunk | `ESmShareComputationChain`     | A chunk of C2b other than the last; non-ZK                         |
 | `e_sm_share_computation_chain_last` | C2b chunk | `ESmShareComputationChainLast` | The last chunk of C2b                                              |
 | `share_encryption`                  | C3        | `ShareEncryption`              | BFV encryption of shares under recipient keys                      |
-| `share_decryption`                  | C4        | `DkgShareDecryption`           | Decrypt shares; aggregate; commitments for P4                      |
+| `share_decryption`                  | C4        | `DkgShareDecryption`           | Decrypt shares; aggregate; commitments for P4; verifies the limbs  |
+| `share_decryption_limb_0`           | C4 limb   | `DkgShareDecryptionLimb0`      | CRT limb 0 of C4; non-ZK                                           |
+| `share_decryption_limb_1`           | C4 limb   | `DkgShareDecryptionLimb1`      | CRT limb 1 of C4; non-ZK                                           |
+| `share_decryption_limb_2`           | C4 limb   | `DkgShareDecryptionLimb2`      | CRT limb 2 of C4; non-ZK                                           |
 
 ### Threshold (`bin/threshold/`)
 

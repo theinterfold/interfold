@@ -544,9 +544,12 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
             values.push(("evm", "evm", "vk"));
         }
         values
-    } else if circuit.group == "dkg" && circuit.name.contains("_share_computation_chain") {
-        // The C2 chunk circuits are only proven non-ZK and verified inside the final C2 circuit,
-        // so their `default` key is the only one anything reads.
+    } else if circuit.group == "dkg"
+        && (circuit.name.contains("_share_computation_chain")
+            || circuit.name.starts_with("share_decryption_limb_"))
+    {
+        // The C2 chunk and C4 limb circuits are only proven non-ZK and verified inside their final
+        // circuit, so their `default` key is the only one anything reads.
         vec![("default", "noir-recursive-no-zk", "vk_recursive")]
     } else {
         vec![
@@ -934,7 +937,7 @@ mod tests {
     use e3_fhe_params::BfvPreset;
 
     #[test]
-    fn c2_chunk_circuits_build_only_their_default_key() {
+    fn chunk_and_limb_circuits_build_only_their_default_key() {
         let circuit = |group: &str, name: &str| Circuit {
             name: name.to_string(),
             group: group.to_string(),
@@ -952,10 +955,17 @@ mod tests {
             "sk_share_computation_chain_last",
             "e_sm_share_computation_chain",
             "e_sm_share_computation_chain_last",
+            "share_decryption_limb_0",
+            "share_decryption_limb_1",
+            "share_decryption_limb_2",
         ] {
             assert_eq!(names(&circuit("dkg", chunk)), ["default"], "{chunk}");
         }
-        for final_circuit in ["sk_share_computation", "e_sm_share_computation"] {
+        for final_circuit in [
+            "sk_share_computation",
+            "e_sm_share_computation",
+            "share_decryption",
+        ] {
             assert_eq!(
                 names(&circuit("dkg", final_circuit)),
                 ["evm", "default", "recursive"],
@@ -1458,9 +1468,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 27
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 30
         // seeded anchor keys the build does not write.
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 45);
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 48);
         let hash =
             identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
