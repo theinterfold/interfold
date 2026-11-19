@@ -14,13 +14,17 @@
 //!   production functions (C2 chunk chains, C3 Chonk chains, C4 limb chains, node folds, the C6
 //!   Chonk root), so they do not add to the `MEASURE` lines.
 //! - `STEP <label>/<step> <s>s`: sub-step wall times that a production function reports.
+//!   `STEP c3 proofs=<count>` is the number of C3 proofs in the `c3` phase.
+//! - `PREP <label> <s>s`: native witness preparation, outside every phase.
 //! - `PHASE <name> start <unix_ms>` / `PHASE <name> <s>s`, then `TOTAL <who> <s>s`.
 //! - `NOTE <text>`: a deviation from the production pipeline.
+//! - `FAIL <label>: <error>`: the prover call that ended the measurement.
 //!
 //! The measurements prove sequentially. Only the production function that runs work in parallel
 //! does so here: `prove_node_dkg_fold` runs C2ab || C3a chain || C3b chain with `rayon::join`.
 //! Set `RAYON_NUM_THREADS=1` to serialize it too. Production also runs independent proof requests
-//! (for example the C3 proofs) concurrently on its task pool, up to its configured limit.
+//! (for example the C3 proofs) concurrently on its task pool, up to its configured limit;
+//! `MEASURE_C3_POOL=1` proves the node's C3 batch that way.
 //!
 //! Staging: the shared `setup_compiled_circuit*` helpers in `common/helpers.rs` always stage under
 //! `insecure-64/<committee>`. [`stage`] stages the active `circuits/bin` artifacts under the
@@ -386,17 +390,21 @@ impl Phases {
     }
 
     pub fn run<T>(&mut self, name: &str, f: impl FnOnce() -> T) -> T {
-        println!("PHASE {name} start {}", now_ms());
-        let started = Instant::now();
+        let started = Self::start(name);
         let value = f();
-        let seconds = started.elapsed().as_secs_f64();
-        println!("PHASE {name} {seconds:.1}s");
-        self.rows.push((name.to_owned(), seconds));
+        self.end(name, started);
         value
     }
 
-    /// Records a phase timed by the caller, for async work `run` cannot wrap.
-    pub fn record(&mut self, name: &str, seconds: f64) {
+    /// Prints the start line of a phase that [`Self::end`] closes, for async work `run` cannot
+    /// wrap.
+    pub fn start(name: &str) -> Instant {
+        println!("PHASE {name} start {}", now_ms());
+        Instant::now()
+    }
+
+    pub fn end(&mut self, name: &str, started: Instant) {
+        let seconds = started.elapsed().as_secs_f64();
         println!("PHASE {name} {seconds:.1}s");
         self.rows.push((name.to_owned(), seconds));
     }
