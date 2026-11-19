@@ -18,6 +18,8 @@ required_artifacts=(
     ./circuits/bin/.active-preset.json
     ./circuits/bin/chonk/target/c3_chonk_app.json
     ./circuits/bin/recursive_aggregation/c3_chonk_tube/target/c3_chonk_tube.json
+    ./circuits/bin/recursive_aggregation/c3_chonk_accumulate/target/c3_chonk_accumulate.json
+    ./circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.json
     ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json
     ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json
 )

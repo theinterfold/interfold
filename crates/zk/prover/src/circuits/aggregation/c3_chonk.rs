@@ -324,6 +324,9 @@ fn prove_tubes(
         }
         seen[idx] = true;
     }
+    if inner_proofs.is_empty() {
+        return Ok(Vec::new());
+    }
     let leaves: Vec<(&Proof, u32)> = inner_proofs
         .iter()
         .zip(slot_indices.iter().copied())
