@@ -83,7 +83,7 @@ impl DecryptionAggregatorLayout {
 /// which is the same order as the Noir `-> pub (A, B, C)` tuple.
 ///
 /// Circuits whose output count depends on runtime parameters (e.g.
-/// `SkShareComputation` / `ESmShareComputation` whose return is `[[Field; L]; N]`)
+/// `SkShareComputation` / `ESmShareComputation` whose return is `([[Field; L]; N], Field)`)
 /// use [`CircuitOutputLayout::Dynamic`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CircuitOutputLayout {

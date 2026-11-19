@@ -365,7 +365,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
     let mut ude = None;
     let mut failures = Vec::new();
     for case in cases {
-        let mut record = records::Record::new(case, mode, variant);
+        let mut record = records::Record::new(case, mode, case.variant(variant));
         let result = leaf::benchmark(
             root,
             &output,

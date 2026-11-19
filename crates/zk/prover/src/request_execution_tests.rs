@@ -727,3 +727,98 @@ async fn execution_rejects_a_native_request_without_touching_its_secret() {
         matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(message)) if message == "expected a ZK request")
     );
 }
+
+/// A secret-shared C2 proof passes only when its trailing key tree hashes this node's chunk keys,
+/// through the public C2 verifier and the peer handler alike. A synchronized C2 has no key tree.
+#[test]
+fn both_c2_verifiers_reject_a_key_tree_other_than_this_nodes() {
+    use ark_ff::{BigInteger, PrimeField};
+    use e3_fhe_params::BfvProfile;
+    use e3_zk_config::CircuitName;
+    use std::fs;
+
+    fn field_bytes(value: ark_bn254::Fr) -> Vec<u8> {
+        let repr = value.into_bigint().to_bytes_be();
+        let mut out = vec![0; 32 - repr.len()];
+        out.extend(repr);
+        out
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    // bb accepts every outer proof, so only the key tree decides.
+    let bb = temp.path().join("bb");
+    fs::write(&bb, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&bb, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let backend = ZkBackend::new(
+        crate::BBPath::Default(bb),
+        temp.path().join("circuits"),
+        temp.path().join("work"),
+    );
+    let prover = ZkProver::new(&backend);
+    let artifacts_dir = "insecure-64/minimum";
+    let circuit = CircuitName::SkShareComputation;
+    let outer = prover
+        .circuits_dir(CircuitVariant::Recursive, artifacts_dir)
+        .join(circuit.dir_path());
+    fs::create_dir_all(&outer).unwrap();
+    fs::write(outer.join(format!("{}.vk", circuit.as_str())), [0u8; 32]).unwrap();
+    let chunks = crate::circuits::aggregation::chain_keys::chunk_circuits(circuit).unwrap();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let dir = prover
+            .circuits_dir(CircuitVariant::Default, artifacts_dir)
+            .join(chunk.dir_path());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{}.vk", chunk.as_str())), [0u8; 32]).unwrap();
+        fs::write(
+            dir.join(format!("{}.vk_hash", chunk.as_str())),
+            field_bytes(ark_bn254::Fr::from(i as u64 + 1)),
+        )
+        .unwrap();
+    }
+    let tree = e3_zk_witness::compute_vk_hash(vec![1u64.into(), 2u64.into()]);
+    let proof = |key_tree: ark_bn254::Fr| {
+        let mut signals = field_bytes(7u64.into());
+        signals.extend(field_bytes(key_tree));
+        Proof::new(
+            circuit,
+            ArcBytes::from_bytes(&[0u8; 8]),
+            ArcBytes::from_bytes(&signals),
+        )
+    };
+    let other = tree + ark_bn254::Fr::from(1u64);
+
+    for (key_tree, accepted) in [(tree, true), (other, false)] {
+        let proof = proof(key_tree);
+        assert_eq!(
+            ShareComputationCircuit
+                .verify(&prover, &proof, "e3-1", 1, artifacts_dir)
+                .unwrap(),
+            accepted
+        );
+        assert_eq!(
+            zk_verify_share_proof_bundle(
+                &prover,
+                BfvProfile::SsInsecure64,
+                &proof,
+                "e3-1",
+                1,
+                artifacts_dir
+            )
+            .unwrap(),
+            accepted
+        );
+    }
+    assert!(zk_verify_share_proof_bundle(
+        &prover,
+        BfvProfile::SyncDecInsecure64,
+        &proof(other),
+        "e3-1",
+        1,
+        artifacts_dir
+    )
+    .unwrap());
+}

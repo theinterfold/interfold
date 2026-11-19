@@ -215,8 +215,11 @@ change every verification key, VK tree anchor, and Honk verifier; proofs do not 
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
 rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
 the governance batch that raises the required protocol version, and upgrade every node before
-resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
-Storage schema and gossip/sync wire majors are unchanged.
+resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
+cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
+change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
+E3s can be neither folded nor link-checked, so drain them first too. Storage schema and gossip/sync
+wire majors are unchanged.
 
 ## BFV profile cutover
 
