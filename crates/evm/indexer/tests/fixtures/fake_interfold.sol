@@ -104,7 +104,8 @@ contract FakeInterfold {
 enum CommitteeSize {
   Minimum,
   Micro,
-  Small
+  Small,
+  Large
 }
 
 struct E3 {

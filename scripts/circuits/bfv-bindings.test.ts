@@ -361,7 +361,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'crates/committee/src/lib.rs',
       'crates/evm/client/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',
-      ...['minimum', 'micro', 'small'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
+      ...['minimum', 'micro', 'small', 'large'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
       ...['insecure', 'secure'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
     ]
     for (const file of files) {
@@ -427,7 +427,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
     )
     assert.throws(check, /admitted configurations must match the request configuration identities/)
     writeFileSync(active, originalActive)
-    for (const committee of ['minimum', 'micro', 'small']) {
+    for (const committee of ['minimum', 'micro', 'small', 'large']) {
       const changed = JSON.parse(source)
       changed.committees.find((record) => record.name === committee).h += 1
       writeFileSync(binding, JSON.stringify(changed))

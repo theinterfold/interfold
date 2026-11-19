@@ -160,6 +160,7 @@ impl BfvProfile {
                 CiphernodesCommitteeSize::Minimum
                     | CiphernodesCommitteeSize::Micro
                     | CiphernodesCommitteeSize::Small
+                    | CiphernodesCommitteeSize::Large
             ) | (Self::SyncDecInsecure64, CiphernodesCommitteeSize::Minimum)
         )
     }

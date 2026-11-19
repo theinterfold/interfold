@@ -262,7 +262,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
             if matches!(options.preset, PresetSelection::All) {
                 1
             } else {
-                2
+                3
             }
         );
         options.validate(temp.path()).unwrap();

@@ -12,8 +12,8 @@ Owners: [Rust circuit builder](../../crates/zk/build/),
 Use `pnpm build:circuits --committee <name> [--preset <preset>]` and `pnpm check:committee`. Do not
 hand-edit generated default/active selectors, C1/C2 bounds, generated TS/Solidity constants,
 verifier output, local `.active-preset.json`, or prepared OpenVM identity artifacts. Canonical
-committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
-preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
+committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`, large `(45,22,34)`.
+Every preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
 `pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,
 and deployment selections/routes. Binding, SDK, contract, and EVM-helper tests compare consumer
@@ -85,15 +85,15 @@ tree** under the old hash scheme. Another tree needs a rebuild, not a new label.
 `v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All six pairs in
 [supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship:
 insecure-64 and secure-8192 × minimum/micro/small. That matrix is canonical for release/installation
-and must be a subset of `scripts/circuits/build-pairs.json` (tooling test). Both Rust and TypeScript
-read that build policy. Wildcards preserve its order, not a Cartesian product; an unsupported
-explicit pair fails before tools or writes.
+and must be a subset of `scripts/circuits/build-pairs.json` (tooling test), which also builds the
+large pairs. Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a
+Cartesian product; an unsupported explicit pair fails before tools or writes.
 
 The builder's legacy `--preset` option now selects a protocol profile; SS retains its existing
 `insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
 separate `circuits/bin/synchronized/{dkg,threshold,recursive_aggregation}` sources/targets and
-generated static configuration, never SS JSON/VK fallback. The live six-pair build/release policy
-still excludes it. Explicitly seeded test policies may build its DKG leaves and draft provenance/
+generated static configuration, never SS JSON/VK fallback. The live build and release policy still
+excludes it. Explicitly seeded test policies may build its DKG leaves and draft provenance/
 publication definitions only: no complete stamp, active SS stamp update, recursive anchors,
 hydration or source-cache reuse. Partial/failed sync work invalidates only its own anchors/metadata.
 `sync-sources`/source checks include this definition without changing SS selectors or enabling
