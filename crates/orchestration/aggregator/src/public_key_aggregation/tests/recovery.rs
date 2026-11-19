@@ -233,7 +233,7 @@ async fn restart_during_c5_proof_generation_keeps_the_received_folds() -> Result
         .send(bus.event_from(effects_enabled, None)?.into_sequenced(0))
         .await?;
     let step = nodes_fold_step_requested(&history).await?;
-    let step_len = nodes_fold_step_len(0, committee_h);
+    let step_len = nodes_fold_step_len(0, honest.len());
     assert_eq!(step.slot_indices, (0..step_len as u32).collect::<Vec<_>>());
     assert_eq!(
         step.inner_proofs,
