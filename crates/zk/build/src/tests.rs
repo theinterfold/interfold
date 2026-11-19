@@ -1363,8 +1363,8 @@ fn bin_current_requires_every_required_artifact() {
 }
 
 /// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
-/// variant's VK and VK hash under its published name, the compiled program in every variant, and the
-/// VK-tree anchor only where the folding circuit has one.
+/// variant's VK and VK hash under its published name, the compiled program in every variant, and
+/// both VK-tree anchors, the C6 one at a path no circuit has.
 #[test]
 fn staging_bin_reproduces_the_published_pair_layout() {
     let temp = tempfile::tempdir().unwrap();
@@ -1392,11 +1392,15 @@ fn staging_bin_reproduces_the_published_pair_layout() {
             }
         }
     }
-    write(
-        &published,
-        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
-        "nodes_fold-anchor",
-    );
+    // The C6 tree anchor keeps the retired `c6_fold` path, which holds no circuit.
+    let anchors = ["nodes_fold", "c6_fold"];
+    for name in anchors {
+        write(
+            &published,
+            &format!("default/recursive_aggregation/{name}/{name}.vk_tree_hash"),
+            format!("{name}-anchor"),
+        );
+    }
     let stamp = artifacts::Stamp {
         preset: "insecure-64".into(),
         committee: "minimum".into(),
@@ -1404,6 +1408,13 @@ fn staging_bin_reproduces_the_published_pair_layout() {
         built_at: "time".into(),
     };
     artifacts::hydrate(root, &published, &request(), &stamp).unwrap();
+    assert_eq!(
+        fs::read_to_string(
+            root.join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash")
+        )
+        .unwrap(),
+        "c6_fold-anchor"
+    );
 
     let staged = root.join("staged/insecure-64/minimum");
     artifacts::stage_bin(root, &staged).unwrap();
@@ -1432,13 +1443,15 @@ fn staging_bin_reproduces_the_published_pair_layout() {
         }
     }
     assert!(!staged.join("evm/recursive_aggregation/nodes_fold").exists());
-    assert_eq!(
-        read(
-            &staged,
-            "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash".into()
-        ),
-        "nodes_fold-anchor"
-    );
+    for name in anchors {
+        assert_eq!(
+            read(
+                &staged,
+                format!("default/recursive_aggregation/{name}/{name}.vk_tree_hash")
+            ),
+            format!("{name}-anchor")
+        );
+    }
     assert!(!staged.join("default/dkg/pk/pk.vk_tree_hash").exists());
 }
 
