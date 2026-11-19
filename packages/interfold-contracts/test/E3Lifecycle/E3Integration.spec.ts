@@ -156,7 +156,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         committeeSize,
         inputWindow: [startTime + 100, startTime + ONE_DAY] as [number, number],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
@@ -1032,7 +1032,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         committeeSize: 0,
         inputWindow: [startTime, startTime + 20] as [number, number],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
@@ -4282,7 +4282,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           committeeSize: 0,
           inputWindow: [startTime, startTime + ONE_DAY] as [number, number],
           e3Program: await e3Program.getAddress(),
-          paramSet: 0,
+          paramSet: 4,
           computeProviderParams: abiCoder.encode(
             ["address"],
             [await decryptionVerifier.getAddress()],
@@ -4359,7 +4359,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           committeeSize: 0,
           inputWindow: [startTime, startTime + ONE_DAY] as [number, number],
           e3Program: await e3Program.getAddress(),
-          paramSet: 0,
+          paramSet: 4,
           computeProviderParams: abiCoder.encode(
             ["address"],
             [await decryptionVerifier.getAddress()],

@@ -113,7 +113,7 @@ describe("CiphernodeRegistryOwnable", function () {
       committeeSize: 0,
       inputWindow: [currentTime + 100, currentTime + 300] as [number, number],
       e3Program: await mockE3Program.getAddress(),
-      paramSet: 0,
+      paramSet: 4,
       computeProviderParams: abiCoder.encode(
         ["address"],
         [await mockDecryptionVerifier.getAddress()],

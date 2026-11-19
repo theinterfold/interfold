@@ -10,11 +10,11 @@ library BfvProtocol {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v5");
 
-    uint8 internal constant INSECURE_PARAM_SET = 0;
+    uint8 internal constant INSECURE_PARAM_SET = 4;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
         0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844;
 
-    uint8 internal constant SECURE_PARAM_SET = 2;
+    uint8 internal constant SECURE_PARAM_SET = 3;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3;
 
