@@ -11,7 +11,9 @@
 //! coefficients, and SAFE lets an absorb continue from a carried `(state, absorb_pos)`
 //! ([`absorb_from_block_boundary`]). So a chunk proof runs C2's per-coefficient checks on its coefficients and
 //! continues every party's sponge where the previous chunk stopped. The last chunk squeezes the
-//! commitments the unchunked C2 returns, and C1, C3, C4 and the folds above C2 do not change.
+//! commitments the unchunked C2 returns, so C1, C3 and C4 do not change. C2 also exposes its chunk
+//! key tree, which `c2ab_fold` hashes into its own key hash: the keys of the folds above C2 change,
+//! and fold artifacts built before chunking are not compatible.
 //!
 //! **Order.** C2 commits each share highest-degree first, so chunk `c` covers absorb positions
 //! `[c * K, c * K + K)`, which is `y_chunk[i] = y[N - 1 - (c * K + i)]`. `K` holds whole share
@@ -346,8 +348,8 @@ fn test_chunk<let K: u32>(y: [[[Field; 4]; 2]; 19], start: u32) -> [[[Field; 4];
     chunk
 }
 
-/// Runs the chain through chunks of 9, 9 and 1 and returns the last chunk's output hash.
-fn run_test_chain_with<let SECRET_LIMBS: u32>(y: [[[Field; 4]; 2]; 19]) -> Field {
+/// Runs the chain through chunks of 9, 9 and 1 and returns each chunk's `[h_in, h_out]` link.
+fn run_test_chain_with<let SECRET_LIMBS: u32>(y: [[[Field; 4]; 2]; 19]) -> [[Field; 2]; 3] {
     let configs = Configs::new(TQ);
     let share = initial_state(share_io_pattern::<19, 60>(), DS_SHARE_ENCRYPTION);
     let secret = initial_state(
@@ -357,31 +359,36 @@ fn run_test_chain_with<let SECRET_LIMBS: u32>(y: [[[Field; 4]; 2]; 19]) -> Field
     let mut states = [share; 7];
     states[6] = secret;
     let mut positions = [0; 7];
+    let mut links = [[0; 2]; 3];
     let mut h = chain_start_hash::<19, 2, 3, 60, SECRET_LIMBS>();
     for c in 0..2 {
         let chunk = test_chunk::<9>(y, c * 9);
-        h = share_computation_chunk::<9, 2, 3, 1, 60, SECRET_LIMBS>(
+        let h_out = share_computation_chunk::<9, 2, 3, 1, 60, SECRET_LIMBS>(
             configs,
             h,
             states,
             positions,
             chunk,
         );
+        links[c] = [h, h_out];
+        h = h_out;
         let (next_states, next_positions) =
             absorb_chunk::<9, 2, 3, 60, SECRET_LIMBS>(states, positions, chunk);
         states = next_states;
         positions = next_positions;
     }
-    share_computation_last_chunk::<1, 19, 2, 3, 1, 60, SECRET_LIMBS>(
+    let h_out = share_computation_last_chunk::<1, 19, 2, 3, 1, 60, SECRET_LIMBS>(
         configs,
         h,
         states,
         positions,
         test_chunk::<1>(y, 18),
-    )
+    );
+    links[2] = [h, h_out];
+    links
 }
 
-fn run_test_chain(y: [[[Field; 4]; 2]; 19]) -> Field {
+fn run_test_chain(y: [[[Field; 4]; 2]; 19]) -> [[Field; 2]; 3] {
     run_test_chain_with::<1>(y)
 }
 
@@ -397,7 +404,7 @@ fn chunked_commitments_equal_the_unchunked_c2_commitments() {
             outputs[1 + party_idx * 2 + mod_idx] = expected[party_idx][mod_idx];
         }
     }
-    assert(run_test_chain(y) == chain_output_hash(outputs));
+    assert(run_test_chain(y)[2][1] == chain_output_hash(outputs));
 }
 
 #[test(should_fail_with = "Divisibility check failed")]
@@ -419,6 +426,18 @@ fn a_chunk_rejects_a_carried_state_that_does_not_match_its_input_hash() {
     let (y, _) = test_sharing();
     let share = initial_state(share_io_pattern::<19, 60>(), DS_SHARE_ENCRYPTION);
     let mut states = [share; 7];
+    states[6] = initial_state(
+        secret_io_pattern::<19, 1>(),
+        DS_SHARE_COMPUTATION_CHAIN_SECRET,
+    );
+    // The fresh sponges match the start hash, so the chunk accepts them.
+    let _ = share_computation_chunk::<9, 2, 3, 1, 60, 1>(
+        Configs::new(TQ),
+        chain_start_hash::<19, 2, 3, 60, 1>(),
+        states,
+        [0; 7],
+        test_chunk::<9>(y, 0),
+    );
     states[3][1] = 1;
     let _ = share_computation_chunk::<9, 2, 3, 1, 60, 1>(
         Configs::new(TQ),
@@ -458,11 +477,10 @@ fn test_chain_outputs(y: [[[Field; 4]; 2]; 19], secret: Polynomial<19>) -> [Fiel
 #[test]
 fn the_final_circuit_returns_the_share_commitments_of_the_chain() {
     let (y, sk) = test_sharing();
-    let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
-    let commitments = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+    let commitments = sk_share_computation_final::<3, 19, 2, 3, 1, 60>(
         test_sk_commitment(sk),
         sk,
-        links,
+        run_test_chain(y),
         test_chain_outputs(y, sk),
     );
     assert(
@@ -476,11 +494,10 @@ fn the_final_circuit_rejects_a_chain_dealt_a_secret_other_than_the_opened_one() 
     let (y, sk) = test_sharing();
     let mut other = sk;
     other.coefficients[3] = 0;
-    let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
-    let _ = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+    let _ = sk_share_computation_final::<3, 19, 2, 3, 1, 60>(
         test_sk_commitment(sk),
         sk,
-        links,
+        run_test_chain(y),
         test_chain_outputs(y, other),
     );
 }
@@ -488,13 +505,12 @@ fn the_final_circuit_rejects_a_chain_dealt_a_secret_other_than_the_opened_one() 
 #[test(should_fail_with = "Chain output mismatch")]
 fn the_final_circuit_rejects_outputs_the_last_chunk_did_not_produce() {
     let (y, sk) = test_sharing();
-    let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
     let mut outputs = test_chain_outputs(y, sk);
     outputs[1] += 1;
-    let _ = sk_share_computation_final::<1, 19, 2, 3, 1, 60>(
+    let _ = sk_share_computation_final::<3, 19, 2, 3, 1, 60>(
         test_sk_commitment(sk),
         sk,
-        links,
+        run_test_chain(y),
         outputs,
     );
 }
@@ -525,7 +541,7 @@ fn chunked_e_sm_chain_carries_every_limb_of_the_secret() {
             outputs[1 + party_idx * 2 + mod_idx] = commitments[party_idx][mod_idx];
         }
     }
-    assert(run_test_chain_with::<2>(y) == chain_output_hash(outputs));
+    assert(run_test_chain_with::<2>(y)[2][1] == chain_output_hash(outputs));
 }
 
 /// A degree-1 sharing of an `e_sm` held as residues in `[0, q_j)`, with some above `(q_j - 1) / 2`
@@ -567,7 +583,7 @@ fn test_e_sm_commitment(e_sm: [Polynomial<19>; 2]) -> Field {
 #[test]
 fn the_e_sm_final_circuit_returns_the_share_commitments_of_the_chain() {
     let (y, e_sm) = test_e_sm_sharing();
-    let links = [[chain_start_hash::<19, 2, 3, 60, 2>(), run_test_chain_with::<2>(y)]];
+    let links = run_test_chain_with::<2>(y);
     let mut outputs = [0; 7];
     let commitments =
         crate::core::dkg::share_computation::commit_to_party_shares::<19, 2, 3, 60>(y);
@@ -577,7 +593,7 @@ fn the_e_sm_final_circuit_returns_the_share_commitments_of_the_chain() {
             outputs[1 + party_idx * 2 + mod_idx] = commitments[party_idx][mod_idx];
         }
     }
-    let returned = e_sm_share_computation_final::<1, 19, 2, 3, 7, 60>(
+    let returned = e_sm_share_computation_final::<3, 19, 2, 3, 7, 60>(
         Configs::new(TQ),
         test_e_sm_commitment(e_sm),
         e_sm,
@@ -592,7 +608,7 @@ fn the_final_check_rejects_a_chain_that_does_not_start_fresh() {
     let (y, sk) = test_sharing();
     let mut outputs = [0; 7];
     outputs[0] = sk_secret_digest(sk);
-    check_chain::<1, 19, 2, 3, 60, 1>([[1, run_test_chain(y)]], outputs);
+    check_chain::<1, 19, 2, 3, 60, 1>([[1, run_test_chain(y)[2][1]]], outputs);
 }
 
 #[test(should_fail_with = "Chunk link mismatch")]
@@ -601,5 +617,5 @@ fn the_final_check_rejects_chunks_that_do_not_link() {
     let mut outputs = [0; 7];
     outputs[0] = sk_secret_digest(sk);
     let start = chain_start_hash::<19, 2, 3, 60, 1>();
-    check_chain::<2, 19, 2, 3, 60, 1>([[start, 5], [6, run_test_chain(y)]], outputs);
+    check_chain::<2, 19, 2, 3, 60, 1>([[start, 5], [6, run_test_chain(y)[2][1]]], outputs);
 }
