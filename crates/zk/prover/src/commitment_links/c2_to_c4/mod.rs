@@ -44,7 +44,8 @@
 //! [expected_commitments[0][0] (32 B)] ... [expected_commitments[0][L-1]]
 //! [expected_commitments[1][0]] ...
 //! [expected_commitments[H-1][L-1]]
-//! [commitment (32 B, TAIL aggregated output)]
+//! [commitment (32 B, aggregated output)]
+//! [key_tree (32 B, hash of the limb keys, last)]
 //! ```
 //!
 //! ## Precise check
@@ -216,7 +217,7 @@ fn check_exact_l_commitments(
     let c2_block = &source_values[c2_start..c2_end];
 
     // C4 row for src_idx (the C2 sender): bytes [X*L*32 .. (X+1)*L*32].
-    // C4 must also have the aggregated output as the last field.
+    // C4's outputs (the aggregate commitment, then the limb key tree) follow the rows.
     let c4_row_start = src_idx * l * FIELD_BYTE_LEN;
     let c4_row_end = c4_row_start + l * FIELD_BYTE_LEN;
     if target_public_signals.len() < c4_row_end + FIELD_BYTE_LEN {
