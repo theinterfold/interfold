@@ -568,9 +568,9 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
             committee_size: committee,
         }),
         ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-            inner_proof: proof(),
+            inner_proofs: vec![proof()],
             prior_accumulator: None,
-            slot_index: 0,
+            slot_indices: vec![0],
             total_slots: 0,
             e3_id: "7".into(),
             params_profile: profile,
