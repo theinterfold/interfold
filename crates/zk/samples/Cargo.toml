@@ -23,4 +23,5 @@ num-bigint.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
+fhe = { workspace = true, features = ["synchronized-decryption"] }
 num-traits.workspace = true

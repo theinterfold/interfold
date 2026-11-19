@@ -76,6 +76,10 @@ one-based Shamir coordinates `party_id + 1`; zero, duplicate, unordered, and out
 coordinates fail. The wrapper subtracts one to locate registry slots. C7 proves every plaintext
 coefficient, including claimed zeros.
 
+The initial synchronized design fixes `S` to the lowest T+1 canonical IDs of the **confirmed
+H-roster** for one ciphertext, before producing any shares. Aggregator failover retains `S`. This is
+the rule for the pending synchronized C6/runtime work, not the SS retry-batch rule above.
+
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds
 to the batch this node reaches; a resumed C7 phase applies it under a fresh chain-scoped
