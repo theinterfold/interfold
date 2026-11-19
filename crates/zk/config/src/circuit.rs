@@ -100,6 +100,14 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
+    /// Chunked C2a: a chunk other than the last (non-ZK, verified by the final C2 circuit).
+    SkShareComputationChain,
+    /// Chunked C2a: the last chunk.
+    SkShareComputationChainLast,
+    /// Chunked C2b: a chunk other than the last.
+    ESmShareComputationChain,
+    /// Chunked C2b: the last chunk.
+    ESmShareComputationChainLast,
 }
 
 impl CircuitName {
@@ -214,6 +222,10 @@ impl CircuitName {
             CircuitName::NodesFoldKernel => "nodes_fold_kernel",
             CircuitName::DkgAggregator => "dkg_aggregator",
             CircuitName::DecryptionAggregator => "decryption_aggregator",
+            CircuitName::SkShareComputationChain => "sk_share_computation_chain",
+            CircuitName::SkShareComputationChainLast => "sk_share_computation_chain_last",
+            CircuitName::ESmShareComputationChain => "e_sm_share_computation_chain",
+            CircuitName::ESmShareComputationChainLast => "e_sm_share_computation_chain_last",
         }
     }
 
@@ -222,6 +234,10 @@ impl CircuitName {
             CircuitName::PkBfv => "dkg",
             CircuitName::SkShareComputation => "dkg",
             CircuitName::ESmShareComputation => "dkg",
+            CircuitName::SkShareComputationChain
+            | CircuitName::SkShareComputationChainLast
+            | CircuitName::ESmShareComputationChain
+            | CircuitName::ESmShareComputationChainLast => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
@@ -283,7 +299,11 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => CircuitOutputLayout::None,
+            | CircuitName::DecryptionAggregator
+            | CircuitName::SkShareComputationChain
+            | CircuitName::SkShareComputationChainLast
+            | CircuitName::ESmShareComputationChain
+            | CircuitName::ESmShareComputationChainLast => CircuitOutputLayout::None,
         }
     }
 

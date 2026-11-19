@@ -9,7 +9,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::CircuitName;
 use e3_zk_config::{dkg, threshold, DkgInputType};
-use e3_zk_prover::{CompiledCircuit, Provable};
+use e3_zk_prover::{CompiledCircuit, Provable, ZkProver};
 use fhe::bfv::BfvParameters;
 use noirc_abi::InputMap;
 use std::{sync::Arc, time::Instant};
@@ -54,10 +54,13 @@ fn prepared<P: Provable>(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     material: &Material,
     case: Case,
     compiled: &CompiledCircuit,
+    prover: &ZkProver,
+    pair: &str,
     ude: &mut Option<Ude>,
     shared: &mut Vec<SharedPreparation>,
     record: &mut Record,
@@ -109,8 +112,22 @@ pub(crate) fn prepare(
             let sample = e3_zk_samples::dkg::pk::generate(&m.dkg)?;
             prepared(e3_zk_prover::PkCircuit, config, sample, record)
         }
-        Case::Named(CircuitName::SkShareComputation | CircuitName::ESmShareComputation) => {
-            let input_type = if case == Case::Named(CircuitName::SkShareComputation) {
+        Case::Named(
+            name @ (CircuitName::SkShareComputation
+            | CircuitName::SkShareComputationChain
+            | CircuitName::SkShareComputationChainLast
+            | CircuitName::ESmShareComputation
+            | CircuitName::ESmShareComputationChain
+            | CircuitName::ESmShareComputationChainLast),
+        ) => {
+            // C2 is proven as a chunk chain: the full-size chunk, the last chunk and the final
+            // circuit that verifies them are the three circuits of every C2 proof.
+            let input_type = if matches!(
+                name,
+                CircuitName::SkShareComputation
+                    | CircuitName::SkShareComputationChain
+                    | CircuitName::SkShareComputationChainLast
+            ) {
                 DkgInputType::SecretKey
             } else {
                 DkgInputType::SmudgingNoise
@@ -118,12 +135,49 @@ pub(crate) fn prepare(
             let config = dkg::share_computation::Configs::new(m.preset, &m.threshold, m.committee)?;
             let sample =
                 e3_zk_samples::dkg::share_computation::generate(&config, m.preset, input_type)?;
-            prepared(
-                e3_zk_prover::ShareComputationCircuit,
-                config,
-                sample,
-                record,
-            )
+            let is_final = matches!(
+                name,
+                CircuitName::SkShareComputation | CircuitName::ESmShareComputation
+            );
+            // The final circuit's inputs are the chunk proofs, so preparing them proves the chain.
+            // Its chunk circuits are artifacts: they load before the timer starts.
+            let chunks = if is_final {
+                record.preparation.metric = "chunk_chain_proving_and_input_projection_wall".into();
+                Some(e3_zk_prover::ChunkCircuits::load(prover, input_type, pair)?)
+            } else {
+                None
+            };
+            let start = Instant::now();
+            let result = (|| -> Result<InputMap> {
+                if let Some(chunks) = &chunks {
+                    let (_, json) = e3_zk_prover::final_circuit_inputs(
+                        prover,
+                        &config,
+                        &sample,
+                        chunks,
+                        "benchmark-c2",
+                        pair,
+                    )?;
+                    return Ok(e3_zk_prover::inputs_json_to_input_map(&json)?);
+                }
+                let inputs =
+                    e3_zk_witness::dkg::share_computation::Inputs::compute(&config, &sample)?;
+                let chain =
+                    e3_zk_witness::dkg::share_computation_chain::Chain::compute(&config, &inputs)?;
+                let chunk = if matches!(
+                    name,
+                    CircuitName::SkShareComputationChainLast
+                        | CircuitName::ESmShareComputationChainLast
+                ) {
+                    chain.chunks.last()
+                } else {
+                    chain.chunks.first()
+                }
+                .expect("a chain has chunks");
+                Ok(e3_zk_prover::inputs_json_to_input_map(&chunk.to_json())?)
+            })();
+            record.preparation.finish(start.elapsed(), &result);
+            result
         }
         Case::Named(CircuitName::ShareEncryption) => {
             let config = dkg::share_encryption::Configs::new(&m.dkg)?;
