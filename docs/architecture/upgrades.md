@@ -212,8 +212,8 @@ rounds.
 The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
 change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
-rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
-the governance batch that raises the required protocol version, and upgrade every node before
+rollout: pause/drain, publish all eight artifact pairs, replace PK/decryption wrappers and routers
+in the governance batch that raises the required protocol version, and upgrade every node before
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
 cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
 change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
@@ -459,13 +459,14 @@ work that it still owes. Retire a profile in this order:
 Step 3 changes the circuit source hash of every preset/committee pair, although no circuit and no
 configuration ID changes. The hash covers `crates/bfv/params/src`, where the flag lives, and the
 generated `packages/interfold-contracts/crypto-config.json`, which records it. The release workflow
-pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all six pairs
-of `scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push`
-and qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
-Regenerate the sources with `pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity
-constants even for disabled profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop
-referencing retired identities in step 1. `pnpm check:crypto-config` checks all identity constants
-separately from exactly admitted request identities.
+pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all eight
+pairs of `scripts/circuits/build-pairs.json` for that release, push them with
+`pnpm store:circuits push` and qualify them again (see the
+[circuit builder usage](../../scripts/circuits/README.md#usage)). Regenerate the sources with
+`pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity constants even for disabled
+profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop referencing retired
+identities in step 1. `pnpm check:crypto-config` checks all identity constants separately from
+exactly admitted request identities.
 
 If a node of that release still refuses to start, it still owes work under the profile, such as
 accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not
