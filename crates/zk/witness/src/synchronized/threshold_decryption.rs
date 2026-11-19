@@ -7,10 +7,14 @@
 //! C6 preparation borrows the recovered C4 opening and the *same* local draw and native
 //! partial used for decryption. No sampling, identity repair, or key substitution here.
 
-use super::{binding_json, commitments, dealers, invalid, KeyBytes, SetupBinding};
+use super::{
+    binding_json, commitments, dealers, invalid,
+    polynomials::{components, native_rows},
+    KeyBytes, SetupBinding,
+};
 use crate::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
-    encoding::fhe_poly_to_crt_centered, validation, WitnessError,
+    encoding::fhe_poly_to_crt_centered, WitnessError,
 };
 use e3_zk_config::synchronized::Configs;
 use fhe::bfv::Ciphertext;
@@ -54,46 +58,9 @@ impl Opening<'_> {
                 "partial is not from the fixed designated owner/set",
             ));
         }
-        if ciphertext.level != 0 || ciphertext.len() != 2 {
-            return Err(invalid(
-                "synchronized C6 requires two level-zero components",
-            ));
-        }
-        let canonical = |matrix: ndarray::ArrayView2<'_, u64>| {
-            matrix
-                .outer_iter()
-                .zip(config.threshold.moduli())
-                .all(|(row, q)| row.iter().all(|v| v < q))
-        };
-        for component in ciphertext.iter() {
-            let matrix = component.coefficients();
-            validation::context(
-                "ciphertext",
-                component.ctx(),
-                matrix.nrows(),
-                matrix.ncols(),
-                &config.threshold,
-            )?;
-            if !canonical(matrix) {
-                return Err(invalid("noncanonical C6 NTT coefficient"));
-            }
-        }
-        let native = |poly: &Poly<PowerBasis>| -> Result<Vec<Vec<u64>>, WitnessError> {
-            let matrix = poly.coefficients();
-            validation::context(
-                "C6 polynomial",
-                poly.ctx(),
-                matrix.nrows(),
-                matrix.ncols(),
-                &config.threshold,
-            )?;
-            if !canonical(matrix) {
-                return Err(invalid("noncanonical C6 coefficient"));
-            }
-            Ok(matrix.outer_iter().map(|row| row.to_vec()).collect())
-        };
-        let sk = zeroize::Zeroizing::new(native(self.sk)?);
-        let share = zeroize::Zeroizing::new(native(d)?);
+        let [ct0, ct1] = components(config, ciphertext)?;
+        let sk = zeroize::Zeroizing::new(native_rows(config, self.sk)?);
+        let share = zeroize::Zeroizing::new(native_rows(config, d)?);
         let moduli = config.threshold.moduli();
         if &compute_aggregated_shares_commitment(
             &fhe_poly_to_crt_centered(self.sk, moduli)?,
@@ -113,8 +80,6 @@ impl Opening<'_> {
                 "C6 opening does not match published SK and key bundle",
             ));
         }
-        let ct0 = ciphertext[0].clone().into_power_basis();
-        let ct1 = ciphertext[1].clone().into_power_basis();
         if &compute_ciphertext_commitment(
             &fhe_poly_to_crt_centered(&ct0, moduli)?,
             &fhe_poly_to_crt_centered(&ct1, moduli)?,
@@ -146,7 +111,7 @@ impl Opening<'_> {
             "owner": self.owner, "roster": self.roster,
             "expected_sk": self.expected_sk.to_string(), "expected_bundle": self.expected_bundle.to_string(),
             "expected_ct": self.expected_ct.to_string(), "outgoing": self.outgoing, "incoming": self.incoming,
-            "sk": sk.as_slice(), "ct": [native(&ct0)?, native(&ct1)?], "shifted_noise": shifted.as_slice(), "d": share.as_slice(),
+            "sk": sk.as_slice(), "ct": [native_rows(config,&ct0)?, native_rows(config,&ct1)?], "shifted_noise": shifted.as_slice(), "d": share.as_slice(),
         }))
     }
 }

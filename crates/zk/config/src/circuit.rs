@@ -127,9 +127,10 @@ impl CircuitName {
     ];
 
     pub fn synchronized_definitions() -> impl Iterator<Item = Self> {
-        Self::SYNCHRONIZED_DKG
-            .into_iter()
-            .chain([Self::ThresholdShareDecryption])
+        Self::SYNCHRONIZED_DKG.into_iter().chain([
+            Self::ThresholdShareDecryption,
+            Self::DecryptedSharesAggregation,
+        ])
     }
 
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {

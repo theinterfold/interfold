@@ -5,6 +5,8 @@
 
 pub mod commitments;
 pub mod pk_generation;
+pub mod plaintext_aggregation;
+mod polynomials;
 pub mod provenance;
 pub mod publication;
 pub mod share_computation;

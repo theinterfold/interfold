@@ -34,6 +34,13 @@ fn centered(rows: [[u64; N]; L]) -> [Polynomial<N>; L] {
     result
 }
 
+pub fn component_commitment(rows: [[u64; N]; L]) -> Field {
+    compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(
+        centered(rows),
+        DS_CIPHERTEXT,
+    )
+}
+
 fn designated<let R: u32, let S: u32>(owner: u32, roster: [u32; R]) -> ([u32; S], u32) {
     assert(S > 0);
     assert(S <= R);
@@ -87,14 +94,8 @@ pub fn execute(
         plus[i] = outgoing[roster[row]];
         minus[i] = incoming[row];
     }
-    let c0 = compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(
-        centered(ct[0]),
-        DS_CIPHERTEXT,
-    );
-    let c1 = compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(
-        centered(ct[1]),
-        DS_CIPHERTEXT,
-    );
+    let c0 = component_commitment(ct[0]);
+    let c1 = component_commitment(ct[1]);
     assert(compute_commitment([c0, c1].as_vector(), DS_CIPHERTEXT) == expected_ct);
     let mask = prf::mask(ids, ct, QIS_THRESHOLD.map(|q| q as u64), plus, minus);
     let weights = lagrange_coefficients::<T + 1, L, SHARE_BIT, SHARE_BIT + 6>(

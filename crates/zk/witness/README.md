@@ -24,10 +24,14 @@ derives. Their opaque setup binding and draft root/bundle schema are described u
 [proof contracts](../../../docs/architecture/proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted);
 they do not authorize admission or replace the runtime SS encoders.
 
-C7 reads only the native ascending prefix selected by `config.max_msg_non_zero_coeffs`. It checks
+SS C7 reads only the native ascending prefix selected by `config.max_msg_non_zero_coeffs`. It checks
 exactly `T+1` shares, strictly increasing one-based committee IDs, and level-zero contexts. It pads
 short messages and computes commitments over that prefix. Noir performs interpolation and CRT
 reconstruction. For Small, C7 requires 10 shares, not the 14 shares required by C5.
+
+Synchronized Minimum C7 instead takes verified C6 public bytes in designated order, full native
+share openings and the level-zero ciphertext. Supply exactly the contracted plaintext width.
+Preparation checks context and openings; the caller owns proof verification and canonical authority.
 
 User-data encryption separates encryption from preparation. `Inputs::compute` takes the exact typed
 ciphertext and its `EncryptionIntermediates`; repeated preparation from the same material is

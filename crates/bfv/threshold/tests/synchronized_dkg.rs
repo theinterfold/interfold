@@ -69,6 +69,10 @@ impl Fixture {
     }
 
     fn native_at(binding: SetupBinding) -> Result<Self> {
+        Self::native_with_roster(binding, DEALERS)
+    }
+
+    fn native_with_roster(binding: SetupBinding, roster: [u32; 2]) -> Result<Self> {
         let config = Configs::for_profile(PROFILE, CiphernodesCommitteeSize::Minimum)?;
         let values = config.committee.values();
         let mut rng = ChaCha8Rng::seed_from_u64(245602);
@@ -161,7 +165,7 @@ impl Fixture {
                         config.pk_generation.bits.pk_bit,
                     ),
                 ],
-                prove: DEALERS.contains(&(dealer as u32)),
+                prove: roster.contains(&(dealer as u32)),
                 transport_slot: None,
             });
             let mut packed_commitments = Vec::new();
@@ -184,7 +188,7 @@ impl Fixture {
                     })
                     .collect();
                 packed_commitments.extend(expected.clone());
-                if !DEALERS.contains(&(dealer as u32)) {
+                if !roster.contains(&(dealer as u32)) {
                     continue;
                 }
                 let (encrypted, witnesses) = BfvEncryptedShare::encrypt_extended(
@@ -245,7 +249,7 @@ impl Fixture {
                 role: CircuitName::SkShareComputation,
                 inputs: sharing.to_json(),
                 outputs: packed_commitments,
-                prove: DEALERS.contains(&(dealer as u32)),
+                prove: roster.contains(&(dealer as u32)),
                 transport_slot: None,
             });
         }
@@ -262,14 +266,14 @@ impl Fixture {
                 &config,
                 binding,
                 recipient as u32,
-                &DEALERS,
+                &roster,
                 &sk,
                 &outgoing[recipient],
                 &received_keys[recipient],
             )?;
             let data = share_decryption::Data {
                 recipient_id: recipient as u32,
-                dealer_ids: DEALERS.to_vec(),
+                dealer_ids: roster.to_vec(),
                 expected_outgoing_root: roots[recipient].clone(),
                 expected_commitments: message_commitments[recipient].clone(),
                 packed_shares: messages[recipient].clone().into(),
@@ -426,7 +430,7 @@ impl CircuitJob {
         Ok(())
     }
 
-    fn reject(&self, input: &Value, case: &str) -> Result<()> {
+    fn reject(&self, input: &Value, case: &str) -> Result<String> {
         self.write(input)?;
         let output = Command::new("nargo")
             .arg("execute")
@@ -443,7 +447,7 @@ impl CircuitJob {
                 && !diagnostic.contains("bug:"),
             "{case} did not fail a completed constraint check: {diagnostic}"
         );
-        Ok(())
+        Ok(diagnostic)
     }
 
     fn prove(&self, bb: &Path, config: &Configs, leaf: &Leaf) -> Result<()> {
