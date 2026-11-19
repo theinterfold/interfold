@@ -313,6 +313,7 @@ async fn own_c0_reaches_the_node_fold_before_encryption_key_created() -> Result<
 fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
     let sensitive = || SensitiveBytes::from_encrypted(&[]);
     let share_request = |dkg_input_type| ShareComputationProofRequest {
+        synchronized: None,
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type,
@@ -329,18 +330,21 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             esi_sss: vec![],
         }),
         proof_request: PkGenerationProofRequest {
+            synchronized: None,
             pk0_share: ArcBytes::from_bytes(&[marker]),
             sk: sensitive(),
             eek: sensitive(),
-            e_sm: sensitive(),
+            e_sm: Some(sensitive()),
             params_profile: e3_fhe_params::BfvProfile::SsInsecure64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(DkgInputType::SecretKey),
-        e_sm_share_computation_request: share_request(DkgInputType::SmudgingNoise),
+        e_sm_share_computation_request: Some(share_request(DkgInputType::SmudgingNoise)),
         sk_share_encryption_requests: vec![],
         e_sm_share_encryption_requests: vec![],
         recipient_party_ids: vec![0],
+        own_sk_share_raw: sensitive(),
+        own_esi_shares_raw: vec![sensitive()],
     }
 }
 
@@ -368,6 +372,7 @@ fn recovered_threshold_proofs(e3_id: E3id, count: usize) -> HashMap<E3id, BTreeM
 
 fn decryption_share_proofs_pending(e3_id: E3id) -> DecryptionShareProofsPending {
     let request = |dkg_input_type| DkgShareDecryptionProofRequest {
+        synchronized: None,
         sk_bfv: SensitiveBytes::from_encrypted(&[]),
         honest_ciphertexts_raw: vec![],
         num_honest_parties: 0,
@@ -501,6 +506,36 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
     Ok(())
 }
 
+#[actix::test]
+async fn invalid_protocol_plan_does_not_retire_existing_correlations() -> Result<()> {
+    let EventFixture { bus, .. } = EventFixture::new()?;
+    let e3_id = E3id::new("invalid-plan-replacement", 1);
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
+    let mut ctx = Context::new();
+    let valid = threshold_share_pending(e3_id.clone(), 0x11);
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(valid.clone(), test_ctx(valid.clone())),
+        &mut ctx,
+    );
+    let correlations: HashSet<_> = actor.threshold_correlation.keys().copied().collect();
+    let mut invalid = valid;
+    invalid.e_sm_share_computation_request = None;
+    actor.handle_threshold_share_pending(
+        TypedEvent::new(invalid.clone(), test_ctx(invalid)),
+        &mut ctx,
+    );
+    assert_eq!(
+        actor
+            .threshold_correlation
+            .keys()
+            .copied()
+            .collect::<HashSet<_>>(),
+        correlations
+    );
+    assert!(actor.pending_threshold.contains_key(&e3_id));
+    Ok(())
+}
+
 /// `ThresholdSharePending` holds admission capacity at least until the actor's handler returns, so
 /// a C1-C3 plan larger than the admission window must still be dispatched in full, in plan order.
 #[actix::test]
@@ -535,7 +570,7 @@ async fn a_work_plan_larger_than_the_admission_window_is_dispatched_in_full() ->
     let planned: Vec<_> = [
         ZkRequest::PkGeneration(plan.proof_request.clone()),
         ZkRequest::ShareComputation(plan.sk_share_computation_request.clone()),
-        ZkRequest::ShareComputation(plan.e_sm_share_computation_request.clone()),
+        ZkRequest::ShareComputation(plan.e_sm_share_computation_request.clone().unwrap()),
     ]
     .into_iter()
     .chain(
@@ -724,6 +759,7 @@ async fn the_e3_end_forgets_its_proof_work() -> Result<()> {
         NodeAggregationMeta {
             party_id: 0,
             total_expected: 4,
+            c4_proofs: 2,
         },
     );
     actor.completed_threshold.insert(e3_id.clone());

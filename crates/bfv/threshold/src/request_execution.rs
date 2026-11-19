@@ -51,6 +51,11 @@ impl TrBFVRequest {
         };
         let result = match self {
             Self::GenPkShareAndSkSss(req) => {
+                if let Some(sync) = &req.synchronized {
+                    sync.profile
+                        .ensure_admission_enabled()
+                        .map_err(|error| self.failure(TrBFVFailure::from(error.to_string())))?;
+                }
                 let mut rng = lock_rng();
                 gen_pk_share_and_sk_sss(&mut *rng, cipher, req.clone())
                     .map(TrBFVResponse::GenPkShareAndSkSss)
@@ -109,6 +114,7 @@ mod tests {
             crp: ArcBytes::from_bytes(&crp.to_bytes()),
             lambda: preset.lambda_config(),
             num_ciphertexts: 1,
+            synchronized: None,
         });
         let TrBFVResponse::GenPkShareAndSkSss(material) = request.execute(&rng, &cipher).unwrap()
         else {
@@ -118,7 +124,7 @@ mod tests {
         assert!(!material.eek_raw.access(&cipher).unwrap().is_empty());
         let request = TrBFVRequest::GenEsiSss(GenEsiSssRequest {
             trbfv_config: config,
-            e_sm_raw: material.e_sm_raw,
+            e_sm_raw: material.e_sm_raw.unwrap(),
         });
         let TrBFVResponse::GenEsiSss(material) = request.execute(&rng, &cipher).unwrap() else {
             panic!("wrong response variant")
@@ -147,5 +153,33 @@ mod tests {
         let failure = error.failure().threshold.as_ref().unwrap();
         assert_eq!(failure.kind, crate::ThresholdFailureKind::MalformedShares);
         assert_eq!(failure.party_id, Some(2));
+    }
+
+    #[tokio::test]
+    async fn disabled_synchronized_generation_rejects_before_parameter_decode_or_rng_use() {
+        use crate::gen_pk_share_and_sk_sss::SynchronizedDkgGeneration;
+        use e3_committee::CiphernodesCommitteeSize;
+        use e3_fhe_params::BfvProfile;
+        use rand::RngCore;
+        let cipher = Cipher::from_password("disabled-sync-execution")
+            .await
+            .unwrap();
+        let rng: SharedRng = Arc::new(Mutex::new(rand_chacha::ChaCha20Rng::seed_from_u64(245603)));
+        let mut expected = rng.lock().unwrap().clone();
+        let request = TrBFVRequest::GenPkShareAndSkSss(GenPkShareAndSkSssRequest {
+            trbfv_config: TrBFVConfig::new(ArcBytes::default(), 3, 1),
+            crp: ArcBytes::default(),
+            lambda: BfvPreset::InsecureThreshold64.lambda_config(),
+            num_ciphertexts: 1,
+            synchronized: Some(SynchronizedDkgGeneration {
+                profile: BfvProfile::SyncDecInsecure64,
+                committee: CiphernodesCommitteeSize::Minimum,
+                owner: 2,
+                setup_binding: [1, 2],
+            }),
+        });
+        let error = request.execute(&rng, &cipher).unwrap_err();
+        assert!(error.to_string().contains("disabled"));
+        assert_eq!(rng.lock().unwrap().next_u64(), expected.next_u64());
     }
 }

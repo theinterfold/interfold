@@ -602,6 +602,38 @@ fn handle_share_computation_proof(
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
         admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    if req.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+        let config = e3_zk_config::synchronized::Configs::for_profile(
+            req.params_profile,
+            req.committee_size,
+        )
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let input =
+            crate::synchronized::prepare_share_computation(&config, &req, &request.e3_id, cipher)
+                .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let proof = prove_synchronized_leaf(
+            &crate::synchronized::ShareComputationCircuit,
+            prover,
+            &config,
+            &input,
+            &request,
+            &artifacts_dir,
+        )?;
+        return Ok(ComputeResponse::zk(
+            ZkResponse::ShareComputation(ShareComputationProofResponse {
+                proof,
+                dkg_input_type: req.dkg_input_type,
+            }),
+            request.correlation_id,
+            request.e3_id,
+        ));
+    }
+    if req.synchronized.is_some() {
+        return Err(make_zk_error(
+            &request,
+            "SS C2 cannot carry synchronized keys".into(),
+        ));
+    }
     // 1. Build BFV threshold parameters
     let (threshold_params, _dkg_params) = req
         .params_profile
@@ -691,6 +723,35 @@ fn handle_pk_generation_proof(
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
         admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    if req.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+        let config = e3_zk_config::synchronized::Configs::for_profile(
+            req.params_profile,
+            req.committee_size,
+        )
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let input =
+            crate::synchronized::prepare_pk_generation(&config, &req, &request.e3_id, cipher)
+                .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let proof = prove_synchronized_leaf(
+            &crate::synchronized::PkGenerationCircuit,
+            prover,
+            &config,
+            &input,
+            &request,
+            &artifacts_dir,
+        )?;
+        return Ok(ComputeResponse::zk(
+            ZkResponse::PkGeneration(PkGenerationProofResponse::new(proof)),
+            request.correlation_id,
+            request.e3_id,
+        ));
+    }
+    if req.synchronized.is_some() {
+        return Err(make_zk_error(
+            &request,
+            "SS C1 cannot carry synchronized context".into(),
+        ));
+    }
     // 1. Build BFV parameters from the threshold preset
     let params = BfvParamSet::from(req.params_profile.threshold_preset()).build_arc();
 
@@ -712,6 +773,8 @@ fn handle_pk_generation_proof(
         .map_err(|e| make_zk_error(&request, format!("eek decrypt: {}", e)))?;
     let e_sm_bytes = req
         .e_sm
+        .as_ref()
+        .ok_or_else(|| make_zk_error(&request, "SS C1 requires smudging material".into()))?
         .access_raw(cipher)
         .map_err(|e| make_zk_error(&request, format!("e_sm decrypt: {}", e)))?;
 
@@ -904,6 +967,38 @@ fn handle_dkg_share_decryption_proof(
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
         admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+    if req.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+        let config = e3_zk_config::synchronized::Configs::for_profile(
+            req.params_profile,
+            req.committee_size,
+        )
+        .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let input =
+            crate::synchronized::prepare_share_decryption(&config, &req, &request.e3_id, cipher)
+                .map_err(|e| make_zk_error(&request, e.to_string()))?;
+        let proof = prove_synchronized_leaf(
+            &crate::synchronized::ShareDecryptionCircuit,
+            prover,
+            &config,
+            &input,
+            &request,
+            &artifacts_dir,
+        )?;
+        return Ok(ComputeResponse::zk(
+            ZkResponse::DkgShareDecryption(DkgShareDecryptionProofResponse {
+                proof,
+                dkg_input_type: req.dkg_input_type,
+            }),
+            request.correlation_id,
+            request.e3_id,
+        ));
+    }
+    if req.synchronized.is_some() {
+        return Err(make_zk_error(
+            &request,
+            "SS C4 cannot carry synchronized keys".into(),
+        ));
+    }
     let (threshold_params, dkg_params) = req
         .params_profile
         .build_pair()
@@ -1044,6 +1139,30 @@ fn handle_dkg_share_decryption_proof(
         request.correlation_id,
         request.e3_id,
     ))
+}
+
+fn prove_synchronized_leaf<C: Provable<Config = e3_zk_config::synchronized::Configs>>(
+    circuit: &C,
+    prover: &ZkProver,
+    config: &e3_zk_config::synchronized::Configs,
+    input: &C::Input,
+    request: &ComputeRequest,
+    artifacts_dir: &str,
+) -> Result<Proof, ComputeRequestError> {
+    circuit
+        .prove(
+            prover,
+            config,
+            input,
+            &zk_bb_work_id(request),
+            artifacts_dir,
+        )
+        .map_err(|error| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+                request.clone(),
+            )
+        })
 }
 
 /// ZK-verify a share proof (inner recursive circuits).

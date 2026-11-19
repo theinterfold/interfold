@@ -2,7 +2,7 @@
 
 //! Dispatch C0 and threshold-share proof work and route compute results.
 
-use crate::utils::total_expected_for;
+use crate::utils::total_expected_for_profile;
 
 use super::*;
 
@@ -62,6 +62,17 @@ impl ProofRequestActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        let profile = msg.proof_request.params_profile;
+        if let Err(error) = profile
+            .ensure_admission_enabled()
+            .and_then(|()| profile.validate_committee(msg.proof_request.committee_size))
+        {
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Skipping DKG proof work for E3 {e3_id}: {error}"),
+            );
+            return;
+        }
         // Terminal cleanup ran already; a late request must not leave pending work behind.
         if self.finished_e3s.contains(&e3_id) {
             return;
@@ -75,6 +86,22 @@ impl ProofRequestActor {
             return;
         }
 
+        let sk_enc_count = msg.sk_share_encryption_requests.len();
+        let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
+        // Validate before replacing correlations or releasing C4 held for this sequence layout.
+        let dispatch = match plan_threshold_dispatch(
+            msg.proof_request,
+            msg.sk_share_computation_request,
+            msg.e_sm_share_computation_request,
+            msg.sk_share_encryption_requests,
+            msg.e_sm_share_encryption_requests,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(error) => {
+                self.bus.with_ec(&ec).err(EType::Computation, error);
+                return;
+            }
+        };
         if self.pending_threshold.contains_key(&e3_id) {
             let stale_count = self
                 .threshold_correlation
@@ -90,15 +117,19 @@ impl ProofRequestActor {
             );
         }
 
-        let sk_enc_count = msg.sk_share_encryption_requests.len();
-        let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
-
-        let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
+        let total_expected = total_expected_for_profile(profile, sk_enc_count, e_sm_enc_count);
         self.node_agg_meta.insert(
             e3_id.clone(),
             NodeAggregationMeta {
                 party_id: msg.full_share.party_id,
                 total_expected,
+                c4_proofs: if profile.protocol()
+                    == e3_fhe_params::BfvDecryptionProtocol::SecretShared
+                {
+                    2
+                } else {
+                    1
+                },
             },
         );
         if let Some(held) = self.held_decryption_pending.remove(&e3_id) {
@@ -112,6 +143,7 @@ impl ProofRequestActor {
             sk_enc_count,
             e_sm_enc_count,
             msg.recipient_party_ids,
+            profile,
         );
 
         // The node-fold collector persists every inner proof before accepting it.
@@ -121,13 +153,6 @@ impl ProofRequestActor {
             .recovered_inner_proofs
             .remove(&e3_id)
             .unwrap_or_default();
-        let dispatch = plan_threshold_dispatch(
-            msg.proof_request,
-            msg.sk_share_computation_request,
-            msg.e_sm_share_computation_request,
-            msg.sk_share_encryption_requests,
-            msg.e_sm_share_encryption_requests,
-        );
         for item in &dispatch {
             if let Some(proof) = recovered.get(&item.seq) {
                 pending.store_proof(&item.kind, proof.clone());

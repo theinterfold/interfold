@@ -5,5 +5,7 @@
 //! randomized outputs. These helpers do not enable the disabled synchronized profile.
 
 mod keys;
+mod sealed_keys;
 
 pub use keys::{pack_key, unpack_key, PrfKey};
+pub use sealed_keys::SealedPrfKeys;

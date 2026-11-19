@@ -429,7 +429,7 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    fn replay_decryption_key_shares(
+    pub(in crate::actors::threshold_keyshare) fn replay_decryption_key_shares(
         &mut self,
         recovery: &ThresholdKeyshareRecoveryState,
         self_addr: Addr<Self>,
@@ -441,12 +441,15 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    fn resume_generating_threshold_share(
+    pub(in crate::actors::threshold_keyshare) fn resume_generating_threshold_share(
         &mut self,
         data: GeneratingThresholdShareData,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        if data.pk_share.is_none() || data.sk_sss.is_none() || data.e_sm_raw.is_none() {
+        let is_sync =
+            self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized;
+        if data.pk_share.is_none() || data.sk_sss.is_none() || (!is_sync && data.e_sm_raw.is_none())
+        {
             let selected = data.ciphernode_selected.ok_or_else(|| {
                 anyhow!("missing CiphernodeSelected while resuming threshold share")
             })?;
@@ -515,7 +518,64 @@ impl ThresholdKeyshare {
             "unsupported threshold-keyshare recovery schema version {}",
             recovery.schema_version
         );
+        if let Some(material) = &recovery.synchronized {
+            let selected = recovery
+                .ciphernode_selected
+                .as_ref()
+                .ok_or_else(|| anyhow!("synchronized recovery has no canonical selection"))?;
+            material.validate(selected, self.interfold_address, &self.cipher)?;
+            ensure!(
+                selected.params_profile == self.params_profile,
+                "saved directed keys belong to another profile"
+            );
+            if matches!(
+                self.state.try_get()?.state,
+                KeyshareState::ReadyForDecryption(_)
+                    | KeyshareState::Decrypting(_)
+                    | KeyshareState::GeneratingDecryptionProof(_)
+                    | KeyshareState::Completed
+            ) {
+                ensure!(
+                    material.incoming_keys.is_some(),
+                    "advanced synchronized recovery has no C4 key provenance"
+                );
+            }
+            if let Some(pending) = self.recovery_payloads.pending() {
+                material.validate_pending(selected, pending, &self.cipher)?;
+            }
+            if material.incoming_keys.is_some() {
+                ensure!(
+                    self.state
+                        .try_get()?
+                        .honest_parties
+                        .as_ref()
+                        .is_some_and(|roster| {
+                            roster
+                                .iter()
+                                .copied()
+                                .eq(material.dealer_ids.iter().map(|&id| u64::from(id)))
+                        }),
+                    "saved synchronized keys differ from the accepted roster"
+                );
+            }
+        } else if self.params_profile.protocol()
+            == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        {
+            ensure!(
+                self.state.get().is_none_or(|state| matches!(
+                    state.state,
+                    KeyshareState::Init
+                        | KeyshareState::CollectingEncryptionKeys(_)
+                        | KeyshareState::GeneratingThresholdShare(GeneratingThresholdShareData {
+                            pk_share: None,
+                            ..
+                        })
+                )),
+                "synchronized recovery is missing previously generated directed keys"
+            );
+        }
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
+        self.discard_unanchored_synchronized_c4(&ec)?;
         // The saved expulsions can already explain a held Ready update: the write that applies it
         // is separate from the expulsion's, and a refused write must not strand the update.
         self.apply_held_ready_updates(ec.clone())?;

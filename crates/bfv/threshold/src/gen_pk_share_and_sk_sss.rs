@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::synchronized::{PrfKey, SealedPrfKeys};
 /// This module defines event payloads that will generate the public key share as well as the sk shamir secret shares to be distributed to other members of the committee.
 /// This has been separated from the esi setup in order to be able to take advantage of parallelism
 use crate::{
@@ -12,7 +13,9 @@ use crate::{
     TrBFVConfig,
 };
 use anyhow::Result;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::{Cipher, SensitiveBytes};
+use e3_fhe_params::BfvProfile;
 use e3_fhe_params::LambdaConfig;
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
@@ -38,6 +41,15 @@ pub struct GenPkShareAndSkSssRequest {
     pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
+    pub synchronized: Option<SynchronizedDkgGeneration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SynchronizedDkgGeneration {
+    pub profile: BfvProfile,
+    pub committee: CiphernodesCommitteeSize,
+    pub owner: u32,
+    pub setup_binding: [u128; 2],
 }
 
 struct InnerRequest {
@@ -45,6 +57,7 @@ struct InnerRequest {
     pub crp: CommonRandomPoly,
     pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
+    pub synchronized: Option<SynchronizedDkgGeneration>,
 }
 
 impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
@@ -57,6 +70,7 @@ impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
             crp,
             lambda: value.lambda,
             num_ciphertexts: value.num_ciphertexts,
+            synchronized: value.synchronized,
         })
     }
 }
@@ -74,7 +88,8 @@ pub struct GenPkShareAndSkSssResponse {
     /// Raw error polynomial from key generation (RNS form) for ZK proof generation (C1) — encrypted at rest.
     pub eek_raw: SensitiveBytes,
     /// Raw smudging noise polynomial (RNS form) for ZK proof generation (C1) — encrypted at rest.
-    pub e_sm_raw: SensitiveBytes,
+    pub e_sm_raw: Option<SensitiveBytes>,
+    pub outgoing_keys: Option<SealedPrfKeys>,
 }
 
 impl TryFrom<(InnerResponse, &Cipher)> for GenPkShareAndSkSssResponse {
@@ -90,7 +105,8 @@ impl TryFrom<(InnerResponse, &Cipher)> for GenPkShareAndSkSssResponse {
             pk0_share_raw: value.pk0_share_raw,
             sk_raw: SensitiveBytes::new(value.sk_raw.to_vec(), cipher)?,
             eek_raw: SensitiveBytes::new(value.eek_raw.to_vec(), cipher)?,
-            e_sm_raw: SensitiveBytes::new(value.e_sm_raw.to_vec(), cipher)?,
+            e_sm_raw: Some(SensitiveBytes::new(value.e_sm_raw.to_vec(), cipher)?),
+            outgoing_keys: None,
         })
     }
 }
@@ -117,6 +133,9 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
 ) -> Result<GenPkShareAndSkSssResponse> {
     info!("gen_pk_share_and_sk_sss");
     let req: InnerRequest = req.try_into()?;
+    if let Some(config) = req.synchronized.as_ref() {
+        return generate_synchronized(rng, cipher, &req, config);
+    }
 
     let params = req.trbfv_config.params();
     let crp = req.crp;
@@ -170,4 +189,61 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         cipher,
     )
         .try_into()
+}
+
+fn generate_synchronized<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    cipher: &Cipher,
+    req: &InnerRequest,
+    config: &SynchronizedDkgGeneration,
+) -> Result<GenPkShareAndSkSssResponse> {
+    use anyhow::ensure;
+    use e3_fhe_params::{create_deterministic_crp_from_default_seed, encode_bfv_params};
+    config.profile.validate_committee(config.committee)?;
+    ensure!(
+        config.profile.prf_key_bits().is_some(),
+        "synchronized DKG requires its own profile"
+    );
+    let values = config.committee.values();
+    ensure!(
+        (config.owner as usize) < values.n,
+        "DKG owner is outside the committee"
+    );
+    ensure!(
+        req.trbfv_config.num_parties() as usize == values.n
+            && req.trbfv_config.threshold() as usize == values.threshold
+            && req.num_ciphertexts == 1,
+        "synchronized DKG requires the exact committee and one ciphertext"
+    );
+    let (params, _) = config.profile.build_pair()?;
+    ensure!(
+        encode_bfv_params(&params) == encode_bfv_params(&req.trbfv_config.params())
+            && req.crp.to_bytes() == create_deterministic_crp_from_default_seed(&params).to_bytes(),
+        "synchronized DKG parameters or CRP do not match the profile"
+    );
+    let secret = SecretKey::random(&params, rng);
+    let (public, intermediate) =
+        PublicKeyShare::new_with_intermediates(&secret, req.crp.clone(), rng)?;
+    let mut manager = ShareManager::new(values.n, values.threshold, params)?;
+    let polynomial = manager.coeffs_to_poly_level0(secret.coeffs.as_ref())?;
+    let shares =
+        SharedSecret::from(manager.generate_secret_shares_from_poly(polynomial.clone(), rng)?);
+    let outgoing = (0..values.n)
+        .map(|_| PrfKey::random(config.profile, rng))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(GenPkShareAndSkSssResponse {
+        pk_share: ArcBytes::from_bytes(&public.to_bytes()),
+        sk_sss: Encrypted::new(shares, cipher)?,
+        pk0_share_raw: ArcBytes::from_bytes(&public.to_bytes()),
+        sk_raw: SensitiveBytes::new(polynomial.to_bytes(), cipher)?,
+        eek_raw: SensitiveBytes::new(intermediate.error().to_bytes(), cipher)?,
+        e_sm_raw: None,
+        outgoing_keys: Some(SealedPrfKeys::seal(
+            config.profile,
+            config.setup_binding,
+            config.owner,
+            &outgoing,
+            cipher,
+        )?),
+    })
 }

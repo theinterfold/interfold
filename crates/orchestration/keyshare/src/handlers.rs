@@ -374,7 +374,7 @@ impl Handler<TypedEvent<AllDecryptionKeySharesCollected>> for ThresholdKeyshare 
     fn handle(
         &mut self,
         msg: TypedEvent<AllDecryptionKeySharesCollected>,
-        _: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if self.ended {
             return;
@@ -385,7 +385,7 @@ impl Handler<TypedEvent<AllDecryptionKeySharesCollected>> for ThresholdKeyshare 
             || {
                 let (msg, ec) = msg.into_components();
                 self.decryption_key_shared_collector = None;
-                self.dispatch_c4_verification(msg.shares, ec)
+                self.dispatch_c4_verification(msg.shares, ec, ctx.address())
             },
         )
     }

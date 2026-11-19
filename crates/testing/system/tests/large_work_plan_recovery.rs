@@ -31,14 +31,16 @@ fn pending_small_work_plan() -> ThresholdSharePending {
     let profile = BfvProfile::SsSecure8192;
     let empty = SensitiveBytes::from_encrypted(&[]);
     let proof_request = PkGenerationProofRequest {
+        synchronized: None,
         pk0_share: ArcBytes::from_bytes(&[]),
         sk: empty.clone(),
         eek: empty.clone(),
-        e_sm: empty.clone(),
+        e_sm: Some(empty.clone()),
         params_profile: profile,
         committee_size: committee,
     };
     let computation = |kind| ShareComputationProofRequest {
+        synchronized: None,
         secret_raw: empty.clone(),
         secret_sss_raw: empty.clone(),
         dkg_input_type: kind,
@@ -93,10 +95,12 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         }),
         proof_request,
         sk_share_computation_request: computation(DkgInputType::SecretKey),
-        e_sm_share_computation_request: computation(DkgInputType::SmudgingNoise),
+        e_sm_share_computation_request: Some(computation(DkgInputType::SmudgingNoise)),
         sk_share_encryption_requests: sk_requests,
         e_sm_share_encryption_requests: esm_requests,
         recipient_party_ids: (0..n as u64).collect(),
+        own_sk_share_raw: empty.clone(),
+        own_esi_shares_raw: vec![empty],
     }
 }
 

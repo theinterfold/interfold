@@ -21,15 +21,19 @@ use async_trait::async_trait;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{DataStore, RepositoriesFactory};
 use e3_events::{BusHandle, Event, InterfoldEvent, InterfoldEventData};
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::BfvProfile;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use tracing::{error, info};
 
-type LinksFactory = Box<dyn Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send + Sync>;
+type LinksFactory = Box<
+    dyn Fn(BfvProfile, CiphernodesCommitteeSize) -> Result<Vec<Box<dyn CommitmentLink>>>
+        + Send
+        + Sync,
+>;
 
 pub struct CommitmentConsistencyCheckerExtension {
     bus: BusHandle,
-    /// Factory that builds commitment links for a given BFV preset.
+    /// Factory that builds links for the exact protocol profile and committee.
     links_factory: LinksFactory,
     /// Backing store for the per-E3 checker state.
     store: DataStore,
@@ -39,7 +43,10 @@ impl CommitmentConsistencyCheckerExtension {
     pub fn create(
         bus: &BusHandle,
         store: &DataStore,
-        links_factory: impl Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send + Sync + 'static,
+        links_factory: impl Fn(BfvProfile, CiphernodesCommitteeSize) -> Result<Vec<Box<dyn CommitmentLink>>>
+            + Send
+            + Sync
+            + 'static,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
@@ -68,17 +75,16 @@ impl CommitmentConsistencyCheckerExtension {
 
         info!("Starting CommitmentConsistencyChecker for E3 {}", e3_id);
 
-        let links = (self.links_factory)(meta.params_profile.threshold_preset());
-        let committee_h =
+        let committee =
             CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)
                 .with_context(|| {
                     format!(
                         "unknown committee thresholds M={}, N={} for E3 {e3_id}",
                         meta.threshold_m, meta.threshold_n
                     )
-                })?
-                .values()
-                .h;
+                })?;
+        let links = (self.links_factory)(meta.params_profile, committee)?;
+        let committee_h = committee.values().h;
         // The request router owns delivery and lifetime for this per-E3 actor. Subscribing it to
         // the global bus as well would deliver every event twice and keep the actor alive after
         // the E3 context is removed.
@@ -188,7 +194,8 @@ mod tests {
     async fn hydrate_recreates_checker_when_meta_was_recovered() -> Result<()> {
         let bus = test_bus();
         let store = test_store();
-        let extension = CommitmentConsistencyCheckerExtension::create(&bus, &store, |_| Vec::new());
+        let extension =
+            CommitmentConsistencyCheckerExtension::create(&bus, &store, |_, _| Ok(Vec::new()));
         let e3_id = E3id::new("0", 31337);
         let mut ctx = test_context(&store, e3_id.clone());
         ctx.set_dependency(META_KEY, test_meta());
@@ -215,7 +222,8 @@ mod tests {
     async fn hydrate_without_meta_leaves_checker_unset() -> Result<()> {
         let bus = test_bus();
         let store = test_store();
-        let extension = CommitmentConsistencyCheckerExtension::create(&bus, &store, |_| Vec::new());
+        let extension =
+            CommitmentConsistencyCheckerExtension::create(&bus, &store, |_, _| Ok(Vec::new()));
         let e3_id = E3id::new("0", 31337);
         let mut ctx = test_context(&store, e3_id.clone());
         let snapshot = E3ContextSnapshot {

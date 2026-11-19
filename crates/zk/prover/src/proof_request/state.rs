@@ -33,12 +33,13 @@ pub(crate) enum DecryptionProofKind {
 pub(crate) struct NodeAggregationMeta {
     pub(crate) party_id: u64,
     pub(crate) total_expected: usize,
+    pub(crate) c4_proofs: usize,
 }
 
 impl NodeAggregationMeta {
     /// Base `seq` for the first C4 proof: just after all C0..C3 proofs.
     pub(crate) fn c4_base_seq(&self) -> usize {
-        self.total_expected.saturating_sub(2)
+        self.total_expected.saturating_sub(self.c4_proofs)
     }
 }
 
@@ -64,6 +65,7 @@ pub(crate) struct PendingThresholdProofs {
     pub(crate) expected_e_sm_enc_count: usize,
     /// Maps positional index to real party_id (from ThresholdSharePending).
     pub(crate) recipient_party_ids: Vec<u64>,
+    pub(crate) expects_smudging: bool,
 }
 
 impl PendingThresholdProofs {
@@ -74,6 +76,7 @@ impl PendingThresholdProofs {
         expected_sk_enc_count: usize,
         expected_e_sm_enc_count: usize,
         recipient_party_ids: Vec<u64>,
+        profile: e3_fhe_params::BfvProfile,
     ) -> Self {
         Self {
             e3_id,
@@ -87,13 +90,15 @@ impl PendingThresholdProofs {
             e_sm_share_encryption_proofs: HashMap::new(),
             expected_e_sm_enc_count,
             recipient_party_ids,
+            expects_smudging: profile.protocol()
+                == e3_fhe_params::BfvDecryptionProtocol::SecretShared,
         }
     }
 
     pub(crate) fn is_complete(&self) -> bool {
         self.pk_generation_proof.is_some()
             && self.sk_share_computation_proof.is_some()
-            && self.e_sm_share_computation_proof.is_some()
+            && self.e_sm_share_computation_proof.is_some() == self.expects_smudging
             && self.sk_share_encryption_proofs.len() == self.expected_sk_enc_count
             && self.e_sm_share_encryption_proofs.len() == self.expected_e_sm_enc_count
     }
@@ -124,7 +129,9 @@ impl PendingThresholdProofs {
     }
 
     pub(crate) fn total_expected(&self) -> usize {
-        3 + self.expected_sk_enc_count + self.expected_e_sm_enc_count
+        2 + usize::from(self.expects_smudging)
+            + self.expected_sk_enc_count
+            + self.expected_e_sm_enc_count
     }
 
     pub(crate) fn total_received(&self) -> usize {

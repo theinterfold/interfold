@@ -26,6 +26,13 @@ impl NodeProofAggregator {
             );
             return;
         }
+        if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            self.bus.with_ec(&ec).err(
+                EType::Computation,
+                anyhow!("Synchronized recursive DKG aggregation is not implemented; refusing the SS fold"),
+            );
+            return;
+        }
         if self
             .recovery_index
             .entries

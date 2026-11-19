@@ -28,6 +28,28 @@ impl ShareVerifier {
         signed_proofs: &[SignedProofPayload],
         params_profile: e3_fhe_params::BfvProfile,
     ) -> bool {
+        if params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            return match kind {
+                VerificationKind::PkGenerationProofs => {
+                    signed_proofs.len() == 1
+                        && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
+                }
+                VerificationKind::ShareProofs => {
+                    let rows = params_profile.threshold_preset().metadata().num_moduli;
+                    signed_proofs.len() == 1 + rows
+                        && signed_proofs[0].payload.proof_type == ProofType::C2aSkShareComputation
+                        && signed_proofs[1..].iter().all(|proof| {
+                            proof.payload.proof_type == ProofType::C3aSkShareEncryption
+                        })
+                }
+                VerificationKind::DecryptionProofs => {
+                    signed_proofs.len() == 1
+                        && signed_proofs[0].payload.proof_type == ProofType::C4aSkShareDecryption
+                }
+                // Synchronized C6 is a separate statement, not the existing SS proof.
+                VerificationKind::ThresholdDecryptionProofs => false,
+            };
+        }
         match kind {
             VerificationKind::PkGenerationProofs => {
                 signed_proofs.len() == 1

@@ -31,6 +31,36 @@ pub struct DecryptionDomainContext {
     pub committee_public_key: B256,
 }
 
+/// Public request context for the draft synchronized DKG leaves. The caller supplies chain-derived
+/// committee/configuration facts; hashing them is not their authentication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DkgSetupContext {
+    pub interfold_address: Address,
+    pub committee_hash: B256,
+    pub crypto_config_id: B256,
+}
+
+impl DkgSetupContext {
+    /// Split the complete, domain-separated request identity into injective 128-bit limbs.
+    pub fn binding(self, chain_id: u64, e3_id: U256) -> [u128; 2] {
+        let hash = keccak256(
+            (
+                keccak256("interfold:sync-dkg-setup:v1"),
+                U256::from(chain_id),
+                self.interfold_address,
+                e3_id,
+                self.committee_hash,
+                self.crypto_config_id,
+            )
+                .abi_encode(),
+        );
+        [
+            u128::from_be_bytes(hash[..16].try_into().expect("16-byte high limb")),
+            u128::from_be_bytes(hash[16..].try_into().expect("16-byte low limb")),
+        ]
+    }
+}
+
 /// Hi/lo 128-bit limbs of the decryption-domain hash for Noir public inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DecryptionDomainLimbs {
@@ -129,6 +159,45 @@ fn field_hex_from_b256(value: B256) -> String {
 mod tests {
     use super::*;
     use alloy::primitives::address;
+
+    #[test]
+    fn dkg_setup_context_binds_the_complete_request_without_reducing_its_hash() {
+        let context = DkgSetupContext {
+            interfold_address: Address::repeat_byte(0x11),
+            committee_hash: B256::repeat_byte(0x22),
+            crypto_config_id: B256::repeat_byte(0x33),
+        };
+        let e3 = U256::from(7);
+        let binding = context.binding(31_337, e3);
+        let mut words = [0u8; 6 * 32];
+        words[..32].copy_from_slice(keccak256("interfold:sync-dkg-setup:v1").as_slice());
+        words[32..64].copy_from_slice(&U256::from(31_337).to_be_bytes::<32>());
+        words[76..96].copy_from_slice(context.interfold_address.as_slice());
+        words[96..128].copy_from_slice(&e3.to_be_bytes::<32>());
+        words[128..160].copy_from_slice(context.committee_hash.as_slice());
+        words[160..192].copy_from_slice(context.crypto_config_id.as_slice());
+        let expected = keccak256(words);
+        assert_eq!(&binding[0].to_be_bytes(), &expected[..16]);
+        assert_eq!(&binding[1].to_be_bytes(), &expected[16..]);
+        assert_ne!(binding, context.binding(1, e3));
+        assert_ne!(binding, context.binding(31_337, U256::from(8)));
+        for altered in [
+            DkgSetupContext {
+                interfold_address: Address::repeat_byte(0x44),
+                ..context
+            },
+            DkgSetupContext {
+                committee_hash: B256::repeat_byte(0x44),
+                ..context
+            },
+            DkgSetupContext {
+                crypto_config_id: B256::repeat_byte(0x44),
+                ..context
+            },
+        ] {
+            assert_ne!(binding, altered.binding(31_337, e3));
+        }
+    }
 
     #[test]
     fn committee_hash_matches_cross_language_vector() {

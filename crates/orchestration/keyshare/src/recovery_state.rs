@@ -59,6 +59,7 @@ pub struct ThresholdKeyshareRecoveryState {
     pub is_aggregator: bool,
     pub keyshare_publish_authorized: bool,
     pub last_ec: Option<EventContext<Sequenced>>,
+    pub synchronized: Option<crate::synchronized::SynchronizedDkgRecovery>,
 }
 
 impl Default for ThresholdKeyshareRecoveryState {
@@ -86,6 +87,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             is_aggregator: false,
             keyshare_publish_authorized: false,
             last_ec: None,
+            synchronized: None,
         }
     }
 }

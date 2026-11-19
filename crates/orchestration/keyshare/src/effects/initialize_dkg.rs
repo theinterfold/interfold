@@ -268,7 +268,8 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
         info!("GenPkShareAndSkSss on ThresholdKeyshare");
-        let CiphernodeSelected { e3_id, .. } = msg.0;
+        let selected = msg.0;
+        let e3_id = selected.e3_id.clone();
         let state = self
             .state
             .get()
@@ -291,6 +292,22 @@ impl ThresholdKeyshare {
                 crp,
                 lambda: threshold_preset.lambda_config(),
                 num_ciphertexts: defaults.z as usize,
+                synchronized: if self.params_profile.protocol()
+                    == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+                {
+                    let context =
+                        crate::synchronized::proof_context(&selected, self.interfold_address)?;
+                    Some(
+                        e3_trbfv::gen_pk_share_and_sk_sss::SynchronizedDkgGeneration {
+                            profile: self.params_profile,
+                            committee: state.committee_size()?,
+                            owner: context.party_id,
+                            setup_binding: crate::synchronized::setup_binding(&context, &e3_id)?,
+                        },
+                    )
+                } else {
+                    None
+                },
             }),
             CorrelationId::new(),
             e3_id,
@@ -306,6 +323,25 @@ impl ThresholdKeyshare {
         res: TypedEvent<ComputeResponse>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        let response_hash = if self.params_profile.protocol()
+            == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        {
+            anyhow::ensure!(
+                res.e3_id == state.e3_id,
+                "synchronized native response belongs to another E3"
+            );
+            let output: GenPkShareAndSkSssResponse = res.clone().into_inner().try_into()?;
+            let digest = alloy::primitives::keccak256(bincode::serialize(&output)?).into();
+            if let Some(saved) = self.recovery.try_get()?.synchronized {
+                anyhow::ensure!(
+                    saved.generation_response_hash == digest,
+                    "conflicting successful synchronized DKG response"
+                );
+            }
+            Some(digest)
+        } else {
+            None
+        };
         match &state.state {
             KeyshareState::GeneratingThresholdShare(data)
                 if data.pk_share.is_none()
@@ -353,6 +389,44 @@ impl ThresholdKeyshare {
             .try_into()
             .context("Error extracting data from compute process")?;
 
+        let is_sync =
+            self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized;
+        anyhow::ensure!(
+            is_sync == output.outgoing_keys.is_some() && is_sync == output.e_sm_raw.is_none(),
+            "key-generation response belongs to another DKG protocol"
+        );
+        if let Some(outgoing_keys) = &output.outgoing_keys {
+            let selected = self
+                .recovery
+                .try_get()?
+                .ciphernode_selected
+                .ok_or_else(|| anyhow!("missing canonical DKG selection"))?;
+            let context = crate::synchronized::proof_context(&selected, self.interfold_address)?;
+            let material = crate::synchronized::SynchronizedDkgRecovery {
+                context,
+                generation_response_hash: response_hash.expect("synchronized response"),
+                outgoing_keys: outgoing_keys.clone(),
+                incoming_keys: None,
+                dealer_ids: Vec::new(),
+                sk_commitment: None,
+                key_bundle: None,
+                c2_statements: Default::default(),
+            };
+            material.validate(&selected, self.interfold_address, &self.cipher)?;
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                if let Some(existing) = &recovery.synchronized {
+                    anyhow::ensure!(
+                        existing == &material,
+                        "conflicting successful synchronized DKG keys"
+                    );
+                } else {
+                    recovery.synchronized = Some(material);
+                }
+                recovery.last_ec = Some(ec.clone());
+                Ok(recovery)
+            })?;
+        }
+
         let (pk_share, sk_sss, e_sm_raw) = (
             output.pk_share.clone(),
             output.sk_sss,
@@ -373,13 +447,22 @@ impl ThresholdKeyshare {
                 GeneratingThresholdShareData {
                     pk_share: Some(pk_share),
                     sk_sss: Some(sk_sss),
-                    e_sm_raw: Some(e_sm_raw.clone()),
+                    e_sm_raw: e_sm_raw.clone(),
+                    esi_sss: if is_sync {
+                        Some(Vec::new())
+                    } else {
+                        current.esi_sss.clone()
+                    },
                     proof_request_data: Some(proof_request_data),
                     ..current
                 },
             ))
         })?;
 
+        if is_sync {
+            let current: GeneratingThresholdShareData = self.state.try_get()?.try_into()?;
+            return self.resume_generating_threshold_share(current, ec);
+        }
         if let Some(response) = self.pending.gen_esi_response.take() {
             self.handle_gen_esi_sss_response(response)?;
         } else {

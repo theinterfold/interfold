@@ -9,3 +9,16 @@
 pub(crate) fn total_expected_for(sk_enc_count: usize, e_sm_enc_count: usize) -> usize {
     4 + sk_enc_count + e_sm_enc_count + 2
 }
+
+pub(crate) fn total_expected_for_profile(
+    profile: e3_fhe_params::BfvProfile,
+    sk_enc_count: usize,
+    e_sm_enc_count: usize,
+) -> usize {
+    match profile.protocol() {
+        e3_fhe_params::BfvDecryptionProtocol::SecretShared => {
+            total_expected_for(sk_enc_count, e_sm_enc_count)
+        }
+        e3_fhe_params::BfvDecryptionProtocol::Synchronized => 4 + sk_enc_count,
+    }
+}

@@ -22,13 +22,18 @@ impl ThresholdKeyshare {
         if recovery.share_verification_complete.is_none() {
             return Ok(());
         }
-        let (Some(own_c2a), Some(own_c2b), Some(verified)) = (
+        let (Some(own_c2a), Some(verified)) = (
             current.signed_sk_share_computation_proof.as_ref(),
-            current.signed_e_sm_share_computation_proof.as_ref(),
             recovery.verified_dealer_ids.as_ref(),
         ) else {
             return Ok(());
         };
+        let own_c2b = current.signed_e_sm_share_computation_proof.as_ref();
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared
+            && own_c2b.is_none()
+        {
+            return Ok(());
+        }
 
         let selected = recovery
             .ciphernode_selected
@@ -44,7 +49,8 @@ impl ThresholdKeyshare {
             "DKG signer does not match the finalized committee slot"
         );
 
-        let mut dealers = vec![dealer_identity(
+        let mut dealers = vec![dealer_identity_for_profile(
+            self.params_profile,
             &state.e3_id,
             state.party_id,
             &current.pk_share,
@@ -58,13 +64,13 @@ impl ThresholdKeyshare {
             let Some(event) = self.recovery_payloads.share(*party_id) else {
                 return Err(anyhow!("verified DKG share is missing from recovery state"));
             };
-            let (Some(c2a), Some(c2b)) = (
-                event.signed_c2a_proof.as_ref(),
-                event.signed_c2b_proof.as_ref(),
-            ) else {
-                return Err(anyhow!("verified DKG share has no C2 proof pair"));
-            };
-            dealers.push(dealer_identity(
+            let c2a = event
+                .signed_c2a_proof
+                .as_ref()
+                .ok_or_else(|| anyhow!("verified DKG share has no C2 proof"))?;
+            let c2b = event.signed_c2b_proof.as_ref();
+            dealers.push(dealer_identity_for_profile(
+                self.params_profile,
                 &state.e3_id,
                 *party_id,
                 &event.share.pk_share,

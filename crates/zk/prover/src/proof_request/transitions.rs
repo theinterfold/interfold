@@ -18,12 +18,21 @@ pub(crate) struct ThresholdDispatchItem {
 pub(crate) fn plan_threshold_dispatch(
     proof_request: PkGenerationProofRequest,
     sk_share_computation_request: ShareComputationProofRequest,
-    e_sm_share_computation_request: ShareComputationProofRequest,
+    e_sm_share_computation_request: Option<ShareComputationProofRequest>,
     sk_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
     e_sm_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
-) -> Vec<ThresholdDispatchItem> {
+) -> anyhow::Result<Vec<ThresholdDispatchItem>> {
+    let has_smudging = proof_request.params_profile.protocol()
+        == e3_fhe_params::BfvDecryptionProtocol::SecretShared;
+    anyhow::ensure!(
+        has_smudging == e_sm_share_computation_request.is_some()
+            && (has_smudging || e_sm_share_encryption_requests.is_empty()),
+        "threshold proof plan does not match the selected protocol"
+    );
     let sk_enc_count = sk_share_encryption_requests.len();
-    let mut items = Vec::with_capacity(3 + sk_enc_count + e_sm_share_encryption_requests.len());
+    let c3_start = 3 + usize::from(has_smudging);
+    let mut items =
+        Vec::with_capacity(c3_start - 1 + sk_enc_count + e_sm_share_encryption_requests.len());
 
     items.push(ThresholdDispatchItem {
         kind: ThresholdProofKind::PkGeneration,
@@ -35,11 +44,13 @@ pub(crate) fn plan_threshold_dispatch(
         seq: 2,
         request: ZkRequest::ShareComputation(sk_share_computation_request),
     });
-    items.push(ThresholdDispatchItem {
-        kind: ThresholdProofKind::ESmShareComputation,
-        seq: 3,
-        request: ZkRequest::ShareComputation(e_sm_share_computation_request),
-    });
+    if let Some(request) = e_sm_share_computation_request {
+        items.push(ThresholdDispatchItem {
+            kind: ThresholdProofKind::ESmShareComputation,
+            seq: 3,
+            request: ZkRequest::ShareComputation(request),
+        });
+    }
 
     for (i, req) in sk_share_encryption_requests.into_iter().enumerate() {
         let kind = ThresholdProofKind::SkShareEncryption {
@@ -48,7 +59,7 @@ pub(crate) fn plan_threshold_dispatch(
         };
         items.push(ThresholdDispatchItem {
             kind,
-            seq: 4 + i,
+            seq: c3_start + i,
             request: ZkRequest::ShareEncryption(req),
         });
     }
@@ -61,12 +72,12 @@ pub(crate) fn plan_threshold_dispatch(
         };
         items.push(ThresholdDispatchItem {
             kind,
-            seq: 4 + sk_enc_count + j,
+            seq: c3_start + sk_enc_count + j,
             request: ZkRequest::ShareEncryption(req),
         });
     }
 
-    items
+    Ok(items)
 }
 
 /// A single planned C4 (DkgShareDecryption) proof request.

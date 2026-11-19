@@ -9,6 +9,8 @@ pub mod canonical_key;
 mod domain;
 pub mod ext;
 mod repo;
+pub mod synchronized;
+mod synchronized_decryption;
 
 pub use actors::{
     AllEncryptionKeysCollected, AllThresholdSharesCollected, BfvKeyIntent, DkgTimingReader,

@@ -4,6 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! Actor histories and recovery tests. This module also provides the shared fixtures used by its
+//! `admission` and `synchronized` child modules in `tests/`.
+
 use super::*;
 use crate::actors::decryption_key_shared_collector::{
     DecryptionKeySharedCollectionFailed, DecryptionKeySharedCollectionTimeout,
@@ -44,6 +47,9 @@ use e3_utils::OrderedSet;
 use e3_zk_config::CircuitName;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+#[path = "tests/synchronized.rs"]
+mod synchronized;
 
 #[actix::test]
 async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
@@ -1740,7 +1746,8 @@ fn gen_pk_response(cipher: &Cipher, e3_id: &E3id, seq: u64) -> Result<TypedEvent
                 pk0_share_raw: ArcBytes::from_bytes(&[4]),
                 sk_raw: SensitiveBytes::new([5], cipher)?,
                 eek_raw: SensitiveBytes::new([6], cipher)?,
-                e_sm_raw: SensitiveBytes::new([7], cipher)?,
+                e_sm_raw: Some(SensitiveBytes::new([7], cipher)?),
+                outgoing_keys: None,
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -4310,6 +4317,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
     // phase transitions, failure delivery, and snapshot recovery use the production actor paths.
     let current: AggregatingDecryptionKey = actor.state.try_get()?.try_into()?;
     let sk_request = DkgShareDecryptionProofRequest {
+        synchronized: None,
         sk_bfv: current.sk_bfv,
         honest_ciphertexts_raw: vec![ArcBytes::from_bytes(&[1])],
         num_honest_parties: 2,
@@ -4321,6 +4329,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
+        synchronized: None,
         dkg_input_type: e3_zk_config::DkgInputType::SmudgingNoise,
         own_share_raw: Some(current.own_esi_shares_raw[0].clone()),
         ..sk_request.clone()
@@ -4458,6 +4467,85 @@ fn generating_threshold_share_state(e3_id: &E3id) -> KeyshareState {
         ciphernode_selected: Some(current.ciphernode_selected),
         proof_request_data: None,
     })
+}
+
+#[actix::test]
+async fn ss_saved_plan_republication_preserves_ciphertexts_and_original_context() -> Result<()> {
+    use fhe::bfv::{PublicKey, SecretKey};
+    use fhe_traits::Serialize;
+    use ndarray::Array2;
+    let id = E3id::new("saved-ss-plan", 1);
+    let (mut actor, _, _, history) =
+        build_actor(&id, generating_threshold_share_state(&id), 7200, 7200, &[]).await?;
+    let (threshold, transport) = actor.params_profile.build_pair()?;
+    let mut rng = rand::rng();
+    let keys = (0..3)
+        .map(|party| {
+            let sk = SecretKey::random(&transport, &mut rng);
+            Arc::new(EncryptionKey::new(
+                party,
+                ArcBytes::from_bytes(&PublicKey::new(&sk, &mut rng).to_bytes()),
+            ))
+        })
+        .collect();
+    let shares = SharedSecret::new(
+        (0..threshold.moduli().len())
+            .map(|_| Array2::from_elem((3, threshold.degree()), 1u64))
+            .collect(),
+    );
+    let encrypted = e3_trbfv::shares::Encrypted::new(shares, &actor.cipher)?;
+    let sensitive = SensitiveBytes::new([1], &actor.cipher)?;
+    actor.state.try_mutate_without_context(|mut state| {
+        let KeyshareState::GeneratingThresholdShare(ref mut current) = state.state else {
+            unreachable!();
+        };
+        current.pk_share = Some(ArcBytes::from_bytes(&[7]));
+        current.sk_sss = Some(encrypted.clone());
+        current.esi_sss = Some(vec![encrypted]);
+        current.e_sm_raw = Some(sensitive.clone());
+        current.collected_encryption_keys = keys;
+        current.proof_request_data = Some(ProofRequestData {
+            pk0_share_raw: ArcBytes::from_bytes(&[7]),
+            sk_raw: sensitive.clone(),
+            eek_raw: sensitive,
+        });
+        Ok(state)
+    })?;
+    let original_ec = test_ec(1);
+    actor.handle_shares_generated(original_ec.clone())?;
+    let original = next_event(&history).await?;
+    let saved = actor
+        .recovery_payloads
+        .pending()
+        .cloned()
+        .expect("persisted SS plan");
+    // No generation inputs remain. A second delivery must use the retained randomized plan.
+    actor.state.try_mutate_without_context(|mut state| {
+        state.state = generating_threshold_share_state(&id);
+        Ok(state)
+    })?;
+    actor.pending.own_dkg_shares = None;
+    // A restarted bus has no in-memory dedup entry for the original publication.
+    let (bus, history) = test_bus();
+    actor.bus = bus;
+    actor.handle_shares_generated(test_ec(2))?;
+    let repeated = next_event(&history).await?;
+    assert_eq!(
+        bincode::serialize(original.get_data())?,
+        bincode::serialize(repeated.get_data())?
+    );
+    assert_eq!(original.id(), repeated.id());
+    assert_eq!(original.causation_id(), repeated.causation_id());
+    assert_eq!(original.origin_id(), repeated.origin_id());
+    assert_eq!(repeated.causation_id(), original_ec.id());
+    assert_eq!(
+        actor.pending.own_dkg_shares,
+        Some((
+            saved.own_sk_share_raw.clone(),
+            saved.own_esi_shares_raw.clone(),
+        ))
+    );
+    Ok(())
 }
 
 #[actix::test]
@@ -5539,6 +5627,7 @@ async fn an_ended_e3_resumes_no_work_while_its_cleanup_retries() -> Result<()> {
         party_id: 0,
         node: Address::ZERO.to_string(),
         sk_request: DkgShareDecryptionProofRequest {
+            synchronized: None,
             sk_bfv: SensitiveBytes::from_encrypted(&[2]),
             honest_ciphertexts_raw: Vec::new(),
             num_honest_parties: 2,

@@ -196,6 +196,7 @@ mod tests {
     fn threshold_share_pending(e3_id: E3id, params_profile: BfvProfile) -> ThresholdSharePending {
         let sensitive = || SensitiveBytes::from_encrypted(&[]);
         let share_request = |dkg_input_type| ShareComputationProofRequest {
+            synchronized: None,
             secret_raw: sensitive(),
             secret_sss_raw: sensitive(),
             dkg_input_type,
@@ -211,18 +212,21 @@ mod tests {
                 esi_sss: vec![],
             }),
             proof_request: PkGenerationProofRequest {
+                synchronized: None,
                 pk0_share: e3_utils::ArcBytes::from_bytes(&[1]),
                 sk: sensitive(),
                 eek: sensitive(),
-                e_sm: sensitive(),
+                e_sm: Some(sensitive()),
                 params_profile,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             },
             sk_share_computation_request: share_request(DkgInputType::SecretKey),
-            e_sm_share_computation_request: share_request(DkgInputType::SmudgingNoise),
+            e_sm_share_computation_request: Some(share_request(DkgInputType::SmudgingNoise)),
             sk_share_encryption_requests: vec![],
             e_sm_share_encryption_requests: vec![],
             recipient_party_ids: vec![0],
+            own_sk_share_raw: sensitive(),
+            own_esi_shares_raw: vec![sensitive()],
         }
     }
 

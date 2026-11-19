@@ -102,6 +102,7 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
             committee,
         )),
         ZkRequest::ShareComputation(ShareComputationProofRequest {
+            synchronized: None,
             secret_raw: secret(),
             secret_sss_raw: secret(),
             dkg_input_type: DkgInputType::SecretKey,
@@ -123,6 +124,7 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
             esi_index: 0,
         }),
         ZkRequest::DkgShareDecryption(DkgShareDecryptionProofRequest {
+            synchronized: None,
             sk_bfv: secret(),
             honest_ciphertexts_raw: Vec::new(),
             num_honest_parties: 2,

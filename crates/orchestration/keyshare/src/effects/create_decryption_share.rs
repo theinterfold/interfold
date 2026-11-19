@@ -5,11 +5,20 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    fn ensure_ss_decryption(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared,
+            "synchronized C6 runtime is not implemented; refusing SS decryption"
+        );
+        Ok(())
+    }
+
     /// Handle the ciphertext output and begin local C6 decryption-share work.
     pub fn handle_ciphertext_output_published(
         &mut self,
         msg: TypedEvent<CiphertextOutputPublished>,
     ) -> Result<()> {
+        self.ensure_ss_decryption()?;
         let (msg, ec) = msg.into_components();
         let ciphertext_output = msg.ciphertext_output;
 
@@ -92,6 +101,7 @@ impl ThresholdKeyshare {
     /// Publish the share calculation for the saved ciphertext under a new correlation ID. Returns
     /// false when the chain public-key context is not recovered yet.
     fn publish_decryption_share_request(&mut self, ec: EventContext<Sequenced>) -> Result<bool> {
+        self.ensure_ss_decryption()?;
         let state = self.state.try_get()?;
         if !self.public_key_context_is_recovered(&state) {
             return Ok(false);
@@ -119,6 +129,7 @@ impl ThresholdKeyshare {
         mut pending: ShareDecryptionProofPending,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        self.ensure_ss_decryption()?;
         if self.pending.decryption_proof_request.is_some() {
             return Ok(());
         }
@@ -152,6 +163,7 @@ impl ThresholdKeyshare {
         &mut self,
         now: std::time::Instant,
     ) -> Result<()> {
+        self.ensure_ss_decryption()?;
         if !self.effects_enabled {
             return Ok(());
         }
@@ -212,6 +224,7 @@ impl ThresholdKeyshare {
         &mut self,
         res: TypedEvent<ComputeResponse>,
     ) -> Result<()> {
+        self.ensure_ss_decryption()?;
         let (res, ec) = res.into_components();
         let msg: CalculateDecryptionShareResponse = res.try_into()?;
         let state = self.state.try_get()?;

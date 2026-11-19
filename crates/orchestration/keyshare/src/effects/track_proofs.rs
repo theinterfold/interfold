@@ -17,6 +17,30 @@ impl ThresholdKeyshare {
         if msg.party_id != state.party_id {
             return Ok(());
         }
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            let recovery = self.recovery.try_get()?;
+            let selected = recovery
+                .ciphernode_selected
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing synchronized selection"))?;
+            let context = crate::synchronized::proof_context(selected, self.interfold_address)?;
+            let config = e3_zk_config::synchronized::Configs::for_profile(
+                self.params_profile,
+                state.committee_size()?,
+            )?;
+            anyhow::ensure!(
+                msg.signed_proof.recover_address()? == self.signer.address(),
+                "own synchronized C1 has another signer"
+            );
+            crate::synchronized::decode_statement(
+                &config,
+                crate::synchronized::setup_binding(&context, &state.e3_id)?,
+                state.party_id.try_into()?,
+                ProofType::C1PkGeneration,
+                &msg.signed_proof,
+                &state.e3_id,
+            )?;
+        }
 
         info!(
             "Received PkGenerationProofSigned for party {} E3 {}",
@@ -42,6 +66,39 @@ impl ThresholdKeyshare {
         }
 
         let proof_type = msg.signed_proof.payload.proof_type;
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            anyhow::ensure!(
+                msg.e3_id == state.e3_id
+                    && msg.signed_proof.recover_address()? == self.signer.address(),
+                "own synchronized DKG proof has another request or signer"
+            );
+            anyhow::ensure!(
+                matches!(
+                    proof_type,
+                    ProofType::C2aSkShareComputation | ProofType::C3aSkShareEncryption
+                ),
+                "synchronized DKG cannot accept an SS proof lane"
+            );
+            if proof_type == ProofType::C2aSkShareComputation {
+                let recovery = self.recovery.try_get()?;
+                let material = recovery
+                    .synchronized
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("missing saved synchronized keys"))?;
+                let config = e3_zk_config::synchronized::Configs::for_profile(
+                    self.params_profile,
+                    state.committee_size()?,
+                )?;
+                crate::synchronized::decode_statement(
+                    &config,
+                    crate::synchronized::setup_binding(&material.context, &state.e3_id)?,
+                    state.party_id.try_into()?,
+                    proof_type,
+                    &msg.signed_proof,
+                    &state.e3_id,
+                )?;
+            }
+        }
         // Own C2 and C3 proofs belong to share aggregation. One that arrives in another state, for
         // example during replay after the node moved on, has nothing left to update.
         if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
