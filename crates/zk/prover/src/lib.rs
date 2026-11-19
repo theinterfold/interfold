@@ -7,6 +7,7 @@
 mod actor_system;
 mod actors;
 mod backend;
+mod chonk;
 mod circuits;
 mod config;
 mod dkg_attestation_bundle;
@@ -30,7 +31,7 @@ pub use domain::commitment_links::default_links;
 
 pub use backend::{BBPath, SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_chain::{final_circuit_inputs, ChunkCircuits};
-pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
+pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::chain_keys::chunk_circuits;
 pub use circuits::aggregation::node_dkg_fold::{

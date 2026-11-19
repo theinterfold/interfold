@@ -304,6 +304,31 @@ pub fn squeeze_one_after_absorb(
     digests[0]
 }
 
+/// Barretenberg's Poseidon2 field-sponge hash (`crypto::Poseidon2::hash`), which Barretenberg uses
+/// for verification-key hashes such as a Chonk kernel's `MegaVerificationKey.hash`.
+///
+/// Unlike SAFE, the capacity element is the last of the state and starts at `len << 64`, and the
+/// rate cache is added to the state before each permutation.
+pub fn bb_poseidon2_hash(inputs: &[Field]) -> Field {
+    let mut state = [Field::zero(); STATE_SIZE];
+    state[RATE] = Field::from(shl64(inputs.len() as u64));
+    if inputs.is_empty() {
+        return poseidon2_permutation(&state)[0];
+    }
+    for chunk in inputs.chunks(RATE) {
+        for (word, value) in state.iter_mut().zip(chunk) {
+            *word += value;
+        }
+        state = poseidon2_permutation(&state);
+    }
+    state[0]
+}
+
+/// `value << 64` as a field element.
+fn shl64(value: u64) -> ark_ff::BigInt<4> {
+    ark_ff::BigInt::<4>([0, value, 0, 0])
+}
+
 /// Computes a unique tag for a sponge instance based on its IO pattern and domain separator.
 /// The tag is used to ensure that distinct instances behave like distinct functions.
 ///
@@ -446,6 +471,22 @@ mod tests {
         let (state, pos) = absorb_from(state, pos, &elements[2..9]);
         let (state, pos) = absorb_from(state, pos, &elements[9..]);
         assert_eq!(squeeze_one_after_absorb(io_pattern, state, pos), expected);
+    }
+
+    /// Matches the hash bb 6.0.0 wrote for one of its verification keys: the `pk` circuit's
+    /// `noir-recursive` key and its `vk_hash`. bb hashes every recursive key, Mega (Chonk) keys
+    /// included, with this sponge over the key's fields; it writes no hash file for a Mega key but
+    /// checks the same hash in-circuit.
+    #[test]
+    fn bb_poseidon2_hash_matches_barretenberg() {
+        use ark_ff::PrimeField;
+        let vk = include_bytes!("../tests/fixtures/bb6_recursive_vk.bin");
+        let fields: Vec<Field> = vk.chunks(32).map(Field::from_be_bytes_mod_order).collect();
+        let expected = Field::from_be_bytes_mod_order(
+            &hex::decode("2b0a92d88671342e419d05d86a9b4fade028de6018637531fb8185429af2a787")
+                .unwrap(),
+        );
+        assert_eq!(bb_poseidon2_hash(&fields), expected);
     }
 
     /// Helper function to create a field element from a u64 value
