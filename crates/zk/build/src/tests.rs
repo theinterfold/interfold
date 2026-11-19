@@ -1322,8 +1322,11 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
         serde_json::to_string_pretty(&stamp).unwrap() + "\n"
     );
     assert!(artifacts::hydration_stamp(&pair, "secure-8192", "minimum", "current-source").is_err());
-    fs::remove_file(pair.join("default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
-        .unwrap();
+    // A published tree that predates an artifact the prover now requires is neither current nor
+    // hydratable, whatever its stamp says.
+    assert!(artifacts::dist_current(&pair, "insecure-64", "minimum", None).unwrap());
+    fs::remove_file(pair.join("default/chonk/c3_chonk_app/c3_chonk_app.json")).unwrap();
+    assert!(!artifacts::dist_current(&pair, "insecure-64", "minimum", None).unwrap());
     assert!(artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").is_err());
 }
 

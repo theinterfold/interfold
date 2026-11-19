@@ -209,18 +209,14 @@ fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
     Ok(())
 }
 
+/// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`). A pair
+/// is complete, current or hydratable only with all of them: a tree built before the inventory
+/// gained an artifact must not pass.
 pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
-    [
-        "default/dkg/pk/pk.json",
-        "default/threshold/pk_aggregation/pk_aggregation.json",
-        "default/recursive_aggregation/dkg_aggregator/dkg_aggregator.json",
-        "default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json",
-        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
-        "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
-    ]
-    .iter()
-    .map(|path| pair.join(path))
-    .collect()
+    let required: Vec<&str> =
+        serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
+            .expect("invalid required circuit artifact inventory");
+    required.iter().map(|path| pair.join(path)).collect()
 }
 
 fn bin_markers(root: &Path) -> Vec<PathBuf> {
