@@ -221,6 +221,15 @@ change, and final C2 proofs gain a trailing key-tree public field. Stored C2 pro
 E3s can be neither folded nor link-checked, so drain them first too. Storage schema and gossip/sync
 wire majors are unchanged.
 
+The cutover also carries three-node `nodes_fold` steps. `nodes_fold` and `nodes_fold_kernel` change
+their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anchor, and the DKG
+verifier change. A nodes fold of an in-flight E3 cannot continue under the new circuits; drain it
+first. `ZkRequest::NodesFoldStep` carries `inner_proofs` and `slot_indices`, which changes its
+event-log encoding. The request is local-only and shares the **unreleased
+schema-9/protocol-9/generation-2 cutover**: this change raises no counter, and there is no migration
+or supported replay between intermediate builds. Rollback uses the prior backup or a controlled
+reset/resync, never an older binary on a journal that holds the new encoding.
+
 ## BFV profile cutover
 
 New contract requests require protocol/DKG/committee-bound profile identities, including SS; the
