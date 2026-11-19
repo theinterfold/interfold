@@ -100,7 +100,7 @@ An outside-H recipient uses its own verified setup for the same batch; it does n
 publication-consent slot. A setup DTO alone is not a proof verdict: callers must admit the local
 worker source/correlation and cryptographic result before either helper.
 
-This remains unactivated: guarded dealer/recipient/C5/consent/publication actor and writer phases,
+This remains unactivated: guarded recipient/C5/consent/publication actor and writer phases,
 full-node synchronized startup and synchronized C6 are absent. The capability replay fixture below
 does not enable production admission. Synchronized runtime folding/publication and decryption paths
 still refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and
@@ -111,6 +111,21 @@ requests. Runtime admission rejects the disabled profile before touching proof a
 qualification calls the explicit definition API. The existing shared compute gate waits for
 current-boot effects and retires this DKG work at confirmed key publication. Neither the gate nor a
 setup response authenticates peer inputs or replaces actor-owned correlation and durable phases.
+
+The node proof collector now has a distinct local dealer phase. It checks the request profile,
+configured Interfold controller, finalized committee/local owner, local source and canonical
+non-self C3 order, then collects C1–C3 without waiting for C4. The C1/C2 secret commitments must
+agree before dispatch. C2 is provisional until each C3 binds its exact recipient/CRT message and the
+key from the native fan-out. Up to one alternate per slot stays repairable until a complete batch
+qualifies. Its exclusive flushed record fences work dispatch and local output publication. Startup
+reads the retained journal, including the snapshotted prefix, for the native key anchors and
+provisional alternates without changing the snapshot encoding. It rejects saved plans for chains
+without a configured journal. Replay waits for current-boot effects, restart preserves qualified
+proof bytes and replaces compute correlations, and confirmed key publication retires the phase.
+Local generation errors retain the exact request rather than accusing peers.
+`SynchronizedDealerProofReady` is local provenance only: authenticated peer delivery and recipient
+collection remain absent. Admission stays disabled; the explicit collection definition and
+real-proof qualification do not admit production effects.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

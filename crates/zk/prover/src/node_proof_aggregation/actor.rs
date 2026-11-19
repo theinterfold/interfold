@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Node-level DKG proof aggregation: buffer all inner proofs (C0–C4), then run one
-//! [`ZkRequest::NodeDkgFold`] when [`ThresholdSharePending`] says the full set is ready.
+//! Node-level DKG proof collection. SS buffers C0–C4 for one [`ZkRequest::NodeDkgFold`];
+//! the guarded synchronized dealer phase collects C1–C3 separately.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -28,7 +28,7 @@ use crate::node_fold_public::extract_node_fold_agg_commits;
 #[cfg(test)]
 use recovery::{meta_repository, proof_repository};
 use recovery::{NodeProofRecovery, NodeProofRecoveryIndex};
-/// Actor that collects DKG inner proofs and dispatches a single [`ZkRequest::NodeDkgFold`].
+/// Local DKG collector with protocol-specific dispatch and recovery.
 pub struct NodeProofAggregator {
     bus: BusHandle,
     signer: PrivateKeySigner,
@@ -44,6 +44,7 @@ pub struct NodeProofAggregator {
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
     recovery_repositories: Option<Repositories>,
     recovery_index: NodeProofRecoveryIndex,
+    dealer: dealer::DealerCollection,
 }
 
 impl NodeProofAggregator {
@@ -66,6 +67,7 @@ impl NodeProofAggregator {
             pending_inner_proofs: HashMap::new(),
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
+            dealer: dealer::DealerCollection::default(),
         }
     }
 
@@ -93,6 +95,7 @@ impl NodeProofAggregator {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn setup(
         bus: &BusHandle,
         signer: PrivateKeySigner,
@@ -101,16 +104,20 @@ impl NodeProofAggregator {
         proof_aggregation_enabled: bool,
         repositories: Repositories,
         recovery: NodeProofRecovery,
+        dealer: dealer::DealerCollection,
     ) -> Addr<Self> {
-        let addr = Self::new(
+        let mut actor = Self::new(
             bus,
             signer,
             dkg_fold_attestation_contexts_by_e3,
             dkg_fold_attestation_contexts_by_chain,
             proof_aggregation_enabled,
         )
-        .with_recovery(repositories, recovery)
-        .start();
+        .with_recovery(repositories, recovery);
+        actor.dealer = dealer;
+        let addr = actor.start();
+        bus.subscribe(EventType::E3Requested, addr.clone().into());
+        bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
         bus.subscribe(
             EventType::DkgFoldAttestationContextEstablished,
             addr.clone().into(),
@@ -127,6 +134,8 @@ impl NodeProofAggregator {
     }
 }
 
+#[path = "dealer.rs"]
+pub(crate) mod dealer;
 #[path = "effects.rs"]
 mod effects;
 #[path = "handlers.rs"]

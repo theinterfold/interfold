@@ -891,6 +891,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
 
     let nodes = open(temp.path(), &setup).await?;
     let mut recovered = Vec::new();
+    let mut recovered_pending = Vec::new();
     for (owner, node) in nodes.iter().enumerate() {
         let saved = node.root(e3).await?;
         ensure!(saved.dkg_roster.as_ref() == Some(&roster));
@@ -954,12 +955,19 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
             .send(GetEvents::<InterfoldEvent>::new())
             .await?
             .is_empty());
+        let payloads = ThresholdKeyshareRecoveryPayloads::load(
+            node.repositories.threshold_keyshare_recovery_payloads(e3),
+            &saved,
+        )
+        .await?;
+        recovered_pending.push((**payloads.pending().context("lost dealer proof plan")?).clone());
         recovered.push((saved, state));
     }
     let qualified = match prover {
         Some(prover) => {
             publication::qualify(
                 &recovered,
+                &recovered_pending,
                 &accepted_c4,
                 prover,
                 temp.path(),

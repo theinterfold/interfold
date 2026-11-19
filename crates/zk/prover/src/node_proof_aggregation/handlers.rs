@@ -12,8 +12,11 @@ impl Actor for NodeProofAggregator {
 impl Handler<InterfoldEvent> for NodeProofAggregator {
     type Result = ();
 
-    fn handle(&mut self, msg: InterfoldEvent, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
+        if self.route_dealer(&data, &ec, ctx) {
+            return;
+        }
         match data {
             InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
                 self.handle_dkg_fold_attestation_context(TypedEvent::new(data, ec));
@@ -69,9 +72,12 @@ impl Handler<TypedEvent<ThresholdSharePending>> for NodeProofAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_threshold_share_pending(msg);
+        let (data, ec) = msg.into_components();
+        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+            self.handle_threshold_share_pending(TypedEvent::new(data, ec));
+        }
     }
 }
 
@@ -81,9 +87,12 @@ impl Handler<TypedEvent<DKGInnerProofReady>> for NodeProofAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<DKGInnerProofReady>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_inner_proof_ready(msg);
+        let (data, ec) = msg.into_components();
+        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+            self.handle_inner_proof_ready(TypedEvent::new(data, ec));
+        }
     }
 }
 
@@ -93,9 +102,12 @@ impl Handler<TypedEvent<ComputeResponse>> for NodeProofAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<ComputeResponse>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_compute_response(msg);
+        let (data, ec) = msg.into_components();
+        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+            self.handle_compute_response(TypedEvent::new(data, ec));
+        }
     }
 }
 
@@ -105,9 +117,12 @@ impl Handler<TypedEvent<ComputeRequestError>> for NodeProofAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<ComputeRequestError>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.handle_compute_request_error(msg);
+        let (data, ec) = msg.into_components();
+        if !self.route_dealer(&data.clone().into(), &ec, ctx) {
+            self.handle_compute_request_error(TypedEvent::new(data, ec));
+        }
     }
 }
 
