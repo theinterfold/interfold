@@ -131,6 +131,16 @@ fn prove_nodes_fold_step(
             "nodes_fold needs at least two slots, got {total_slots}"
         )));
     }
+    // The circuit writes nothing for the sentinel slot `total_slots`, so a node given it would be
+    // verified and then dropped.
+    if let Some((_, slot)) = leaves
+        .iter()
+        .find(|(_, slot)| *slot as usize >= total_slots)
+    {
+        return Err(ZkError::InvalidInput(format!(
+            "nodes_fold slot {slot} out of range for {total_slots} slots"
+        )));
+    }
     let mut inner_proofs = Vec::with_capacity(NODES_FOLD_LEAVES);
     let mut node_fold_public_inputs = Vec::with_capacity(NODES_FOLD_LEAVES);
     let mut slot_indices = Vec::with_capacity(NODES_FOLD_LEAVES);
