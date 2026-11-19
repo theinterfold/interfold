@@ -443,13 +443,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@243@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@248@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@449@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@479@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],
