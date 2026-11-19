@@ -131,6 +131,12 @@ pub enum CircuitName {
     C6ChonkTube,
     /// Closes the C6 tube's IPA claim; the decryption aggregator verifies it.
     C6ChonkRoot,
+    /// Chunked C4: CRT limb 0 (non-ZK, verified by the final C4 circuit).
+    DkgShareDecryptionLimb0,
+    /// Chunked C4: CRT limb 1.
+    DkgShareDecryptionLimb1,
+    /// Chunked C4: CRT limb 2.
+    DkgShareDecryptionLimb2,
 }
 
 impl CircuitName {
@@ -275,6 +281,9 @@ impl CircuitName {
             CircuitName::C6ChonkHidingKernel => "c6_chonk_hiding_kernel",
             CircuitName::C6ChonkTube => "c6_chonk_tube",
             CircuitName::C6ChonkRoot => "c6_chonk_root",
+            CircuitName::DkgShareDecryptionLimb0 => "share_decryption_limb_0",
+            CircuitName::DkgShareDecryptionLimb1 => "share_decryption_limb_1",
+            CircuitName::DkgShareDecryptionLimb2 => "share_decryption_limb_2",
         }
     }
 
@@ -288,7 +297,10 @@ impl CircuitName {
             | CircuitName::ESmShareComputationChain
             | CircuitName::ESmShareComputationChainLast => "dkg",
             CircuitName::ShareEncryption => "dkg",
-            CircuitName::DkgShareDecryption => "dkg",
+            CircuitName::DkgShareDecryption
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2 => "dkg",
             CircuitName::PkGeneration => "threshold",
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
@@ -376,7 +388,10 @@ impl CircuitName {
             | CircuitName::C6ChonkTailKernel
             | CircuitName::C6ChonkHidingKernel
             | CircuitName::C6ChonkTube
-            | CircuitName::C6ChonkRoot => CircuitOutputLayout::None,
+            | CircuitName::C6ChonkRoot
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2 => CircuitOutputLayout::None,
         }
     }
 
