@@ -129,11 +129,10 @@ fn test_limbs() -> ([[Polynomial<4>; 3]; 3], [[Field; 3]; 3], Field) {
             );
         }
     }
-    let expected = crate::core::dkg::share_decryption::ShareDecryption::<4, 3, 3, 60, 60>::new(
-        commitments,
+    let expected = crate::core::dkg::share_decryption::aggregate_canonical_shares::<4, 3, 3, 60, 60>(
         shares,
-    )
-        .execute(TQ);
+        TQ,
+    );
     (shares, commitments, expected)
 }
 
