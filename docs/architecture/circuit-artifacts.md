@@ -142,10 +142,11 @@ manifests, and required artifacts before publication. Non-release CI/full-proof 
 `pull --compatible` without a source match. This selects the latest first-parent artifact commit
 with the checkout's exact VK catalogue and verifies the checksums and all six VK genealogies before
 replacing local artifacts. It does not infer compatibility from the branch name or repair a bad
-archive. `--hydrate-bin-only` requires a stamp and markers, reports a source mismatch, and records
-the original artifact hash in the active stamp. It never rewrites the archived stamp.
-`--skip-if-built` still requires a source match. These development reuse paths do not supply
-release-level source provenance; retain strict release qualification.
+archive. `--hydrate-bin-only` requires a stamp and every
+[required artifact](../../crates/zk/prover/required-artifacts.json), reports a source mismatch, and
+records the original artifact hash in the active stamp. It never rewrites the archived stamp.
+`--skip-if-built` still requires a source match and every required artifact. These development reuse
+paths do not supply release-level source provenance; retain strict release qualification.
 
 The expected archive digest ships **with the binary**, never fetched from the archive or endpoint.
 0.18.0's pin is the published GitHub asset digest; other version pins live in versions.json. Release
@@ -186,6 +187,15 @@ Complete pair builds generate `nodes_fold.vk_tree_hash`/`c6_fold.vk_tree_hash` f
 keys. Subset builds, skip-VK, or any circuit failure remove **both** pair/bin anchors to prevent
 stale pins. Cache markers and release validation require both; hydration copies them. Final wrappers
 pin these tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
+
+The builder writes the `.vk_hash` of every Chonk app, kernel, and hiding circuit, not bb:
+`write_vk --scheme chonk` writes a key only, and the hash is `e3_safe::bb_poseidon2_hash` over its
+fields. A bb upgrade must recheck these hashes against bb's in-circuit VK-hash check. The C3 stacks
+are proven through `bb prove --scheme chonk --ivc_inputs_path` with the msgpack input layout of that
+bb version, which is part of the pinned bb interface. `qualify-vk-commitments` re-derives Chonk keys
+with bb but recomputes their hashes with the same builder function, so it detects stale files, not a
+hash-algorithm change; that evidence is the `e3-safe` bb 6.0.0 fixture test and real C3 Chonk
+proofs.
 
 Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable routers dispatch by
 public-input length and VK anchors. Selecting an already installed matching pair needs no

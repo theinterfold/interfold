@@ -34,8 +34,8 @@ fn secure_minimum_is_decryption_only_and_does_not_fall_back_to_ss() {
 #[test]
 fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
     // Frozen from the e3-events definitions at 26023af50, including the shared C4/C6 basename.
-    // The four share-computation chunk circuits at the end are new rows, appended after the
-    // existing variants.
+    // The four share-computation chunk circuits, then the C3 Chonk circuits, are new rows appended
+    // after the existing variants.
     for (index, (name, path, inputs, outputs)) in [
         ("PkBfv", "dkg/pk", 0, Some(1)),
         ("PkGeneration", "threshold/pk_generation", 0, Some(3)),
@@ -114,6 +114,37 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
         (
             "ESmShareComputationChainLast",
             "dkg/e_sm_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
+        ("C3ChonkApp", "chonk/c3_chonk_app", 0, Some(0)),
+        (
+            "C3ChonkInitKernel",
+            "chonk/c3_chonk_init_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkTailKernel",
+            "chonk/c3_chonk_tail_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkHidingKernel",
+            "chonk/c3_chonk_hiding_kernel",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkTube",
+            "recursive_aggregation/c3_chonk_tube",
+            0,
+            Some(0),
+        ),
+        (
+            "C3ChonkAccumulate",
+            "recursive_aggregation/c3_chonk_accumulate",
             0,
             Some(0),
         ),

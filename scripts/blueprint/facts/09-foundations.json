@@ -388,7 +388,7 @@
         },
         {
           "why": "compute_tag: the IO pattern and domain separator folded into one field element",
-          "ref": "crates/safe/src/lib.rs@320@pub fn compute_tag<const L: usize>"
+          "ref": "crates/safe/src/lib.rs@345@pub fn compute_tag<const L: usize>"
         }
       ],
       "rust_patterns": [
@@ -400,12 +400,12 @@
         {
           "pattern": "iterator-chain",
           "note": "compute_tag walks the IO pattern with iter().take(L)",
-          "ref": "crates/safe/src/lib.rs@328@for item in io_pattern.iter().take(L) {"
+          "ref": "crates/safe/src/lib.rs@353@for item in io_pattern.iter().take(L) {"
         },
         {
           "pattern": "unit-test",
           "note": "tests sit in a cfg(test) module in the same file",
-          "ref": "crates/safe/src/lib.rs@428@#[test]"
+          "ref": "crates/safe/src/lib.rs@453@#[test]"
         }
       ],
       "depends_on": [],

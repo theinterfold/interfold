@@ -66,10 +66,17 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.Folder name='share_decryption' />
         <FileTree.Folder name='decrypted_shares_aggregation' />
       </FileTree.Folder>
+      <FileTree.Folder name='chonk'>
+        <FileTree.File name='Nargo.toml' />
+        <FileTree.Folder name='c3_chonk_app' />
+        <FileTree.Folder name='c3_chonk_init_kernel' />
+        <FileTree.Folder name='c3_chonk_tail_kernel' />
+        <FileTree.Folder name='c3_chonk_hiding_kernel' />
+      </FileTree.Folder>
       <FileTree.Folder name='recursive_aggregation'>
         <FileTree.Folder name='c2ab_fold' />
-        <FileTree.Folder name='c3_fold' />
-        <FileTree.Folder name='c3_fold_kernel' />
+        <FileTree.Folder name='c3_chonk_tube' />
+        <FileTree.Folder name='c3_chonk_accumulate' />
         <FileTree.Folder name='c3ab_fold' />
         <FileTree.Folder name='c4ab_fold' />
         <FileTree.Folder name='c6_fold' />
@@ -92,6 +99,7 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                  |
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4), and the C2 chunk circuits those two verify. |
 | `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).                                |
+| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 Chonk stacks.                                                                                                                      |
 | `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                     |
 | `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                                       |
 | `benchmarks`                | Timing scripts and reports.                                                                                                                                                             |
@@ -111,16 +119,23 @@ proofs go on-chain.
   label='DKG proof aggregation'
   steps={[
     { label: 'Inner proofs', icon: 'circuit', sub: 'C0 to C4 for each ciphernode.' },
-    { label: 'Step folds', icon: 'layers', sub: 'c2ab_fold, c3_fold, c3ab_fold, c4ab_fold.' },
+    {
+      label: 'Step folds',
+      icon: 'layers',
+      sub: 'c2ab_fold, the C3 Chonk chains, c3ab_fold, c4ab_fold.',
+    },
     { label: 'node_fold', icon: 'node', sub: 'One fold for each ciphernode.' },
     { label: 'nodes_fold', icon: 'network', sub: 'Folds the node_fold proofs of the committee.' },
     { label: 'dkg_aggregator', icon: 'contract', sub: 'Adds C5. Verified on-chain.' },
   ]}
 />
 
-The decryption path is shorter. The C6 proofs of the committee go through `c6_fold`, and
-`decryption_aggregator` adds C7. The `*_kernel` packages make the first proof of each sequential
-fold (`c3_fold`, `c6_fold`, `nodes_fold`).
+C3 runs over Chonk: `c3_chonk_app` verifies a batch of C3 proofs and three kernels close the stack,
+`c3_chonk_tube` verifies the stack's Chonk proof, `c3_chonk_accumulate` merges the tubes, and
+`c3ab_fold` closes the chain. The decryption path is shorter. The C6 proofs of the committee go
+through `c6_fold`, and `decryption_aggregator` adds C7. The `*_fold_kernel` packages make the first
+proof of each sequential fold (`c6_fold`, `nodes_fold`). The `c3_chonk_*_kernel` packages are Chonk
+kernels, not fold kernels.
 
 The Solidity verifiers for the two aggregators are committed to the repository as
 `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol`. `BfvPkVerifier` and
@@ -246,11 +261,13 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 2. It regenerates the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
    `packages/interfold-contracts/contracts/lib/BfvProtocol.sol`.
-4. It compiles every package in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
-   `nargo compile`.
+4. It compiles every package in `bin/dkg`, `bin/threshold`, `bin/chonk`, and
+   `bin/recursive_aggregation` with `nargo compile`.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
    `noir-recursive-no-zk`, and `noir-recursive` keys. Each fold circuit gets a
-   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key.
+   `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key. The C3 Chonk app and
+   kernels get `--scheme chonk` keys with a Poseidon2 key hash, and `c3_chonk_tube` and
+   `c3_chonk_accumulate` get `noir-rollup-no-zk` keys.
 6. It copies the artifacts to `dist/circuits/<preset>/<committee>/`, with one directory for each
    variant (`default`, `recursive`, `evm`). Then it writes `SHA256SUMS` and `checksums.json`.
 
@@ -423,12 +440,18 @@ and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/
 
 ## Add or rename a circuit
 
-1. Put the package in `bin/dkg`, `bin/threshold`, or `bin/recursive_aggregation`. The build script
-   finds packages in these groups automatically.
-2. Add the package to the `members` list of the group workspace, for `bin/dkg` and `bin/threshold`.
+1. Put the package in `bin/dkg`, `bin/threshold`, `bin/chonk`, or `bin/recursive_aggregation`. The
+   build script finds packages in these groups automatically. In `bin/chonk`, the package suffix
+   (`_app`, `_hiding_kernel`, or any other kernel) picks the Chonk circuit kind the key is written
+   for (`write_vk` in `crates/zk/build/src/artifacts.rs`).
+2. Add the package to the `members` list of the group workspace, for `bin/dkg`, `bin/threshold`, and
+   `bin/chonk`.
 3. Add the directory to `DIRS` in `scripts/circuits/lint.sh`, for a package in
    `bin/recursive_aggregation`.
-4. Add a `CircuitName` variant in `crates/zk/config` if the Rust prover must run the circuit.
+4. Append a `CircuitName` variant in `crates/zk/config` after the last one if the Rust prover must
+   run the circuit. Never remove or reorder variants. Mark the variant of a retired circuit as
+   retired and keep it in place: every persisted or gossiped bincode encoding (the event log, the
+   keyshare layouts, node-fold recovery, DHT documents, and slashing records) holds it by position.
 5. Rebuild each pair that you ship, and regenerate the verifiers if the circuit goes on-chain.
 
 ## Next steps

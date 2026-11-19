@@ -523,6 +523,13 @@ fn dry_run_lists_selections_without_tools_or_writes() {
         Group::Dkg,
         Group::RecursiveAggregation,
     ]);
+    assert!(!dry.groups.is_complete());
+    dry.groups = GroupSelection::Selected(vec![
+        Group::Threshold,
+        Group::Dkg,
+        Group::Chonk,
+        Group::RecursiveAggregation,
+    ]);
     assert!(dry.groups.is_complete());
 }
 
@@ -1315,9 +1322,44 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
         serde_json::to_string_pretty(&stamp).unwrap() + "\n"
     );
     assert!(artifacts::hydration_stamp(&pair, "secure-8192", "minimum", "current-source").is_err());
-    fs::remove_file(pair.join("default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
-        .unwrap();
+    // A published tree that predates an artifact the prover now requires is neither current nor
+    // hydratable, whatever its stamp says.
+    assert!(artifacts::dist_current(&pair, "insecure-64", "minimum", None).unwrap());
+    fs::remove_file(pair.join("default/chonk/c3_chonk_app/c3_chonk_app.json")).unwrap();
+    assert!(!artifacts::dist_current(&pair, "insecure-64", "minimum", None).unwrap());
     assert!(artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").is_err());
+}
+
+/// `circuits/bin` is current only with every required artifact where hydration puts it: one missing
+/// Chonk kernel key fails it, whatever the stamp says.
+#[test]
+fn bin_current_requires_every_required_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "circuits/bin/chonk/Nargo.toml",
+        "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
+    );
+    write_json(
+        &root.join("circuits/bin/.active-preset.json"),
+        &artifacts::Stamp {
+            preset: "insecure-64".into(),
+            committee: "minimum".into(),
+            source_hash: "source".into(),
+            built_at: "time".into(),
+        },
+    )
+    .unwrap();
+    for marker in artifacts::bin_markers(root).unwrap() {
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(marker, b"marker").unwrap();
+    }
+    assert!(artifacts::bin_current(root, "insecure-64", "minimum", Some("source")).unwrap());
+    assert!(!artifacts::bin_current(root, "insecure-64", "minimum", Some("other")).unwrap());
+    fs::remove_file(root.join("circuits/bin/chonk/target/c3_chonk_hiding_kernel.vk_recursive"))
+        .unwrap();
+    assert!(!artifacts::bin_current(root, "insecure-64", "minimum", Some("source")).unwrap());
 }
 
 /// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
@@ -1403,8 +1445,8 @@ fn staging_bin_reproduces_the_published_pair_layout() {
 const VK_PATHS: &[(&str, &str, &str)] = &[
     ("recursive", "dkg", "sk_share_computation"),
     ("recursive", "dkg", "e_sm_share_computation"),
-    ("default", "recursive_aggregation", "c3_fold"),
-    ("default", "recursive_aggregation", "c3_fold_kernel"),
+    ("default", "recursive_aggregation", "c3_chonk_accumulate"),
+    ("default", "recursive_aggregation", "c3_chonk_tube"),
     ("recursive", "dkg", "share_encryption"),
     ("recursive", "dkg", "share_decryption"),
     ("recursive", "dkg", "pk"),
@@ -1422,6 +1464,10 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "dkg", "sk_share_computation_chain_last"),
     ("default", "dkg", "e_sm_share_computation_chain"),
     ("default", "dkg", "e_sm_share_computation_chain_last"),
+    ("default", "chonk", "c3_chonk_hiding_kernel"),
+    ("default", "chonk", "c3_chonk_app"),
+    ("default", "chonk", "c3_chonk_init_kernel"),
+    ("default", "chonk", "c3_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1453,7 +1499,9 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[1],
         compute_vk_hash(vec![keys[19], keys[20]]),
     ]);
-    let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
+    let c3_chain = compute_vk_hash(vec![
+        keys[2], keys[3], keys[21], keys[4], keys[22], keys[23], keys[24],
+    ]);
     let node = compute_vk_hash(vec![
         keys[6],
         keys[7],

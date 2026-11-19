@@ -73,10 +73,9 @@ pub enum CircuitName {
     ThresholdShareDecryption,
     /// Decrypted shares aggregation proof (C7).
     DecryptedSharesAggregation,
-    /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
+    /// Retired sequential C3 fold; C3 runs over Chonk. Kept so stored encodings keep their indices.
     C3Fold,
-    /// First step of a [`CircuitName::C3Fold`] chain: proves the first leaf and starts the accumulator
-    /// (same ABI; it verifies no accumulator).
+    /// Retired `c3_fold` kernel. Kept so stored encodings keep their indices.
     C3FoldKernel,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
@@ -85,7 +84,7 @@ pub enum CircuitName {
     C6FoldKernel,
     /// Ad-hoc recursive aggregation: C2a + C2b.
     C2abFold,
-    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
+    /// Ad-hoc: final sk C3 Chonk accumulator + final e_sm C3 Chonk accumulator.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
     C4abFold,
@@ -108,6 +107,18 @@ pub enum CircuitName {
     ESmShareComputationChain,
     /// Chunked C2b: the last chunk.
     ESmShareComputationChainLast,
+    /// C3 Chonk stack app: verifies a batch of C3 proofs and writes their rows.
+    C3ChonkApp,
+    /// C3 Chonk stack kernel that verifies the app.
+    C3ChonkInitKernel,
+    /// C3 Chonk stack kernel that verifies the init kernel.
+    C3ChonkTailKernel,
+    /// C3 Chonk stack kernel that verifies the tail kernel and ends the stack.
+    C3ChonkHidingKernel,
+    /// Rollup proof of one C3 Chonk stack's Chonk proof.
+    C3ChonkTube,
+    /// Rollup proof merging a C3 Chonk accumulator or tube with a tube.
+    C3ChonkAccumulate,
 }
 
 impl CircuitName {
@@ -240,6 +251,12 @@ impl CircuitName {
             CircuitName::SkShareComputationChainLast => "sk_share_computation_chain_last",
             CircuitName::ESmShareComputationChain => "e_sm_share_computation_chain",
             CircuitName::ESmShareComputationChainLast => "e_sm_share_computation_chain_last",
+            CircuitName::C3ChonkApp => "c3_chonk_app",
+            CircuitName::C3ChonkInitKernel => "c3_chonk_init_kernel",
+            CircuitName::C3ChonkTailKernel => "c3_chonk_tail_kernel",
+            CircuitName::C3ChonkHidingKernel => "c3_chonk_hiding_kernel",
+            CircuitName::C3ChonkTube => "c3_chonk_tube",
+            CircuitName::C3ChonkAccumulate => "c3_chonk_accumulate",
         }
     }
 
@@ -258,6 +275,10 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
             CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkInitKernel
+            | CircuitName::C3ChonkTailKernel
+            | CircuitName::C3ChonkHidingKernel => "chonk",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C6Fold
@@ -269,7 +290,9 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => "recursive_aggregation",
+            | CircuitName::DecryptionAggregator
+            | CircuitName::C3ChonkTube
+            | CircuitName::C3ChonkAccumulate => "recursive_aggregation",
         }
     }
 
@@ -317,7 +340,13 @@ impl CircuitName {
             | CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
-            | CircuitName::ESmShareComputationChainLast => CircuitOutputLayout::None,
+            | CircuitName::ESmShareComputationChainLast
+            | CircuitName::C3ChonkApp
+            | CircuitName::C3ChonkInitKernel
+            | CircuitName::C3ChonkTailKernel
+            | CircuitName::C3ChonkHidingKernel
+            | CircuitName::C3ChonkTube
+            | CircuitName::C3ChonkAccumulate => CircuitOutputLayout::None,
         }
     }
 

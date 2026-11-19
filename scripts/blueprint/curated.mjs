@@ -187,7 +187,7 @@ function system({ units, tag }) {
         fa: 0.3,
         label: 'witness in-process · bb proves',
         tip: 'Noir is linked as a library to compute the witness; the bb binary runs as a child process to make the proof.',
-        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)'],
+        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@123@StdCommand::new(bb)'],
       },
       { from: 'circuits', to: 'contracts', fs: 'l', ts: 'r', label: 'Honk verifiers', refs: [...ev('A20'), ...ev('D9', 'D10')] },
       {
@@ -593,10 +593,10 @@ function circuits() {
         y: 480,
         w: 320,
         h: 80,
-        title: 'c3_fold → c3ab_fold',
+        title: 'C3 Chonk → c3ab_fold',
         lines: ['every C3, then sk and e_sm'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c3_fold/src/main.nr@42@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs`,
+        ref: `${CIR}/chonk/c3_chonk_app/src/main.nr@27@verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k]`,
       },
       {
         id: 'c4ab',
@@ -1066,7 +1066,7 @@ function ciphernode({ units }) {
         ta: 0.3,
         label: 'spawn bb',
         lt: 0.3,
-        refs: ['crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
+        refs: ['crates/zk/prover/src/prover.rs@123@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
       },
     ],
   }

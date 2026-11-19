@@ -201,14 +201,7 @@ pub fn qualify(root: &Path, request: &Request) -> Result<()> {
                 let vk = directory.join(format!("{}.vk", circuit.package));
                 let hash = directory.join(format!("{}.vk_hash", circuit.package));
                 let job = tempfile::tempdir()?;
-                crate::run(
-                    Command::new("bb")
-                        .args(["write_vk", "-b"])
-                        .arg(&compiled)
-                        .arg("-o")
-                        .arg(job.path())
-                        .args(["-t", target]),
-                )?;
+                artifacts::write_vk(&circuit, &compiled, target, job.path())?;
                 ensure!(
                     fs::read(job.path().join("vk"))? == fs::read(&vk)?,
                     "Backend VK bytes differ: {}",

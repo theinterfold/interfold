@@ -132,9 +132,9 @@ hand; the check will reject pushes where they drift from what the generator woul
 
 ### What it does
 
-1. **Discovers circuits** in `circuits/bin/{dkg,threshold,recursive_aggregation}/`
+1. **Discovers circuits** in `circuits/bin/{dkg,threshold,chonk,recursive_aggregation}/`
 2. **Compiles** each circuit using `nargo compile`
-3. **Generates verification keys** using `bb write_vk`
+3. **Generates verification keys** using `bb write_vk` (`--scheme chonk` for the `chonk` group)
 4. **Sanitizes paths** in compiled JSON (removes local filesystem paths for opsec)
 5. **Generates checksums** (`SHA256SUMS` and `checksums.json`)
 6. **Copies artifacts** to `dist/circuits/`
@@ -146,7 +146,7 @@ hand; the check will reject pushes where they drift from what the generator woul
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
 - `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
-- `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)
+- `--group <groups>` - Circuit groups (comma-separated: dkg,threshold,chonk,recursive_aggregation)
 - `--circuit <name>` - Build specific circuit(s)
 - `--skip-vk` - Skip verification key generation
 - `--skip-checksums` - Skip checksum generation

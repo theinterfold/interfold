@@ -2,10 +2,11 @@
 
 Owners: [Noir library](../../circuits/lib/src/),
 [recursive circuits](../../circuits/bin/recursive_aggregation/),
-[Rust configuration](../../crates/zk/config/) and [witness preparation](../../crates/zk/witness/),
-and [BFV wrappers](../../packages/interfold-contracts/contracts/verifiers/). These constraints
-survive implementation refactors. A passing witness is not a soundness argument, and a code citation
-or audit remediation is not completeness evidence.
+[Chonk circuits](../../circuits/bin/chonk/), [Rust configuration](../../crates/zk/config/) and
+[witness preparation](../../crates/zk/witness/), and
+[BFV wrappers](../../packages/interfold-contracts/contracts/verifiers/). These constraints survive
+implementation refactors. A passing witness is not a soundness argument, and a code citation or
+audit remediation is not completeness evidence.
 
 ## Statement chain
 
@@ -468,13 +469,32 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C3, C6, and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across
-predecessors. The kernel proves the chain's first leaf at that leaf's slot; every fold step carries
-its predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain
-of `n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
+Sequential C6 and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across predecessors.
+The kernel proves the chain's first leaf at that leaf's slot; every fold step carries its
+predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain of
+`n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
 continuation verifies the fold; the final consumer binds the declared fold hash to the verified VK.
 C3ab covers both complete C3 chains. Node-fold covers child folds and their nested keys. DKG
 aggregation requires one node-tree hash across every selected row.
+
+C3 chains run over Chonk (`lib::math::chonk`) instead. A stack is `c3_chonk_app`, which verifies
+`C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
+the stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube
+on the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
+rollup, which closes its IPA claim. Every stage verifies against a witness key and appends that
+key's hash to the data it passes on, so each tube or accumulator exposes seven key hashes: its own,
+the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on
+both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which the anchor pins. The
+Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
+writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app,
+kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
+on an accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
+
+Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
+verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
+proof that verifies under the leaf key; the prover repeats the stack's first leaf, but the circuit
+does not require that choice, and the place adds no row. Within a stack every written slot must be
+empty, and merging rejects a slot filled on both sides, so no row is overwritten or duplicated.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
@@ -482,7 +502,7 @@ The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 C2a chain  = hash(sk_share_computation_chain, sk_share_computation_chain_last)
 C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_last)
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
-C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
+C3 chain   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, C3, app, init, tail)
 C3 tree    = hash(C3a chain, C3b chain)
 C4 tree    = hash(C4a, C4b)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
@@ -541,10 +561,11 @@ publishes them in the `default` variant alone; the final circuits keep every var
 ## Evidence and change review
 
 - [Noir helpers](../../circuits/lib/src/math/) and
-  [recursive circuit tests](../../circuits/bin/recursive_aggregation/) own range, packing,
-  recipient, and recursion constraints. `pnpm noir:test` exercises the selected configuration; use
-  real secure witnesses and unit branches for secure-only paths. Scan execution output for `bug:` as
-  well as exit failures. Compilation alone is not a proof check.
+  [recursive circuit tests](../../circuits/bin/recursive_aggregation/),
+  [Chonk circuits](../../circuits/bin/chonk/) own range, packing, recipient, and recursion
+  constraints. `pnpm noir:test` exercises the selected configuration; use real secure witnesses and
+  unit branches for secure-only paths. Scan execution output for `bug:` as well as exit failures.
+  Compilation alone is not a proof check.
 - [BFV wrapper tests](../../packages/interfold-contracts/test/BfvDecryptionVerifier.spec.ts),
   [PK tests](../../packages/interfold-contracts/test/BfvPkVerifier.spec.ts), and
   [VK integration](../../packages/interfold-contracts/test/BfvVkBindingIntegration.spec.ts) own
