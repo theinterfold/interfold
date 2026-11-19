@@ -410,4 +410,21 @@ mod share_computation_chain {
             );
         }
     }
+
+    /// Inputs dealt to a committee of the same degree but another size are rejected, not indexed.
+    #[test]
+    fn chain_rejects_inputs_shaped_for_another_committee() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let minimum = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
+        let micro = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+        let sample = e3_zk_samples::dkg::share_computation::generate(
+            &minimum,
+            preset,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let inputs = Inputs::compute(&minimum, &sample).unwrap();
+        let error = Chain::compute(&micro, &inputs).unwrap_err();
+        assert!(error.to_string().contains("per share row"), "{error}");
+    }
 }

@@ -16,6 +16,7 @@ use crate::commitments::{
     compute_commitments, packer, DS_SHARE_COMPUTATION_CHAIN_OUTPUT,
     DS_SHARE_COMPUTATION_CHAIN_SECRET, DS_SHARE_COMPUTATION_CHAIN_STATE, DS_SHARE_ENCRYPTION,
 };
+use crate::encoding::bigint_3d_to_json_values;
 use crate::WitnessError;
 use ark_bn254::Fr as Field;
 use ark_ff::{BigInteger, PrimeField};
@@ -49,15 +50,7 @@ impl ChainChunk {
                 .map(|state| state.iter().map(field_to_string).collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
             "positions_in": self.positions_in,
-            "y_chunk": self
-                .y_chunk
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(|limb| limb.iter().map(|v| v.to_string()).collect::<Vec<_>>())
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>(),
+            "y_chunk": bigint_3d_to_json_values(&self.y_chunk),
         })
     }
 }
@@ -87,6 +80,14 @@ impl Chain {
             return Err(WitnessError::Other(format!(
                 "C2 chain expects {degree} share rows, got {}",
                 inputs.y.len()
+            )));
+        }
+        if let Some(row) = inputs.y.iter().position(|row| {
+            row.len() != num_moduli || row.iter().any(|limb| limb.len() != n_parties + 1)
+        }) {
+            return Err(WitnessError::Other(format!(
+                "C2 chain expects {num_moduli} limbs of {} values per share row; row {row} differs",
+                n_parties + 1
             )));
         }
 
