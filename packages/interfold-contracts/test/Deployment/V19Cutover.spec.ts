@@ -32,7 +32,7 @@ function decisions() {
     interfold: addr(1),
     interfoldProxyAdmin: addr(2),
     interfoldImplementation: addr(3),
-    paramSet: { index: 2, encoded: "0x1234" },
+    paramSets: [{ index: 3, encoded: "0x1234" }],
     committeeThresholds: [{ size: 2n, quorum: 9n, total: 20n }],
     pkVerifier: addr(4),
     decryptionVerifier: addr(5),
@@ -84,7 +84,7 @@ describe("v0.19 cutover", function () {
   it("leaves out the steps that the chain already satisfies", function () {
     const txs = buildV19CutoverTransactions({
       ...decisions(),
-      paramSet: undefined,
+      paramSets: [],
       committeeThresholds: [],
       ciphertextVerifier: undefined,
       registerProgram: undefined,
@@ -96,6 +96,24 @@ describe("v0.19 cutover", function () {
       "setPkVerifier",
       "setDecryptionVerifier",
     ]);
+  });
+
+  it("registers every parameter set that the chain lacks", function () {
+    const paramSets = [
+      { index: 4, encoded: "0x12" },
+      { index: 3, encoded: "0x34" },
+    ];
+    const registered = buildV19CutoverTransactions({
+      ...decisions(),
+      paramSets,
+    })
+      .map((tx) => interfoldInterface.parseTransaction({ data: tx.data }))
+      .filter((parsed) => parsed?.name === "setParamSet")
+      .map((parsed) => ({
+        index: Number(parsed!.args[0]),
+        encoded: parsed!.args[1],
+      }));
+    expect(registered).to.deep.equal(paramSets);
   });
 
   it("reads an OpenVM guest identity and refuses a malformed one", function () {
