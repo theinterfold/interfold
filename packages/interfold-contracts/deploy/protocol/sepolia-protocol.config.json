@@ -43,7 +43,7 @@
     "maxDuration": "2592000",
     "markFailedGracePeriod": "3600",
     "timeoutConfig": {
-      "dkgWindow": "1200",
+      "dkgWindow": "7200",
       "computeWindow": "604800",
       "decryptionWindow": "21600"
     },
