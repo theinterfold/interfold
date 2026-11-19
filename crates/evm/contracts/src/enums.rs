@@ -11,6 +11,7 @@ sol! {
         Minimum,
         Micro,
         Small,
+        Large,
     }
 
     #[derive(Debug, PartialEq)]
@@ -53,6 +54,7 @@ mod tests {
             CommitteeSize::Minimum,
             CommitteeSize::Micro,
             CommitteeSize::Small,
+            CommitteeSize::Large,
             CommitteeSize::__Invalid,
         ]
         .into_iter()

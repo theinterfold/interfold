@@ -248,16 +248,17 @@ pnpm build:circuits --preset secure-8192 --committee small
 
 A build selects one BFV preset and one committee size:
 
-| Option        | Values                              | Default       |
-| ------------- | ----------------------------------- | ------------- |
-| `--preset`    | `insecure-64`, `secure-8192`, `all` | `insecure-64` |
-| `--committee` | `minimum`, `micro`, `small`, `all`  | `minimum`     |
+| Option        | Values                                      | Default       |
+| ------------- | ------------------------------------------- | ------------- |
+| `--preset`    | `insecure-64`, `secure-8192`, `all`         | `insecure-64` |
+| `--committee` | `minimum`, `micro`, `small`, `large`, `all` | `minimum`     |
 
 | Committee | N   | T   | H   |
 | --------- | --- | --- | --- |
 | `minimum` | 3   | 1   | 2   |
 | `micro`   | 9   | 4   | 5   |
 | `small`   | 19  | 9   | 14  |
+| `large`   | 45  | 22  | 34  |
 
 N is the committee size, T is the threshold, and H is the number of honest parties that the DKG
 expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure parameter set.
