@@ -47,7 +47,7 @@ library ActiveCryptoConfig {
     uint32 internal constant LARGE_H = BfvProtocol.LARGE_H;
     uint32 internal constant LARGE_N = BfvProtocol.LARGE_N;
 
-    // Production default. The public MAX_COMMITTEE_SIZE constant reads N.
+    // Production default.
     bytes32 internal constant CONFIG_ID =
         BfvProtocol.SS_SECURE_8192_SMALL_CONFIG_ID;
     uint8 internal constant PARAM_SET = SECURE_PARAM_SET;
