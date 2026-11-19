@@ -400,8 +400,8 @@ async fn trbfv_c3_chonk_stack_measure() {
     }
 }
 
-/// C3 proving throughput: proves the same `MEASURE_C3_COUNT` (default 24) C3 slots with 1, 2 and 4
-/// proofs at a time, splitting `MEASURE_THREADS` (default 16) bb threads evenly between them. Needs
+/// C3 proving throughput: proves the same `MEASURE_C3_COUNT` (default 24) C3 proofs with 1, 2 and
+/// 4 at a time, splitting `MEASURE_THREADS` (default 16) bb threads evenly between them. Needs
 /// `MEASURE_C3_CONCURRENCY=1`.
 #[tokio::test]
 async fn trbfv_c3_concurrency_measure() {
@@ -452,11 +452,15 @@ async fn trbfv_c3_concurrency_measure() {
         ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
     });
     let slots_per_party = PRESET.metadata().num_moduli;
+    // The node's C3 slots: every recipient's but its own. A count above them repeats slots, because
+    // the circuit cost does not depend on the slot.
+    let peer_slots = (committee.n - 1) * slots_per_party;
     let config =
         e3_zk_config::dkg::share_encryption::Configs::for_preset(PRESET).expect("C3 configuration");
     let data: Vec<_> = prep("C3 witness data", || {
-        (slots_per_party..slots_per_party + count)
-            .map(|slot| {
+        (0..count)
+            .map(|index| {
+                let slot = slots_per_party + index % peer_slots;
                 node_fold_witness::share_encryption_for_slot(
                     PRESET,
                     &dkg_pk,
