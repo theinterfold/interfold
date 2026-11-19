@@ -189,7 +189,7 @@ export interface BuildRequestParamsOptions {
   windowDuration?: number;
   /** Override custom params bytes. Defaults to an ABI-encoded throwaway address. */
   customParams?: string;
-  /** Param-set id registered on the Interfold. Defaults to `0`. */
+  /** Param-set id registered on the Interfold. Defaults to `4` (insecure-64). */
   paramSet?: number;
 }
 
@@ -215,7 +215,7 @@ export const buildRequestParams = async (
     committeeSize: opts.committeeSize ?? COMMITTEE_SIZE_MINIMUM,
     inputWindow: [now + startOffset, now + windowDuration] as [number, number],
     e3Program: e3ProgramAddr,
-    paramSet: opts.paramSet ?? 0,
+    paramSet: opts.paramSet ?? 4,
     computeProviderParams: abiCoder.encode(
       ["address"],
       [decryptionVerifierAddr],

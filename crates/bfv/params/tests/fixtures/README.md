@@ -1,9 +1,10 @@
 # BFV protocol compatibility vectors
 
 `bfv_protocol.json` contains exact ABI bytes and parameter hashes for current threshold presets,
-plus historical threshold-only v5/v1 configuration IDs. The v5 records use registry indices 0 and 2;
-v1 records retain their original indices 0 and 1. These IDs support historical indexing, not new
-request or node admission.
+plus historical threshold-only v5/v1 configuration IDs. Current records use registry indices 4
+(insecure) and 3 (secure). Historical records retain their original indices: the v5 records of the
+v0.19 tuples use indices 0 and 2; the v1 records use indices 0 and 1. The threshold-only IDs support
+historical indexing, not new request or node admission.
 
 The vectors were calculated independently with ethers v6 `AbiCoder`, `id`, and `keccak256`:
 

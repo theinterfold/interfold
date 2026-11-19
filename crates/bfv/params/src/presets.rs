@@ -68,14 +68,15 @@ pub enum BfvPreset {
 }
 
 impl BfvPreset {
-    /// Current registry entries. Historical indices do not identify current presets.
+    /// Current registry entries. Historical indices do not identify current presets: registration
+    /// is append-only, and indices 0, 1 and 2 hold earlier tuples on live chains.
     pub const ON_CHAIN_PARAMETER_SETS: [(u8, Self); 2] = [
-        (0, Self::InsecureThreshold64),
-        (2, Self::SecureThreshold8192),
+        (4, Self::InsecureThreshold64),
+        (3, Self::SecureThreshold8192),
     ];
 
     /// Map a supported on-chain parameter-set index to a threshold `BfvPreset`.
-    /// Return `None` for the historical secure index 1 and other unsupported indices.
+    /// Return `None` for the historical indices 0, 1 and 2 and other unsupported indices.
     pub fn from_on_chain_param_set(value: u8) -> Option<Self> {
         Self::ON_CHAIN_PARAMETER_SETS
             .iter()
@@ -749,14 +750,16 @@ mod tests {
     }
 
     #[test]
-    fn old_secure_parameter_slot_has_no_preset() {
+    fn historical_parameter_slots_have_no_preset() {
+        for historical in [0, 1, 2] {
+            assert_eq!(BfvPreset::from_on_chain_param_set(historical), None);
+        }
         assert_eq!(
-            BfvPreset::from_on_chain_param_set(0),
+            BfvPreset::from_on_chain_param_set(4),
             Some(BfvPreset::InsecureThreshold64)
         );
-        assert_eq!(BfvPreset::from_on_chain_param_set(1), None);
         assert_eq!(
-            BfvPreset::from_on_chain_param_set(2),
+            BfvPreset::from_on_chain_param_set(3),
             Some(BfvPreset::SecureThreshold8192)
         );
         for (index, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {

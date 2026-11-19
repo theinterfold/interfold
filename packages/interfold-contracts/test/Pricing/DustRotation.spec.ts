@@ -121,7 +121,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
           number,
         ],
         e3Program: e3Program.getAddress() as unknown as string,
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [decryptionVerifier.getAddress()],
@@ -140,7 +140,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
         committeeSize: 0,
         inputWindow: [now + 10, now + inputWindowDuration] as [number, number],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
