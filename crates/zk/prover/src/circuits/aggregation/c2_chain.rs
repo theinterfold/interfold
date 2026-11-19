@@ -57,8 +57,8 @@ fn prove_circuit(
     prover.generate_proof_with_variant(circuit, &witness, job_id, variant, artifacts_dir)
 }
 
-/// Proves the chunk chain of C2 for `input` and returns the final circuit and its inputs: the C2
-/// inputs without the share grid, plus the chunk keys, proofs, links and the chain's outputs.
+/// Proves the chunk chain of C2 for `input` and returns the final circuit and its inputs: the
+/// secret and its commitment, plus the chunk keys, proofs, links and the chain's outputs.
 pub fn final_circuit_inputs(
     prover: &ZkProver,
     config: &Configs,
@@ -110,7 +110,6 @@ pub fn final_circuit_inputs(
     let fields = final_inputs
         .as_object_mut()
         .expect("C2 inputs serialize as an object");
-    fields.remove("y");
     fields.insert("full_vk".into(), json!(full_vk.verification_key));
     fields.insert("full_key_hash".into(), json!(full_vk.key_hash));
     fields.insert("last_vk".into(), json!(last_vk.verification_key));
