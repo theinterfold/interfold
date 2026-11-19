@@ -4,6 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! DKG share decryption and aggregation (C4a / C4b), one CRT limb at a time.
+//!
+//! **Role:** Verify decrypted shares against C2 commitments and publish a commitment to the sum
+//! over honest parties (run twice: sk path and e_sm path).
+//!
+//! **Consumes:** Per-party share commitments from C2 (sk or e_sm branch).
+//!
+//! **Produces:**
+//! - C4a: `commit(agg_sk)` -> C6 (threshold share decryption).
+//! - C4b: `commit(agg_e_sm)` -> C6 (threshold share decryption).
+//!
+//! [`aggregate_limb`] is C4's statement for one limb; `share_decryption_chain` proves it per limb
+//! and carries the aggregate commitment's sponge between the limbs. `BIT_MSG` hashes per-share
+//! plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
+//! (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
+
 use crate::math::commitments::{
     compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message_checked,
 };
@@ -13,74 +29,11 @@ use crate::math::polynomial::Polynomial;
 /// Bits allowed for the carry that [`normalize_aggregated`] divides out.
 ///
 /// The aggregate is a sum of `H` coefficients, each in `[0, q)`, so the carry is at most `H`. Eight
-/// bits cover every committee up to 255 members, and `execute` asserts that. It is deliberately
-/// loose: the carry bound exists to keep the reduction an integer identity, not to select the
-/// representative — the centered window does that — so slack costs a fraction of a gate per
-/// coefficient and buys independence from the committee config.
+/// bits cover every committee up to 255 members, and `aggregate_canonical_limb` asserts that. It is
+/// deliberately loose: the carry bound exists to keep the reduction an integer identity, not to
+/// select the representative — the centered window does that — so slack costs a fraction of a gate
+/// per coefficient and buys independence from the committee config.
 pub global AGGREGATION_BIT_CARRY: u32 = 8;
-
-/// DKG share decryption and aggregation (C4a / C4b).
-///
-/// **Role:** Verify decrypted shares against C2 commitments and publish a commitment to the sum
-/// over honest parties (run twice: sk path and e_sm path).
-///
-/// **Consumes:** Per-party share commitments from C2 (sk or e_sm branch).
-///
-/// **Produces:**
-/// - C4a: `commit(agg_sk)` -> C6 (threshold share decryption).
-/// - C4b: `commit(agg_e_sm)` -> C6 (threshold share decryption).
-///
-/// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
-/// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
-pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> {
-    /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
-    /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
-    /// parties and L CRT moduli.
-    /// (public witnesses)
-    expected_commitments: [[Field; L]; H],
-
-    /// Decrypted share polynomials from H honest parties.
-    /// Organised as [party_idx][mod_idx].
-    /// (secret witnesses)
-    decrypted_shares: [[Polynomial<N>; L]; H],
-}
-
-impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG> {
-    pub fn new(
-        expected_commitments: [[Field; L]; H],
-        decrypted_shares: [[Polynomial<N>; L]; H],
-    ) -> Self {
-        ShareDecryption { expected_commitments, decrypted_shares }
-    }
-
-    /// Executes the share decryption and aggregation circuit.
-    ///
-    /// Returns a commitment to the aggregated shares:
-    /// - C4a: commit(agg_sk), consumed by C6 in P4
-    /// - C4b: commit(agg_e_sm), consumed by C6 in P4
-    ///
-    /// `moduli` must be the threshold CRT moduli `[q_0, ..., q_{L-1}]`.
-    /// They are used to reverse and center the aggregated polynomials so that
-    /// `compute_aggregated_shares_commitment` produces the same hash as C6's
-    /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
-    /// and then applies `.reverse()` and `.center(&qi)` before hashing).
-    pub fn execute(self, moduli: [Field; L]) -> Field {
-        let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
-        for mod_idx in 0..L {
-            let mut commitments = [0; H];
-            let mut shares = [Polynomial::new([0; N]); H];
-            for party_idx in 0..H {
-                commitments[party_idx] = self.expected_commitments[party_idx][mod_idx];
-                shares[party_idx] = self.decrypted_shares[party_idx][mod_idx];
-            }
-            normalized[mod_idx] =
-                aggregate_limb::<N, H, BIT_MSG>(commitments, shares, moduli[mod_idx]);
-        }
-
-        // Publish commitment to the aggregate (C6 input).
-        compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
-    }
-}
 
 /// C4's statement for one CRT limb with modulus `q`: every honest party's decrypted share opens its
 /// C2 commitment, and the shares' sum, reversed and centered as C6 hashes it, is returned.
