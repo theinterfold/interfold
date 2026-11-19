@@ -167,11 +167,13 @@ too. CI candidate fixtures deliberately use that flag/subsets, not production po
 or staged `circuits/bin`) in local builds and tests: it applies the same manifest and
 required-artifact rules, without a release pin.
 
-Readiness requires the default bb executable to report the required version and every recorded
-artifact file to exist. A downloaded bb that cannot run on the host or reports another version fails
-setup, and therefore node startup, without being recorded. The installer retains each resolved
-artifact path in version.json, including the committee selected for a legacy manifest key. Readiness
-checks file presence, not file hashes.
+Readiness requires the default bb executable to report the required version, every recorded artifact
+file to exist, and every installed pair to hold the current required-artifacts inventory. A release
+can require new artifacts under the same circuits version; an installation that predates them needs
+circuits again and repairs to that version. A downloaded bb that cannot run on the host or reports
+another version fails setup, and therefore node startup, without being recorded. The installer
+retains each resolved artifact path in version.json, including the committee selected for a legacy
+manifest key. Readiness checks file presence, not file hashes.
 
 Validate before replacement so failure preserves installed circuits/version. Install errors trigger
 best-effort rollback but remain the returned error. Log every failed rollback rename source/target;

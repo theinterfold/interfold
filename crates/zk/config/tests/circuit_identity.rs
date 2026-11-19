@@ -34,6 +34,8 @@ fn secure_minimum_is_decryption_only_and_does_not_fall_back_to_ss() {
 #[test]
 fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
     // Frozen from the e3-events definitions at 26023af50, including the shared C4/C6 basename.
+    // The four share-computation chunk circuits at the end are new rows, appended after the
+    // existing variants.
     for (index, (name, path, inputs, outputs)) in [
         ("PkBfv", "dkg/pk", 0, Some(1)),
         ("PkGeneration", "threshold/pk_generation", 0, Some(3)),
@@ -88,6 +90,30 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
         (
             "DecryptionAggregator",
             "recursive_aggregation/decryption_aggregator",
+            0,
+            Some(0),
+        ),
+        (
+            "SkShareComputationChain",
+            "dkg/sk_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "SkShareComputationChainLast",
+            "dkg/sk_share_computation_chain_last",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChain",
+            "dkg/e_sm_share_computation_chain",
+            0,
+            Some(0),
+        ),
+        (
+            "ESmShareComputationChainLast",
+            "dkg/e_sm_share_computation_chain_last",
             0,
             Some(0),
         ),

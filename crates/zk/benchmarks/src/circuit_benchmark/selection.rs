@@ -20,7 +20,11 @@ impl Case {
             _ => [
                 CircuitName::PkBfv,
                 CircuitName::SkShareComputation,
+                CircuitName::SkShareComputationChain,
+                CircuitName::SkShareComputationChainLast,
                 CircuitName::ESmShareComputation,
+                CircuitName::ESmShareComputationChain,
+                CircuitName::ESmShareComputationChainLast,
                 CircuitName::ShareEncryption,
                 CircuitName::DkgShareDecryption,
                 CircuitName::PkGeneration,
@@ -43,6 +47,19 @@ impl Case {
     }
     pub fn name(self) -> String {
         self.path().rsplit('/').next().unwrap().to_string()
+    }
+    /// The variant this case runs in. The C2 chunk circuits are only built, proven and verified
+    /// non-ZK (`default`), whichever variant the run requests.
+    pub fn variant(self, requested: CircuitVariant) -> CircuitVariant {
+        match self {
+            Self::Named(
+                CircuitName::SkShareComputationChain
+                | CircuitName::SkShareComputationChainLast
+                | CircuitName::ESmShareComputationChain
+                | CircuitName::ESmShareComputationChainLast,
+            ) => CircuitVariant::Default,
+            _ => requested,
+        }
     }
 }
 

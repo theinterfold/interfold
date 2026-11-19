@@ -411,7 +411,9 @@ export function findCompatibleRevision(root: string, reference: string): string 
   for (const revision of git('rev-list', '--first-parent', reference).split('\n')) {
     if (git('ls-tree', '--object-only', revision, '--', 'vk-commitments.json') === expected) return revision
   }
-  throw new Error('No published circuit artifacts match the checkout VK catalogue')
+  throw new Error(
+    'No published circuit artifacts match the checkout VK catalogue; build from this checkout or publish a verified archive for this catalogue',
+  )
 }
 
 async function verifyRelease() {
