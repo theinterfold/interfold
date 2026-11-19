@@ -2,7 +2,7 @@
 //
 // The v0.19 cutover. Requests are paused and every E3 and committee is drained. One governance
 // batch then upgrades Interfold (new libraries, because `ActiveCryptoConfig` changed), registers
-// the secure BFV parameter set, installs the BFV verifier routers, wires the OpenVM CRISP program,
+// the BFV parameter sets, installs the BFV verifier routers, wires the OpenVM CRISP program,
 // retires the earlier programs and raises the node-release policy. Requests stay paused until
 // `resume` builds the unpause batch.
 //
@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { BFV_PRESETS } from "../../bfv.js";
 import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
 import {
   Interfold__factory as InterfoldFactory,
@@ -32,7 +33,7 @@ import {
   availVectorXForChain,
 } from "../dataAvailability";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
-import { BFV_PARAMS, ZERO, proxyAdminInterface } from "../protocol/constants";
+import { ZERO, proxyAdminInterface } from "../protocol/constants";
 import { deployBfvVerifierRoutes } from "../protocol/deployContracts";
 import {
   crispDeploymentsPath,
@@ -74,6 +75,7 @@ import {
   PRODUCTION_BFV_CONFIG,
   activeBfvConfigForChain,
   bfvConfigsForChain,
+  bfvParamSetConfigsForChain,
 } from "../utils";
 import {
   equalAddress,
@@ -87,8 +89,17 @@ import {
 } from "./safeProxyUpgrade";
 
 export const BFV_SCHEME_ID = ethersLib.id("fhe.rs:BFV");
-const SECURE_PARAM_SET = PRODUCTION_BFV_CONFIG.paramSet;
 const SUPPORTED_CHAINS = [1, 11155111, 31337];
+
+/** The parameter sets that requests on `chainId` use, as `setParamSet` takes them. */
+function chainParamSets(
+  chainId: number,
+): Array<{ index: number; encoded: string }> {
+  return bfvParamSetConfigsForChain(chainId).map((config) => ({
+    index: config.paramSet,
+    encoded: encodeBfvParams(BFV_PRESETS[config.preset].threshold),
+  }));
+}
 
 const interfoldInterface = InterfoldFactory.createInterface();
 const releaseInterface = NodeReleaseRegistryFactory.createInterface();
@@ -175,8 +186,8 @@ export interface V19CutoverDecisions {
   interfold: string;
   interfoldProxyAdmin: string;
   interfoldImplementation: string;
-  /** Present when parameter set `SECURE_PARAM_SET` is not registered yet. */
-  paramSet?: { index: number; encoded: string };
+  /** The chain's parameter sets that are not registered yet. */
+  paramSets: Array<{ index: number; encoded: string }>;
   committeeThresholds: Array<{ size: bigint; quorum: bigint; total: bigint }>;
   pkVerifier: string;
   decryptionVerifier: string;
@@ -215,13 +226,8 @@ export function buildV19CutoverTransactions(
       decisions.interfold,
       interfoldInterface.encodeFunctionData(functionName as any, args as any),
     );
-  if (decisions.paramSet) {
-    txs.push(
-      call("setParamSet", [
-        decisions.paramSet.index,
-        decisions.paramSet.encoded,
-      ]),
-    );
+  for (const paramSet of decisions.paramSets) {
+    txs.push(call("setParamSet", [paramSet.index, paramSet.encoded]));
   }
   for (const threshold of decisions.committeeThresholds) {
     txs.push(
@@ -617,16 +623,17 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     requiredNodeGeneration,
   );
 
-  const encodedParams = encodeBfvParams(BFV_PARAMS.secure8192);
-  const registeredParams: string =
-    await interfold.paramSetRegistry(SECURE_PARAM_SET);
-  if (
-    registeredParams !== "0x" &&
-    registeredParams.toLowerCase() !== encodedParams.toLowerCase()
-  ) {
-    throw new Error(
-      `Parameter set ${SECURE_PARAM_SET} is registered with other values; registration is append-only, so this deployment cannot take the v0.19 parameters`,
-    );
+  // Sepolia requests use the insecure set too, so the batch registers every set the chain lacks.
+  const missingParamSets: V19CutoverDecisions["paramSets"] = [];
+  for (const paramSet of chainParamSets(chainId)) {
+    const registered: string = await interfold.paramSetRegistry(paramSet.index);
+    if (registered === "0x") {
+      missingParamSets.push(paramSet);
+    } else if (registered.toLowerCase() !== paramSet.encoded.toLowerCase()) {
+      throw new Error(
+        `Parameter set ${paramSet.index} is registered with other values; registration is append-only, so this deployment cannot take the release's parameters`,
+      );
+    }
   }
 
   const thresholds: V19CutoverDecisions["committeeThresholds"] = [];
@@ -708,10 +715,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     interfold: deployment.interfold,
     interfoldProxyAdmin: deployment.interfoldProxyAdmin,
     interfoldImplementation: upgrade.implementation,
-    paramSet:
-      registeredParams === "0x"
-        ? { index: SECURE_PARAM_SET, encoded: encodedParams }
-        : undefined,
+    paramSets: missingParamSets,
     committeeThresholds: thresholds,
     pkVerifier: routes.pkVerifier,
     decryptionVerifier: routes.decryptionVerifier,
@@ -732,7 +736,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   const rawBatchFile = batchPath(config, "cutover");
   const title = `${config.name} v0.19 cutover`;
   const description =
-    "Upgrade Interfold, register the secure BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.";
+    "Upgrade Interfold, register the BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.";
   const batch = governanceBatch(config, txs);
   batch.meta.name = title;
   batch.meta.description = description;
@@ -766,8 +770,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     nodeRelease,
     nodeReleasePolicyUpdated,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
-    paramSet: SECURE_PARAM_SET,
-    paramSetRegisteredByBatch: registeredParams === "0x",
+    paramSetsRegisteredByBatch: missingParamSets.map(({ index }) => index),
     pkVerifier: routes.pkVerifier,
     decryptionVerifier: routes.decryptionVerifier,
     bfvVerifierRoutes: routes.bfvVerifierRoutes,
@@ -834,7 +837,7 @@ v0.19 cutover prepared
   PK verifier router:       ${plan.pkVerifier}
   decryption router:        ${plan.decryptionVerifier}
   BFV routes:               ${plan.bfvVerifierRoutes.length}
-  parameter set ${plan.paramSet}:          ${plan.paramSetRegisteredByBatch ? "registered by the batch" : "already registered"}
+  parameter sets:           ${plan.paramSetsRegisteredByBatch.length ? `${plan.paramSetsRegisteredByBatch.join(", ")} registered by the batch` : "already registered"}
   CRISP program:            ${plan.crispProgram} (image ${plan.crispImageId})
   ciphertext verifier:      ${plan.ciphertextVerifier}
   retired E3 programs:      ${plan.retiredE3Programs.join(", ") || "none"}
@@ -884,11 +887,13 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
     plan.cryptoConfigId,
     "Interfold crypto configuration",
   );
-  equalValue(
-    await interfold.paramSetRegistry(plan.paramSet),
-    encodeBfvParams(BFV_PARAMS.secure8192),
-    `parameter set ${plan.paramSet}`,
-  );
+  for (const paramSet of chainParamSets(chainId)) {
+    equalValue(
+      await interfold.paramSetRegistry(paramSet.index),
+      paramSet.encoded,
+      `parameter set ${paramSet.index}`,
+    );
+  }
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
     equalValue(
