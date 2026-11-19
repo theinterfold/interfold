@@ -799,7 +799,7 @@ Options:
   --preset <name>        BFV preset for circuits/bin (insecure-64 | secure-8192).
                          Defaults to insecure-64. Check mode compares the committed verifier
                          for the selected preset and committee.
-  --committee <name>     Committee size (minimum | micro | small). When omitted, read from
+  --committee <name>     Committee size (minimum | micro | small | large). When omitted, read from
                          circuits/bin/.active-preset.json. Non-canonical pairs write to
                          honk/<preset>/<committee>/ so committed canonical files are not clobbered.
   --output-dir <path>    Write generated verifiers here instead of the committed honk/ dir.
