@@ -1242,10 +1242,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Non-release proof suites reuse the published branch tip.
-      - name: Pull the published circuits
+      # Other development branches can publish incompatible circuit ABIs on the same artifact branch.
+      - name: Pull circuits matching the checkout verifier catalogue
         timeout-minutes: 10
-        run: pnpm store:circuits pull --latest
+        run: pnpm store:circuits pull --compatible
 
       - name: Hydrate the insecure-64/minimum circuits
         run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
