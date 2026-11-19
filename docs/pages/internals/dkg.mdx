@@ -114,7 +114,7 @@ proofs.
 | `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b and binds each C2's chunk key tree into its key hash.                 |
 | `c3_chonk_*`                      | `C3Chonk*`                     | Verifies one branch's C3 proofs in Chonk stacks of 24, then tubes and accumulates them. |
 | `c3ab_fold`                       | `C3abFold`                     | Closes the secret key and smudging noise C3 chains.                                     |
-| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b.                                                                      |
+| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b and binds each C4's limb key tree into its key hash.                  |
 | `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                   |
 | `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence.                                             |
 | `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                 |
