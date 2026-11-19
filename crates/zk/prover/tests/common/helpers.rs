@@ -156,13 +156,42 @@ pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
     ] {
         setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
     }
-    for circuit in [
-        CircuitName::SkShareComputationChain,
-        CircuitName::SkShareComputationChainLast,
-        CircuitName::ESmShareComputationChain,
-        CircuitName::ESmShareComputationChainLast,
-    ] {
-        let name = circuit.as_str();
+    setup_default_recursive_circuits(
+        backend,
+        &[
+            CircuitName::SkShareComputationChain,
+            CircuitName::SkShareComputationChainLast,
+            CircuitName::ESmShareComputationChain,
+            CircuitName::ESmShareComputationChainLast,
+        ],
+    )
+    .await;
+}
+
+/// Installs the C3 Chonk circuits: the four stack circuits from the `chonk` workspace, then the
+/// tube and accumulate rollups.
+#[allow(dead_code)]
+pub async fn setup_c3_chonk_circuits(backend: &ZkBackend) {
+    setup_default_recursive_circuits(
+        backend,
+        &[
+            CircuitName::C3ChonkApp,
+            CircuitName::C3ChonkInitKernel,
+            CircuitName::C3ChonkTailKernel,
+            CircuitName::C3ChonkHidingKernel,
+        ],
+    )
+    .await;
+    for circuit in [CircuitName::C3ChonkTube, CircuitName::C3ChonkAccumulate] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+}
+
+/// Installs `circuits` in the `default` variant only, from their workspace's shared target
+/// directory.
+async fn setup_default_recursive_circuits(backend: &ZkBackend, circuits: &[CircuitName]) {
+    for circuit in circuits {
+        let pkg = circuit.as_str();
         let target_dir = circuits_build_root().join(circuit.group()).join("target");
         let default_dir = backend
             .circuits_dir
@@ -170,23 +199,19 @@ pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
             .join("minimum")
             .join("default")
             .join(circuit.group())
-            .join(name);
+            .join(pkg);
         fs::create_dir_all(&default_dir).await.unwrap();
-        for (source, file) in [
-            (format!("{name}.json"), format!("{name}.json")),
-            (format!("{name}.vk_recursive"), format!("{name}.vk")),
-            (
-                format!("{name}.vk_recursive_hash"),
-                format!("{name}.vk_hash"),
-            ),
+        for (from, to) in [
+            ("json", "json"),
+            ("vk_recursive", "vk"),
+            ("vk_recursive_hash", "vk_hash"),
         ] {
-            let source = target_dir.join(source);
-            assert!(
-                source.exists(),
-                "{} not found (run `pnpm build:circuits`)",
-                source.display()
-            );
-            fs::copy(&source, default_dir.join(file)).await.unwrap();
+            let source = target_dir.join(format!("{pkg}.{from}"));
+            fs::copy(&source, default_dir.join(format!("{pkg}.{to}")))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("{}: {e} (run `pnpm build:circuits`)", source.display())
+                });
         }
     }
 }

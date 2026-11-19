@@ -145,9 +145,13 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
 }
 
 pub fn target_dir(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
+    workspace_target(root, &circuit.path)
+}
+
+/// The `target` directory nargo writes the package at `package` to: its workspace's, if it has one.
+fn workspace_target(root: &Path, package: &Path) -> Result<PathBuf> {
     let bin = root.join("circuits/bin");
-    for directory in circuit
-        .path
+    for directory in package
         .ancestors()
         .take_while(|path| path.starts_with(&bin))
     {
@@ -159,7 +163,7 @@ pub fn target_dir(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
             }
         }
     }
-    Ok(circuit.path.join("target"))
+    Ok(package.join("target"))
 }
 
 pub fn copy_tree(source: &Path, target: &Path, excluded: &[&str]) -> Result<()> {
@@ -209,34 +213,70 @@ fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
     Ok(())
 }
 
-pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
-    [
-        "default/dkg/pk/pk.json",
-        "default/threshold/pk_aggregation/pk_aggregation.json",
-        "default/recursive_aggregation/dkg_aggregator/dkg_aggregator.json",
-        "default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json",
-        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
-        "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
-    ]
-    .iter()
-    .map(|path| pair.join(path))
-    .collect()
+/// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`), as
+/// `<variant>/<group>/<name>/<package>.<extension>`.
+fn required_artifacts() -> Vec<&'static str> {
+    serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
+        .expect("invalid required circuit artifact inventory")
 }
 
-fn bin_markers(root: &Path) -> Vec<PathBuf> {
-    [
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json",
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive",
-        "recursive_aggregation/nodes_fold/target/nodes_fold.vk_tree_hash",
-        "recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash",
-        "dkg/target/pk.json",
-        "threshold/target/pk_aggregation.json",
-    ]
-    .iter()
-    .map(|path| root.join("circuits/bin").join(path))
-    .collect()
+/// Where [`hydrate`] copies each published file of a variant in `circuits/bin`, as
+/// `(published extension, bin extension)`.
+const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
+    (
+        "default",
+        &[
+            ("json", "json"),
+            ("vk", "vk_recursive"),
+            ("vk_hash", "vk_recursive_hash"),
+            ("vk_tree_hash", "vk_tree_hash"),
+        ],
+    ),
+    ("evm", &[("vk", "vk"), ("vk_hash", "vk_hash")]),
+    (
+        "recursive",
+        &[("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
+    ),
+];
+
+/// The required artifacts of a pair. A pair is complete, current or hydratable only with all of
+/// them: a tree built before the inventory gained an artifact must not pass.
+pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
+    required_artifacts()
+        .iter()
+        .map(|path| pair.join(path))
+        .collect()
+}
+
+/// The required artifacts where [`hydrate`] puts them in `circuits/bin`. Every variant's program
+/// is the circuit's one compiled `json`.
+pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
+    required_artifacts()
+        .into_iter()
+        .map(|required| {
+            let parts: Vec<&str> = required.split('/').collect();
+            let [variant, group @ .., name, file] = parts.as_slice() else {
+                bail!("Malformed required artifact {required}");
+            };
+            let (package, extension) = file
+                .split_once('.')
+                .with_context(|| format!("Required artifact {required} has no extension"))?;
+            let extension = if extension == "json" {
+                "json"
+            } else {
+                BIN_EXTENSIONS
+                    .iter()
+                    .find(|(published, _)| published == variant)
+                    .and_then(|(_, extensions)| {
+                        extensions.iter().find(|(from, _)| *from == extension)
+                    })
+                    .map(|(_, to)| *to)
+                    .with_context(|| format!("Required artifact {required} has no bin location"))?
+            };
+            let package_dir = root.join("circuits/bin").join(group.join("/")).join(name);
+            Ok(workspace_target(root, &package_dir)?.join(format!("{package}.{extension}")))
+        })
+        .collect()
 }
 
 fn read_stamp(path: &Path) -> Result<Option<Stamp>> {
@@ -302,11 +342,12 @@ pub fn bin_current(root: &Path, preset: &str, committee: &str, hash: Option<&str
     if profile(preset)?.protocol() == BfvDecryptionProtocol::Synchronized {
         return Ok(false);
     }
-    Ok(read_active_stamp(root)?.is_some_and(|stamp| {
+    let stamped = read_active_stamp(root)?.is_some_and(|stamp| {
         stamp.preset == preset
             && stamp.committee == committee
             && hash.is_none_or(|hash| stamp.source_hash == hash)
-    }) && bin_markers(root).iter().all(|path| path.is_file()))
+    });
+    Ok(stamped && bin_markers(root)?.iter().all(|path| path.is_file()))
 }
 
 /// The stamp of the preset and committee `circuits/bin` was built for, or `None` before any build.
@@ -337,22 +378,7 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
     for circuit in circuits {
         let target = target_dir(root, &circuit)?;
         fs::create_dir_all(&target)?;
-        for (variant, extensions) in [
-            (
-                "default",
-                vec![
-                    ("json", "json"),
-                    ("vk", "vk_recursive"),
-                    ("vk_hash", "vk_recursive_hash"),
-                    ("vk_tree_hash", "vk_tree_hash"),
-                ],
-            ),
-            ("evm", vec![("vk", "vk"), ("vk_hash", "vk_hash")]),
-            (
-                "recursive",
-                vec![("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
-            ),
-        ] {
+        for (variant, extensions) in BIN_EXTENSIONS {
             let source = pair.join(variant).join(&circuit.group).join(&circuit.name);
             for (from, to) in extensions {
                 let source = source.join(format!("{}.{from}", circuit.package));
@@ -459,8 +485,21 @@ fn sanitize_paths(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The `write_vk` target of a Chonk stack circuit, which takes `--scheme chonk` in place of `-t`.
+const CHONK_TARGET: &str = "chonk";
+
 pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static str)> {
+    if circuit.group == "chonk" {
+        return vec![("default", CHONK_TARGET, "vk_recursive")];
+    }
     if circuit.group == "recursive_aggregation" {
+        // The tube and accumulate proofs carry an IPA claim that `c3ab_fold` closes.
+        if matches!(
+            circuit.name.as_str(),
+            "c3_chonk_tube" | "c3_chonk_accumulate"
+        ) {
+            return vec![("default", "noir-rollup-no-zk", "vk_recursive")];
+        }
         let mut values = vec![("default", "noir-recursive-no-zk", "vk_recursive")];
         if matches!(
             circuit.name.as_str(),
@@ -554,12 +593,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             continue;
         }
         let job = tempfile::tempdir_in(target)?;
-        run(Command::new("bb")
-            .args(["write_vk", "-b"])
-            .arg(&compiled)
-            .arg("-o")
-            .arg(job.path())
-            .args(["-t", verifier_target]))?;
+        write_vk(circuit, &compiled, verifier_target, job.path())?;
         for (file, suffix) in vk_files(extension) {
             let source = job.path().join(file);
             if !source.is_file() {
@@ -576,6 +610,58 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
         }
     }
     println!("Built {}/{}", circuit.group, circuit.name);
+    Ok(())
+}
+
+/// Writes `vk` and `vk_hash` for `circuit` into `out` with `bb write_vk`. The build and the
+/// qualification share it so both derive a Chonk key the same way.
+pub(crate) fn write_vk(
+    circuit: &Circuit,
+    compiled: &Path,
+    verifier_target: &str,
+    out: &Path,
+) -> Result<()> {
+    let mut command = Command::new("bb");
+    command
+        .args(["write_vk", "-b"])
+        .arg(compiled)
+        .arg("-o")
+        .arg(out);
+    if verifier_target == CHONK_TARGET {
+        // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding kernel
+        // ends the stack; its key is the stack's Chonk key.
+        let kind = if circuit.name.ends_with("_app") {
+            "app"
+        } else if circuit.name.ends_with("_hiding_kernel") {
+            "hiding"
+        } else {
+            "kernel"
+        };
+        command.args(["--scheme", "chonk", "--circuit_kind", kind]);
+    } else {
+        command.args(["-t", verifier_target]);
+    }
+    run(&mut command)?;
+    if verifier_target == CHONK_TARGET {
+        write_chonk_vk_hash(out)?;
+    }
+    Ok(())
+}
+
+/// `write_vk --scheme chonk` writes no hash. The kernels pin each key by Barretenberg's
+/// Poseidon2 hash of its fields, so the builder writes that hash beside the key.
+fn write_chonk_vk_hash(job: &Path) -> Result<()> {
+    use ark_ff::{BigInteger, PrimeField};
+    let key = fs::read(job.join("vk"))?;
+    if key.len() % 32 != 0 {
+        bail!("Chonk verification key is not a whole number of fields");
+    }
+    let fields: Vec<_> = key
+        .chunks(32)
+        .map(ark_bn254::Fr::from_be_bytes_mod_order)
+        .collect();
+    let hash = e3_safe::bb_poseidon2_hash(&fields);
+    fs::write(job.join("vk_hash"), hash.into_bigint().to_bytes_be())?;
     Ok(())
 }
 
@@ -1347,9 +1433,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 19
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 23
         // seeded anchor keys the build does not write.
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 37);
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 41);
         let hash =
             identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
@@ -1372,7 +1458,29 @@ mod tests {
             r#"{"required_bb_version":"0.0.0-invalid"}"#,
         )
         .unwrap();
-        for marker in dist_markers(&pair).into_iter().chain(bin_markers(root)) {
+        // The Chonk workspace exists before the markers are placed, so its markers land in the
+        // workspace target, where nargo writes them.
+        let chonk = root.join("circuits/bin/chonk");
+        fs::create_dir_all(chonk.join("c3_chonk_app/src")).unwrap();
+        fs::write(
+            chonk.join("Nargo.toml"),
+            "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/Nargo.toml"),
+            "[package]\nname = \"c3_chonk_app\"\ntype = \"bin\"\nauthors = []\n",
+        )
+        .unwrap();
+        fs::write(
+            chonk.join("c3_chonk_app/src/main.nr"),
+            "fn main(x: Field, y: Field) -> pub Field { x + y }\n",
+        )
+        .unwrap();
+        for marker in dist_markers(&pair)
+            .into_iter()
+            .chain(bin_markers(root).unwrap())
+        {
             if !marker.exists() {
                 fs::create_dir_all(marker.parent().unwrap()).unwrap();
                 fs::write(marker, "published marker").unwrap();
@@ -1425,5 +1533,27 @@ mod tests {
             "published-source"
         );
         assert_eq!(fs::read(pair.join(".build-stamp.json")).unwrap(), archived);
+
+        // A Chonk circuit is built with `write_vk --scheme chonk`, which writes no hash. The
+        // qualification must derive its key and hash the way the build does.
+        crate::tests::write_pins(root);
+        let mut only_chonk = request();
+        only_chonk.groups =
+            super::super::GroupSelection::Selected(vec![super::super::Group::Chonk]);
+        only_chonk.no_clean = true;
+        only_chonk.no_clean_targets = true;
+        super::super::execute(root, &only_chonk).unwrap();
+        let built = pair.join("default/chonk/c3_chonk_app");
+        assert_eq!(
+            fs::read(built.join("c3_chonk_app.vk_hash")).unwrap().len(),
+            32
+        );
+        vk_commitments::qualify(root, &only_chonk).unwrap();
+        let hash = built.join("c3_chonk_app.vk_hash");
+        fs::write(&hash, [0; 32]).unwrap();
+        assert!(vk_commitments::qualify(root, &only_chonk)
+            .unwrap_err()
+            .to_string()
+            .contains("VK hash differs"));
     }
 }
