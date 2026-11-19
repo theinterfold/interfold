@@ -78,7 +78,7 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     /// Low-degree tail of `d` in **native** \([0, q)\) form per coefficient (matches C7
     /// `decryption_shares` / `from_fhe` truncation). Coefficients are in the same JSON order
     /// as C7 (ascending degree within each limb). `d_commitment` hashes this, not the
-    /// reversed+centered `d` prefix, so DecryptionAggregator can link C6 fold to C7.
+    /// reversed+centered `d` prefix, so DecryptionAggregator can link C6 to C7.
     d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
 }
 

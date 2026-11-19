@@ -99,8 +99,8 @@ fn main(
         assert(c6_root_public[C6_ROOT_CT_OFFSET + i] == ciphertext_commitment);
     }
 
-    // Cross-circuit C6 to C7: each folded `d_commitment` column entry must match `c7_public[i]`
-    // (leading `T + 1` words of `c7_public`).
+    // Cross-circuit C6 to C7: each `d_commitment` column entry of the C6 root must match
+    // `c7_public[i]` (leading `T + 1` words of `c7_public`).
     for i in 0..(T + 1) {
         assert(c6_root_public[C6_ROOT_D_OFFSET + i] == c7_public[C7_D_COMMITMENT_OFFSET + i]);
     }
