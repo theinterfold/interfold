@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Shared helpers for the sequential `c3_fold` / `c6_fold` / `nodes_fold` accumulators and
+//! Shared helpers for the sequential `c6_fold` / `nodes_fold` accumulators and
 //! the single-shot `node_dkg_fold` builder.
 
 use crate::circuits::utils::bytes_to_field_strings;
@@ -86,8 +86,7 @@ pub fn extract_single_field(
 /// Parse and validate fold-accumulator public-signal field strings against
 /// `(prefix_len, slot_width)`. Returns the flattened field-string vector.
 ///
-/// Use this when the accumulator has a per-slot tail of fixed `slot_width` (e.g. `c3_fold`,
-/// `c6_fold`). For accumulators whose tail layout is determined at runtime by the inner proof
+/// Use this when the accumulator has a per-slot tail of fixed `slot_width` (e.g. `c6_fold`). For accumulators whose tail layout is determined at runtime by the inner proof
 /// shape (e.g. `nodes_fold`, where each slot stores a whole `node_fold` statement), use
 /// [`parse_acc_public_field_strings_flat`] and perform the per-slot length check at the call site.
 pub fn parse_acc_public_field_strings(
