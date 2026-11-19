@@ -97,7 +97,7 @@ pub enum PublicKeyAggregatorState {
         dkg_aggregated_proof: Option<Proof>,
         c5_proof_pending: Option<Proof>,
         last_ec: Option<e3_events::EventContext<e3_events::Sequenced>>,
-        /// Accumulated nodes_fold proof after `nodes_fold_completed_slots` streaming steps.
+        /// Accumulated nodes_fold proof over the first `nodes_fold_completed_slots` slots.
         nodes_fold_accumulator: Option<Proof>,
         /// Number of slots folded so far; equals the next slot index to dispatch.
         nodes_fold_completed_slots: u32,
