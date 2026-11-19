@@ -3,6 +3,8 @@
 //! Independent native encrypted transport -> production encoders -> Noir leaves.
 //! The provenance child exercises draft recursive joins, not admission or canonical publication.
 
+#[path = "synchronized_dkg/decryption_aggregation.rs"]
+mod decryption_aggregation;
 #[path = "synchronized_dkg/provenance.rs"]
 mod provenance;
 #[path = "synchronized_dkg/threshold_decryption.rs"]
@@ -390,6 +392,15 @@ fn run(command: &mut Command) -> Result<Output> {
 }
 
 impl CircuitJob {
+    fn read_proof(&self, role: CircuitName) -> Result<e3_events::Proof> {
+        let dir = self.directory.path().join("proof");
+        Ok(e3_events::Proof::new(
+            role,
+            e3_utils::utility_types::ArcBytes::from_bytes(&fs::read(dir.join("proof"))?),
+            e3_utils::utility_types::ArcBytes::from_bytes(&fs::read(dir.join("public_inputs"))?),
+        ))
+    }
+
     fn new(root: &Path, role: CircuitName) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("src"))?;

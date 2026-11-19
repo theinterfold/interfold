@@ -4,6 +4,7 @@
 //! The caller owns authenticated setup context, peer commitments and encrypted secret storage.
 
 pub mod commitments;
+pub mod decryption_aggregation;
 pub mod pk_generation;
 pub mod plaintext_aggregation;
 mod polynomials;

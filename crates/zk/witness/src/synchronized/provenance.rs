@@ -69,7 +69,7 @@ impl VerificationKeys<'_> {
     }
 }
 
-fn canonical(field: &Field) -> Result<(), WitnessError> {
+pub(super) fn canonical(field: &Field) -> Result<(), WitnessError> {
     if BigInt::from_bytes_be(Sign::Plus, field) >= get_zkp_modulus() {
         return Err(invalid("noncanonical recursive field"));
     }

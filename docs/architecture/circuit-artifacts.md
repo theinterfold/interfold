@@ -94,10 +94,10 @@ The builder's legacy `--preset` option now selects a protocol profile; SS retain
 separate `circuits/bin/synchronized/{dkg,threshold,recursive_aggregation}` sources/targets and
 generated static configuration, never SS JSON/VK fallback. The live six-pair build/release policy
 still excludes it. Explicitly seeded test policies may build its DKG leaves, draft provenance/
-publication definitions and isolated Minimum C6/C7: no complete stamp, active SS stamp update,
-recursive anchors, hydration or source-cache reuse. Partial/failed sync work invalidates only its
-own anchors/metadata. `sync-sources`/source checks include this definition without changing SS
-selectors or enabling admission.
+publication definitions, Minimum C6/C7 and the direct decryption aggregator: no complete stamp,
+active SS stamp update, recursive anchors, hydration or source-cache reuse. Partial/failed sync work
+invalidates only its own anchors/metadata. `sync-sources`/source checks include this definition
+without changing SS selectors or enabling admission.
 
 These disabled definitions introduce no durable/wire enum or deployed verifier migration. Existing
 SS artifacts retain their original provenance; added source owners intentionally change source

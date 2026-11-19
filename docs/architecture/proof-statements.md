@@ -155,9 +155,28 @@ only the protocol's plaintext prefix is published.
 
 `pnpm rust:test:sync-dkg:proofs` includes a real native C4/C6/C7 case. It compares the C7 public
 prefix byte-for-byte to independently verified C6 proofs and rejects a substitution from another
-independently proved set on the same ciphertext. C7 does not recursively verify those proofs. The
-fold/final verifier must still authenticate the **exact rows** and bind them to independently
-confirmed authority; a collection of self-declared rows is not proof of a decryption.
+independently proved set on the same ciphertext.
+
+The isolated
+[Minimum decryption aggregator](../../circuits/bin/synchronized/recursive_aggregation/decryption_aggregator/src/main.nr)
+directly verifies both designated C6 proofs and the C7 proof. Each `noir-recursive` ZK leaf is
+verified against its slice of one public C7 statement; there is no separately supplied copy of the
+C6 rows. The two public child-key pins use bb's Poseidon2 hash of the actual VK fields. The final
+`evm` proof exposes `(C6 VK hash, C7 VK hash, complete C7 statement)`. These are the only
+descendants: this definition uses neither the SS sequential fold nor any SS VK.
+
+The [native verifier](../../crates/zk/prover/src/synchronized/decryption.rs) compares both pins with
+local synchronized artifacts; it checks the roster, setup, domain, ciphertext, designated SK/bundle
+anchors and plaintext against independent expectations before verifying the outer proof. A generated
+Honk verifier alone authenticates no chain state. An application wrapper must enforce those pins and
+obtain the expected context and anchors from the confirmed request and synchronized DKG authority
+before activation.
+
+At `sync-insecure-64/minimum`, bb 6.0.0 measured 2,242,265 gates for the outer circuit. Its
+generated Solidity verifier (solc 0.8.28) accepted the real 76-field statement and rejected a
+changed plaintext coefficient. To export the public inputs, proof and VK for verifier testing, run
+the ignored `threshold_decryption::` test in `synchronized_dkg` with `E3_SYNC_DECRYPTION_EXPORT` set
+to a new directory path. This evidence covers the disabled Minimum definition only.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
@@ -264,7 +283,7 @@ values or caller-supplied chain context/roster, or replace signature admission. 
 consistently selected setup is not rejected without canonical external authority. These joins prove
 neither C4's BFV decryption equation nor publication authority. The runtime still refuses
 synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
-replay and the C6 fold/final verifier remain open.
+replay and on-chain decryption authority binding remain open.
 
 The typed local definition executor reuses these proof/verification owners. Recipient results must
 match independently supplied setup/owner and C1/C4/batch anchors; publication results must also
