@@ -17,8 +17,9 @@
 //!   [`generate_c3_chonk_chain`].
 //! - [`c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key`]: a leaf whose claimed row differs
 //!   from its proof, or a stack stage handed another stage's key, never yields a chain.
-//! - [`c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind`]: the accumulate step and
-//!   `c3ab_fold` reject children of the wrong kind, and a tube under the accumulator's key.
+//! - [`c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind`]: an accumulator merges a
+//!   third tube as the left child; the accumulate step and `c3ab_fold` reject children of the
+//!   wrong kind, and a tube under the accumulator's key.
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
 
 mod common;
@@ -665,7 +666,8 @@ fn assert_witness_rejected(result: Result<Vec<u8>, ZkError>, case: &str) {
 }
 
 /// `c3_chonk_accumulate` takes a tube on the right, and a tube or an accumulator on the left;
-/// `c3ab_fold` takes accumulators. The checks are constraints of the circuits, so each witness
+/// `c3ab_fold` takes accumulators. An honest accumulator merges a third, disjoint tube as the chain
+/// does from its third stack on. The checks are constraints of the circuits, so each witness
 /// fails where its honest twin solves. A tube handed to the accumulate step under the
 /// accumulator's key is a statement the circuit's constraints allow, so only bb's recursive
 /// verification rejects it.
@@ -697,6 +699,48 @@ async fn c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind() {
         .prover
         .verify_rollup_proof(&accumulator, "e3-c3chonk-accumulate", &f.artifacts_dir)
         .unwrap());
+
+    // From the third tube on, the chain takes an accumulator as the left child: a small
+    // committee's 54 leaves fill three stacks. A tube over a third, disjoint slot merges into it.
+    let third = generate_c3_chonk_tubes(
+        &f.prover,
+        &f.inners[..1],
+        &[2u32],
+        f.total_slots,
+        "e3-c3chonk-third-tube",
+        &f.artifacts_dir,
+    )
+    .expect("one disjoint tube");
+    assert_eq!(third.len(), 1);
+    let deeper = generate_c3_chonk_accumulate(
+        &f.prover,
+        &accumulator,
+        &third[0],
+        f.total_slots,
+        "e3-c3chonk-accumulate-deeper",
+        &f.artifacts_dir,
+    )
+    .expect("an accumulator as the left child");
+    assert!(f
+        .prover
+        .verify_rollup_proof(&deeper, "e3-c3chonk-accumulate-deeper", &f.artifacts_dir)
+        .unwrap());
+    let public = fields(&deeper);
+    assert_eq!(public[..7], fields(&accumulator)[..7]);
+    let zero = format!("0x{}", "0".repeat(64));
+    let leaves = [&f.inners[0], &f.inners[1], &f.inners[0]];
+    for column in 0..3 {
+        for slot in 0..f.total_slots {
+            let expected = leaves
+                .get(slot)
+                .map_or(zero.clone(), |inner| fields(inner)[column].clone());
+            assert_eq!(
+                public[7 + column * f.total_slots + slot],
+                expected,
+                "column {column}, slot {slot}"
+            );
+        }
+    }
 
     let default_dir = f
         .prover
@@ -776,6 +820,8 @@ async fn c3_chonk_accumulate_and_c3ab_reject_children_of_the_wrong_kind() {
     let acc = (&accumulator, accumulate_vk.verification_key.as_slice());
     let tube = (&tubes[0], tube_vk.verification_key.as_slice());
     witness(&c3ab_path, &c3ab_input(acc, acc)).expect("honest c3ab witness");
+    let deep = (&deeper, accumulate_vk.verification_key.as_slice());
+    witness(&c3ab_path, &c3ab_input(deep, deep)).expect("honest c3ab witness over a deeper chain");
     assert_witness_rejected(
         witness(&c3ab_path, &c3ab_input(tube, acc)),
         "the chain must end on an accumulator",

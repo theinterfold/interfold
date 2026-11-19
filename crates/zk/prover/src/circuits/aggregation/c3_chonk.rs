@@ -309,13 +309,6 @@ fn prove_tubes(
             slot_indices.len()
         )));
     }
-    // Two stacks, each with a real leaf, make the chain end on an accumulator.
-    if inner_proofs.len() < 2 {
-        return Err(ZkError::InvalidInput(format!(
-            "generate_c3_chonk_chain: need at least two inner proofs, got {}",
-            inner_proofs.len()
-        )));
-    }
     let mut seen = vec![false; total_slots];
     for &s in slot_indices {
         let idx = s as usize;
@@ -363,6 +356,13 @@ fn prove_chain(
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
+    // Two stacks, each with a real leaf, make the chain end on an accumulator.
+    if inner_proofs.len() < 2 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_chonk_chain: need at least two inner proofs, got {}",
+            inner_proofs.len()
+        )));
+    }
     let mut tubes = prove_tubes(
         prover,
         circuits,
@@ -388,7 +388,8 @@ fn prove_chain(
     Ok(acc)
 }
 
-/// The tubes [`generate_c3_chonk_chain`] accumulates, one per stack. Negative tests only.
+/// The tubes [`generate_c3_chonk_chain`] accumulates, one per stack; a single leaf makes one tube.
+/// Tests only.
 pub fn generate_c3_chonk_tubes(
     prover: &ZkProver,
     inner_proofs: &[Proof],
@@ -408,8 +409,8 @@ pub fn generate_c3_chonk_tubes(
     )
 }
 
-/// One accumulate step of [`generate_c3_chonk_chain`], over children the caller chooses.
-/// Negative tests only.
+/// One accumulate step of [`generate_c3_chonk_chain`], over children the caller chooses. Tests
+/// only.
 pub fn generate_c3_chonk_accumulate(
     prover: &ZkProver,
     left: &Proof,
