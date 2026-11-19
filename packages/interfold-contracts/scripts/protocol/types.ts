@@ -328,9 +328,8 @@ export interface V19CutoverPlan {
   };
   nodeReleasePolicyUpdated: boolean;
   cryptoConfigId: string;
-  paramSet: number;
-  /** The batch registers the parameter set, which the chain does not hold yet. */
-  paramSetRegisteredByBatch: boolean;
+  /** The parameter-set indices that the batch registers; the chain already holds the others. */
+  paramSetsRegisteredByBatch: number[];
   pkVerifier: string;
   decryptionVerifier: string;
   bfvVerifierRoutes: BfvVerifierRouteDeployment[];
