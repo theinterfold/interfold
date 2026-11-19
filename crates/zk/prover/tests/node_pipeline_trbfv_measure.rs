@@ -6,12 +6,12 @@
 
 //! Gated measurement of one node's trBFV DKG proving pipeline on secure-8192 (party 0).
 //!
-//! At the committee in `MEASURE_COMMITTEE` (`small` by default, or `minimum`) the node proves C0,
-//! C1 (`pk_generation`), C2a/C2b (each a chunk chain and the final circuit), every C3 proof of the
+//! At the committee in `MEASURE_COMMITTEE` (default `small`) the node proves C0, C1
+//! (`pk_generation`), C2a/C2b (each a chunk chain and the final circuit), every C3 proof of the
 //! node, C4a/C4b as recipient (each a limb chain and the final C4), and the node fold (C2ab || C3a
 //! chain || C3b chain, C3ab, C4ab, `node_fold`), as `generate_shares.rs` and `multithread.rs`
-//! request them. An optional test measures threshold decryption (`MEASURE_DECRYPTION=1`,
-//! aggregator side with `MEASURE_AGGREGATOR=1`).
+//! request them. The other tests measure threshold decryption, the aggregator's C5, C3 Chonk stack
+//! sizes and C3 concurrency, each behind its own flag as well.
 //! Output format and parallelism: `common/node_pipeline_measure.rs`.
 //!
 //! Run with the matching active artifacts (`pnpm build:circuits --preset secure-8192 --committee
@@ -41,21 +41,14 @@ use rand::rng;
 
 const PRESET: BfvPreset = BfvPreset::SecureThreshold8192;
 
+/// The leaf circuits the node proves. `pipeline::stage` adds the C2 chunk and C4 limb circuits
+/// that the final C2 and C4 circuits are proven through.
 const NODE_LEAVES: &[CircuitName] = &[
     CircuitName::PkBfv,
     CircuitName::PkGeneration,
     CircuitName::SkShareComputation,
     CircuitName::ESmShareComputation,
-    // C2 is proven through these chunk circuits; the two names above are the final circuits.
-    CircuitName::SkShareComputationChain,
-    CircuitName::SkShareComputationChainLast,
-    CircuitName::ESmShareComputationChain,
-    CircuitName::ESmShareComputationChainLast,
     CircuitName::ShareEncryption,
-    // C4 is proven through its three limb circuits; `DkgShareDecryption` is the final circuit.
-    CircuitName::DkgShareDecryptionLimb0,
-    CircuitName::DkgShareDecryptionLimb1,
-    CircuitName::DkgShareDecryptionLimb2,
     CircuitName::DkgShareDecryption,
 ];
 
@@ -357,18 +350,16 @@ async fn trbfv_c3_chonk_stack_measure() {
                 .expect("C2 configuration");
         ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
     });
-    let (c3_proofs, c3_slots) = measure("c3_set", || {
-        Ok::<_, String>(pipeline::prove_c3_set(
-            &prover,
-            PRESET,
-            &committee,
-            &sk_inputs,
-            &dkg_pk,
-            DkgInputType::SecretKey,
-            "c3a",
-            &artifacts_dir,
-        ))
-    });
+    let (c3_proofs, c3_slots) = pipeline::prove_c3_set(
+        &prover,
+        PRESET,
+        &committee,
+        &sk_inputs,
+        &dkg_pk,
+        DkgInputType::SecretKey,
+        "c3a",
+        &artifacts_dir,
+    );
     let total_slots = committee.n * PRESET.metadata().num_moduli;
     println!(
         "STEP c3 proofs={} total_slots={total_slots}",
@@ -480,8 +471,7 @@ async fn trbfv_c3_concurrency_measure() {
 
     for parallel in [1usize, 2, 4] {
         let per_proof = (threads / parallel).max(1);
-        // Every bb process reads its thread count from the environment it inherits.
-        std::env::set_var("HARDWARE_CONCURRENCY", per_proof.to_string());
+        let prover = prover.with_bb_threads(per_proof);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(parallel)
             .build()
@@ -505,7 +495,6 @@ async fn trbfv_c3_concurrency_measure() {
             })
         });
     }
-    std::env::set_var("HARDWARE_CONCURRENCY", threads.to_string());
 }
 
 /// Threshold decryption on the trBFV preset: the node's C6, and with `MEASURE_AGGREGATOR=1` the
