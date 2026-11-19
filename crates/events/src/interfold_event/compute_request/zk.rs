@@ -45,7 +45,7 @@ pub enum ZkRequest {
     NodesFoldStep(NodesFoldStepRequest),
     /// Cross-node DKG aggregator (NodesFold + C5 + DkgAggregator).
     DkgAggregation(DkgAggregationRequest),
-    /// Phase-7 decryption aggregator (C6Fold + C7 + DecryptionAggregator).
+    /// Phase-7 decryption aggregator (C6 Chonk root + C7 + DecryptionAggregator).
     DecryptionAggregation(DecryptionAggregationRequest),
     /// Re-verify a C3a/C3b proof that an accusation forwards. It is accusation work, so it still
     /// runs after the E3 fails, until the request completes. Its response is
@@ -114,7 +114,7 @@ pub struct DkgAggregationRequest {
     pub committee_size: CiphernodesCommitteeSize,
 }
 
-/// Decryption aggregation: sequential C6 fold + DecryptionAggregator per job.
+/// Decryption aggregation: C6 Chonk root + DecryptionAggregator per job.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DecryptionAggregationRequest {
     pub c6_total_slots: usize,
