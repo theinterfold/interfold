@@ -124,10 +124,13 @@ do not qualify a source-bound release or the secure profile.
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
 manifests, and required artifacts before publication. Non-release CI/full-proof integration can use
-`pull --latest` without a source match. `--hydrate-bin-only` requires a stamp and markers, reports a
-source mismatch, and records the original artifact hash in the active stamp. It never rewrites the
-archived stamp. `--skip-if-built` still requires a source match. These development reuse paths do
-not supply release-level source provenance; retain strict release qualification.
+`pull --compatible` without a source match. This selects the latest first-parent artifact commit
+with the checkout's exact VK catalogue and verifies the checksums and all six VK genealogies before
+replacing local artifacts. It does not infer compatibility from the branch name or repair a bad
+archive. `--hydrate-bin-only` requires a stamp and markers, reports a source mismatch, and records
+the original artifact hash in the active stamp. It never rewrites the archived stamp.
+`--skip-if-built` still requires a source match. These development reuse paths do not supply
+release-level source provenance; retain strict release qualification.
 
 The expected archive digest ships **with the binary**, never fetched from the archive or endpoint.
 0.18.0's pin is the published GitHub asset digest; other version pins live in versions.json. Release
