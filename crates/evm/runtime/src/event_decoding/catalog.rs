@@ -10,7 +10,7 @@
 //! names every other event in the current implementation ABIs so raw audit
 //! records remain understandable without creating dozens of actor messages.
 
-use crate::contracts::{ICiphernodeRegistry, IInterfold};
+use crate::contracts::{ICiphernodeRegistry, IInterfold, ISynchronizedDkgPublication};
 use alloy::primitives::{keccak256, B256};
 use alloy::sol_types::SolEvent;
 
@@ -525,6 +525,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "DkgFoldAttestationContextEstablished",
         "DkgFoldAttestationContextEstablished(uint256,address,address)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
+        "SynchronizedDkgAuthorityPublished",
+        ISynchronizedDkgPublication::SynchronizedDkgAuthorityPublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(

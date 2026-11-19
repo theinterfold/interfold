@@ -354,6 +354,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'packages/interfold-contracts/scripts/protocol/constants.ts',
       'packages/interfold-contracts/scripts/utils.ts',
       'packages/interfold-contracts/contracts/lib/BfvProtocol.sol',
+      'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol',
       'packages/interfold-contracts/tasks/interfold.ts',
       'packages/interfold-sdk/src/utils.ts',
       'crates/bfv/params/src/constants.rs',
@@ -392,18 +393,40 @@ test('the dependency-free committee gate compares binding values, not consumer i
     stale.bfv.profiles[0].configurations[0].cryptoConfigId = `0x${'00'.repeat(32)}`
     writeFileSync(binding, JSON.stringify(stale))
     assert.throws(check, /SS_INSECURE_64_MINIMUM config ID must match/)
-    // A binding that cannot be read, or that drops an admitted configuration, must not leave the
+    // A binding that cannot be read, or that drops a configuration, must not leave the
     // configuration-ID comparison with nothing to compare.
     const unreadable = JSON.parse(source)
     delete unreadable.bfv.profiles
     writeFileSync(binding, JSON.stringify(unreadable))
-    assert.throws(check, /could not read the admitted configurations/)
+    assert.throws(check, /could not read the profile configurations/)
     const dropped = JSON.parse(source)
     const secure = dropped.bfv.profiles.find((profile: { profile: string }) => profile.profile === 'ss-secure-8192')
     secure.configurations = secure.configurations.filter((configuration: { committee: string }) => configuration.committee !== 'small')
     writeFileSync(binding, JSON.stringify(dropped))
     assert.throws(check, /must match the \*_CONFIG_ID constants/)
     writeFileSync(binding, source)
+    const changedDisabled = JSON.parse(source)
+    const synchronized = changedDisabled.bfv.profiles.find((profile: { protocol: string }) => profile.protocol === 'synchronized')
+    assert.ok(synchronized)
+    synchronized.configurations[0].cryptoConfigId = `0x${'00'.repeat(32)}`
+    writeFileSync(binding, JSON.stringify(changedDisabled))
+    assert.throws(check, /SYNC_INSECURE_64_MINIMUM config ID must match/)
+    for (const protocol of ['secret-shared', 'synchronized']) {
+      const changed = JSON.parse(source)
+      const configuration = changed.bfv.profiles.find((profile: { protocol: string }) => profile.protocol === protocol).configurations[0]
+      configuration.admissionEnabled = !configuration.admissionEnabled
+      writeFileSync(binding, JSON.stringify(changed))
+      assert.throws(check, /admitted configurations must match the request configuration identities/)
+    }
+    writeFileSync(binding, source)
+    const active = join(temp, 'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol')
+    const originalActive = readFileSync(active, 'utf8')
+    writeFileSync(
+      active,
+      originalActive.replaceAll('BfvProtocol.SS_INSECURE_64_MINIMUM_CONFIG_ID', 'BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID'),
+    )
+    assert.throws(check, /admitted configurations must match the request configuration identities/)
+    writeFileSync(active, originalActive)
     for (const committee of ['minimum', 'micro', 'small']) {
       const changed = JSON.parse(source)
       changed.committees.find((record) => record.name === committee).h += 1

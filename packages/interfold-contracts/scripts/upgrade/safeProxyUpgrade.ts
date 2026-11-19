@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
+import { artifacts } from "hardhat";
 import path from "path";
 
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
@@ -36,6 +37,32 @@ export async function proxyImplementation(
   return ethersLib.getAddress(`0x${word.slice(-40)}`);
 }
 
+export async function assertDkgPublicationLibraryLink(
+  provider: ethersLib.Provider,
+  implementation: string,
+  library: string,
+): Promise<void> {
+  await requireContract(provider, library, "DKG publication library");
+  const artifact = await artifacts.readArtifact("CiphernodeRegistryOwnable");
+  const references = Object.values(artifact.deployedLinkReferences).flatMap(
+    (libraries) => libraries.DkgPublicationLib ?? [],
+  );
+  if (references.length === 0) {
+    throw new Error(
+      "registry artifact has no DkgPublicationLib link references",
+    );
+  }
+  const code = await provider.getCode(implementation);
+  for (const { start, length } of references) {
+    const actual = `0x${code.slice(2 + 2 * start, 2 + 2 * (start + length))}`;
+    if (actual.toLowerCase() !== library.toLowerCase()) {
+      throw new Error(
+        `registry DkgPublicationLib link mismatch: expected ${library}, got ${actual}`,
+      );
+    }
+  }
+}
+
 export type UpgradeTarget =
   | "bondingRegistry"
   | "ciphernodeRegistry"
@@ -65,6 +92,7 @@ interface UpgradePlan {
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
+  dkgPublicationLibrary?: string;
   operator: string;
   protocolOwner: string;
   safe?: string;
@@ -143,6 +171,7 @@ export async function proposeProxyUpgrade(
     lifecycleLibrary: deployed.lifecycleLibrary,
     pricingLibrary: deployed.pricingLibrary,
     sortitionLibrary: deployed.sortitionLibrary,
+    dkgPublicationLibrary: deployed.dkgPublicationLibrary,
     operator: operatorAddress,
     protocolOwner: config.protocolOwner,
     safe: config.safe,
@@ -278,6 +307,7 @@ export async function deployUpgradeImplementation(
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
+  dkgPublicationLibrary?: string;
   refundClaimLibrary?: string;
 }> {
   if (target === "interfold") {
@@ -314,6 +344,9 @@ export async function deployUpgradeImplementation(
     const sortition = await sortitionFactory.deploy();
     await sortition.waitForDeployment();
     const sortitionLibrary = await deployedAddress(sortition);
+    const publication = await ethers.deployContract("DkgPublicationLib");
+    await publication.waitForDeployment();
+    const dkgPublicationLibrary = await deployedAddress(publication);
     const factory = await ethers.getContractFactory(
       RegistryFactory.abi,
       RegistryFactory.linkBytecode({
@@ -321,6 +354,8 @@ export async function deployUpgradeImplementation(
           deployment.poseidonT3,
         "project/contracts/lib/RegistrySortitionLib.sol:RegistrySortitionLib":
           sortitionLibrary,
+        "project/contracts/lib/DkgPublicationLib.sol:DkgPublicationLib":
+          dkgPublicationLibrary,
       }),
       operator,
     );
@@ -329,6 +364,7 @@ export async function deployUpgradeImplementation(
     return {
       implementation: await deployedAddress(implementation),
       sortitionLibrary,
+      dkgPublicationLibrary,
     };
   }
 
@@ -457,6 +493,7 @@ Protocol upgrade prepared
   lifecycleLibrary: ${plan.lifecycleLibrary ?? "(not applicable)"}
   pricingLibrary:  ${plan.pricingLibrary ?? "(not applicable)"}
   sortitionLibrary: ${plan.sortitionLibrary ?? "(not applicable)"}
+  dkgPublicationLibrary: ${plan.dkgPublicationLibrary ?? "(not applicable)"}
   operator:        ${plan.operator}
   protocol owner:  ${plan.protocolOwner}
   governance batch:${plan.safeTransactions}

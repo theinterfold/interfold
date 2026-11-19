@@ -100,6 +100,13 @@ export async function actionValidate(): Promise<void> {
     console.log(`  ok ${label}`);
   }
 
+  if (
+    deployment.dkgPublicationLib &&
+    (await ethers.provider.getCode(deployment.dkgPublicationLib)) === "0x"
+  ) {
+    throw new Error("dkgPublicationLib: no contract at recorded address");
+  }
+
   const checks: Array<[string, Promise<unknown>, unknown]> = [
     ["ticket.owner", ticket.owner(), config.protocolOwner],
     ["ticket.registry", ticket.registry(), deployment.bondingRegistryProxy],

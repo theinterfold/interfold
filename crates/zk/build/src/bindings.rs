@@ -30,6 +30,20 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
     }
     for profile in BfvProfile::ALL {
         if !profile.admission_enabled() {
+            // Identity is not admission. The unactivated publication boundary must reject SS IDs,
+            // even where synchronized and SS threshold parameters are identical.
+            for committee in CiphernodesCommitteeSize::ALL {
+                if !profile.supports_committee(committee) {
+                    continue;
+                }
+                let label = format!("{}_{}", profile.name(), committee)
+                    .replace('-', "_")
+                    .to_uppercase();
+                let identity = profile.crypto_config_id(committee)?;
+                text.push_str(&format!(
+                    "\n    bytes32 internal constant {label}_CONFIG_ID =\n        {identity:#x};\n"
+                ));
+            }
             continue;
         }
         // Admitted Solidity routes currently require the preset-backed SS DKG pair.

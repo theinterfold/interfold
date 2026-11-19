@@ -203,6 +203,15 @@ export function assertValidatedVrfDeploymentMatchesPlan(
   deployment: ProtocolDeployment,
   plan: VrfSortitionUpgradePlan,
 ): void {
+  if (
+    plan.dkgPublicationLibrary &&
+    deployment.dkgPublicationLib?.toLowerCase() !==
+      plan.dkgPublicationLibrary.toLowerCase()
+  ) {
+    throw new Error(
+      "deployment DKG publication library does not match upgrade plan",
+    );
+  }
   for (const [label, actual, expected] of [
     [
       "deployment registry implementation",

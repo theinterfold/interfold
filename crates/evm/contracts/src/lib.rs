@@ -19,6 +19,8 @@ pub mod enums;
 pub use enums::{CommitteeSize, E3Stage, FailureReason};
 pub mod token;
 pub use token::{IERC20Metadata, IInterfoldTicketToken};
+pub mod synchronized_dkg;
+pub use synchronized_dkg::ISynchronizedDkgPublication;
 
 /// ABI views used to decode already-stored raw observations. If a live admission layout changes,
 /// retain its old definition here rather than changing the decoder for existing journals.

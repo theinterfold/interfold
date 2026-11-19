@@ -8,9 +8,7 @@ pragma solidity 0.8.28;
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
-import { E3 } from "../interfaces/IE3.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
-import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 import {
     Ownable2StepUpgradeable
@@ -22,12 +20,15 @@ import {
 import {
     IERC165
 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
 import { RegistrySortitionLib } from "../lib/RegistrySortitionLib.sol";
 import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
+import {
+    ISynchronizedDkgPublication
+} from "../interfaces/ISynchronizedDkgPublication.sol";
+import { DkgPublicationLib } from "../lib/DkgPublicationLib.sol";
 
 /**
  * @title CiphernodeRegistryOwnable
@@ -37,12 +38,16 @@ import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
 // solhint-disable-next-line max-states-count
 contract CiphernodeRegistryOwnable is
     ICiphernodeRegistry,
+    ISynchronizedDkgPublication,
     Ownable2StepUpgradeable
 {
     using InternalLazyIMT for LazyIMTData;
 
     /// @notice Thrown when {renounceOwnership} is called.
     error RenounceOwnershipDisabled();
+
+    /// @notice Legacy ABI entry for the unchanged failure forwarded by the SS PK verifier.
+    error InvalidProof();
 
     /// @notice Minimum permitted value for {sortitionSubmissionWindow}.
     uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 60;
@@ -214,6 +219,10 @@ contract CiphernodeRegistryOwnable is
     /// @dev Removed tree slots that can be assigned to future registrations.
     uint40[] private _freeCiphernodeTreeIndices;
 
+    // Append-only authority storage. SS anchors above retain their exact layout and semantics.
+    mapping(uint256 e3Id => ISynchronizedDkgPublication.Authority authority)
+        private _synchronizedDkgAuthorities;
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                     Modifiers                          //
@@ -358,39 +367,48 @@ contract CiphernodeRegistryOwnable is
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) external {
-        Committee storage c = committees[e3Id];
-
-        require(
-            c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
-            CommitteeNotFinalized()
-        );
-        require(c.activeCount >= c.threshold[0], ThresholdNotMet());
-        require(c.publicKey == bytes32(0), CommitteeAlreadyPublished());
-        require(pkCommitment != bytes32(0), PkCommitmentRequired());
-
-        bytes32 committeeHash = CommitteeHashLib.hash(c.topNodes);
-        c.committeeHash = committeeHash;
-        c.publicKey = pkCommitment;
-        publicKeyHashes[e3Id] = pkCommitment;
-
-        E3 memory e3 = _interfoldFor(e3Id).getE3(e3Id);
-        // Bind to the on-chain committee (c.topNodes), not caller-supplied
-        // nodes, so a wrong `nodes` input cannot pre-commit the prover to
-        // an attacker's set (C-08).
-        _verifyAndStoreDkgAnchors(
-            e3Id,
-            e3,
-            roots[e3Id],
-            c.topNodes,
-            pkCommitment,
-            committeeHash,
+        DkgPublicationLib.SecretSharedContext memory context;
+        context.e3Id = e3Id;
+        context.controller = _interfoldFor(e3Id);
+        context.attestationVerifier = _dkgFoldAttestationVerifierFor(e3Id);
+        context.committeeRoot = roots[e3Id];
+        context.pkCommitment = pkCommitment;
+        DkgPublicationLib.publishSecretShared(
+            committees[e3Id],
+            publicKeyHashes,
+            dkgPartyIds,
+            dkgSkAggCommits,
+            dkgEsmAggCommits,
+            context,
             proof,
             dkgAttestationBundle
         );
+    }
 
-        _interfoldFor(e3Id).onCommitteePublished(e3Id, pkCommitment);
+    /// @inheritdoc ISynchronizedDkgPublication
+    function publishSynchronizedCommittee(
+        uint256 e3Id,
+        ISynchronizedDkgPublication.Publication calldata publication
+    ) external {
+        DkgPublicationLib.publishSynchronized(
+            _synchronizedDkgAuthorities,
+            publicKeyHashes,
+            committees[e3Id],
+            _interfoldFor(e3Id),
+            e3Id,
+            publication
+        );
+    }
 
-        emit CommitteeProofPublished(e3Id, c.topNodes, pkCommitment, proof);
+    /// @inheritdoc ISynchronizedDkgPublication
+    function getSynchronizedDkgAuthority(
+        uint256 e3Id
+    ) external view returns (ISynchronizedDkgPublication.Authority memory) {
+        return
+            DkgPublicationLib.getSynchronized(
+                _synchronizedDkgAuthorities,
+                e3Id
+            );
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -412,64 +430,6 @@ contract CiphernodeRegistryOwnable is
             totalLength,
             chunk
         );
-    }
-
-    function _verifyAndStoreDkgAnchors(
-        uint256 e3Id,
-        E3 memory e3,
-        uint256 committeeRoot,
-        address[] memory sortedNodes,
-        bytes32 pkCommitment,
-        bytes32 committeeHash,
-        bytes calldata proof,
-        bytes calldata dkgAttestationBundle
-    ) internal {
-        require(proof.length > 0, DkgProofRequired());
-        // Reverts with a typed error on any mismatch; binds to the on-chain
-        // committee (sortedNodes = c.topNodes) per audit finding C-08.
-        if (
-            !e3.pkVerifier.verify(
-                e3Id,
-                committeeRoot,
-                sortedNodes,
-                pkCommitment,
-                committeeHash,
-                proof
-            )
-        ) revert IPkVerifier.InvalidProof();
-        _verifyAndStoreFoldAttestation(e3Id, proof, dkgAttestationBundle);
-    }
-
-    /// @dev Split out to avoid "stack too deep" in `_verifyAndStoreDkgAnchors`.
-    function _verifyAndStoreFoldAttestation(
-        uint256 e3Id,
-        bytes calldata proof,
-        bytes calldata dkgAttestationBundle
-    ) internal {
-        require(dkgAttestationBundle.length > 0, FoldAttestationsRequired());
-        IDkgFoldAttestationVerifier verifier = _dkgFoldAttestationVerifierFor(
-            e3Id
-        );
-        require(
-            address(verifier) != address(0),
-            FoldAttestationVerifierNotSet()
-        );
-
-        (
-            uint256[] memory partyIds,
-            bytes32[] memory skAgg,
-            bytes32[] memory esmAgg
-        ) = verifier.verify(
-                address(this),
-                block.chainid,
-                e3Id,
-                proof,
-                dkgAttestationBundle
-            );
-
-        dkgPartyIds[e3Id] = partyIds;
-        dkgSkAggCommits[e3Id] = skAgg;
-        dkgEsmAggCommits[e3Id] = esmAgg;
     }
 
     /// @notice Propose a new DKG fold-attestation verifier. The change becomes active
@@ -1316,17 +1276,17 @@ contract CiphernodeRegistryOwnable is
     //                                                        //
     ////////////////////////////////////////////////////////////
 
-    /// @notice ERC-165 interface detection. Advertises
-    ///         {ICiphernodeRegistry} and {IERC165}.
+    /// @notice ERC-165 interface detection, including the separate synchronized publication API.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {
         return
             interfaceId == type(ICiphernodeRegistry).interfaceId ||
+            interfaceId == type(ISynchronizedDkgPublication).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 }

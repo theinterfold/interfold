@@ -18,7 +18,10 @@ import type {
   VrfSortitionUpgradePlan,
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
-import { proxyImplementation } from "./safeProxyUpgrade";
+import {
+  assertDkgPublicationLibraryLink,
+  proxyImplementation,
+} from "./safeProxyUpgrade";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -61,6 +64,13 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
     ["randomness provider", plan.randomnessProvider],
   ] as const) {
     await requireContract(ethers.provider, target, label);
+  }
+  if (plan.dkgPublicationLibrary) {
+    await assertDkgPublicationLibraryLink(
+      ethers.provider,
+      plan.registryImplementation,
+      plan.dkgPublicationLibrary,
+    );
   }
 
   assertEqual(
@@ -201,6 +211,7 @@ export async function validateVrfSortitionUpgrade(): Promise<void> {
   writeJson(deploymentFile, {
     ...deployment,
     registrySortitionLib: plan.sortitionLibrary,
+    dkgPublicationLib: plan.dkgPublicationLibrary,
     ciphernodeRegistryImplementation: plan.registryImplementation,
     interfoldImplementation: plan.interfoldImplementation,
     interfoldLifecycle: plan.lifecycleLibrary,

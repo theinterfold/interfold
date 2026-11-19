@@ -125,6 +125,13 @@ export function syncProtocolDeploymentRecords(
     "RegistrySortitionLib",
     opts.chain,
   );
+  if (deployment.dkgPublicationLib) {
+    storeDeploymentArgs(
+      { address: deployment.dkgPublicationLib, blockNumber },
+      "DkgPublicationLib",
+      opts.chain,
+    );
+  }
   if (config.randomness && deployment.randomnessProvider) {
     storeDeploymentArgs(
       {
@@ -188,6 +195,11 @@ export function syncProtocolDeploymentRecords(
       libraries: {
         PoseidonT3: deployment.poseidonT3,
         RegistrySortitionLib: deployment.registrySortitionLib,
+        ...(deployment.dkgPublicationLib
+          ? {
+              DkgPublicationLib: deployment.dkgPublicationLib,
+            }
+          : {}),
       },
     },
     "CiphernodeRegistryOwnable",

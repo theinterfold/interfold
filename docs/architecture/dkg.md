@@ -84,12 +84,14 @@ This is not a complete admitted setup protocol. The explicit proof API verifies 
 context/roster; it does not establish their chain/signature authority. The isolated
 [C5/publication boundary](proof-statements.md#draft-synchronized-c5publication-boundary-not-admitted)
 joins H recipient setups to the aggregate key and a common dealer-batch anchor, with native and
-Solidity verification against independent expectations, including reopened runtime artifacts.
-Registry publication/attestations, full-node synchronized startup and synchronized C6 remain absent.
-The capability replay fixture below does not enable production admission. Synchronized runtime
-folding/publication and decryption paths still refuse the SS implementations. The joins,
-root/bundle/batch schemas and setup derivation require human protocol review before consumers freeze
-them.
+Solidity verification against independent expectations, including reopened runtime artifacts. The
+separate [registry authority](proof-statements.md#synchronized-registry-authority-unactivated) now
+requires every selected recipient's consent and stores distinct SK/key-bundle anchors. It is
+unactivated: native authority ingestion, full-node synchronized startup and synchronized C6 remain
+absent. The capability replay fixture below does not enable production admission. Synchronized
+runtime folding/publication and decryption paths still refuse the SS implementations. The joins,
+root/bundle/batch schemas, attestation domain and setup derivation require human protocol review
+before consumers freeze them.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

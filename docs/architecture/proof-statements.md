@@ -231,8 +231,8 @@ admitted C4 aggregate-SK/bundle, dealer-batch and selected C1/C5 threshold-key c
 candidate outputs cannot supply their own authority. It does **not** authenticate those expected
 values or caller-supplied chain context/roster, or replace signature admission. A different
 consistently selected setup is not rejected without canonical external authority. These joins prove
-neither C4's BFV decryption equation nor registry publication. The runtime still refuses
-synchronized folding/publication; human protocol review, registry/attestation wiring, full-node
+neither C4's BFV decryption equation nor publication authority. The runtime still refuses
+synchronized folding/publication; human protocol review, native authority/recovery wiring, full-node
 replay and C6 remain open.
 
 ### Draft synchronized C5/publication boundary (not admitted)
@@ -252,11 +252,46 @@ Rust verification compares the native expected PK commitment, admitted C1/C4/bat
 canonical context/roster before returning a read-only handoff. The isolated
 `SynchronizedDkgPublicationVerifier` recomputes the setup binding from chain ID, configured
 Interfold/configuration ID, full E3 ID and raw-address committee hash, checks the expected roster,
-batch/PK and complete VK pins, then verifies the EVM proof. The caller still authenticates the
-request-frozen facts. This contract is deliberately not an `IPkVerifier` route, does not implement
-fold attestations or store anchors, and is absent from deployments. Registry integration needs a
-reviewed SK/key-bundle publication/attestation schema; the SS registry's ESM field cannot stand in
-for a bundle.
+batch/PK and complete VK pins, then verifies the EVM proof. Its constructor accepts only the
+disabled synchronized insecure-64/minimum identity and canonical N/H. The caller still authenticates
+the request-frozen facts. This contract is deliberately not an `IPkVerifier` route and is absent
+from deployments. The separate registry entry below supplies authority; the SS registry's ESM field
+cannot stand in for a bundle.
+
+### Synchronized registry authority (unactivated)
+
+`publishSynchronizedCommittee` uses the request's frozen controller, configuration ID, full
+canonical committee and proof wrapper, never publication-supplied deployment facts or the registry's
+current global SS attestation verifier. A final proof alone is insufficient: **all H selected
+recipients**, not a T+1 shortcut or all N members, must sign the same setup, ordered roster, dealer
+batch and aggregate PK, each with its own full-committee party ID and SK/key-bundle anchors. Every
+signer must still be active at publication. The roster is strictly increasing full-committee IDs;
+H-row positions do not replace them. The batch binds the proof's complete selected contributions and
+threshold-key rows.
+
+The EIP-712 domain is `InterfoldSynchronizedDkgAttestation`, version `"1"`, with chain ID and the
+request-frozen proof-wrapper address as `verifyingContract`. The struct additionally binds the
+registry, **full uint256 E3 ID**, configuration ID and setup binding.
+`rosterHash = keccak256(abi.encode(uint256[] partyIds))`, including ABI offset and length, not a
+packed address hash. Exact field types/order are owned by
+[`SynchronizedDkgAttestationLib`](../../packages/interfold-contracts/contracts/lib/SynchronizedDkgAttestationLib.sol);
+no SS signature/domain or ESM commitment is reused.
+
+The registry stores
+[Authority v1](../../packages/interfold-contracts/contracts/interfaces/ISynchronizedDkgPublication.sol)
+in append-only storage, with the three commitment columns in selected H order, and emits the full
+authority for replay. Version zero means absent, including for SS publications. The existing
+canonical-key callback still enforces lifecycle deadlines; its rejection atomically rolls back
+authority and key writes. The ordinary SS entry rejects the synchronized identity. SS publication
+checks, anchors and existing ERC-165 identities are preserved; linked `DkgPublicationLib` owns both
+publication paths to fit EIP-170 under the normal compiler settings.
+
+Mock-proof registry tests establish consent/rollback/storage behavior, not proof soundness. The
+prepared real-proof suite checks the wrapper with an actual generated verifier. Neither establishes
+native confirmed-authority ingestion/restart, a whole-node synchronized workflow, C6 or a
+source-bound release. Admission stays disabled. The domain, authority schema and deployment/rollback
+decisions remain unratified protocol interfaces requiring human cryptographic and compatibility
+review.
 
 ## Commitments, packing, and Fiat-Shamir
 

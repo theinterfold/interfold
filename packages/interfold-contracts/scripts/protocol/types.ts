@@ -234,6 +234,8 @@ export interface ProtocolDeployment {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  /** Absent on registry generations predating synchronized DKG publication. */
+  dkgPublicationLib?: string;
   randomnessProvider: string;
   /** Exact randomness settings used to deploy and validate the recorded provider. */
   randomness?: RandomnessConfig;
@@ -264,6 +266,7 @@ export interface VrfSortitionUpgradePlan {
   registryProxyAdmin: string;
   registryImplementation: string;
   sortitionLibrary: string;
+  dkgPublicationLibrary?: string;
   interfoldProxy: string;
   interfoldProxyAdmin: string;
   interfoldImplementation: string;
@@ -371,6 +374,7 @@ export interface ProtocolContracts {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  dkgPublicationLib?: string;
   randomnessProvider: string;
   randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;

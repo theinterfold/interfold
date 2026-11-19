@@ -11,11 +11,13 @@ export default buildModule("CiphernodeRegistry", (m) => {
 
   const poseidonT3 = m.library("PoseidonT3");
   const registrySortitionLib = m.library("RegistrySortitionLib");
+  const dkgPublicationLib = m.library("DkgPublicationLib");
 
   const cipherNodeRegistryImpl = m.contract("CiphernodeRegistryOwnable", [], {
     libraries: {
       PoseidonT3: poseidonT3,
       RegistrySortitionLib: registrySortitionLib,
+      DkgPublicationLib: dkgPublicationLib,
     },
   });
 

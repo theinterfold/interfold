@@ -322,6 +322,7 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
     registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
     registryImplementation: registryUpgrade.implementation,
     sortitionLibrary: registryUpgrade.sortitionLibrary,
+    dkgPublicationLibrary: registryUpgrade.dkgPublicationLibrary,
     interfoldProxy: deployment.interfold,
     interfoldProxyAdmin: deployment.interfoldProxyAdmin,
     interfoldImplementation: interfoldUpgrade.implementation,

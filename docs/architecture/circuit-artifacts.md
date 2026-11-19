@@ -109,8 +109,11 @@ decision for a future sync release.
 The draft recipient setup verifier derives its full descendant pin from the selected local keys; it
 does not accept a received NodeFold VK hash as that pin. This does not make a partial sync tree
 installable or release-qualified. An isolated C5/publication wrapper and contextual Solidity
-verifier now exist, but no release manifest, registry/attestation integration, deployed route or
-hydration path does; the existing six SS pairs and their anchors are unchanged.
+verifier now exist, with a separate unactivated
+[registry/attestation boundary](proof-statements.md#synchronized-registry-authority-unactivated). No
+release manifest, deployed synchronized route or hydration path exists; the existing six SS pairs
+and their anchors are unchanged. Emitting a disabled profile's canonical Solidity identity is not
+artifact or request admission.
 
 The keyshare [recovery qualification](../../crates/orchestration/keyshare/README.md#tests) stages
 explicit leaf/Default/EVM variants and VK hashes in private temporary directories, retaining the
