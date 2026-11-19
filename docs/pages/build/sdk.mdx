@@ -172,8 +172,8 @@ of the E3 request, which also sets the `paramSet` of the E3.
 
 | Preset name             | Request `profile` | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
 | ----------------------- | ----------------- | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 0          | 64          | 3              | Local development and tests     |
-| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 2          | 8192        | 3              | Production and secure test runs |
+| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 4          | 64          | 3              | Local development and tests     |
+| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 3          | 8192        | 3              | Production and secure test runs |
 
 The insecure preset has no production security. Use it only for tests.
 `ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
