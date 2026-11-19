@@ -42,7 +42,7 @@ pub struct VerificationKeys<'a> {
 
 pub(crate) fn hash(fields: &[Field]) -> Result<Field, WitnessError> {
     for field in fields {
-        canonical(field)?;
+        canonical(field).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
     }
     let value = compute_vk_hash(
         fields
@@ -113,8 +113,9 @@ pub(crate) fn insert_child(
     child: &Child<'_>,
     key: &VerificationKey<'_>,
 ) -> Result<(), WitnessError> {
-    canonical(&key.hash)?;
-    json[format!("{prefix}_vk")] = fields(key.fields)?;
+    canonical(&key.hash).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
+    json[format!("{prefix}_vk")] =
+        fields(key.fields).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
     json[format!("{prefix}_key_hash")] = json!(format!("0x{}", hex::encode(key.hash)));
     json[format!("{prefix}_proof")] = fields(child.proof)?;
     json[format!("{prefix}_public")] = fields(child.public_signals)?;
@@ -248,13 +249,11 @@ pub fn recipient(
         return Err(invalid("C4 roster or outgoing-root anchor differs"));
     }
     let l = config.threshold.moduli().len();
-    let tree = keys.dealer_tree()?;
+    let mut trees = Vec::with_capacity(nodes.len());
     for (row, (&dealer, node)) in roster.iter().zip(nodes).enumerate() {
         let public = statement(config, node, CircuitName::NodeFold)?;
         identity(&public, binding, dealer)?;
-        if public.tree_hash() != Some(tree) {
-            return Err(invalid("unanchored dealer descendant VK"));
-        }
+        trees.push(public.tree_hash());
         let messages = public.message_commitments().unwrap();
         if messages[id as usize * l..(id as usize + 1) * l]
             != opening.message_commitments().unwrap()[row * l..(row + 1) * l]
@@ -270,6 +269,13 @@ pub fn recipient(
         } else if public.recipient_keys().unwrap()[id as usize] != pk.pk_commitment().unwrap() {
             return Err(invalid("C3 key differs from recipient C0"));
         }
+    }
+    // Check every independent statement before assigning a local-key retry disposition.
+    let tree = keys.dealer_tree()?;
+    if trees.iter().any(|candidate| *candidate != Some(tree)) {
+        return Err(WitnessError::VerificationKey(
+            "dealer genealogy differs from the local verifier keys".into(),
+        ));
     }
     let mut input = json!({
         "expected_tree_hash": format!("0x{}", hex::encode(keys.setup_tree()?)),
@@ -406,6 +412,74 @@ mod tests {
         transport.swap(0, 1);
         transport[5][31] += 1;
         assert!(attempt(&transport).is_err());
+    }
+
+    #[test]
+    fn recipient_semantic_faults_precede_local_genealogy_across_all_rows() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let bytes = [0; 32];
+        let keys = keys(&bytes);
+        let c0 = vec![0; 32];
+        let c2 = vec![0; 14 * 32];
+        let mut c4 = vec![0; 14 * 32];
+        c4[4 * 32 + 31] = 2;
+        let mut nodes = vec![vec![0; 27 * 32]; 2];
+        for (row, node) in nodes.iter_mut().enumerate() {
+            node[2 * 32 + 31] = (row * 2) as u8;
+            node[3 * 32..4 * 32].copy_from_slice(&keys.dealer_tree().unwrap());
+        }
+        let attempt = |nodes: &[Vec<u8>]| {
+            recipient(
+                &config,
+                [0, 0],
+                0,
+                &[0, 2],
+                Child {
+                    circuit: CircuitName::PkBfv,
+                    proof: &bytes,
+                    public_signals: &c0,
+                },
+                Child {
+                    circuit: CircuitName::SkShareComputation,
+                    proof: &bytes,
+                    public_signals: &c2,
+                },
+                Child {
+                    circuit: CircuitName::DkgShareDecryption,
+                    proof: &bytes,
+                    public_signals: &c4,
+                },
+                &nodes
+                    .iter()
+                    .map(|node| Child {
+                        circuit: CircuitName::NodeFold,
+                        proof: &bytes,
+                        public_signals: node,
+                    })
+                    .collect::<Vec<_>>(),
+                &keys,
+            )
+        };
+        attempt(&nodes).unwrap();
+        nodes[0][3 * 32 + 31] ^= 1;
+        assert!(matches!(
+            attempt(&nodes),
+            Err(WitnessError::VerificationKey(_))
+        ));
+        // Context, C2/C4 messages, own C2 and recipient C0 are independent of local VKs.
+        for (row, slot) in [(1, 0), (1, 6), (0, 5), (1, 15)] {
+            let mut altered = nodes.clone();
+            altered[row][slot * 32 + 31] ^= 1;
+            let error = attempt(&altered).unwrap_err();
+            assert!(
+                !matches!(error, WitnessError::VerificationKey(_)),
+                "{error}"
+            );
+        }
     }
 
     #[test]

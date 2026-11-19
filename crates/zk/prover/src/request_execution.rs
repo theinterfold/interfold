@@ -86,6 +86,7 @@ pub fn zk_operation_name(request: &ZkRequest) -> &'static str {
         ZkRequest::NodesFoldStep(_) => "zk_nodes_fold_step",
         ZkRequest::DkgAggregation(_) => "zk_dkg_aggregation",
         ZkRequest::DecryptionAggregation(_) => "zk_decryption_aggregation",
+        ZkRequest::SynchronizedDkg(_) => "zk_synchronized_dkg",
     }
 }
 
@@ -134,7 +135,41 @@ pub fn execute_zk_request(
         ZkRequest::DecryptionAggregation(req) => {
             handle_decryption_aggregation_proof(prover, req, request)
         }
+        ZkRequest::SynchronizedDkg(req) => {
+            // Identity/disabled-profile rejection precedes all witness, artifact and process work.
+            admitted_profile_artifacts(req.params_profile, req.committee_size, &request)?;
+            if req.params_profile.protocol() != e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+                return Err(make_zk_error(
+                    &request,
+                    "synchronized DKG work requires a synchronized profile".into(),
+                ));
+            }
+            let response = crate::synchronized::execution::execute_definition(
+                prover,
+                &request.e3_id,
+                &req,
+                &zk_bb_work_id(&request),
+            )
+            .map_err(|error| synchronized_execution_error(&request, error))?;
+            Ok(ComputeResponse::zk(
+                ZkResponse::SynchronizedDkg(response),
+                request.correlation_id,
+                request.e3_id,
+            ))
+        }
     }
+}
+
+fn synchronized_execution_error(
+    request: &ComputeRequest,
+    error: crate::synchronized::execution::ExecutionError,
+) -> ComputeRequestError {
+    use crate::synchronized::execution::ExecutionError;
+    let kind = match error {
+        ExecutionError::InvalidParams(error) => ZkEventError::InvalidParams(format!("{error:#}")),
+        ExecutionError::Local(error) => ZkEventError::ProofGenerationFailed(format!("{error:#}")),
+    };
+    ComputeRequestError::new(ComputeRequestErrorKind::Zk(kind), request.clone())
 }
 
 #[cfg(test)]

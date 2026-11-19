@@ -18,6 +18,7 @@ use e3_zk_config::{
     CircuitName, CircuitVariant,
 };
 use e3_zk_witness::synchronized::provenance::{self, Child, VerificationKey, VerificationKeys};
+use noirc_abi::{input_parser::InputValue, Abi, AbiType, InputMap};
 use serde_json::Value;
 
 pub struct DealerJoin<'a> {
@@ -197,6 +198,103 @@ pub fn prepare_recipient(
     )?)
 }
 
+/// Owners of the ordered child rows already checked during statement preparation.
+pub(super) struct PeerProofRows<'a> {
+    pub parameter: &'static str,
+    pub owners: &'a [u32],
+    pub local_owner: u32,
+}
+
+fn check_child_proof_shapes(
+    abi: &Abi,
+    inputs: &InputMap,
+    peers: Option<PeerProofRows<'_>>,
+) -> Result<()> {
+    let mut peer_error = None;
+    for parameter in &abi.parameters {
+        if !(parameter.name.ends_with("_proof") || parameter.name.ends_with("_proofs")) {
+            continue;
+        }
+        let value = inputs
+            .get(&parameter.name)
+            .context("prepared witness is missing a child proof")?;
+        if value.matches_abi(&parameter.typ) {
+            continue;
+        }
+        if let (Some(peers), InputValue::Vec(rows), AbiType::Array { length, typ }) =
+            (&peers, value, &parameter.typ)
+        {
+            if parameter.name == peers.parameter
+                // Cardinality is independently fixed by the validated plan. A mismatch of the
+                // outer dimension or a non-proof ABI element is a local artifact problem.
+                && rows.len() == peers.owners.len()
+                && *length as usize == rows.len()
+                && matches!(typ.as_ref(), AbiType::Array { typ, .. } if matches!(typ.as_ref(), AbiType::Field))
+                && rows.iter().zip(peers.owners).all(|(row, &owner)| {
+                    owner != peers.local_owner || row.matches_abi(typ)
+                })
+            {
+                peer_error = Some(&parameter.name);
+                continue;
+            }
+        }
+        // Use the loaded shape, but do not classify locally generated inputs as peer faults.
+        anyhow::bail!(
+            "local child {} does not match the selected circuit proof shape",
+            parameter.name
+        );
+    }
+    if let Some(name) = peer_error {
+        return Err(e3_zk_witness::WitnessError::Other(format!(
+            "{name} peer child does not match the selected circuit proof shape"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn loaded_shape_uses_the_local_row_and_canonical_fanout_to_classify_failures() {
+    use super::execution::ExecutionError;
+    use serde_json::json;
+
+    let check = |length: u32, local_owner: u32| {
+        let circuit = CompiledCircuit::from_json(
+            &json!({
+                "bytecode": "",
+                "abi": {
+                    "parameters": [{
+                        "name": "node_proofs", "visibility": "private",
+                        "type": {
+                            "kind": "array", "length": length,
+                            "type": {"kind": "array", "length": 2, "type": {"kind": "field"}}
+                        }
+                    }],
+                    "return_type": null,
+                    "error_types": {}
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let input = inputs_json_to_input_map(&json!({"node_proofs": [["1", "2"], ["3"]]})).unwrap();
+        check_child_proof_shapes(
+            &circuit.abi,
+            &input,
+            Some(PeerProofRows {
+                parameter: "node_proofs",
+                owners: &[0, 2],
+                local_owner,
+            }),
+        )
+        .map_err(ExecutionError::from)
+    };
+    assert!(matches!(check(2, 0), Err(ExecutionError::InvalidParams(_))));
+    assert!(matches!(check(2, 2), Err(ExecutionError::Local(_))));
+    assert!(matches!(check(3, 0), Err(ExecutionError::Local(_))));
+}
+
 pub(super) fn prove(
     prover: &ZkProver,
     config: &Configs,
@@ -204,6 +302,7 @@ pub(super) fn prove(
     input: Value,
     job: &str,
     variant: CircuitVariant,
+    peers: Option<PeerProofRows<'_>>,
 ) -> Result<Proof> {
     let directory = config
         .profile
@@ -213,8 +312,9 @@ pub(super) fn prove(
         .join(circuit.dir_path())
         .join(format!("{}.json", circuit.as_str()));
     let compiled = CompiledCircuit::from_file(&path)?;
-    let witness =
-        WitnessGenerator::new().generate_witness(&compiled, inputs_json_to_input_map(&input)?)?;
+    let inputs = inputs_json_to_input_map(&input)?;
+    check_child_proof_shapes(&compiled.abi, &inputs, peers)?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, inputs)?;
     Ok(prover.generate_proof_with_variant(circuit, &witness, job, variant, &directory)?)
 }
 
@@ -233,6 +333,7 @@ pub fn prove_dealer(
         prepare_dealer(prover, config, context, e3_id, input)?,
         job,
         CircuitVariant::Default,
+        None,
     )
 }
 
@@ -251,6 +352,11 @@ pub fn prove_recipient(
         prepare_recipient(prover, config, context, e3_id, input)?,
         job,
         CircuitVariant::Default,
+        Some(PeerProofRows {
+            parameter: "node_proofs",
+            owners: input.dealer_ids,
+            local_owner: context.party_id,
+        }),
     )
 }
 
@@ -265,33 +371,55 @@ pub fn verify_recipient(
     proof: &Proof,
     job: &str,
 ) -> Result<Option<SetupCommitments>> {
+    Ok(verify_recipient_result(prover, config, context, e3_id, expected, proof, job)?.ok())
+}
+
+/// Preserve statement rejection separately from a completed cryptographic rejection for workers.
+pub(super) enum Rejection {
+    Expectations,
+    Malformed,
+    VerificationKey,
+    Proof,
+}
+
+pub(super) fn verify_recipient_result(
+    prover: &ZkProver,
+    config: &Configs,
+    context: &SynchronizedProofContext,
+    e3_id: &E3id,
+    expected: &ExpectedSetup<'_>,
+    proof: &Proof,
+    job: &str,
+) -> Result<std::result::Result<SetupCommitments, Rejection>> {
     let binding = request_binding(config, context, e3_id)?;
     let keys = Keys::load(prover, config)?;
     let tree = keys.as_inputs().setup_tree()?;
     if proof.circuit != CircuitName::NodesFold {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let Ok(public) = PublicSignals::decode(config, proof.circuit, &proof.public_signals) else {
-        return Ok(None);
+        return Ok(Err(Rejection::Malformed));
     };
+    if public.tree_hash() != Some(tree) {
+        return Ok(Err(Rejection::VerificationKey));
+    }
     if public.binding() != Some(binding)
         || public.party_id() != Some(context.party_id)
         || public.dealers().as_deref() != Some(expected.dealers)
-        || public.tree_hash() != Some(tree)
         || public.threshold_keys() != Some(expected.threshold_keys)
         || public.dealer_batch() != Some(expected.dealer_batch)
         || public.sk_commitment() != Some(expected.sk_commitment)
         || public.key_bundle() != Some(expected.key_bundle)
     {
-        return Ok(None);
+        return Ok(Err(Rejection::Expectations));
     }
     let directory = config
         .profile
         .artifacts_dir_for_committee(config.committee)?;
     if !prover.verify_fold_proof(proof, job, context.party_id as u64, &directory)? {
-        return Ok(None);
+        return Ok(Err(Rejection::Proof));
     }
-    Ok(Some(SetupCommitments {
+    Ok(Ok(SetupCommitments {
         binding,
         recipient: context.party_id,
         dealers: expected.dealers.to_vec(),

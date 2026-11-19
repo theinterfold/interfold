@@ -25,6 +25,9 @@ pub enum WitnessError {
     Polynomial(#[from] e3_polynomial::PolynomialError),
     #[error("Conversion error: {0}")]
     ConversionError(String),
+    /// Verification keys are local execution inputs, not evidence about a peer's proof.
+    #[error("Verification-key input: {0}")]
+    VerificationKey(String),
     #[error("Commitment too long: {0}")]
     CommitmentTooLong(usize),
     /// Extra ciphertext components would share a commitment with the two-component prefix.

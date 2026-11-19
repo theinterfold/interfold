@@ -166,6 +166,7 @@ impl ComputeEffectGate {
                         | ZkRequest::NodeDkgFold(_)
                         | ZkRequest::NodesFoldStep(_)
                         | ZkRequest::DkgAggregation(_)
+                        | ZkRequest::SynchronizedDkg(_)
                 ) || matches!(
                     request,
                     ZkRequest::VerifyShareProofs(request)
@@ -1189,6 +1190,77 @@ pub(crate) mod tests {
         gate.send(compute(CorrelationId::new(), 40)).await.unwrap();
 
         assert!(recorder.send(Received).await.unwrap().is_empty());
+    }
+
+    #[actix::test]
+    async fn synchronized_join_work_waits_for_effects_and_ends_at_key_publication() {
+        use alloy::primitives::Address;
+        use e3_events::{
+            SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedProofContext,
+        };
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
+        let first = CorrelationId::new();
+        let work = |correlation, timestamp, proof_byte| {
+            let proof = Proof::new(
+                CircuitName::PkGeneration,
+                ArcBytes::from_bytes(&[proof_byte]),
+                ArcBytes::default(),
+            );
+            let request = ComputeRequest::zk(
+                ZkRequest::SynchronizedDkg(Box::new(SynchronizedDkgProofRequest {
+                    params_profile: e3_fhe_params::BfvProfile::SyncDecInsecure64,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                    context: SynchronizedProofContext {
+                        party_id: 0,
+                        setup: e3_committee_hash::DkgSetupContext {
+                            interfold_address: Address::repeat_byte(1),
+                            committee_hash: [2; 32].into(),
+                            crypto_config_id: [3; 32].into(),
+                        },
+                    },
+                    job: SynchronizedDkgProofJob::Dealer {
+                        c1: proof.clone(),
+                        c2: proof,
+                        c3: vec![],
+                    },
+                })),
+                correlation,
+                E3id::new("4", 1),
+            );
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                request.into(),
+                None,
+                timestamp,
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(1)
+        };
+        gate.send(work(first, 10, 1)).await.unwrap();
+        assert!(recorder.send(Received).await.unwrap().is_empty());
+        gate.send(effects_enabled()).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
+        gate.send(
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                e3_events::E3StageChanged {
+                    e3_id: E3id::new("4", 1),
+                    previous_stage: E3Stage::CommitteeFinalized,
+                    new_stage: E3Stage::KeyPublished,
+                }
+                .into(),
+                None,
+                30,
+                Some(1),
+                EventSource::Evm,
+            )
+            .into_sequenced(2),
+        )
+        .await
+        .unwrap();
+        // A new payload cannot be suppressed by semantic dedup of the earlier request.
+        gate.send(work(CorrelationId::new(), 40, 2)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
     }
 
     #[actix::test]

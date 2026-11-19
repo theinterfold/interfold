@@ -106,6 +106,12 @@ does not enable production admission. Synchronized runtime folding/publication a
 still refuse the SS implementations. The joins, root/bundle/batch schemas, attestation domain and
 setup derivation require human protocol review before consumers freeze them.
 
+Typed local dealer/recipient/publication work uses a separate synchronized executor, not SS fold
+requests. Runtime admission rejects the disabled profile before touching proof artifacts; isolated
+qualification calls the explicit definition API. The existing shared compute gate waits for
+current-boot effects and retires this DKG work at confirmed key publication. Neither the gate nor a
+setup response authenticates peer inputs or replaces actor-owned correlation and durable phases.
+
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CiphernodeSelected` → initialization                | Read `getDeadlines` and the request-frozen timeout configuration at `CommitteeFinalized`. Retry unavailable RPC; do not substitute a local window. Record the encrypted BFV keypair with flushed `DurableIntent` before using or publishing it.                                    |

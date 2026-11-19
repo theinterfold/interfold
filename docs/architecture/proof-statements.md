@@ -235,6 +235,18 @@ neither C4's BFV decryption equation nor publication authority. The runtime stil
 synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
 replay and C6 remain open.
 
+The typed local definition executor reuses these proof/verification owners. Recipient results must
+match independently supplied setup/owner and C1/C4/batch anchors; publication results must also
+match the independently aggregated native PK. Invalid context, witness inputs or independent
+expectations are permanent parameter errors, including malformed external child-proof shapes against
+the loaded ABI. Incompatible locally generated proof shapes or a loaded ABI with the wrong canonical
+fan-out are local failures. Independent statement mismatches take precedence over local genealogy
+failures. Unusable local VK fields or inconsistent verifier-key genealogy, missing artifacts/process
+failures, malformed generated public signals and cryptographic rejection of a locally generated
+proof remain local generation failures, not peer-invalid verdicts. Runtime requests still fail
+disabled-profile admission before artifact access; real qualification invokes the definition API
+explicitly, without a production bypass flag.
+
 ### Draft synchronized C5/publication boundary (not admitted)
 
 C5 reuses the bounded public-key aggregation statement with the synchronized profile's threshold
