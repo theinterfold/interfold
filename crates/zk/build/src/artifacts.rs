@@ -145,9 +145,13 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
 }
 
 pub fn target_dir(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
+    workspace_target(root, &circuit.path)
+}
+
+/// The `target` directory nargo writes the package at `package` to: its workspace's, if it has one.
+fn workspace_target(root: &Path, package: &Path) -> Result<PathBuf> {
     let bin = root.join("circuits/bin");
-    for directory in circuit
-        .path
+    for directory in package
         .ancestors()
         .take_while(|path| path.starts_with(&bin))
     {
@@ -159,7 +163,7 @@ pub fn target_dir(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
             }
         }
     }
-    Ok(circuit.path.join("target"))
+    Ok(package.join("target"))
 }
 
 pub fn copy_tree(source: &Path, target: &Path, excluded: &[&str]) -> Result<()> {
@@ -209,30 +213,70 @@ fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
     Ok(())
 }
 
-/// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`). A pair
-/// is complete, current or hydratable only with all of them: a tree built before the inventory
-/// gained an artifact must not pass.
-pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
-    let required: Vec<&str> =
-        serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
-            .expect("invalid required circuit artifact inventory");
-    required.iter().map(|path| pair.join(path)).collect()
+/// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`), as
+/// `<variant>/<group>/<name>/<package>.<extension>`.
+fn required_artifacts() -> Vec<&'static str> {
+    serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
+        .expect("invalid required circuit artifact inventory")
 }
 
-fn bin_markers(root: &Path) -> Vec<PathBuf> {
-    [
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json",
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive",
-        "recursive_aggregation/nodes_fold/target/nodes_fold.vk_tree_hash",
-        "recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash",
-        "dkg/target/pk.json",
-        "threshold/target/pk_aggregation.json",
-    ]
-    .iter()
-    .map(|path| root.join("circuits/bin").join(path))
-    .collect()
+/// Where [`hydrate`] copies each published file of a variant in `circuits/bin`, as
+/// `(published extension, bin extension)`.
+const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
+    (
+        "default",
+        &[
+            ("json", "json"),
+            ("vk", "vk_recursive"),
+            ("vk_hash", "vk_recursive_hash"),
+            ("vk_tree_hash", "vk_tree_hash"),
+        ],
+    ),
+    ("evm", &[("vk", "vk"), ("vk_hash", "vk_hash")]),
+    (
+        "recursive",
+        &[("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
+    ),
+];
+
+/// The required artifacts of a pair. A pair is complete, current or hydratable only with all of
+/// them: a tree built before the inventory gained an artifact must not pass.
+pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
+    required_artifacts()
+        .iter()
+        .map(|path| pair.join(path))
+        .collect()
+}
+
+/// The required artifacts where [`hydrate`] puts them in `circuits/bin`. Every variant's program
+/// is the circuit's one compiled `json`.
+pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
+    required_artifacts()
+        .into_iter()
+        .map(|required| {
+            let parts: Vec<&str> = required.split('/').collect();
+            let [variant, group @ .., name, file] = parts.as_slice() else {
+                bail!("Malformed required artifact {required}");
+            };
+            let (package, extension) = file
+                .split_once('.')
+                .with_context(|| format!("Required artifact {required} has no extension"))?;
+            let extension = if extension == "json" {
+                "json"
+            } else {
+                BIN_EXTENSIONS
+                    .iter()
+                    .find(|(published, _)| published == variant)
+                    .and_then(|(_, extensions)| {
+                        extensions.iter().find(|(from, _)| *from == extension)
+                    })
+                    .map(|(_, to)| *to)
+                    .with_context(|| format!("Required artifact {required} has no bin location"))?
+            };
+            let package_dir = root.join("circuits/bin").join(group.join("/")).join(name);
+            Ok(workspace_target(root, &package_dir)?.join(format!("{package}.{extension}")))
+        })
+        .collect()
 }
 
 fn read_stamp(path: &Path) -> Result<Option<Stamp>> {
@@ -298,11 +342,12 @@ pub fn bin_current(root: &Path, preset: &str, committee: &str, hash: Option<&str
     if profile(preset)?.protocol() == BfvDecryptionProtocol::Synchronized {
         return Ok(false);
     }
-    Ok(read_active_stamp(root)?.is_some_and(|stamp| {
+    let stamped = read_active_stamp(root)?.is_some_and(|stamp| {
         stamp.preset == preset
             && stamp.committee == committee
             && hash.is_none_or(|hash| stamp.source_hash == hash)
-    }) && bin_markers(root).iter().all(|path| path.is_file()))
+    });
+    Ok(stamped && bin_markers(root)?.iter().all(|path| path.is_file()))
 }
 
 /// The stamp of the preset and committee `circuits/bin` was built for, or `None` before any build.
@@ -333,22 +378,7 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
     for circuit in circuits {
         let target = target_dir(root, &circuit)?;
         fs::create_dir_all(&target)?;
-        for (variant, extensions) in [
-            (
-                "default",
-                vec![
-                    ("json", "json"),
-                    ("vk", "vk_recursive"),
-                    ("vk_hash", "vk_recursive_hash"),
-                    ("vk_tree_hash", "vk_tree_hash"),
-                ],
-            ),
-            ("evm", vec![("vk", "vk"), ("vk_hash", "vk_hash")]),
-            (
-                "recursive",
-                vec![("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
-            ),
-        ] {
+        for (variant, extensions) in BIN_EXTENSIONS {
             let source = pair.join(variant).join(&circuit.group).join(&circuit.name);
             for (from, to) in extensions {
                 let source = source.join(format!("{}.{from}", circuit.package));
@@ -1428,7 +1458,10 @@ mod tests {
             r#"{"required_bb_version":"0.0.0-invalid"}"#,
         )
         .unwrap();
-        for marker in dist_markers(&pair).into_iter().chain(bin_markers(root)) {
+        for marker in dist_markers(&pair)
+            .into_iter()
+            .chain(bin_markers(root).unwrap())
+        {
             if !marker.exists() {
                 fs::create_dir_all(marker.parent().unwrap()).unwrap();
                 fs::write(marker, "published marker").unwrap();

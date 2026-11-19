@@ -1330,6 +1330,38 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
     assert!(artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").is_err());
 }
 
+/// `circuits/bin` is current only with every required artifact where hydration puts it: one missing
+/// Chonk kernel key fails it, whatever the stamp says.
+#[test]
+fn bin_current_requires_every_required_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "circuits/bin/chonk/Nargo.toml",
+        "[workspace]\nmembers = [\"c3_chonk_app\"]\n",
+    );
+    write_json(
+        &root.join("circuits/bin/.active-preset.json"),
+        &artifacts::Stamp {
+            preset: "insecure-64".into(),
+            committee: "minimum".into(),
+            source_hash: "source".into(),
+            built_at: "time".into(),
+        },
+    )
+    .unwrap();
+    for marker in artifacts::bin_markers(root).unwrap() {
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(marker, b"marker").unwrap();
+    }
+    assert!(artifacts::bin_current(root, "insecure-64", "minimum", Some("source")).unwrap());
+    assert!(!artifacts::bin_current(root, "insecure-64", "minimum", Some("other")).unwrap());
+    fs::remove_file(root.join("circuits/bin/chonk/target/c3_chonk_hiding_kernel.vk_recursive"))
+        .unwrap();
+    assert!(!artifacts::bin_current(root, "insecure-64", "minimum", Some("source")).unwrap());
+}
+
 /// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
 /// variant's VK and VK hash under its published name, the compiled program in every variant, and the
 /// VK-tree anchor only where the folding circuit has one.
