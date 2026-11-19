@@ -6,3 +6,4 @@
 
 pub mod dkg;
 pub mod threshold;
+pub mod synchronized;

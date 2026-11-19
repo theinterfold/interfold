@@ -1177,7 +1177,7 @@ jobs:
 
   # Proves with the newest published circuit set without a local SOURCE_HASH match.
   # Source builds still compile and check their selected pair. Releases verify the complete matrix.
-  # The proof suites run in two legs; the correlated node test alone sets the floor.
+  # Recursive synchronized proofs need their own bounded proof leg.
   zk_prover_e2e:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.zk == 'true'
@@ -1188,7 +1188,8 @@ jobs:
       'zk_prover_e2e', matrix.leg) || 'ubuntu-latest' }}
     strategy:
       matrix:
-        leg: [suites, node-fold]
+        leg: [suites, node-fold, sync-dkg-proofs]
+      fail-fast: false
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -1286,6 +1287,10 @@ jobs:
       - name: Check C6/C7 witness and ABI compatibility
         if: matrix.leg == 'suites'
         run: cargo test --locked -p e3-zk-prover --test witness_compatibility -- --include-ignored --nocapture
+
+      - name: Prove isolated synchronized DKG leaves from native encrypted transport
+        if: matrix.leg == 'sync-dkg-proofs'
+        run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
 
       - name: Run ZK prover e2e tests
         if: matrix.leg == 'suites'

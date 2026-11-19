@@ -32,9 +32,12 @@ The shared library is the Nargo package **`lib`** (`lib/Nargo.toml`). All packag
 depend on it; module structure is documented in [`lib/src/README.md`](lib/src/README.md).
 
 Packages under `bin/` with a `Nargo.toml` are build targets. Directory names align with the
-**`CircuitName`** enum in `crates/zk/config` via `CircuitName::group()` and
-`CircuitName::dir_path()`. Workspace manifests also exist at `dkg/` and `threshold/` for grouped
-builds.
+**`CircuitName`** enum in `crates/zk/config` via `CircuitName::source_path(profile)`. SS retains
+`group()`/`dir_path()`; isolated sync DKG packages live under `bin/synchronized/` and never fall
+back to SS descendants. Workspace manifests exist at each protocol's `dkg/` and `threshold/`. The
+sync definition is not enabled by the live builder policy. Its
+[draft proof contracts](../docs/architecture/proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted)
+describe the missing provenance joins and deployment limits.
 
 ## Circuit package index
 

@@ -7,6 +7,7 @@ use crate::{
     PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
     THRESHOLD_SHARE_DECRYPTION_INPUTS, THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
+use e3_fhe_params::{BfvDecryptionProtocol, BfvProfile};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -102,6 +103,56 @@ pub enum CircuitName {
 }
 
 impl CircuitName {
+    /// Implemented synchronized leaves only. Missing descendants must not fall back to SS.
+    pub const SYNCHRONIZED_DKG: [Self; 5] = [
+        Self::PkBfv,
+        Self::PkGeneration,
+        Self::SkShareComputation,
+        Self::ShareEncryption,
+        Self::DkgShareDecryption,
+    ];
+
+    pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
+        match profile.protocol() {
+            BfvDecryptionProtocol::SecretShared => Some(self.dir_path()),
+            BfvDecryptionProtocol::Synchronized if Self::SYNCHRONIZED_DKG.contains(self) => {
+                Some(format!("synchronized/{}", self.dir_path()))
+            }
+            BfvDecryptionProtocol::Synchronized => None,
+        }
+    }
+
+    pub fn output_layout_for_profile(&self, profile: BfvProfile) -> Option<CircuitOutputLayout> {
+        self.source_path(profile)?;
+        Some(match (profile.protocol(), self) {
+            (BfvDecryptionProtocol::Synchronized, Self::PkGeneration) => {
+                CircuitOutputLayout::Fixed {
+                    fields: &[
+                        crate::OutputField {
+                            name: "sk_commitment",
+                        },
+                        crate::OutputField {
+                            name: "pk_commitment",
+                        },
+                    ],
+                }
+            }
+            (BfvDecryptionProtocol::Synchronized, Self::DkgShareDecryption) => {
+                CircuitOutputLayout::Fixed {
+                    fields: &[
+                        crate::OutputField {
+                            name: "sk_commitment",
+                        },
+                        crate::OutputField {
+                            name: "key_bundle_commitment",
+                        },
+                    ],
+                }
+            }
+            _ => self.output_layout(),
+        })
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "pk",

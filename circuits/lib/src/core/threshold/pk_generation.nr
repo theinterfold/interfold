@@ -265,23 +265,39 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     /// equality over the integers, which is what lets a single evaluation point stand in for the
     /// polynomial identity.
     fn verify_evaluations(self, gamma: Field) {
-        let kernel = negacyclic_kernel(self.sk, gamma);
+        verify_key_evaluations(
+            self.configs.qis,
+            self.a,
+            self.eek,
+            self.sk,
+            self.r,
+            self.pk0,
+            gamma,
+        );
+    }
+}
 
-        for i in 0..L {
-            // Move every term except the product onto one side, so the product is evaluated once
-            // through the kernel and compared against a plain polynomial evaluation.
-            let mut residual: [Field; N] = [0; N];
-            for j in 0..N {
-                residual[j] = self.pk0[i].coefficients[j]
-                    - self.eek.coefficients[j]
-                    - self.configs.qis[i] * self.r[i].coefficients[j];
-            }
-
-            assert(
-                Polynomial::new(residual).eval(gamma) == -self.a[i].dot(kernel),
-                "Public key equation 1 failed",
-            );
+/// Common reduced key identity. Each statement bounds its operands and binds its own transcript.
+pub fn verify_key_evaluations<let N: u32, let L: u32>(
+    qis: [Field; L],
+    a: [Polynomial<N>; L],
+    eek: Polynomial<N>,
+    sk: Polynomial<N>,
+    r: [Polynomial<N>; L],
+    pk0: [Polynomial<N>; L],
+    gamma: Field,
+) {
+    let kernel = negacyclic_kernel(sk, gamma);
+    for i in 0..L {
+        let mut residual: [Field; N] = [0; N];
+        for j in 0..N {
+            residual[j] =
+                pk0[i].coefficients[j] - eek.coefficients[j] - qis[i] * r[i].coefficients[j];
         }
+        assert(
+            Polynomial::new(residual).eval(gamma) == -a[i].dot(kernel),
+            "Public key equation 1 failed",
+        );
     }
 }
 
