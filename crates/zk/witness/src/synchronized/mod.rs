@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Deterministic private-input preparation for the disabled synchronized DKG leaves.
+//! Deterministic private-input preparation for disabled synchronized leaves.
 //! The caller owns authenticated setup context, peer commitments and encrypted secret storage.
 
 pub mod commitments;
@@ -9,6 +9,7 @@ pub mod provenance;
 pub mod publication;
 pub mod share_computation;
 pub mod share_decryption;
+pub mod threshold_decryption;
 
 use crate::WitnessError;
 use e3_zk_config::synchronized::Configs;

@@ -108,8 +108,8 @@ This handoff only reads setup that already reached the durable checkpoint. Today
 against the same confirmed H batch without making all N setups a condition of publication or
 restarting consent.
 
-This remains unactivated: admitted full-node synchronized startup and synchronized C6 are absent.
-The capability replay fixture below does not enable production admission. Synchronized runtime
+This remains unactivated: admitted full-node synchronized startup and C6 dispatch are absent. The
+capability replay fixture below does not enable production admission. Synchronized runtime
 folding/publication and decryption paths still refuse the SS implementations. The joins,
 root/bundle/batch schemas, attestation domain and setup derivation require human protocol review
 before consumers freeze them.

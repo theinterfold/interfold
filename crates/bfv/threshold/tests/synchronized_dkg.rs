@@ -5,6 +5,8 @@
 
 #[path = "synchronized_dkg/provenance.rs"]
 mod provenance;
+#[path = "synchronized_dkg/threshold_decryption.rs"]
+mod threshold_decryption;
 
 use anyhow::{ensure, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
@@ -58,6 +60,7 @@ struct Fixture {
     openings: Vec<share_decryption::Data>,
     recipient_public: Vec<PublicKey>,
     threshold_shares: Vec<PublicKeyShare>,
+    aggregate_sk: Vec<zeroize::Zeroizing<fhe_math::rq::Poly<fhe_math::rq::PowerBasis>>>,
 }
 
 impl Fixture {
@@ -247,9 +250,11 @@ impl Fixture {
             });
         }
         let mut openings = Vec::new();
+        let mut aggregate_sk = Vec::new();
         for recipient in 0..values.n {
             let aggregate = manager.aggregate_collected_shares(&residues[recipient])?;
-            let mut aggregate = CrtPolynomial::from_fhe_polynomial(&aggregate);
+            aggregate_sk.push(zeroize::Zeroizing::new(aggregate));
+            let mut aggregate = CrtPolynomial::from_fhe_polynomial(&*aggregate_sk[recipient]);
             aggregate.reverse();
             aggregate.center(config.threshold.moduli())?;
             let sk = compute_aggregated_shares_commitment(&aggregate, config.aggregate_bit);
@@ -287,6 +292,7 @@ impl Fixture {
             openings,
             recipient_public,
             threshold_shares,
+            aggregate_sk,
         })
     }
 }

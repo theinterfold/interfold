@@ -466,9 +466,8 @@ pub fn compute_ciphertext_commitment_from_power_basis(
 
 fn ciphertext_commitment_from_packed(payload0: Vec<Field>, payload1: Vec<Field>) -> BigInt {
     let io = [0x80000000 | payload0.len() as u32, 1];
-    let commit_ct0 = compute_commitments(payload0, DS_CIPHERTEXT, io)[0];
-
-    let commit_ct1 = compute_commitments(payload1, DS_CIPHERTEXT, io)[0];
+    let commit_ct0 = packed_ciphertext_component(payload0, io);
+    let commit_ct1 = packed_ciphertext_component(payload1, io);
 
     let inputs = vec![commit_ct0, commit_ct1];
     let io = [0x80000000 | inputs.len() as u32, 1];
@@ -476,6 +475,19 @@ fn ciphertext_commitment_from_packed(payload0: Vec<Field>, payload1: Vec<Field>)
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
 
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+fn packed_ciphertext_component(payload: Vec<Field>, io: [u32; 2]) -> Field {
+    compute_commitments(payload, DS_CIPHERTEXT, io)[0]
+}
+
+/// The existing component hash inside the ciphertext commitment. Synchronized C7 needs to
+/// open c0 independently, without the private c1 witness from C6.
+pub fn ciphertext_component_commitment(component: &CrtPolynomial, bit_ct: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &component.limbs, bit_ct);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let digest = packed_ciphertext_component(payload, io);
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &digest.into_bigint().to_bytes_le())
 }
 
 /// Compute aggregated shares commitment (either sk_shares or e_sm_shares).

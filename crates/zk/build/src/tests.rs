@@ -373,7 +373,7 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
     let leaves = artifacts::discover(&repo, &full).unwrap();
     assert_eq!(
         leaves.len(),
-        e3_zk_config::CircuitName::SYNCHRONIZED_DKG.len()
+        e3_zk_config::CircuitName::synchronized_definitions().count()
     );
     for leaf in &leaves {
         assert!(leaf
