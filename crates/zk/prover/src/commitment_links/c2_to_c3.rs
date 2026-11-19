@@ -6,14 +6,15 @@
 
 //! C2 (ShareComputation) → C3 (ShareEncryption) message commitment link.
 //!
-//! C2's inner circuit outputs per-party-per-modulus share commitments via
-//! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
+//! C2's final circuit outputs per-party-per-modulus share commitments, which the chunk chain
+//! computes as `commit_to_party_shares` would. C3 claims `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
-//! The signed C2 proof is the **inner** circuit proof (SkShareComputation /
+//! The signed C2 proof is the **final** circuit proof (SkShareComputation /
 //! ESmShareComputation, `CircuitVariant::Recursive`). Its public signals layout:
 //!   - field 0: `expected_secret_commitment` (public input, skip)
-//!   - fields 1..(N_PARTIES × L_THRESHOLD): share commitments from `commit_to_party_shares`
+//!   - fields 1..=(N_PARTIES × L_THRESHOLD): share commitments
+//!   - last field: the hash of the chunk keys of the C2 chain (skip)
 //!
 //! Source is C3 (the claimant — it declares what commitment it encrypts).
 //! Target is C2 (the provider — it produced the actual share commitments).
@@ -106,9 +107,10 @@ fn extract_message_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
 /// Check whether `source_values[0]` (from a C3 proof) appears in the share
 /// commitment section of a C2 inner proof's public signals.
 ///
-/// C2 inner circuit public signals layout:
-///   - field 0:       `expected_secret_commitment` (public input, skipped)
-///   - fields 1..:    `commit_to_party_shares[party_idx][mod_idx]` outputs
+/// Final C2 public signals layout:
+///   - field 0:          `expected_secret_commitment` (public input, skipped)
+///   - fields 1..last:   `commit_to_party_shares[party_idx][mod_idx]` outputs
+///   - last field:       the chunk key-tree hash (skipped)
 ///
 /// Barretenberg's `noir-recursive` variant sometimes doubles the signal
 /// buffer (448 = 2×224 bytes for a 7-field circuit).  We detect and
@@ -119,11 +121,7 @@ fn commitment_in_c2_outputs(source_values: &[FieldValue], target_public_signals:
     }
     let expected = &source_values[0];
     let signals = deduplicate(target_public_signals);
-    // Skip first field (expected_secret_commitment public input).
-    if signals.len() < 2 * FIELD_BYTE_LEN {
-        return false;
-    }
-    signals[FIELD_BYTE_LEN..]
+    super::c2_share_commitments(signals)
         .chunks(FIELD_BYTE_LEN)
         .any(|chunk| chunk == expected.as_slice())
 }
@@ -158,13 +156,16 @@ mod tests {
         v
     }
 
-    /// C2 inner signals: [expected_secret_commitment] + N share commitments.
+    /// The chunk key-tree hash a final C2 proof exposes last.
+    const KEY_TREE: u8 = 0xEE;
+
+    /// Final C2 signals: [expected_secret_commitment] + N share commitments + [key_tree].
     fn c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = vec![0u8; 32 + commitments.len() * 32];
-        v[0..32].copy_from_slice(&make_field(0xFF)); // expected_secret_commitment
-        for (i, c) in commitments.iter().enumerate() {
-            v[32 + i * 32..32 + (i + 1) * 32].copy_from_slice(c);
+        let mut v = make_field(0xFF).to_vec(); // expected_secret_commitment
+        for c in commitments {
+            v.extend_from_slice(c);
         }
+        v.extend_from_slice(&make_field(KEY_TREE));
         v
     }
 
@@ -200,6 +201,14 @@ mod tests {
         let msg = make_field(0xFF); // same value as the secret_commitment placeholder
         let c2 = c2_signals(&[make_field(1)]); // share commitments don't include 0xFF
         assert!(!link.check_signals(&[msg], &c2));
+    }
+
+    #[test]
+    fn consistency_ignores_the_trailing_key_tree() {
+        // Only the key-tree hash matches the claimed commitment, which is not a share.
+        let link = C3aToC2aShareEncryptionLink;
+        let c2 = c2_signals(&[make_field(1), make_field(2)]);
+        assert!(!link.check_signals(&[make_field(KEY_TREE)], &c2));
     }
 
     #[test]

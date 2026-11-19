@@ -19,7 +19,7 @@ mod recursive_vk_substitution;
 use std::path::PathBuf;
 
 use common::{
-    find_bb, require_minimum_circuits, setup_compiled_circuit,
+    find_bb, require_minimum_circuits, setup_chunked_dkg_circuits, setup_compiled_circuit,
     setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
@@ -345,23 +345,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let artifacts_dir =
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
 
-    for g in [
-        "pk",
-        "sk_share_computation",
-        "e_sm_share_computation",
-        "share_encryption",
-        "share_decryption",
-    ] {
-        let name = match g {
-            "pk" => "pk",
-            "sk_share_computation" => "sk_share_computation",
-            "e_sm_share_computation" => "e_sm_share_computation",
-            "share_encryption" => "share_encryption",
-            "share_decryption" => "share_decryption",
-            _ => unreachable!(),
-        };
+    for name in ["pk", "share_encryption", "share_decryption"] {
         setup_compiled_circuit(&backend, "dkg", name).await;
     }
+    setup_chunked_dkg_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
 
     for c in [

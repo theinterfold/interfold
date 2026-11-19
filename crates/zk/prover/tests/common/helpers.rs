@@ -146,6 +146,51 @@ pub async fn setup_compiled_circuit_for_committee(
     }
 }
 
+/// Sets up both final C2 circuits in every variant and the four chunk circuits they are proven
+/// through in the `default` variant only, as `pnpm build:circuits` publishes them.
+#[allow(dead_code)]
+pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
+    for circuit in [
+        CircuitName::SkShareComputation,
+        CircuitName::ESmShareComputation,
+    ] {
+        setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
+    }
+    for circuit in [
+        CircuitName::SkShareComputationChain,
+        CircuitName::SkShareComputationChainLast,
+        CircuitName::ESmShareComputationChain,
+        CircuitName::ESmShareComputationChainLast,
+    ] {
+        let name = circuit.as_str();
+        let target_dir = circuits_build_root().join(circuit.group()).join("target");
+        let default_dir = backend
+            .circuits_dir
+            .join("insecure-64")
+            .join("minimum")
+            .join("default")
+            .join(circuit.group())
+            .join(name);
+        fs::create_dir_all(&default_dir).await.unwrap();
+        for (source, file) in [
+            (format!("{name}.json"), format!("{name}.json")),
+            (format!("{name}.vk_recursive"), format!("{name}.vk")),
+            (
+                format!("{name}.vk_recursive_hash"),
+                format!("{name}.vk_hash"),
+            ),
+        ] {
+            let source = target_dir.join(source);
+            assert!(
+                source.exists(),
+                "{} not found (run `pnpm build:circuits`)",
+                source.display()
+            );
+            fs::copy(&source, default_dir.join(file)).await.unwrap();
+        }
+    }
+}
+
 /// Stages a `recursive_aggregation/*` fold binary for [`CircuitVariant::Default`] (`noir-recursive-no-zk`).
 ///
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.

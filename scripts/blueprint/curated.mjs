@@ -585,7 +585,7 @@ function circuits() {
         title: 'c2ab_fold',
         lines: ['C2a + C2b'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c2ab_fold/src/main.nr@30@verify_honk_proof(c2a_vk, c2a_proof`,
+        ref: `${CIR}/recursive_aggregation/c2ab_fold/src/main.nr@33@verify_honk_proof(c2a_vk, c2a_proof`,
       },
       {
         id: 'c3f',

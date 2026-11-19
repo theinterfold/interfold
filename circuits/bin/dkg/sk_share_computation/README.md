@@ -1,12 +1,16 @@
 # `sk_share_computation` — C2a (share computation)
 
-Correct Threshold Secret Key Share Computation (**Circuit 2a**). Verifies the expected secret
-commitment, checks secret consistency (`y[i][j][0] == sk_secret[i]`), performs range checks (`y` in
-`[0, q_j)`), and checks that the shares lie on a degree-`T` polynomial: their `(T+1)`-th finite
-differences vanish modulo `q_j`. Commits computed party shares for downstream aggregation.
+Correct Threshold Secret Key Share Computation (**Circuit 2a**), the final circuit of a chunk chain.
+It verifies the `sk_share_computation_chain` chunk proofs (the last place takes
+`sk_share_computation_chain_last`), which run the per-coefficient checks: secret consistency
+(`y[i][j][0] == sk_secret[i]`), range checks (`y` in `[0, q_j)`), and that the shares lie on a
+degree-`T` polynomial, with `(T + 1)`-th finite differences over windows of `T + 2` consecutive
+values. It verifies the expected secret commitment, links the chunks from fresh commitment sponges,
+and returns the party share commitments for downstream aggregation, followed by the hash of the
+chunk keys.
 
-|           |                                                                                           |
-| --------- | ----------------------------------------------------------------------------------------- |
-| **Core**  | [`lib/src/core/dkg/share_computation.nr`](../../../lib/src/core/dkg/share_computation.nr) |
-| **Index** | [Circuit package index](../../../README.md#circuit-package-index)                         |
-| **Docs**  | [Noir Circuits](../../../../docs/pages/build/noir-circuits.mdx)                           |
+|           |                                                                                                                                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Core**  | [`lib/src/core/dkg/share_computation_chain.nr`](../../../lib/src/core/dkg/share_computation_chain.nr), [`lib/src/core/dkg/share_computation.nr`](../../../lib/src/core/dkg/share_computation.nr) |
+| **Index** | [Circuit package index](../../../README.md#circuit-package-index)                                                                                                                                |
+| **Docs**  | [Noir Circuits](../../../../docs/pages/build/noir-circuits.mdx)                                                                                                                                  |

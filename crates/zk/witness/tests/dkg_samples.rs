@@ -314,3 +314,117 @@ mod share_encryption {
         assert!(error.to_string().contains("level zero"));
     }
 }
+
+mod share_computation_chain {
+    use ark_bn254::Fr as Field;
+    use ark_ff::{BigInteger, PrimeField};
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
+    use e3_polynomial::Polynomial;
+    use e3_safe::ABSORB_FLAG;
+    use e3_zk_config::dkg::share_computation::Configs;
+    use e3_zk_config::DkgInputType;
+    use e3_zk_witness::commitments::{
+        compute_commitments, compute_share_encryption_commitment_from_message,
+        DS_SHARE_COMPUTATION_CHAIN_SECRET,
+    };
+    use e3_zk_witness::dkg::share_computation::Inputs;
+    use e3_zk_witness::dkg::share_computation_chain::Chain;
+    use num_bigint::{BigInt, BigUint, Sign};
+
+    /// `value` as a field element; the `sk` column holds `-1`, which wraps mod p.
+    fn to_field(value: &BigInt) -> Field {
+        let (sign, bytes) = value.to_bytes_le();
+        let magnitude = Field::from_le_bytes_mod_order(&bytes);
+        if sign == Sign::Minus {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
+    /// The chain's commitments are the unchunked C2 commitments, and its chunks cover the degree.
+    #[test]
+    fn chain_outputs_equal_the_unchunked_share_commitments() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+        let degree = config.params.degree();
+        let num_moduli = config.params.moduli().len();
+        let n_parties = config.committee.values().n;
+        for input_type in [DkgInputType::SecretKey, DkgInputType::SmudgingNoise] {
+            let sample =
+                e3_zk_samples::dkg::share_computation::generate(&config, preset, input_type)
+                    .unwrap();
+            let inputs = Inputs::compute(&config, &sample).unwrap();
+            let chain = Chain::compute(&config, &inputs).unwrap();
+
+            let layout = match input_type {
+                DkgInputType::SecretKey => &config.sk_chunks,
+                DkgInputType::SmudgingNoise => &config.e_sm_chunks,
+            };
+            assert_eq!(chain.chunks.len(), layout.n_chunks);
+            assert!(chain.chunks.last().unwrap().is_last);
+            assert_eq!(
+                chain.chunks.iter().map(|c| c.y_chunk.len()).sum::<usize>(),
+                degree
+            );
+            for party_idx in 0..n_parties {
+                for mod_idx in 0..num_moduli {
+                    let mut message: Vec<BigInt> = inputs
+                        .y
+                        .iter()
+                        .map(|row| row[mod_idx][party_idx + 1].clone())
+                        .collect();
+                    message.reverse();
+                    let expected = compute_share_encryption_commitment_from_message(
+                        &Polynomial::new(message),
+                        config.bits.bit_share,
+                    );
+                    let got = chain.outputs[1 + party_idx * num_moduli + mod_idx];
+                    let got =
+                        BigInt::from(BigUint::from_bytes_le(&got.into_bigint().to_bytes_le()));
+                    assert_eq!(
+                        got, expected,
+                        "{input_type:?} party {party_idx} limb {mod_idx}"
+                    );
+                }
+            }
+
+            // The secret digest is the one-shot hash of the dealt secret column, highest degree
+            // first, which the final circuit recomputes from the opened secret.
+            let limbs = match input_type {
+                DkgInputType::SecretKey => 1,
+                DkgInputType::SmudgingNoise => num_moduli,
+            };
+            let stream: Vec<Field> = inputs
+                .y
+                .iter()
+                .rev()
+                .flat_map(|row| row[..limbs].iter().map(|limb| to_field(&limb[0])))
+                .collect();
+            let io_pattern = [ABSORB_FLAG | stream.len() as u32, 1];
+            assert_eq!(
+                chain.outputs[0],
+                compute_commitments(stream, DS_SHARE_COMPUTATION_CHAIN_SECRET, io_pattern)[0],
+                "{input_type:?} secret digest"
+            );
+        }
+    }
+
+    /// Inputs dealt to a committee of the same degree but another size are rejected, not indexed.
+    #[test]
+    fn chain_rejects_inputs_shaped_for_another_committee() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let minimum = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
+        let micro = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+        let sample = e3_zk_samples::dkg::share_computation::generate(
+            &minimum,
+            preset,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let inputs = Inputs::compute(&minimum, &sample).unwrap();
+        let error = Chain::compute(&micro, &inputs).unwrap_err();
+        assert!(error.to_string().contains("per share row"), "{error}");
+    }
+}
