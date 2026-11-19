@@ -1058,7 +1058,7 @@ mod tests {
             before,
             "wildcard sync dry-run wrote files"
         );
-        dry.circuits = vec!["c6_fold".into()];
+        dry.circuits = vec!["decryption_aggregator".into()];
         assert!(build(root, &dry).is_err());
         assert_eq!(crate::tests::snapshot(root), before);
         let manifest = circuit.path.join("Nargo.toml");

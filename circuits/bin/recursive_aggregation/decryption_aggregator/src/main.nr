@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Decryption aggregator: non-ZK `c6_fold` (folded C6 column) + non-ZK `decrypted_shares_aggregation`
+//! Decryption aggregator: non-ZK `c6_chonk_root` (the C6 column) + non-ZK `decrypted_shares_aggregation`
 //! (C7, both `noir-recursive-no-zk`). The final `bb prove -t evm` proof of this circuit is what the
 //! contract verifies on-chain.
 //! `committee_hash_hi` / `committee_hash_lo` bind the proof to the full on-chain committee ordering.
@@ -18,23 +18,19 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use lib::configs::default::MAX_MSG_NON_ZERO_COEFFS;
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::T;
+use lib::math::chonk::C6_CHONK_DATA_LEN;
 use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
-use lib::math::recursive_vk::sequential_fold_vk_hash;
 
-/// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
-/// and flattened `(out_sk, out_esm, out_ct, out_d)`.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 7 + (4 * (T + 1));
-
-pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
-
-/// Column offsets inside the `c6_fold` flattened tail (after `C6_FOLD_PREFIX_LEN`):
-/// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
-pub global C6_FOLD_COL_WIDTH: u32 = T + 1;
-pub global C6_FOLD_SK_COL_OFFSET: u32 = 0;
-pub global C6_FOLD_ESM_COL_OFFSET: u32 = C6_FOLD_COL_WIDTH;
-pub global C6_FOLD_CT_COL_OFFSET: u32 = 2 * C6_FOLD_COL_WIDTH;
-pub global C6_FOLD_D_COL_OFFSET: u32 = 3 * C6_FOLD_COL_WIDTH;
+/// `c6_chonk_root` public layout: its chain key hash, the two domain limbs, then the
+/// `(sk, esm, ct, d)` columns, each `T + 1` long.
+pub global C6_ROOT_PUBLIC_LEN: u32 = 1 + C6_CHONK_DATA_LEN;
+pub global C6_ROOT_DOMAIN_HI: u32 = 1;
+pub global C6_ROOT_DOMAIN_LO: u32 = 2;
+pub global C6_ROOT_SK_OFFSET: u32 = 3;
+pub global C6_ROOT_ESM_OFFSET: u32 = 3 + (T + 1);
+pub global C6_ROOT_CT_OFFSET: u32 = 3 + 2 * (T + 1);
+pub global C6_ROOT_D_OFFSET: u32 = 3 + 3 * (T + 1);
 
 /// `c7_public` layout: `[expected_d_commitments | party_ids | message]`.
 pub global C7_D_COMMITMENT_OFFSET: u32 = 0;
@@ -66,10 +62,10 @@ fn assert_strictly_increasing(prev: u32, curr: u32) {
 }
 
 fn main(
-    c6_fold_vk: UltraHonkVerificationKey,
-    c6_fold_proof: UltraHonkProof,
-    c6_fold_public: [Field; C6_FOLD_PUBLIC_LEN],
-    c6_fold_vk_hash: Field,
+    c6_root_vk: UltraHonkVerificationKey,
+    c6_root_proof: UltraHonkProof,
+    c6_root_public: [Field; C6_ROOT_PUBLIC_LEN],
+    c6_root_vk_hash: Field,
     c7_vk: UltraHonkVerificationKey,
     c7_proof: UltraHonkProof,
     c7_public: [Field; C7_PUBLIC_LEN],
@@ -86,35 +82,27 @@ fn main(
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
 
-    verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_vk_hash);
+    verify_honk_proof_non_zk(c6_root_vk, c6_root_proof, c6_root_public, c6_root_vk_hash);
     verify_honk_proof_non_zk(c7_vk, c7_proof, c7_public, c7_key_hash);
 
-    assert(c6_fold_public[1] == c6_fold_vk_hash);
-    assert(
-        c6_fold_key_hash
-            == sequential_fold_vk_hash(c6_fold_vk_hash, c6_fold_public[2], c6_fold_public[0]),
-    );
+    // The C6 tree is the root key and the hash of the stack's key list.
+    assert(c6_fold_key_hash == compute_vk_hash([c6_root_vk_hash, c6_root_public[0]].as_vector()));
 
-    // The C6 fold only accepts secret-bearing leaf proofs carrying one common
+    // The C6 stack only accepts secret-bearing leaf proofs carrying one common
     // domain. Expose that domain in the final EVM proof for on-chain checking.
-    assert(c6_fold_public[5] == domain_hi);
-    assert(c6_fold_public[6] == domain_lo);
+    assert(c6_root_public[C6_ROOT_DOMAIN_HI] == domain_hi);
+    assert(c6_root_public[C6_ROOT_DOMAIN_LO] == domain_lo);
 
     // Every C6 leaf commits to the same decoded BFV ciphertext. Expose that
     // canonical commitment as a final public input for the EVM wrapper.
     for i in 0..(T + 1) {
-        assert(
-            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i] == ciphertext_commitment,
-        );
+        assert(c6_root_public[C6_ROOT_CT_OFFSET + i] == ciphertext_commitment);
     }
 
     // Cross-circuit C6 to C7: each folded `d_commitment` column entry must match `c7_public[i]`
     // (leading `T + 1` words of `c7_public`).
     for i in 0..(T + 1) {
-        assert(
-            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_D_COL_OFFSET + i]
-                == c7_public[C7_D_COMMITMENT_OFFSET + i],
-        );
+        assert(c6_root_public[C6_ROOT_D_OFFSET + i] == c7_public[C7_D_COMMITMENT_OFFSET + i]);
     }
 
     let vk_hashes = [c6_fold_key_hash, c7_key_hash].as_vector();
@@ -126,8 +114,8 @@ fn main(
     let mut prev_party_id: u32 = 0;
     for i in 0..(T + 1) {
         party_ids[i] = c7_public[C7_PARTY_ID_OFFSET + i];
-        expected_sk[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_SK_COL_OFFSET + i];
-        expected_esm[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_ESM_COL_OFFSET + i];
+        expected_sk[i] = c6_root_public[C6_ROOT_SK_OFFSET + i];
+        expected_esm[i] = c6_root_public[C6_ROOT_ESM_OFFSET + i];
 
         // `committee_members` and `topNodes` are 0-indexed; a future per-party
         // signer/identity check must index them with `committee_members[party_ids[i] - 1]`,

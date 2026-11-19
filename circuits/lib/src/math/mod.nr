@@ -12,5 +12,6 @@ pub mod commitments;
 pub mod recursive_vk;
 pub mod c3_chonk_rows;
 pub mod nodes_fold;
+pub mod c6_chonk_rows;
 pub mod chonk;
 pub mod committee_hash;

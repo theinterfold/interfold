@@ -86,8 +86,8 @@ C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 | `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                  |
 | `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence.                                            |
 | `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                |
-| `c6_fold`, `c6_fold_kernel`       | `C6Fold`, `C6FoldKernel`       | Folds the T + 1 C6 proofs of one ciphertext.                                           |
-| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_fold` and C7. Its EVM proof goes to `publishPlaintextOutput`.             |
+| `c6_chonk_*`                      | `C6Chonk*`                     | Verifies the T + 1 C6 proofs of one ciphertext in one Chonk stack and closes it.       |
+| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_chonk_root` and C7. Its EVM proof goes to `publishPlaintextOutput`.       |
 
 For recursive trust and public-input bindings, see
 [proof statements](../docs/architecture/proof-statements.md#recursive-trust-and-exported-values).

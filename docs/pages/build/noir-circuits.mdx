@@ -72,6 +72,10 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.Folder name='c3_chonk_init_kernel' />
         <FileTree.Folder name='c3_chonk_tail_kernel' />
         <FileTree.Folder name='c3_chonk_hiding_kernel' />
+        <FileTree.Folder name='c6_chonk_app' />
+        <FileTree.Folder name='c6_chonk_init_kernel' />
+        <FileTree.Folder name='c6_chonk_tail_kernel' />
+        <FileTree.Folder name='c6_chonk_hiding_kernel' />
       </FileTree.Folder>
       <FileTree.Folder name='recursive_aggregation'>
         <FileTree.Folder name='c2ab_fold' />
@@ -79,8 +83,8 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.Folder name='c3_chonk_accumulate' />
         <FileTree.Folder name='c3ab_fold' />
         <FileTree.Folder name='c4ab_fold' />
-        <FileTree.Folder name='c6_fold' />
-        <FileTree.Folder name='c6_fold_kernel' />
+        <FileTree.Folder name='c6_chonk_tube' />
+        <FileTree.Folder name='c6_chonk_root' />
         <FileTree.Folder name='node_fold' />
         <FileTree.Folder name='nodes_fold' />
         <FileTree.Folder name='nodes_fold_kernel' />
@@ -99,7 +103,7 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                  |
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4), and the C2 chunk circuits those two verify. |
 | `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).                                |
-| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 Chonk stacks.                                                                                                                      |
+| `bin/chonk`                 | Nargo workspace: the app and three kernels of the C3 and C6 Chonk stacks.                                                                                                               |
 | `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                     |
 | `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli and bounds).                                                                                       |
 | `benchmarks`                | Timing scripts and reports.                                                                                                                                                             |
@@ -133,9 +137,10 @@ proofs go on-chain.
 C3 runs over Chonk: `c3_chonk_app` verifies a batch of C3 proofs and three kernels close the stack,
 `c3_chonk_tube` verifies the stack's Chonk proof, `c3_chonk_accumulate` merges the tubes, and
 `c3ab_fold` closes the chain. The decryption path is shorter. The C6 proofs of the committee go
-through `c6_fold`, and `decryption_aggregator` adds C7. The `*_fold_kernel` packages make the first
-proof of each sequential fold (`c6_fold`, `nodes_fold`). The `c3_chonk_*_kernel` packages are Chonk
-kernels, not fold kernels.
+through one Chonk stack (`c6_chonk_app` and three kernels), `c6_chonk_tube` verifies the stack's
+Chonk proof, `c6_chonk_root` closes it, and `decryption_aggregator` adds C7. `nodes_fold_kernel`
+makes the first proof of the sequential `nodes_fold`. The `c3_chonk_*_kernel` and
+`c6_chonk_*_kernel` packages are Chonk kernels, not fold kernels.
 
 The Solidity verifiers for the two aggregators are committed to the repository as
 `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol`. `BfvPkVerifier` and
