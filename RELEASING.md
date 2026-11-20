@@ -126,8 +126,9 @@ Before you start:
 1. Merge or rebase main into the branch. The workflow file and the release scripts come from the
    branch that you dispatch, so the branch must contain the test release mode. GitHub runs a manual
    workflow only if the workflow file with the `workflow_dispatch` trigger is also on main.
-2. Build the circuits of the branch tree and run `pnpm store:circuits push`. The workflow pulls only
-   circuit artifacts that have the `SOURCE_HASH` of the dispatched commit. It fails when none exist.
+2. Build the circuits of the branch tree and run `pnpm store:circuits push`. Push derives and checks
+   the VK catalogue of the assembled archive before publication. The workflow pulls only circuit
+   artifacts that have the `SOURCE_HASH` of the dispatched commit. It fails when none exist.
 3. Make sure the branch has `deployments/manifest.json`, and that its version files agree. Do not
    bump the version. The workflow does not commit anything.
 

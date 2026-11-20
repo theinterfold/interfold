@@ -75,10 +75,14 @@ unconstrained fn division_hint(x: Field, q: u64) -> (Field, u64) {
     divide(x, q)
 }
 
-fn check_division(x: Field, q: u64, k: Field, r: u64, max_k: Field, max_r: u64) {
+fn check_quotient_range(k: Field, max_k: Field) {
     // q >= 16 implies floor((p-1)/q) < 2^250. The two range checks order k as integers.
     k.assert_max_bit_size::<250>();
     (max_k - k).assert_max_bit_size::<250>();
+}
+
+fn check_division(x: Field, q: u64, k: Field, r: u64, max_k: Field, max_r: u64) {
+    check_quotient_range(k, max_k);
     assert(r < q);
     assert((k != max_k) | (r <= max_r));
     assert(k * q as Field + r as Field == x);
@@ -195,6 +199,12 @@ fn canonical_reduction_endpoints() {
     let (max_k, max_r) = comptime { divide(-1, 65537) };
     check_division(-1, q, max_k, max_r, max_k, max_r);
     check_division(0, q, 0, 0, max_k, max_r);
+}
+
+#[test(should_fail)]
+fn quotient_above_canonical_maximum_is_rejected() {
+    let (max_k, _) = comptime { divide(-1, 65537) };
+    check_quotient_range(max_k + 1, max_k);
 }
 
 #[test(should_fail)]

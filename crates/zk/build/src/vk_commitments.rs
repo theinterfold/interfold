@@ -349,6 +349,15 @@ mod tests {
         crate::execute(root, &request).unwrap();
         assert_eq!(crate::tests::snapshot(root), after);
 
+        // A partial push starts with the previous publication's root catalogue.
+        let catalogue = output.join(PAIR_FILE);
+        fs::write(&catalogue, b"stale inherited catalogue").unwrap();
+        crate::execute(root, &request).unwrap();
+        assert_eq!(
+            fs::read(&catalogue).unwrap(),
+            fs::read(root.join(MANIFEST)).unwrap()
+        );
+
         let mut hash = [0; 32];
         hash[31] = 1;
         fs::write(

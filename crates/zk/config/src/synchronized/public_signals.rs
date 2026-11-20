@@ -329,6 +329,28 @@ mod tests {
     use e3_fhe_params::BfvProfile;
 
     #[test]
+    fn c6_requires_designated_owner_and_two_u128_domain_limbs() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let mut row = vec![0; 12 * 32]; // Minimum C6 wire row
+        row[4 * 32 + 31] = 2; // non-prefix roster [0, 2]
+        let decode = |bytes: &[u8]| {
+            PublicSignals::decode(&config, CircuitName::ThresholdShareDecryption, bytes)
+        };
+        assert!(decode(&row).is_ok());
+        for limb in [5, 6] {
+            let mut oversized = row.clone();
+            oversized[limb * 32 + 15] = 1;
+            assert!(decode(&oversized).is_err());
+        }
+        row[2 * 32 + 31] = 1; // valid committee ID, outside the designated set
+        assert!(decode(&row).is_err());
+    }
+
+    #[test]
     fn exact_sync_layout_rejects_noncanonical_fields_context_and_rosters() {
         let config = Configs::for_profile(
             BfvProfile::SyncDecInsecure64,
