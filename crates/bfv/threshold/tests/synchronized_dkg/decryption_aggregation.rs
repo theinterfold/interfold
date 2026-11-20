@@ -71,6 +71,54 @@ pub(super) fn qualify(
         &outer,
         "sync-final"
     )?);
+    // Keep the same accepted proof and expectations: corrupt local files are retryable errors.
+    let namespace = config
+        .profile
+        .artifacts_dir_for_committee(config.committee)?;
+    let recursive = prover.circuits_dir(e3_zk_config::CircuitVariant::Recursive, &namespace);
+    for child in [
+        CircuitName::ThresholdShareDecryption,
+        CircuitName::DecryptedSharesAggregation,
+    ] {
+        let path = recursive
+            .join(child.dir_path())
+            .join(format!("{}.vk_hash", child.as_str()));
+        let pin = fs::read(&path)?;
+        let mut changed = pin.clone();
+        changed[31] ^= 1;
+        fs::write(&path, changed)?;
+        let error = verify_decryption(&prover, config, &expected, &outer, "bad-child-key")
+            .expect_err("local child sidecar mismatch classified as a proof result");
+        ensure!(matches!(
+            error.downcast_ref::<e3_zk_witness::WitnessError>(),
+            Some(e3_zk_witness::WitnessError::VerificationKey(_))
+        ));
+        fs::write(path, pin)?;
+    }
+    let path = compiled.with_extension("vk");
+    let vk = fs::read(&path)?;
+    fs::write(&path, &vk[..vk.len() - 1])?;
+    let error = verify_decryption(&prover, config, &expected, &outer, "bad-outer-key")
+        .expect_err("truncated local outer VK classified as a proof result");
+    ensure!(
+        matches!(
+            error.downcast_ref::<e3_zk_prover::ZkError>(),
+            Some(e3_zk_prover::ZkError::VerifyFailed(_))
+        ),
+        "unexpected outer VK error: {error:#}"
+    );
+    fs::write(path, vk)?;
+    let mut changed_pin = outer.clone();
+    let mut signals = outer.public_signals.extract_bytes();
+    signals[31] ^= 1;
+    changed_pin.public_signals = e3_utils::utility_types::ArcBytes::from_bytes(&signals);
+    ensure!(!verify_decryption(
+        &prover,
+        config,
+        &expected,
+        &changed_pin,
+        "bad-proof-pin"
+    )?);
     // Preserve only the verified public fixture when a separate EVM qualification requests it.
     if let Some(directory) = std::env::var_os("E3_SYNC_DECRYPTION_EXPORT") {
         let directory = PathBuf::from(directory);
@@ -167,16 +215,20 @@ pub(super) fn qualify(
     ensure!(prepare_decryption(&prover, config, &wrong, c7).is_err());
     // Both child proofs individually verified. Even if the host row precheck is satisfied,
     // the recursive verifier must reject the proof body belonging to the other designated set.
-    wrong[1].public_signals = partials[1].public_signals.clone();
-    let error = prove_decryption(&prover, config, &wrong, c7, "mixed-c6-proof")
-        .expect_err("mixed C6 proof verified");
-    ensure!(
-        matches!(
-            error.downcast_ref::<e3_zk_prover::ZkError>(),
-            Some(e3_zk_prover::ZkError::ProofRejected(_))
-        ),
-        "unexpected failure for mixed C6 proof: {error:#}"
-    );
+    for (slot, body) in [(0, &partials[1].data), (1, &alternate.data)] {
+        let mut mixed = partials.to_vec();
+        mixed[slot].data = body.clone();
+        prepare_decryption(&prover, config, &mixed, c7)?;
+        let error = prove_decryption(&prover, config, &mixed, c7, "mixed-c6-proof")
+            .expect_err("mixed C6 proof verified");
+        ensure!(
+            matches!(
+                error.downcast_ref::<e3_zk_prover::ZkError>(),
+                Some(e3_zk_prover::ZkError::ProofRejected(_))
+            ),
+            "unexpected failure for mixed C6 proof at slot {slot}: {error:#}"
+        );
+    }
     let input = prepare_decryption(&prover, config, partials, c7)?;
     for name in ["c6", "c7"] {
         let mut wrong_key = input.clone();
