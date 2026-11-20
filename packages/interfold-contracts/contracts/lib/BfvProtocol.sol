@@ -12,32 +12,32 @@ library BfvProtocol {
 
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
-        0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e;
+        0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844;
 
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
-        0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317;
+        0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3;
 
     bytes32 internal constant SS_INSECURE_64_MINIMUM_CONFIG_ID =
-        0x5fec4d6a3c71793e00e8a04a6762d260587ea165b332309d92a6bfd72fcf3e92;
+        0xd76c4f521394e6cbe1df28036cc5dd5590c6630a403525b5c2b052f9b91507f4;
 
     bytes32 internal constant SS_INSECURE_64_MICRO_CONFIG_ID =
-        0x447075ed6fac1de9c55bbd9a361bba8c870effc1d1af6924f96802d37e905343;
+        0x893989231b402942b005fecdbf9eae21b227d861085433293d0873547ea2816a;
 
     bytes32 internal constant SS_INSECURE_64_SMALL_CONFIG_ID =
-        0xe05dc026e537ba9f61d06760554e54841a7c1516ab643cad440bdbcc0d8789c1;
+        0x7fa922a08c5501592d02394205bb600219da3e168e0432f076465569116ccfe3;
 
     bytes32 internal constant SS_SECURE_8192_MINIMUM_CONFIG_ID =
-        0x86c32bb95b830c20bec1e9eb4773bb1be0b139cf3117c46a7d708a36e7d399ce;
+        0x0acc89be9b1f39b0c1ee06493af3bad6f5685bf60e0f1cec7a733e95caaab87a;
 
     bytes32 internal constant SS_SECURE_8192_MICRO_CONFIG_ID =
-        0x02f42e1af8a22b1776eda846dce9ae90577cd6b1bdd3b4bb33c5ef4d9730fa59;
+        0xebe75e3c1ada2079e5a06e5853d710b67ac296959c6b67f7d82b44312574dd0b;
 
     bytes32 internal constant SS_SECURE_8192_SMALL_CONFIG_ID =
-        0xdf63ace029f44b127e6295f4652ed95ceb10ac543c49507b2e85b3cabc806980;
+        0x41d2f2a41bfb17dfb292332d8283b3a9238f9fa8fdc4eecf87de4d777f95c891;
 
     bytes32 internal constant SYNC_INSECURE_64_MINIMUM_CONFIG_ID =
-        0xb1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05;
+        0xfe0e258735d79bc000f057bbc65136f31e6006884bd8d56f58a43bb236079fd7;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
