@@ -3,7 +3,7 @@
   "bb": "6.0.0",
   "circuits": [
     {
-      "circuitSha256": "cd19e7049edfad33ac6eab30d31964eb09a7f5fba4c74791a71368b386ecc551",
+      "circuitSha256": "2edcf59c3ffa8c359bb8ee8a4ce4321e796ca3a5000dd4560cdf7146095e857c",
       "gates": 92038,
       "path": "recursive/threshold/share_decryption",
       "role": "share_decryption",
@@ -12,7 +12,7 @@
       "vkSha256": "8bdc9841323ae28f317afff0d4f7d0b7c7dc85ae3d14f006d91f1bebe40a406e"
     },
     {
-      "circuitSha256": "bb4ba5a4d6ed8e8ed11a025d6bd5b814006cde4cdced3e944ef82798291214c9",
+      "circuitSha256": "d1b73870b1dd2b80e16df42c4839f57f796a72cbfa982fce25bdd572365c8a1f",
       "gates": 17265,
       "path": "recursive/threshold/decrypted_shares_aggregation",
       "role": "decrypted_shares_aggregation",
@@ -21,7 +21,7 @@
       "vkSha256": "df4330a9f911baa05ada8a37341b39eff00a19033cd2411a396ec8f89a0f9402"
     },
     {
-      "circuitSha256": "8a4c58a88be4c31a8d4d27b898cba1b891ca893bf91d67b9595fc60e38c36e22",
+      "circuitSha256": "02f0aa5cf4784b5ce8e914b93f34f6ca64333bc0ff111faab48f8b3bb39145fc",
       "gates": 2242265,
       "path": "evm/recursive_aggregation/decryption_aggregator",
       "role": "decryption_aggregator",
@@ -37,5 +37,5 @@
   "nargo": "1.0.0-rc.3",
   "profile": "sync-insecure-64",
   "scope": "decryption-only",
-  "sourceHash": "5837aa37bd0d2708"
+  "sourceHash": "67b5a2df37132fcd"
 }

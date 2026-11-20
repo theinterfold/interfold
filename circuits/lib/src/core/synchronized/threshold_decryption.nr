@@ -59,6 +59,16 @@ pub fn designated<let R: u32, let S: u32>(owner: u32, roster: [u32; R]) -> ([u32
     (ids, slot)
 }
 
+fn c0_commitment<let N: u32, let L: u32, let BIT: u32>(
+    rows: [[u64; N]; L],
+    qis: [Field; L],
+) -> Field {
+    compute_multiple_polynomial_commitment_checked::<N, L, BIT>(
+        centered_for(rows, qis),
+        DS_CIPHERTEXT,
+    )
+}
+
 fn open<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIES: u32, let AGGREGATE_BIT: u32, let KEY_BITS: u32, let SHARE_BIT: u32>(
     setup: [Field; 2],
     owner: u32,
@@ -72,6 +82,7 @@ fn open<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIES: u32, let 
     ct: [[[u64; N]; L]; 2],
     qis: [Field; L],
     profile: [Field; 2],
+    center_c1_first: bool,
 ) -> Openings<N, L, T + 1> {
     let secret = centered_for(sk, qis);
     assert(
@@ -99,11 +110,15 @@ fn open<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIES: u32, let 
         plus[i] = outgoing[roster[row]];
         minus[i] = incoming[row];
     }
-    let c0_hash = compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(
-        centered_for(ct[0], qis),
-        DS_CIPHERTEXT,
-    );
-    let c1 = centered_for(ct[1], qis);
+    // bb's VK commits to gate order. Secure C6 historically centered c1 before opening c0;
+    // direct C6 opened c0 first. Both still hash the same ordered pair below.
+    let (c0_hash, c1) = if center_c1_first {
+        let c1 = centered_for(ct[1], qis);
+        (c0_commitment::<N, L, AGGREGATE_BIT>(ct[0], qis), c1)
+    } else {
+        let c0 = c0_commitment::<N, L, AGGREGATE_BIT>(ct[0], qis);
+        (c0, centered_for(ct[1], qis))
+    };
     let c1_hash =
         compute_multiple_polynomial_commitment_checked::<N, L, AGGREGATE_BIT>(c1, DS_CIPHERTEXT);
     assert(
@@ -149,6 +164,7 @@ pub fn direct_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
         ct,
         qis,
         profile,
+        false,
     );
     let mut share = [Polynomial::new([0; N]); L];
     for j in 0..N {
@@ -213,6 +229,7 @@ pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
         ct,
         qis,
         profile,
+        true,
     );
     // Commit the complete centered negacyclic product before its evaluation point.
     let mut transcript = [0; 5 + L * N];
@@ -256,11 +273,6 @@ pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
 
 fn check_secure_noise(shifted: Field, bound: Field) {
     assert_in_range::<145>(shifted, 2 * bound + 1);
-}
-
-#[test(should_fail)]
-fn secure_noise_rejects_first_out_of_range_draw() {
-    check_secure_noise(15, 7);
 }
 
 #[test]

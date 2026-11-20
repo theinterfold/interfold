@@ -121,6 +121,7 @@ and native verification step. An existing candidate is never overwritten.
 Both profiles are disabled. Only the insecure fixture also proves synchronized DKG and exercises the
 request-aware Solidity wrapper with signed registry publication. Secure Minimum qualifies decryption
 from native setup openings; secure DKG publication and runtime admission are separate. PR CI
+type-checks both secure packages, exercises the secure C6 constraints on a small fixture, and
 rebuilds the secure C7 recursive key and compares its VK bytes and field pin with the recorded
 candidate. Secure C6 compilation alone exceeds the 16 GiB proof runner budget; rerun the guarded
 qualification on a larger host when changing that leaf or its shared dependencies.
