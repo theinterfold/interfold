@@ -375,6 +375,15 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
         leaves.len(),
         e3_zk_config::CircuitName::synchronized_definitions().count()
     );
+    let threshold = repo.join("circuits/bin/synchronized/threshold");
+    let c6 = leaves
+        .iter()
+        .find(|leaf| leaf.path == threshold.join("share_decryption"))
+        .expect("missing synchronized C6");
+    assert_eq!(
+        artifacts::target_dir(&repo, c6).unwrap(),
+        threshold.join("target")
+    );
     for leaf in &leaves {
         assert!(leaf
             .path
