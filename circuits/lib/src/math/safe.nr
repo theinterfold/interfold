@@ -192,6 +192,28 @@ impl<let L: u32> SafeSponge<L> {
         output
     }
 
+    /// Fixed-width squeeze at a permutation boundary. Avoids repeatedly growing a vector
+    /// for long PRF streams; lanes and subsequent sponge positions match `squeeze`.
+    pub fn squeeze_after_absorb<let OUT: u32>(&mut self) -> [Field; OUT] {
+        assert(self.io_count < L);
+        assert(self.io_pattern[self.io_count] == OUT);
+        assert(OUT < ABSORB_FLAG);
+        assert(self.squeeze_pos == RATE);
+        let mut output = [0; OUT];
+        for i in 0..OUT {
+            if i % RATE == 0 {
+                self.state = self.permute();
+            }
+            output[i] = self.state[CAPACITY + i % RATE];
+        }
+        if OUT > 0 {
+            self.absorb_pos = 0;
+            self.squeeze_pos = 1 + (OUT - 1) % RATE;
+        }
+        self.io_count += 1;
+        output
+    }
+
     /// Finalizes the sponge instance, verifying that all expected operations have been performed and clearing the internal state for security (following spec 2.4).
     ///
     /// This function is used to ensure that the sponge instance has been used correctly and to prevent information leakage.

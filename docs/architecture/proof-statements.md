@@ -107,16 +107,19 @@ checks that each `BIT` covers its array. Bound-1 witnesses (C1 `sk`, C3 and user
 
 ## Synchronized PRF requirements (consumer deferred)
 
-The consuming C6 statement and Rust/Noir PRF conformance coverage belong to
-[#2050](https://github.com/theinterfold/interfold/issues/2050), not DKG transport. Their
-implementation must match the v0.6.0 PRF, not the reference branch's commitment-based transcript.
-SAFE uses zero-padded `fhe.rs/trbfv/prf/poseidon2/ctx` and `fhe.rs/trbfv/prf/poseidon2/eval` labels.
-The context absorbs the designated count, sorted one-based IDs, level and component count, then each
-component's CRT/ring dimensions and every native power-basis coefficient in ascending order,
-CRT-major. Synchronized ciphertexts have two components at level zero. Keys map from all 32
-little-endian bytes modulo the BN254 scalar field. Evaluation squeezes one full field element per
-output coefficient, reduced as a canonical integer under that CRT modulus; it does not extract three
-residues from each field.
+The [isolated Noir gadget](../../circuits/lib/src/core/synchronized/prf.nr) consumes native
+power-basis rows. `pnpm test:sync-prf` checks individual owners' masks against the locked `fhe.rs`
+implementation with deterministic ciphertexts, keys and sets. The caller must select the correct
+incoming/outgoing keys from the authenticated bundle. The C6 consumer, including its ciphertext and
+provenance openings, remains work for
+[#2050](https://github.com/theinterfold/interfold/issues/2050). SAFE uses zero-padded
+`fhe.rs/trbfv/prf/poseidon2/ctx` and `fhe.rs/trbfv/prf/poseidon2/eval` labels. The context absorbs
+the designated count, sorted one-based IDs, level and component count, then each component's
+CRT/ring dimensions and every native power-basis coefficient in ascending order, CRT-major.
+Synchronized ciphertexts have two components at level zero. Keys map from all 32 little-endian bytes
+modulo the BN254 scalar field. Evaluation squeezes one full field element per output coefficient,
+reduced as a canonical integer under that CRT modulus; it does not extract three residues from each
+field.
 
 Full-field quotient hints must reconstruct an integer in `[0, p-1]`, not just the same scalar-field
 value. At the maximal quotient, the remainder must also be at most `(p-1) % q`; ordinary quotient
