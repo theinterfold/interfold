@@ -46,7 +46,7 @@ contract Interfold is
     uint256 public constant MAX_TIMEOUT_WINDOW = 30 days;
 
     /// @notice Upper bound on configured committee size.
-    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.N;
+    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.LARGE_N;
 
     /// @notice Cap on {PricingConfig.protocolShareBps}. Protocol share
     ///         is hard-capped at 50% so a compromised owner cannot route an

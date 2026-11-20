@@ -140,17 +140,17 @@
         {
           "name": "E3Stage",
           "what": "None, Requested, CommitteeFinalized, KeyPublished, CiphertextReady, Complete, Failed",
-          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@51@enum E3Stage {"
+          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@52@enum E3Stage {"
         },
         {
           "name": "FailureReason",
           "what": "why an E3 failed or was cancelled",
-          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@63@enum FailureReason {"
+          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@64@enum FailureReason {"
         },
         {
           "name": "E3RequestParams",
           "what": "the argument struct of request()",
-          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@623@struct E3RequestParams {"
+          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@624@struct E3RequestParams {"
         }
       ],
       "read_first": [
@@ -166,7 +166,7 @@
           "why": "the stage and proof rules that the callbacks and output functions delegate to",
           "ref": "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@42@library InterfoldLifecycle {"
         },
-        { "why": "the stage vocabulary", "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@51@enum E3Stage {" }
+        { "why": "the stage vocabulary", "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@52@enum E3Stage {" }
       ],
       "rust_patterns": [],
       "depends_on": [
@@ -1630,7 +1630,7 @@
         {
           "name": "PricingConfig",
           "what": "the fee, protocol-share and randomness-fee settings that pricing reads",
-          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@111@struct PricingConfig {"
+          "ref": "packages/interfold-contracts/contracts/interfaces/IInterfold.sol@112@struct PricingConfig {"
         }
       ],
       "read_first": [

@@ -32,10 +32,10 @@ assert_eq!(CiphernodesCommitteeSize::from_n_h(3, 2).unwrap(), size);
 assert_eq!(CiphernodesCommitteeSize::from_threshold(1, 3).unwrap(), size);
 ```
 
-`Minimum`, `Micro`, and `Small` expose N (total parties), H (honest roster), and T (`threshold`).
-`from_threshold` receives `(T, N)`, not `(T+1, N)` or `(H, N)`; unsupported pairs return errors.
-`as_str()`/Display provide the lowercase tooling names. Serde names and serialized enum order are
-compatibility-sensitive, distinct from those lowercase names.
+`Minimum`, `Micro`, `Small`, and `Large` expose N (total parties), H (honest roster), and T
+(`threshold`). `from_threshold` receives `(T, N)`, not `(T+1, N)` or `(H, N)`; unsupported pairs
+return errors. `as_str()`/Display provide the lowercase tooling names. Serde names and serialized
+enum order are compatibility-sensitive, distinct from those lowercase names.
 
 For a dependency inside this workspace, use `e3-committee = { workspace = true }` and import
 `e3_committee`. The [FHE parameter API](../bfv/params/README.md) combines committee dimensions with

@@ -95,8 +95,8 @@ the key shares, and decrypts the output. See [E3 lifecycle](/learn/e3-lifecycle)
 
 ### Committee size
 
-The fixed shape of a committee: `minimum`, `micro`, or `small`. Each size sets the values of
-[N, T, and H](#n-t-and-h). See [`CommitteeSize`](/reference/contracts#committeesize).
+The fixed shape of a committee: `minimum`, `micro`, `small`, or `large`. Each size sets the values
+of [N, T, and H](#n-t-and-h). See [`CommitteeSize`](/reference/contracts#committeesize).
 
 ### CommitteeFinalized
 
@@ -275,7 +275,8 @@ verification. The manifest marks such a network with `mocks: true`. See
 The three numbers that describe a committee. N is the committee size. T is the threshold, and
 decryption needs T + 1 key shares. H is the number of honest parties. The contract uses H as the
 viability threshold. The sizes are `minimum` (N = 3, T = 1, H = 2), `micro` (N = 9, T = 4, H = 5),
-and `small` (N = 19, T = 9, H = 14). See [`CommitteeSize`](/reference/contracts#committeesize).
+`small` (N = 19, T = 9, H = 14), and `large` (N = 45, T = 22, H = 34). See
+[`CommitteeSize`](/reference/contracts#committeesize).
 
 ### Network profile
 

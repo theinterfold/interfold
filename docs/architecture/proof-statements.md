@@ -410,8 +410,8 @@ nested keys. DKG aggregation requires one node-tree hash across every selected r
 
 `nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
 (`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries
-every party's rows, so a fourth node takes a step past 2^22 gates (4.28M at 39 parties), while three
-stay within it. The aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots
+every party's rows, so a fourth node takes a step past 2^22 (4.28M gates at n = 39; three nodes are
+3.71M at n = 45). The aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots
 in canonical order once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so
 the dispatcher and its response handler agree without extra state. A chain of at most three nodes
 splits one and the rest, so it never ends on the kernel.

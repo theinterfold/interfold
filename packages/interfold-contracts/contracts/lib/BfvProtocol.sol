@@ -27,6 +27,9 @@ library BfvProtocol {
     bytes32 internal constant SS_INSECURE_64_SMALL_CONFIG_ID =
         0x7fa922a08c5501592d02394205bb600219da3e168e0432f076465569116ccfe3;
 
+    bytes32 internal constant SS_INSECURE_64_LARGE_CONFIG_ID =
+        0xf7cd0828ce1f727085f5553ae162547513928ca5dc58d3799a49fa1e4591ce77;
+
     bytes32 internal constant SS_SECURE_8192_MINIMUM_CONFIG_ID =
         0x0acc89be9b1f39b0c1ee06493af3bad6f5685bf60e0f1cec7a733e95caaab87a;
 
@@ -35,6 +38,9 @@ library BfvProtocol {
 
     bytes32 internal constant SS_SECURE_8192_SMALL_CONFIG_ID =
         0x41d2f2a41bfb17dfb292332d8283b3a9238f9fa8fdc4eecf87de4d777f95c891;
+
+    bytes32 internal constant SS_SECURE_8192_LARGE_CONFIG_ID =
+        0xf8ddf924e1ef60bf63d14a2bb39c7c259b4b054e75f6e2baf07bb268462d13ed;
 
     bytes32 internal constant SYNC_INSECURE_64_MINIMUM_CONFIG_ID =
         0xfe0e258735d79bc000f057bbc65136f31e6006884bd8d56f58a43bb236079fd7;
@@ -53,6 +59,11 @@ library BfvProtocol {
     uint32 internal constant SMALL_T = 9;
     uint32 internal constant SMALL_H = 14;
     uint32 internal constant SMALL_N = 19;
+
+    uint8 internal constant LARGE_COMMITTEE_SIZE = 3;
+    uint32 internal constant LARGE_T = 22;
+    uint32 internal constant LARGE_H = 34;
+    uint32 internal constant LARGE_N = 45;
 
     uint256 internal constant MESSAGE_COEFFS_COUNT = 50;
     uint256 internal constant MESSAGE_COEFF_BYTE_LEN = 8;
