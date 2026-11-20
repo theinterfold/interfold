@@ -2,13 +2,15 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { isPresetCommitteeSupported } from './constants'
 import {
   findArtifactRevision,
+  findCompatibleRevision,
+  installVerifiedArtifacts,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
@@ -24,6 +26,20 @@ test('every release pair is a supported build pair', () => {
   assert.ok(RELEASE_REQUIRED_PAIRS.length > 0)
   for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
     assert.ok(isPresetCommitteeSupported(preset, committee), `${preset}/${committee} cannot be built`)
+  }
+})
+
+test('failed promotion restores the previous verified installation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'interfold-artifacts-rollback-'))
+  try {
+    const dist = join(root, 'installed'),
+      backup = join(root, 'backup')
+    mkdirSync(dist)
+    writeFileSync(join(dist, 'proof-key'), 'previous bytes')
+    assert.throws(() => installVerifiedArtifacts(join(root, 'missing'), dist, backup), /ENOENT/)
+    assert.equal(readFileSync(join(dist, 'proof-key'), 'utf8'), 'previous bytes')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
@@ -103,6 +119,75 @@ test('checksums command covers exactly the staged circuit configurations', () =>
   }
 })
 
+test('partial push publishes the staged catalogue and does not advance the ref if preparation fails', (t) => {
+  const seed = makeCompleteMatrix()
+  const checkout = mkdtempSync(join(tmpdir(), 'interfold-publish-'))
+  t.after(() => {
+    for (const dir of [seed, checkout]) rmSync(dir, { recursive: true, force: true })
+  })
+  const env = {
+    ...process.env,
+    PATH: `${checkout}:${process.env.PATH}`,
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Fixture',
+    GIT_COMMITTER_NAME: 'Fixture',
+    GIT_AUTHOR_EMAIL: 'fixture@localhost',
+    GIT_COMMITTER_EMAIL: 'fixture@localhost',
+  }
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim()
+  const store = join(checkout, 'store.git')
+  git(seed, 'init', '-q', '-b', 'circuit-artifacts')
+  writeFileSync(join(seed, 'vk-commitments.json'), 'old')
+  git(seed, 'add', '.')
+  git(seed, 'commit', '-qm', 'previous publication')
+  git(checkout, 'clone', '-q', '--bare', seed, store)
+  git(checkout, 'init', '-q')
+  git(checkout, 'remote', 'add', 'origin', store)
+  for (const file of [
+    'scripts/circuits/artifacts.ts',
+    'crates/zk/prover/required-artifacts.json',
+    'crates/zk/prover/supported-configurations.json',
+  ]) {
+    mkdirSync(join(checkout, file, '..'), { recursive: true })
+    copyFileSync(join(__dirname, '../..', file), join(checkout, file))
+  }
+  const pair = 'insecure-64/minimum'
+  cpSync(join(seed, pair), join(checkout, 'dist/circuits', pair), { recursive: true })
+  mkdirSync(join(checkout, 'circuits'))
+  writeFileSync(join(checkout, 'circuits/vk-commitments.json'), 'new')
+  const selected = join('dist/circuits', pair, 'fixture-pin')
+  writeFileSync(join(checkout, selected), 'new')
+  // Stub only the builder. The Rust owner tests real VK genealogy and catalogue derivation.
+  writeFileSync(
+    join(checkout, 'pnpm'),
+    `#!/bin/sh
+set -eu
+if [ "$1" = --silent ]; then
+  if [ "$#" = 3 ]; then echo source; else echo "source:$5:$7"; fi
+  exit
+fi
+test "$1 $2 $3" = 'build:circuits prepare-vk-commitments --output'
+test -f "$4/secure-8192/small/.build-stamp.json"
+cmp "$4/${pair}/fixture-pin" circuits/vk-commitments.json
+cp circuits/vk-commitments.json "$4/vk-commitments.json"
+`,
+    { mode: 0o755 },
+  )
+  const push = () =>
+    execFileSync(process.execPath, [require.resolve('tsx/cli'), 'scripts/circuits/artifacts.ts', 'push'], {
+      cwd: checkout,
+      env,
+      stdio: 'pipe',
+    })
+  push()
+  assert.equal(git(store, 'show', 'circuit-artifacts:vk-commitments.json'), 'new')
+  const head = git(store, 'rev-parse', 'circuit-artifacts')
+  writeFileSync(join(checkout, selected), 'incompatible')
+  assert.throws(push)
+  assert.equal(git(store, 'rev-parse', 'circuit-artifacts'), head)
+})
+
 test('release verification refuses the checksum manifests that a node refuses', () => {
   const dir = makeCompleteMatrix()
   try {
@@ -154,6 +239,10 @@ test('artifact selection uses the newest matching build, not another source tree
     git('init', '-q')
     writeFileSync(join(dir, 'artifact.json'), '{}')
     commit('legacy build without source metadata')
+    mkdirSync(join(dir, 'circuits'))
+    writeFileSync(join(dir, 'circuits/vk-commitments.json'), 'expected')
+    assert.throws(() => findCompatibleRevision(dir, 'HEAD'), /No published circuit artifacts match/)
+    writeFileSync(join(dir, 'vk-commitments.json'), 'expected')
     assert.throws(() => findArtifactRevision(dir, 'HEAD', 'requested-source'), /No published circuit artifacts match/)
     writeFileSync(join(dir, 'SOURCE_HASH'), 'requested-source\n')
     commit('requested build')
@@ -161,8 +250,10 @@ test('artifact selection uses the newest matching build, not another source tree
     const rebuilt = commit('same source with updated artifacts')
     assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
     writeFileSync(join(dir, 'SOURCE_HASH'), 'other-source\n')
+    writeFileSync(join(dir, 'vk-commitments.json'), 'unmerged graph')
     const newer = commit('build for another source tree')
     assert.equal(findArtifactRevision(dir, 'HEAD'), newer)
+    assert.equal(findCompatibleRevision(dir, 'HEAD'), rebuilt)
     assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
     assert.equal(findArtifactRevision(dir, 'HEAD', 'other-source'), newer)
     assert.throws(() => findArtifactRevision(dir, 'HEAD', 'unpublished-source'), /No published circuit artifacts match/)
