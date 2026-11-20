@@ -41,8 +41,6 @@ function copyArtifactsInto(target: string): void {
       cpSync(localPair, remotePair, { recursive: true })
     }
   }
-  const commitments = join(DIST, 'vk-commitments.json')
-  if (existsSync(commitments)) cpSync(commitments, join(target, 'vk-commitments.json'))
 }
 
 function artifactFiles(dir: string, base = dir): string[] {
@@ -249,6 +247,12 @@ async function push() {
 
   copyArtifactsInto(tmp)
   validateArtifactSet(tmp)
+  // The merged tree can contain pairs from both DIST and the previous publication.
+  // Its lookup key must be derived from those pairs, never inherited from either root.
+  execFileSync('pnpm', ['build:circuits', 'prepare-vk-commitments', '--output', tmp], { cwd: ROOT, stdio: 'inherit' })
+  if (!readFileSync(join(tmp, 'vk-commitments.json')).equals(readFileSync(join(ROOT, 'circuits/vk-commitments.json')))) {
+    throw new Error('Prepared archive catalogue does not match the exact checkout catalogue')
+  }
   writeFileSync(join(tmp, 'SOURCE_HASH'), hash)
   refreshChecksums(tmp)
 

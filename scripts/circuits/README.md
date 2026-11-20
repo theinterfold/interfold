@@ -185,7 +185,8 @@ checks this before it publishes binaries or `circuits-<version>.tar.gz`.
 ### Usage
 
 ```bash
-# Build or hydrate the required circuit pairs, then push them to the git branch
+# Build the required pairs. Push derives the catalogue from the assembled archive
+# and refuses publication if it differs from the checkout.
 pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
@@ -242,6 +243,9 @@ outside those inputs does not need a circuit rebuild.
 Circuits are built locally and stored in a git branch:
 
 1. **Local**: Build circuits and push to branch
+
+`push` runs `prepare-vk-commitments` on the staged six-pair tree before hashing it. If a pair
+disagrees with the committed catalogue, rebuild the matching artifacts.
 
 ```bash
 pnpm build:circuits --preset insecure-64 --committee minimum
