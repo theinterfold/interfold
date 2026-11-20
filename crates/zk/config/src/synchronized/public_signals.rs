@@ -392,4 +392,40 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn c6_batch_checks_shared_fields_and_owner_order_independently() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let mut first = vec![0; config.c6_public_fields() * 32];
+        first[4 * 32 + 31] = 2;
+        let mut second = first.clone();
+        second[2 * 32 + 31] = 2;
+        let batch = |second: &[u8]| {
+            PublicSignals::decode_c6_batch(&config, [first.as_slice(), second].into_iter())
+        };
+        assert!(batch(&second).is_ok());
+        for (index, replacement) in [
+            (0, 1),
+            (1, 1),
+            (2, 0),
+            (3, 1),
+            (5, 1),
+            (6, 1),
+            (9, 1),
+            (11, 1),
+        ] {
+            let mut other = second.clone();
+            other[index * 32 + 31] = replacement;
+            // The row is valid in isolation; the batch must detect the mismatch.
+            assert!(
+                PublicSignals::decode(&config, CircuitName::ThresholdShareDecryption, &other)
+                    .is_ok()
+            );
+            assert!(batch(&other).is_err(), "accepted changed row field {index}");
+        }
+    }
 }
