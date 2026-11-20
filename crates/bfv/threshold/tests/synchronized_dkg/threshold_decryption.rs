@@ -166,7 +166,13 @@ fn native_partials_match_c4_and_c6_proofs() -> Result<()> {
             ] {
                 let mut bad = leaf.inputs.clone();
                 *bad.pointer_mut(pointer).unwrap() = value;
-                job.reject(&bad, pointer)?;
+                let diagnostic = job.reject(&bad, pointer)?;
+                if pointer == "/shifted_noise/0" {
+                    ensure!(
+                        diagnostic.contains("Local noise outside signed bound"),
+                        "shifted noise failed for another reason: {diagnostic}"
+                    );
+                }
             }
         }
         shares.push(DecryptionShare::from_parts(d, id, coords, &ct)?);

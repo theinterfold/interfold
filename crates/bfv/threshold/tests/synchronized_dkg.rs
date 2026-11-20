@@ -426,7 +426,7 @@ impl CircuitJob {
         Ok(())
     }
 
-    fn reject(&self, input: &Value, case: &str) -> Result<()> {
+    fn reject(&self, input: &Value, case: &str) -> Result<String> {
         self.write(input)?;
         let output = Command::new("nargo")
             .arg("execute")
@@ -443,7 +443,7 @@ impl CircuitJob {
                 && !diagnostic.contains("bug:"),
             "{case} did not fail a completed constraint check: {diagnostic}"
         );
-        Ok(())
+        Ok(diagnostic)
     }
 
     fn prove(&self, bb: &Path, config: &Configs, leaf: &Leaf) -> Result<()> {
