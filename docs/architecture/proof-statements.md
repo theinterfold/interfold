@@ -195,7 +195,11 @@ evaluation or per-coefficient noise/share check. Signed local noise uses one fie
 `N*q^3 + B + 2q` and the signed quotient times `q` both fit below the scalar modulus. The private
 evaluation challenge and integer argument require independent cryptographic review. Secure C7 shares
 the same sum/decode implementation. A common outer verifier shape does not imply interchangeable
-child VK pins.
+child VK pins. Both profiles use the
+[same C6 opening checks](../../circuits/lib/src/core/synchronized/threshold_decryption.nr) before
+their respective product and noise constraints. `CircuitName::DecryptionAggregator` alone does not
+distinguish this layout from SS: any future router must dispatch on the authenticated profile and
+committee before decoding the public statement or choosing keys.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 

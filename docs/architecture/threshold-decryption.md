@@ -87,7 +87,11 @@ the rule in the
 `pnpm test:sync-decryption:contract` checks the final wrapper against the signed registry
 publication for the same request. The harness starts from a finalized committee and supplies the
 lifecycle call context; synchronized request admission, actor failover and plaintext publication
-through a live route remain pending.
+through a live route remain pending. Activation requires durable idempotency: one native share and
+one noise draw per owner, ciphertext and designated set. Recovery and aggregator failover must reuse
+that retained share; retrying with a fresh noise draw is not a new decryption request. The C6
+witness JSON contains private openings and noise; it is not a log, transport payload or recovery
+record.
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

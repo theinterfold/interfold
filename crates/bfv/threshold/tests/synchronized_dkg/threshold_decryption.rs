@@ -373,21 +373,42 @@ fn prove_partials(
         };
         job.execute(&leaf.inputs)?;
         if i == 0 && cfg.profile == BfvProfile::SyncDecSecure8192 {
-            let compiled = job.directory.path().join("target/sync_leaf.json");
-            for (pointer, replacement) in [
-                ("/product/0/8191", json!("0")),
+            for (pointer, replacement, reason) in [
+                ("/expected_sk", json!("0"), "Wrong synchronized SK opening"),
+                (
+                    "/expected_bundle",
+                    json!("0"),
+                    "Wrong synchronized key bundle opening",
+                ),
+                (
+                    "/expected_ct",
+                    json!("0"),
+                    "Wrong synchronized ciphertext opening",
+                ),
+                ("/product/0/8191", json!("0"), "Wrong negacyclic product"),
                 (
                     "/shifted_noise/0",
                     json!((noise.smudging_bound() * 2u8 + 1u8).to_string()),
+                    "check_secure_noise",
                 ),
-                ("/d/1/8191", json!(d.coefficients()[[1, 8191]] ^ 1)),
             ] {
                 let mut bad = leaf.inputs.clone();
                 ensure!(bad.pointer(pointer) != Some(&replacement));
                 *bad.pointer_mut(pointer)
                     .context("missing secure C6 witness coefficient")? = replacement;
-                super::provenance::reject_join(&compiled, &bad, pointer)?;
+                let diagnostic = job.reject(&bad, pointer)?;
+                ensure!(
+                    diagnostic.contains(reason),
+                    "wrong rejection for {pointer}, expected {reason}: {diagnostic}"
+                );
             }
+            let mut bad = leaf.inputs.clone();
+            bad["d"][1][8191] = json!(d.coefficients()[[1, 8191]] ^ 1);
+            super::provenance::reject_join(
+                &job.directory.path().join("target/sync_leaf.json"),
+                &bad,
+                "wrong partial decryption",
+            )?;
         }
         job.prove(bb, cfg, &leaf)?;
         let proof = job.read_proof(leaf.role)?;
