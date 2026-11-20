@@ -84,6 +84,13 @@ fn bounded_tail<R: io::Read + io::Seek>(output: &mut R, len: u64) -> io::Result<
 /// `bb prove` verifies the proof it wrote and says so on stderr when that check fails. A Chonk
 /// run reports "Failed to verify the generated proof!" in place of the UltraHonk message.
 fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
+    // bb 6 prefixes a malformed local key with the same failure text as a rejected proof.
+    if [stderr, stdout]
+        .iter()
+        .any(|s| s.contains("invalid VK size"))
+    {
+        return false;
+    }
     [stderr, stdout].into_iter().any(|stream| {
         stream.contains("Proof verification failed")
             || stream.contains("Failed to verify the generated proof")

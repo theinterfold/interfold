@@ -29,6 +29,44 @@ pub struct VerificationKey<'a> {
     pub hash: Field,
 }
 
+impl VerificationKey<'_> {
+    /// Check the local bb 6 UltraHonk recursive VK and its sidecar as a pair.
+    pub fn validate_recursive_honk(&self) -> Result<(), WitnessError> {
+        if self.fields.len() != 115 * 32 {
+            return Err(WitnessError::VerificationKey(
+                "expected a 115-field UltraHonk recursive VK".into(),
+            ));
+        }
+        let scalars = self
+            .fields
+            .chunks_exact(32)
+            .map(|bytes| {
+                canonical(bytes.try_into().unwrap())
+                    .map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
+                Ok(Fr::from_be_bytes_mod_order(bytes))
+            })
+            .collect::<Result<Vec<_>, WitnessError>>()?;
+        if e3_safe::bb_poseidon2_hash(&scalars)
+            .into_bigint()
+            .to_bytes_be()
+            != self.hash
+        {
+            return Err(WitnessError::VerificationKey(
+                "VK does not match its hash".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn insert(&self, input: &mut Value, prefix: &str) -> Result<(), WitnessError> {
+        canonical(&self.hash).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
+        input[format!("{prefix}_vk")] = fields(self.fields)
+            .map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
+        input[format!("{prefix}_key_hash")] = json!(format!("0x{}", hex::encode(self.hash)));
+        Ok(())
+    }
+}
+
 /// Ordered immediate keys and all descendants of the recipient setup proof. The setup circuit's
 /// own VK is selected separately by its verifier, not recursively included in itself.
 pub struct VerificationKeys<'a> {
@@ -113,10 +151,7 @@ pub(crate) fn insert_child(
     child: &Child<'_>,
     key: &VerificationKey<'_>,
 ) -> Result<(), WitnessError> {
-    canonical(&key.hash).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
-    json[format!("{prefix}_vk")] =
-        fields(key.fields).map_err(|error| WitnessError::VerificationKey(error.to_string()))?;
-    json[format!("{prefix}_key_hash")] = json!(format!("0x{}", hex::encode(key.hash)));
+    key.insert(json, prefix)?;
     json[format!("{prefix}_proof")] = fields(child.proof)?;
     json[format!("{prefix}_public")] = fields(child.public_signals)?;
     Ok(())
