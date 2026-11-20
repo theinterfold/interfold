@@ -107,18 +107,22 @@ pub(super) fn qualify(
         ),
         "unexpected outer VK error: {error:#}"
     );
+    // Leave the outer key unavailable for verification: Ok(false) must come from
+    // the host's independent pin comparison, not from bb rejecting modified inputs.
+    for index in [31, 63] {
+        let mut changed_pin = outer.clone();
+        let mut signals = outer.public_signals.extract_bytes();
+        signals[index] ^= 1;
+        changed_pin.public_signals = e3_utils::utility_types::ArcBytes::from_bytes(&signals);
+        ensure!(!verify_decryption(
+            &prover,
+            config,
+            &expected,
+            &changed_pin,
+            "bad-proof-pin"
+        )?);
+    }
     fs::write(path, vk)?;
-    let mut changed_pin = outer.clone();
-    let mut signals = outer.public_signals.extract_bytes();
-    signals[31] ^= 1;
-    changed_pin.public_signals = e3_utils::utility_types::ArcBytes::from_bytes(&signals);
-    ensure!(!verify_decryption(
-        &prover,
-        config,
-        &expected,
-        &changed_pin,
-        "bad-proof-pin"
-    )?);
     // Preserve only the verified public fixture when a separate EVM qualification requests it.
     if let Some(directory) = std::env::var_os("E3_SYNC_DECRYPTION_EXPORT") {
         let directory = PathBuf::from(directory);
