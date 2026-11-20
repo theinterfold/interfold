@@ -11,8 +11,8 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 15);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 14);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 18);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 17);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
