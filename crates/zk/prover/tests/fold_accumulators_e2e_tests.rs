@@ -288,14 +288,19 @@ async fn c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
     }
 }
 
-/// The witness fails on a constraint of the circuit. The solver reports only that an assertion
+/// The witness fails on a constraint of the circuit. The solver reports only that a constraint
 /// failed, so each case also solves its honest twin, which differs in the one edit under test.
+/// nargo reports an unsatisfied constraint as a failed assertion when the opcode carries an
+/// assertion payload, and as an unsolvable program when the compiler merged the `assert` into an
+/// opcode without one (for example an equality with a hash output).
 fn assert_witness_rejected(result: Result<Vec<u8>, ZkError>, case: &str) {
     match result {
-        Err(ZkError::WitnessGenerationFailed(message)) => {
-            assert_eq!(message, "Failed assertion", "{case}")
-        }
-        other => panic!("{case}: expected a failed assertion, got {other:?}"),
+        Err(ZkError::WitnessGenerationFailed(message)) => assert!(
+            message == "Failed assertion"
+                || message == "Failed to solve program: 'Cannot satisfy constraint'",
+            "{case}: expected an unsatisfied constraint, got {message}"
+        ),
+        other => panic!("{case}: expected an unsatisfied constraint, got {other:?}"),
     }
 }
 
