@@ -388,7 +388,7 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
     }
     full.circuits = vec!["e_sm_share_computation".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
-    full.circuits = vec!["c6_fold".into()];
+    full.circuits = vec!["decryption_aggregator".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
     let mut ss = request();
     ss.circuits = vec!["pk".into()];
@@ -1363,8 +1363,8 @@ fn bin_current_requires_every_required_artifact() {
 }
 
 /// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
-/// variant's VK and VK hash under its published name, the compiled program in every variant, and the
-/// VK-tree anchor only where the folding circuit has one.
+/// variant's VK and VK hash under its published name, the compiled program in every variant, and
+/// both VK-tree anchors, the C6 one at a path no circuit has.
 #[test]
 fn staging_bin_reproduces_the_published_pair_layout() {
     let temp = tempfile::tempdir().unwrap();
@@ -1392,11 +1392,15 @@ fn staging_bin_reproduces_the_published_pair_layout() {
             }
         }
     }
-    write(
-        &published,
-        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
-        "nodes_fold-anchor",
-    );
+    // The C6 tree anchor keeps the retired `c6_fold` path, which holds no circuit.
+    let anchors = ["nodes_fold", "c6_fold"];
+    for name in anchors {
+        write(
+            &published,
+            &format!("default/recursive_aggregation/{name}/{name}.vk_tree_hash"),
+            format!("{name}-anchor"),
+        );
+    }
     let stamp = artifacts::Stamp {
         preset: "insecure-64".into(),
         committee: "minimum".into(),
@@ -1404,6 +1408,13 @@ fn staging_bin_reproduces_the_published_pair_layout() {
         built_at: "time".into(),
     };
     artifacts::hydrate(root, &published, &request(), &stamp).unwrap();
+    assert_eq!(
+        fs::read_to_string(
+            root.join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash")
+        )
+        .unwrap(),
+        "c6_fold-anchor"
+    );
 
     let staged = root.join("staged/insecure-64/minimum");
     artifacts::stage_bin(root, &staged).unwrap();
@@ -1432,13 +1443,15 @@ fn staging_bin_reproduces_the_published_pair_layout() {
         }
     }
     assert!(!staged.join("evm/recursive_aggregation/nodes_fold").exists());
-    assert_eq!(
-        read(
-            &staged,
-            "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash".into()
-        ),
-        "nodes_fold-anchor"
-    );
+    for name in anchors {
+        assert_eq!(
+            read(
+                &staged,
+                format!("default/recursive_aggregation/{name}/{name}.vk_tree_hash")
+            ),
+            format!("{name}-anchor")
+        );
+    }
     assert!(!staged.join("default/dkg/pk/pk.vk_tree_hash").exists());
 }
 
@@ -1457,8 +1470,8 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "nodes_fold"),
     ("default", "recursive_aggregation", "nodes_fold_kernel"),
     ("default", "recursive_aggregation", "node_fold"),
-    ("default", "recursive_aggregation", "c6_fold"),
-    ("default", "recursive_aggregation", "c6_fold_kernel"),
+    ("default", "recursive_aggregation", "c6_chonk_root"),
+    ("default", "recursive_aggregation", "c6_chonk_tube"),
     ("recursive", "threshold", "share_decryption"),
     ("default", "dkg", "sk_share_computation_chain"),
     ("default", "dkg", "sk_share_computation_chain_last"),
@@ -1468,6 +1481,10 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "chonk", "c3_chonk_app"),
     ("default", "chonk", "c3_chonk_init_kernel"),
     ("default", "chonk", "c3_chonk_tail_kernel"),
+    ("default", "chonk", "c6_chonk_hiding_kernel"),
+    ("default", "chonk", "c6_chonk_app"),
+    ("default", "chonk", "c6_chonk_init_kernel"),
+    ("default", "chonk", "c6_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1519,13 +1536,18 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         ),
         (
             "c6_fold",
-            field_bytes(compute_vk_hash(vec![keys[14], keys[15], keys[16]])),
+            field_bytes(compute_vk_hash(vec![
+                keys[14],
+                compute_vk_hash(vec![
+                    keys[15], keys[15], keys[25], keys[16], keys[26], keys[27], keys[28],
+                ]),
+            ])),
         ),
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
-        // Keys 14..=16 are the C6 chain; every other key is under the node fold.
-        let c6 = usize::from((14..=16).contains(&i));
+        // Keys 14..=16 and 25.. are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i) || i >= 25);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
         assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));

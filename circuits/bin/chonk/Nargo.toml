@@ -4,4 +4,8 @@ members = [
     "c3_chonk_init_kernel",
     "c3_chonk_tail_kernel",
     "c3_chonk_hiding_kernel",
+    "c6_chonk_app",
+    "c6_chonk_init_kernel",
+    "c6_chonk_tail_kernel",
+    "c6_chonk_hiding_kernel",
 ]

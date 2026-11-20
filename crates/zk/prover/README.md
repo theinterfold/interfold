@@ -23,7 +23,7 @@ define a second owner.
 | [`request_execution.rs`](src/request_execution.rs)                                                       | Correlated C0–C7, batch verification and recursive request execution, including local witness decryption. |
 | [`proof_request/`](src/proof_request), [`proof_verification/`](src/proof_verification)                   | Local proof planning/signing and authenticated key-proof verification/recovery.                           |
 | [`share_verification/`](src/share_verification), [`node_proof_aggregation/`](src/node_proof_aggregation) | Signed share bundles, per-batch outcomes, and node-fold accumulation/recovery.                            |
-| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds, C3 Chonk chains, and cross-proof links.                                                  |
+| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds, C3 and C6 Chonk aggregation, and cross-proof links.                                      |
 | [`tests/`](tests)                                                                                        | Prepared local, recursive-fold, network/download, and proof-to-slash suites.                              |
 
 A capability actor records a proof/verification plan and requests compute work. Shared workers

@@ -838,79 +838,79 @@
           "ref": "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@65@committee_hash_lo: pub Field"
         },
         {
-          "name": "private: c6_fold_vk",
+          "name": "private: c6_root_vk",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@69@c6_fold_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@65@c6_root_vk: UltraHonkVerificationKey"
         },
         {
-          "name": "private: c6_fold_proof",
+          "name": "private: c6_root_proof",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@70@c6_fold_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@66@c6_root_proof: UltraHonkProof"
         },
         {
-          "name": "private: c6_fold_public",
+          "name": "private: c6_root_public",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@71@c6_fold_public: [Field; C6_FOLD_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@67@c6_root_public: [Field; C6_ROOT_PUBLIC_LEN]"
         },
         {
-          "name": "private: c6_fold_vk_hash",
+          "name": "private: c6_root_vk_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_fold_vk_hash: Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@68@c6_root_vk_hash: Field"
         },
         {
           "name": "private: c7_vk",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@73@c7_vk: UltraHonkVerificationKey"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@69@c7_vk: UltraHonkVerificationKey"
         },
         {
           "name": "private: c7_proof",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@74@c7_proof: UltraHonkProof"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@70@c7_proof: UltraHonkProof"
         },
         {
           "name": "private: c7_public",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@75@c7_public: [Field; C7_PUBLIC_LEN]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@71@c7_public: [Field; C7_PUBLIC_LEN]"
         },
         {
           "name": "public: c6_fold_key_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@76@c6_fold_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_fold_key_hash: pub Field"
         },
         {
           "name": "public: c7_key_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@77@c7_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@73@c7_key_hash: pub Field"
         },
         {
           "name": "private: committee_members",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@78@committee_members: [Field; N_PARTIES]"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@74@committee_members: [Field; N_PARTIES]"
         },
         {
           "name": "public: committee_hash_hi",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@79@committee_hash_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@75@committee_hash_hi: pub Field"
         },
         {
           "name": "public: committee_hash_lo",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@80@committee_hash_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@76@committee_hash_lo: pub Field"
         },
         {
           "name": "public: domain_hi",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@81@domain_hi: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@77@domain_hi: pub Field"
         },
         {
           "name": "public: domain_lo",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@82@domain_lo: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@78@domain_lo: pub Field"
         },
         {
           "name": "public: ciphertext_commitment",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@83@ciphertext_commitment: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@79@ciphertext_commitment: pub Field"
         }
       ],
       "emits": [],
@@ -924,7 +924,7 @@
         {
           "name": "predecessor_key_hash",
           "what": "checks the prior keys are the leaf, fold and genesis keys, then returns the genesis key on step one and the fold key after",
-          "ref": "circuits/lib/src/math/recursive_vk.nr@10@pub fn predecessor_key_hash("
+          "ref": "circuits/lib/src/math/recursive_vk.nr@8@pub fn predecessor_key_hash("
         }
       ],
       "read_first": [
@@ -938,11 +938,11 @@
         },
         {
           "why": "decryption_aggregator entry point: the plaintext proof the contract verifies",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@68@fn main("
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@64@fn main("
         },
         {
-          "why": "decryption_aggregator checks the C6 fold proof and the C7 proof in-circuit",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@89@verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_vk_hash);"
+          "why": "decryption_aggregator checks the C6 Chonk root proof and the C7 proof in-circuit",
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@85@verify_honk_proof_non_zk(c6_root_vk, c6_root_proof, c6_root_public, c6_root_vk_hash);"
         },
         {
           "why": "node_fold entry point: one member's C0 to C4 proofs and their same-party links",
@@ -954,7 +954,7 @@
       "tests": "dkg_aggregator has 7 #[test] functions, decryption_aggregator 7 and node_fold 3, all in their main.nr; the other folds have none. circuits/README.md runs nargo test on these packages through scripts/circuits/test.sh.",
       "unverified": [
         "On-chain verification of the final aggregator proofs is stated in the circuit doc comments and in docs/architecture/threshold-decryption.md; no Solidity source was read.",
-        "The earlier flow description said C7 is checked with ZK, but decryption_aggregator calls verify_honk_proof_non_zk for it (decryption_aggregator/src/main.nr@90); docs/architecture/proof-statements.md describes the trust boundary rather than that older wrapper wording.",
+        "The earlier flow description said C7 is checked with ZK, but decryption_aggregator calls verify_honk_proof_non_zk for it (decryption_aggregator/src/main.nr@86); docs/architecture/proof-statements.md describes the trust boundary rather than that older wrapper wording.",
         "circuits/README.md lists recursive_aggregation/fold and wrapper paths that are not in this snapshot; this unit follows the directory listing."
       ]
     },

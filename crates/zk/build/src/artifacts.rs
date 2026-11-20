@@ -229,7 +229,6 @@ const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
             ("json", "json"),
             ("vk", "vk_recursive"),
             ("vk_hash", "vk_recursive_hash"),
-            ("vk_tree_hash", "vk_tree_hash"),
         ],
     ),
     ("evm", &[("vk", "vk"), ("vk_hash", "vk_hash")]),
@@ -238,6 +237,26 @@ const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
         &[("vk", "vk_noir"), ("vk_hash", "vk_noir_hash")],
     ),
 ];
+
+/// The VK-tree anchors, by the name each is published under. An anchor is placed by this name and
+/// not with a circuit [`discover`] lists: the C6 tree anchor keeps the retired `c6_fold` path, which
+/// holds no circuit.
+const ANCHORS: [&str; 2] = ["nodes_fold", "c6_fold"];
+
+/// Where the anchor `name` is published in `pair`.
+fn published_anchor(pair: &Path, name: &str) -> PathBuf {
+    pair.join("default/recursive_aggregation")
+        .join(name)
+        .join(format!("{name}.vk_tree_hash"))
+}
+
+/// Where a build or [`hydrate`] leaves the anchor `name` under `bin` (`circuits/bin`).
+fn built_anchor(bin: &Path, name: &str) -> PathBuf {
+    bin.join("recursive_aggregation")
+        .join(name)
+        .join("target")
+        .join(format!("{name}.vk_tree_hash"))
+}
 
 /// The required artifacts of a pair. A pair is complete, current or hydratable only with all of
 /// them: a tree built before the inventory gained an artifact must not pass.
@@ -261,6 +280,9 @@ pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
             let (package, extension) = file
                 .split_once('.')
                 .with_context(|| format!("Required artifact {required} has no extension"))?;
+            if extension == "vk_tree_hash" {
+                return Ok(built_anchor(&root.join("circuits/bin"), name));
+            }
             let extension = if extension == "json" {
                 "json"
             } else {
@@ -388,6 +410,19 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
             }
         }
     }
+    // `clean_targets` reaches only the targets of circuits, so an anchor at a path that holds no
+    // circuit is replaced here.
+    for name in ANCHORS {
+        let built = built_anchor(&root.join("circuits/bin"), name);
+        if built.exists() {
+            fs::remove_file(&built)?;
+        }
+        let published = published_anchor(pair, name);
+        if published.is_file() {
+            fs::create_dir_all(built.parent().context("Anchor parent")?)?;
+            fs::copy(published, built)?;
+        }
+    }
     active_stamp(root, &stamp.preset, &stamp.committee, &stamp.source_hash)
 }
 
@@ -493,10 +528,11 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
         return vec![("default", CHONK_TARGET, "vk_recursive")];
     }
     if circuit.group == "recursive_aggregation" {
-        // The tube and accumulate proofs carry an IPA claim that `c3ab_fold` closes.
+        // The tube and accumulate proofs carry an IPA claim that a root rollup (`c3ab_fold`,
+        // `c6_chonk_root`) closes.
         if matches!(
             circuit.name.as_str(),
-            "c3_chonk_tube" | "c3_chonk_accumulate"
+            "c3_chonk_tube" | "c3_chonk_accumulate" | "c6_chonk_tube"
         ) {
             return vec![("default", "noir-rollup-no-zk", "vk_recursive")];
         }
@@ -555,19 +591,19 @@ pub fn stage_bin(root: &Path, pair: &Path) -> Result<()> {
             let dist = pair.join(variant).join(&circuit.group).join(&circuit.name);
             fs::create_dir_all(&dist)?;
             fs::copy(&compiled, dist.join(format!("{}.json", circuit.package)))?;
-            let mut files = vk_files(extension).to_vec();
-            if variant == "default" {
-                // Only the folding circuits carry a VK-tree anchor.
-                let anchor = target.join(format!("{}.vk_tree_hash", circuit.package));
-                if anchor.is_file() {
-                    files.push(("vk_tree_hash", "vk_tree_hash".to_string()));
-                }
-            }
-            for (file, suffix) in files {
+            for (file, suffix) in vk_files(extension) {
                 let source = target.join(format!("{}.{suffix}", circuit.package));
                 fs::copy(&source, dist.join(format!("{}.{file}", circuit.package)))
                     .with_context(|| format!("Cannot stage {}", source.display()))?;
             }
+        }
+    }
+    for name in ANCHORS {
+        let built = built_anchor(&root.join("circuits/bin"), name);
+        if built.is_file() {
+            let published = published_anchor(pair, name);
+            fs::create_dir_all(published.parent().context("Anchor parent")?)?;
+            fs::copy(built, published)?;
         }
     }
     Ok(())
@@ -686,16 +722,8 @@ pub fn refresh_anchors(
             fs::remove_file(stamp)?;
         }
     }
-    for name in ["nodes_fold", "c6_fold"] {
-        for path in [
-            pair.join("default/recursive_aggregation")
-                .join(name)
-                .join(format!("{name}.vk_tree_hash")),
-            bin.join("recursive_aggregation")
-                .join(name)
-                .join("target")
-                .join(format!("{name}.vk_tree_hash")),
-        ] {
+    for name in ANCHORS {
+        for path in [published_anchor(pair, name), built_anchor(&bin, name)] {
             if path.exists() {
                 fs::remove_file(path)?;
             }
@@ -703,12 +731,9 @@ pub fn refresh_anchors(
     }
     if complete {
         for (name, bytes) in vk_tree::hashes(pair)? {
-            for directory in [
-                pair.join("default/recursive_aggregation").join(name),
-                bin.join("recursive_aggregation").join(name).join("target"),
-            ] {
-                fs::create_dir_all(&directory)?;
-                fs::write(directory.join(format!("{name}.vk_tree_hash")), bytes)?;
+            for path in [published_anchor(pair, name), built_anchor(&bin, name)] {
+                fs::create_dir_all(path.parent().context("Anchor parent")?)?;
+                fs::write(path, bytes)?;
             }
         }
     }
@@ -1058,7 +1083,7 @@ mod tests {
             before,
             "wildcard sync dry-run wrote files"
         );
-        dry.circuits = vec!["c6_fold".into()];
+        dry.circuits = vec!["decryption_aggregator".into()];
         assert!(build(root, &dry).is_err());
         assert_eq!(crate::tests::snapshot(root), before);
         let manifest = circuit.path.join("Nargo.toml");
@@ -1433,9 +1458,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 23
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 27
         // seeded anchor keys the build does not write.
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 41);
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 45);
         let hash =
             identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
