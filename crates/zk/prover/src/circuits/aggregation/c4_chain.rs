@@ -19,6 +19,7 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_zk_config::dkg::share_decryption::Configs;
 use e3_zk_witness::dkg::share_decryption::{Inputs, ShareDecryptionCircuitData};
 use e3_zk_witness::dkg::share_decryption_chain::LimbChain;
+use e3_zk_witness::encoding::bigint_2d_to_json_values;
 use serde_json::{json, Value};
 
 /// The limb circuits of the final C4 circuit, loaded for proving: each limb's compiled program and
@@ -90,16 +91,15 @@ pub fn final_share_decryption_inputs(
         limb_links.push(publics[publics.len() - 2..].to_vec());
     }
 
-    let mut final_inputs = inputs.to_json();
-    let fields = final_inputs
-        .as_object_mut()
-        .expect("C4 inputs serialize as an object");
-    fields.remove("decrypted_shares");
-    fields.insert("limb_vks".into(), json!(limb_vks));
-    fields.insert("limb_key_hashes".into(), json!(limb_key_hashes));
-    fields.insert("limb_proofs".into(), json!(limb_proofs));
-    fields.insert("limb_links".into(), json!(limb_links));
-    Ok(final_inputs)
+    // The final circuit reads only the commitments and the limb proofs; the decrypted shares stay in
+    // the limb witnesses.
+    Ok(json!({
+        "expected_commitments": bigint_2d_to_json_values(&inputs.expected_commitments),
+        "limb_vks": limb_vks,
+        "limb_key_hashes": limb_key_hashes,
+        "limb_proofs": limb_proofs,
+        "limb_links": limb_links,
+    }))
 }
 
 /// Proves C4 for `input` as a limb chain and returns the final proof.
