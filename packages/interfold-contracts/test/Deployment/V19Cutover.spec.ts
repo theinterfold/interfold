@@ -13,6 +13,7 @@ import {
   BFV_SCHEME_ID,
   buildV19CutoverTransactions,
   readOpenVmIdentity,
+  requireTimeoutConfig,
   resolveOpenVmCrisp,
 } from "../../scripts/upgrade/v19Cutover";
 import {
@@ -114,6 +115,30 @@ describe("v0.19 cutover", function () {
         encoded: parsed!.args[1],
       }));
     expect(registered).to.deep.equal(paramSets);
+  });
+
+  it("refuses to validate Sepolia while it holds the old DKG window", function () {
+    const configured = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/sepolia-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ).interfold.timeoutConfig;
+    // Live Sepolia before the cutover's `setTimeoutConfig`.
+    const live = {
+      dkgWindow: 1800n,
+      computeWindow: 604800n,
+      decryptionWindow: 21600n,
+    };
+    expect(() => requireTimeoutConfig(live, configured)).to.throw(
+      /dkgWindow is 1800 s; the configuration sets 7200 s/,
+    );
+    expect(() =>
+      requireTimeoutConfig({ ...live, dkgWindow: 7200n }, configured),
+    ).not.to.throw();
   });
 
   it("reads an OpenVM guest identity and refuses a malformed one", function () {

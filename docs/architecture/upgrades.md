@@ -288,8 +288,9 @@ routes and adds `setCommitteeThresholds(3, [34, 45])` from the configuration. Th
 upgrade in the batch, because the earlier implementation reverts on size 3. `upgrade:v19` does not
 change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s
 of DKG, so a Sepolia batch must add `setTimeoutConfig` with the configured windows, which raise
-`dkgWindow` to 7200 s. A fresh deployment sets them from the configuration. Check
-`getTimeoutConfig()` before resume.
+`dkgWindow` to 7200 s. A fresh deployment sets them from the configuration. `upgrade:v19 validate`,
+which `resume` runs first, compares `getTimeoutConfig()` with the configured windows and refuses
+while they differ, so Sepolia cannot resume on the old 1800 s window.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
