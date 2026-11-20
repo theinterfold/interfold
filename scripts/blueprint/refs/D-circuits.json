@@ -37,8 +37,8 @@
     "id": "D3",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof",
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@31@verify_honk_proof(c4b_vk, c4b_proof"
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof",
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@33@verify_honk_proof(c4b_vk, c4b_proof"
     ],
     "line_text": [
       "verify_honk_proof(c4a_vk, c4a_proof, c4a_public, c4a_key_hash);",
@@ -67,11 +67,11 @@
     "id": "D5",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@109@verify_honk_proof(c0_vk, c0_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@110@verify_honk_proof(c1_vk, c1_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@112@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@113@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof(c0_vk, c0_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@112@verify_honk_proof(c1_vk, c1_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@113@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@114@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@115@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
     ],
     "line_text": [
       "verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);",
@@ -86,9 +86,9 @@
     "id": "D6",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@53@inner_proofs[k],",
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@66@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@49@inner_proofs[k],"
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@55@inner_proofs[k],",
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@68@verify_honk_proof_non_zk(acc_vk, acc_proof",
+      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@51@inner_proofs[k],"
     ],
     "line_text": ["inner_proofs[k],", "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);", "inner_proofs[k],"],
     "note": "nodes_fold verifies three node_fold proofs per step plus the previous accumulator over the H rows, and nodes_fold_kernel verifies only its three node_fold proofs."

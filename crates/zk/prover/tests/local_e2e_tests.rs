@@ -342,7 +342,7 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "share_decryption").await;
+    setup_chunked_dkg_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
 
     let config = e3_zk_config::dkg::share_decryption::Configs::for_preset(preset).ok()?;

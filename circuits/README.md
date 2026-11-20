@@ -51,6 +51,12 @@ chunks, so its proof is the one peers and `c2ab_fold` consume, and its share com
 unchunked C2's. Gossip and threshold signing use that final proof. `c2ab_fold` verifies the final
 C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 
+**C4** is proven the same way, one CRT limb per proof: `share_decryption` (**C4a**, **C4b**) is the
+final circuit over `share_decryption_limb_0`, `_1` and `_2`, which each run C4's statement for one
+limb and carry the aggregate commitment sponge between them. Its commitments equal the unchunked
+C4's, so C6 is unchanged. `c4ab_fold` verifies the final C4a and C4b proofs and hashes each one's
+limb key tree into its key hash.
+
 ### DKG (`bin/dkg/`)
 
 | Path                                | ID        | `CircuitName`                  | Role                                                               |
@@ -63,7 +69,10 @@ C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 | `e_sm_share_computation_chain`      | C2b chunk | `ESmShareComputationChain`     | A chunk of C2b other than the last; non-ZK                         |
 | `e_sm_share_computation_chain_last` | C2b chunk | `ESmShareComputationChainLast` | The last chunk of C2b                                              |
 | `share_encryption`                  | C3        | `ShareEncryption`              | BFV encryption of shares under recipient keys                      |
-| `share_decryption`                  | C4        | `DkgShareDecryption`           | Decrypt shares; aggregate; commitments for P4                      |
+| `share_decryption`                  | C4        | `DkgShareDecryption`           | Decrypt shares; aggregate; commitments for P4; verifies the limbs  |
+| `share_decryption_limb_0`           | C4 limb   | `DkgShareDecryptionLimb0`      | CRT limb 0 of C4; non-ZK                                           |
+| `share_decryption_limb_1`           | C4 limb   | `DkgShareDecryptionLimb1`      | CRT limb 1 of C4; non-ZK                                           |
+| `share_decryption_limb_2`           | C4 limb   | `DkgShareDecryptionLimb2`      | CRT limb 2 of C4; non-ZK                                           |
 
 ### Threshold (`bin/threshold/`)
 
@@ -82,7 +91,7 @@ C2a and C2b proofs and hashes each one's chunk key tree into its key hash.
 | `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b and binds each C2's chunk key tree into its key hash.                |
 | `c3_fold`, `c3_fold_kernel`       | `C3Fold`, `C3FoldKernel`       | Folds the C3 proofs of one branch in sequence. The kernel makes the first accumulator. |
 | `c3ab_fold`                       | `C3abFold`                     | Folds the final secret key and smudging noise C3 folds.                                |
-| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b.                                                                     |
+| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b and binds each C4's limb key tree into its key hash.                 |
 | `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                  |
 | `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence.                                            |
 | `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                |

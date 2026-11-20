@@ -1485,6 +1485,9 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "chonk", "c6_chonk_app"),
     ("default", "chonk", "c6_chonk_init_kernel"),
     ("default", "chonk", "c6_chonk_tail_kernel"),
+    ("default", "dkg", "share_decryption_limb_0"),
+    ("default", "dkg", "share_decryption_limb_1"),
+    ("default", "dkg", "share_decryption_limb_2"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1527,7 +1530,10 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[9],
         compute_vk_hash(vec![c3_chain, c3_chain]),
         keys[10],
-        compute_vk_hash(vec![keys[5], keys[5]]),
+        {
+            let limbs = compute_vk_hash(vec![keys[29], keys[30], keys[31]]);
+            compute_vk_hash(vec![keys[5], limbs, keys[5], limbs])
+        },
     ]);
     let expected = [
         (
@@ -1546,8 +1552,8 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
-        // Keys 14..=16 and 25.. are the C6 chain; every other key is under the node fold.
-        let c6 = usize::from((14..=16).contains(&i) || i >= 25);
+        // Keys 14..=16 and 25..=28 are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i) || (25..=28).contains(&i));
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
         assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));

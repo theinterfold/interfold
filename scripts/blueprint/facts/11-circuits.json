@@ -48,7 +48,7 @@
         },
         {
           "why": "the commitment: hashes pk0 then pk1 under the DS_PK domain separator",
-          "ref": "circuits/lib/src/math/commitments.nr@211@pub fn compute_dkg_pk_commitment"
+          "ref": "circuits/lib/src/math/commitments.nr@218@pub fn compute_dkg_pk_commitment"
         }
       ],
       "rust_patterns": [],
@@ -392,45 +392,45 @@
       "consumes": [
         {
           "name": "public: expected_commitments",
-          "by": "ShareDecryption::execute",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@15@expected_commitments: pub [[Field; L_THRESHOLD]; H]"
+          "by": "share_decryption_limb",
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@21@expected_commitments: pub [[Field; L_THRESHOLD]; H]"
         },
         {
-          "name": "private: decrypted_shares",
-          "by": "ShareDecryption::execute",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@16@decrypted_shares: [[Polynomial<N>; L_THRESHOLD]; H]"
+          "name": "private: limb_proofs",
+          "by": "check_limb_chain",
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@24@limb_proofs: [UltraHonkProof; L_THRESHOLD]"
         }
       ],
       "emits": [],
       "state": [],
       "key_types": [
         {
-          "name": "ShareDecryption",
-          "what": "H decrypted shares and their C2 commitments, aggregated per CRT limb",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@35@pub struct ShareDecryption<"
+          "name": "share_decryption_limb",
+          "what": "C4's statement for one CRT limb: open the H shares, sum, normalize and continue the aggregate commitment's sponge",
+          "ref": "circuits/lib/src/core/dkg/share_decryption_chain.nr@66@pub fn share_decryption_limb<"
         }
       ],
       "read_first": [
         {
-          "why": "entry point: main takes the C2 commitments and the H decrypted shares and returns the aggregate commitment",
-          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@14@fn main("
+          "why": "entry point: main takes the C2 commitments and the three limb proofs, links them and returns the aggregate commitment and the limb key hash",
+          "ref": "circuits/bin/dkg/share_decryption/src/main.nr@20@fn main("
         },
         {
-          "why": "execute: check each share, sum, normalize, then commit",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@130@pub fn execute(self, moduli: [Field; L]) -> Field"
+          "why": "the chain check: the limb links start from the fresh aggregate sponge and the last limb's output is the commitment",
+          "ref": "circuits/lib/src/core/dkg/share_decryption_chain.nr@92@assert(links[0][0] == limb_chain_start_hash::<N, L, BIT_AGG>(), \"Chain must start fresh\");"
         },
         {
           "why": "the per-share check against its C2 commitment",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@78@compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>("
+          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@61@compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>("
         },
         {
-          "why": "the output commitment that C6 later opens",
-          "ref": "circuits/lib/src/core/dkg/share_decryption.nr@151@compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)"
+          "why": "the output commitment that C6 later opens, squeezed by the last limb",
+          "ref": "circuits/lib/src/core/dkg/share_decryption_chain.nr@83@squeeze_one_after_absorb(aggregated_io_pattern::<N, L, BIT_AGG>(), state, pos)"
         }
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "lib/src/core/dkg/share_decryption.nr has 2 #[test] functions; run nargo test in circuits/lib. This package has none.",
+      "tests": "lib/src/core/dkg/share_decryption_chain.nr has 3 #[test] functions and core/dkg/share_decryption.nr has 2; run nargo test in circuits/lib. This package has none.",
       "unverified": [
         "Generator role (each selected member proves its own aggregate) comes from docs/architecture/dkg.md, not from the circuit code."
       ]
@@ -946,7 +946,7 @@
         },
         {
           "why": "node_fold entry point: one member's C0 to C4 proofs and their same-party links",
-          "ref": "circuits/bin/recursive_aggregation/node_fold/src/main.nr@85@fn main("
+          "ref": "circuits/bin/recursive_aggregation/node_fold/src/main.nr@87@fn main("
         }
       ],
       "rust_patterns": [],
@@ -1024,7 +1024,7 @@
         },
         {
           "why": "the commitment wrapper that every commitment goes through",
-          "ref": "circuits/lib/src/math/commitments.nr@143@pub fn compute_commitment("
+          "ref": "circuits/lib/src/math/commitments.nr@150@pub fn compute_commitment("
         },
         {
           "why": "the negacyclic evaluation kernel used by the BFV identity checks",
