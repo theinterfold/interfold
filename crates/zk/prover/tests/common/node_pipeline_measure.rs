@@ -7,8 +7,8 @@
 //! Support for the per-node trBFV DKG pipeline measurement (`node_pipeline_trbfv_measure.rs`).
 //!
 //! Output lines:
-//! - `skipping: <reason>` (a flag is not set) or `SKIP <reason>` (`MEASURE_RUN=1`, but the active
-//!   circuit artifacts are for another preset or committee): the test passes without measuring.
+//! - `skipping: <reason>`: a flag is not set; the test passes without measuring. With the flags set,
+//!   active circuit artifacts for another preset or committee fail the test.
 //!   `measure: preset=<preset> committee=<committee> n=<n> h=<h> t=<t> party=<id>` opens a
 //!   measurement.
 //! - `MEASURE <label> start <unix_ms>` / `MEASURE <label> done <s>s`: one top-level prover call,
@@ -85,8 +85,9 @@ pub fn note(text: &str) {
     println!("NOTE {text}");
 }
 
-/// Returns the committee to measure when `MEASURE_RUN=1` and the active circuit artifacts match
-/// `preset` and `MEASURE_COMMITTEE` (default `small`). Prints why it skips otherwise.
+/// Returns the committee to measure when `MEASURE_RUN=1` and `extra_env` are set, and prints why it
+/// skips otherwise. Once opted in, panics unless the active circuit artifacts match `preset` and
+/// `MEASURE_COMMITTEE` (default `small`), so a requested measurement cannot pass empty.
 pub fn gate(
     preset: BfvPreset,
     extra_env: Option<&str>,
@@ -115,14 +116,13 @@ pub fn gate(
     if active_bin_preset().as_deref() != Some(expected_preset.as_str())
         || active_bin_committee().as_deref() != Some(committee.as_str())
     {
-        println!(
-            "SKIP active circuit artifacts are {:?}/{:?}; this measurement needs {expected_preset}/{} (pnpm build:circuits --preset {expected_preset} --committee {}, then run cargo with E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 so its build script keeps them active)",
+        panic!(
+            "active circuit artifacts are {:?}/{:?}; this measurement needs {expected_preset}/{} (pnpm build:circuits --preset {expected_preset} --committee {}, then run cargo with E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 so its build script keeps them active)",
             active_bin_preset(),
             active_bin_committee(),
             committee.as_str(),
             committee.as_str()
         );
-        return None;
     }
     let values = committee.values();
     println!(
