@@ -230,6 +230,27 @@ pub(super) fn qualify(
         );
     }
     let input = prepare_decryption(&prover, config, partials, c7)?;
+    // A valid C7 body authenticates its original public plaintext only. The host
+    // accepts a different well-formed plaintext, but the recursive verifier must not.
+    let mut other_c7 = c7.clone();
+    let mut public = c7.public_signals.extract_bytes();
+    let last = public
+        .chunks_exact_mut(32)
+        .last()
+        .context("empty C7 statement")?;
+    ensure!(last.iter().any(|byte| *byte != 0));
+    last.fill(0);
+    other_c7.public_signals = e3_utils::utility_types::ArcBytes::from_bytes(&public);
+    prepare_decryption(&prover, config, partials, &other_c7)?;
+    let error = prove_decryption(&prover, config, partials, &other_c7, "wrong-c7-statement")
+        .expect_err("C7 body verified with a different plaintext");
+    ensure!(
+        matches!(
+            error.downcast_ref::<e3_zk_prover::ZkError>(),
+            Some(e3_zk_prover::ZkError::ProofRejected(_))
+        ),
+        "unexpected C7 rejection: {error:#}"
+    );
     for name in ["c6", "c7"] {
         let mut wrong_key = input.clone();
         wrong_key[format!("{name}_vk")][0] = json!("0");

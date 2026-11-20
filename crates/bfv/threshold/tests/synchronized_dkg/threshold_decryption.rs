@@ -184,7 +184,13 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     ] {
         let mut bad = original.clone();
         *bad.pointer_mut(pointer).unwrap() = value;
-        job.reject(&bad, pointer)?;
+        let diagnostic = job.reject(&bad, pointer)?;
+        if pointer == "/shares/1/0/0" {
+            ensure!(
+                diagnostic.contains("Noncanonical C6 share coefficient"),
+                "wrong range rejection: {diagnostic}"
+            );
+        }
     }
     // Same ciphertext and E3, same owner in slot 1, but an independently proven C6 from
     // a different H/S. Neither set is complete after this replacement.
