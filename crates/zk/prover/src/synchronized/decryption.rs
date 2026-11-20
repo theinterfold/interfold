@@ -12,7 +12,7 @@ use crate::{
     circuits::vk::{self, VkArtifacts},
     ZkProver,
 };
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use e3_events::Proof;
 use e3_zk_config::{
     synchronized::{
@@ -37,14 +37,28 @@ pub struct ExpectedDecryption<'a> {
     pub message: &'a [u64],
 }
 
+fn key(vk: &VkArtifacts) -> VerificationKey<'_> {
+    VerificationKey {
+        fields: &vk.verification_key_bytes,
+        hash: vk.key_hash_bytes,
+    }
+}
+
 fn keys(prover: &ZkProver, config: &Configs) -> Result<[VkArtifacts; 2]> {
     let namespace = config
         .profile
         .artifacts_dir_for_committee(config.committee)?;
     let dir = prover.circuits_dir(CircuitVariant::Recursive, &namespace);
+    let load = |role| -> Result<_> {
+        let artifacts = vk::load_vk_artifacts(&dir, role)?;
+        key(&artifacts)
+            .validate_recursive_honk()
+            .with_context(|| format!("Invalid local {role} VK in {}", dir.display()))?;
+        Ok(artifacts)
+    };
     Ok([
-        vk::load_vk_artifacts(&dir, CircuitName::ThresholdShareDecryption)?,
-        vk::load_vk_artifacts(&dir, CircuitName::DecryptedSharesAggregation)?,
+        load(CircuitName::ThresholdShareDecryption)?,
+        load(CircuitName::DecryptedSharesAggregation)?,
     ])
 }
 
@@ -55,12 +69,6 @@ pub fn prepare_decryption(
     aggregation: &Proof,
 ) -> Result<Value> {
     let [c6, c7] = keys(prover, config)?;
-    fn key(vk: &VkArtifacts) -> VerificationKey<'_> {
-        VerificationKey {
-            fields: &vk.verification_key_bytes,
-            hash: vk.key_hash_bytes,
-        }
-    }
     Ok(decryption_aggregation::prepare(
         config,
         &partials.iter().map(child).collect::<Vec<_>>(),
