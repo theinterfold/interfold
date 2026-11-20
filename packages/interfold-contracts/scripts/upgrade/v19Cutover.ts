@@ -62,13 +62,16 @@ import type {
   ProtocolConfigFile,
   ProtocolDeployment,
   SafeTransaction,
+  TimeoutConfig,
   V19CutoverPlan,
 } from "../protocol/types";
 import {
   address,
   encodeBfvParams,
+  isMissingFunctionError,
   loadConfig,
   requireContract,
+  timeoutConfig,
 } from "../protocol/values";
 import { verifyRecordedDeployments } from "../sourceVerification";
 import {
@@ -639,13 +642,19 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   const thresholds: V19CutoverDecisions["committeeThresholds"] = [];
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
-    const [quorum, total] = await Promise.all([
+    // The implementation that the batch replaces reverts without data on a size that its
+    // `CommitteeSize` lacks. The batch upgrades first, so it sets that size.
+    const current = await Promise.all([
       interfold.committeeThresholds(size, 0n),
       interfold.committeeThresholds(size, 1n),
-    ]);
+    ]).catch((error) => {
+      if (isMissingFunctionError(error)) return undefined;
+      throw error;
+    });
     if (
-      quorum !== BigInt(threshold.quorum) ||
-      total !== BigInt(threshold.total)
+      !current ||
+      current[0] !== BigInt(threshold.quorum) ||
+      current[1] !== BigInt(threshold.total)
     ) {
       thresholds.push({
         size,
@@ -850,6 +859,29 @@ v0.19 cutover prepared
 }
 
 /**
+ * Require the live E3 windows to equal the configured ones. The cutover batch does not set them, so
+ * a chain whose governance skipped the manual `setTimeoutConfig` (Sepolia: `dkgWindow` 1800 s, where
+ * a Large committee needs 7200 s) must not resume.
+ */
+export function requireTimeoutConfig(
+  live: { dkgWindow: bigint; computeWindow: bigint; decryptionWindow: bigint },
+  configured: TimeoutConfig,
+): void {
+  const expected = timeoutConfig(configured);
+  for (const window of [
+    "dkgWindow",
+    "computeWindow",
+    "decryptionWindow",
+  ] as const) {
+    if (live[window] !== expected[window]) {
+      throw new Error(
+        `Interfold ${window} is ${live[window]} s; the configuration sets ${expected[window]} s. Execute setTimeoutConfig with the configured windows before resume`,
+      );
+    }
+  }
+}
+
+/**
  * Check the executed cutover against the plan. Reads only, so it can run before resume and again
  * after it. `--write-records` copies the new addresses into both deployment records.
  */
@@ -907,6 +939,10 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
       `committee ${threshold.size} total`,
     );
   }
+  requireTimeoutConfig(
+    await interfold.getTimeoutConfig(),
+    config.interfold.timeoutConfig,
+  );
   equalAddress(
     String(await interfold.getPkVerifier(BFV_SCHEME_ID)),
     plan.pkVerifier,
