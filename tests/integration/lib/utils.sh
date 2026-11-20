@@ -9,13 +9,13 @@ get_evm_timestamp() {
 }
 
 # Check which committee sizes the local deployment configured. With mock verifiers it configures
-# every size (0, 1 and 2). The ZK verifiers check one committee's H and T, so with them it
+# every size (0, 1, 2 and 3). The ZK verifiers check one committee's H and T, so with them it
 # configures only the size selected by deployment tooling. Interfold itself rejects an [H, N] pair
 # that does not match the size.
 # Usage: check_committee_sizes <interfold-contracts package dir> <zk verification true|false> [rpc_url]
 check_committee_sizes() {
   local package="$1" zk="$2" rpc_url="${3:-http://localhost:8545}"
-  local interfold size total configured="" expected="0 1 2"
+  local interfold size total configured="" expected="0 1 2 3"
   interfold=$(jq -r '.localhost.Interfold.address' "$package/deployed_contracts.json")
   for size in 0 1 2 3; do
     total=$(cast call "$interfold" "committeeThresholds(uint8,uint256)(uint32)" "$size" 1 \

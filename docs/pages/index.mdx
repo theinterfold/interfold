@@ -98,7 +98,7 @@ import {
 
 <Reveal>
   <SectionHead kicker='Committees' title='Security comes from the committee'>
-    No single ciphernode can decrypt. The protocol supports three committee sizes. Decryption needs
+    No single ciphernode can decrypt. The protocol supports four committee sizes. Decryption needs
     T + 1 key shares.
   </SectionHead>
 
@@ -107,6 +107,7 @@ import {
     { value: '3', label: 'minimum', hint: 'N = 3, T = 1. The smallest committee.' },
     { value: '9', label: 'micro', hint: 'N = 9, T = 4.' },
     { value: '19', label: 'small', hint: 'N = 19, T = 9. Higher assurance.' },
+    { value: '45', label: 'large', hint: 'N = 45, T = 22. Sepolia and local chains.' },
   ]}
 />
 
