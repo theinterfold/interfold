@@ -46,8 +46,12 @@ fn every_supported_identity_resolves_to_its_own_profile_only() {
     assert_eq!(supported, 7);
 
     let unknown = B256::repeat_byte(0x12);
-    let error = BfvProfile::from_crypto_config_id(0, CiphernodesCommitteeSize::Minimum, unknown)
-        .unwrap_err();
+    let error = BfvProfile::from_crypto_config_id(
+        BfvProfile::SsInsecure64.param_set(),
+        CiphernodesCommitteeSize::Minimum,
+        unknown,
+    )
+    .unwrap_err();
     assert!(
         matches!(&error, BfvProfileError::UnsupportedConfiguration(id) if *id == unknown.to_string()),
         "{error}"

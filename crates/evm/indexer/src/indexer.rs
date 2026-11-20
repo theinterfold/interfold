@@ -403,6 +403,22 @@ impl<S: DataStore> InterfoldIndexer<S, ReadWrite> {
     }
 }
 
+/// Statement versions of the threshold-only configuration IDs that requests of a historical
+/// registry slot carry. Registration is append-only, so current presets use later slots and these
+/// slots keep their original bytes: slots 0 and 2 hold the v0.19 tuples (slot 0 on testnets), and
+/// slots 0 and 1 hold the earlier Mainnet tuples.
+fn historical_statement_versions(param_set: u8) -> &'static [&'static str] {
+    match param_set {
+        0 => &[LEGACY_BFV_CONFIG_VERSION, "interfold-bfv-v1"],
+        1 => &["interfold-bfv-v1"],
+        2 => &[LEGACY_BFV_CONFIG_VERSION],
+        _ => &[],
+    }
+}
+
+/// Resolve the parameter bytes of a request. A current slot resolves through its profile identity
+/// to the local preset. A historical slot resolves to its registry bytes, and only under the
+/// threshold-only identity those exact bytes had when the request was made.
 fn request_bfv_params(
     param_set: u8,
     committee_size: u8,
@@ -410,21 +426,17 @@ fn request_bfv_params(
     historical_params: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     if let Some(preset) = BfvPreset::from_on_chain_param_set(param_set) {
-        let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
         if let Ok(committee) = CiphernodesCommitteeSize::try_from(committee_size) {
             if let Ok(profile) =
                 BfvProfile::from_crypto_config_id(param_set, committee, request_config_id)
             {
                 profile.ensure_admission_enabled()?;
-                return Ok(params);
+                return Ok(encode_bfv_params(&BfvParamSet::from(preset).build_arc()));
             }
         }
-        // Historical completed requests keep their original threshold-only v5 identity.
-        if request_config_id == bfv_crypto_config_id(&params, LEGACY_BFV_CONFIG_VERSION) {
-            return Ok(params);
-        }
     }
-    if param_set != 0 && param_set != 1 {
+    let versions = historical_statement_versions(param_set);
+    if versions.is_empty() {
         return Err(eyre!(
             "unsupported BFV parameter set {param_set} or configuration ID"
         ));
@@ -434,7 +446,10 @@ fn request_bfv_params(
         .ok_or_else(|| eyre!("historical BFV parameter set {param_set} is not registered"))?;
     decode_bfv_params(params)
         .map_err(|error| eyre!("invalid historical BFV parameters: {error}"))?;
-    if request_config_id != bfv_crypto_config_id(params, "interfold-bfv-v1") {
+    if !versions
+        .iter()
+        .any(|version| request_config_id == bfv_crypto_config_id(params, version))
+    {
         return Err(eyre!(
             "local circuit configuration does not match request-time config for parameter set {param_set}"
         ));
@@ -467,7 +482,7 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         request_crypto_config_id,
         None,
     ) {
-        Err(_) if e3.paramSet == 0 || e3.paramSet == 1 => {
+        Err(_) if !historical_statement_versions(e3.paramSet).is_empty() => {
             let historical_params = contract.get_param_set_registry(e3.paramSet).await?;
             request_bfv_params(
                 e3.paramSet,
@@ -1239,20 +1254,90 @@ mod public_key_chunk_tests {
         assert!(request_bfv_params(0, 0, id, Some(&extended)).is_err());
         assert!(request_bfv_params(0, 0, extended_id, Some(&params)).is_err());
 
+        let slot = BfvProfile::SsInsecure64.param_set();
         let current =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc());
         let current_id = BfvProfile::SsInsecure64
             .crypto_config_id(CiphernodesCommitteeSize::Minimum)
             .unwrap();
-        assert_eq!(request_bfv_params(0, 0, current_id, None).unwrap(), current);
-        assert!(request_bfv_params(1, 0, current_id, Some(&current)).is_err());
+        assert_eq!(
+            request_bfv_params(slot, 0, current_id, None).unwrap(),
+            current
+        );
+        // A historical slot never resolves a current identity, even over the current bytes.
+        for historical in [0, 1, 2] {
+            assert!(request_bfv_params(historical, 0, current_id, Some(&current)).is_err());
+        }
         let disabled = BfvProfile::SyncDecInsecure64
             .crypto_config_id(CiphernodesCommitteeSize::Minimum)
             .unwrap();
-        assert!(request_bfv_params(0, 0, disabled, Some(&current))
+        assert!(request_bfv_params(slot, 0, disabled, Some(&current))
             .unwrap_err()
             .to_string()
             .contains("disabled"));
+    }
+
+    #[test]
+    fn v019_slots_keep_their_registered_bytes_and_threshold_only_identity() {
+        // The v0.19 tuples that live registries hold: the insecure one at slot 0 (Sepolia) and
+        // the secure one at slot 2 (Mainnet and Sepolia).
+        let insecure = (
+            U256::from(64u64),
+            U256::from(17_000_000u64),
+            vec![
+                U256::from(0x7fffd81u64),
+                U256::from(0x7fff801u64),
+                U256::from(0x7fff781u64),
+            ],
+            "12617929386".to_string(),
+        )
+            .abi_encode();
+        let secure = (
+            U256::from(8192u64),
+            U256::from(17_000_000u64),
+            vec![
+                U256::from(0x0800000000db4001u64),
+                U256::from(0x0800000000d54001u64),
+                U256::from(0x0800000000cbc001u64),
+            ],
+            "17723039943798878305460955570711717478400".to_string(),
+        )
+            .abi_encode();
+        for (slot, params, hash, id) in [
+            (
+                0,
+                &insecure,
+                "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+                "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+            ),
+            (
+                2,
+                &secure,
+                "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+            ),
+        ] {
+            assert_eq!(keccak256(params).to_string(), hash);
+            let config_id: B256 = id.parse().unwrap();
+            assert_eq!(
+                bfv_crypto_config_id(params, LEGACY_BFV_CONFIG_VERSION),
+                config_id
+            );
+            assert_eq!(
+                &request_bfv_params(slot, 0, config_id, Some(params)).unwrap(),
+                params
+            );
+            assert!(request_bfv_params(slot, 0, config_id, None).is_err());
+            // Slot 1 only ever carried v1 identities.
+            assert!(request_bfv_params(1, 0, config_id, Some(params)).is_err());
+            // No current slot resolves a threshold-only identity.
+            for current in BfvProfile::ALL.map(BfvProfile::param_set) {
+                assert!(request_bfv_params(current, 0, config_id, Some(params)).is_err());
+            }
+        }
+        // Slot 2 never held a v1 tuple.
+        let v1_id = bfv_crypto_config_id(&secure, "interfold-bfv-v1");
+        assert!(request_bfv_params(2, 0, v1_id, Some(&secure)).is_err());
     }
 
     #[test]
@@ -1304,6 +1389,7 @@ mod public_key_chunk_tests {
 
     #[test]
     fn current_secure_slot_requires_the_current_configuration_id() {
+        let slot = BfvProfile::SsSecure8192.param_set();
         let params =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::SecureThreshold8192).build_arc());
         for committee in CiphernodesCommitteeSize::ALL {
@@ -1311,15 +1397,17 @@ mod public_key_chunk_tests {
                 .crypto_config_id(committee)
                 .unwrap();
             assert_eq!(
-                request_bfv_params(2, committee as u8, id, None).unwrap(),
+                request_bfv_params(slot, committee as u8, id, None).unwrap(),
                 params
             );
-            assert!(request_bfv_params(2, (committee as u8 + 1) % 3, id, None).is_err());
-            assert!(request_bfv_params(3, committee as u8, id, None).is_err());
+            assert!(request_bfv_params(slot, (committee as u8 + 1) % 3, id, None).is_err());
+            assert!(request_bfv_params(5, committee as u8, id, None).is_err());
+            assert!(request_bfv_params(2, committee as u8, id, Some(&params)).is_err());
         }
+        // A threshold-only identity is historical: no current slot admits one.
         let legacy_id = bfv_crypto_config_id(&params, LEGACY_BFV_CONFIG_VERSION);
-        assert_eq!(request_bfv_params(2, 0, legacy_id, None).unwrap(), params);
-        assert!(request_bfv_params(2, 0, keccak256(b"interfold-bfv-v1"), None).is_err());
+        assert!(request_bfv_params(slot, 0, legacy_id, Some(&params)).is_err());
+        assert!(request_bfv_params(slot, 0, keccak256(b"interfold-bfv-v1"), None).is_err());
     }
 
     #[tokio::test]
@@ -1450,7 +1538,7 @@ mod public_key_chunk_tests {
             .setRequestCrypto(
                 U256::from(7),
                 bfv_encryption_scheme_id(),
-                2,
+                BfvProfile::SsSecure8192.param_set(),
                 BfvProfile::SsSecure8192.crypto_config_id(CiphernodesCommitteeSize::Minimum)?,
             )
             .send()

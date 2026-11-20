@@ -234,7 +234,7 @@ describe("Interfold", function () {
       const { interfold, notTheOwner } = await loadFixture(setup);
 
       await expect(
-        interfold.connect(notTheOwner).setParamSet(0, BFV_PARAMS_DEFAULT),
+        interfold.connect(notTheOwner).setParamSet(4, BFV_PARAMS_DEFAULT),
       )
         .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
         .withArgs(notTheOwner);
@@ -243,33 +243,36 @@ describe("Interfold", function () {
     it("accepts only supported circuit parameter sets", async function () {
       const { interfold } = await loadFixture(setup);
 
-      expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
-      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
+      expect(await interfold.paramSetRegistry(4)).to.equal(BFV_PARAMS_DEFAULT);
+      await expect(interfold.setParamSet(3, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(2, BFV_PARAMS_SECURE);
-      expect(await interfold.paramSetRegistry(2)).to.equal(BFV_PARAMS_SECURE);
-      expect(await interfold.paramSetRegistry(1)).to.equal("0x");
-      await expect(
-        interfold.setParamSet(1, BFV_PARAMS_SECURE),
-      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
-      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
+        .withArgs(3, BFV_PARAMS_SECURE);
+      expect(await interfold.paramSetRegistry(3)).to.equal(BFV_PARAMS_SECURE);
+      // Indices 0, 1 and 2 hold earlier tuples on live chains and stay closed.
+      for (const historical of [0, 1, 2]) {
+        expect(await interfold.paramSetRegistry(historical)).to.equal("0x");
+        await expect(
+          interfold.setParamSet(historical, BFV_PARAMS_SECURE),
+        ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      }
+      await expect(interfold.setParamSet(3, BFV_PARAMS_SECURE))
         .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
-        .withArgs(2);
+        .withArgs(3);
     });
 
     it("does not overwrite the active parameter set", async function () {
       const { interfold } = await loadFixture(setup);
 
-      await expect(interfold.setParamSet(0, BFV_PARAMS_DEFAULT))
+      await expect(interfold.setParamSet(4, BFV_PARAMS_DEFAULT))
         .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
-        .withArgs(0);
+        .withArgs(4);
     });
 
     it("rejects parameter bytes that do not match the active circuit", async function () {
       const { interfold } = await loadFixture(setup);
 
       await expect(
-        interfold.setParamSet(2, "0x"),
+        interfold.setParamSet(3, "0x"),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
   });
@@ -556,13 +559,13 @@ describe("Interfold", function () {
   });
 
   describe("request()", function () {
-    it("binds new secure requests to slot 2", async function () {
+    it("binds new secure requests to slot 3", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
-      await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+      await interfold.setParamSet(3, BFV_PARAMS_SECURE);
       const secureRequest = {
         ...request,
         inputWindow: await freshInputWindow(),
-        paramSet: 2,
+        paramSet: 3,
         expectedCryptoConfigId: bfvConfiguration(
           "ss-secure-8192",
           Number(request.committeeSize),
@@ -574,7 +577,7 @@ describe("Interfold", function () {
         interfold,
         "E3Requested",
       );
-      expect((await interfold.getE3(firstE3Id)).paramSet).to.equal(2);
+      expect((await interfold.getE3(firstE3Id)).paramSet).to.equal(3);
       expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
         secureRequest.expectedCryptoConfigId,
       );
@@ -630,11 +633,11 @@ describe("Interfold", function () {
     ]) {
       it(`rejects ${version} configurations for both BFV parameter sets`, async function () {
         const { interfold, request } = await loadFixture(setup);
-        await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+        await interfold.setParamSet(3, BFV_PARAMS_SECURE);
         for (const [paramSet, params, currentConfigId] of [
-          [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+          [4, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
           [
-            2,
+            3,
             BFV_PARAMS_SECURE,
             bfvConfiguration("ss-secure-8192", Number(request.committeeSize))
               .configId,

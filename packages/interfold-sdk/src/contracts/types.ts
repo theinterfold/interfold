@@ -33,8 +33,8 @@ export function validateCommitteeSize(value: number | CommitteeSize): CommitteeS
 }
 
 export enum ParamSet {
-  Insecure64 = 0,
-  Secure8192 = 2,
+  Insecure64 = 4,
+  Secure8192 = 3,
 }
 
 export interface E3 {

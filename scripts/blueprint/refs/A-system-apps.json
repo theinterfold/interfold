@@ -134,7 +134,7 @@
     "supported": true,
     "refs": [
       "crates/evm/indexer/src/indexer.rs@395@create_contract_listener(rpc_url, addresses)",
-      "crates/evm/indexer/src/indexer.rs@1109@event_listener.listen()"
+      "crates/evm/indexer/src/indexer.rs@1141@event_listener.listen()"
     ],
     "line_text": [
       "let event_listener = EventListener::create_contract_listener(rpc_url, addresses).await?;",
