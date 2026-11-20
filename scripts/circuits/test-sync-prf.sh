@@ -3,7 +3,7 @@ set -euo pipefail
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-for shape in vector vector-micro; do
+for shape in vector vector-micro vector-secure-moduli; do
   cargo run --locked -p e3-zk-samples --example sync_prf -- "$shape" "$scratch/$shape"
   (
     cd "$scratch/$shape"
