@@ -5,7 +5,6 @@ import type {
   LogDescription,
   TypedDataDomain,
 } from "ethers";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,6 +15,7 @@ import {
   ethers,
   networkHelpers,
 } from "../fixtures";
+import { ProofCleanupError, runProofCommand } from "../fixtures/proofCommand";
 import {
   synchronizedDkgAttestationDomain,
   synchronizedDkgAttestationTypes,
@@ -209,11 +209,14 @@ describe("Synchronized DKG registry authority", function () {
     async function () {
       // Includes the locked Rust build on cold CI workers.
       this.timeout(50 * 60_000);
+      // Leave time for group teardown and the EVM checks after the last proof tool.
+      const deadline = performance.now() + 48 * 60_000;
       // A separate finalized request is seeded below with the real DKG verifier.
       const base = await networkHelpers.loadFixture(setup);
       const f = { ...base, e3Id: base.e3Id + 1n };
       const root = resolve("../..");
       const dir = mkdtempSync(join(tmpdir(), "sync-decryption-"));
+      let cleanup = true;
       try {
         const fixture = join(dir, "export");
         const context = join(dir, "context.json");
@@ -228,7 +231,7 @@ describe("Synchronized DKG registry authority", function () {
             nodes: f.nodes,
           }),
         );
-        execFileSync("pnpm", ["rust:test:sync-dkg:proofs"], {
+        await runProofCommand(deadline, "pnpm", ["rust:test:sync-dkg:proofs"], {
           cwd: root,
           env: {
             ...process.env,
@@ -237,12 +240,12 @@ describe("Synchronized DKG registry authority", function () {
             E3_SYNC_DECRYPTION_EXPORT: fixture,
             E3_SYNC_DKG_EXPORT: join(dir, "dkg"),
           },
-          stdio: "inherit",
         });
-        execFileSync(
+        await runProofCommand(
+          deadline,
           "pnpm",
           ["exec", "tsx", "scripts/circuits/render-sync-honk.ts", fixture],
-          { cwd: root, stdio: "inherit" },
+          { cwd: root },
         );
         const source = "SynchronizedHonk.sol";
         const deployHonk = (path: string, name: string) =>
@@ -370,21 +373,30 @@ describe("Synchronized DKG registry authority", function () {
           idx: number,
           value: bigint = BigInt(fields[idx]!) ^ 1n,
         ) => fields.map((v, i) => (i === idx ? field(value) : v));
-        for (const [idx, error] of [
-          [0, "VkHashMismatch"],
-          [1, "VkHashMismatch"],
-          [14, "DomainBindingMismatch"],
-          [16, "DkgAnchorMismatch"],
-          [17, "DkgAnchorMismatch"],
-          [19, "DomainBindingMismatch"],
-          [21, "DkgAnchorMismatch"],
-          [22, "DkgAnchorMismatch"],
-          [23, "CiphertextCommitmentMismatch"],
-        ] as const) {
+        for (const idx of [0, 1]) {
           await expect(call(changed(idx))).to.be.revertedWithCustomError(
             wrapper,
-            error,
+            "VkHashMismatch",
           );
+        }
+        // Each 12-field row is checked against the published authority before Honk.
+        for (const start of [2, 14]) {
+          for (const [offset, error] of [
+            [0, "DomainBindingMismatch"],
+            [1, "DomainBindingMismatch"],
+            [2, "DkgAnchorMismatch"],
+            [3, "DkgAnchorMismatch"],
+            [4, "DkgAnchorMismatch"],
+            [5, "DomainBindingMismatch"],
+            [6, "DomainBindingMismatch"],
+            [7, "DkgAnchorMismatch"],
+            [8, "DkgAnchorMismatch"],
+            [9, "CiphertextCommitmentMismatch"],
+          ] as const) {
+            await expect(
+              call(changed(start + offset)),
+            ).to.be.revertedWithCustomError(wrapper, error);
+          }
         }
         await expect(
           call(changed(12, 1n << 255n)),
@@ -397,8 +409,14 @@ describe("Synchronized DKG registry authority", function () {
         );
         // d has no independent registry value. Its authenticity comes from the actual Honk proof.
         await expect(call(changed(12))).to.be.revert(ethers);
+      } catch (error) {
+        if (error instanceof ProofCleanupError) {
+          cleanup = false;
+          throw new Error(`Retained proof fixture at ${dir}`, { cause: error });
+        }
+        throw error;
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        if (cleanup) rmSync(dir, { recursive: true, force: true });
       }
     },
   );

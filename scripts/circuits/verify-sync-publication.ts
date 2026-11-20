@@ -10,11 +10,24 @@ export function verifySynchronizedPublication(root: string, fixture: string): nu
   const prepared = JSON.parse(readFileSync(fixture, 'utf8'))
   const source = join(dirname(fixture), 'SynchronizedHonk.sol')
   renderSynchronizedHonk(root, prepared.vk, 'dkg_aggregator', source)
-  const result = spawnSync('pnpm', ['exec', 'hardhat', 'test', 'mocha', '--no-compile', 'test/SynchronizedDkgPublication.spec.ts'], {
-    cwd: join(root, 'packages/interfold-contracts'),
-    env: { ...process.env, E3_SYNC_PUBLICATION_FIXTURE: fixture, E3_SYNC_PUBLICATION_VERIFIER_SOURCE: source },
-    stdio: 'inherit',
-  })
+  const result = spawnSync(
+    'pnpm',
+    [
+      'exec',
+      'hardhat',
+      '--config',
+      'hardhat.qualification.config.ts',
+      'test',
+      'mocha',
+      '--no-compile',
+      'test/SynchronizedDkgPublication.spec.ts',
+    ],
+    {
+      cwd: join(root, 'packages/interfold-contracts'),
+      env: { ...process.env, E3_SYNC_PUBLICATION_FIXTURE: fixture, E3_SYNC_PUBLICATION_VERIFIER_SOURCE: source },
+      stdio: 'inherit',
+    },
+  )
   if (result.error) throw result.error
   return result.status ?? 1
 }

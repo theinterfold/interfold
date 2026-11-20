@@ -145,7 +145,16 @@ else {
       writeFileSync(join(root, 'status'), String(status))
       assert.equal(verifySynchronizedPublication(root, input), status)
       assert.deepEqual(JSON.parse(readFileSync(join(root, 'runner.json'), 'utf8')), {
-        args: ['exec', 'hardhat', 'test', 'mocha', '--no-compile', 'test/SynchronizedDkgPublication.spec.ts'],
+        args: [
+          'exec',
+          'hardhat',
+          '--config',
+          'hardhat.qualification.config.ts',
+          'test',
+          'mocha',
+          '--no-compile',
+          'test/SynchronizedDkgPublication.spec.ts',
+        ],
         cwd: realpathSync(join(root, 'packages/interfold-contracts')),
         fixture: input,
         source: join(prepared, 'SynchronizedHonk.sol'),

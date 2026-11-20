@@ -131,7 +131,18 @@ test('CI compiles circuits for compiler/verifier inputs or explicit runs, not ev
   t.after(() => rmSync(temp, { recursive: true, force: true }))
   const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
   const script = workflow.split('      - name: Compute job filters\n')[1].match(/        run: \|\n((?:          .*\n|\n)+)/)[1]
-  for (const enabled of ['rust', 'crypto_config', 'ci', 'tooling', 'sdk', 'templates', 'circuits', 'verifiers', 'force']) {
+  for (const enabled of [
+    'rust',
+    'crypto_config',
+    'sync_proof_tools',
+    'ci',
+    'tooling',
+    'sdk',
+    'templates',
+    'circuits',
+    'verifiers',
+    'force',
+  ]) {
     const output = join(temp, enabled)
     const selected = script.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, expression) => {
       const filter = /steps\.(?:circuit_filter|filter)\.outputs\.(\w+)/.exec(expression)
@@ -147,5 +158,6 @@ test('CI compiles circuits for compiler/verifier inputs or explicit runs, not ev
     )
     assert.equal(jobs.build_circuits, String(['circuits', 'verifiers', 'force'].includes(enabled)), enabled)
     assert.equal(jobs.crypto_sources, String(['circuits', 'verifiers', 'crypto_config', 'force'].includes(enabled)), enabled)
+    assert.equal(jobs.zk, String(['rust', 'sync_proof_tools', 'ci', 'tooling', 'circuits', 'force'].includes(enabled)), enabled)
   }
 })
