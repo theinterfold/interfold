@@ -431,6 +431,32 @@ describe("Synchronized DKG registry authority", function () {
     await expect(call()).to.be.revertedWithCustomError(wrapper, "InvalidProof");
   });
 
+  it("requires two contracts and two nonzero scalar pins on deployment", async () => {
+    const f = await networkHelpers.loadFixture(setup);
+    const factory = await ethers.getContractFactory(
+      "SynchronizedDecryptionVerifier",
+    );
+    const honk = await f.circuit.getAddress();
+    const registry = await f.registry.getAddress();
+    const scalarModulus =
+      field(
+        21888242871839275222246405745257275088548364400416034343698204186575808495617n,
+      );
+    for (const [h, r, c6, c7] of [
+      [ethers.ZeroAddress, registry, field(10), field(11)],
+      [honk, ethers.ZeroAddress, field(10), field(11)],
+      [honk, registry, field(0), field(11)],
+      [honk, registry, field(10), field(0)],
+      [honk, registry, scalarModulus, field(11)],
+      [honk, registry, field(10), scalarModulus],
+    ] as const) {
+      await expect(factory.deploy(h, r, c6, c7)).to.be.revertedWithCustomError(
+        factory,
+        "InvalidConfiguration",
+      );
+    }
+  });
+
   async function checkDecryptionAuthority(
     wrapper: BaseContract,
     fields: string[],
