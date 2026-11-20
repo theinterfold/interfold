@@ -60,7 +60,7 @@ pub fn execute(
         for l in 0..L {
             for j in 0..N {
                 let r = shares[s][l][j];
-                assert(r < QIS_THRESHOLD[l] as u64);
+                assert(r < QIS_THRESHOLD[l] as u64, "Noncanonical C6 share coefficient");
                 polynomials[l].coefficients[j] = r as Field;
             }
         }

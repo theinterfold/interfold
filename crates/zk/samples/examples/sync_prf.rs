@@ -24,7 +24,10 @@ fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| "usage: sync_prf CASE NEW_DIRECTORY")?;
-    let vector = matches!(case.as_str(), "vector" | "vector-micro");
+    let vector = matches!(
+        case.as_str(),
+        "vector" | "vector-micro" | "vector-secure-moduli"
+    );
     let (params, committee) =
         match case.as_str() {
             "vector" | "vector-micro" => (
@@ -35,12 +38,21 @@ fn main() -> Result<()> {
                     .build_arc()?,
                 if case == "vector" { Minimum } else { Micro },
             ),
+            // Exercise all production CRT widths against fhe.rs without an 8192-coefficient CI circuit.
+            "vector-secure-moduli" => (
+                BfvParametersBuilder::new()
+                    .set_degree(8)
+                    .set_plaintext_modulus(17)
+                    .set_moduli(BfvPreset::SecureThreshold8192.build_pair()?.0.moduli())
+                    .build_arc()?,
+                Minimum,
+            ),
             "insecure-minimum" => (BfvPreset::InsecureThreshold64.build_pair()?.0, Minimum),
             "secure-minimum" => (BfvPreset::SecureThreshold8192.build_pair()?.0, Minimum),
             "secure-micro" => (BfvPreset::SecureThreshold8192.build_pair()?.0, Micro),
             "secure-small" => (BfvPreset::SecureThreshold8192.build_pair()?.0, Small),
             _ => return Err(
-                "expected vector, vector-micro, insecure-minimum, secure-minimum, secure-micro, or secure-small"
+                "expected vector, vector-micro, vector-secure-moduli, insecure-minimum, secure-minimum, secure-micro, or secure-small"
                     .into(),
             ),
         };
