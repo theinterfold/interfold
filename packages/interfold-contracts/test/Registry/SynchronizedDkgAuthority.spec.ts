@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { expect } from "chai";
 import type {
+  BaseContract,
   ContractTransactionReceipt,
   LogDescription,
   TypedDataDomain,
@@ -358,72 +359,11 @@ describe("Synchronized DKG registry authority", function () {
             cipher,
             coder.encode(["bytes", "bytes32[]"], [raw, inputs]),
           );
-        expect(await call()).to.equal(true);
-        await expect(
-          call(undefined, f.e3Id + 1n),
-        ).to.be.revertedWithCustomError(
-          wrapper,
-          "InvalidSynchronizedAuthority",
-        );
-        await expect(
-          call(undefined, undefined, field(1)),
-        ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
-        await expect(
-          call(undefined, undefined, undefined, field(1)),
-        ).to.be.revertedWithCustomError(wrapper, "PlaintextHashMismatch");
-        await expect(
-          call(undefined, undefined, undefined, undefined, field(1)),
-        ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
-        await expect(
-          call(undefined, undefined, undefined, undefined, undefined, field(1)),
-        ).to.be.revertedWithCustomError(
-          wrapper,
-          "CiphertextCommitmentMismatch",
-        );
-        await expect(call(fields.slice(0, -1))).to.be.revertedWithCustomError(
-          wrapper,
-          "InvalidPublicInputsLength",
-        );
-        const changed = (
-          idx: number,
-          value: bigint = BigInt(fields[idx]!) ^ 1n,
-        ) => fields.map((v, i) => (i === idx ? field(value) : v));
-        for (const idx of [0, 1]) {
-          await expect(call(changed(idx))).to.be.revertedWithCustomError(
-            wrapper,
-            "VkHashMismatch",
-          );
-        }
-        // Each 12-field row is checked against the published authority before Honk.
-        for (const start of [2, 14]) {
-          for (const [offset, error] of [
-            [0, "DomainBindingMismatch"],
-            [1, "DomainBindingMismatch"],
-            [2, "DkgAnchorMismatch"],
-            [3, "DkgAnchorMismatch"],
-            [4, "DkgAnchorMismatch"],
-            [5, "DomainBindingMismatch"],
-            [6, "DomainBindingMismatch"],
-            [7, "DkgAnchorMismatch"],
-            [8, "DkgAnchorMismatch"],
-            [9, "CiphertextCommitmentMismatch"],
-          ] as const) {
-            await expect(
-              call(changed(start + offset)),
-            ).to.be.revertedWithCustomError(wrapper, error);
-          }
-        }
-        await expect(
-          call(changed(12, 1n << 255n)),
-        ).to.be.revertedWithCustomError(wrapper, "NonCanonicalPublicInput");
-        await expect(
-          call(changed(26, 1n << 64n)),
-        ).to.be.revertedWithCustomError(
-          wrapper,
-          "MessageCoefficientOutOfRange",
-        );
-        // d has no independent registry value. Its authenticity comes from the actual Honk proof.
-        await expect(call(changed(12))).to.be.revert(ethers);
+        await checkDecryptionAuthority(wrapper, fields, f.e3Id, call);
+        // d is authenticated only by the real proof.
+        const altered = [...fields];
+        altered[12] = field(BigInt(altered[12]!) ^ 1n);
+        await expect(call(altered)).to.be.revert(ethers);
       } catch (error) {
         if (error instanceof ProofCleanupError) {
           cleanup = false;
@@ -435,6 +375,132 @@ describe("Synchronized DKG registry authority", function () {
       }
     },
   );
+
+  it("checks decryption authority before consulting the circuit verifier", async () => {
+    const f = await networkHelpers.loadFixture(setup);
+    await f.registry.publishSynchronizedCommittee(f.e3Id, await publication(f));
+    const wrapper = await ethers.deployContract(
+      "SynchronizedDecryptionVerifier",
+      [
+        await f.circuit.getAddress(),
+        await f.registry.getAddress(),
+        field(10),
+        field(11),
+      ],
+    );
+    const committee = await f.registry.getCommitteeHash(f.e3Id);
+    const domain = field(83);
+    const ct = field(19);
+    const plaintext = ethers.keccak256(new Uint8Array(50 * 8));
+    const rows = f.ids.flatMap((owner, i) => [
+      ...f.fields.slice(2, 4),
+      field(owner),
+      ...f.ids.map(field),
+      field(0),
+      domain,
+      f.fields[9 + i]!,
+      f.fields[11 + i]!,
+      ct,
+      field(23),
+      field(24),
+    ]);
+    const fields = [
+      field(10),
+      field(11),
+      ...rows,
+      ...Array<string>(50).fill(field(0)),
+    ];
+    const call = (
+      inputs = fields,
+      id = f.e3Id,
+      d = domain,
+      p = plaintext,
+      c = committee,
+      cipher = ct,
+    ) =>
+      wrapper.verify(
+        id,
+        d,
+        p,
+        c,
+        cipher,
+        coder.encode(["bytes", "bytes32[]"], ["0x", inputs]),
+      );
+    await checkDecryptionAuthority(wrapper, fields, f.e3Id, call);
+    await f.circuit.setReturnValue(false);
+    await expect(call()).to.be.revertedWithCustomError(wrapper, "InvalidProof");
+  });
+
+  async function checkDecryptionAuthority(
+    wrapper: BaseContract,
+    fields: string[],
+    id: bigint,
+    call: (
+      fields?: string[],
+      id?: bigint,
+      domain?: string,
+      plaintext?: string,
+      committee?: string,
+      ciphertext?: string,
+    ) => Promise<boolean>,
+  ) {
+    expect(await call()).to.equal(true);
+    await expect(call(undefined, id + 1n)).to.be.revertedWithCustomError(
+      wrapper,
+      "InvalidSynchronizedAuthority",
+    );
+    await expect(
+      call(undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
+    await expect(
+      call(undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "PlaintextHashMismatch");
+    await expect(
+      call(undefined, undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
+    await expect(
+      call(undefined, undefined, undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "CiphertextCommitmentMismatch");
+    await expect(call(fields.slice(0, -1))).to.be.revertedWithCustomError(
+      wrapper,
+      "InvalidPublicInputsLength",
+    );
+    const changed = (idx: number, value: bigint = BigInt(fields[idx]!) ^ 1n) =>
+      fields.map((v, i) => (i === idx ? field(value) : v));
+    for (const idx of [0, 1]) {
+      await expect(call(changed(idx))).to.be.revertedWithCustomError(
+        wrapper,
+        "VkHashMismatch",
+      );
+    }
+    // Each 12-field row is checked against the published authority before Honk.
+    for (const start of [2, 14]) {
+      for (const [offset, error] of [
+        [0, "DomainBindingMismatch"],
+        [1, "DomainBindingMismatch"],
+        [2, "DkgAnchorMismatch"],
+        [3, "DkgAnchorMismatch"],
+        [4, "DkgAnchorMismatch"],
+        [5, "DomainBindingMismatch"],
+        [6, "DomainBindingMismatch"],
+        [7, "DkgAnchorMismatch"],
+        [8, "DkgAnchorMismatch"],
+        [9, "CiphertextCommitmentMismatch"],
+      ] as const) {
+        await expect(
+          call(changed(start + offset)),
+        ).to.be.revertedWithCustomError(wrapper, error);
+      }
+    }
+    await expect(call(changed(12, 1n << 255n))).to.be.revertedWithCustomError(
+      wrapper,
+      "NonCanonicalPublicInput",
+    );
+    await expect(call(changed(26, 1n << 64n))).to.be.revertedWithCustomError(
+      wrapper,
+      "MessageCoefficientOutOfRange",
+    );
+  }
 
   it("publishes distinct immutable anchors with consent of every selected recipient", async () => {
     const f = await networkHelpers.loadFixture(setup);
