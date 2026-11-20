@@ -1,0 +1,11 @@
+{
+  "preset": "insecure-64",
+  "committee": "large",
+  "commitments": {
+    "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x1fc9f630eb9b5df61fa6862f09dd6c974e028bb0134d67d825d6bda0c8c5e166",
+    "bb-vk-hash/default/threshold/pk_aggregation": "0x21ac75169754ebf56c1f2f0ffe5619605462b941d119f87ad21523e4cea4d82c",
+    "bb-vk-hash/default/threshold/user_data_encryption": "0x0e3125146d5c11b54cd466942d48661d73cf3e4b987ab5c5c6cd8d736747805b",
+    "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x0fcd0fb8e5c5ad6258cbd2efb0dd69c676297d1ec294e31692a40d406e13fafc",
+    "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x290932afa25c4f0ac046451bb9c42f8b04cbf84530b500adcacb27e15ef01621"
+  }
+}
