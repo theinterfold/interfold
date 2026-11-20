@@ -75,14 +75,10 @@ unconstrained fn division_hint(x: Field, q: u64) -> (Field, u64) {
     divide(x, q)
 }
 
-fn check_quotient_range(k: Field, max_k: Field) {
+fn check_division(x: Field, q: u64, k: Field, r: u64, max_k: Field, max_r: u64) {
     // q >= 16 implies floor((p-1)/q) < 2^250. The two range checks order k as integers.
     k.assert_max_bit_size::<250>();
     (max_k - k).assert_max_bit_size::<250>();
-}
-
-fn check_division(x: Field, q: u64, k: Field, r: u64, max_k: Field, max_r: u64) {
-    check_quotient_range(k, max_k);
     assert(r < q);
     assert((k != max_k) | (r <= max_r));
     assert(k * q as Field + r as Field == x);
@@ -201,10 +197,17 @@ fn canonical_reduction_endpoints() {
     check_division(0, q, 0, 0, max_k, max_r);
 }
 
-#[test(should_fail)]
+#[test(should_fail_with = "call to assert_max_bit_size")]
 fn quotient_above_canonical_maximum_is_rejected() {
-    let (max_k, _) = comptime { divide(-1, 65537) };
-    check_quotient_range(max_k + 1, max_k);
+    let (max_k, max_r) = comptime { divide(-1, 65537) };
+    // Even a hint that also has a bad remainder must fail the quotient range check itself.
+    check_division(0, 65537, max_k + 1, 65537, max_k, max_r);
+}
+
+#[test(should_fail_with = "call to assert_max_bit_size")]
+fn quotient_must_fit_the_integer_window() {
+    let (max_k, max_r) = comptime { divide(-1, 65537) };
+    check_division(0, 65537, -1, 65537, max_k, max_r);
 }
 
 #[test(should_fail)]
