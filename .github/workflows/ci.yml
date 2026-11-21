@@ -1082,6 +1082,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:crypto-config
       - run: pnpm test:circuit-tooling
+      - run: python3 scripts/circuits/qualification_guard_test.py
 
   build_circuits:
     needs: [detect_changes]
@@ -1296,6 +1297,18 @@ jobs:
       - name: Prove synchronized Minimum DKG and verify decryption against its signed publication
         if: matrix.leg == 'sync-dkg-proofs'
         run: E3_CUSTOM_BB=$(command -v bb) pnpm test:sync-decryption:contract
+
+      - name: Rebuild the secure Minimum C7 recursive key
+        if: matrix.leg == 'sync-dkg-proofs'
+        working-directory: circuits/bin/synchronized_secure/threshold/decrypted_shares_aggregation
+        run: |
+          manifest="$GITHUB_WORKSPACE/circuits/qualification/sync-secure-8192/minimum/manifest.json"
+          key=$(jq -ce '.circuits[] | select(.role == "decrypted_shares_aggregation" and .target == "noir-recursive")' "$manifest")
+          nargo compile
+          out=$(mktemp -d)
+          bb write_vk -t noir-recursive -b target/decrypted_shares_aggregation.json -o "$out"
+          echo "$(jq -er .vkSha256 <<< "$key")  $out/vk" | sha256sum --check
+          test "0x$(xxd -p -c 32 "$out/vk_hash")" = "$(jq -er .vkHash <<< "$key")"
 
       - name: Install Anvil for recovered synchronized publication
         if: matrix.leg == 'sync-dkg-recovery'

@@ -30,14 +30,25 @@ pub(super) struct Request {
 #[test]
 #[ignore = "requires pinned nargo and bb; checks C4/C6 proofs and C7 against native plaintext"]
 fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
+    let profile = if std::env::var("E3_SYNC_SECURE_QUALIFICATION").as_deref() == Ok("1") {
+        BfvProfile::SyncDecSecure8192
+    } else {
+        PROFILE
+    };
+    qualify(profile)
+}
+
+// Explicit campaign only: not an unconditional addition to the existing insecure CI proof leg.
+fn qualify(profile: BfvProfile) -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()?;
     let bb = check_tools(&root)?;
     let chain = Chain::fixture()?;
-    let dkg = chain.setup()?;
+    let mut dkg = chain.setup()?;
+    dkg.crypto_config_id = profile.crypto_config_id(CiphernodesCommitteeSize::Minimum)?;
     let setup = dkg.binding(chain.chain_id, chain.e3_id);
-    let fixture = Fixture::native_at(setup)?;
+    let fixture = Fixture::native_profile(profile, setup, DEALERS)?;
     let cfg = &fixture.config;
     let params = &cfg.threshold;
     let mut rng = ChaCha8Rng::seed_from_u64(2050);
@@ -101,7 +112,7 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         &decoded[..width],
     )?;
     let role = CircuitName::DecryptedSharesAggregation;
-    let job = CircuitJob::new(&root, role)?;
+    let job = CircuitJob::for_profile(&root, role, profile)?;
     let leaf = Leaf {
         role,
         inputs,
@@ -121,6 +132,17 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     }
     use e3_zk_config::synchronized::public_signals::PublicSignals;
     PublicSignals::decode(cfg, role, &bytes)?;
+    let moduli = params.moduli();
+    let ct_hash = compute_ciphertext_commitment(
+        &fhe_poly_to_crt_centered(&ct[0], moduli)?,
+        &fhe_poly_to_crt_centered(&ct[1], moduli)?,
+        cfg.aggregate_bit,
+    );
+    if profile == BfvProfile::SyncDecSecure8192 {
+        return super::decryption_aggregation::qualify(
+            &root, &bb, &fixture, &proofs, &c7, None, request, &ct_hash, &expected,
+        );
+    }
     let mut duplicate = bytes.clone();
     duplicate[public[0].len()..public_batch.len()].copy_from_slice(public[0]);
     ensure!(PublicSignals::decode(cfg, role, &duplicate).is_err());
@@ -238,19 +260,13 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         error.contains("Mixed C6 roster"),
         "mixed proof rows failed for another reason: {error}"
     );
-    let moduli = params.moduli();
-    let ct_hash = compute_ciphertext_commitment(
-        &fhe_poly_to_crt_centered(&ct[0], moduli)?,
-        &fhe_poly_to_crt_centered(&ct[1], moduli)?,
-        cfg.aggregate_bit,
-    );
     super::decryption_aggregation::qualify(
         &root,
         &bb,
         &fixture,
         &proofs,
         &c7,
-        &alt_proofs[1],
+        Some(&alt_proofs[1]),
         request,
         &ct_hash,
         &expected,
@@ -273,7 +289,7 @@ fn prove_partials(
     let component = |i: usize| fhe_poly_to_crt_centered(&ct[i], params.moduli());
     let ct_hash = compute_ciphertext_commitment(&component(0)?, &component(1)?, cfg.aggregate_bit);
     let c0_hash = ciphertext_component_commitment(&component(0)?, cfg.aggregate_bit);
-    let preset = PROFILE.threshold_preset();
+    let preset = cfg.profile.threshold_preset();
     let noise = SmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
         params.clone(),
         values.n,
@@ -283,8 +299,10 @@ fn prove_partials(
     ensure!(noise.smudging_bound() == &cfg.pk_generation.bounds.e_sm_bound);
     let decryptor = SynchronizedDecryptor::new(values.n, values.threshold, params.clone())?;
     let set = roster.map(|id| id as usize + 1);
-    let job = CircuitJob::new(root, CircuitName::ThresholdShareDecryption)?;
-    let c4_job = CircuitJob::new(root, CircuitName::DkgShareDecryption)?;
+    let job = CircuitJob::for_profile(root, CircuitName::ThresholdShareDecryption, cfg.profile)?;
+    let c4_job = (cfg.profile == PROFILE)
+        .then(|| CircuitJob::new(root, CircuitName::DkgShareDecryption))
+        .transpose()?;
     let mut shares = Vec::new();
     let mut public = Vec::new();
     for &owner in &roster {
@@ -296,8 +314,10 @@ fn prove_partials(
                 l.role == CircuitName::DkgShareDecryption && l.inputs["recipient_id"] == owner
             })
             .context("missing C4")?;
-        c4_job.execute(&c4.inputs)?;
-        c4_job.prove(bb, cfg, c4)?;
+        if let Some(job) = &c4_job {
+            job.execute(&c4.inputs)?;
+            job.prove(bb, cfg, c4)?;
+        }
         let data = &fixture.openings[i];
         let opening = Opening {
             setup: request.setup,
@@ -358,6 +378,44 @@ fn prove_partials(
             transport_slot: None,
         };
         job.execute(&leaf.inputs)?;
+        if i == 0 && cfg.profile == BfvProfile::SyncDecSecure8192 {
+            for (pointer, replacement, reason) in [
+                ("/expected_sk", json!("0"), "Wrong synchronized SK opening"),
+                (
+                    "/expected_bundle",
+                    json!("0"),
+                    "Wrong synchronized key bundle opening",
+                ),
+                (
+                    "/expected_ct",
+                    json!("0"),
+                    "Wrong synchronized ciphertext opening",
+                ),
+                ("/product/0/8191", json!("0"), "Wrong negacyclic product"),
+                (
+                    "/shifted_noise/0",
+                    json!((noise.smudging_bound() * 2u8 + 1u8).to_string()),
+                    "check_secure_noise",
+                ),
+            ] {
+                let mut bad = leaf.inputs.clone();
+                ensure!(bad.pointer(pointer) != Some(&replacement));
+                *bad.pointer_mut(pointer)
+                    .context("missing secure C6 witness coefficient")? = replacement;
+                let diagnostic = job.reject(&bad, pointer)?;
+                ensure!(
+                    diagnostic.contains(reason),
+                    "wrong rejection for {pointer}, expected {reason}: {diagnostic}"
+                );
+            }
+            let mut bad = leaf.inputs.clone();
+            bad["d"][1][8191] = json!(d.coefficients()[[1, 8191]] ^ 1);
+            super::provenance::reject_join(
+                &job.directory.path().join("target/sync_leaf.json"),
+                &bad,
+                "wrong partial decryption",
+            )?;
+        }
         job.prove(bb, cfg, &leaf)?;
         let proof = job.read_proof(leaf.role)?;
         let signals = e3_zk_config::synchronized::public_signals::PublicSignals::decode(
@@ -386,7 +444,7 @@ fn prove_partials(
         {
             ensure!(BigInt::from_bytes_be(Sign::Plus, field) == BigInt::from(limb));
         }
-        if i == 0 {
+        if i == 0 && cfg.profile == PROFILE {
             for (pointer, value) in [
                 ("/expected_sk", json!("0")),
                 ("/expected_bundle", json!("0")),

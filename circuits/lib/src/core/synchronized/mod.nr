@@ -6,6 +6,7 @@ pub mod pk_generation;
 pub mod share_computation;
 pub mod share_decryption;
 pub mod threshold_decryption;
+mod threshold_decryption_tests;
 pub mod plaintext_aggregation;
 pub mod provenance;
 pub mod publication;

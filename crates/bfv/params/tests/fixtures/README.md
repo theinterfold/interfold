@@ -44,4 +44,6 @@ cryptoConfigId = keccak256(abi.encode(
 
 Protocol names and statement versions are identity inputs, not independently selectable request
 flags. The synchronized insecure/minimum vector reserves a distinct identity without enabling its
-execution or asserting proof compatibility.
+execution or asserting proof compatibility. The secure synchronized Minimum row uses the same
+independent ABI calculation with the degree-8192 synchronized transport from `35d7ef7c`. Neither
+synchronized row enables admission.

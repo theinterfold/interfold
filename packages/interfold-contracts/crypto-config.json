@@ -220,6 +220,43 @@
             "admissionEnabled": false
           }
         ]
+      },
+      {
+        "profile": "sync-secure-8192",
+        "protocol": "synchronized",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 2,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_8192",
+          "degree": "8192",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "576460752317792257",
+            "576460752317399041",
+            "576460752316776449"
+          ],
+          "error1Variance": "17723039943798878305460955570711717478400"
+        },
+        "dkg": {
+          "name": "SECURE_SYNCHRONIZED_DKG_8192",
+          "degree": "8192",
+          "plaintextModulus": "1152921504635584514",
+          "moduli": [
+            "2648718071565238273",
+            "2742124912636592129"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "dkgParameterHash": "0x6c4c3d67ad6b7d2d731011c21687156d64304bd9b139b3bea0269dbcabb68b46",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0x2c2655dc733425748efd5e5d4b02376088d6173aa34da9a9ccc22f36e90ce31a",
+            "artifactsDir": "sync-secure-8192/minimum",
+            "admissionEnabled": false
+          }
+        ]
       }
     ]
   },

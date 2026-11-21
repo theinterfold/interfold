@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::provenance::{field, reject_join, stage};
+use super::provenance::{field, reject_join, stage_profile};
 use super::*;
 use e3_events::Proof;
 use e3_zk_prover::{synchronized::decryption::*, BBPath, ZkBackend, ZkProver};
@@ -16,7 +16,7 @@ pub(super) fn qualify(
     fixture: &Fixture,
     partials: &[Proof],
     c7: &Proof,
-    alternate: &Proof,
+    alternate: Option<&Proof>,
     request: super::threshold_decryption::Request,
     ciphertext: &BigInt,
     message: &[u64],
@@ -29,15 +29,30 @@ pub(super) fn qualify(
         temp.path().join("work"),
     );
     let prover = ZkProver::new(&backend);
+    let stage = |role| {
+        stage_profile(
+            &CircuitJob::for_profile(root, role, config.profile)?,
+            &prover,
+            bb,
+            role,
+            config.profile,
+        )
+    };
     for role in [
         CircuitName::ThresholdShareDecryption,
         CircuitName::DecryptedSharesAggregation,
     ] {
-        stage(&CircuitJob::new(root, role)?, &prover, bb, role)?;
+        stage(role)?;
     }
     let role = CircuitName::DecryptionAggregator;
-    let compiled = stage(&CircuitJob::new(root, role)?, &prover, bb, role)?;
+    let compiled = stage(role)?;
+    let start = std::time::Instant::now();
     let outer = prove_decryption(&prover, config, partials, c7, "sync-final")?;
+    eprintln!(
+        "{} outer witness + EVM proving: {:.2}s",
+        config.profile,
+        start.elapsed().as_secs_f64()
+    );
     ensure!(outer.public_signals[64..] == c7.public_signals[..]);
     e3_zk_config::synchronized::public_signals::PublicSignals::decode(
         config,
@@ -133,7 +148,9 @@ pub(super) fn qualify(
         )?;
         fs::write(directory.join("proof"), &outer.data[..])?;
         fs::write(directory.join("public_inputs"), &outer.public_signals[..])?;
-        let namespace = PROFILE.artifacts_dir_for_committee(config.committee)?;
+        let namespace = config
+            .profile
+            .artifacts_dir_for_committee(config.committee)?;
         let keys = prover.circuits_dir(e3_zk_config::CircuitVariant::Recursive, &namespace);
         let key = |role| e3_zk_prover::test_utils::load_vk_artifacts(&keys, role);
         fs::write(
@@ -215,6 +232,9 @@ pub(super) fn qualify(
     wrong.swap(0, 1);
     ensure!(prepare_decryption(&prover, config, &wrong, c7).is_err());
     wrong.swap(0, 1);
+    let Some(alternate) = alternate else {
+        return Ok(());
+    };
     wrong[1] = alternate.clone();
     ensure!(prepare_decryption(&prover, config, &wrong, c7).is_err());
     // Both child proofs individually verified. Even if the host row precheck is satisfied,

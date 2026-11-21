@@ -21,7 +21,12 @@ fn main(
     dealer_ids: pub [u32; H],
 ) -> pub (Field, [Field; H], [Field; H], [Field; H], Field) {
     for row in 0..H {
-        verify_honk_proof_non_zk(setup_vk, setup_proofs[row], setup_public[row], setup_key_hash);
+        verify_honk_proof_non_zk(
+            setup_vk,
+            setup_proofs[row],
+            setup_public[row],
+            setup_key_hash,
+        );
     }
     verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);
     assert(
@@ -29,6 +34,10 @@ fn main(
         "Unanchored publication descendant VK",
     );
     join_publication::<N_PARTIES, H>(
-        setup_binding, dealer_ids, setup_public[0][0], setup_public, c5_public,
+        setup_binding,
+        dealer_ids,
+        setup_public[0][0],
+        setup_public,
+        c5_public,
     )
 }
