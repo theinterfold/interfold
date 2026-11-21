@@ -218,8 +218,9 @@ the governance batch that raises the required protocol version, and upgrade ever
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
 cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
 change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
-E3s can be neither folded nor link-checked, so drain them first too. Storage schema and gossip/sync
-wire majors are unchanged.
+E3s can be neither folded nor link-checked, so drain them first too. C6 now aggregates over Chonk:
+the `decryption_aggregator` key, the C6 tree anchor and every `BfvDecryptionVerifier` change, and no
+event encoding changes. Storage schema and gossip/sync wire majors are unchanged.
 
 The cutover also carries three-node `nodes_fold` steps. `nodes_fold` and `nodes_fold_kernel` change
 their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anchor, and the DKG
