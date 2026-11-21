@@ -294,4 +294,17 @@ mod tests {
         .is_err());
         assert!(dkg::share_decryption::Configs::new(&threshold, &transport).is_err());
     }
+
+    #[test]
+    fn secure_c6_noise_bound_fits_the_statement_width() {
+        // The secure C6 statically asserts at most 145 bits; a wider bound would only fail at
+        // circuit compile time, which CI does not run for this leaf.
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecSecure8192,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let bits = config.pk_generation.bounds.e_sm_bound.bits();
+        assert!(bits <= 145, "secure C6 noise bound has {bits} bits");
+    }
 }

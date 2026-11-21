@@ -78,10 +78,9 @@ pub mod secure_8192 {
     }
 }
 
-/// Common search defaults shared across presets
 /// Search defaults for the SecureThreshold8192 preset (production scale).
-/// The InsecureThreshold64 preset uses its own smaller values (see `insecure_search_defaults`)
-/// so that the smudging bounds baked into the insecure circuit configs remain valid.
+/// The InsecureThreshold64 preset has its own module (`insecure_search_defaults`); the two differ
+/// only in `MIN_PRIME_BITS`.
 pub mod search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;

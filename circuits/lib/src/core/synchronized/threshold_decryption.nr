@@ -245,7 +245,8 @@ pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
     }
     let gamma = commit(transcript.as_vector());
     // The bound B has NOISE_BIT bits and the shifted noise lies in [0, 2B], so SHIFTED_NOISE_BIT
-    // is one more. The quotient window below needs B/q < 2^86 with q >= 2^59, so B < 2^145.
+    // is one more. The quotient window below holds far larger B; the cap pins the bound this
+    // statement was reviewed for (B/q < 2^86 for 60-bit moduli), so a larger B needs a new review.
     std::static_assert(SHIFTED_NOISE_BIT == NOISE_BIT + 1, "shifted noise width");
     std::static_assert(
         NOISE_BIT <= 145,

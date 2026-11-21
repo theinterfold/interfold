@@ -270,12 +270,12 @@ is append-only, and live registries already hold the v0.19 tuples at those indic
 (`0x1b2620f6…2317`), Sepolia index 0 (`0xaff065a7…ab1e`) and index 2 (`0x1b2620f6…2317`). Such a
 deployment cannot register the new bytes in place. `requestE3` does not compare the registered bytes
 with the `BfvProtocol` hash, so after an in-place upgrade it binds the old bytes under a new
-configuration ID, and nodes skip every such request because the parameter bytes do not match the
-profile. The indexer derives the threshold-only v5 ID of indices 0 and 2 from the local tuple, so it
-also stops reading v0.19 E3s at those indices. This breaks the
-[v0.19 rule](#v019-protocolcrypto-cutover) never to overwrite or reinterpret old E3 records. Either
-deploy a new stack, or, as v0.19 did for index 1, register the new tuples at new indices and keep
-indices 0 and 2 as historical registry-byte reads with frozen v5 IDs and fixture vectors.
+configuration ID while nodes prove with the new tuple. The indexer derives the threshold-only v5 ID
+of indices 0 and 2 from the local tuple, so it also stops reading v0.19 E3s at those indices. This
+breaks the [v0.19 rule](#v019-protocolcrypto-cutover) never to overwrite or reinterpret old E3
+records. Either deploy a new stack, or, as v0.19 did for index 1, register the new tuples at new
+indices and keep indices 0 and 2 as historical registry-byte reads with frozen v5 IDs and fixture
+vectors.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
