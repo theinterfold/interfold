@@ -464,10 +464,15 @@ fn prove_partials(
                 let mut bad = leaf.inputs.clone();
                 *bad.pointer_mut(pointer).unwrap() = value;
                 let diagnostic = job.reject(&bad, pointer)?;
-                if pointer == "/shifted_noise/0" {
+                let reason = match pointer {
+                    "/expected_sk" => Some("Wrong synchronized SK opening"),
+                    "/shifted_noise/0" => Some("Local noise outside signed bound"),
+                    _ => None,
+                };
+                if let Some(reason) = reason {
                     ensure!(
-                        diagnostic.contains("Local noise outside signed bound"),
-                        "shifted noise failed for another reason: {diagnostic}"
+                        diagnostic.contains(reason),
+                        "{pointer} failed for another reason: {diagnostic}"
                     );
                 }
             }
