@@ -70,17 +70,18 @@ impl LimbChain {
         let moduli = config.threshold_params.moduli();
         let num_moduli = moduli.len();
         let degree = config.threshold_params.degree();
-        if inputs
-            .decrypted_shares
-            .iter()
-            .any(|party| party.len() != num_moduli)
+        if inputs.decrypted_shares.len() != inputs.expected_commitments.len()
+            || inputs
+                .decrypted_shares
+                .iter()
+                .any(|party| party.len() != num_moduli)
             || inputs
                 .expected_commitments
                 .iter()
                 .any(|party| party.len() != num_moduli)
         {
             return Err(WitnessError::Other(format!(
-                "C4 inputs need {num_moduli} limbs per party"
+                "C4 inputs need one commitment row per share row and {num_moduli} limbs per party"
             )));
         }
         let agg_bit = config.bits.agg_bit;
