@@ -297,12 +297,20 @@ of those exact bytes: v5 at indices 0 and 2, v1 at indices 0 and 1.
 The Large committee slice routes `insecure-64/large` and `secure-8192/large` on Sepolia and local
 chains only; Mainnet routes and configuration are unchanged. On Sepolia, `upgrade:v19` deploys both
 routes and adds `setCommitteeThresholds(3, [34, 45])` from the configuration. The call follows the
-upgrade in the batch, because the earlier implementation reverts on size 3. `upgrade:v19` does not
-change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s
-of DKG, so a Sepolia batch must add `setTimeoutConfig` with the configured windows, which raise
-`dkgWindow` to 7200 s. A fresh deployment sets them from the configuration. `upgrade:v19 validate`,
-which `resume` runs first, compares `getTimeoutConfig()` with the configured windows and refuses
-while they differ, so Sepolia cannot resume on the old 1800 s window.
+upgrade in the batch, because the earlier implementation reverts on size 3; `prepare` reads that
+revert as an unset threshold only for a size this release knows. `upgrade:v19` does not change
+timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s of DKG
+on 16 cores / 32 threads, so a Sepolia batch must add `setTimeoutConfig` with the configured
+windows, which raise `dkgWindow` to 7200 s for every Sepolia committee size; node checkpoints scale
+with it. A fresh deployment sets them from the configuration. `upgrade:v19:validate`, which
+`upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with the configured windows and
+refuses while they differ. An owner that unpauses directly bypasses that check.
+
+Live Sepolia's `NodeReleaseRegistry` already requires protocol 9, generation 2, which this release
+also declares, so the Sepolia batch raises no release policy and leaves cached node status valid:
+only `--ciphernodes-restarted` attests that operators run the new build. Live Sepolia also has fewer
+than 45 active operators, so Large requests revert with `InsufficientCiphernodes` until enough
+operators join, and `upgrade:v19:resume` there needs `--sepolia-committee-size` for a smaller gate.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
