@@ -1086,7 +1086,7 @@ mod tests {
             before,
             "wildcard sync dry-run wrote files"
         );
-        dry.circuits = vec!["decryption_aggregator".into()];
+        dry.circuits = vec!["c6_chonk_root".into()];
         assert!(build(root, &dry).is_err());
         assert_eq!(crate::tests::snapshot(root), before);
         let manifest = circuit.path.join("Nargo.toml");
