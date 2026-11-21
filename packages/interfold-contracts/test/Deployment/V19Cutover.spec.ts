@@ -11,6 +11,7 @@ import path from "path";
 
 import {
   BFV_SCHEME_ID,
+  SIZES_ADDED_BY_RELEASE,
   buildV19CutoverTransactions,
   readCommitteeThreshold,
   readOpenVmIdentity,
@@ -148,31 +149,32 @@ describe("v0.19 cutover", function () {
     };
     // Live Sepolia answers `committeeThresholds(3, …)` with an empty revert.
     expect(
-      await readCommitteeThreshold(reverting({ code: 3, data: "0x" }), 3n, [
-        0n,
-        1n,
-        2n,
+      await readCommitteeThreshold(
+        reverting({ code: 3, data: "0x" }),
         3n,
-      ]),
+        SIZES_ADDED_BY_RELEASE,
+      ),
     ).to.equal(undefined);
-    // A size this release does not know is not treated as unset.
+    // A size the replaced implementation already has must answer; an empty revert there is an error.
     await expect(
-      readCommitteeThreshold(reverting({ code: 3, data: "0x" }), 4n, [
+      readCommitteeThreshold(
+        reverting({ code: 3, data: "0x" }),
         0n,
-        1n,
-        2n,
-        3n,
-      ]),
+        SIZES_ADDED_BY_RELEASE,
+      ),
     ).to.be.rejected;
     // A transport failure is not a missing function.
     await expect(
-      readCommitteeThreshold(reverting(new Error("RPC unavailable")), 3n, [3n]),
+      readCommitteeThreshold(
+        reverting(new Error("RPC unavailable")),
+        3n,
+        SIZES_ADDED_BY_RELEASE,
+      ),
     ).to.be.rejectedWith("RPC unavailable");
     const live = async (index: bigint) => (index === 0n ? 34n : 45n);
-    expect(await readCommitteeThreshold(live, 3n, [3n])).to.deep.equal([
-      34n,
-      45n,
-    ]);
+    expect(
+      await readCommitteeThreshold(live, 3n, SIZES_ADDED_BY_RELEASE),
+    ).to.deep.equal([34n, 45n]);
   });
 
   it("reads an OpenVM guest identity and refuses a malformed one", function () {

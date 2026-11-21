@@ -79,7 +79,6 @@ import {
   activeBfvConfigForChain,
   bfvConfigsForChain,
   bfvParamSetConfigsForChain,
-  committeeThresholdsForChain,
 } from "../utils";
 import {
   equalAddress,
@@ -641,15 +640,12 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   }
 
   const thresholds: V19CutoverDecisions["committeeThresholds"] = [];
-  const releaseSizes = committeeThresholdsForChain(chainId).map((c) =>
-    BigInt(c.committeeSize),
-  );
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
     const current = await readCommitteeThreshold(
       (index) => interfold.committeeThresholds(size, index),
       size,
-      releaseSizes,
+      SIZES_ADDED_BY_RELEASE,
     );
     if (
       !current ||
@@ -858,21 +854,24 @@ v0.19 cutover prepared
   return plan;
 }
 
+/** `CommitteeSize` values this release appends: `Large` (3). */
+export const SIZES_ADDED_BY_RELEASE: readonly bigint[] = [3n];
+
 /**
  * Read the live `(quorum, total)` of a committee size, or `undefined` when the implementation that
  * the batch replaces lacks the size: it reverts without data on a size its `CommitteeSize` enum does
- * not have. The batch upgrades first, so it can then set that size. Only a size that this release
- * knows (`releaseSizes`) may read as unset; any other error is rethrown.
+ * not have. The batch upgrades first, so it can then set that size. Only a size this release adds
+ * (`addedSizes`) may read as unset; for every other size the error is rethrown.
  */
 export async function readCommitteeThreshold(
   read: (index: bigint) => Promise<bigint>,
   size: bigint,
-  releaseSizes: bigint[],
+  addedSizes: readonly bigint[],
 ): Promise<[bigint, bigint] | undefined> {
   try {
     return await Promise.all([read(0n), read(1n)]);
   } catch (error) {
-    if (isMissingFunctionError(error) && releaseSizes.includes(size)) {
+    if (isMissingFunctionError(error) && addedSizes.includes(size)) {
       return undefined;
     }
     throw error;
