@@ -125,10 +125,16 @@ fn prove_nodes_fold_step(
             leaves.len()
         )));
     }
-    // With one slot the chain would end on the kernel, which `DkgAggregator` does not accept.
+    // A chain that ends on the kernel is not accepted by `DkgAggregator`: it needs two slots, and a
+    // kernel step must leave at least one slot for a fold step.
     if total_slots < 2 {
         return Err(ZkError::InvalidInput(format!(
             "nodes_fold needs at least two slots, got {total_slots}"
+        )));
+    }
+    if prior_fold.is_none() && leaves.len() >= total_slots {
+        return Err(ZkError::InvalidInput(format!(
+            "nodes_fold kernel step covers all {total_slots} slots; the chain would end on the kernel"
         )));
     }
     // The circuit writes nothing for the sentinel slot `total_slots`, so a node given it would be
