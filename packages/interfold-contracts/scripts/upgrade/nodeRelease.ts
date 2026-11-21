@@ -21,6 +21,7 @@ import {
 } from "../protocol/safe";
 import type { ProtocolDeployment, SafeTransaction } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
+import { requiredActiveOperators } from "./v19Cutover";
 
 interface NodeReleasePlan {
   name: string;
@@ -221,12 +222,10 @@ async function resume(): Promise<void> {
   ) {
     throw new Error("Live required release does not match the prepared plan");
   }
-  const minimumActive = config.interfold.committeeThresholds.reduce(
-    (maximum, threshold) => {
-      const total = BigInt(threshold.total);
-      return total > maximum ? total : maximum;
-    },
-    0n,
+  const minimumActive = requiredActiveOperators(
+    config.interfold.committeeThresholds,
+    config.chainId,
+    arg("sepolia-committee-size"),
   );
   const active = await bonding.numActiveOperators();
   if (active < minimumActive) {

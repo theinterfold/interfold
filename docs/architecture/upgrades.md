@@ -316,7 +316,8 @@ Live Sepolia's `NodeReleaseRegistry` already requires protocol 9, generation 2, 
 also declares, so the Sepolia batch raises no release policy and leaves cached node status valid:
 only `--ciphernodes-restarted` attests that operators run the new build. Live Sepolia also has fewer
 than 45 active operators, so Large requests revert with `InsufficientCiphernodes` until enough
-operators join, and `upgrade:v19:resume` there needs `--sepolia-committee-size` for a smaller gate.
+operators join. There, `upgrade:v19:resume`, `upgrade:node-release` resume and
+`upgrade:vrf-sortition:resume` take `--sepolia-committee-size` for a smaller gate.
 
 `CiphernodesCommitteeSize::Large` is an appended variant in the event log, keyshare pending payloads
 and threshold-keyshare recovery, so an older binary cannot read a journal that holds it. It shares
