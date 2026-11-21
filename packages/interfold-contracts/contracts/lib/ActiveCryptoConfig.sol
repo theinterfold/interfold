@@ -8,8 +8,9 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { BfvProtocol } from "./BfvProtocol.sol";
 
-// Mainnet supports secure BFV with minimum, micro, and small committees. Sepolia and local chains
-// support insecure and secure BFV with every committee size.
+// Mainnet supports secure BFV; Sepolia and local chains support insecure and secure BFV. Every
+// committee size is accepted once governance sets its threshold, so the deployment configuration,
+// not this library, keeps mainnet to minimum, micro and small.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID =
         BfvProtocol.ENCRYPTION_SCHEME_ID;
