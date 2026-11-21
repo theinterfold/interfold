@@ -28,9 +28,9 @@ const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 /// Longest time `bb --version` may run. A binary that hangs must not block setup or startup.
 const BB_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Downloads have no total deadline: the circuit archive grows with every supported pair, and a
-/// slow but steady link must still finish. They fail only when a connection cannot be opened or
-/// stops delivering data.
+/// Downloads have no deadline of their own: the circuit archive grows with every supported pair,
+/// and a slow but steady link must still finish. They fail when a connection cannot be opened or
+/// stops delivering data. On node start the download still counts against the startup timeout.
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 

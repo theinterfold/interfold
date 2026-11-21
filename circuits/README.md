@@ -86,17 +86,17 @@ limb key tree into its key hash.
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
-| Path                              | `CircuitName`                  | Role                                                                                   |
-| --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `c2ab_fold`                       | `C2abFold`                     | Folds C2a and C2b and binds each C2's chunk key tree into its key hash.                |
-| `c3_chonk_*`                      | `C3Chonk*`                     | Verifies the C3 proofs of one branch in one Chonk stack; `c3ab_fold` closes the stack. |
-| `c3ab_fold`                       | `C3abFold`                     | Combines the secret key and smudging noise C3 Chonk accumulators and closes both.      |
-| `c4ab_fold`                       | `C4abFold`                     | Folds C4a and C4b and binds each C4's limb key tree into its key hash.                 |
-| `node_fold`                       | `NodeFold`                     | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.                  |
-| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | Folds the H `node_fold` proofs in sequence, three per step.                            |
-| `dkg_aggregator`                  | `DkgAggregator`                | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.                |
-| `c6_chonk_tube`, `c6_chonk_root`  | `C6ChonkTube`, `C6ChonkRoot`   | Close one ciphertext's C6 Chonk stack; its app and kernels are in `bin/chonk/`.        |
-| `decryption_aggregator`           | `DecryptionAggregator`         | Verifies `c6_chonk_root` and C7. Its EVM proof goes to `publishPlaintextOutput`.       |
+| Path                                   | `CircuitName`                      | Role                                                                              |
+| -------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------- |
+| `c2ab_fold`                            | `C2abFold`                         | Folds C2a and C2b and binds each C2's chunk key tree into its key hash.           |
+| `c3_chonk_tube`, `c3_chonk_accumulate` | `C3ChonkTube`, `C3ChonkAccumulate` | Close one branch's C3 Chonk stack; its app and kernels are in `bin/chonk/`.       |
+| `c3ab_fold`                            | `C3abFold`                         | Combines the secret key and smudging noise C3 Chonk accumulators and closes both. |
+| `c4ab_fold`                            | `C4abFold`                         | Folds C4a and C4b and binds each C4's limb key tree into its key hash.            |
+| `node_fold`                            | `NodeFold`                         | Folds C0, C1, `c2ab_fold`, `c3ab_fold`, and `c4ab_fold` for one node.             |
+| `nodes_fold`, `nodes_fold_kernel`      | `NodesFold`, `NodesFoldKernel`     | Folds the H `node_fold` proofs in sequence, three per step.                       |
+| `dkg_aggregator`                       | `DkgAggregator`                    | Verifies `nodes_fold` and C5. Its EVM proof goes to `publishCommittee`.           |
+| `c6_chonk_tube`, `c6_chonk_root`       | `C6ChonkTube`, `C6ChonkRoot`       | Close one ciphertext's C6 Chonk stack; its app and kernels are in `bin/chonk/`.   |
+| `decryption_aggregator`                | `DecryptionAggregator`             | Verifies `c6_chonk_root` and C7. Its EVM proof goes to `publishPlaintextOutput`.  |
 
 For recursive trust and public-input bindings, see
 [proof statements](../docs/architecture/proof-statements.md#recursive-trust-and-exported-values).
