@@ -28,6 +28,20 @@ impl PublicSignals {
         if encoded.len() != count * 32 {
             return Err(invalid());
         }
+        if circuit == CircuitName::DecryptedSharesAggregation {
+            let (batch, message) = encoded.split_at(
+                (config.committee.values().threshold + 1) * config.c6_public_fields() * 32,
+            );
+            Self::decode_c6_batch(config, batch.chunks_exact(config.c6_public_fields() * 32))?;
+            for field in message.chunks_exact(32) {
+                if field[..24] != [0; 24]
+                    || u64::from_be_bytes(field[24..].try_into().unwrap())
+                        >= config.threshold.plaintext()
+                {
+                    return Err(invalid());
+                }
+            }
+        }
         let fields: Vec<Field> = encoded
             .chunks_exact(32)
             .map(|field| field.try_into().unwrap())
@@ -106,6 +120,50 @@ impl PublicSignals {
 
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+
+    /// Decode a complete ordered C6 statement batch. This checks public consistency, not proof validity.
+    pub fn decode_c6_batch<'a>(
+        config: &Configs,
+        encoded: impl ExactSizeIterator<Item = &'a [u8]>,
+    ) -> Result<Vec<Self>, ConfigError> {
+        let invalid =
+            || ConfigError::Other("incomplete or inconsistent synchronized C6 batch".into());
+        if encoded.len() != config.committee.values().threshold + 1 {
+            return Err(invalid());
+        }
+        let rows = encoded
+            .map(|row| Self::decode(config, CircuitName::ThresholdShareDecryption, row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first = &rows[0];
+        let roster = first.dealers().ok_or_else(invalid)?;
+        for (row, owner) in rows.iter().zip(&roster) {
+            if row.party_id() != Some(*owner)
+                || row.binding() != first.binding()
+                || row.dealers().as_ref() != Some(&roster)
+                || row.decryption_domain() != first.decryption_domain()
+                || row.ciphertext_commitment() != first.ciphertext_commitment()
+                || row.c0_commitment() != first.c0_commitment()
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(rows)
+    }
+
+    pub fn decryption_domain(&self) -> Option<[u128; 2]> {
+        (self.circuit == CircuitName::ThresholdShareDecryption).then(|| {
+            [3 + self.h, 4 + self.h]
+                .map(|i| u128::from_be_bytes(self.fields[i][16..].try_into().unwrap()))
+        })
+    }
+
+    pub fn decryption_share_commitment(&self) -> Option<Field> {
+        (self.circuit == CircuitName::ThresholdShareDecryption).then(|| self.fields[8 + self.h])
+    }
+
+    pub fn c0_commitment(&self) -> Option<Field> {
+        (self.circuit == CircuitName::ThresholdShareDecryption).then(|| self.fields[9 + self.h])
     }
 
     pub fn identity_fields(&self) -> Option<[Field; 3]> {
@@ -354,6 +412,42 @@ mod tests {
                 bytes[(start + 1) * 32 + 31] = 0;
                 assert!(PublicSignals::decode(&config, circuit, &bytes).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn c6_batch_checks_shared_fields_and_owner_order_independently() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let mut first = vec![0; config.c6_public_fields() * 32];
+        first[4 * 32 + 31] = 2;
+        let mut second = first.clone();
+        second[2 * 32 + 31] = 2;
+        let batch = |second: &[u8]| {
+            PublicSignals::decode_c6_batch(&config, [first.as_slice(), second].into_iter())
+        };
+        assert!(batch(&second).is_ok());
+        for (index, replacement) in [
+            (0, 1),
+            (1, 1),
+            (2, 0),
+            (3, 1),
+            (5, 1),
+            (6, 1),
+            (9, 1),
+            (11, 1),
+        ] {
+            let mut other = second.clone();
+            other[index * 32 + 31] = replacement;
+            // The row is valid in isolation; the batch must detect the mismatch.
+            assert!(
+                PublicSignals::decode(&config, CircuitName::ThresholdShareDecryption, &other)
+                    .is_ok()
+            );
+            assert!(batch(&other).is_err(), "accepted changed row field {index}");
         }
     }
 }
