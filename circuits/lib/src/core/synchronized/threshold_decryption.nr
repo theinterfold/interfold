@@ -66,6 +66,7 @@ pub fn execute(
     assert(
         compute_aggregated_shares_commitment_checked::<N, L, AGGREGATE_BIT>(centered(sk))
             == expected_sk,
+        "Wrong synchronized SK opening",
     );
     assert(
         key_bundle::<N_PARTIES, H, PRF_KEY_BITS>(
