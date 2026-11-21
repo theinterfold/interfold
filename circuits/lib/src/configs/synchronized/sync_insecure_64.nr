@@ -92,6 +92,7 @@ pub global PROFILE_ID: [Field; 2] =
 pub global PRF_KEY_BITS: u32 = 64;
 pub global SHARE_BIT: u32 = 27;
 pub global AGGREGATE_BIT: u32 = 26;
+pub global C6_NOISE_BOUND: u64 = 255488870400000;
 pub global PK_BIT_PK: u32 = 28;
 pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;

@@ -105,14 +105,12 @@ coefficient. Their generated bound arrays then only document the honest range, a
 checks that each `BIT` covers its array. Bound-1 witnesses (C1 `sk`, C3 and user-encryption `u`) use
 `c^3 = c`.
 
-## Synchronized PRF requirements (consumer deferred)
+## Synchronized PRF and draft Minimum C6
 
 The [isolated Noir gadget](../../circuits/lib/src/core/synchronized/prf.nr) consumes native
 power-basis rows. `pnpm test:sync-prf` checks individual owners' masks against the locked `fhe.rs`
 implementation with deterministic ciphertexts, keys and sets. The caller must select the correct
-incoming/outgoing keys from the authenticated bundle. The C6 consumer, including its ciphertext and
-provenance openings, remains work for
-[#2050](https://github.com/theinterfold/interfold/issues/2050). SAFE uses zero-padded
+incoming/outgoing keys from the authenticated bundle. SAFE uses zero-padded
 `fhe.rs/trbfv/prf/poseidon2/ctx` and `fhe.rs/trbfv/prf/poseidon2/eval` labels. The context absorbs
 the designated count, sorted one-based IDs, level and component count, then each component's
 CRT/ring dimensions and every native power-basis coefficient in ascending order, CRT-major.
@@ -130,6 +128,25 @@ This PRF context does not authenticate the Interfold E3 or DKG key provenance. T
 chain and deployed verifier interfaces remain SS-only; neither native transport tests nor isolated
 DKG leaves establish a synchronized proof chain or qualify secure-profile or repeated-decryption
 behavior.
+
+The disabled
+[`sync-insecure-64/minimum` C6](../../circuits/bin/synchronized/threshold/share_decryption/src/main.nr)
+opens the full C4 SK and bidirectional H-wide bundle. It derives the one-based PRF/Shamir set from
+the first T+1 rows of the public, strictly ordered zero-based H roster. Only a designated owner may
+contribute. C6 opens both components of the level-zero ciphertext and directly checks every native
+coefficient of `d = λ · c1 · sk + e + mask` in the negacyclic ring. The direct product and integer
+widths are for degree 64 only. One bounded integer per coefficient supplies the same noise across
+every CRT limb. Its bound comes from the profile's native noise calculator; this does not prove how
+or when the host sampled it.
+
+The draft public fields are
+`(setup[2], owner, roster[H], E3 decryption domain[2], aggregate SK, key bundle, ciphertext)`
+followed by `(d commitment, c0 component commitment)`. The new `d` anchor covers **all** native
+ascending coefficients, not the SS prefix. The c0 anchor is the component hash already inside the
+ciphertext commitment, in centered descending order. A synchronized C7 must open both in those
+encodings. The fold/final verifier must still enforce the same E3, roster, ciphertext and exact
+positions against independently confirmed authority. A valid isolated C6 does not establish that the
+public anchors were authorized, or that the set was complete.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
@@ -171,10 +188,9 @@ aggregate SK and bundle. A consistent context/dealer substitution can produce a 
 with different public fields/outputs; it is not evidence of authentication. Canonical context
 derivation now has a [draft native owner](dkg.md#exchange-and-verification-boundaries), and keyshare
 checks signed transport and complete C2-batch openings. The draft joins below add recursive
-enforcement of child consistency, not chain authority or registry publication authorization.
-Synchronized C6 remains unimplemented; no dummy ESM statements stand in for missing consumers. The
-joins, root/bundle/batch schema and setup derivation require protocol review before consumers freeze
-them.
+enforcement of child consistency, not chain authority or registry publication authorization. The
+draft Minimum C6 consumes the two C4 commitments without an ESM placeholder. The joins,
+root/bundle/batch schema and setup derivation require protocol review before consumers freeze them.
 
 `pnpm rust:test:sync-dkg:proofs` exercises the actual typed encoders and native encrypted transport,
 including non-prefix H, self/outside-H recipients, real private-input leaf and join/publication
@@ -237,7 +253,7 @@ values or caller-supplied chain context/roster, or replace signature admission. 
 consistently selected setup is not rejected without canonical external authority. These joins prove
 neither C4's BFV decryption equation nor publication authority. The runtime still refuses
 synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
-replay and C6 remain open.
+replay and the C6 fold/final verifier remain open.
 
 The typed local definition executor reuses these proof/verification owners. Recipient results must
 match independently supplied setup/owner and C1/C4/batch anchors; publication results must also

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Exact public layouts of synchronized DKG definitions, excluding Honk protocol fields.
+//! Exact public layouts of synchronized definitions, excluding Honk protocol fields.
 
 use super::Configs;
 use crate::{field::get_zkp_modulus, CircuitName, ConfigError};
@@ -50,6 +50,7 @@ impl PublicSignals {
             CircuitName::PkGeneration
                 | CircuitName::SkShareComputation
                 | CircuitName::DkgShareDecryption
+                | CircuitName::ThresholdShareDecryption
                 | CircuitName::NodeFold
                 | CircuitName::NodesFold
                 | CircuitName::DkgAggregator
@@ -68,11 +69,23 @@ impl PublicSignals {
         }
         if matches!(
             circuit,
-            CircuitName::DkgShareDecryption | CircuitName::NodesFold | CircuitName::DkgAggregator
+            CircuitName::DkgShareDecryption
+                | CircuitName::ThresholdShareDecryption
+                | CircuitName::NodesFold
+                | CircuitName::DkgAggregator
         ) {
             let dealers = result.dealers().ok_or_else(invalid)?;
             if dealers.iter().any(|&dealer| dealer as usize >= result.n)
                 || dealers.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                return Err(invalid());
+            }
+            if circuit == CircuitName::ThresholdShareDecryption
+                && (!dealers[..=config.committee.values().threshold]
+                    .contains(&result.party_id().ok_or_else(invalid)?)
+                    || result.fields[3 + result.h..5 + result.h]
+                        .iter()
+                        .any(|f| f[..16] != [0; 16]))
             {
                 return Err(invalid());
             }
@@ -102,7 +115,11 @@ impl PublicSignals {
     }
 
     pub fn ciphertext_commitment(&self) -> Option<Field> {
-        (self.circuit == CircuitName::ShareEncryption).then(|| self.fields[2])
+        match self.circuit {
+            CircuitName::ShareEncryption => Some(self.fields[2]),
+            CircuitName::ThresholdShareDecryption => Some(self.fields[7 + self.h]),
+            _ => None,
+        }
     }
 
     pub fn party_id(&self) -> Option<u32> {
@@ -111,6 +128,7 @@ impl PublicSignals {
             CircuitName::PkGeneration
                 | CircuitName::SkShareComputation
                 | CircuitName::DkgShareDecryption
+                | CircuitName::ThresholdShareDecryption
                 | CircuitName::NodeFold
                 | CircuitName::NodesFold
         )
@@ -122,6 +140,7 @@ impl PublicSignals {
         match self.circuit {
             CircuitName::PkGeneration | CircuitName::SkShareComputation => Some(self.fields[3]),
             CircuitName::DkgShareDecryption => Some(self.fields[self.fields.len() - 2]),
+            CircuitName::ThresholdShareDecryption => Some(self.fields[5 + self.h]),
             CircuitName::NodesFold => Some(self.fields[self.fields.len() - 2]),
             _ => None,
         }
@@ -160,7 +179,7 @@ impl PublicSignals {
 
     pub fn dealers(&self) -> Option<Vec<u32>> {
         let start = match self.circuit {
-            CircuitName::DkgShareDecryption => 3,
+            CircuitName::DkgShareDecryption | CircuitName::ThresholdShareDecryption => 3,
             CircuitName::NodesFold => 4,
             CircuitName::DkgAggregator => 4,
             _ => return None,
@@ -172,6 +191,9 @@ impl PublicSignals {
     }
 
     pub fn key_bundle(&self) -> Option<Field> {
+        if self.circuit == CircuitName::ThresholdShareDecryption {
+            return Some(self.fields[6 + self.h]);
+        }
         matches!(
             self.circuit,
             CircuitName::DkgShareDecryption | CircuitName::NodesFold
@@ -247,6 +269,28 @@ mod tests {
     use super::*;
     use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvProfile;
+
+    #[test]
+    fn c6_requires_designated_owner_and_two_u128_domain_limbs() {
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecInsecure64,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let mut row = vec![0; 12 * 32]; // Minimum C6 wire row
+        row[4 * 32 + 31] = 2; // non-prefix roster [0, 2]
+        let decode = |bytes: &[u8]| {
+            PublicSignals::decode(&config, CircuitName::ThresholdShareDecryption, bytes)
+        };
+        assert!(decode(&row).is_ok());
+        for limb in [5, 6] {
+            let mut oversized = row.clone();
+            oversized[limb * 32 + 15] = 1;
+            assert!(decode(&oversized).is_err());
+        }
+        row[2 * 32 + 31] = 1; // valid committee ID, outside the designated set
+        assert!(decode(&row).is_err());
+    }
 
     #[test]
     fn exact_sync_layout_rejects_noncanonical_fields_context_and_rosters() {
