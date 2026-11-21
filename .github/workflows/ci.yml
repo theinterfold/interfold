@@ -209,6 +209,7 @@ jobs:
           CONTRACTS="${{ steps.filter.outputs.contracts }}"
           BINDINGS="${{ steps.filter.outputs.bindings }}"
           CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
+          SYNC_PROOF_TOOLS="${{ steps.circuit_filter.outputs.sync_proof_tools }}"
           VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
           CRYPTO_CONFIG="${{ steps.circuit_filter.outputs.crypto_config }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
@@ -238,7 +239,7 @@ jobs:
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
           echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "zk=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "zk=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $SYNC_PROOF_TOOLS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "contracts=$(any $FORCE $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # The rust jobs already compile the workspace, so the image build only
           # needs to run when the Dockerfiles or their build context change.
@@ -1292,9 +1293,9 @@ jobs:
         if: matrix.leg == 'sync-dkg-proofs'
         run: pnpm test:sync-prf
 
-      - name: Prove synchronized DKG leaves, joins and isolated publication verification
+      - name: Prove synchronized Minimum DKG and verify decryption against its signed publication
         if: matrix.leg == 'sync-dkg-proofs'
-        run: E3_CUSTOM_BB=$(command -v bb) pnpm rust:test:sync-dkg:proofs
+        run: E3_CUSTOM_BB=$(command -v bb) pnpm test:sync-decryption:contract
 
       - name: Install Anvil for recovered synchronized publication
         if: matrix.leg == 'sync-dkg-recovery'
