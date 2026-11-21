@@ -137,6 +137,9 @@ impl Configs {
             CircuitName::DecryptedSharesAggregation => Some(
                 (values.threshold + 1) * self.c6_public_fields() + crate::MAX_MSG_NON_ZERO_COEFFS,
             ),
+            CircuitName::DecryptionAggregator => self
+                .public_inputs(CircuitName::DecryptedSharesAggregation)
+                .map(|count| 2 + count),
             _ => None,
         }
     }
@@ -146,7 +149,7 @@ impl Configs {
             CircuitName::PkBfv | CircuitName::ShareEncryption => Some(1),
             CircuitName::PkGeneration | CircuitName::DkgShareDecryption => Some(2),
             CircuitName::ThresholdShareDecryption => Some(2),
-            CircuitName::DecryptedSharesAggregation => Some(0),
+            CircuitName::DecryptedSharesAggregation | CircuitName::DecryptionAggregator => Some(0),
             CircuitName::SkShareComputation => {
                 Some(self.committee.values().n * self.threshold.moduli().len() + 1)
             }

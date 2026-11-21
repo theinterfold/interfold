@@ -294,7 +294,7 @@ impl Request {
             && synchronized
             && (self.hydrate_bin_only || self.circuits.is_empty())
         {
-            bail!("Synchronized artifacts are incomplete; select explicit DKG leaf circuits, without hydration");
+            bail!("Synchronized artifacts are incomplete; select explicit circuit names with --circuit, without hydration");
         }
         Ok(())
     }

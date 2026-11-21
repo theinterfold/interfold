@@ -4,6 +4,7 @@
 //! admit the profile or authenticate caller-supplied chain context.
 
 pub mod dealer;
+pub mod decryption;
 pub mod execution;
 pub mod provenance;
 pub mod publication;
