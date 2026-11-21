@@ -28,6 +28,10 @@ contract FakeInterfold {
   mapping(uint256 => bytes32) private encryptionSchemeOverrides;
   mapping(uint256 => uint8) private paramSetOverrides;
 
+  function setParamSet(uint8 index, bytes calldata data) external {
+    paramSetRegistry[index] = data;
+  }
+
   function setCryptoConfigId(uint256 e3Id, bytes32 configId) external {
     cryptoConfigOverrides[e3Id] = configId;
   }

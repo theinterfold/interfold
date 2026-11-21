@@ -4166,6 +4166,7 @@ dependencies = [
  "fhe-traits",
  "rand 0.9.5",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
