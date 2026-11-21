@@ -79,6 +79,7 @@ import {
   activeBfvConfigForChain,
   bfvConfigsForChain,
   bfvParamSetConfigsForChain,
+  committeeThresholdsForChain,
 } from "../utils";
 import {
   equalAddress,
@@ -640,17 +641,16 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   }
 
   const thresholds: V19CutoverDecisions["committeeThresholds"] = [];
+  const releaseSizes = committeeThresholdsForChain(chainId).map((c) =>
+    BigInt(c.committeeSize),
+  );
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
-    // The implementation that the batch replaces reverts without data on a size that its
-    // `CommitteeSize` lacks. The batch upgrades first, so it sets that size.
-    const current = await Promise.all([
-      interfold.committeeThresholds(size, 0n),
-      interfold.committeeThresholds(size, 1n),
-    ]).catch((error) => {
-      if (isMissingFunctionError(error)) return undefined;
-      throw error;
-    });
+    const current = await readCommitteeThreshold(
+      (index) => interfold.committeeThresholds(size, index),
+      size,
+      releaseSizes,
+    );
     if (
       !current ||
       current[0] !== BigInt(threshold.quorum) ||
@@ -856,6 +856,27 @@ v0.19 cutover prepared
   requests remain paused after execution
 `);
   return plan;
+}
+
+/**
+ * Read the live `(quorum, total)` of a committee size, or `undefined` when the implementation that
+ * the batch replaces lacks the size: it reverts without data on a size its `CommitteeSize` enum does
+ * not have. The batch upgrades first, so it can then set that size. Only a size that this release
+ * knows (`releaseSizes`) may read as unset; any other error is rethrown.
+ */
+export async function readCommitteeThreshold(
+  read: (index: bigint) => Promise<bigint>,
+  size: bigint,
+  releaseSizes: bigint[],
+): Promise<[bigint, bigint] | undefined> {
+  try {
+    return await Promise.all([read(0n), read(1n)]);
+  } catch (error) {
+    if (isMissingFunctionError(error) && releaseSizes.includes(size)) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /**
