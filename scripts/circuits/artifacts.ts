@@ -7,8 +7,8 @@
 
 import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { join, relative, resolve } from 'path'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { dirname, join, relative, resolve } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './constants'
 import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
 import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
@@ -41,8 +41,6 @@ function copyArtifactsInto(target: string): void {
       cpSync(localPair, remotePair, { recursive: true })
     }
   }
-  const commitments = join(DIST, 'vk-commitments.json')
-  if (existsSync(commitments)) cpSync(commitments, join(target, 'vk-commitments.json'))
 }
 
 function artifactFiles(dir: string, base = dir): string[] {
@@ -249,6 +247,12 @@ async function push() {
 
   copyArtifactsInto(tmp)
   validateArtifactSet(tmp)
+  // The merged tree can contain pairs from both DIST and the previous publication.
+  // Its lookup key must be derived from those pairs, never inherited from either root.
+  execFileSync('pnpm', ['build:circuits', 'prepare-vk-commitments', '--output', tmp], { cwd: ROOT, stdio: 'inherit' })
+  if (!readFileSync(join(tmp, 'vk-commitments.json')).equals(readFileSync(join(ROOT, 'circuits/vk-commitments.json')))) {
+    throw new Error('Prepared archive catalogue does not match the exact checkout catalogue')
+  }
   writeFileSync(join(tmp, 'SOURCE_HASH'), hash)
   refreshChecksums(tmp)
 
@@ -339,6 +343,9 @@ export function findArtifactRevision(root: string, reference: string, sourceHash
 }
 
 async function pull() {
+  const latest = process.argv.includes('--latest')
+  const compatible = process.argv.includes('--compatible')
+  if (latest && compatible) throw new Error('Select --latest or --compatible, not both')
   try {
     run(`git fetch origin ${BRANCH}`)
   } catch (e: any) {
@@ -353,7 +360,27 @@ async function pull() {
   }
 
   // Non-release consumers can use the newest published build. Release pulls stay source-bound.
-  const latest = process.argv.includes('--latest')
+  if (compatible) {
+    const revision = findCompatibleRevision(ROOT, `origin/${BRANCH}`)
+    mkdirSync(dirname(DIST), { recursive: true })
+    const job = mkdtempSync(join(dirname(DIST), '.published-circuits-'))
+    const staged = join(job, 'new')
+    const backup = join(job, 'previous')
+    try {
+      mkdirSync(staged)
+      execFileSync('bash', ['-o', 'pipefail', '-c', 'git archive "$1" | tar -x -C "$2"', 'extract', revision, staged], { cwd: ROOT })
+      validateChecksums(staged)
+      execFileSync('pnpm', ['build:circuits', 'check-vk-commitments', '--preset', 'all', '--committee', 'all', '--output', staged], {
+        cwd: ROOT,
+        stdio: 'inherit',
+      })
+      installVerifiedArtifacts(staged, DIST, backup)
+    } finally {
+      if (!existsSync(backup)) rmSync(job, { recursive: true, force: true })
+    }
+    console.log(`Verified published ${revision} against ${join(ROOT, 'circuits/vk-commitments.json')}`)
+    return
+  }
   const hash = latest ? undefined : run('pnpm --silent build:circuits hash')
   const revision = findArtifactRevision(ROOT, `origin/${BRANCH}`, hash)
 
@@ -362,6 +389,35 @@ async function pull() {
 
   runV(`git archive ${revision} | tar -x -C "${DIST}"`)
   console.log(`✅ Pulled ${revision} (SOURCE_HASH=${readFileSync(join(DIST, 'SOURCE_HASH'), 'utf8').trim()}) to ${DIST}`)
+}
+
+/** Keep the old installation recoverable until promotion succeeds. All paths are on one filesystem. */
+export function installVerifiedArtifacts(staged: string, destination: string, backup: string): void {
+  if (!existsSync(destination)) return renameSync(staged, destination)
+  renameSync(destination, backup)
+  try {
+    renameSync(staged, destination)
+  } catch (error) {
+    try {
+      renameSync(backup, destination)
+    } catch (restore) {
+      throw new AggregateError([error, restore], `Could not restore circuit artifacts. Recovery paths: ${backup}, ${staged}`)
+    }
+    throw error
+  }
+  rmSync(backup, { recursive: true })
+}
+
+/** CI may reuse a different source revision, but never a different verifier genealogy. */
+export function findCompatibleRevision(root: string, reference: string): string {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const expected = git('hash-object', 'circuits/vk-commitments.json')
+  for (const revision of git('rev-list', '--first-parent', reference).split('\n')) {
+    if (git('ls-tree', '--object-only', revision, '--', 'vk-commitments.json') === expected) return revision
+  }
+  throw new Error(
+    'No published circuit artifacts match the checkout VK catalogue; build from this checkout or publish a verified archive for this catalogue',
+  )
 }
 
 async function verifyRelease() {
@@ -388,6 +444,6 @@ if (require.main === module) {
   else if (cmd === 'checksums') refreshChecksums(resolve(argValue('--dir') ?? DIST))
   else
     console.log(
-      'Usage: pnpm store:circuits [push [--replace]|pull [--latest]|verify-release [--source-hash <hash>]|checksums [--dir <path>]|restamp --expect-source-hash <hash>]',
+      'Usage: pnpm store:circuits [push [--replace]|pull [--latest | --compatible]|verify-release [--source-hash <hash>]|checksums [--dir <path>]|restamp --expect-source-hash <hash>]',
     )
 }
