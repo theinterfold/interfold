@@ -796,20 +796,10 @@ pub fn run_decryption(
     }
     let mut aggregator = Phases::new("aggregator_decryption");
     let slots = committee.threshold + 1;
-    let mut inner = vec![c6];
-    // The other T shares come from other nodes; they are Chonk inputs, not aggregator work.
-    for index in 1..slots {
-        let data = prep(&format!("c6_input[{index}] sample"), c6_sample);
-        inner.push(measure(&format!("c6_input[{index}]"), || {
-            ThresholdShareDecryptionCircuit.prove(
-                prover,
-                &c6_config,
-                &data,
-                &format!("measure-c6-input-{index}"),
-                artifacts_dir,
-            )
-        }));
-    }
+    // The other T shares come from other nodes and are Chonk inputs, not aggregator work. The Chonk
+    // app checks proof validity, one shared domain and distinct slots, so copies of this node's C6
+    // fill the other slots, as the C6 Chonk e2e test does.
+    let inner = vec![c6; slots];
     let slot_indices: Vec<u32> = (0..slots as u32).collect();
     aggregator.run("c6_chonk", || {
         measure("c6_chonk_root", || {

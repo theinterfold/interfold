@@ -15,10 +15,13 @@
 //! Output format and parallelism: `common/node_pipeline_measure.rs`.
 //!
 //! Run with the matching active artifacts (`pnpm build:circuits --preset secure-8192 --committee
-//! small`), `MEASURE_RUN=1`, `--release -- --nocapture --test-threads=1`. Set
-//! `E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1` as well: without it this crate's build script can run
-//! `pnpm build:circuits --skip-if-built` for the default pair, which makes insecure-64/minimum the
-//! active artifacts, and every measurement then skips.
+//! small`; `MEASURE_COMMITTEE` selects another built committee, `large` included):
+//! `E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 MEASURE_RUN=1 cargo test --release -p e3-zk-prover --test
+//! node_pipeline_trbfv_measure <test name> -- --nocapture --test-threads=1`. The DKG pipeline test
+//! has no flag of its own, so name the test to run. Without `E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1`
+//! this crate's build script can run `pnpm build:circuits --skip-if-built` for the default pair,
+//! which makes insecure-64/minimum the active artifacts, and every requested measurement then
+//! fails at the artifact check.
 
 mod common;
 #[allow(dead_code)]
@@ -205,6 +208,9 @@ async fn trbfv_node_dkg_pipeline_measure() {
         println!("STEP c3 proofs={}", c3a.len() + c3b.len());
         (c3a, c3b, slots_a)
     } else {
+        pipeline::note(
+            "C3 proves one proof at a time on every core; production runs four light C3 jobs at once",
+        );
         phases.run("c3", || {
             let (c3a, slots_a) = pipeline::prove_c3_set(
                 &prover,

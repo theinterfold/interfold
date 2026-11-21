@@ -159,6 +159,10 @@ guards and C6 key validation. The ignored
 `local_small_c7_request_proves_ten_shares_with_the_canonical_committee` test also lives here; it
 requires `E3_CUSTOM_BB` and `E3_TEST_ARTIFACTS_ROOT` for prepared insecure-64/small artifacts.
 
+`tests/node_pipeline_trbfv_measure.rs` measures one node's production proving pipeline. Every test
+returns at once unless `MEASURE_RUN=1` (and its own flag) is set; once requested, it fails unless
+the active artifacts match. It asserts no results. Its module documentation gives the command.
+
 ### Real-proof tests
 
 Prepare pinned nargo and bb, jq, pnpm/workspace dependencies, and circuits/VKs matching the active
