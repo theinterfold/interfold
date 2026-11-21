@@ -143,10 +143,22 @@ The draft public fields are
 `(setup[2], owner, roster[H], E3 decryption domain[2], aggregate SK, key bundle, ciphertext)`
 followed by `(d commitment, c0 component commitment)`. The new `d` anchor covers **all** native
 ascending coefficients, not the SS prefix. The c0 anchor is the component hash already inside the
-ciphertext commitment, in centered descending order. A synchronized C7 must open both in those
-encodings. The fold/final verifier must still enforce the same E3, roster, ciphertext and exact
-positions against independently confirmed authority. A valid isolated C6 does not establish that the
-public anchors were authorized, or that the set was complete.
+ciphertext commitment, in centered descending order.
+
+The disabled
+[Minimum C7](../../circuits/bin/synchronized/threshold/decrypted_shares_aggregation/src/main.nr)
+exposes exactly T+1 **complete C6 public rows**, in order, followed by the published native
+plaintext coefficients. Row `i` must belong to `roster[i]`; setup, full H roster, E3 domain,
+ciphertext and c0 must match across rows. Each raw share opens its own C6 `d` commitment; the single
+c0 opens the common component commitment. C7 sums native residues with c0 once, then uses the
+existing Garner reconstruction and rounded decode. All coefficients enter the openings even though
+only the protocol's plaintext prefix is published.
+
+`pnpm rust:test:sync-dkg:proofs` includes a real native C4/C6/C7 case. It compares the C7 public
+prefix byte-for-byte to independently verified C6 proofs and rejects a substitution from another
+independently proved set on the same ciphertext. C7 does not recursively verify those proofs. The
+fold/final verifier must still authenticate the **exact rows** and bind them to independently
+confirmed authority; a collection of self-declared rows is not proof of a decryption.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 

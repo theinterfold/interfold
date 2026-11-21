@@ -193,7 +193,7 @@ pub fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: 
 ///
 /// This replaces taking `u` as a witness with its own CRT-consistency equation and quotients: `u` is
 /// derived here, so there is no quotient to bound and nothing for a prover to choose.
-fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
+pub fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
     residues: [Field; L],
     qis: [Field; L],
 ) -> Field {
@@ -229,7 +229,7 @@ fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
 /// `[0, Q)` is unique, so a wrong hint cannot satisfy both checks below.
 ///
 /// `half` is passed in because the caller already computed it once for every coefficient.
-fn rounded_decode<let BIT_T: u32, let BIT_Q_TOTAL: u32>(
+pub fn rounded_decode<let BIT_T: u32, let BIT_Q_TOTAL: u32>(
     u: Field,
     t: Field,
     q_total: Field,
