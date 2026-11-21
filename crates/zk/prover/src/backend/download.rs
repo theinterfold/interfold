@@ -28,6 +28,12 @@ const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 /// Longest time `bb --version` may run. A binary that hangs must not block setup or startup.
 const BB_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Downloads have no total deadline: the circuit archive grows with every supported pair, and a
+/// slow but steady link must still finish. They fail only when a connection cannot be opened or
+/// stops delivering data.
+const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
 
@@ -696,7 +702,8 @@ fn find_bb_in_dir(dir: &Path) -> Result<PathBuf, ZkError> {
 
 async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkError> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
+        .read_timeout(DOWNLOAD_STALL_TIMEOUT)
         .build()
         .map_err(|e| ZkError::DownloadFailed(url.to_string(), e.to_string()))?;
 
