@@ -198,7 +198,7 @@ pub fn direct_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
     (compute_threshold_decryption_share_commitment::<N, L, SHARE_BIT>(share), opened.c0_hash)
 }
 
-pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIES: u32, let AGGREGATE_BIT: u32, let KEY_BITS: u32, let SHARE_BIT: u32>(
+pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIES: u32, let AGGREGATE_BIT: u32, let KEY_BITS: u32, let SHARE_BIT: u32, let NOISE_BIT: u32, let SHIFTED_NOISE_BIT: u32>(
     setup: [Field; 2],
     owner: u32,
     roster: [u32; H],
@@ -244,9 +244,16 @@ pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
         }
     }
     let gamma = commit(transcript.as_vector());
-    bound.assert_max_bit_size::<144>();
+    // The bound B has NOISE_BIT bits and the shifted noise lies in [0, 2B], so SHIFTED_NOISE_BIT
+    // is one more. The quotient window below needs B/q < 2^86 with q >= 2^59, so B < 2^145.
+    std::static_assert(SHIFTED_NOISE_BIT == NOISE_BIT + 1, "shifted noise width");
+    std::static_assert(
+        NOISE_BIT <= 145,
+        "noise bound too wide for the quotient window",
+    );
+    bound.assert_max_bit_size::<NOISE_BIT>();
     for j in 0..N {
-        check_secure_noise(shifted_noise[j], bound);
+        check_secure_noise::<SHIFTED_NOISE_BIT>(shifted_noise[j], bound);
     }
     let mut share = [Polynomial::new([0; N]); L];
     for l in 0..L {
@@ -271,8 +278,8 @@ pub fn secure_share<let N: u32, let L: u32, let H: u32, let T: u32, let N_PARTIE
     (compute_threshold_decryption_share_commitment::<N, L, SHARE_BIT>(share), opened.c0_hash)
 }
 
-fn check_secure_noise(shifted: Field, bound: Field) {
-    assert_in_range::<145>(shifted, 2 * bound + 1);
+fn check_secure_noise<let BIT: u32>(shifted: Field, bound: Field) {
+    assert_in_range::<BIT>(shifted, 2 * bound + 1);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 use lib::configs::synchronized::sync_secure_8192::{
-    AGGREGATE_BIT, C6_NOISE_BOUND, H, KEY_BITS, L, N, N_PARTIES, PROFILE_ID, QIS, SHARE_BIT, T,
+    AGGREGATE_BIT, C6_NOISE_BIT, C6_NOISE_BOUND, C6_SHIFTED_NOISE_BIT, H, KEY_BITS, L, N, N_PARTIES,
+    PROFILE_ID, QIS, SHARE_BIT, T,
 };
 use lib::core::synchronized::threshold_decryption::secure_share;
 
@@ -21,7 +22,7 @@ fn main(
     product: [[Field; N]; L],
 ) -> pub (Field, Field) {
     let _ = domain;
-    secure_share::<N, L, H, T, N_PARTIES, AGGREGATE_BIT, KEY_BITS, SHARE_BIT>(
+    secure_share::<N, L, H, T, N_PARTIES, AGGREGATE_BIT, KEY_BITS, SHARE_BIT, C6_NOISE_BIT, C6_SHIFTED_NOISE_BIT>(
         setup,
         owner,
         roster,
