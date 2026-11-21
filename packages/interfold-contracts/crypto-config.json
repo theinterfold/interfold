@@ -225,7 +225,7 @@
         "profile": "sync-secure-8192",
         "protocol": "synchronized",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
