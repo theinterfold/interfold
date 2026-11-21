@@ -41,7 +41,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     expected[width - 1] = params.plaintext() - 1;
     let pt = Plaintext::try_encode(&expected, Encoding::poly(), params)?;
     let ct = pk.try_encrypt(&pt, &mut rng)?;
-    let (shares, public) = prove_partials(&root, &bb, &fixture, DEALERS, &ct)?;
+    let (shares, proofs) = prove_partials(&root, &bb, &fixture, DEALERS, &ct)?;
+    let public: Vec<&[u8]> = proofs.iter().map(|p| p.public_signals.as_ref()).collect();
     let values = cfg.committee.values();
     let decryptor = SynchronizedDecryptor::new(values.n, values.threshold, params.clone())?;
     let plaintext = decryptor.decrypt_from_shares(&shares, &ct)?;
@@ -77,7 +78,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     job.execute(&leaf.inputs)?;
     job.prove(&bb, cfg, &leaf)?;
     // The next recursion layer will have to compare exactly these fields, in exactly this order.
-    let bytes = fs::read(job.directory.path().join("proof/public_inputs"))?;
+    let c7 = job.read_proof(role)?;
+    let bytes = c7.public_signals.extract_bytes();
     let public_batch = public.concat();
     ensure!(bytes.starts_with(&public_batch));
     for (field, &coefficient) in bytes[public_batch.len()..].chunks_exact(32).zip(&expected) {
@@ -151,7 +153,11 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     // a different H/S. Neither set is complete after this replacement.
     let other = [1, 2];
     let alt = Fixture::native_with_roster(BINDING, other)?;
-    let (alt_shares, alt_public) = prove_partials(&root, &bb, &alt, other, &ct)?;
+    let (alt_shares, alt_proofs) = prove_partials(&root, &bb, &alt, other, &ct)?;
+    let alt_public: Vec<&[u8]> = alt_proofs
+        .iter()
+        .map(|p| p.public_signals.as_ref())
+        .collect();
     let alt_share = alt_shares.into_iter().last().unwrap().into_parts().0;
     let mixed = [
         Contribution {
@@ -180,6 +186,23 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         error.contains("Mixed C6 roster"),
         "mixed proof rows failed for another reason: {error}"
     );
+    let moduli = params.moduli();
+    let ct_hash = compute_ciphertext_commitment(
+        &fhe_poly_to_crt_centered(&ct[0], moduli)?,
+        &fhe_poly_to_crt_centered(&ct[1], moduli)?,
+        cfg.aggregate_bit,
+    );
+    super::decryption_aggregation::qualify(
+        &root,
+        &bb,
+        &fixture,
+        &proofs,
+        &c7,
+        &alt_proofs[1],
+        DOMAIN,
+        &ct_hash,
+        &expected,
+    )?;
     Ok(())
 }
 
@@ -189,7 +212,7 @@ fn prove_partials(
     fixture: &Fixture,
     roster: [u32; 2],
     ct: &Ciphertext,
-) -> Result<(Vec<DecryptionShare>, Vec<Vec<u8>>)> {
+) -> Result<(Vec<DecryptionShare>, Vec<e3_events::Proof>)> {
     let cfg = &fixture.config;
     let params = &cfg.threshold;
     let values = cfg.committee.values();
@@ -283,9 +306,11 @@ fn prove_partials(
         };
         job.execute(&leaf.inputs)?;
         job.prove(bb, cfg, &leaf)?;
-        let bytes = fs::read(job.directory.path().join("proof/public_inputs"))?;
+        let proof = job.read_proof(leaf.role)?;
         let signals = e3_zk_config::synchronized::public_signals::PublicSignals::decode(
-            cfg, leaf.role, &bytes,
+            cfg,
+            leaf.role,
+            &proof.public_signals,
         )?;
         ensure!(
             signals.binding() == Some(BINDING)
@@ -342,7 +367,7 @@ fn prove_partials(
             }
         }
         shares.push(DecryptionShare::from_parts(d, id, coords, ct)?);
-        public.push(bytes);
+        public.push(proof);
     }
     Ok((shares, public))
 }

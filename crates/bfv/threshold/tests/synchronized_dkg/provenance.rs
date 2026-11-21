@@ -12,7 +12,7 @@ use e3_zk_prover::{
     BBPath, CompiledCircuit, WitnessGenerator, ZkBackend, ZkProver,
 };
 
-fn field(value: &BigInt) -> [u8; 32] {
+pub(super) fn field(value: &BigInt) -> [u8; 32] {
     let (_, bytes) = value.to_bytes_be();
     let mut result = [0; 32];
     result[32 - bytes.len()..].copy_from_slice(&bytes);
@@ -25,7 +25,10 @@ fn variant(role: CircuitName) -> CircuitVariant {
         CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::PkAggregation
     ) {
         CircuitVariant::Default
-    } else if role == CircuitName::DkgAggregator {
+    } else if matches!(
+        role,
+        CircuitName::DkgAggregator | CircuitName::DecryptionAggregator
+    ) {
         CircuitVariant::Evm
     } else {
         CircuitVariant::Recursive
@@ -34,7 +37,12 @@ fn variant(role: CircuitName) -> CircuitVariant {
 
 // This is an isolated, explicitly selected proof variant, not an installable archive or a copy of
 // the release variant/marker table. Source manifests retain their canonical dependency pins.
-fn stage(job: &CircuitJob, prover: &ZkProver, bb: &Path, role: CircuitName) -> Result<PathBuf> {
+pub(super) fn stage(
+    job: &CircuitJob,
+    prover: &ZkProver,
+    bb: &Path,
+    role: CircuitName,
+) -> Result<PathBuf> {
     run(Command::new("nargo")
         .arg("compile")
         .current_dir(job.directory.path()))?;
@@ -79,7 +87,7 @@ fn prove_json(prover: &ZkProver, role: CircuitName, input: &Value, job: &str) ->
     Ok(proof)
 }
 
-fn reject_join(compiled: &Path, input: &Value, expected: &str) -> Result<()> {
+pub(super) fn reject_join(compiled: &Path, input: &Value, expected: &str) -> Result<()> {
     let compiled = CompiledCircuit::from_file(compiled)?;
     let error = WitnessGenerator::new()
         .generate_witness(&compiled, inputs_json_to_input_map(input)?)

@@ -149,6 +149,7 @@ impl CircuitName {
         Self::SYNCHRONIZED_DKG.into_iter().chain([
             Self::ThresholdShareDecryption,
             Self::DecryptedSharesAggregation,
+            Self::DecryptionAggregator,
         ])
     }
 

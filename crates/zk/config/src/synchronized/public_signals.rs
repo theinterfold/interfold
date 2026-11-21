@@ -28,19 +28,15 @@ impl PublicSignals {
         if encoded.len() != count * 32 {
             return Err(invalid());
         }
-        if circuit == CircuitName::DecryptedSharesAggregation {
-            let (batch, message) = encoded.split_at(
-                (config.committee.values().threshold + 1) * config.c6_public_fields() * 32,
-            );
-            Self::decode_c6_batch(config, batch.chunks_exact(config.c6_public_fields() * 32))?;
-            for field in message.chunks_exact(32) {
-                if field[..24] != [0; 24]
-                    || u64::from_be_bytes(field[24..].try_into().unwrap())
-                        >= config.threshold.plaintext()
-                {
-                    return Err(invalid());
-                }
+        match circuit {
+            CircuitName::DecryptedSharesAggregation => {
+                Self::decode_c7(config, encoded)?;
             }
+            // Two child VK pins precede the unchanged C7 statement.
+            CircuitName::DecryptionAggregator => {
+                Self::decode_c7(config, &encoded[64..])?;
+            }
+            _ => {}
         }
         let fields: Vec<Field> = encoded
             .chunks_exact(32)
@@ -120,6 +116,31 @@ impl PublicSignals {
 
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+
+    pub fn decode_c7(
+        config: &Configs,
+        encoded: &[u8],
+    ) -> Result<(Vec<Self>, Vec<u64>), ConfigError> {
+        let invalid = || ConfigError::Other("invalid synchronized C7 statement".into());
+        let row_bytes = config.c6_public_fields() * 32;
+        let (batch, message) = encoded
+            .split_at_checked((config.committee.values().threshold + 1) * row_bytes)
+            .ok_or_else(invalid)?;
+        if message.len() != crate::MAX_MSG_NON_ZERO_COEFFS * 32 {
+            return Err(invalid());
+        }
+        let rows = Self::decode_c6_batch(config, batch.chunks_exact(row_bytes))?;
+        let plaintext = message
+            .chunks_exact(32)
+            .map(|field| {
+                let value = u64::from_be_bytes(field[24..].try_into().unwrap());
+                (field[..24] == [0; 24] && value < config.threshold.plaintext())
+                    .then_some(value)
+                    .ok_or_else(invalid)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok((rows, plaintext))
     }
 
     /// Decode a complete ordered C6 statement batch. This checks public consistency, not proof validity.
