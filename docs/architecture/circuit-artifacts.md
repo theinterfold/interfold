@@ -93,9 +93,8 @@ The builder's legacy `--preset` option now selects a protocol profile; SS retain
 `insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
 separate `circuits/bin/synchronized/{dkg,threshold,recursive_aggregation}` sources/targets and
 generated static configuration, never SS JSON/VK fallback. The live build/release policy still
-excludes it. Explicitly seeded test policies may build its DKG leaves, draft provenance/
-publication definitions, Minimum C6/C7 and the direct decryption aggregator. For the decryption
-chain select
+excludes it. Explicitly seeded test policies may build its DKG leaves, draft provenance/ publication
+definitions, Minimum C6/C7 and the direct decryption aggregator. For the decryption chain select
 `--group threshold,recursive_aggregation --circuit share_decryption --circuit decrypted_shares_aggregation --circuit decryption_aggregator`
 explicitly. This partial build does not stamp a complete pair, change the active SS stamp, produce
 recursive anchors, hydrate artifacts or reuse the source cache. Partial/failed sync work invalidates
