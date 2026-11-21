@@ -11,6 +11,10 @@ the generated verifier compiled with solc 0.8.28 accepted it and rejected change
 | `sync-insecure-64/minimum` |               92,038 |    17,265 |   2,242,265 |                            4.51 GiB |
 | `sync-secure-8192/minimum` |            8,609,254 | 1,516,802 |   2,242,265 |                           26.68 GiB |
 
+The 45-party parameter search (#2542) raises the secure C6 noise bound to 145 bits. The secure C6 is
+then 8,609,260 gates; C7 and the outer circuit are unchanged. The timings below predate it. The
+2026-11-21 requalification on an Apple M5 Ultra peaked at 26.63 GiB.
+
 Apple M4 Pro / 48 GiB, Nargo `1.0.0-rc.3`, bb `6.0.0`, local CRS. In the secure run, C6
 `bb prove --write_vk` took **21.06 s / 20.74 s** for the two owners; C7 took **4.23 s**. Outer
 witness preparation and EVM proving together took **4.81 s** (insecure: **5.12 s**). A separate
