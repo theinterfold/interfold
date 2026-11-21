@@ -30,11 +30,12 @@ Before accepting a paid request it requires:
   eligibility version, with every captured registration refreshed;
 - expected token/configuration equality and `totalFee <= maxFee`, before exact escrow transfer.
 
-Mainnet supports secure-8192 at minimum/micro/small; configured launch `minCommitteeSize = 19`
-admits Small only. Sepolia/local also support insecure-64. A route being configured does not itself
-authorize its price-policy committee size. Different tuples, H/N, or verifier thresholds require
-matching artifacts and contracts. Requests and saved contexts must retain the identity bound to
-their selected profile; shared threshold bytes do not authorize profile substitution.
+Mainnet supports secure-8192. The contract accepts any committee size whose threshold governance has
+set; the mainnet configuration sets minimum/micro/small, and launch `minCommitteeSize = 19` admits
+Small only. Sepolia/local also support insecure-64 and set Large. A route being configured does not
+itself authorize its price-policy committee size. Different tuples, H/N, or verifier thresholds
+require matching artifacts and contracts. Requests and saved contexts must retain the identity bound
+to their selected profile; shared threshold bytes do not authorize profile substitution.
 Confirmed-chain ingestion resolves the exact request identity. Synchronized profiles and older
 threshold-only identities are not admitted. [Upgrades](upgrades.md) preserves historical
 parameter-set indices 0, 1 and 2 and registers the current tuples at indices 3 and 4; never
