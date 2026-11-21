@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { expect } from "chai";
 import type {
+  BaseContract,
   ContractTransactionReceipt,
   LogDescription,
   TypedDataDomain,
 } from "ethers";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import {
   buildRequestParams,
@@ -13,10 +16,15 @@ import {
   ethers,
   networkHelpers,
 } from "../fixtures";
+import { ProofCleanupError, runProofCommand } from "../fixtures/proofCommand";
 import {
   synchronizedDkgAttestationDomain,
   synchronizedDkgAttestationTypes,
 } from "../fixtures/synchronizedDkgAttestation";
+import {
+  compileSynchronized,
+  deployCompiled,
+} from "../fixtures/synchronizedSolidity";
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 const field = (value: number | bigint) => ethers.toBeHex(value, 32);
@@ -146,6 +154,7 @@ describe("Synchronized DKG registry authority", function () {
     domainChanges: Partial<TypedDataDomain> = {},
   ) {
     const signatures: string[] = [];
+    const pkCommitment = f.fields[13]!;
     for (let row = 0; row < f.ids.length; ++row) {
       const partyId = f.ids[row]!;
       signatures.push(
@@ -164,19 +173,19 @@ describe("Synchronized DKG registry authority", function () {
             cryptoConfigId: config,
             setupBinding: f.binding,
             rosterHash: ethers.keccak256(coder.encode(["uint256[]"], [f.ids])),
-            dealerBatch: field(71),
-            pkCommitment: field(70),
+            dealerBatch: f.fields[6],
+            pkCommitment,
             partyId,
-            skAggCommit: field(30 + row),
-            keyBundleCommit: field(40 + row),
+            skAggCommit: f.fields[9 + row],
+            keyBundleCommit: f.fields[11 + row],
             ...changes,
           },
         ),
       );
     }
     return {
-      pkCommitment: field(70),
-      dealerBatch: field(71),
+      pkCommitment,
+      dealerBatch: f.fields[6]!,
       partyIds: f.ids,
       proof: coder.encode(["bytes", "bytes32[]"], ["0x01", f.fields]),
       signatures,
@@ -193,6 +202,314 @@ describe("Synchronized DKG registry authority", function () {
     ).to.be.revertedWithCustomError(f.registry, "CommitteeNotPublished");
     expect((await f.controller.getE3(f.e3Id)).committeePublicKey).to.equal(
       ethers.ZeroHash,
+    );
+  }
+
+  (process.env.E3_SYNC_DECRYPTION_PROOFS === "1" ? it : it.skip)(
+    "binds a real synchronized decryption to the signed registry publication",
+    async function () {
+      // Includes the locked Rust build on cold CI workers.
+      this.timeout(50 * 60_000);
+      // Leave time for group teardown and the EVM checks after the last proof tool.
+      const deadline = performance.now() + 48 * 60_000;
+      // A separate finalized request is seeded below with the real DKG verifier.
+      const base = await networkHelpers.loadFixture(setup);
+      const f = { ...base, e3Id: base.e3Id + 1n };
+      const root = resolve("../..");
+      const dir = mkdtempSync(join(tmpdir(), "sync-decryption-"));
+      let cleanup = true;
+      try {
+        const fixture = join(dir, "export");
+        const context = join(dir, "context.json");
+        const interfold = await f.controller.getAddress();
+        const committee = ethers.keccak256(ethers.concat(f.nodes));
+        writeFileSync(
+          context,
+          JSON.stringify({
+            chain_id: Number(f.chainId),
+            e3_id: ethers.toBeHex(f.e3Id),
+            interfold,
+            nodes: f.nodes,
+          }),
+        );
+        await runProofCommand(deadline, "pnpm", ["rust:test:sync-dkg:proofs"], {
+          cwd: root,
+          env: {
+            ...process.env,
+            E3_ZK_PROVER_SKIP_FIXTURE_BUILD: "1",
+            E3_SYNC_DECRYPTION_CONTEXT: context,
+            E3_SYNC_DECRYPTION_EXPORT: fixture,
+            E3_SYNC_DKG_EXPORT: join(dir, "dkg"),
+          },
+        });
+        await runProofCommand(
+          deadline,
+          "pnpm",
+          ["exec", "tsx", "scripts/circuits/render-sync-honk.ts", fixture],
+          { cwd: root },
+        );
+        const source = "SynchronizedHonk.sol";
+        const deployHonk = (path: string, name: string) =>
+          deployCompiled(
+            compileSynchronized({
+              [source]: { content: readFileSync(join(path, source), "utf8") },
+            }),
+            f.signers[0]!,
+          )(source, name);
+        const honk = await deployHonk(fixture, "DecryptionAggregatorVerifier");
+        const expected = JSON.parse(
+          readFileSync(join(fixture, "expected.json"), "utf8"),
+        );
+        const fields = ethers
+          .hexlify(readFileSync(join(fixture, "public_inputs")))
+          .slice(2)
+          .match(/.{64}/g)!
+          .map((x) => "0x" + x);
+        const raw = readFileSync(join(fixture, "proof"));
+        const bytes = (x: number[]) => ethers.hexlify(Uint8Array.from(x));
+        const wrapper = await ethers.deployContract(
+          "SynchronizedDecryptionVerifier",
+          [
+            await honk.getAddress(),
+            await f.registry.getAddress(),
+            expected.pins[0],
+            expected.pins[1],
+          ],
+        );
+        const dkg = JSON.parse(
+          readFileSync(join(dir, "dkg", "publication.json"), "utf8"),
+        );
+        const dkgHonk = await deployHonk(
+          join(dir, "dkg"),
+          "DkgAggregatorVerifier",
+        );
+        f.wrapper = await ethers.deployContract(
+          "SynchronizedDkgPublicationVerifier",
+          [
+            await dkgHonk.getAddress(),
+            interfold,
+            config,
+            dkg.setup_tree,
+            dkg.c5_key_hash,
+            3,
+            2,
+          ],
+        );
+        await f.controller.configure(
+          f.e3Id,
+          await f.registry.getAddress(),
+          await f.wrapper.getAddress(),
+          config,
+        );
+        await f.registry.seed(f.e3Id, interfold, f.nodes);
+        f.binding = await f.wrapper.setupBinding(f.e3Id, f.nodes);
+        f.fields = dkg.public_inputs;
+        expect(dkg.sk_commitments).to.deep.equal(expected.sk.map(bytes));
+        expect(dkg.key_bundles).to.deep.equal(expected.bundles.map(bytes));
+        expect(dkg.pk_commitment).to.equal(expected.pk);
+        const signed = await publication(f);
+        await f.registry.publishSynchronizedCommittee(f.e3Id, {
+          ...signed,
+          proof: coder.encode(["bytes", "bytes32[]"], [dkg.proof, f.fields]),
+        });
+        const pk = (await f.controller.getE3(f.e3Id)).committeePublicKey;
+        const domain = ethers.keccak256(
+          coder.encode(
+            ["uint256", "address", "uint256", "bytes32", "bytes32", "bytes32"],
+            [
+              f.chainId,
+              interfold,
+              f.e3Id,
+              committee,
+              expected.ciphertext_hash,
+              pk,
+            ],
+          ),
+        );
+        const plaintext = ethers.keccak256(bytes(expected.plaintext));
+        const ct = bytes(expected.ciphertext);
+        const call = (
+          inputs = fields,
+          id = f.e3Id,
+          d = domain,
+          p = plaintext,
+          c = committee,
+          cipher = ct,
+        ) =>
+          wrapper.verify(
+            id,
+            d,
+            p,
+            c,
+            cipher,
+            coder.encode(["bytes", "bytes32[]"], [raw, inputs]),
+          );
+        await checkDecryptionAuthority(wrapper, fields, f.e3Id, call);
+        // d is authenticated only by the real proof.
+        const altered = [...fields];
+        altered[12] = field(BigInt(altered[12]!) ^ 1n);
+        await expect(call(altered)).to.be.revert(ethers);
+      } catch (error) {
+        if (error instanceof ProofCleanupError) {
+          cleanup = false;
+          throw new Error(`Retained proof fixture at ${dir}`, { cause: error });
+        }
+        throw error;
+      } finally {
+        if (cleanup) rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("checks decryption authority before consulting the circuit verifier", async () => {
+    const f = await networkHelpers.loadFixture(setup);
+    await f.registry.publishSynchronizedCommittee(f.e3Id, await publication(f));
+    const wrapper = await ethers.deployContract(
+      "SynchronizedDecryptionVerifier",
+      [
+        await f.circuit.getAddress(),
+        await f.registry.getAddress(),
+        field(10),
+        field(11),
+      ],
+    );
+    const committee = await f.registry.getCommitteeHash(f.e3Id);
+    const domain = field(83);
+    const ct = field(19);
+    const plaintext = ethers.keccak256(new Uint8Array(50 * 8));
+    const rows = f.ids.flatMap((owner, i) => [
+      ...f.fields.slice(2, 4),
+      field(owner),
+      ...f.ids.map(field),
+      field(0),
+      domain,
+      f.fields[9 + i]!,
+      f.fields[11 + i]!,
+      ct,
+      field(23),
+      field(24),
+    ]);
+    const fields = [
+      field(10),
+      field(11),
+      ...rows,
+      ...Array<string>(50).fill(field(0)),
+    ];
+    const call = (
+      inputs = fields,
+      id = f.e3Id,
+      d = domain,
+      p = plaintext,
+      c = committee,
+      cipher = ct,
+    ) =>
+      wrapper.verify(
+        id,
+        d,
+        p,
+        c,
+        cipher,
+        coder.encode(["bytes", "bytes32[]"], ["0x", inputs]),
+      );
+    await checkDecryptionAuthority(wrapper, fields, f.e3Id, call);
+    await f.circuit.setReturnValue(false);
+    await expect(call()).to.be.revertedWithCustomError(wrapper, "InvalidProof");
+  });
+
+  it("requires two contracts and two nonzero scalar pins on deployment", async () => {
+    const f = await networkHelpers.loadFixture(setup);
+    const factory = await ethers.getContractFactory(
+      "SynchronizedDecryptionVerifier",
+    );
+    const honk = await f.circuit.getAddress();
+    const registry = await f.registry.getAddress();
+    const scalarModulus =
+      field(
+        21888242871839275222246405745257275088548364400416034343698204186575808495617n,
+      );
+    for (const [h, r, c6, c7] of [
+      [ethers.ZeroAddress, registry, field(10), field(11)],
+      [honk, ethers.ZeroAddress, field(10), field(11)],
+      [honk, registry, field(0), field(11)],
+      [honk, registry, field(10), field(0)],
+      [honk, registry, scalarModulus, field(11)],
+      [honk, registry, field(10), scalarModulus],
+    ] as const) {
+      await expect(factory.deploy(h, r, c6, c7)).to.be.revertedWithCustomError(
+        factory,
+        "InvalidConfiguration",
+      );
+    }
+  });
+
+  async function checkDecryptionAuthority(
+    wrapper: BaseContract,
+    fields: string[],
+    id: bigint,
+    call: (
+      fields?: string[],
+      id?: bigint,
+      domain?: string,
+      plaintext?: string,
+      committee?: string,
+      ciphertext?: string,
+    ) => Promise<boolean>,
+  ) {
+    expect(await call()).to.equal(true);
+    await expect(call(undefined, id + 1n)).to.be.revertedWithCustomError(
+      wrapper,
+      "InvalidSynchronizedAuthority",
+    );
+    await expect(
+      call(undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
+    await expect(
+      call(undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "PlaintextHashMismatch");
+    await expect(
+      call(undefined, undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "DomainBindingMismatch");
+    await expect(
+      call(undefined, undefined, undefined, undefined, undefined, field(1)),
+    ).to.be.revertedWithCustomError(wrapper, "CiphertextCommitmentMismatch");
+    await expect(call(fields.slice(0, -1))).to.be.revertedWithCustomError(
+      wrapper,
+      "InvalidPublicInputsLength",
+    );
+    const changed = (idx: number, value: bigint = BigInt(fields[idx]!) ^ 1n) =>
+      fields.map((v, i) => (i === idx ? field(value) : v));
+    for (const idx of [0, 1]) {
+      await expect(call(changed(idx))).to.be.revertedWithCustomError(
+        wrapper,
+        "VkHashMismatch",
+      );
+    }
+    // Each 12-field row is checked against the published authority before Honk.
+    for (const start of [2, 14]) {
+      for (const [offset, error] of [
+        [0, "DomainBindingMismatch"],
+        [1, "DomainBindingMismatch"],
+        [2, "DkgAnchorMismatch"],
+        [3, "DkgAnchorMismatch"],
+        [4, "DkgAnchorMismatch"],
+        [5, "DomainBindingMismatch"],
+        [6, "DomainBindingMismatch"],
+        [7, "DkgAnchorMismatch"],
+        [8, "DkgAnchorMismatch"],
+        [9, "CiphertextCommitmentMismatch"],
+      ] as const) {
+        await expect(
+          call(changed(start + offset)),
+        ).to.be.revertedWithCustomError(wrapper, error);
+      }
+    }
+    await expect(call(changed(12, 1n << 255n))).to.be.revertedWithCustomError(
+      wrapper,
+      "NonCanonicalPublicInput",
+    );
+    await expect(call(changed(26, 1n << 64n))).to.be.revertedWithCustomError(
+      wrapper,
+      "MessageCoefficientOutOfRange",
     );
   }
 

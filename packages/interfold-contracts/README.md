@@ -61,6 +61,11 @@ as the SS PK-verifier default. The separate request-context event freezes the
 synchronized wrapper for native signing/recovery. Guarded runtime orchestration,
 human protocol review and separate rollout decisions remain required.
 
+**Do not register `SynchronizedDecryptionVerifier` with `setDecryptionVerifier`
+for BFV.** That owner-only setter checks the threshold, not the proof layout or
+decryption protocol. Installing the synchronized wrapper in the existing SS slot
+would break SS verification.
+
 Registry implementations now link `DkgPublicationLib` as well as the existing
 sortition/Poseidon libraries. Preparation scripts record that library address;
 this change does not deploy or activate a synchronized verifier.

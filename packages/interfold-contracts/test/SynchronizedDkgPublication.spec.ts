@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { expect } from "chai";
-import type { BaseContract } from "ethers";
 import { network } from "hardhat";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  compileSynchronized,
+  deployCompiled,
+} from "./fixtures/synchronizedSolidity";
 
 // Prepared only by the explicit Rust real-proof suite. Ordinary contract runs do not replace
 // missing proofs with mocks or accept a stale committed fixture.
@@ -22,9 +25,6 @@ prepared("SynchronizedDkgPublication real proof", function () {
 
   it("accepts the exact setup and rejects context, roster, anchors and proof substitutions", async () => {
     const fixture = JSON.parse(fs.readFileSync(fixturePath!, "utf8"));
-    expect(execFileSync("solc", ["--version"], { encoding: "utf8" })).to.match(
-      /Version: 0\.8\.28\+/,
-    );
     const source = fs.readFileSync(
       process.env.E3_SYNC_PUBLICATION_VERIFIER_SOURCE!,
       "utf8",
@@ -49,37 +49,13 @@ prepared("SynchronizedDkgPublication real proof", function () {
       ]),
     );
     sources["SynchronizedHonk.sol"] = { content: source };
-    const output = JSON.parse(
-      execFileSync("solc", ["--standard-json"], {
-        input: JSON.stringify({
-          language: "Solidity",
-          sources,
-          settings: {
-            // Match the contract package's production compiler settings, including EIP-170.
-            optimizer: { enabled: true, runs: 1 },
-            evmVersion: "paris",
-            debug: { revertStrings: "strip" },
-            metadata: { bytecodeHash: "none" },
-            outputSelection: {
-              "*": { "*": ["abi", "evm.bytecode", "evm.deployedBytecode"] },
-            },
-          },
-        }),
-        maxBuffer: 64 * 1024 * 1024,
-        encoding: "utf8",
-      }),
-    );
-    expect(
-      (output.errors ?? []).filter(
-        (error: { severity: string }) => error.severity === "error",
-      ),
-    ).to.deep.equal([]);
+    const contracts = compileSynchronized(sources);
     // Retain this exact temporary verifier for the Rust recovered-setup/registry campaign.
     fs.writeFileSync(
       path.join(path.dirname(fixturePath!), "SynchronizedHonk.json"),
       JSON.stringify(
         Object.fromEntries(
-          Object.entries(output.contracts["SynchronizedHonk.sol"]).map(
+          Object.entries(contracts["SynchronizedHonk.sol"]).map(
             ([name, value]) => {
               const compiled = value as {
                 abi: unknown;
@@ -104,47 +80,7 @@ prepared("SynchronizedDkgPublication real proof", function () {
       ),
     );
     const [signer] = await ethers.getSigners();
-    const deployed = new Map<string, string>();
-    async function deploy(
-      file: string,
-      name: string,
-      args: unknown[] = [],
-    ): Promise<BaseContract> {
-      const artifact = output.contracts[file][name];
-      let bytecode = artifact.evm.bytecode.object;
-      for (const [libraryFile, libraries] of Object.entries(
-        artifact.evm.bytecode.linkReferences,
-      )) {
-        for (const [library, locations] of Object.entries(
-          libraries as Record<string, { start: number; length: number }[]>,
-        )) {
-          const id = `${libraryFile}:${library}`;
-          if (!deployed.has(id)) {
-            const instance = await deploy(libraryFile, library);
-            deployed.set(id, await instance.getAddress());
-          }
-          const address = deployed.get(id)!.slice(2);
-          for (const location of locations) {
-            expect(location.length).to.equal(20);
-            bytecode =
-              bytecode.slice(0, 2 * location.start) +
-              address +
-              bytecode.slice(2 * (location.start + location.length));
-          }
-        }
-      }
-      // Preserve the real EIP-170 limit; this test does not enable unlimited contract size.
-      expect(artifact.evm.deployedBytecode.object.length / 2).to.be.at.most(
-        24_576,
-      );
-      const instance = await new ethers.ContractFactory(
-        artifact.abi,
-        `0x${bytecode}`,
-        signer,
-      ).deploy(...args);
-      await instance.waitForDeployment();
-      return instance;
-    }
+    const deploy = deployCompiled(contracts, signer);
     const honk = await deploy("SynchronizedHonk.sol", "DkgAggregatorVerifier");
     const wrapperFile = names[0];
     const configuration = [

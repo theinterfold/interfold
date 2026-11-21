@@ -5,6 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use alloy::primitives::{keccak256, B256};
+use e3_committee_hash::{decryption_domain_limbs, DecryptionDomainContext};
 use e3_zk_witness::synchronized::plaintext_aggregation::{prepare, Contribution};
 use e3_zk_witness::{
     commitments::ciphertext_component_commitment, compute_threshold_decryption_share_commitment,
@@ -15,9 +17,15 @@ use fhe::trbfv::{
     DecryptionShare, PartyPrfKeyTransport, PartyPrfKeys, SmudgingBoundCalculatorConfig,
     SmudgingNoiseGenerator, SynchronizedDecryptor,
 };
-use fhe_traits::{FheDecoder, FheEncrypter};
+use fhe_traits::{FheDecoder, FheEncrypter, Serialize};
 
-const DOMAIN: [u128; 2] = [0x2050, u128::MAX - 1];
+#[derive(Clone, Copy)]
+pub(super) struct Request {
+    pub setup: SetupBinding,
+    pub domain: [u128; 2],
+    pub pk: B256,
+    pub ciphertext_hash: B256,
+}
 
 #[test]
 #[ignore = "requires pinned nargo and bb; checks C4/C6 proofs and C7 against native plaintext"]
@@ -26,7 +34,10 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         .join("../../..")
         .canonicalize()?;
     let bb = check_tools(&root)?;
-    let fixture = Fixture::native()?;
+    let chain = Chain::fixture()?;
+    let dkg = chain.setup()?;
+    let setup = dkg.binding(chain.chain_id, chain.e3_id);
+    let fixture = Fixture::native_at(setup)?;
     let cfg = &fixture.config;
     let params = &cfg.threshold;
     let mut rng = ChaCha8Rng::seed_from_u64(2050);
@@ -41,7 +52,30 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     expected[width - 1] = params.plaintext() - 1;
     let pt = Plaintext::try_encode(&expected, Encoding::poly(), params)?;
     let ct = pk.try_encrypt(&pt, &mut rng)?;
-    let (shares, proofs) = prove_partials(&root, &bb, &fixture, DEALERS, &ct)?;
+    let pk_commit = e3_zk_witness::commitments::compute_pk_aggregation_commitment(
+        &fhe_poly_to_crt_centered(&pk.c[0], params.moduli())?,
+        &fhe_poly_to_crt_centered(&pk.c[1], params.moduli())?,
+        cfg.aggregate_bit,
+    );
+    let pk_commit = B256::from(super::provenance::field(&pk_commit));
+    let ciphertext_hash = keccak256(ct.to_bytes());
+    let domain = decryption_domain_limbs(
+        chain.chain_id,
+        chain.e3_id,
+        DecryptionDomainContext {
+            interfold_address: chain.interfold,
+            committee_hash: dkg.committee_hash,
+            committee_public_key: pk_commit,
+        },
+        ciphertext_hash,
+    );
+    let request = Request {
+        setup,
+        domain: [domain.hi, domain.lo],
+        pk: pk_commit,
+        ciphertext_hash,
+    };
+    let (shares, proofs) = prove_partials(&root, &bb, &fixture, request, DEALERS, &ct)?;
     let public: Vec<&[u8]> = proofs.iter().map(|p| p.public_signals.as_ref()).collect();
     let values = cfg.committee.values();
     let decryptor = SynchronizedDecryptor::new(values.n, values.threshold, params.clone())?;
@@ -59,8 +93,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         .collect();
     let inputs = prepare(
         cfg,
-        BINDING,
-        DOMAIN,
+        request.setup,
+        request.domain,
         &DEALERS,
         &ct,
         &contributions,
@@ -88,7 +122,7 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     use e3_zk_config::synchronized::public_signals::PublicSignals;
     PublicSignals::decode(cfg, role, &bytes)?;
     let mut duplicate = bytes.clone();
-    duplicate[public[0].len()..public_batch.len()].copy_from_slice(&public[0]);
+    duplicate[public[0].len()..public_batch.len()].copy_from_slice(public[0]);
     ensure!(PublicSignals::decode(cfg, role, &duplicate).is_err());
     let mut noncanonical_message = bytes.clone();
     noncanonical_message[public_batch.len() + 24..public_batch.len() + 32]
@@ -97,8 +131,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
 
     ensure!(prepare(
         cfg,
-        BINDING,
-        DOMAIN,
+        request.setup,
+        request.domain,
         &DEALERS,
         &ct,
         &contributions[..1],
@@ -108,8 +142,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     let other_ct = pk.try_encrypt(&pt, &mut rng)?;
     ensure!(prepare(
         cfg,
-        BINDING,
-        DOMAIN,
+        request.setup,
+        request.domain,
         &DEALERS,
         &other_ct,
         &contributions,
@@ -118,7 +152,16 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     .is_err());
     let mut reversed = contributions;
     reversed.reverse();
-    ensure!(prepare(cfg, BINDING, DOMAIN, &DEALERS, &ct, &reversed, &expected).is_err());
+    ensure!(prepare(
+        cfg,
+        request.setup,
+        request.domain,
+        &DEALERS,
+        &ct,
+        &reversed,
+        &expected
+    )
+    .is_err());
     let original = &leaf.inputs;
     for (pointer, value) in [
         ("/rows/0", original["rows"][1].clone()),
@@ -152,8 +195,8 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     // Same ciphertext and E3, same owner in slot 1, but an independently proven C6 from
     // a different H/S. Neither set is complete after this replacement.
     let other = [1, 2];
-    let alt = Fixture::native_with_roster(BINDING, other)?;
-    let (alt_shares, alt_proofs) = prove_partials(&root, &bb, &alt, other, &ct)?;
+    let alt = Fixture::native_with_roster(request.setup, other)?;
+    let (alt_shares, alt_proofs) = prove_partials(&root, &bb, &alt, request, other, &ct)?;
     let alt_public: Vec<&[u8]> = alt_proofs
         .iter()
         .map(|p| p.public_signals.as_ref())
@@ -161,15 +204,24 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
     let alt_share = alt_shares.into_iter().last().unwrap().into_parts().0;
     let mixed = [
         Contribution {
-            public_signals: &public[0],
+            public_signals: public[0],
             share: &parts[0],
         },
         Contribution {
-            public_signals: &alt_public[1],
+            public_signals: alt_public[1],
             share: &alt_share,
         },
     ];
-    ensure!(prepare(cfg, BINDING, DOMAIN, &DEALERS, &ct, &mixed, &expected).is_err());
+    ensure!(prepare(
+        cfg,
+        request.setup,
+        request.domain,
+        &DEALERS,
+        &ct,
+        &mixed,
+        &expected
+    )
+    .is_err());
     let mut bad = original.clone();
     let alt_row: Vec<_> = alt_public[1]
         .chunks_exact(32)
@@ -199,7 +251,7 @@ fn native_partials_match_c4_c6_and_c7_proofs() -> Result<()> {
         &proofs,
         &c7,
         &alt_proofs[1],
-        DOMAIN,
+        request,
         &ct_hash,
         &expected,
     )?;
@@ -210,6 +262,7 @@ fn prove_partials(
     root: &Path,
     bb: &Path,
     fixture: &Fixture,
+    request: Request,
     roster: [u32; 2],
     ct: &Ciphertext,
 ) -> Result<(Vec<DecryptionShare>, Vec<e3_events::Proof>)> {
@@ -247,8 +300,8 @@ fn prove_partials(
         c4_job.prove(bb, cfg, c4)?;
         let data = &fixture.openings[i];
         let opening = Opening {
-            setup: BINDING,
-            domain: DOMAIN,
+            setup: request.setup,
+            domain: request.domain,
             roster: &roster,
             owner,
             expected_sk: &c4.outputs[0],
@@ -313,7 +366,7 @@ fn prove_partials(
             &proof.public_signals,
         )?;
         ensure!(
-            signals.binding() == Some(BINDING)
+            signals.binding() == Some(request.setup)
                 && signals.party_id() == Some(owner)
                 && signals.dealers().as_deref() == Some(&roster[..])
         );

@@ -19,6 +19,11 @@ circuits:
   - '!**/*.md'
   - '!**/*.mdx'
 
+# Scripts used by the joined synchronized proof qualification.
+sync_proof_tools:
+  - 'scripts/circuits/render-sync-honk.ts'
+  - 'scripts/circuits/verify-sync-publication.ts'
+
 # Configuration/consumer inputs outside the Noir compiler.
 crypto_config:
   - 'scripts/circuits/**'

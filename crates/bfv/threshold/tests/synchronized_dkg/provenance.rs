@@ -156,19 +156,12 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
         temp.path().join("work"),
     );
     let prover = ZkProver::new(&backend);
+    let chain = Chain::fixture()?;
     let context = SynchronizedProofContext {
-        setup: e3_committee_hash::DkgSetupContext {
-            interfold_address: [0x11; 20].into(),
-            committee_hash: e3_committee_hash::hash_committee_addresses(&[
-                [1; 20].into(),
-                [2; 20].into(),
-                [3; 20].into(),
-            ]),
-            crypto_config_id: PROFILE.crypto_config_id(CiphernodesCommitteeSize::Minimum)?,
-        },
+        setup: chain.setup()?,
         party_id: 0,
     };
-    let e3_id = E3id::new("245904", 31337);
+    let e3_id = E3id::new(chain.e3_id.to_string(), chain.chain_id);
     let config = Configs::for_profile(PROFILE, CiphernodesCommitteeSize::Minimum)?;
     let binding = request_binding(&config, &context, &e3_id)?;
     let fixture = Fixture::native_at(binding)?;
@@ -822,6 +815,7 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
         &publication_input,
         &publication,
         &verified,
+        &chain.nodes,
     ) {
         let evidence = temp.keep();
         return Err(error.context(format!(
@@ -996,6 +990,7 @@ fn verify_publication_contract(
     prepared: &Value,
     proof: &Proof,
     verified: &e3_zk_prover::synchronized::publication::PublicationCommitments,
+    nodes: &[alloy::primitives::Address],
 ) -> Result<()> {
     let namespace = PROFILE.artifacts_dir_for_committee(config.committee)?;
     let vk = prover
@@ -1025,11 +1020,7 @@ fn verify_publication_contract(
             "setup_tree": prepared["expected_tree_hash"],
             "c5_key_hash": c5.key_hash,
             "e3_id": e3.e3_id(),
-            "committee": [
-                "0x0101010101010101010101010101010101010101",
-                "0x0202020202020202020202020202020202020202",
-                "0x0303030303030303030303030303030303030303",
-            ],
+            "committee": nodes,
             "dealers": DEALERS,
             "dealer_batch": encode(&verified.dealer_batch()),
             "pk_commitment": encode(&verified.pk_commitment()),
@@ -1053,5 +1044,14 @@ fn verify_publication_contract(
         .env("E3_CUSTOM_BB", bb)
         .current_dir(root);
     run(&mut command)?;
+    if let Some(path) = std::env::var_os("E3_SYNC_DKG_EXPORT") {
+        let path = PathBuf::from(path);
+        fs::create_dir(&path)?;
+        fs::copy(fixture, path.join("publication.json"))?;
+        fs::copy(
+            directory.join("SynchronizedHonk.sol"),
+            path.join("SynchronizedHonk.sol"),
+        )?;
+    }
     Ok(())
 }
