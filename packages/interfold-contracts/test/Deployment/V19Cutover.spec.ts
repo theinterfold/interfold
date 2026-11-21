@@ -12,6 +12,7 @@ import path from "path";
 import {
   BFV_SCHEME_ID,
   buildV19CutoverTransactions,
+  readCommitteeThreshold,
   readOpenVmIdentity,
   requireTimeoutConfig,
   resolveOpenVmCrisp,
@@ -117,7 +118,7 @@ describe("v0.19 cutover", function () {
     expect(registered).to.deep.equal(paramSets);
   });
 
-  it("refuses to validate Sepolia while it holds the old DKG window", function () {
+  it("rejects the old Sepolia DKG window against the shipped configuration", function () {
     const configured = JSON.parse(
       fs.readFileSync(
         new URL(
@@ -139,6 +140,39 @@ describe("v0.19 cutover", function () {
     expect(() =>
       requireTimeoutConfig({ ...live, dkgWindow: 7200n }, configured),
     ).not.to.throw();
+  });
+
+  it("reads a committee size that the replaced implementation lacks as unset", async function () {
+    const reverting = (error: unknown) => async (): Promise<bigint> => {
+      throw error;
+    };
+    // Live Sepolia answers `committeeThresholds(3, …)` with an empty revert.
+    expect(
+      await readCommitteeThreshold(reverting({ code: 3, data: "0x" }), 3n, [
+        0n,
+        1n,
+        2n,
+        3n,
+      ]),
+    ).to.equal(undefined);
+    // A size this release does not know is not treated as unset.
+    await expect(
+      readCommitteeThreshold(reverting({ code: 3, data: "0x" }), 4n, [
+        0n,
+        1n,
+        2n,
+        3n,
+      ]),
+    ).to.be.rejected;
+    // A transport failure is not a missing function.
+    await expect(
+      readCommitteeThreshold(reverting(new Error("RPC unavailable")), 3n, [3n]),
+    ).to.be.rejectedWith("RPC unavailable");
+    const live = async (index: bigint) => (index === 0n ? 34n : 45n);
+    expect(await readCommitteeThreshold(live, 3n, [3n])).to.deep.equal([
+      34n,
+      45n,
+    ]);
   });
 
   it("reads an OpenVM guest identity and refuses a malformed one", function () {
