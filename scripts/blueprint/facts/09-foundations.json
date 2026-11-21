@@ -71,12 +71,12 @@
         {
           "name": "BfvParamSet",
           "what": "one preset's degree, plaintext modulus and moduli, ready to build BFV parameters",
-          "ref": "crates/bfv/params/src/presets.rs@249@pub struct BfvParamSet {"
+          "ref": "crates/bfv/params/src/presets.rs@267@pub struct BfvParamSet {"
         },
         {
           "name": "PresetError",
           "what": "error type: unknown preset, missing threshold or DKG pair, or an insecure lambda",
-          "ref": "crates/bfv/params/src/presets.rs@206@pub enum PresetError {"
+          "ref": "crates/bfv/params/src/presets.rs@222@pub enum PresetError {"
         }
       ],
       "read_first": [
@@ -101,17 +101,17 @@
         {
           "pattern": "enum-match",
           "note": "metadata() maps each preset to its degree, modulus count, party count and security tier",
-          "ref": "crates/bfv/params/src/presets.rs@387@pub fn metadata(&self) -> PresetMetadata"
+          "ref": "crates/bfv/params/src/presets.rs@418@pub fn metadata(&self) -> PresetMetadata"
         },
         {
           "pattern": "thiserror-enum",
           "note": "PresetError derives Debug and the thiserror Error impl through the ThisError alias",
-          "ref": "crates/bfv/params/src/presets.rs@205@#[derive(ThisError, Debug)]"
+          "ref": "crates/bfv/params/src/presets.rs@221@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "impl-from",
           "note": "a preset converts into its BfvParamSet with From",
-          "ref": "crates/bfv/params/src/presets.rs@497@impl From<BfvPreset> for BfvParamSet {"
+          "ref": "crates/bfv/params/src/presets.rs@569@impl From<BfvPreset> for BfvParamSet {"
         },
         {
           "pattern": "builder-pattern",
