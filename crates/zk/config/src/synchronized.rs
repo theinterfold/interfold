@@ -179,12 +179,14 @@ impl Configs {
                  pub global L: u32 = {};\npub global QIS: [Field; L] = [{}];\n\
                  pub global PROFILE_ID: [Field; 2] = [{}, {}];\npub global KEY_BITS: u32 = {};\n\
                  pub global SHARE_BIT: u32 = {};\npub global AGGREGATE_BIT: u32 = {};\npub global C6_NOISE_BOUND: Field = {};\n\
+                 pub global C6_NOISE_BIT: u32 = {};\npub global C6_SHIFTED_NOISE_BIT: u32 = {};\n\
                  pub global C6_PUBLIC_FIELDS: u32 = {};\npub global C7_PLAINTEXT_MODULUS: Field = {};\n\
                  pub global C7_BIT_K: u32 = {};\npub global C7_BIT_T: u32 = {};\npub global C7_BIT_Q_TOTAL: u32 = {};\n",
                 self.threshold.degree(), committee.n, committee.h, committee.threshold,
                 self.threshold.moduli().len(), join_display(self.threshold.moduli(), ", "),
                 self.profile_id[0], self.profile_id[1], self.key_bits, self.share_bit, self.aggregate_bit,
-                generation.bounds.e_sm_bound, self.c6_public_fields(), decode.plaintext_modulus,
+                generation.bounds.e_sm_bound, generation.bounds.e_sm_bound.bits(),
+                (&generation.bounds.e_sm_bound << 1u32).bits(), self.c6_public_fields(), decode.plaintext_modulus,
                 decode.bits.k_bit, decode.bits.t_bit, decode.bits.q_total_bit
             ));
         }
