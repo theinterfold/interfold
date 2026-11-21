@@ -220,7 +220,9 @@ cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 b
 change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
 E3s can be neither folded nor link-checked, so drain them first too. C6 now aggregates over Chonk:
 the `decryption_aggregator` key, the C6 tree anchor and every `BfvDecryptionVerifier` change, and no
-event encoding changes. Storage schema and gossip/sync wire majors are unchanged.
+event encoding changes. Each pair gains 18 required C6 Chonk artifacts (the app, three kernels, tube
+and root) and drops the six `c6_fold` and `c6_fold_kernel` files; only `c6_fold.vk_tree_hash` keeps
+its retired path. Storage schema and gossip/sync wire majors are unchanged.
 
 The cutover also carries three-node `nodes_fold` steps. `nodes_fold` and `nodes_fold_kernel` change
 their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anchor, and the DKG
