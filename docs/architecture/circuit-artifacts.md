@@ -143,9 +143,9 @@ Default `store:circuits pull` selects newest first-parent artifact commit with m
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
 manifests, and required artifacts before publication. Non-release CI/full-proof integration can use
 `pull --compatible` without a source match. This selects the latest first-parent artifact commit
-with the checkout's exact VK catalogue and verifies the checksums and all six VK genealogies before
-replacing local artifacts. It does not infer compatibility from the branch name or repair a bad
-archive. `--hydrate-bin-only` requires a stamp and every
+with the checkout's exact VK catalogue and verifies the checksums and every pair's VK genealogy
+before replacing local artifacts. It does not infer compatibility from the branch name or repair a
+bad archive. `--hydrate-bin-only` requires a stamp and every
 [required artifact](../../crates/zk/prover/required-artifacts.json), reports a source mismatch, and
 records the original artifact hash in the active stamp. It never rewrites the archived stamp.
 `--skip-if-built` still requires a source match and every required artifact. These development reuse
