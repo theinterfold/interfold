@@ -319,6 +319,11 @@ than 45 active operators, so Large requests revert with `InsufficientCiphernodes
 operators join. There, `upgrade:v19:resume`, `upgrade:node-release` resume and
 `upgrade:vrf-sortition:resume` take `--sepolia-committee-size` for a smaller gate.
 
+The 7200 s window rests on one node's DKG measurement; it does not qualify Large end to end. The
+nodes-fold step and the 23-leaf C6 Chonk stack are not measured at N = 45, and the buffer limits in
+`crates/net/src/ingress_limits.rs` and `crates/state/request/src/routing/event_buffer.rs` are sized
+for N = 19. Treat Large on Sepolia as a trial until those are measured.
+
 `CiphernodesCommitteeSize::Large` is an appended variant in the event log, keyshare pending payloads
 and threshold-keyshare recovery, so an older binary cannot read a journal that holds it. It shares
 the unreleased schema-9/protocol-9/generation-2 cutover: rollback uses the prior backup or a
