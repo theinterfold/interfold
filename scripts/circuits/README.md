@@ -268,7 +268,7 @@ Circuits are built locally and stored in a git branch:
 
 1. **Local**: Build circuits and push to branch
 
-`push` runs `prepare-vk-commitments` on the staged six-pair tree before hashing it. If a pair
+`push` runs `prepare-vk-commitments` on the staged eight-pair tree before hashing it. If a pair
 disagrees with the committed catalogue, rebuild the matching artifacts.
 
 ```bash

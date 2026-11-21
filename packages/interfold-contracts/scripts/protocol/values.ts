@@ -647,7 +647,8 @@ function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
     throw new Error("interfold.committeeThresholds must be an array");
   }
 
-  for (const active of bfvConfigsForChain(config.chainId)) {
+  const routes = bfvConfigsForChain(config.chainId);
+  for (const active of routes) {
     const found = config.interfold.committeeThresholds.some(
       (threshold) =>
         threshold.size === String(active.committeeSize) &&
@@ -659,6 +660,18 @@ function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
         `Config chainId ${config.chainId} supports BFV ${active.preset}/${active.committee}; ` +
           `interfold.committeeThresholds must include size=${active.committeeSize}, ` +
           `quorum=${active.h}, total=${active.n}`,
+      );
+    }
+  }
+  // The contract admits every committee size on every chain once its threshold is set, and a set
+  // threshold cannot be cleared. Only a size the chain routes may get one.
+  for (const threshold of config.interfold.committeeThresholds) {
+    if (
+      !routes.some((active) => String(active.committeeSize) === threshold.size)
+    ) {
+      throw new Error(
+        `Config chainId ${config.chainId} routes no BFV pair for committee size ${threshold.size}; ` +
+          `remove it from interfold.committeeThresholds`,
       );
     }
   }
