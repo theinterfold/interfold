@@ -397,7 +397,7 @@
         },
         {
           "name": "private: limb_proofs",
-          "by": "check_limb_chain",
+          "by": "verify_honk_proof_non_zk",
           "ref": "circuits/bin/dkg/share_decryption/src/main.nr@24@limb_proofs: [UltraHonkProof; L_THRESHOLD]"
         }
       ],
@@ -430,7 +430,7 @@
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "lib/src/core/dkg/share_decryption_chain.nr has 3 #[test] functions and core/dkg/share_decryption.nr has 2; run nargo test in circuits/lib. This package has none.",
+      "tests": "lib/src/core/dkg/share_decryption_chain.nr has 5 #[test] functions and core/dkg/share_decryption.nr has 2; run nargo test in circuits/lib. This package has none.",
       "unverified": [
         "Generator role (each selected member proves its own aggregate) comes from docs/architecture/dkg.md, not from the circuit code."
       ]

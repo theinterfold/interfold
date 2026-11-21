@@ -7,8 +7,6 @@
 //! Circuit input data, witness preparation, and canonical Noir encoding.
 
 use crate::commitments::compute_share_encryption_commitment_from_message;
-use crate::encoding::bigint_2d_to_json_values;
-use crate::encoding::poly_coefficients_to_toml_json;
 use crate::WitnessError;
 use e3_polynomial::Polynomial;
 use e3_zk_config::dkg::share_decryption::Configs;
@@ -142,27 +140,6 @@ impl Inputs {
         Ok(Inputs {
             expected_commitments,
             decrypted_shares,
-        })
-    }
-
-    // Used as input for Nargo execution.
-    /// Serializes input so that `decrypted_shares` matches Noir's `[[Polynomial<N>; L]; H]`:
-    /// each polynomial is `{ "coefficients": [number|string, ...] }` (numbers when fit in i64).
-    pub fn to_json(&self) -> serde_json::Value {
-        let decrypted_shares: Vec<Vec<serde_json::Value>> = self
-            .decrypted_shares
-            .iter()
-            .map(|party_shares| {
-                party_shares
-                    .iter()
-                    .map(|share| poly_coefficients_to_toml_json(share))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        serde_json::json!({
-            "expected_commitments": bigint_2d_to_json_values(&self.expected_commitments),
-            "decrypted_shares": decrypted_shares,
         })
     }
 }
