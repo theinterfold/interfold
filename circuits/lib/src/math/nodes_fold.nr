@@ -53,3 +53,8 @@ fn a_node_cannot_overwrite_a_filled_row() {
 fn a_node_slot_past_the_sentinel_is_rejected() {
     let _ = place_nodes::<2, 2, 1>([[0; 2]; 2], [[1, 2]], [3]);
 }
+
+#[test(should_fail_with = "slot already filled")]
+fn two_nodes_of_one_step_cannot_share_a_row() {
+    let _ = place_nodes::<2, 2, 2>([[0; 2]; 2], [[1, 2], [3, 4]], [1, 1]);
+}
