@@ -274,6 +274,94 @@ async fn backfill_skips_legacy_keys_and_recovers_current_rounds() -> Result<()> 
     Ok(())
 }
 
+/// A request at a historical registry slot resolves to the registry's bytes under the
+/// threshold-only ID those bytes had, and any other ID at that slot is skipped.
+#[tokio::test]
+async fn backfill_reads_historical_slots_from_the_registry() -> Result<()> {
+    let (contract, address, _, _, endpoint, _anvil) = setup_two_contracts().await?;
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../bfv/params/tests/fixtures/bfv_protocol.json"
+    ))?;
+    let vector = |name: &str| {
+        vectors["vectors"]
+            .as_array()
+            .and_then(|all| all.iter().find(|v| v["name"] == name))
+            .unwrap_or_else(|| panic!("fixture vector {name}"))
+            .clone()
+    };
+    let historical = vector("historical-insecure-v5");
+    assert_eq!(historical["paramSet"], 0);
+    let params: Bytes = historical["encodedParameters"].as_str().unwrap().parse()?;
+    let historical_id: B256 = historical["cryptoConfigId"].as_str().unwrap().parse()?;
+    let other_id: B256 = vector("current-insecure")["cryptoConfigId"]
+        .as_str()
+        .unwrap()
+        .parse()?;
+    // A non-BFV scheme keeps the committee-key binding out of the test.
+    let scheme = alloy::primitives::keccak256("AES-256-GCM");
+    contract
+        .setParamSet(0, params.clone())
+        .send()
+        .await?
+        .watch()
+        .await?;
+    let (historical_e3, mismatched_e3) = (21u64, 22u64);
+    for (id, config_id) in [(historical_e3, historical_id), (mismatched_e3, other_id)] {
+        contract
+            .setRequestCrypto(Uint::from(id), scheme, 0, config_id)
+            .send()
+            .await?
+            .watch()
+            .await?;
+        contract
+            .emitCommitteePublished(
+                Uint::from(id),
+                Bytes::from(vec![1, 2, 3]),
+                B256::ZERO,
+                Bytes::default(),
+            )
+            .send()
+            .await?
+            .watch()
+            .await?;
+    }
+
+    let indexer = Arc::new(
+        InterfoldIndexer::<InMemoryStore, ReadOnly>::from_endpoint_address_in_mem(
+            &endpoint,
+            &[&address],
+        )
+        .await?,
+    );
+    indexer.configure_backfill(Some(0), Some(2));
+    let listener = {
+        let indexer = indexer.clone();
+        tokio::spawn(async move { indexer.listen().await })
+    };
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(round) = indexer.get_e3(historical_e3).await {
+                if indexer
+                    .get_store()
+                    .get::<u64>(e3_indexer::INDEXER_CURSOR_KEY)
+                    .await?
+                    .is_some()
+                {
+                    break Ok::<_, eyre::Report>(round);
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    listener.abort();
+    let round = recovered??;
+    assert_eq!(round.e3_params, params.to_vec());
+    assert_eq!(round.crypto_config_id, historical_id.to_vec());
+    assert!(indexer.get_e3(mismatched_e3).await.is_err());
+    Ok(())
+}
+
 mod test_memory_leak {
 
     use e3_evm_client::{contracts::InterfoldContractFactory, event_listener::EventListener};
