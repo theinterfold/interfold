@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Static definitions for the disabled synchronized DKG leaves and provenance joins.
+//! Static definitions for the disabled synchronized setup and threshold circuits.
 
 use crate::{dkg, field::join_display, threshold, CircuitName, ConfigError};
 use e3_committee::CiphernodesCommitteeSize;
@@ -128,6 +128,7 @@ impl Configs {
             CircuitName::NodesFold => Some(4 + values.h),
             CircuitName::PkAggregation => Some(values.h),
             CircuitName::DkgAggregator => Some(4 + values.h),
+            CircuitName::ThresholdShareDecryption => Some(8 + values.h),
             _ => None,
         }
     }
@@ -136,6 +137,7 @@ impl Configs {
         match circuit {
             CircuitName::PkBfv | CircuitName::ShareEncryption => Some(1),
             CircuitName::PkGeneration | CircuitName::DkgShareDecryption => Some(2),
+            CircuitName::ThresholdShareDecryption => Some(2),
             CircuitName::SkShareComputation => {
                 Some(self.committee.values().n * self.threshold.moduli().len() + 1)
             }
@@ -167,6 +169,7 @@ impl Configs {
              pub global PRF_KEY_BITS: u32 = {};\n\
              pub global SHARE_BIT: u32 = {};\n\
              pub global AGGREGATE_BIT: u32 = {};\n\
+             pub global C6_NOISE_BOUND: u64 = {};\n\
              pub global PK_BIT_PK: u32 = {};\n\
              pub global PK_GENERATION_BIT_EEK: u32 = {};\n\
              pub global PK_GENERATION_BIT_SK: u32 = {};\n\
@@ -185,6 +188,9 @@ impl Configs {
             self.key_bits,
             self.share_bit,
             self.aggregate_bit,
+            u64::try_from(&generation.bounds.e_sm_bound).map_err(|_| ConfigError::Other(
+                "local noise exceeds Minimum C6 integer width".into()
+            ))?,
             self.pk.pk_bit,
             generation.bits.eek_bit,
             generation.bits.sk_bit,
@@ -228,7 +234,7 @@ mod tests {
         assert_eq!(config.public_outputs(CircuitName::DkgAggregator), Some(8));
         assert_eq!(
             config.public_outputs(CircuitName::ThresholdShareDecryption),
-            None
+            Some(2)
         );
         assert!(!profile.admission_enabled());
         let (_, ss_transport) = BfvProfile::SsInsecure64.build_pair().unwrap();

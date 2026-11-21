@@ -150,13 +150,15 @@ fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
             );
         }
         let synchronized = BfvProfile::SyncDecInsecure64;
-        if CircuitName::SYNCHRONIZED_DKG.contains(&circuit) {
+        if CircuitName::synchronized_definitions().any(|c| c == circuit) {
             assert_eq!(
                 circuit.source_path(synchronized).unwrap(),
                 format!("synchronized/{path}")
             );
             let expected = match circuit {
-                CircuitName::PkGeneration | CircuitName::DkgShareDecryption => Some(2),
+                CircuitName::PkGeneration
+                | CircuitName::DkgShareDecryption
+                | CircuitName::ThresholdShareDecryption => Some(2),
                 CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::DkgAggregator => None,
                 _ => outputs,
             };

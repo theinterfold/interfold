@@ -145,10 +145,18 @@ impl CircuitName {
         Self::DkgAggregator,
     ];
 
+    pub fn synchronized_definitions() -> impl Iterator<Item = Self> {
+        Self::SYNCHRONIZED_DKG
+            .into_iter()
+            .chain([Self::ThresholdShareDecryption])
+    }
+
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
         match profile.protocol() {
             BfvDecryptionProtocol::SecretShared => Some(self.dir_path()),
-            BfvDecryptionProtocol::Synchronized if Self::SYNCHRONIZED_DKG.contains(self) => {
+            BfvDecryptionProtocol::Synchronized
+                if Self::synchronized_definitions().any(|c| c == *self) =>
+            {
                 Some(format!("synchronized/{}", self.dir_path()))
             }
             BfvDecryptionProtocol::Synchronized => None,
@@ -178,6 +186,18 @@ impl CircuitName {
                         },
                         crate::OutputField {
                             name: "key_bundle_commitment",
+                        },
+                    ],
+                }
+            }
+            (BfvDecryptionProtocol::Synchronized, Self::ThresholdShareDecryption) => {
+                CircuitOutputLayout::Fixed {
+                    fields: &[
+                        crate::OutputField {
+                            name: "d_commitment",
+                        },
+                        crate::OutputField {
+                            name: "c0_commitment",
                         },
                     ],
                 }
