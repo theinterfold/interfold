@@ -397,7 +397,8 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
     }
     full.circuits = vec!["e_sm_share_computation".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
-    full.circuits = vec!["decryption_aggregator".into()];
+    // `c6_chonk_root` is SS-only; a sync selection must not fall back to its SS definition.
+    full.circuits = vec!["c6_chonk_root".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
     let mut ss = request();
     ss.circuits = vec!["pk".into()];
