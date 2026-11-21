@@ -31,7 +31,8 @@ impl Case {
         product[0][7] = self.product_constant;
         let mut shifted = [7; 8];
         shifted[0] = self.shifted;
-        let _ = secure_share::<8, 2, 2, 1, 3, 9, 256, 10>(
+        // B = 7 has 3 bits; the shifted noise in [0, 14] has 4.
+        let _ = secure_share::<8, 2, 2, 1, 3, 9, 256, 10, 3, 4>(
             [3, 4],
             0,
             [0, 2],
