@@ -29,6 +29,30 @@ No test-support feature exists in the production libraries.
 adapters. `--export-toml` writes debug ABI inputs inside the benchmark run directory. Static
 configuration generation belongs to `pnpm build:circuits`.
 
+### Synchronized PRF conformance and sizing
+
+`pnpm test:sync-prf` compares Noir with `PartyPrfKeys::mask` from the locked `fhe.rs`, including its
+published non-prefix vector. The fixture uses synthetic keys and an isolated Nargo package outside
+artifact discovery. To measure a single owner's mask with real proving, run from the root:
+
+```sh
+probe=$(mktemp -d)/prf
+cargo run --locked -p e3-zk-samples --example sync_prf -- insecure-minimum "$probe"
+cd "$probe"
+nargo execute
+bb gates -b target/sync_prf_probe.json -t noir-recursive
+bb write_vk -b target/sync_prf_probe.json -t noir-recursive -o target
+time bb prove -b target/sync_prf_probe.json -w target/sync_prf_probe.gz -k target/vk -t noir-recursive -o target
+bb verify -k target/vk -p target/proof -i target/public_inputs -t noir-recursive
+```
+
+`secure-minimum`, `secure-micro` and `secure-small` select degree-8192 threshold parameters with the
+respective committee dimensions. These probes expose an expected _synthetic_ mask for equality
+checking; they measure neither a C6 statement nor an admitted secure profile. Report gate count and
+proving time separately from compilation, witness solving, VK generation and verification. With bb
+6.0.0, the monolithic secure Small probe needs 26 rounds and cannot prove within the backend's
+25-round limit. See the [sizing results](../../../circuits/benchmarks/synchronized-prf.md).
+
 ## Map and use
 
 | Location                                     | Responsibility                                                |
