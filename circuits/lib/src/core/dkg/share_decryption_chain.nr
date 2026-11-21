@@ -194,3 +194,24 @@ fn the_limb_chain_rejects_unlinked_limbs() {
     let start = limb_chain_start_hash::<4, 3, 60>();
     let _ = check_limb_chain::<4, 3, 60>([[start, 1], [2, 3], [3, 4]]);
 }
+
+#[test(should_fail_with = "Chain state mismatch")]
+fn a_limb_rejects_a_carried_state_other_than_its_input_hash() {
+    let (shares, commitments, _) = test_limbs();
+    let fresh = initial_state(aggregated_io_pattern::<4, 3, 60>(), DS_AGGREGATED_SHARES);
+    let mut substituted = fresh;
+    substituted[0] = substituted[0] + 1;
+    let (c0, s0) = limb_inputs(shares, commitments, 0);
+    let _ = share_decryption_limb::<0, 4, 3, 3, 60, 60>(
+        TQ,
+        c0,
+        s0,
+        limb_state_hash(fresh),
+        substituted,
+    );
+}
+
+#[test(should_fail_with = "Chain must start fresh")]
+fn the_limb_chain_rejects_a_chain_that_starts_from_another_state() {
+    let _ = check_limb_chain::<4, 3, 60>([[1, 2], [2, 3], [3, 4]]);
+}

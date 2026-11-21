@@ -231,6 +231,12 @@ schema-9/protocol-9/generation-2 cutover**: this change raises no counter, and t
 or supported replay between intermediate builds. Rollback uses the prior backup or a controlled
 reset/resync, never an older binary on a journal that holds the new encoding.
 
+The cutover also carries chunked C4: the final C4 verifies one limb circuit per CRT limb. The C4 and
+`c4ab_fold` keys, the C4 branch of the VK tree, the nodes-tree anchor and the DKG verifier change,
+final C4 proofs gain a trailing key-tree public field, and each pair gains nine required limb
+artifacts. Stored C4 proofs from in-flight E3s can be neither folded, link-checked nor verified by
+peers, so drain them first.
+
 ## BFV profile cutover
 
 New contract requests require protocol/DKG/committee-bound profile identities, including SS; the
