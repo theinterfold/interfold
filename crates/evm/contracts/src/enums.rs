@@ -48,6 +48,9 @@ sol! {
 mod tests {
     use super::*;
 
+    /// The real variants keep their indices; `Large` is appended after them. The hidden `__Invalid`
+    /// sentinel follows the last variant, so its encoding moves from 3 to 4. Contracts before
+    /// `Large` never return a size above 2, so no stored value changes meaning.
     #[test]
     fn committee_view_preserves_existing_indexer_encoding() {
         for (index, value) in [
