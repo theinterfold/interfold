@@ -8,8 +8,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x1c689d0dc6478827c9228e2d224e32c053bf09ce5cfa5199838a37ce46189e63",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x070c5fad1cb98d7173666aeabf80e970be5480864e5e2a5fa0e186d6b0ef64e0",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x1e44efe8fd3e2a5ce05d798b508056b0ceac8a7f4d1ed9291f082f2bfa89a488",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x272d1f281db274b50946798a398557159be6f8ed81c69f920402071b59e18a0b",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x05da4bd2e5ba5f5a8e26652773ca1b663f2baae85099bcff08cc6c080a1a79fd"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x1631e1b272f00f772db91d078af30b12d71a66782c9ac3399db5080953651c74",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x1889da2ea3735546a4d81aed62dcb1b56042258369473125c382b53891a4ad44"
       }
     },
     {
@@ -19,8 +19,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x27faa89b3967e6ce2a6872a5de8e194eaa34b283026b4eb88a5fade6ed55c180",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x0fea4c0757b373b72617df0e0af2b4eb5c85d50d5fc50f35dd8e00769f86e80d",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x1e44efe8fd3e2a5ce05d798b508056b0ceac8a7f4d1ed9291f082f2bfa89a488",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x10929cdf9c09e4755279664db8ecb11a97537af7c13ef2309a2a13cef9e93a44",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x065e7fe643142511f1cb438a54cdf122547b49e081b9a06a27366fa2df1c43d7"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x13dbad24674100a2d9561f6a9915869c8a9603cca6f58f97a0140f30497c1488",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x12e891a9652ef54df0c6168b99a00326ee80af2b756eb2253043cc836f874586"
       }
     },
     {
@@ -30,8 +30,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x085c69d25debc9b9d8b00a435f7ef11a34aaa79c95bfd12a56a3b5affdaf0989",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x2a1cc527e977397fa9b3723e1bec742555a90eb84d0ee3bfd92d9b3080f50326",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x1e44efe8fd3e2a5ce05d798b508056b0ceac8a7f4d1ed9291f082f2bfa89a488",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x11fe2a93b2ca61c51d5acfb9b9ccc90427253627eefacec27e5dd811a54dd175",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x1a94fb17ed705c2faa06b3cd4b577c55e306c0aaf83b052e288eeff7af88c2a5"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x29ae698d0c658539aca03a43da97df1f760148108f4b4294fdd4afa3ef85219b",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x19cd8b7eed6355ce30199e8dfc1102e08f1920140abd7fbcc1ffaa48e6dd2532"
       }
     },
     {
@@ -41,8 +41,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x273cd303b95c702986695d430c6d173a367658cb15c562503abab1856e379e97",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x06b8b089ed341146e56c7a3feca5458eaf002fe9471a473edc8d6f704a0cb608",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x185b1c0ec5b7b229e90329df0d436338073ce990d381055758b3c0560f7e81c6",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x0e0e7c90bd53b3fb936336f9a794694009d3e373c2b41d1f2912df75894c578e",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x2f9c3466a52297cc4ce698b49f32a3667a8fa9f5e76b97d8c7cd29a739dfc61a"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x2434af9a7886541a693a064187a46c31cdae181757174f4b2d94a25326f9cee4",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x025b0c2b80d69ef83cc3703a987aa7699493bd6d2b56bbe674293ce03ef22d9a"
       }
     },
     {
@@ -52,8 +52,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x095257b85826689a4ea081ed1bdd52ecb6d2115950b395244f5464b5b83d905b",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x22b80edd65add3a454b4f3dd09205c20234e1dceee9eaa083e8f324df64f4fe2",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x185b1c0ec5b7b229e90329df0d436338073ce990d381055758b3c0560f7e81c6",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x0a1b8195568328f50befc7754c87d241d5a3605bca97b992081aeae76632a347",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x08ec0cc9a0e45bcde10984fa65156ea1a899537e194149b527e5f604c4de4070"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x15088b65089d1a01fff6e3200c6e02e9eed4bbd70fe76243c6359975808fff36",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x138bdd0486814eb5749517b45299bb0729c94736b1872ac6393864aeb6423cf9"
       }
     },
     {
@@ -63,8 +63,8 @@
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x251e54cf7e120bacf1f01f767e3606a8c75bc44d7d1cd3afb2c294896312e593",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x278a97248a55fb9e7b79c98255c6082bb3fa989c6dad65163e20cc89f12dc230",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x185b1c0ec5b7b229e90329df0d436338073ce990d381055758b3c0560f7e81c6",
-        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x0ec16ccd32da83d1da6f80805ec8a2589257e3ba2b24bf1ef62ce1947b8f1e1c",
-        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x2d6e2609d4f7e8e67ae048c0d956df044a2c851f0befb27668c885f911bdafdf"
+        "recursive-tree-commitment/default/recursive_aggregation/c6_fold": "0x24a4fd650eb735a3dea41574e717caf90c1f582f24ca96694bc0c9a70b901c43",
+        "recursive-tree-commitment/default/recursive_aggregation/nodes_fold": "0x02ba6120e5729c3c4fc4941425589aba95a7b64785e2f781d663ec2c7ce955e1"
       }
     }
   ]
