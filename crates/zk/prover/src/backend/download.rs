@@ -33,6 +33,9 @@ const BB_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// stops delivering data. On node start the download still counts against the startup timeout.
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Without a total deadline a misbehaving endpoint could stream forever. The largest download, the
+/// eight-pair circuit archive, is about 352 MB, so 1 GiB leaves room for growth.
+const MAX_DOWNLOAD_BYTES: u64 = 1 << 30;
 
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
@@ -721,6 +724,12 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
     }
 
     let total_size = response.content_length().unwrap_or(0);
+    if total_size > MAX_DOWNLOAD_BYTES {
+        return Err(ZkError::DownloadFailed(
+            url.to_string(),
+            format!("size {total_size} exceeds the {MAX_DOWNLOAD_BYTES}-byte limit"),
+        ));
+    }
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(
@@ -738,6 +747,12 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ZkError::DownloadFailed(url.to_string(), e.to_string()))?;
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_DOWNLOAD_BYTES {
+            return Err(ZkError::DownloadFailed(
+                url.to_string(),
+                format!("more than {MAX_DOWNLOAD_BYTES} bytes received"),
+            ));
+        }
         bytes.extend_from_slice(&chunk);
         pb.set_position(bytes.len() as u64);
     }
