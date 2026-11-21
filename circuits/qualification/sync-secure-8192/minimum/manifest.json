@@ -1,0 +1,41 @@
+{
+  "admissionEnabled": false,
+  "bb": "6.0.0",
+  "circuits": [
+    {
+      "circuitSha256": "41d81efabf35cae30ef1bdbb4e8f075b948b7f8ddbbfe3fac9d2d83a09ce8a32",
+      "gates": 8609254,
+      "path": "recursive/threshold/share_decryption",
+      "role": "share_decryption",
+      "target": "noir-recursive",
+      "vkHash": "0x2cbe5ec65994e950db88e4144678a477dfbcc12b2efa4b3bc8de574efa62ef32",
+      "vkSha256": "6f1b270cc869e0c4819e13e0e2bb27c5355166094b3ed3b7af30ae04da02279c"
+    },
+    {
+      "circuitSha256": "4b441305556d3f8c40636321744b87056381153ba6f2b619a7f5d984a2527754",
+      "gates": 1516802,
+      "path": "recursive/threshold/decrypted_shares_aggregation",
+      "role": "decrypted_shares_aggregation",
+      "target": "noir-recursive",
+      "vkHash": "0x1ce8f5c3d31d52edfdc905884917a67ef2025f0654151e5cd48f8932c735a4f8",
+      "vkSha256": "d91eca38a1f528bd1338db7936da36593b0774dca1ee784d4d031623310c64c8"
+    },
+    {
+      "circuitSha256": "02f0aa5cf4784b5ce8e914b93f34f6ca64333bc0ff111faab48f8b3bb39145fc",
+      "gates": 2242265,
+      "path": "evm/recursive_aggregation/decryption_aggregator",
+      "role": "decryption_aggregator",
+      "soliditySha256": "6c6dd5bed4fd7cfe325f2cfe205b08ae1656850153caf5e56ed6faa388ccb7a9",
+      "target": "evm",
+      "vkHash": "0x05403e1e7060e21b75a26d283de1cc0ebf800384695cbe1530b591eb9730f2ef",
+      "vkSha256": "5767fba72ffc3d73f0d3b17f50624413441766a200f966e82fd67e765d24517f"
+    }
+  ],
+  "committee": "minimum",
+  "cryptoConfigId": "0x2c2655dc733425748efd5e5d4b02376088d6173aa34da9a9ccc22f36e90ce31a",
+  "formatVersion": 1,
+  "nargo": "1.0.0-rc.3",
+  "profile": "sync-secure-8192",
+  "scope": "decryption-only",
+  "sourceHash": "ac948da24891e27b"
+}

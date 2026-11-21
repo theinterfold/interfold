@@ -43,10 +43,20 @@ pub(super) fn stage(
     bb: &Path,
     role: CircuitName,
 ) -> Result<PathBuf> {
+    stage_profile(job, prover, bb, role, PROFILE)
+}
+
+pub(super) fn stage_profile(
+    job: &CircuitJob,
+    prover: &ZkProver,
+    bb: &Path,
+    role: CircuitName,
+    profile: BfvProfile,
+) -> Result<PathBuf> {
     run(Command::new("nargo")
         .arg("compile")
         .current_dir(job.directory.path()))?;
-    let namespace = PROFILE.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum)?;
+    let namespace = profile.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum)?;
     let destination = prover
         .circuits_dir(variant(role), &namespace)
         .join(role.dir_path());

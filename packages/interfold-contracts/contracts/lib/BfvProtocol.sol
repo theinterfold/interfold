@@ -39,6 +39,9 @@ library BfvProtocol {
     bytes32 internal constant SYNC_INSECURE_64_MINIMUM_CONFIG_ID =
         0xb1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05;
 
+    bytes32 internal constant SYNC_SECURE_8192_MINIMUM_CONFIG_ID =
+        0x2c2655dc733425748efd5e5d4b02376088d6173aa34da9a9ccc22f36e90ce31a;
+
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
     uint32 internal constant MINIMUM_H = 2;

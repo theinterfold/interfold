@@ -47,9 +47,10 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
             {
                 continue;
             }
-            let path = root
-                .join("circuits/bin")
-                .join(role.source_path(profile).unwrap());
+            let Some(source) = role.source_path(profile) else {
+                continue;
+            };
+            let path = root.join("circuits/bin").join(source);
             let manifest = path.join("Nargo.toml");
             let value: toml::Value =
                 toml::from_str(&fs::read_to_string(&manifest).with_context(|| {
@@ -200,17 +201,22 @@ fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
         paths.insert(target_dir(root, circuit)?);
         paths.insert(circuit.path.join("target"));
     }
-    if circuits.iter().any(|circuit| {
-        !circuit
-            .path
-            .starts_with(root.join("circuits/bin/synchronized"))
-    }) {
+    if circuits
+        .iter()
+        .any(|circuit| !synchronized_path(root, &circuit.path))
+    {
         paths.insert(root.join("circuits/bin/target"));
     }
     for path in paths {
         remove_dir(&path)?;
     }
     Ok(())
+}
+
+fn synchronized_path(root: &Path, path: &Path) -> bool {
+    ["synchronized", "synchronized_secure"]
+        .iter()
+        .any(|domain| path.starts_with(root.join("circuits/bin").join(domain)))
 }
 
 /// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`), as
@@ -392,10 +398,7 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
 }
 
 fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
-    if circuit
-        .path
-        .starts_with(root.join("circuits/bin/synchronized"))
-    {
+    if synchronized_path(root, &circuit.path) {
         let path = target_dir(root, circuit)?.join(format!("{}.json", circuit.package));
         if !path.is_file() {
             bail!(
@@ -434,7 +437,7 @@ fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
     )
 }
 
-fn sanitize_paths(path: &Path) -> Result<()> {
+pub(super) fn sanitize_paths(path: &Path) -> Result<()> {
     #[derive(Deserialize)]
     struct Compiled<'a> {
         #[serde(borrow)]

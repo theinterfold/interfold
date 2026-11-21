@@ -4,6 +4,34 @@ use e3_fhe_params::BfvProfile;
 use e3_zk_config::{CircuitName, CircuitVariant};
 
 #[test]
+fn secure_minimum_is_decryption_only_and_does_not_fall_back_to_ss() {
+    use e3_committee::CiphernodesCommitteeSize::{Micro, Minimum};
+    use e3_zk_config::synchronized::Configs;
+    let secure = BfvProfile::SyncDecSecure8192;
+    assert!(secure.ensure_admission_enabled().is_err());
+    assert!(secure.artifacts_dir_for_committee(Micro).is_err());
+    assert_eq!(
+        secure.artifacts_dir_for_committee(Minimum).unwrap(),
+        "sync-secure-8192/minimum"
+    );
+    let cfg = Configs::for_profile(secure, Minimum).unwrap();
+    assert_eq!(cfg.key_bits, 256);
+    assert_eq!(cfg.transport.plaintext(), 2 * cfg.threshold.moduli()[0]);
+    let (_, ss) = BfvProfile::SsSecure8192.build_pair().unwrap();
+    assert!(Configs::new(secure, Minimum, &cfg.threshold, &ss).is_err());
+    assert_eq!(
+        cfg.public_inputs(CircuitName::DecryptionAggregator),
+        Some(76)
+    );
+    assert!(cfg.public_inputs(CircuitName::DkgShareDecryption).is_none());
+    assert!(CircuitName::DkgAggregator.source_path(secure).is_none());
+    assert_ne!(
+        CircuitName::ThresholdShareDecryption.source_path(secure),
+        CircuitName::ThresholdShareDecryption.source_path(BfvProfile::SsSecure8192)
+    );
+}
+
+#[test]
 fn baseline_enum_bytes_names_paths_and_layout_selection_are_unchanged() {
     // Frozen from the e3-events definitions at 26023af50, including the shared C4/C6 basename.
     // The four share-computation chunk circuits, then the C3 Chonk circuits, are new rows appended

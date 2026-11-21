@@ -609,6 +609,11 @@ fn all_sources(root: &Path) -> Result<Selection> {
         BfvProfile::SyncDecInsecure64,
         CiphernodesCommitteeSize::Minimum,
     )?);
+    selection.noir.extend(synchronized_sources(
+        root,
+        BfvProfile::SyncDecSecure8192,
+        CiphernodesCommitteeSize::Minimum,
+    )?);
     Ok(selection)
 }
 

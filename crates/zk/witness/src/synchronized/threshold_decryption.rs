@@ -97,6 +97,38 @@ impl Opening<'_> {
             ));
         }
         let bound = BigInt::from(bound.clone());
+        let mut result = json!({
+            "setup": binding_json(self.setup), "domain": binding_json(self.domain),
+            "owner": self.owner, "roster": self.roster,
+            "expected_sk": self.expected_sk.to_string(), "expected_bundle": self.expected_bundle.to_string(),
+            "expected_ct": self.expected_ct.to_string(), "outgoing": self.outgoing, "incoming": self.incoming,
+            "sk": sk.as_slice(), "ct": [native_rows(config,&ct0)?, native_rows(config,&ct1)?], "d": share.as_slice(),
+        });
+        if config.profile == e3_fhe_params::BfvProfile::SyncDecSecure8192 {
+            let c1 = fhe_poly_to_crt_centered(&ct1, moduli)?;
+            let secret = fhe_poly_to_crt_centered(self.sk, moduli)?;
+            let prime = e3_zk_config::field::get_zkp_modulus();
+            // Move the decimal strings directly into the private witness JSON.
+            result["product"] = c1
+                .limbs
+                .iter()
+                .zip(&secret.limbs)
+                .map(|(a, b)| {
+                    let product =
+                        crate::negacyclic::negacyclic_mul_exact(a, b, config.threshold.degree());
+                    product
+                        .coefficients()
+                        .iter()
+                        .map(|v| Value::String(((v % &prime + &prime) % &prime).to_string()))
+                        .collect::<Value>()
+                })
+                .collect();
+            result["shifted_noise"] = noise
+                .iter()
+                .map(|e| Value::String((e + &bound).to_string()))
+                .collect();
+            return Ok(result);
+        }
         let shifted = zeroize::Zeroizing::new(
             noise
                 .iter()
@@ -106,12 +138,7 @@ impl Opening<'_> {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         );
-        Ok(json!({
-            "setup": binding_json(self.setup), "domain": binding_json(self.domain),
-            "owner": self.owner, "roster": self.roster,
-            "expected_sk": self.expected_sk.to_string(), "expected_bundle": self.expected_bundle.to_string(),
-            "expected_ct": self.expected_ct.to_string(), "outgoing": self.outgoing, "incoming": self.incoming,
-            "sk": sk.as_slice(), "ct": [native_rows(config,&ct0)?, native_rows(config,&ct1)?], "shifted_noise": shifted.as_slice(), "d": share.as_slice(),
-        }))
+        result["shifted_noise"] = json!(shifted.as_slice());
+        Ok(result)
     }
 }

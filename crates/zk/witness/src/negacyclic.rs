@@ -23,7 +23,7 @@ const AUX_PRIME_BITS: usize = 62;
 ///
 /// Both inputs hold `N` descending coefficients, as [`fold_negacyclic`] reads them, and the result
 /// equals `fold_negacyclic(&a.mul(b), n)`. The product is taken in `Z_P[x]/(x^N + 1)` for `P` the
-/// product of two NTT-friendly primes, then lifted to the centred window `(-P/2, P/2)`. That lift
+/// product of two or three NTT-friendly primes, then lifted to the centred window `(-P/2, P/2)`. That lift
 /// is the integer product because every result coefficient is a sum of `N` terms `a_i * b_j`, so
 /// `|c| <= N * max|a| * max|b|`, which is checked to be below `P/2` before the NTT path is taken.
 /// Inputs that do not fit `i64`, have a degree the NTT context cannot take, or could exceed the
@@ -46,12 +46,11 @@ fn ntt_negacyclic_mul(a: &Polynomial, b: &Polynomial, n: usize) -> Option<Polyno
     if ac.len() != n || bc.len() != n || !n.is_power_of_two() || n < 8 {
         return None;
     }
-    let ctx = aux_context(n)?;
-    let modulus: BigUint = ctx.moduli().iter().map(|&p| BigUint::from(p)).product();
-    let half = &modulus >> 1u32;
-
     let max_abs = |c: &[BigInt]| c.iter().map(|v| v.abs()).max().unwrap_or_default();
     let worst = max_abs(ac) * max_abs(bc) * BigInt::from(n);
+    let ctx = aux_context(n, worst.bits() >= 123)?;
+    let modulus: BigUint = ctx.moduli().iter().map(|&p| BigUint::from(p)).product();
+    let half = &modulus >> 1u32;
     if worst >= BigInt::from(half.clone()) {
         return None;
     }
@@ -86,19 +85,24 @@ fn ntt_negacyclic_mul(a: &Polynomial, b: &Polynomial, n: usize) -> Option<Polyno
     Some(Polynomial::new(out))
 }
 
-/// The two-prime NTT context for degree `n`, built once per degree.
-fn aux_context(n: usize) -> Option<Arc<Context>> {
-    static CONTEXTS: OnceLock<Mutex<HashMap<usize, Arc<Context>>>> = OnceLock::new();
+/// Secure synchronized C6 multiplies two full residue polynomials and needs a third prime.
+fn aux_context(n: usize, wide: bool) -> Option<Arc<Context>> {
+    type Cache = Mutex<HashMap<(usize, bool), Arc<Context>>>;
+    static CONTEXTS: OnceLock<Cache> = OnceLock::new();
     let contexts = CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut contexts = contexts.lock().ok()?;
-    if let Some(ctx) = contexts.get(&n) {
+    if let Some(ctx) = contexts.get(&(n, wide)) {
         return Some(ctx.clone());
     }
     let step = 2 * n as u64;
     let p1 = generate_prime(AUX_PRIME_BITS, step, 1u64 << AUX_PRIME_BITS)?;
     let p2 = generate_prime(AUX_PRIME_BITS, step, p1)?;
-    let ctx = Context::new_arc(&[p1, p2], n).ok()?;
-    contexts.insert(n, ctx.clone());
+    let mut primes = vec![p1, p2];
+    if wide {
+        primes.push(generate_prime(AUX_PRIME_BITS, step, p2)?);
+    }
+    let ctx = Context::new_arc(&primes, n).ok()?;
+    contexts.insert((n, wide), ctx.clone());
     Some(ctx)
 }
 
@@ -259,7 +263,12 @@ mod tests {
     #[test]
     fn exact_product_falls_back_outside_the_window() {
         let n = 8;
-        let big = Polynomial::new(vec![BigInt::from(i64::MAX); n]);
+        let wide = Polynomial::new(vec![BigInt::from(i64::MAX); n]);
+        assert_eq!(
+            ntt_negacyclic_mul(&wide, &wide, n).unwrap(),
+            reduce_reference(&wide.mul(&wide), n)
+        );
+        let big = Polynomial::new(vec![BigInt::from(1u8) << 100; n]);
         assert!(ntt_negacyclic_mul(&big, &big, n).is_none());
         assert_eq!(
             negacyclic_mul_exact(&big, &big, n),

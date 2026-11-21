@@ -3,6 +3,7 @@
 mod artifacts;
 mod bindings;
 mod configuration;
+mod decryption_candidate;
 mod identity;
 mod layouts;
 pub mod metadata;
@@ -77,6 +78,7 @@ pub enum Operation {
     CheckVkCommitments,
     QualifyVkCommitments,
     SyncSources,
+    DecryptionCandidate,
 }
 
 impl FromStr for Operation {
@@ -97,8 +99,9 @@ impl FromStr for Operation {
             "check-vk-commitments" => Ok(Self::CheckVkCommitments),
             "qualify-vk-commitments" => Ok(Self::QualifyVkCommitments),
             "sync-sources" => Ok(Self::SyncSources),
+            "decryption-candidate" => Ok(Self::DecryptionCandidate),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, or sync-sources"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, sync-sources, or decryption-candidate"
             )),
         }
     }
@@ -121,6 +124,7 @@ impl fmt::Display for Operation {
             Self::CheckVkCommitments => "check-vk-commitments",
             Self::QualifyVkCommitments => "qualify-vk-commitments",
             Self::SyncSources => "sync-sources",
+            Self::DecryptionCandidate => "decryption-candidate",
         })
     }
 }
@@ -269,6 +273,16 @@ pub struct Request {
 impl Request {
     /// Reject requests that name no buildable pair before any tool run or write.
     pub fn validate(&self, root: &Path) -> Result<()> {
+        // This operation qualifies one disabled definition from explicit proof evidence. It
+        // never selects a release pair or hydrates/installs artifacts.
+        if self.operation == Operation::DecryptionCandidate {
+            anyhow::ensure!(matches!(self.preset, PresetSelection::Single(p) if p.protocol() == BfvDecryptionProtocol::Synchronized && !p.admission_enabled())
+                && self.committee == CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum)
+                && self.groups.is_complete() && self.circuits.is_empty() && self.output.is_some()
+                && !self.skip_vk && !self.hydrate_bin_only && !self.dry_run && !self.skip_if_built,
+                "decryption-candidate requires a disabled synchronized Minimum profile and a proof export directory");
+            return Ok(());
+        }
         if matches!(&self.groups, GroupSelection::Selected(groups) if groups.is_empty()) {
             bail!("Select at least one circuit group, or use all");
         }
@@ -521,6 +535,7 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::CheckVkCommitments => vk_commitments::check(root, request)?,
         Operation::QualifyVkCommitments => vk_commitments::qualify(root, request)?,
         Operation::SyncSources => configuration::sync_sources(root)?,
+        Operation::DecryptionCandidate => decryption_candidate::build(root, request)?,
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;
             let mut stdout = std::io::stdout().lock();
