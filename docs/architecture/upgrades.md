@@ -304,9 +304,9 @@ The Large committee slice routes `insecure-64/large` and `secure-8192/large` on 
 chains only; Mainnet routes and configuration are unchanged. On Sepolia, `upgrade:v19` deploys both
 routes and adds `setCommitteeThresholds(3, [34, 45])` from the configuration. The call follows the
 upgrade in the batch, because the earlier implementation reverts on size 3; `prepare` reads that
-revert as an unset threshold only for a size this release knows. `upgrade:v19` does not change
-timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s of DKG
-on 16 cores / 32 threads, so a Sepolia batch must add `setTimeoutConfig` with the configured
+revert as an unset threshold only for Large, the size this release adds. `upgrade:v19` does not
+change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s
+of DKG on 16 cores / 32 threads, so a Sepolia batch must add `setTimeoutConfig` with the configured
 windows, which raise `dkgWindow` to 7200 s for every Sepolia committee size; node checkpoints scale
 with it. A fresh deployment sets them from the configuration. `upgrade:v19:validate`, which
 `upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with the configured windows and
@@ -317,6 +317,11 @@ also declares, so the Sepolia batch raises no release policy and leaves cached n
 only `--ciphernodes-restarted` attests that operators run the new build. Live Sepolia also has fewer
 than 45 active operators, so Large requests revert with `InsufficientCiphernodes` until enough
 operators join, and `upgrade:v19:resume` there needs `--sepolia-committee-size` for a smaller gate.
+
+`CiphernodesCommitteeSize::Large` is an appended variant in the event log, keyshare pending payloads
+and threshold-keyshare recovery, so an older binary cannot read a journal that holds it. It shares
+the unreleased schema-9/protocol-9/generation-2 cutover: rollback uses the prior backup or a
+controlled reset/resync, and a set size-3 threshold cannot be cleared.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
