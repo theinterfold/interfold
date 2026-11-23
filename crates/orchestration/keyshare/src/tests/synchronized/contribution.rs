@@ -209,6 +209,30 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
     };
 
     let memory = InMemStore::new(false).start();
+    let data = DataStore::from_in_mem(&memory);
+    let root = data
+        .repositories()
+        .threshold_keyshare_recovery_payloads(id)
+        .scope("synchronized-contribution-v1");
+    let live = crate::synchronized::LiveReservation::default();
+    keys.remember_synchronized_opening(id, &ciphertext, &test_ec(42), true)?;
+    // A local read error before insertion cannot justify a new seed or a second authorization.
+    root.scope("share").write_sync(0xffu8).await?;
+    assert!(live
+        .reserve_if_authorized(&open(&data)?, &keys, true)
+        .await
+        .is_err());
+    assert!(root
+        .scope("allocation")
+        .read_checked::<SensitiveBytes>()
+        .await?
+        .is_none());
+    root.scope("share").remove_sync().await?;
+    let replacement = crate::synchronized::LiveReservation::default();
+    replacement
+        .reserve_if_authorized(&open(&data)?, &keys, true)
+        .await?;
+    assert!(open(&data)?.resume().await.is_err());
     let broken = DataStore::from_in_mem(&memory).with_flush_recipient(
         FailFirstFlush {
             store: memory.clone(),
@@ -219,7 +243,11 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
     );
     let fenced = open(&broken)?;
     assert!(fenced.resume().await.is_err());
-    assert!(fenced.reserve().await.is_err());
+    assert!(live
+        .reserve_if_authorized(&fenced, &keys, true)
+        .await
+        .is_err());
+    live.reserve_if_authorized(&fenced, &keys, true).await?;
     let ContributionProgress::Reserved(retry) = fenced.resume().await? else {
         panic!()
     };
@@ -228,10 +256,6 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
     };
     assert!(retry.coefficients()? == again.coefficients()?);
     let memory = DataStore::from_in_mem(&memory);
-    let root = memory
-        .repositories()
-        .threshold_keyshare_recovery_payloads(id)
-        .scope("synchronized-contribution-v1");
     let refuse = |slot| {
         memory
             .clone()
@@ -253,6 +277,37 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
     assert!(
         matches!(open(&memory)?.resume().await?, ContributionProgress::Signed(value) if value == signed_bundle)
     );
+    let selected = &setup.selected[signed_bundle.party_id as usize];
+    let (node, _, _) = super::publication::actor(
+        &memory,
+        ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selected.clone(), test_ec(1))),
+            ..Default::default()
+        },
+        setup.signers[signed_bundle.party_id as usize].clone(),
+        setup.cipher.clone(),
+        setup.interfold,
+        keys.clone(),
+    )
+    .await?;
+    node.send(keyshare_event(
+        E3RequestComplete { e3_id: id.clone() },
+        50,
+        EventSource::Evm,
+    ))
+    .await?;
+    assert!(node.send(Die).await.is_err());
+    for slot in ["allocation", "share", "signed"] {
+        assert!(
+            root.scope(slot)
+                .read_checked::<SensitiveBytes>()
+                .await?
+                .is_none(),
+            "{slot} survived terminal cleanup"
+        );
+    }
+    live.reserve_if_authorized(&fenced, &keys, true).await?;
+    assert!(fenced.resume().await.is_err());
 
     let dir = tempfile::tempdir()?;
     let (bus, _) = test_bus();

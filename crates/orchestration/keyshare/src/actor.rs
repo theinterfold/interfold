@@ -207,6 +207,7 @@ pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
 pub struct ThresholdKeyshare {
     decryption_runtime: Option<e3_zk_prover::synchronized::fixed_set::DecryptionRuntime>,
     live_opening: bool,
+    live_reservation: crate::synchronized::LiveReservation,
     contribution_running: Option<SpawnHandle>,
     contribution_delivered: bool,
     synchronized_setup: Option<crate::synchronized::SynchronizedSetupIntent>,
@@ -292,6 +293,7 @@ impl ThresholdKeyshare {
             synchronized_setup: None,
             decryption_runtime: None,
             live_opening: false,
+            live_reservation: Default::default(),
             contribution_running: None,
             contribution_delivered: false,
             synchronized_setup_retry: None,

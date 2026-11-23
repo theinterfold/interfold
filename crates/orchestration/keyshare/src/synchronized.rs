@@ -13,6 +13,7 @@ use e3_trbfv::synchronized::SealedPrfKeys;
 
 mod contribution;
 mod publication;
+pub(crate) use contribution::LiveReservation;
 pub use contribution::{
     ContributionProgress, ContributionStore, ContributionWorker, LocalContribution, NoiseAllocation,
 };

@@ -47,7 +47,7 @@ pub use chain_system::*;
 pub use chain_time::committee_chain_time_reader;
 pub use chains::{validate_chain_id, Chain, Chains, EnabledChain};
 pub use contracts::ICiphernodeRegistry;
-pub use dkg_timing::{read_canonical_dkg_timing, read_decryption_deadline, CanonicalDkgTiming};
+pub use dkg_timing::{read_canonical_dkg_timing, read_decryption_window, CanonicalDkgTiming};
 pub use domain::encode_attestation_evidence;
 pub use eligibility::bonding_eligibility_reader;
 pub use finalized_lifecycle::{read_finalized_e3_lifecycles, FinalizedE3Lifecycle};

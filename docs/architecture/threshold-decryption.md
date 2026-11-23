@@ -99,7 +99,10 @@ plan even if key authority remains for hydration.
 Only the first matching opening observed live with effects enabled may reserve private noise.
 Projection replay restores the opening and its original cause, **not** permission to create another
 allocation. A restart with no allocation fails closed, even if the node crashed before the first
-write. The private Minimum worker consumes only a **previously flushed** allocation. It uses the
+write. The original live actor retains one pending seed until the allocation flush is acknowledged:
+a pre-insert failure retries those same bytes, and a visible but unflushed insert is flushed again.
+Reservation, proving and release use the latest block timestamp and the same inclusive chain deadline.
+The private Minimum worker consumes only a **previously flushed** allocation. It uses the
 saved summed SK and C4 directed keys to derive the native weighted share, checks the C4 openings,
 and flushes the exact share before proving it. On retry it compares bytes before proving or reusing
 a signed proof. Both paths verify C6 against the profile-specific VK, the confirmed row and the full

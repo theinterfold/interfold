@@ -16,11 +16,46 @@ use e3_utils::ArcBytes;
 use e3_zk_config::synchronized::Configs;
 use e3_zk_prover::synchronized::fixed_set;
 use rand::RngCore;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
 mod worker;
 pub use worker::{ContributionWorker, LocalContribution};
+
+fn new_seed() -> Zeroizing<[u8; 32]> {
+    let mut seed = Zeroizing::new([0; 32]);
+    rand::rng().fill_bytes(seed.as_mut());
+    seed
+}
+
+/// Owned by the live keyshare actor, never serialized. Ambiguous writes retry the same seed.
+#[derive(Clone, Default)]
+pub(crate) struct LiveReservation(Arc<Mutex<Option<Zeroizing<[u8; 32]>>>>);
+
+impl LiveReservation {
+    pub(crate) async fn reserve_if_authorized(
+        &self,
+        store: &ContributionStore,
+        keys: &e3_request::canonical_key::CanonicalPublicKeys,
+        observed: bool,
+    ) -> Result<()> {
+        let seed = {
+            let mut pending = self.0.lock().expect("local reservation lock");
+            if pending.is_none()
+                && observed
+                && keys.take_first_reservation(&store.plan, store.owner)
+            {
+                *pending = Some(new_seed());
+            }
+            pending.clone()
+        };
+        if let Some(seed) = seed {
+            store.allocation(Some(&seed)).await?;
+            self.0.lock().expect("local reservation lock").take();
+        }
+        Ok(())
+    }
+}
 
 /// Replaying the v1 sampler starts the same private stream at offset zero.
 pub struct NoiseAllocation {
@@ -147,12 +182,12 @@ impl ContributionStore {
         Ok(Some((plain, keccak256(bincode::serialize(&value)?))))
     }
 
-    async fn allocation(&self, create: bool) -> Result<(NoiseAllocation, B256)> {
+    async fn allocation(&self, proposed: Option<&[u8; 32]>) -> Result<(NoiseAllocation, B256)> {
         let existing = self.slot("allocation", B256::ZERO, None).await?;
         let (bytes, parent) = if let Some(value) = existing {
             value
         } else {
-            ensure!(create, "missing noise allocation");
+            let seed = proposed.context("missing noise allocation")?;
             for slot in ["share", "signed"] {
                 ensure!(
                     self.store
@@ -163,8 +198,6 @@ impl ContributionStore {
                     "missing allocation for existing contribution"
                 );
             }
-            let mut seed = Zeroizing::new([0u8; 32]);
-            rand::rng().fill_bytes(seed.as_mut());
             self.slot("allocation", B256::ZERO, Some(seed.as_slice()))
                 .await?
                 .context("missing recorded allocation")?
@@ -180,18 +213,15 @@ impl ContributionStore {
         ))
     }
 
-    /// First live authorization only. A duplicate observes the winning atomic insert.
+    #[cfg(test)]
     pub async fn reserve(&self) -> Result<ContributionProgress> {
-        self.progress(true).await
+        self.allocation(Some(&new_seed())).await?;
+        self.resume().await
     }
 
     /// After restart or an ambiguous dispatch, absence is not evidence of a first authorization.
     pub async fn resume(&self) -> Result<ContributionProgress> {
-        self.progress(false).await
-    }
-
-    async fn progress(&self, first_authorization: bool) -> Result<ContributionProgress> {
-        let (noise, parent) = self.allocation(first_authorization).await?;
+        let (noise, parent) = self.allocation(None).await?;
         let Some((share, parent)) = self.slot("share", parent, None).await? else {
             ensure!(
                 self.store
@@ -214,7 +244,7 @@ impl ContributionStore {
 
     #[cfg(test)]
     pub(crate) async fn record_generated(&self, share: &ArcBytes) -> Result<()> {
-        let (_, parent) = self.allocation(false).await?;
+        let (_, parent) = self.allocation(None).await?;
         self.record_generated_at(share, parent).await
     }
 
@@ -245,7 +275,7 @@ impl ContributionStore {
     }
 
     pub async fn record_signed(&self, bundle: &DecryptionshareCreated) -> Result<()> {
-        let (_, parent) = self.allocation(false).await?;
+        let (_, parent) = self.allocation(None).await?;
         let (share, parent) = self
             .slot("share", parent, None)
             .await?

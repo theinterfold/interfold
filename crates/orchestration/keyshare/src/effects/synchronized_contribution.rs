@@ -3,7 +3,6 @@
 use super::*;
 use crate::synchronized::{ContributionStore, ContributionWorker, LocalContribution};
 use e3_events::{DecryptionshareCreated, ProofPayload};
-use e3_zk_prover::synchronized::fixed_set::before_expiry;
 
 impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn observe_contribution_opening(
@@ -75,28 +74,35 @@ impl ThresholdKeyshare {
             &self.cipher,
         )?;
         let first = self.live_opening;
+        let reservation = self.live_reservation.clone();
         let bus = self.bus.clone();
         self.contribution_running = Some(
             ctx.spawn(
                 async move {
-                    let deadline = (runtime.deadline)(state.e3_id.clone()).await?;
+                    let deadline = runtime.open_deadline(&state.e3_id, None).await?;
                     let current = || -> Result<()> {
                         anyhow::ensure!(!bus.is_shutting_down(), "node is stopping");
-                        plan.check_current(&keys, &ct)?;
-                        before_expiry(deadline)
+                        plan.check_current(&keys, &ct)
                     };
                     current()?;
-                    if first && keys.take_first_reservation(&plan, owner) {
-                        store.reserve().await?;
-                    }
+                    reservation
+                        .reserve_if_authorized(&store, &keys, first)
+                        .await?;
                     let worker = ContributionWorker {
-                        pool: runtime.pool,
-                        task_scope: runtime.task_scope,
-                        prover: runtime.prover,
+                        pool: runtime.pool.clone(),
+                        task_scope: runtime.task_scope.clone(),
+                        prover: runtime.prover.clone(),
                     };
                     let result = worker
-                        .run_fenced(&store, &keys, &ct, &ready.sk_poly_sum, Some(deadline))
+                        .run_fenced(
+                            &store,
+                            &keys,
+                            &ct,
+                            &ready.sk_poly_sum,
+                            Some((&runtime, deadline)),
+                        )
                         .await?;
+                    runtime.open_deadline(plan.e3_id(), Some(deadline)).await?;
                     current()?;
                     let bundle = match result {
                         LocalContribution::Signed(bundle) => bundle,
@@ -120,8 +126,9 @@ impl ThresholdKeyshare {
                             bundle
                         }
                     };
+                    runtime.open_deadline(plan.e3_id(), Some(deadline)).await?;
                     current()?;
-                    Ok::<_, anyhow::Error>((plan, ct, deadline, bundle, ec))
+                    Ok::<_, anyhow::Error>((plan, ct, bundle, ec))
                 }
                 .into_actor(self)
                 .map(|result, actor, _| {
@@ -129,9 +136,8 @@ impl ThresholdKeyshare {
                     if actor.ended || !actor.effects_enabled || actor.bus.is_shutting_down() {
                         return;
                     }
-                    let result = result.and_then(|(plan, ct, deadline, bundle, ec)| {
+                    let result = result.and_then(|(plan, ct, bundle, ec)| {
                         plan.check_current(&actor.canonical_keys, &ct)?;
-                        before_expiry(deadline)?;
                         actor.bus.publish(bundle, ec)?;
                         actor.contribution_delivered = true;
                         Ok(())

@@ -15,29 +15,30 @@ use e3_zk_config::{
     CircuitName,
 };
 use num_bigint::{BigInt, Sign};
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-/// Shared execution capacity; the reader returns the absolute decryptionDeadline of this E3.
+type ChainTiming =
+    Arc<dyn Fn(E3id) -> Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>> + Send + Sync>;
+
+/// Shared execution capacity; the reader returns (frozen deadline, latest block time).
 #[derive(Clone)]
 pub struct DecryptionRuntime {
     pub prover: ZkProver,
     pub pool: TaskPool,
     pub task_scope: String,
-    pub deadline:
-        Arc<dyn Fn(E3id) -> Pin<Box<dyn Future<Output = Result<u64>> + Send>> + Send + Sync>,
+    pub timing: ChainTiming,
 }
 
-pub fn before_expiry(deadline: u64) -> Result<()> {
-    ensure!(
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() <= deadline,
-        "decryption deadline expired"
-    );
-    Ok(())
+impl DecryptionRuntime {
+    pub async fn open_deadline(&self, id: &E3id, frozen: Option<u64>) -> Result<u64> {
+        let (deadline, now) = (self.timing)(id.clone()).await?;
+        ensure!(
+            deadline != 0 && frozen.is_none_or(|d| d == deadline),
+            "decryption deadline missing or changed"
+        );
+        ensure!(now <= deadline, "decryption deadline expired");
+        Ok(deadline)
+    }
 }
 
 pub fn validate_row(

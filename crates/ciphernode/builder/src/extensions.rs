@@ -97,12 +97,12 @@ impl CiphernodeBuilder {
             pool: task_pool.clone(),
             prover: e3_zk_prover::ZkProver::new(zk_backend),
             task_scope: addr.to_owned(),
-            deadline: Arc::new(move |e3| {
+            timing: Arc::new(move |e3| {
                 let reader = readers.get(&e3.chain_id()).cloned();
                 Box::pin(async move {
                     let (provider, address) = reader
                         .ok_or_else(|| anyhow::anyhow!("no decryption deadline reader for {e3}"))?;
-                    e3_evm::read_decryption_deadline(&provider, address, &e3).await
+                    e3_evm::read_decryption_window(&provider, address, &e3).await
                 })
             }),
         };
