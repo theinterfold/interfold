@@ -138,6 +138,8 @@ fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, limits: &BbLimits) -> io::Re
     }
     let mut child = command.spawn()?;
     let (started, timeout) = (Instant::now(), limits.timeout);
+    let mut poll = Duration::from_millis(1);
+    let max_poll = Duration::from_millis(50);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -150,7 +152,8 @@ fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, limits: &BbLimits) -> io::Re
                 "the work was cancelled",
             ));
         }
-        if started.elapsed() >= timeout {
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
             let _ = child.kill();
             child.wait()?;
             let stderr = read_process_output_tail(&stderr_path).unwrap_or_default();
@@ -162,7 +165,9 @@ fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, limits: &BbLimits) -> io::Re
                 ),
             ));
         }
-        thread::sleep(Duration::from_millis(100));
+        let remaining = timeout.saturating_sub(elapsed);
+        thread::sleep(poll.min(remaining));
+        poll = (poll * 2).min(max_poll);
     };
     Ok(Output {
         status,

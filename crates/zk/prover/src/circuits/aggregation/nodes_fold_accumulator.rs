@@ -18,7 +18,7 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::proof::Proof;
 use crate::prover::ZkProver;
-use crate::witness::{CompiledCircuit, WitnessGenerator};
+use crate::witness::{ParsedCircuit, WitnessGenerator};
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 
@@ -136,13 +136,13 @@ fn generate_nodes_fold_kernel_proof(
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
         .join(CircuitName::NodesFoldKernel.dir_path())
         .join(format!("{}.json", CircuitName::NodesFoldKernel.as_str()));
-    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let compiled = ParsedCircuit::from_file_cached(&circuit_path)?;
 
     let json = serde_json::to_value(&full_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
     let witness_gen = WitnessGenerator::new();
-    let witness = witness_gen.generate_witness(&compiled, input_map)?;
+    let witness = witness_gen.generate_witness_parsed(&compiled, input_map)?;
 
     let proof = prover.generate_recursive_aggregation_bin_proof(
         CircuitName::NodesFoldKernel,
@@ -251,14 +251,14 @@ fn generate_nodes_fold_step_with_vks(
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
         .join(CircuitName::NodesFold.dir_path())
         .join(format!("{}.json", CircuitName::NodesFold.as_str()));
-    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let compiled = ParsedCircuit::from_file_cached(&circuit_path)?;
 
     let json = serde_json::to_value(&full_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
 
     let witness_gen = WitnessGenerator::new();
-    let witness = witness_gen.generate_witness(&compiled, input_map)?;
+    let witness = witness_gen.generate_witness_parsed(&compiled, input_map)?;
 
     prover.generate_recursive_aggregation_bin_proof(
         CircuitName::NodesFold,

@@ -16,12 +16,13 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::proof::Proof;
 use crate::prover::ZkProver;
-use crate::witness::{CompiledCircuit, WitnessGenerator};
+use crate::witness::{ParsedCircuit, WitnessGenerator};
 use alloy::primitives::Address;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_zk_config::{CircuitName, CircuitVariant};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 fn proof_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
@@ -32,23 +33,23 @@ fn proof_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
     bytes_to_field_strings(proof.public_signals.as_ref())
 }
 
-/// Load `<artifacts_dir>/<variant>/<circuit>/<circuit>.json` as a [`CompiledCircuit`]. Centralised
-/// so the layout is in one place across all aggregation builders below.
-fn load_compiled_circuit(
+/// Load `<artifacts_dir>/<variant>/<circuit>/<circuit>.json` as a cached [`ParsedCircuit`].
+/// Centralised so the layout is in one place across all aggregation builders below.
+fn load_parsed_circuit(
     prover: &ZkProver,
     circuit: CircuitName,
     variant: CircuitVariant,
     artifacts_dir: &str,
-) -> Result<CompiledCircuit, ZkError> {
+) -> Result<Arc<ParsedCircuit>, ZkError> {
     let path = prover
         .circuits_dir(variant, artifacts_dir)
         .join(circuit.dir_path())
         .join(format!("{}.json", circuit.as_str()));
-    CompiledCircuit::from_file(&path)
+    ParsedCircuit::from_file_cached(&path)
 }
 
 /// Build a witness from a `Serialize` Noir input struct and prove `circuit` via the recursive-bin
-/// path. Collapses the repeated `serde_json::to_value → inputs_json_to_input_map → CompiledCircuit::from_file
+/// path. Collapses the repeated `serde_json::to_value → inputs_json_to_input_map → ParsedCircuit::from_file_cached
 /// → WitnessGenerator → generate_recursive_aggregation_bin_proof` boilerplate used by every fold
 /// builder (c2ab / c3ab / c4ab / node_fold) in this module.
 fn build_and_prove_recursive_bin<W: Serialize>(
@@ -61,8 +62,8 @@ fn build_and_prove_recursive_bin<W: Serialize>(
     let json = serde_json::to_value(witness_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
-    let compiled = load_compiled_circuit(prover, circuit, CircuitVariant::Default, artifacts_dir)?;
-    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    let compiled = load_parsed_circuit(prover, circuit, CircuitVariant::Default, artifacts_dir)?;
+    let witness = WitnessGenerator::new().generate_witness_parsed(&compiled, input_map)?;
     prover.generate_recursive_aggregation_bin_proof(circuit, &witness, job_label, artifacts_dir)
 }
 
@@ -164,17 +165,50 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
     });
 }
 
-/// Run C2abFold || (C3a fold || C3b fold) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
-///
-/// C2abFold and the two C3 fold chains are mutually independent and run concurrently via
-/// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
-pub fn prove_node_dkg_fold(
+/// Inputs for [`prove_node_dkg_prefold`]: C2 and C3 proofs available immediately after dealing.
+pub struct NodeDkgPreFoldInput<'a> {
+    pub c2a_proof: &'a Proof,
+    pub c2b_proof: &'a Proof,
+    pub c3a_inner_proofs: &'a [Proof],
+    pub c3b_inner_proofs: &'a [Proof],
+    pub c3_slot_indices_a: &'a [u32],
+    pub c3_slot_indices_b: &'a [u32],
+    pub c3_total_slots: usize,
+}
+
+/// Output proofs of [`prove_node_dkg_prefold`], consumed by [`prove_node_dkg_finish`] once C4 arrives.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeDkgPreFold {
+    pub c2ab_proof: Proof,
+    pub c3ab_proof: Proof,
+}
+
+/// Output of [`prove_node_dkg_prefold`] including sub-step timings.
+#[derive(Clone, Debug)]
+pub struct NodeDkgPreFoldProveResult {
+    pub prefold: NodeDkgPreFold,
+    pub step_timings: Vec<FoldProveStepTiming>,
+}
+
+/// Inputs for [`prove_node_dkg_finish`]: pre-folded C2ab/C3ab proofs plus C0, C1, and C4.
+pub struct NodeDkgFinishInput<'a> {
+    pub c0_proof: &'a Proof,
+    pub c1_proof: &'a Proof,
+    pub c2ab_proof: &'a Proof,
+    pub c3ab_proof: &'a Proof,
+    pub c4a_proof: &'a Proof,
+    pub c4b_proof: &'a Proof,
+    pub party_id: u64,
+}
+
+/// Prove [`CircuitName::C2abFold`] combining C2a and C2b.
+pub fn prove_c2ab_fold(
     prover: &ZkProver,
-    input: &NodeDkgFoldInput,
+    c2a_proof: &Proof,
+    c2b_proof: &Proof,
     e3_id: &str,
     artifacts_dir: &str,
-) -> Result<NodeDkgFoldProveResult, ZkError> {
-    let mut step_timings = Vec::with_capacity(6);
+) -> Result<Proof, ZkError> {
     let c2a_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::SkShareComputation,
@@ -183,29 +217,174 @@ pub fn prove_node_dkg_fold(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::ESmShareComputation,
     )?;
-
     let c2ab = C2abFoldWitness {
-        c2a_vk: c2a_vk.verification_key.clone(),
-        c2a_proof: proof_field_strings(input.c2a_proof)?,
-        c2a_public: proof_public_field_strings(input.c2a_proof)?,
-        c2b_vk: c2b_vk.verification_key.clone(),
-        c2b_proof: proof_field_strings(input.c2b_proof)?,
-        c2b_public: proof_public_field_strings(input.c2b_proof)?,
-        c2a_key_hash: c2a_vk.key_hash.clone(),
-        c2b_key_hash: c2b_vk.key_hash.clone(),
+        c2a_vk: c2a_vk.verification_key,
+        c2a_proof: proof_field_strings(c2a_proof)?,
+        c2a_public: proof_public_field_strings(c2a_proof)?,
+        c2b_vk: c2b_vk.verification_key,
+        c2b_proof: proof_field_strings(c2b_proof)?,
+        c2b_public: proof_public_field_strings(c2b_proof)?,
+        c2a_key_hash: c2a_vk.key_hash,
+        c2b_key_hash: c2b_vk.key_hash,
+    };
+    build_and_prove_recursive_bin(
+        prover,
+        CircuitName::C2abFold,
+        &c2ab,
+        &format!("{e3_id}-c2ab"),
+        artifacts_dir,
+    )
+}
+
+/// Prove [`CircuitName::C3abFold`] combining folded C3a and C3b chains.
+pub fn prove_c3ab_fold(
+    prover: &ZkProver,
+    c3a_folded: &Proof,
+    c3b_folded: &Proof,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let c3_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3Fold,
+    )?;
+    let c3ab = C3abFoldWitness {
+        c3a_vk: c3_fold_vk.verification_key.clone(),
+        c3a_proof: proof_field_strings(c3a_folded)?,
+        c3a_public: proof_public_field_strings(c3a_folded)?,
+        c3b_vk: c3_fold_vk.verification_key,
+        c3b_proof: proof_field_strings(c3b_folded)?,
+        c3b_public: proof_public_field_strings(c3b_folded)?,
+        c3a_key_hash: c3_fold_vk.key_hash.clone(),
+        c3b_key_hash: c3_fold_vk.key_hash,
+    };
+    build_and_prove_recursive_bin(
+        prover,
+        CircuitName::C3abFold,
+        &c3ab,
+        &format!("{e3_id}-c3ab"),
+        artifacts_dir,
+    )
+}
+
+/// Prove [`CircuitName::C4abFold`] combining C4a and C4b.
+pub fn prove_c4ab_fold(
+    prover: &ZkProver,
+    c4a_proof: &Proof,
+    c4b_proof: &Proof,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let c4_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::DkgShareDecryption,
+    )?;
+    let c4ab = C4abFoldWitness {
+        c4a_vk: c4_vk.verification_key.clone(),
+        c4a_proof: proof_field_strings(c4a_proof)?,
+        c4a_public: proof_public_field_strings(c4a_proof)?,
+        c4b_vk: c4_vk.verification_key,
+        c4b_proof: proof_field_strings(c4b_proof)?,
+        c4b_public: proof_public_field_strings(c4b_proof)?,
+        c4a_key_hash: c4_vk.key_hash.clone(),
+        c4b_key_hash: c4_vk.key_hash,
+    };
+    build_and_prove_recursive_bin(
+        prover,
+        CircuitName::C4abFold,
+        &c4ab,
+        &format!("{e3_id}-c4ab"),
+        artifacts_dir,
+    )
+}
+
+/// Prove the final [`CircuitName::NodeFold`] from C0, C1, C2ab, C3ab, and C4ab.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_node_fold_final(
+    prover: &ZkProver,
+    c0_proof: &Proof,
+    c1_proof: &Proof,
+    c2ab_proof: &Proof,
+    c3ab_proof: &Proof,
+    c4ab_proof: &Proof,
+    party_id: u64,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let c0_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkBfv,
+    )?;
+    let c1_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkGeneration,
+    )?;
+    let c2ab_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C2abFold,
+    )?;
+    let c3ab_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3abFold,
+    )?;
+    let c4ab_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C4abFold,
+    )?;
+
+    let nf = NodeFoldWitness {
+        c0_vk: c0_vk.verification_key,
+        c0_proof: proof_field_strings(c0_proof)?,
+        c0_public: proof_public_field_strings(c0_proof)?,
+        c1_vk: c1_vk.verification_key,
+        c1_proof: proof_field_strings(c1_proof)?,
+        c1_public: proof_public_field_strings(c1_proof)?,
+        c2ab_vk: c2ab_fold_vk.verification_key,
+        c2ab_proof: proof_field_strings(c2ab_proof)?,
+        c2ab_public: proof_public_field_strings(c2ab_proof)?,
+        c3ab_vk: c3ab_fold_vk.verification_key,
+        c3ab_proof: proof_field_strings(c3ab_proof)?,
+        c3ab_public: proof_public_field_strings(c3ab_proof)?,
+        c4ab_vk: c4ab_fold_vk.verification_key,
+        c4ab_proof: proof_field_strings(c4ab_proof)?,
+        c4ab_public: proof_public_field_strings(c4ab_proof)?,
+        party_id: u64_to_field_hex(party_id),
+        c0_key_hash: c0_vk.key_hash,
+        c1_key_hash: c1_vk.key_hash,
+        c2ab_key_hash: c2ab_fold_vk.key_hash,
+        c3ab_key_hash: c3ab_fold_vk.key_hash,
+        c4ab_key_hash: c4ab_fold_vk.key_hash,
     };
 
-    // c2ab_fold is independent of the c3 chains; c3a and c3b are independent of each other.
-    // Run all three concurrently: c2ab || (c3a || c3b).
+    build_and_prove_recursive_bin(
+        prover,
+        CircuitName::NodeFold,
+        &nf,
+        &format!("{e3_id}-nodefold"),
+        artifacts_dir,
+    )
+}
+
+/// First half of [`prove_node_dkg_fold`]: runs `C2abFold || (C3aFold || C3bFold) → C3abFold`.
+/// Depends only on this node's own C2 and C3 proofs so it can execute while waiting for peers'
+/// shares, roster formation, and C4 decryption.
+pub fn prove_node_dkg_prefold(
+    prover: &ZkProver,
+    input: &NodeDkgPreFoldInput,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<NodeDkgPreFoldProveResult, ZkError> {
+    let mut step_timings = Vec::with_capacity(4);
+
     let ((c2ab_result, c2ab_elapsed), ((c3a_result, c3a_elapsed), (c3b_result, c3b_elapsed))) =
         rayon::join(
             || {
                 let t = Instant::now();
-                let r = build_and_prove_recursive_bin(
+                let r = prove_c2ab_fold(
                     prover,
-                    CircuitName::C2abFold,
-                    &c2ab,
-                    &format!("{e3_id}-c2ab"),
+                    input.c2a_proof,
+                    input.c2b_proof,
+                    e3_id,
                     artifacts_dir,
                 );
                 (r, t.elapsed())
@@ -256,113 +435,100 @@ pub fn prove_node_dkg_fold(
         seconds: c3b_elapsed.as_secs_f64(),
     });
 
-    let c3_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3Fold,
-    )?;
-    let c3ab = C3abFoldWitness {
-        c3a_vk: c3_fold_vk.verification_key.clone(),
-        c3a_proof: proof_field_strings(&c3a_folded)?,
-        c3a_public: proof_public_field_strings(&c3a_folded)?,
-        c3b_vk: c3_fold_vk.verification_key.clone(),
-        c3b_proof: proof_field_strings(&c3b_folded)?,
-        c3b_public: proof_public_field_strings(&c3b_folded)?,
-        c3a_key_hash: c3_fold_vk.key_hash.clone(),
-        c3b_key_hash: c3_fold_vk.key_hash.clone(),
-    };
     let t = Instant::now();
-    let c3ab_proof = build_and_prove_recursive_bin(
-        prover,
-        CircuitName::C3abFold,
-        &c3ab,
-        &format!("{e3_id}-c3ab"),
-        artifacts_dir,
-    )?;
+    let c3ab_proof = prove_c3ab_fold(prover, &c3a_folded, &c3b_folded, e3_id, artifacts_dir)?;
     push_step(&mut step_timings, "c3ab_fold", t);
 
-    // C4a and C4b are both proofs of the same `DkgShareDecryption` circuit, so they share the
-    // same VK. Load it once and clone into both witness slots.
-    let c4_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::DkgShareDecryption,
-    )?;
-    let c4ab = C4abFoldWitness {
-        c4a_vk: c4_vk.verification_key.clone(),
-        c4a_proof: proof_field_strings(input.c4a_proof)?,
-        c4a_public: proof_public_field_strings(input.c4a_proof)?,
-        c4b_vk: c4_vk.verification_key.clone(),
-        c4b_proof: proof_field_strings(input.c4b_proof)?,
-        c4b_public: proof_public_field_strings(input.c4b_proof)?,
-        c4a_key_hash: c4_vk.key_hash.clone(),
-        c4b_key_hash: c4_vk.key_hash.clone(),
-    };
+    Ok(NodeDkgPreFoldProveResult {
+        prefold: NodeDkgPreFold {
+            c2ab_proof,
+            c3ab_proof,
+        },
+        step_timings,
+    })
+}
+
+/// Second half of [`prove_node_dkg_fold`]: runs `C4abFold → NodeFold` once C4 proofs are ready.
+pub fn prove_node_dkg_finish(
+    prover: &ZkProver,
+    input: &NodeDkgFinishInput,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<NodeDkgFoldProveResult, ZkError> {
+    let mut step_timings = Vec::with_capacity(2);
     let t = Instant::now();
-    let c4ab_proof = build_and_prove_recursive_bin(
+    let c4ab_proof = prove_c4ab_fold(
         prover,
-        CircuitName::C4abFold,
-        &c4ab,
-        &format!("{e3_id}-c4ab"),
+        input.c4a_proof,
+        input.c4b_proof,
+        e3_id,
         artifacts_dir,
     )?;
     push_step(&mut step_timings, "c4ab_fold", t);
 
-    let c0_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::PkBfv,
-    )?;
-    let c1_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::PkGeneration,
-    )?;
-    let c2ab_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C2abFold,
-    )?;
-    let c3ab_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3abFold,
-    )?;
-    let c4ab_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C4abFold,
-    )?;
-
-    let nf = NodeFoldWitness {
-        c0_vk: c0_vk.verification_key,
-        c0_proof: proof_field_strings(input.c0_proof)?,
-        c0_public: proof_public_field_strings(input.c0_proof)?,
-        c1_vk: c1_vk.verification_key,
-        c1_proof: proof_field_strings(input.c1_proof)?,
-        c1_public: proof_public_field_strings(input.c1_proof)?,
-        c2ab_vk: c2ab_fold_vk.verification_key,
-        c2ab_proof: proof_field_strings(&c2ab_proof)?,
-        c2ab_public: proof_public_field_strings(&c2ab_proof)?,
-        c3ab_vk: c3ab_fold_vk.verification_key,
-        c3ab_proof: proof_field_strings(&c3ab_proof)?,
-        c3ab_public: proof_public_field_strings(&c3ab_proof)?,
-        c4ab_vk: c4ab_fold_vk.verification_key,
-        c4ab_proof: proof_field_strings(&c4ab_proof)?,
-        c4ab_public: proof_public_field_strings(&c4ab_proof)?,
-        party_id: u64_to_field_hex(input.party_id),
-        c0_key_hash: c0_vk.key_hash,
-        c1_key_hash: c1_vk.key_hash,
-        c2ab_key_hash: c2ab_fold_vk.key_hash,
-        c3ab_key_hash: c3ab_fold_vk.key_hash,
-        c4ab_key_hash: c4ab_fold_vk.key_hash,
-    };
-
     let t = Instant::now();
-    let proof = build_and_prove_recursive_bin(
+    let proof = prove_node_fold_final(
         prover,
-        CircuitName::NodeFold,
-        &nf,
-        &format!("{e3_id}-nodefold"),
+        input.c0_proof,
+        input.c1_proof,
+        input.c2ab_proof,
+        input.c3ab_proof,
+        &c4ab_proof,
+        input.party_id,
+        e3_id,
         artifacts_dir,
     )?;
     push_step(&mut step_timings, "node_fold", t);
 
     Ok(NodeDkgFoldProveResult {
         proof,
+        step_timings,
+    })
+}
+
+/// Run C2abFold || (C3a fold || C3b fold) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
+///
+/// C2abFold and the two C3 fold chains are mutually independent and run concurrently via
+/// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
+pub fn prove_node_dkg_fold(
+    prover: &ZkProver,
+    input: &NodeDkgFoldInput,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<NodeDkgFoldProveResult, ZkError> {
+    let pre = prove_node_dkg_prefold(
+        prover,
+        &NodeDkgPreFoldInput {
+            c2a_proof: input.c2a_proof,
+            c2b_proof: input.c2b_proof,
+            c3a_inner_proofs: input.c3a_inner_proofs,
+            c3b_inner_proofs: input.c3b_inner_proofs,
+            c3_slot_indices_a: input.c3_slot_indices_a,
+            c3_slot_indices_b: input.c3_slot_indices_b,
+            c3_total_slots: input.c3_total_slots,
+        },
+        e3_id,
+        artifacts_dir,
+    )?;
+    let mut step_timings = pre.step_timings;
+    let finished = prove_node_dkg_finish(
+        prover,
+        &NodeDkgFinishInput {
+            c0_proof: input.c0_proof,
+            c1_proof: input.c1_proof,
+            c2ab_proof: &pre.prefold.c2ab_proof,
+            c3ab_proof: &pre.prefold.c3ab_proof,
+            c4a_proof: input.c4a_proof,
+            c4b_proof: input.c4b_proof,
+            party_id: input.party_id,
+        },
+        e3_id,
+        artifacts_dir,
+    )?;
+    step_timings.extend(finished.step_timings);
+
+    Ok(NodeDkgFoldProveResult {
+        proof: finished.proof,
         step_timings,
     })
 }
@@ -520,13 +686,13 @@ pub fn prove_dkg_aggregation(
     let json =
         serde_json::to_value(&witness).map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
-    let compiled = load_compiled_circuit(
+    let compiled = load_parsed_circuit(
         prover,
         CircuitName::DkgAggregator,
         CircuitVariant::Default,
         artifacts_dir,
     )?;
-    let w = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    let w = WitnessGenerator::new().generate_witness_parsed(&compiled, input_map)?;
     prover.generate_proof_with_variant(
         CircuitName::DkgAggregator,
         &w,
@@ -562,6 +728,93 @@ struct DecryptionAggregatorWitness {
     ciphertext_commitment: String,
 }
 
+/// Prove [`CircuitName::DecryptionAggregator`] from an already-folded C6 accumulator and C7 proof,
+/// allowing callers to checkpoint the C6 fold steps separately.
+pub fn prove_decryption_aggregator_with_c6_fold(
+    prover: &ZkProver,
+    c6_fold: &Proof,
+    c6_total_slots: usize,
+    c7_proof: &Proof,
+    committee_addresses: &[Address],
+    job_label: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if committee_addresses.is_empty() {
+        return Err(ZkError::InvalidInput(
+            "prove_decryption_aggregator_with_c6_fold: committee_addresses must be non-empty (on-chain topNodes)".into(),
+        ));
+    }
+    let c6_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C6Fold,
+    )?;
+    let c7_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::DecryptedSharesAggregation,
+    )?;
+    let compiled = load_parsed_circuit(
+        prover,
+        CircuitName::DecryptionAggregator,
+        CircuitVariant::Default,
+        artifacts_dir,
+    )?;
+    let (committee_hash_hi, committee_hash_lo) =
+        e3_committee_hash::committee_hash_field_hex(committee_addresses);
+    let committee_members: Vec<String> = committee_addresses
+        .iter()
+        .map(address_to_field_hex)
+        .collect();
+
+    let c6_fold_public = proof_public_field_strings(c6_fold)?;
+    let domain_hi = c6_fold_public.get(5).cloned().ok_or_else(|| {
+        ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 5".into())
+    })?;
+    let domain_lo = c6_fold_public.get(6).cloned().ok_or_else(|| {
+        ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 6".into())
+    })?;
+    let ciphertext_commitment = c6_fold_public
+        .get(7 + (2 * c6_total_slots))
+        .cloned()
+        .ok_or_else(|| {
+            ZkError::InvalidInput(
+                "C6 fold proof is missing the ciphertext commitment column".into(),
+            )
+        })?;
+
+    let witness = DecryptionAggregatorWitness {
+        c6_fold_vk: c6_fold_vk.verification_key,
+        c6_fold_vk_hash: c6_fold_vk.key_hash,
+        c6_fold_proof: proof_field_strings(c6_fold)?,
+        c6_fold_public,
+        c7_vk: c7_vk.verification_key,
+        c7_proof: proof_field_strings(c7_proof)?,
+        c7_public: proof_public_field_strings(c7_proof)?,
+        c6_fold_key_hash: vk::load_vk_tree_hash(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C6Fold,
+        )?,
+        c7_key_hash: c7_vk.key_hash,
+        committee_members,
+        committee_hash_hi,
+        committee_hash_lo,
+        domain_hi,
+        domain_lo,
+        ciphertext_commitment,
+    };
+
+    let json =
+        serde_json::to_value(&witness).map_err(|e| ZkError::SerializationError(e.to_string()))?;
+    let input_map = inputs_json_to_input_map(&json)?;
+    let w = WitnessGenerator::new().generate_witness_parsed(&compiled, input_map)?;
+    prover.generate_proof_with_variant(
+        CircuitName::DecryptionAggregator,
+        &w,
+        job_label,
+        CircuitVariant::Evm,
+        artifacts_dir,
+    )
+}
+
 /// Prove [`CircuitName::DecryptionAggregator`] for each job (C6 fold + C7), with
 /// [`CircuitVariant::Evm`] for on-chain verification.
 pub fn prove_decryption_aggregation_jobs(
@@ -572,35 +825,11 @@ pub fn prove_decryption_aggregation_jobs(
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Vec<Proof>, ZkError> {
-    // VKs and the compiled circuit are job-independent: load once, reuse per ciphertext.
-    let c6_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C6Fold,
-    )?;
-    let c7_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::DecryptedSharesAggregation,
-    )?;
-    let compiled = load_compiled_circuit(
-        prover,
-        CircuitName::DecryptionAggregator,
-        CircuitVariant::Default,
-        artifacts_dir,
-    )?;
-
     if committee_addresses.is_empty() {
         return Err(ZkError::InvalidInput(
             "prove_decryption_aggregation_jobs: committee_addresses must be non-empty (on-chain topNodes)".into(),
         ));
     }
-
-    let (committee_hash_hi, committee_hash_lo) =
-        e3_committee_hash::committee_hash_field_hex(committee_addresses);
-
-    let committee_members: Vec<String> = committee_addresses
-        .iter()
-        .map(address_to_field_hex)
-        .collect();
 
     let mut out = Vec::with_capacity(jobs.len());
     for (i, job) in jobs.iter().enumerate() {
@@ -612,52 +841,13 @@ pub fn prove_decryption_aggregation_jobs(
             &format!("{e3_id}-c6fold-{i}"),
             artifacts_dir,
         )?;
-        let c6_fold_public = proof_public_field_strings(&c6_fold)?;
-        let domain_hi = c6_fold_public.get(5).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 5".into())
-        })?;
-        let domain_lo = c6_fold_public.get(6).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 6".into())
-        })?;
-        let ciphertext_commitment = c6_fold_public
-            .get(7 + (2 * c6_total_slots))
-            .cloned()
-            .ok_or_else(|| {
-                ZkError::InvalidInput(
-                    "C6 fold proof is missing the ciphertext commitment column".into(),
-                )
-            })?;
-
-        let witness = DecryptionAggregatorWitness {
-            c6_fold_vk: c6_fold_vk.verification_key.clone(),
-            c6_fold_vk_hash: c6_fold_vk.key_hash.clone(),
-            c6_fold_proof: proof_field_strings(&c6_fold)?,
-            c6_fold_public,
-            c7_vk: c7_vk.verification_key.clone(),
-            c7_proof: proof_field_strings(job.c7_proof)?,
-            c7_public: proof_public_field_strings(job.c7_proof)?,
-            c6_fold_key_hash: vk::load_vk_tree_hash(
-                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-                CircuitName::C6Fold,
-            )?,
-            c7_key_hash: c7_vk.key_hash.clone(),
-            committee_members: committee_members.clone(),
-            committee_hash_hi: committee_hash_hi.clone(),
-            committee_hash_lo: committee_hash_lo.clone(),
-            domain_hi,
-            domain_lo,
-            ciphertext_commitment,
-        };
-
-        let json = serde_json::to_value(&witness)
-            .map_err(|e| ZkError::SerializationError(e.to_string()))?;
-        let input_map = inputs_json_to_input_map(&json)?;
-        let w = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
-        let proof = prover.generate_proof_with_variant(
-            CircuitName::DecryptionAggregator,
-            &w,
+        let proof = prove_decryption_aggregator_with_c6_fold(
+            prover,
+            &c6_fold,
+            c6_total_slots,
+            job.c7_proof,
+            committee_addresses,
             &format!("{e3_id}-decagg-{i}"),
-            CircuitVariant::Evm,
             artifacts_dir,
         )?;
         out.push(proof);

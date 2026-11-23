@@ -7,7 +7,7 @@
 use crate::error::ZkError;
 use crate::proof::Proof;
 use crate::prover::ZkProver;
-use crate::witness::{CompiledCircuit, WitnessGenerator};
+use crate::witness::{ParsedCircuit, WitnessGenerator};
 use e3_zk_config::{CircuitName, CircuitVariant};
 use noirc_abi::InputMap;
 
@@ -70,10 +70,10 @@ pub trait Provable: Send + Sync {
             .join(resolved_name.dir_path())
             .join(format!("{}.json", resolved_name.as_str()));
 
-        let circuit = CompiledCircuit::from_file(&circuit_path)?;
+        let circuit = ParsedCircuit::from_file_cached(&circuit_path)?;
 
         let witness_gen = WitnessGenerator::new();
-        let witness = witness_gen.generate_witness(&circuit, inputs)?;
+        let witness = witness_gen.generate_witness_parsed(&circuit, inputs)?;
 
         prover.generate_proof_with_variant(resolved_name, &witness, e3_id, variant, artifacts_dir)
     }

@@ -16,12 +16,18 @@ mod traits;
 mod witness;
 
 pub use backend::{BBPath, SetupStatus, ZkBackend};
-pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
-pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
+pub use circuits::aggregation::c3_accumulator::{
+    generate_c3_fold_step, generate_sequential_c3_fold,
+};
+pub use circuits::aggregation::c6_accumulator::{
+    generate_c6_fold_step, generate_sequential_c6_fold,
+};
 pub use circuits::aggregation::node_dkg_fold::{
-    prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_node_dkg_fold,
-    DecryptionAggregationJob, DkgAggregationInput, FoldProveStepTiming, NodeDkgFoldInput,
-    NodeDkgFoldProveResult,
+    prove_c2ab_fold, prove_c3ab_fold, prove_c4ab_fold, prove_decryption_aggregation_jobs,
+    prove_decryption_aggregator_with_c6_fold, prove_dkg_aggregation, prove_node_dkg_finish,
+    prove_node_dkg_fold, prove_node_dkg_prefold, prove_node_fold_final, DecryptionAggregationJob,
+    DkgAggregationInput, FoldProveStepTiming, NodeDkgFinishInput, NodeDkgFoldInput,
+    NodeDkgFoldProveResult, NodeDkgPreFold, NodeDkgPreFoldInput, NodeDkgPreFoldProveResult,
 };
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
@@ -42,4 +48,4 @@ pub use node_fold_public::extract_node_fold_agg_commits;
 pub use proof::{DkgFoldAggCommits, Proof};
 pub use prover::{Cancel, ZkProver};
 pub use traits::Provable;
-pub use witness::{input_map, CompiledCircuit, WitnessGenerator};
+pub use witness::{input_map, CompiledCircuit, ParsedCircuit, WitnessGenerator};

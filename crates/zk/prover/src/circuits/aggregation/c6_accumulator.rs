@@ -18,7 +18,7 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::proof::Proof;
 use crate::prover::ZkProver;
-use crate::witness::{CompiledCircuit, WitnessGenerator};
+use crate::witness::{ParsedCircuit, WitnessGenerator};
 use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 
@@ -102,13 +102,13 @@ fn generate_c6_fold_kernel_proof(
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
         .join(CircuitName::C6FoldKernel.dir_path())
         .join(format!("{}.json", CircuitName::C6FoldKernel.as_str()));
-    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let compiled = ParsedCircuit::from_file_cached(&circuit_path)?;
 
     let json = serde_json::to_value(&full_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
     let witness_gen = WitnessGenerator::new();
-    let witness = witness_gen.generate_witness(&compiled, input_map)?;
+    let witness = witness_gen.generate_witness_parsed(&compiled, input_map)?;
 
     let proof = prover.generate_recursive_aggregation_bin_proof(
         CircuitName::C6FoldKernel,
@@ -231,20 +231,49 @@ fn generate_c6_fold_step_with_vks(
         .circuits_dir(CircuitVariant::Default, artifacts_dir)
         .join(CircuitName::C6Fold.dir_path())
         .join(format!("{}.json", CircuitName::C6Fold.as_str()));
-    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let compiled = ParsedCircuit::from_file_cached(&circuit_path)?;
 
     let json = serde_json::to_value(&full_input)
         .map_err(|e| ZkError::SerializationError(e.to_string()))?;
     let input_map = inputs_json_to_input_map(&json)?;
 
     let witness_gen = WitnessGenerator::new();
-    let witness = witness_gen.generate_witness(&compiled, input_map)?;
+    let witness = witness_gen.generate_witness_parsed(&compiled, input_map)?;
 
     prover.generate_recursive_aggregation_bin_proof(
         CircuitName::C6Fold,
         &witness,
         e3_id,
         artifacts_dir,
+    )
+}
+
+/// Single step of a C6 fold chain (`C6FoldKernel` when `prior_fold` is `None`, else `C6Fold`),
+/// allowing callers to checkpoint and gate each recursive proof individually.
+pub fn generate_c6_fold_step(
+    prover: &ZkProver,
+    inner: &Proof,
+    prior_fold: Option<&Proof>,
+    slot_index: u32,
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if slot_index as usize >= total_slots {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c6_fold_step: slot index {slot_index} out of range (total_slots={total_slots})"
+        )));
+    }
+    let vks = C6FoldVks::load(prover, artifacts_dir)?;
+    generate_c6_fold_step_with_vks(
+        prover,
+        inner,
+        prior_fold,
+        slot_index,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+        &vks,
     )
 }
 

@@ -16,6 +16,10 @@ use nargo::foreign_calls::default::DefaultForeignCallBuilder;
 use nargo::ops::execute_program;
 use noirc_abi::{input_parser::InputValue, Abi, InputMap};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledCircuit {
@@ -23,16 +27,73 @@ pub struct CompiledCircuit {
     pub abi: Abi,
 }
 
+/// A circuit JSON whose ABI and ACIR program have already been decoded and deserialized.
+///
+/// Reusing a `ParsedCircuit` across witness generations skips reading the multi-megabyte JSON file,
+/// JSON parsing, base64 decoding, and ACIR deserialization on every proof and recursive fold step.
+pub struct ParsedCircuit {
+    pub abi: Abi,
+    pub program: Program<FieldElement>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct CircuitFileKey {
+    path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+static PARSED_CIRCUIT_CACHE: OnceLock<RwLock<HashMap<CircuitFileKey, Arc<ParsedCircuit>>>> =
+    OnceLock::new();
+
+fn parsed_circuit_cache() -> &'static RwLock<HashMap<CircuitFileKey, Arc<ParsedCircuit>>> {
+    PARSED_CIRCUIT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
 impl CompiledCircuit {
     pub fn from_json(json: &str) -> Result<Self, ZkError> {
         serde_json::from_str(json).map_err(ZkError::JsonError)
     }
 
-    pub fn from_file(path: &std::path::Path) -> Result<Self, ZkError> {
+    pub fn from_file(path: &Path) -> Result<Self, ZkError> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
             ZkError::CircuitNotFound(format!("circuit JSON at {}: {}", path.display(), e))
         })?;
         Self::from_json(&contents)
+    }
+}
+
+impl ParsedCircuit {
+    pub fn from_compiled(compiled: CompiledCircuit) -> Result<Self, ZkError> {
+        let program = get_program(&compiled.bytecode)?;
+        Ok(Self {
+            abi: compiled.abi,
+            program,
+        })
+    }
+
+    pub fn from_file_cached(path: &Path) -> Result<Arc<Self>, ZkError> {
+        let meta = std::fs::metadata(path).map_err(|e| {
+            ZkError::CircuitNotFound(format!("circuit JSON at {}: {}", path.display(), e))
+        })?;
+        let key = CircuitFileKey {
+            path: path.to_path_buf(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        };
+        if let Ok(guard) = parsed_circuit_cache().read() {
+            if let Some(cached) = guard.get(&key) {
+                return Ok(Arc::clone(cached));
+            }
+        }
+        let compiled = CompiledCircuit::from_file(path)?;
+        let parsed = Arc::new(Self::from_compiled(compiled)?);
+        if let Ok(mut guard) = parsed_circuit_cache().write() {
+            // Drop any stale version of the same path before caching the new one.
+            guard.retain(|existing, _| existing.path != key.path);
+            guard.insert(key, Arc::clone(&parsed));
+        }
+        Ok(parsed)
     }
 }
 
@@ -48,21 +109,28 @@ fn get_program(bytecode: &str) -> Result<Program<FieldElement>, ZkError> {
         .map_err(|e| ZkError::SerializationError(format!("ACIR decode: {:?}", e)))
 }
 
-fn execute(
-    bytecode: &str,
+fn execute_parsed(
+    program: &Program<FieldElement>,
     initial_witness: WitnessMap<FieldElement>,
 ) -> Result<WitnessStack<FieldElement>, ZkError> {
-    let program = get_program(bytecode)?;
     let blackbox_solver = Bn254BlackBoxSolver;
     let mut foreign_call_executor = DefaultForeignCallBuilder::default().build();
 
     execute_program(
-        &program,
+        program,
         initial_witness,
         &blackbox_solver,
         &mut foreign_call_executor,
     )
     .map_err(|e| ZkError::WitnessGenerationFailed(e.to_string()))
+}
+
+fn execute(
+    bytecode: &str,
+    initial_witness: WitnessMap<FieldElement>,
+) -> Result<WitnessStack<FieldElement>, ZkError> {
+    let program = get_program(bytecode)?;
+    execute_parsed(&program, initial_witness)
 }
 
 fn serialize_witness(witness_stack: &WitnessStack<FieldElement>) -> Result<Vec<u8>, ZkError> {
@@ -89,6 +157,20 @@ impl WitnessGenerator {
             .map_err(|e| ZkError::WitnessGenerationFailed(format!("ABI encode: {:?}", e)))?;
 
         let witness_stack = execute(&circuit.bytecode, initial_witness)?;
+        serialize_witness(&witness_stack)
+    }
+
+    pub fn generate_witness_parsed(
+        &self,
+        circuit: &ParsedCircuit,
+        inputs: InputMap,
+    ) -> Result<Vec<u8>, ZkError> {
+        let initial_witness = circuit
+            .abi
+            .encode(&inputs, None)
+            .map_err(|e| ZkError::WitnessGenerationFailed(format!("ABI encode: {:?}", e)))?;
+
+        let witness_stack = execute_parsed(&circuit.program, initial_witness)?;
         serialize_witness(&witness_stack)
     }
 }
@@ -206,5 +288,32 @@ mod tests {
         assert!(matches!(err, ZkError::SerializationError(_)));
         assert!(err.to_string().contains("invalid field element"));
         assert!(err.to_string().contains("'x'"));
+    }
+
+    #[test]
+    fn parsed_circuit_cache_reuses_arc_and_matches_unparsed_witness() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dummy.json");
+        std::fs::write(&path, DUMMY_CIRCUIT).unwrap();
+
+        let first = ParsedCircuit::from_file_cached(&path).unwrap();
+        let second = ParsedCircuit::from_file_cached(&path).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let compiled = CompiledCircuit::from_json(DUMMY_CIRCUIT).unwrap();
+        let generator = WitnessGenerator::new();
+        let w1 = generator
+            .generate_witness(
+                &compiled,
+                input_map([("x", "5"), ("y", "3"), ("_sum", "8")]).unwrap(),
+            )
+            .unwrap();
+        let w2 = generator
+            .generate_witness_parsed(
+                &first,
+                input_map([("x", "5"), ("y", "3"), ("_sum", "8")]).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(w1, w2);
     }
 }
