@@ -113,10 +113,11 @@ and proving use the shared node/E3 task group; retirement is checked again befor
 release. Keyshare flushes the signed bundle before broadcast.
 
 Each collector checks the C6 body, signer, public row and full share before pinning its journal
-sequence. A standby signals readiness only after all designated rows are durable. Promotion starts
-from those same rows; once the ordered sequence vector is flushed, demotion or restart can finish
-it. Native reconstruction sums the locally weighted shares and adds `c0` once. C7 opens those same
-polynomials; the outer proof binds their C6 statements and the plaintext.
+sequence. A standby signals readiness only after all designated rows are durable. After the chain
+and checkpoint reads, only the current active collector may record a new batch from those rows. Once
+the ordered sequence vector is flushed, demotion or restart can finish it. Native reconstruction
+sums the locally weighted shares and adds `c0` once. C7 opens those same polynomials; the outer
+proof binds their C6 statements and the plaintext.
 
 Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
 review. Collector failover and request-bound publication still need a joint runtime qualification.

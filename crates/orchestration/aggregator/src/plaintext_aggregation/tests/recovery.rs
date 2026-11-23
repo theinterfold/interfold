@@ -209,12 +209,16 @@ async fn synchronized_hydration_preserves_admission_and_attaches_to_the_local_e3
         .0;
     ctx.set_dependency(META_KEY, meta);
     ctx.set_effects_enabled(false);
+    let (keys, opening) = crate::test_support::synchronized_opening(&id)?;
+    let candidate = share_event(&id, 0, false, 2);
+    keys.note_synchronized_candidate(&id, candidate.seq());
+    let (timing, mut calls) = tokio::sync::mpsc::unbounded_channel();
     let extension = ThresholdPlaintextAggregatorExtension::create(
         &bus,
         &start_sortition(&bus),
         false,
-        CanonicalPublicKeys::default(),
-        history_reader(&[])?,
+        keys,
+        history_reader(&[opening.clone(), candidate])?,
     )
     .with_decryption_runtime(DecryptionRuntime {
         pool: e3_task_pool::TaskPool::new(1, 1),
@@ -224,7 +228,10 @@ async fn synchronized_hydration_preserves_admission_and_attaches_to_the_local_e3
             "unused".into(),
             "unused".into(),
         )),
-        timing: Arc::new(|_| panic!("hydration cannot issue a chain read")),
+        timing: Arc::new(move |id| {
+            timing.send(id).unwrap();
+            Box::pin(std::future::pending())
+        }),
     });
     let snapshot = ctx.snapshot()?;
     extension.hydrate(&mut ctx, &snapshot).await?;
@@ -252,8 +259,24 @@ async fn synchronized_hydration_preserves_admission_and_attaches_to_the_local_e3
             21,
         )
     };
+    recipient.send(opening).await?;
     recipient.send(end(EventSource::Net)).await?;
     assert!(slot.read_checked::<Vec<u64>>().await?.is_some());
+    assert!(
+        matches!(
+            calls.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ),
+        "replaying the opening issued a timing read before EffectsEnabled"
+    );
+    recipient
+        .send(event(EffectsEnabled::new(), EventSource::Local, 22))
+        .await?;
+    assert_eq!(
+        actix::clock::timeout(Duration::from_secs(2), calls.recv()).await?,
+        Some(id.clone())
+    );
+    // The recipient must still process terminal cleanup while the timing read is outstanding.
     recipient.send(end(EventSource::Evm)).await?;
     assert!(recipient.send(end(EventSource::Evm)).await.is_err());
     assert!(slot.read_checked::<Vec<u64>>().await?.is_none());

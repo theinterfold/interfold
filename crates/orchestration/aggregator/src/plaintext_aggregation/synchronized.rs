@@ -266,8 +266,8 @@ impl FixedSetPlaintext {
             )?;
             self.ready = true;
         }
-        let active = self.active;
-        let start = DurableIntent::<Vec<u64>>::new(self.checkpoints.scope("started"));
+        let owner = ctx.address().recipient::<StartNewBatch>();
+        let start = self.started_slot();
         let output = DurableIntent::<PlaintextAggregated>::new(self.checkpoints.scope("result"));
         let (sequences, bundles): (Vec<_>, Vec<_>) = self.rows.values().cloned().unzip();
         let keys = self.keys.clone();
@@ -279,11 +279,19 @@ impl FixedSetPlaintext {
                 async move {
                     rt.open_deadline(plan.e3_id(), Some(deadline)).await?;
                     plan.check_current(&keys, &ct)?;
-                    let started = start.restore().await?;
-                    if !active && started.is_none() {
+                    if let Some(saved) = DurableIntent::<Vec<u64>>::new(start.clone())
+                        .restore()
+                        .await?
+                    {
+                        ensure!(
+                            saved == sequences,
+                            "recorded batch differs from admitted sequences"
+                        );
+                        // A previous insert may have succeeded without acknowledging its flush.
+                        start.flush_sync().await?;
+                    } else if !owner.send(StartNewBatch(sequences)).await?? {
                         return Ok(None);
                     }
-                    start.record(&sequences).await?;
                     let saved = output.restore().await?;
                     let current_plan = plan.clone();
                     let bytes = ct.clone();
@@ -347,6 +355,10 @@ impl FixedSetPlaintext {
         }
     }
 
+    fn started_slot(&self) -> DataStore {
+        self.checkpoints.scope("started")
+    }
+
     fn defer(&mut self, ctx: &mut Context<Self>, error: anyhow::Error) {
         tracing::warn!(e3_id=%self.id, %error, "synchronized collection deferred");
         self.back_off(ctx);
@@ -391,6 +403,29 @@ impl FixedSetPlaintext {
                 }
             }),
         );
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<bool>")]
+struct StartNewBatch(Vec<u64>);
+
+impl Handler<StartNewBatch> for FixedSetPlaintext {
+    type Result = AtomicResponse<Self, Result<bool>>;
+
+    fn handle(&mut self, batch: StartNewBatch, _: &mut Context<Self>) -> Self::Result {
+        if !self.active || self.ended || self.bus.is_shutting_down() {
+            return AtomicResponse::new(Box::pin(actix::fut::ready(Ok(false))));
+        }
+        // Only the first checkpoint write excludes role changes; RPC and proving stay interruptible.
+        let slot = DurableIntent::new(self.started_slot());
+        AtomicResponse::new(Box::pin(
+            async move {
+                slot.record(&batch.0).await?;
+                Ok(true)
+            }
+            .into_actor(self),
+        ))
     }
 }
 
@@ -450,3 +485,7 @@ impl Handler<InterfoldEvent> for FixedSetPlaintext {
         self.wake(ctx);
     }
 }
+
+#[cfg(test)]
+#[path = "tests/synchronized_role.rs"]
+mod role_tests;
