@@ -75,11 +75,7 @@ impl<'a> ContributionStore<'a> {
         let store = repos
             .threshold_keyshare_recovery_payloads(plan.e3_id())
             .scope("synchronized-contribution-v1");
-        let binding = keccak256(bincode::serialize(&(
-            "interfold/synchronized/C6/local/v1",
-            &plan,
-            owner,
-        ))?);
+        let binding = plan.local_contribution_binding_v1(owner)?;
         Ok(Self {
             store,
             cipher,

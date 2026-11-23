@@ -28,6 +28,15 @@ pub struct SynchronizedDecryptionPlan {
 }
 
 impl SynchronizedDecryptionPlan {
+    /// On-disk v1 binding. Changes to the serialized plan need a checkpoint migration.
+    pub fn local_contribution_binding_v1(&self, owner: u32) -> Result<B256> {
+        Ok(keccak256(bincode::serialize(&(
+            "interfold/synchronized/C6/local/v1",
+            self,
+            owner,
+        ))?))
+    }
+
     pub fn e3_id(&self) -> &E3id {
         &self.e3_id
     }
@@ -75,6 +84,46 @@ impl SynchronizedDecryptionPlan {
             && signals.c0_commitment() == Some(self.c0_commitment)
             && signals.sk_commitment() == Some(self.authority.sk_agg_commits[row])
             && signals.key_bundle() == Some(self.authority.key_bundle_commits[row])
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    #[test]
+    fn non_prefix_owner_v1_checkpoint_binding() -> Result<()> {
+        let plan = SynchronizedDecryptionPlan {
+            e3_id: E3id::new("7", 31337),
+            profile: BfvProfile::SyncDecInsecure64,
+            committee: CiphernodesCommitteeSize::Minimum,
+            authority: SynchronizedDkgAuthority {
+                version: 1,
+                context: e3_events::SynchronizedDkgContext {
+                    registry: Address::repeat_byte(1),
+                    verifying_contract: Address::repeat_byte(2),
+                    crypto_config_id: [3; 32],
+                },
+                setup_binding: [4; 32],
+                dealer_batch: [5; 32],
+                party_ids: vec![0, 2],
+                threshold_pk_commits: vec![[6; 32], [7; 32]],
+                sk_agg_commits: vec![[8; 32], [9; 32]],
+                key_bundle_commits: vec![[10; 32], [11; 32]],
+            },
+            owners: vec![Address::repeat_byte(12), Address::repeat_byte(13)],
+            ciphertext_hash: B256::repeat_byte(14),
+            ciphertext_commitment: [15; 32],
+            c0_commitment: [16; 32],
+            domain: [17, 18],
+        };
+        assert_eq!(
+            plan.local_contribution_binding_v1(2)?,
+            alloy::primitives::b256!(
+                "a33af4df180d615eebbc46c965edcd07872d8d1ebc2974da896e31e7234c8d74"
+            )
+        );
+        Ok(())
     }
 }
 
