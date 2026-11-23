@@ -780,7 +780,7 @@
         {
           "name": "Multithread",
           "role": "runs compute requests off the event path and publishes their responses",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@50@pub struct Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@48@pub struct Multithread {"
         },
         {
           "name": "ComputeEffectGate",
@@ -807,7 +807,7 @@
         {
           "name": "E3Failed, E3StageChanged and E3RequestComplete, which cancel the E3's task groups",
           "by": "Multithread",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@176@EventType::E3Failed,"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@174@EventType::E3Failed,"
         }
       ],
       "emits": [
@@ -869,7 +869,7 @@
       "read_first": [
         {
           "why": "wiring: attach creates the actor, subscribes it to the bus, and starts the gate",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@101@pub fn attach("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@99@pub fn attach("
         },
         {
           "why": "the gate: when a request goes to the worker, and when a stored result is reused",
@@ -877,7 +877,7 @@
         },
         {
           "why": "the actor's request handler and its retry loop",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@672@async fn handle_compute_request_event("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@692@async fn handle_compute_request_event("
         },
         {
           "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
@@ -885,24 +885,24 @@
         },
         {
           "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@1061@fn handle_compute_request("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@1081@fn handle_compute_request("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@611@impl Actor for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@631@impl Actor for Multithread {"
         },
         {
           "pattern": "actix-handler",
           "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@618@impl Handler<InterfoldEvent> for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@638@impl Handler<InterfoldEvent> for Multithread {"
         },
         {
           "pattern": "actix-recipient",
           "note": "the gate receives the actor as a Recipient, so it sends events without naming the actor type",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@125@addr.clone().recipient(),"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@123@addr.clone().recipient(),"
         },
         {
           "pattern": "channel",

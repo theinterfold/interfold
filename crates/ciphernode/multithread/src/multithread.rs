@@ -23,7 +23,6 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_events::trap_fut;
 
-#[cfg(test)]
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::EType;
 use e3_events::{
@@ -33,7 +32,6 @@ use e3_events::{
 };
 #[cfg(test)]
 use e3_events::{PkBfvProofRequest, VerifyShareProofsRequest};
-#[cfg(test)]
 use e3_fhe_params::BfvProfile;
 #[cfg(test)]
 use e3_trbfv::TrBFVFailure;
@@ -190,17 +188,39 @@ impl Multithread {
 /// threads, split evenly.
 const LIGHT_JOBS_AT_ONCE: u32 = 4;
 
+/// Slots a secure-8192 public-key aggregation (C5) takes at the Large committee. Its `bb prove`
+/// peaked at 14.3 GiB on Linux (16 threads, 32 GiB host), over one [`PROVER_JOB_MEMORY`] slot,
+/// and `--slow_low_memory` (the retry) uses more, 15.3 GiB.
+///
+/// [`PROVER_JOB_MEMORY`]: crate::PROVER_JOB_MEMORY_BYTES
+const SECURE_LARGE_C5_SLOTS: u32 = 2;
+
+/// Fewest bb threads for a secure-Large C5: bb 6.0.0 aborts on an allocator assertion with four
+/// threads or fewer on that circuit. On a smaller pool bb time-slices, which is slower but proves.
+const SECURE_LARGE_C5_MIN_THREADS: usize = 8;
+
 /// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
 /// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
 /// batch faster than one at a time on every thread. A C3 job takes a quarter of the pool's units,
-/// so at most four run at once and nothing else is admitted beside them. Every other job takes one
-/// slot and every thread, as before.
+/// so at most four run at once and nothing else is admitted beside them. A secure-Large C5 takes
+/// two slots, or the whole pool where it has fewer (the pool clamps the units). Every other job
+/// takes one slot and every thread.
 fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
     match request {
         ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_)) => (
             pool.capacity_units() / LIGHT_JOBS_AT_ONCE,
             Some(pool.threads() / LIGHT_JOBS_AT_ONCE as usize),
         ),
+        ComputeRequestKind::Zk(ZkRequest::PkAggregation(request))
+            if request.params_profile == BfvProfile::SsSecure8192
+                && request.committee_h == CiphernodesCommitteeSize::Large.values().h =>
+        {
+            (
+                SECURE_LARGE_C5_SLOTS * e3_task_pool::SLOT_UNITS,
+                (pool.threads() < SECURE_LARGE_C5_MIN_THREADS)
+                    .then_some(SECURE_LARGE_C5_MIN_THREADS),
+            )
+        }
         _ => (e3_task_pool::SLOT_UNITS, None),
     }
 }
