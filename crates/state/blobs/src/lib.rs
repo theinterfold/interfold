@@ -13,7 +13,7 @@
 use alloy_primitives::{keccak256, B256, U256};
 use e3_protocol::{BlobRef, E3Id, SealedRef};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
@@ -22,6 +22,21 @@ use std::{
         Arc, Condvar, Mutex, MutexGuard,
     },
 };
+
+/// Maximum closed E3 IDs remembered in memory to refuse late writes without unbounded growth.
+const MAX_CLOSED: usize = 16_384;
+/// Default in-memory LRU cache capacity for verified public blobs served to peers.
+const PUBLIC_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Largest single blob retained in the public serving cache.
+const PUBLIC_CACHE_MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlobCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub bytes: usize,
+    pub entries: usize,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobError {
@@ -38,11 +53,42 @@ pub enum BlobError {
 /// What a node stores, by the E3 whose work made or fetched it.
 pub trait BlobStore: Clone + Send + Sync + 'static {
     fn put(&self, e3: E3Id, bytes: &[u8]) -> Result<BlobRef, BlobError>;
+    /// Verifies `bytes` against `expected` in a single hash pass and stores it if absent.
+    /// Returns `Ok(false)` without writing when length or digest does not match `expected`.
+    fn put_verified(&self, e3: E3Id, expected: &BlobRef, bytes: &[u8]) -> Result<bool, BlobError> {
+        if bytes.len() as u64 != expected.len || keccak256(bytes) != expected.hash {
+            return Ok(false);
+        }
+        if !self.has(e3, expected) {
+            self.put(e3, bytes)?;
+        }
+        Ok(true)
+    }
+    /// Verifies and stores a batch of public blobs for one E3, amortising directory syncs.
+    fn put_verified_batch(
+        &self,
+        e3: E3Id,
+        items: &[(&BlobRef, &[u8])],
+    ) -> Result<Vec<bool>, BlobError> {
+        let mut results = Vec::with_capacity(items.len());
+        for (expected, bytes) in items {
+            results.push(self.put_verified(e3, expected, bytes)?);
+        }
+        Ok(results)
+    }
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError>;
     fn has(&self, e3: E3Id, blob: &BlobRef) -> bool;
     /// The public blob of `e3` with this hash, for a peer that asks. This is the only way out of
     /// the store for the network.
     fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>>;
+    /// Zero-copy shared view of a public blob for peer serving.
+    fn serve_shared(&self, e3: E3Id, hash: &B256) -> Option<Arc<[u8]>> {
+        self.serve(e3, hash).map(Arc::from)
+    }
+    /// Cache telemetry for observability endpoints.
+    fn cache_stats(&self) -> BlobCacheStats {
+        BlobCacheStats::default()
+    }
     /// Stores bytes that the node's cipher already sealed.
     fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError>;
     fn get_sealed(&self, e3: E3Id, secret: &SealedRef) -> Result<Vec<u8>, BlobError>;
@@ -121,7 +167,8 @@ struct Closing {
 #[derive(Default)]
 struct Writes {
     running: HashMap<E3Id, usize>,
-    closed: BTreeSet<E3Id>,
+    closed: HashSet<E3Id>,
+    closed_order: VecDeque<E3Id>,
 }
 
 impl Closing {
@@ -147,7 +194,14 @@ impl Closing {
 
     fn close(&self, e3: E3Id) {
         let mut writes = self.lock();
-        writes.closed.insert(e3);
+        if writes.closed.insert(e3) {
+            writes.closed_order.push_back(e3);
+            while writes.closed_order.len() > MAX_CLOSED {
+                if let Some(evicted) = writes.closed_order.pop_front() {
+                    writes.closed.remove(&evicted);
+                }
+            }
+        }
         while writes.running.contains_key(&e3) {
             writes = self
                 .finished
@@ -281,6 +335,140 @@ impl BlobStore for MemoryBlobs {
     }
 }
 
+/// Bounded LRU cache of hash-verified public blobs for zero-copy peer serving.
+struct PublicCache {
+    inner: Mutex<PublicCacheInner>,
+    hits: AtomicU64,
+    misses: AtomicU64,
+    max_bytes: usize,
+    max_entry_bytes: usize,
+}
+
+type CacheKey = (E3Id, B256);
+type CacheValue = (Arc<[u8]>, u64);
+
+#[derive(Default)]
+struct PublicCacheInner {
+    entries: HashMap<CacheKey, CacheValue>,
+    order: VecDeque<(u64, CacheKey)>,
+    bytes: usize,
+    clock: u64,
+}
+
+impl PublicCache {
+    fn new(max_bytes: usize, max_entry_bytes: usize) -> Self {
+        Self {
+            inner: Mutex::new(PublicCacheInner::default()),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            max_bytes,
+            max_entry_bytes,
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, PublicCacheInner> {
+        self.inner.lock().expect("no holder of the lock panics")
+    }
+
+    fn get(&self, e3: E3Id, hash: &B256) -> Option<Arc<[u8]>> {
+        let mut inner = self.lock();
+        let key = (e3, *hash);
+        let now = inner.clock + 1;
+        if let Some((bytes, tick)) = inner.entries.get_mut(&key) {
+            let shared = Arc::clone(bytes);
+            *tick = now;
+            inner.clock = now;
+            inner.order.push_back((now, key));
+            compact_order(&mut inner);
+            drop(inner);
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Some(shared);
+        }
+        drop(inner);
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    fn insert(&self, e3: E3Id, hash: B256, bytes: Arc<[u8]>) {
+        if bytes.len() > self.max_entry_bytes || bytes.len() > self.max_bytes {
+            return;
+        }
+        let mut inner = self.lock();
+        let key = (e3, hash);
+        inner.clock += 1;
+        let now = inner.clock;
+        if let Some((_, tick)) = inner.entries.get_mut(&key) {
+            *tick = now;
+            inner.order.push_back((now, key));
+            compact_order(&mut inner);
+            return;
+        }
+        inner.bytes += bytes.len();
+        inner.entries.insert(key, (bytes, now));
+        inner.order.push_back((now, key));
+        while inner.bytes > self.max_bytes {
+            let Some((tick, victim)) = inner.order.pop_front() else {
+                break;
+            };
+            if inner
+                .entries
+                .get(&victim)
+                .is_some_and(|(_, current)| *current == tick)
+            {
+                if let Some((removed, _)) = inner.entries.remove(&victim) {
+                    inner.bytes = inner.bytes.saturating_sub(removed.len());
+                }
+            }
+        }
+        compact_order(&mut inner);
+    }
+
+    fn remove(&self, e3: E3Id, hash: &B256) {
+        let mut inner = self.lock();
+        if let Some((removed, _)) = inner.entries.remove(&(e3, *hash)) {
+            inner.bytes = inner.bytes.saturating_sub(removed.len());
+        }
+    }
+
+    fn evict_e3(&self, e3: E3Id) {
+        let mut inner = self.lock();
+        let mut freed = 0usize;
+        inner.entries.retain(|(id, _), (bytes, _)| {
+            if *id == e3 {
+                freed += bytes.len();
+                false
+            } else {
+                true
+            }
+        });
+        inner.bytes = inner.bytes.saturating_sub(freed);
+        if freed > 0 {
+            inner.order.retain(|(_, (id, _))| *id != e3);
+        }
+    }
+
+    fn stats(&self) -> BlobCacheStats {
+        let inner = self.lock();
+        BlobCacheStats {
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
+            bytes: inner.bytes,
+            entries: inner.entries.len(),
+        }
+    }
+}
+
+fn compact_order(inner: &mut PublicCacheInner) {
+    let limit = inner.entries.len().saturating_mul(4).max(128);
+    if inner.order.len() <= limit {
+        return;
+    }
+    let entries = &inner.entries;
+    inner
+        .order
+        .retain(|(tick, key)| entries.get(key).is_some_and(|(_, current)| current == tick));
+}
+
 /// Files, one directory per E3 with one folder per space, each file named by its hash or key. A
 /// step that names an item is journaled after the write returns, so a write returns only once the
 /// file is complete on disk.
@@ -288,6 +476,7 @@ impl BlobStore for MemoryBlobs {
 pub struct FileBlobs {
     dir: PathBuf,
     closing: Arc<Closing>,
+    public_cache: Arc<PublicCache>,
 }
 
 /// Numbers each write's partial file, so two writers of one item never share one.
@@ -313,6 +502,10 @@ impl FileBlobs {
         Ok(Self {
             dir,
             closing: Arc::default(),
+            public_cache: Arc::new(PublicCache::new(
+                PUBLIC_CACHE_MAX_BYTES,
+                PUBLIC_CACHE_MAX_ENTRY_BYTES,
+            )),
         })
     }
 
@@ -324,21 +517,37 @@ impl FileBlobs {
         self.e3_dir(e3).join(space.folder()).join(name.to_string())
     }
 
-    fn write(&self, e3: E3Id, space: Space, name: &B256, bytes: &[u8]) -> Result<(), BlobError> {
-        let path = self.path(e3, space, name);
-        let folder = path.parent().expect("an item's path has a folder");
+    fn ensure_folder(&self, e3: E3Id, folder: &Path) -> Result<(), BlobError> {
         if !folder.exists() {
             fs::create_dir_all(folder)?;
             sync_dir(&self.e3_dir(e3))?;
             sync_dir(&self.dir)?;
         }
+        Ok(())
+    }
+
+    fn write_without_dir_sync(
+        &self,
+        e3: E3Id,
+        space: Space,
+        name: &B256,
+        bytes: &[u8],
+    ) -> Result<PathBuf, BlobError> {
+        let path = self.path(e3, space, name);
+        let folder = path.parent().expect("an item's path has a folder");
+        self.ensure_folder(e3, folder)?;
         let write = WRITES.fetch_add(1, Ordering::Relaxed);
         let partial = path.with_extension(format!("{}-{write}.partial", std::process::id()));
         let mut file = File::create(&partial)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
+        file.sync_data()?;
         fs::rename(&partial, &path)?;
-        sync_dir(folder)?;
+        Ok(folder.to_path_buf())
+    }
+
+    fn write(&self, e3: E3Id, space: Space, name: &B256, bytes: &[u8]) -> Result<(), BlobError> {
+        let folder = self.write_without_dir_sync(e3, space, name, bytes)?;
+        sync_dir(&folder)?;
         Ok(())
     }
 
@@ -349,6 +558,9 @@ impl FileBlobs {
         match fs::read(&path) {
             Ok(bytes) if keccak256(&bytes) == *hash => Ok(bytes),
             Ok(_) => {
+                if space == Space::Public {
+                    self.public_cache.remove(e3, hash);
+                }
                 fs::remove_file(&path)?;
                 Err(BlobError::Corrupt(*hash))
             }
@@ -386,7 +598,63 @@ impl BlobStore for FileBlobs {
             self.closing
                 .write(e3, || self.write(e3, Space::Public, &blob.hash, bytes))?;
         }
+        self.public_cache.insert(e3, blob.hash, Arc::from(bytes));
         Ok(blob)
+    }
+
+    fn put_verified(&self, e3: E3Id, expected: &BlobRef, bytes: &[u8]) -> Result<bool, BlobError> {
+        if bytes.len() as u64 != expected.len || keccak256(bytes) != expected.hash {
+            return Ok(false);
+        }
+        if !self.has(e3, expected) {
+            self.closing
+                .write(e3, || self.write(e3, Space::Public, &expected.hash, bytes))?;
+        }
+        self.public_cache
+            .insert(e3, expected.hash, Arc::from(bytes));
+        Ok(true)
+    }
+
+    fn put_verified_batch(
+        &self,
+        e3: E3Id,
+        items: &[(&BlobRef, &[u8])],
+    ) -> Result<Vec<bool>, BlobError> {
+        let mut results = vec![false; items.len()];
+        let mut to_write: Vec<(&BlobRef, &[u8])> = Vec::new();
+        let mut seen = HashSet::new();
+        for (idx, (expected, bytes)) in items.iter().enumerate() {
+            if bytes.len() as u64 == expected.len && keccak256(bytes) == expected.hash {
+                results[idx] = true;
+                if seen.insert(expected.hash) && !self.has(e3, expected) {
+                    to_write.push((*expected, *bytes));
+                }
+            }
+        }
+        if !to_write.is_empty() {
+            self.closing.write(e3, || {
+                let mut folder = None;
+                for (expected, bytes) in &to_write {
+                    folder = Some(self.write_without_dir_sync(
+                        e3,
+                        Space::Public,
+                        &expected.hash,
+                        bytes,
+                    )?);
+                }
+                if let Some(folder) = folder {
+                    sync_dir(&folder)?;
+                }
+                Ok(())
+            })?;
+        }
+        for (idx, (expected, bytes)) in items.iter().enumerate() {
+            if results[idx] {
+                self.public_cache
+                    .insert(e3, expected.hash, Arc::from(*bytes));
+            }
+        }
+        Ok(results)
     }
 
     fn get(&self, e3: E3Id, blob: &BlobRef) -> Result<Vec<u8>, BlobError> {
@@ -400,13 +668,31 @@ impl BlobStore for FileBlobs {
     }
 
     fn serve(&self, e3: E3Id, hash: &B256) -> Option<Vec<u8>> {
-        self.read_named(e3, Space::Public, hash).ok()
+        self.serve_shared(e3, hash).map(|bytes| bytes.to_vec())
+    }
+
+    fn serve_shared(&self, e3: E3Id, hash: &B256) -> Option<Arc<[u8]>> {
+        if let Some(cached) = self.public_cache.get(e3, hash) {
+            return Some(cached);
+        }
+        let bytes = self.read_named(e3, Space::Public, hash).ok()?;
+        let shared: Arc<[u8]> = Arc::from(bytes);
+        self.public_cache.insert(e3, *hash, Arc::clone(&shared));
+        Some(shared)
+    }
+
+    fn cache_stats(&self) -> BlobCacheStats {
+        self.public_cache.stats()
     }
 
     fn put_sealed(&self, e3: E3Id, bytes: &[u8]) -> Result<SealedRef, BlobError> {
         let secret = SealedRef::of(bytes);
-        self.closing
-            .write(e3, || self.write(e3, Space::Sealed, &secret.hash, bytes))?;
+        let exists = fs::metadata(self.path(e3, Space::Sealed, &secret.hash))
+            .is_ok_and(|file| file.len() == bytes.len() as u64);
+        if !exists {
+            self.closing
+                .write(e3, || self.write(e3, Space::Sealed, &secret.hash, bytes))?;
+        }
         Ok(secret)
     }
 
@@ -442,6 +728,7 @@ impl BlobStore for FileBlobs {
 
     fn close(&self, e3: E3Id) -> Result<(), BlobError> {
         self.closing.close(e3);
+        self.public_cache.evict_e3(e3);
         match fs::remove_dir_all(self.e3_dir(e3)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.into()),
             _ => Ok(()),
@@ -658,5 +945,31 @@ mod tests {
         blobs.retain(|kept| *kept == e3(2)).unwrap();
         assert!(!blobs.has(e3(1), &blob));
         assert_eq!(blobs.get(e3(2), &blob).unwrap(), b"proof");
+    }
+
+    #[test]
+    fn put_verified_batch_and_shared_serve_cache_work_and_evict_on_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = FileBlobs::open(dir.path()).unwrap();
+        let a = BlobRef::of(b"alpha");
+        let b = BlobRef::of(b"beta");
+        let bad = BlobRef::of(b"expected");
+
+        let ok = blobs
+            .put_verified_batch(e3(1), &[(&a, b"alpha"), (&bad, b"wrong"), (&b, b"beta")])
+            .unwrap();
+        assert_eq!(ok, vec![true, false, true]);
+        assert!(blobs.has(e3(1), &a));
+        assert!(!blobs.has(e3(1), &bad));
+        assert!(blobs.has(e3(1), &b));
+
+        let s1 = blobs.serve_shared(e3(1), &a.hash).unwrap();
+        let s2 = blobs.serve_shared(e3(1), &a.hash).unwrap();
+        assert!(Arc::ptr_eq(&s1, &s2));
+        assert!(blobs.cache_stats().hits >= 2);
+
+        blobs.close(e3(1)).unwrap();
+        assert!(blobs.serve_shared(e3(1), &a.hash).is_none());
+        assert_eq!(blobs.cache_stats().entries, 0);
     }
 }
