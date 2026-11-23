@@ -20,68 +20,88 @@ struct Fixture {
     bytes: ArcBytes,
 }
 
-#[test]
-fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_peer_e3() -> Result<()>
-{
+#[actix::test]
+async fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_peer_e3(
+) -> Result<()> {
+    use e3_event_system::EventSystem;
+    use std::time::Duration;
     let f = Fixture::new()?;
-    let id = &f.request.e3_id;
+    let aggregate = AggregateId::new(1);
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                Duration::ZERO,
+            )])));
+    let bus = system.handle()?.enable("early-share-history");
     let (keys, mut projection) = f.projection();
-    let candidate = |id: &E3id, seq| {
-        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+    let id = |n: u64| E3id::new(n.to_string(), 1);
+    let candidate = |n, ts: u64| {
+        bus.publish_from_remote(
             e3_events::DecryptionshareCreated {
-                e3_id: id.clone(),
+                e3_id: id(n),
                 party_id: 2,
-                node: String::new(),
+                node: format!("peer-{ts}"),
                 decryption_share: vec![],
                 signed_decryption_proofs: vec![],
-            }
-            .into(),
-            None,
-            seq as u128,
+            },
+            ts.into(),
             None,
             EventSource::Net,
         )
-        .into_sequenced(seq)
     };
-    let request = |id: &E3id, seq| {
-        let mut request = f.request.clone();
-        request.e3_id = id.clone();
-        InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            request.into(),
-            None,
-            seq as u128,
+    let confirm = |n, ts: u64| {
+        bus.publish_from_remote(
+            E3Requested {
+                e3_id: id(n),
+                ..f.request.clone()
+            },
+            ts.into(),
             Some(1),
             EventSource::Evm,
         )
-        .into_sequenced(seq)
     };
-    projection.observe(&candidate(id, 20))?;
-    assert!(keys.synchronized_candidates(id).is_none());
-    let other = E3id::new("346", id.chain_id());
-    projection.observe(&request(&other, 21))?;
-    assert_eq!(keys.synchronized_candidates(&other), None);
-    projection.observe(&request(id, 22))?;
-    assert_eq!(keys.synchronized_candidates(id), Some((20, 20)));
-    projection.observe(&candidate(id, 45))?;
-    assert_eq!(keys.synchronized_candidates(id), Some((20, 45)));
-    projection.observe(&candidate(&other, 46))?;
-    assert_eq!(keys.synchronized_candidates(&other), Some((46, 46)));
-    assert!(keys.get(id).is_none());
-
-    // More unauthenticated IDs than there are hint slots. Every matching journal row
-    // must still be discoverable, even after a colliding request consumed its hint.
+    // Overflow before restart. Neither an early share nor an index entry admits a request.
     for n in 1..=512 {
-        projection.observe(&candidate(&E3id::new((1000 + n).to_string(), 1), 100 + n))?;
+        candidate(2000 + 2 * n, n)?;
+        if n % 64 == 0 {
+            bus.flush_event_pipeline().await?;
+        }
     }
-    let later = E3id::new("2025", 1);
-    projection.observe(&request(&later, 699))?;
-    assert_eq!(keys.synchronized_candidates(&later), None);
-    for (seq, n) in (700..).zip([1, 512, 257, 256]) {
-        let id = E3id::new((1000 + n).to_string(), 1);
-        projection.observe(&request(&id, seq))?;
-        let (first, last) = keys.synchronized_candidates(&id).unwrap();
-        assert!((first..=last).contains(&(100 + n)) && last <= 612);
+    candidate(1, 513)?;
+    candidate(1025, 514)?;
+    bus.flush_event_pipeline().await?;
+    projection
+        .recover(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            HashSet::new(),
+        )
+        .await?;
+    let bounds = |n| keys.synchronized_candidates(&id(n));
+    assert_eq!(bounds(1), None);
+    assert_eq!(bounds(1025), None);
+    projection.attach(&bus).await?;
+
+    confirm(2002, 515)?; // free a memory slot before an already-spilled ID arrives again
+    for (ts, missing) in (516..).zip([257, 513, 769]) {
+        confirm(missing, ts)?;
     }
+    candidate(1025, 519)?;
+    confirm(1025, 520)?;
+    confirm(1, 521)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(2002), Some((1, 1)));
+    assert_eq!(bounds(1025), Some((514, 519)));
+    assert_eq!(bounds(1), Some((513, 513)));
+    for missing in [257, 513, 769] {
+        assert_eq!(bounds(missing), None);
+    }
+    candidate(257, 522)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(257), Some((522, 522)));
+    assert!(keys.get(&id(257)).is_none());
     Ok(())
 }
 

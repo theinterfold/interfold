@@ -4025,6 +4025,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "serde",
  "serde_json",
+ "sled",
  "tempfile",
  "tokio",
  "tower 0.5.3",
