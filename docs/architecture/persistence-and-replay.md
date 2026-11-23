@@ -31,8 +31,10 @@ before releasing its value. A conflict, corrupt record, missing predecessor or l
 authorization to resample. Never restore an older private store into an active E3: complete loss of
 local history cannot be detected from an empty database alone. Terminal keyshare cleanup retires the
 private slots. Standbys pin the verified party sequences in `synchronized-v1` under plaintext
-recovery; the started ordered batch and final intent are write-once. Restart rechecks signed inputs
-from retained history, the current plan, and the saved proof before release. See
+recovery; the started ordered batch and final intent are write-once and survive node shutdown.
+Terminal cleanup removes this public scope. The shared history scan indexes candidate sequence
+ranges, not verdicts. An unassigned early share can widen a later request's range. Restart rechecks
+signed inputs from that range, the current plan, and the saved proof before release. See
 [threshold decryption](threshold-decryption.md).
 
 ## Contracts and actual boundaries
