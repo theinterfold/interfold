@@ -29,14 +29,15 @@ remote command conversions are in [cli.rs](../../cli/src/cli.rs).
 ## Transport limits
 
 There is no authentication or TLS. Keep the control socket local. Its manual HTTP parser supports
-content-length framing, not arbitrary chunked requests, and is not a general-purpose HTTP server
-with framework body/time limits. Handler errors become HTTP 500 responses.
+content-length framing, not arbitrary chunked requests, and is not a general-purpose HTTP server. It
+reads at most 16 KiB of headers and a 1 MiB body, within 10 seconds; a request past these limits
+gets HTTP 400 or 408 before the handler runs. Handler errors become HTTP 500 responses.
 
 Use [program-server](../../program/server/README.md) for the separate computation-job HTTP API.
 
 ## Tests
 
-`cargo check --locked -p e3-daemon-server --tests` checks its callback/transport types without a
-live node. There are currently no dedicated crate test functions. The
-[CLI startup handler](../../cli/src/start.rs) is the integration point for exercising allowed
-commands and output forwarding. See [AGENTS.md](AGENTS.md) for transport-change constraints.
+`cargo test --locked -p e3-daemon-server` runs loopback tests of the framing, the request limits and
+the client, without a live node. The [CLI startup handler](../../cli/src/start.rs) is the
+integration point for exercising allowed commands and output forwarding. See [AGENTS.md](AGENTS.md)
+for transport-change constraints.
