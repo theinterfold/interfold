@@ -14,6 +14,7 @@ pub(crate) struct Protocols {
     pub(crate) identify: String,
     pub(crate) kademlia: StreamProtocol,
     pub(crate) blobs: StreamProtocol,
+    pub(crate) direct: StreamProtocol,
 }
 
 /// What a peer's Identify says about it.
@@ -37,7 +38,8 @@ impl Protocols {
             topic: IdentTopic::new(format!("{prefix}/messages/2")),
             identify: format!("/{prefix}/identify/2"),
             kademlia: stream("kad/1.0.0"),
-            blobs: stream("blobs/1"),
+            blobs: stream("blobs/2"),
+            direct: stream("direct/1"),
         }
     }
 

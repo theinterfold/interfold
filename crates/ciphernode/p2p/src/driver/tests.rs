@@ -657,3 +657,38 @@ async fn closing_ends_the_network() {
         .await
         .unwrap();
 }
+
+/// Once operator-to-peer identity is learned (e.g. from Phase 1 C0 blob fetches), recipient-targeted
+/// DKG shares route directly over QUIC without flooding the gossipsub mesh, and all share blobs
+/// fetch in a single batched request.
+#[tokio::test(flavor = "multi_thread")]
+async fn shares_route_directly_and_batch_fetch_once_peer_operator_is_known() {
+    let [first, mut second, mut third] = network().await;
+    // Phase 1: third fetches first's key blobs, teaching first third's verified (PeerId <-> Operator).
+    let key_msg = key(&first, 1);
+    publish(&first, signed(key_msg.clone(), 1, 10)).await;
+    assert_eq!(received(&mut second).await, key_msg);
+    assert_eq!(received(&mut third).await, key_msg);
+    fetch(&third, key_msg).await.unwrap();
+
+    // Phase 2: first publishes shares addressed to third -> routed over direct/1.
+    let share_msg = shares(&first, 1, 3);
+    publish(&first, signed(share_msg.clone(), 1, 11)).await;
+    assert_eq!(received(&mut third).await, share_msg);
+    assert!(
+        first.p2p.stats().direct_sent >= 1,
+        "expected direct send, stats={:?}",
+        first.p2p.stats()
+    );
+
+    let before_batches = third.p2p.stats().blob_batches_fetched;
+    fetch(&third, share_msg.clone()).await.unwrap();
+    let after_batches = third.p2p.stats().blob_batches_fetched;
+    assert_eq!(
+        after_batches - before_batches,
+        1,
+        "all 6 share blobs should arrive in one batch request"
+    );
+    assert!(share_msg.blobs().iter().all(|blob| third.blobs.has(blob)));
+    nothing(&mut second, Duration::from_secs(2)).await;
+}

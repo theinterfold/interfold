@@ -119,6 +119,11 @@ impl Inbox {
         }
     }
 
+    /// The next ready message without waiting, for draining bursts in a batch.
+    pub fn try_next(&self) -> Option<PeerMessage> {
+        self.shared.queues().pop()
+    }
+
     /// Waits until the network stopped.
     pub async fn closed(&self) {
         loop {

@@ -9,13 +9,14 @@
 
 use crate::{
     behaviour::{Behaviour, BehaviourEvent, IDLE_CONNECTION, MAX_BLOB_BYTES},
+    blob_codec::{BlobBatchRequest, BlobBatchResponse, DirectAck, DirectMessage},
     fetcher::{Done, Fetcher, Wanted},
     inbox::{inbox, Inbox, InboxWriter},
     peers::{advertised, strip_peer_id, PeerBook},
     protocols::{Protocols, Standing},
-    serving::{BlobRequest, Serving},
+    serving::Serving,
     transport::{DialGuard, RecentDials},
-    Network, NetworkError,
+    Network, NetworkError, NetworkStats,
 };
 use alloy_primitives::{Address, B256};
 use e3_blobs::{BlobStore, MemoryBlobs};
@@ -35,11 +36,10 @@ use libp2p::{
     swarm::{dial_opts::DialOpts, DialError, SwarmEvent},
     Multiaddr, PeerId, Swarm,
 };
-use serde_bytes::ByteBuf;
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -51,6 +51,8 @@ use tracing::{debug, info, warn};
 const MAX_COMMANDS: usize = 1_024;
 /// Messages whose senders a node remembers, to fetch their blobs from.
 const MAX_SOURCES: usize = 4_096;
+/// Maximum distinct source peers tracked per message ID.
+const MAX_SOURCES_PER_MESSAGE: usize = 8;
 /// The peers whose addresses the node remembers putting into Kademlia.
 const MAX_ADVERTISING_PEERS: usize = 1_024;
 /// A publish waits this long for a peer on the topic, as a node that just started has none.
@@ -70,6 +72,25 @@ const MAX_CLOCK_AHEAD: u64 = 2 * 60;
 const DRAIN: Duration = Duration::from_secs(2);
 /// A log line that can repeat with every message comes at most this often.
 const WARN_EVERY: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+struct AtomicStats {
+    direct_sent: AtomicU64,
+    gossip_sent: AtomicU64,
+    blob_batches_fetched: AtomicU64,
+    blob_batches_served: AtomicU64,
+}
+
+impl AtomicStats {
+    fn snapshot(&self) -> NetworkStats {
+        NetworkStats {
+            direct_sent: self.direct_sent.load(Ordering::Relaxed),
+            gossip_sent: self.gossip_sent.load(Ordering::Relaxed),
+            blob_batches_fetched: self.blob_batches_fetched.load(Ordering::Relaxed),
+            blob_batches_served: self.blob_batches_served.load(Ordering::Relaxed),
+        }
+    }
+}
 
 /// How a node joins its network.
 #[derive(Clone, Debug)]
@@ -121,6 +142,7 @@ pub struct P2p {
     peer: PeerId,
     listening: Vec<Multiaddr>,
     connected: Arc<AtomicUsize>,
+    stats: Arc<AtomicStats>,
 }
 
 enum Command {
@@ -194,8 +216,10 @@ impl P2p {
         let (served_writer, served) = mpsc::unbounded_channel();
         let (stored_writer, stored) = mpsc::unbounded_channel();
         let connected = Arc::new(AtomicUsize::new(0));
+        let stats = Arc::new(AtomicStats::default());
         let mut driver = Driver {
             connected: connected.clone(),
+            stats: stats.clone(),
             swarm,
             protocols,
             messages,
@@ -206,8 +230,11 @@ impl P2p {
             recent_dials,
             sources: Recent::default(),
             advertised: Recent::default(),
+            verified_peers: HashMap::new(),
+            operator_peers: HashMap::new(),
             fetcher: Fetcher::default(),
             requests: HashMap::new(),
+            direct_pending: HashMap::new(),
             publishes: VecDeque::new(),
             serving: Serving::default(),
             served_writer,
@@ -224,6 +251,7 @@ impl P2p {
             peer,
             listening,
             connected,
+            stats,
         };
         Ok((p2p, reader))
     }
@@ -298,6 +326,10 @@ impl Network for P2p {
         self.connected.load(Ordering::Relaxed)
     }
 
+    fn stats(&self) -> NetworkStats {
+        self.stats.snapshot()
+    }
+
     async fn close(&self) {
         let (done, closed) = oneshot::channel();
         if self.commands.send(Command::Close { done }).await.is_ok() {
@@ -336,6 +368,10 @@ impl<K: Copy + Eq + std::hash::Hash, V, const CAPACITY: usize> Recent<K, V, CAPA
     fn get(&self, key: &K) -> Option<&V> {
         self.entries.get(key)
     }
+
+    fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.entries.get_mut(key)
+    }
 }
 
 struct PendingPublish {
@@ -344,36 +380,35 @@ struct PendingPublish {
     done: Done,
 }
 
-/// A member's request for a blob, on its way through the line.
+/// A member's batched request for blobs, on its way through the line.
 struct Asked {
     e3: E3Id,
-    hash: B256,
+    hashes: Vec<B256>,
     member: Address,
-    channel: ResponseChannel<Option<ByteBuf>>,
+    channel: ResponseChannel<BlobBatchResponse>,
 }
 
-/// A blob read for a member, ready to send.
+/// A blob batch read for a member, ready to send.
 struct Served {
     request: InboundRequestId,
-    channel: ResponseChannel<Option<ByteBuf>>,
-    bytes: Option<ByteBuf>,
+    channel: ResponseChannel<BlobBatchResponse>,
+    response: BlobBatchResponse,
 }
 
-/// What became of a blob that arrived.
-enum Stored {
-    Kept,
-    /// The bytes were not the blob's: another peer may have the real ones.
-    Wrong,
+/// What became of a blob batch that arrived.
+enum BatchStored {
+    Done { kept: usize, retry: Vec<BlobRef> },
     Failed(String),
 }
 
 struct Driver<S> {
     connected: Arc<AtomicUsize>,
+    stats: Arc<AtomicStats>,
     swarm: Swarm<Behaviour>,
     protocols: Protocols,
     /// Whether the node takes part in the network's messages; a bootstrap node does not.
     messages: bool,
-    /// The operator this node is, and its word for it, which every blob request shows.
+    /// The operator this node is, and its word for it, which every blob/direct request shows.
     proof: PeerProof,
     blobs: S,
     inbox: InboxWriter,
@@ -384,16 +419,22 @@ struct Driver<S> {
     sources: Recent<B256, Vec<PeerId>, MAX_SOURCES>,
     /// The addresses of each peer that the node put into Kademlia from its last Identify.
     advertised: Recent<PeerId, Vec<Multiaddr>, MAX_ADVERTISING_PEERS>,
+    /// Verified `(PeerId -> Operator)` cache for active connections, avoiding repeated ECDSA
+    /// verification on every blob/direct request and enabling direct pairwise routing.
+    verified_peers: HashMap<PeerId, Address>,
+    operator_peers: HashMap<Address, PeerId>,
     fetcher: Fetcher<PeerId>,
-    /// The read each request belongs to.
+    /// The read ticket each outbound blob batch request belongs to.
     requests: HashMap<OutboundRequestId, u64>,
+    /// Outbound direct pairwise sends awaiting ack before optional gossipsub fallback.
+    direct_pending: HashMap<OutboundRequestId, PendingPublish>,
     /// Publishes that found no peer on the topic yet.
     publishes: VecDeque<PendingPublish>,
     serving: Serving<InboundRequestId, Asked>,
     served_writer: mpsc::UnboundedSender<Served>,
     served: mpsc::UnboundedReceiver<Served>,
-    stored_writer: mpsc::UnboundedSender<(u64, Stored)>,
-    stored: mpsc::UnboundedReceiver<(u64, Stored)>,
+    stored_writer: mpsc::UnboundedSender<(u64, BatchStored)>,
+    stored: mpsc::UnboundedReceiver<(u64, BatchStored)>,
     refused: Limited,
 }
 
@@ -499,9 +540,93 @@ impl<S: BlobStore> Driver<S> {
         }
     }
 
+    fn record_verified_peer(&mut self, peer: PeerId, operator: Address) {
+        if let Some(prev) = self.verified_peers.insert(peer, operator) {
+            if prev != operator && self.operator_peers.get(&prev) == Some(&peer) {
+                self.operator_peers.remove(&prev);
+            }
+        }
+        self.operator_peers.insert(operator, peer);
+    }
+
+    fn forget_verified_peer(&mut self, peer: &PeerId) {
+        if let Some(operator) = self.verified_peers.remove(peer) {
+            if self.operator_peers.get(&operator) == Some(peer) {
+                self.operator_peers.remove(&operator);
+            }
+        }
+    }
+
+    fn verify_peer_proof(&mut self, peer: PeerId, proof: &PeerProof) -> bool {
+        if self.verified_peers.get(&peer) == Some(&proof.operator) {
+            return true;
+        }
+        if proof.holds_for(&peer.to_bytes()) {
+            self.record_verified_peer(peer, proof.operator);
+            return true;
+        }
+        false
+    }
+
+    fn add_sources(&mut self, id: B256, candidates: impl IntoIterator<Item = PeerId>) {
+        let book = &self.swarm.behaviour().peers;
+        let filtered: Vec<PeerId> = candidates
+            .into_iter()
+            .filter(|peer| !book.takes_no_messages(peer))
+            .collect();
+        if filtered.is_empty() {
+            return;
+        }
+        if let Some(existing) = self.sources.get_mut(&id) {
+            for peer in filtered {
+                if !existing.contains(&peer) && existing.len() < MAX_SOURCES_PER_MESSAGE {
+                    existing.push(peer);
+                }
+            }
+        } else {
+            let mut peers = Vec::with_capacity(filtered.len().min(MAX_SOURCES_PER_MESSAGE));
+            for peer in filtered {
+                if !peers.contains(&peer) && peers.len() < MAX_SOURCES_PER_MESSAGE {
+                    peers.push(peer);
+                }
+            }
+            self.sources.insert(id, peers);
+        }
+    }
+
     fn publish(&mut self, envelope: Envelope, done: Done) {
+        let bytes = envelope.encode();
+        // Recipient-targeted messages (e.g. DKG shares) go directly over a single QUIC stream when
+        // the recipient's peer ID is already known and connected, falling back to gossipsub on any
+        // error or rejection.
+        if let Some(recipient) = envelope.message.recipient() {
+            if let Some(&peer) = self.operator_peers.get(&recipient) {
+                if self.swarm.is_connected(&peer)
+                    && !self
+                        .swarm
+                        .behaviour()
+                        .peers
+                        .is_rejected(&peer, Instant::now())
+                {
+                    let req = DirectMessage {
+                        envelope: bytes.clone(),
+                        sender_proof: self.proof.clone(),
+                    };
+                    let request_id = self.swarm.behaviour_mut().direct.send_request(&peer, req);
+                    self.direct_pending.insert(
+                        request_id,
+                        PendingPublish {
+                            bytes,
+                            attempts: 0,
+                            done,
+                        },
+                    );
+                    return;
+                }
+            }
+        }
         let pending = PendingPublish {
-            bytes: envelope.encode(),
+            bytes,
             attempts: 0,
             done,
         };
@@ -521,6 +646,7 @@ impl<S: BlobStore> Driver<S> {
             .publish(topic, pending.bytes.clone());
         match result {
             Ok(_) => {
+                self.stats.gossip_sent.fetch_add(1, Ordering::Relaxed);
                 let _ = pending.done.send(Ok(()));
             }
             Err(PublishError::NoPeersSubscribedToTopic | PublishError::AllQueuesFull(_))
@@ -551,6 +677,7 @@ impl<S: BlobStore> Driver<S> {
                 message,
             })) => self.on_gossip(propagation_source, message_id, message),
             SwarmEvent::Behaviour(BehaviourEvent::Blobs(event)) => self.on_blobs(event),
+            SwarmEvent::Behaviour(BehaviourEvent::Direct(event)) => self.on_direct_event(event),
             SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
                 peer_id,
                 info,
@@ -574,12 +701,17 @@ impl<S: BlobStore> Driver<S> {
             SwarmEvent::ConnectionClosed {
                 peer_id,
                 connection_id,
+                num_established,
                 ..
-            } => self
-                .swarm
-                .behaviour_mut()
-                .peers
-                .closed(peer_id, connection_id),
+            } => {
+                self.swarm
+                    .behaviour_mut()
+                    .peers
+                    .closed(peer_id, connection_id);
+                if num_established == 0 {
+                    self.forget_verified_peer(&peer_id);
+                }
+            }
             SwarmEvent::OutgoingConnectionError {
                 peer_id,
                 error: DialError::WrongPeerId { obtained, address },
@@ -655,24 +787,118 @@ impl<S: BlobStore> Driver<S> {
         let Some(peer_message) = opened.filter(|opened| admitted && opened.is_for(me)) else {
             return;
         };
+        // A bootstrap peer offers no blobs. Who carried a message does not matter otherwise: its
+        // signature says who wrote it, and refusing the first copy would make the network's own
+        // duplicate filter drop the honest copies behind it.
         let mut peers: Vec<PeerId> = message.source.into_iter().collect();
         if !peers.contains(&propagation) {
             peers.push(propagation);
         }
-        // A bootstrap peer offers no blobs. Who carried a message does not matter otherwise: its
-        // signature says who wrote it, and refusing the first copy would make the network's own
-        // duplicate filter drop the honest copies behind it.
-        let book = &self.swarm.behaviour().peers;
-        peers.retain(|peer| !book.takes_no_messages(peer));
-        if !peers.is_empty() {
-            self.sources.insert(peer_message.id(), peers);
-        }
+        self.add_sources(peer_message.id(), peers);
         let sender = peer_message.sender;
         if !self.inbox.push(peer_message, message.data.len() as u64) {
             if let Some(held_back) = self.refused.pass() {
                 warn!(%sender, held_back, "the node's inbox has no room for this sender");
             }
         }
+    }
+
+    fn on_direct_event(&mut self, event: request_response::Event<DirectMessage, DirectAck>) {
+        match event {
+            request_response::Event::Message {
+                peer,
+                message:
+                    request_response::Message::Request {
+                        request, channel, ..
+                    },
+                ..
+            } => self.on_direct_request(peer, request, channel),
+            request_response::Event::Message {
+                message:
+                    request_response::Message::Response {
+                        request_id,
+                        response,
+                    },
+                ..
+            } => {
+                let Some(pending) = self.direct_pending.remove(&request_id) else {
+                    return;
+                };
+                if response.0 {
+                    self.stats.direct_sent.fetch_add(1, Ordering::Relaxed);
+                    let _ = pending.done.send(Ok(()));
+                } else {
+                    self.try_publish(pending);
+                }
+            }
+            request_response::Event::OutboundFailure {
+                request_id, error, ..
+            } => {
+                if let Some(pending) = self.direct_pending.remove(&request_id) {
+                    debug!(%error, "direct message send failed; falling back to gossipsub");
+                    self.try_publish(pending);
+                }
+            }
+            request_response::Event::ResponseSent { .. }
+            | request_response::Event::InboundFailure { .. } => {}
+        }
+    }
+
+    fn on_direct_request(
+        &mut self,
+        peer: PeerId,
+        request: DirectMessage,
+        channel: ResponseChannel<DirectAck>,
+    ) {
+        let DirectMessage {
+            envelope: bytes,
+            sender_proof,
+        } = request;
+        if !self.verify_peer_proof(peer, &sender_proof) {
+            if let Some(held_back) = self.refused.pass() {
+                let operator = sender_proof.operator;
+                warn!(%peer, %operator, held_back, "a peer sent a direct message with an invalid identity proof");
+            }
+            let _ = self
+                .swarm
+                .behaviour_mut()
+                .direct
+                .send_response(channel, DirectAck(false));
+            self.refuse(peer);
+            return;
+        }
+        let wire_len = bytes.len() as u64;
+        let envelope = Envelope::decode(&bytes);
+        let is_fresh = envelope
+            .as_ref()
+            .is_some_and(|env| fresh(env.sent_at, unix_now()));
+        let opened = envelope.and_then(Envelope::open);
+        let me = self.proof.operator;
+        let admitted = is_fresh
+            && opened.as_ref().is_some_and(|msg| {
+                msg.sender == sender_proof.operator
+                    && self.admission.borrow().senders.contains(&msg.sender)
+                    && msg.is_for(me)
+            });
+        let accepted = if admitted {
+            let peer_message = opened.expect("admitted implies opened");
+            self.add_sources(peer_message.id(), [peer]);
+            let sender = peer_message.sender;
+            let queued = self.inbox.push(peer_message, wire_len);
+            if !queued {
+                if let Some(held_back) = self.refused.pass() {
+                    warn!(%sender, held_back, "the node's inbox has no room for this sender");
+                }
+            }
+            queued
+        } else {
+            false
+        };
+        let _ = self
+            .swarm
+            .behaviour_mut()
+            .direct
+            .send_response(channel, DirectAck(accepted));
     }
 
     /// Fetches the blobs `message` names that the store lacks. A fetch already on its way for the
@@ -692,13 +918,22 @@ impl<S: BlobStore> Driver<S> {
             let _ = done.send(Ok(()));
             return;
         }
-        let (Some(peers), true) = (
-            self.sources.get(&id).cloned(),
-            missing.iter().all(|blob| blob.len <= MAX_BLOB_BYTES),
-        ) else {
+        let Some(mut peers) = self.sources.get(&id).cloned() else {
             let _ = done.send(Err(NetworkError::Unavailable));
             return;
         };
+        if !missing.iter().all(|blob| blob.len <= MAX_BLOB_BYTES) {
+            let _ = done.send(Err(NetworkError::Unavailable));
+            return;
+        }
+        // Prefer the original publisher if its peer ID is already verified and connected.
+        if let Some(&publisher) = self.operator_peers.get(&message.sender) {
+            if !self.swarm.behaviour().peers.takes_no_messages(&publisher)
+                && !peers.contains(&publisher)
+            {
+                peers.insert(0, publisher);
+            }
+        }
         let wanted = Wanted {
             message,
             missing,
@@ -710,19 +945,23 @@ impl<S: BlobStore> Driver<S> {
 
     fn start_reads(&mut self) {
         for read in self.fetcher.next_reads() {
+            let hashes = read.blobs.iter().map(|blob| blob.hash).collect();
             let request = self.swarm.behaviour_mut().blobs.send_request(
                 &read.peer,
-                BlobRequest {
+                BlobBatchRequest {
                     e3: read.e3,
-                    hash: read.hash,
+                    hashes,
                     requester: self.proof.clone(),
                 },
             );
+            self.stats
+                .blob_batches_fetched
+                .fetch_add(1, Ordering::Relaxed);
             self.requests.insert(request, read.ticket);
         }
     }
 
-    fn on_blobs(&mut self, event: request_response::Event<BlobRequest, Option<ByteBuf>>) {
+    fn on_blobs(&mut self, event: request_response::Event<BlobBatchRequest, BlobBatchResponse>) {
         match event {
             request_response::Event::Message {
                 peer,
@@ -745,19 +984,13 @@ impl<S: BlobStore> Driver<S> {
                 let Some(read) = self.requests.remove(&request_id) else {
                     return;
                 };
-                match response {
-                    Some(bytes) => self.store(read, bytes.into_vec()),
-                    None => {
-                        self.fetcher.failed(read);
-                        self.start_reads();
-                    }
-                }
+                self.store_batch(read, response);
             }
             request_response::Event::OutboundFailure {
                 request_id, error, ..
             } => {
                 if let Some(read) = self.requests.remove(&request_id) {
-                    debug!(%error, "a blob request failed");
+                    debug!(%error, "a blob batch request failed");
                     self.fetcher.failed(read);
                     self.start_reads();
                 }
@@ -770,26 +1003,27 @@ impl<S: BlobStore> Driver<S> {
         }
     }
 
-    /// Takes a peer's request for a blob. Only a member of the blob's E3 gets an answer with
+    /// Takes a peer's batched request for blobs. Only a member of the blobs' E3 gets an answer with
     /// bytes. The claim costs nothing to check, so it comes first; a peer that claims a member it
     /// cannot prove to be is dropped, so a false claim costs it a new identity and connection.
     fn on_asked(
         &mut self,
         peer: PeerId,
         request: InboundRequestId,
-        asked: BlobRequest,
-        channel: ResponseChannel<Option<ByteBuf>>,
+        asked: BlobBatchRequest,
+        channel: ResponseChannel<BlobBatchResponse>,
     ) {
-        let BlobRequest {
+        let BlobBatchRequest {
             e3,
-            hash,
+            hashes,
             requester,
         } = asked;
+        let count = hashes.len();
         if !self.may_read(e3, requester.operator) {
-            self.answer_nothing(channel);
+            self.answer_nothing(channel, count);
             return;
         }
-        if !requester.holds_for(&peer.to_bytes()) {
+        if !self.verify_peer_proof(peer, &requester) {
             if let Some(held_back) = self.refused.pass() {
                 let operator = requester.operator;
                 warn!(%peer, %operator, held_back, "a peer claimed to be a member it cannot prove to be");
@@ -800,13 +1034,15 @@ impl<S: BlobStore> Driver<S> {
         let member = requester.operator;
         let asked = Asked {
             e3,
-            hash,
+            hashes,
             member,
             channel,
         };
         match self.serving.ask(request, member, asked) {
             Ok(()) => self.serve_next(),
-            Err(Asked { channel, .. }) => self.answer_nothing(channel),
+            Err(Asked {
+                channel, hashes, ..
+            }) => self.answer_nothing(channel, hashes.len()),
         }
     }
 
@@ -818,35 +1054,43 @@ impl<S: BlobStore> Driver<S> {
             .is_some_and(|committee| committee.contains(&operator))
     }
 
-    fn answer_nothing(&mut self, channel: ResponseChannel<Option<ByteBuf>>) {
-        let _ = self
-            .swarm
-            .behaviour_mut()
-            .blobs
-            .send_response(channel, None);
+    fn answer_nothing(&mut self, channel: ResponseChannel<BlobBatchResponse>, count: usize) {
+        let _ = self.swarm.behaviour_mut().blobs.send_response(
+            channel,
+            BlobBatchResponse {
+                items: vec![None; count],
+            },
+        );
     }
 
-    /// Starts the disk reads whose turn it is, off this task. A member can lose its seat while it
+    /// Starts the blob reads whose turn it is, off this task. A member can lose its seat while it
     /// waits in line, and then finds nothing.
     fn serve_next(&mut self) {
         while let Some((request, asked)) = self.serving.next_turn() {
             let Asked {
                 e3,
-                hash,
+                hashes,
                 member,
                 channel,
             } = asked;
             let readable = self.may_read(e3, member);
             let (blobs, served) = (self.blobs.clone(), self.served_writer.clone());
+            self.stats
+                .blob_batches_served
+                .fetch_add(1, Ordering::Relaxed);
             tokio::task::spawn_blocking(move || {
-                let bytes = readable
-                    .then(|| blobs.serve(e3, &hash))
-                    .flatten()
-                    .map(ByteBuf::from);
+                let items = if readable {
+                    hashes
+                        .into_iter()
+                        .map(|hash| blobs.serve_shared(e3, &hash))
+                        .collect()
+                } else {
+                    vec![None; hashes.len()]
+                };
                 let _ = served.send(Served {
                     request,
                     channel,
-                    bytes,
+                    response: BlobBatchResponse { items },
                 });
             });
         }
@@ -856,48 +1100,71 @@ impl<S: BlobStore> Driver<S> {
         let Served {
             request,
             channel,
-            bytes,
+            response,
         } = served;
         self.serving.read(request);
         let blobs = &mut self.swarm.behaviour_mut().blobs;
-        if blobs.send_response(channel, bytes).is_err() {
+        if blobs.send_response(channel, response).is_err() {
             self.serving.end(request);
             self.serve_next();
         }
     }
 
-    /// Checks and stores a blob off this task. A fetch that ended keeps nothing.
-    fn store(&mut self, read: u64, bytes: Vec<u8>) {
-        let Some((e3, blob)) = self.fetcher.expected(read) else {
+    /// Checks and stores a batch of blobs off this task with a single directory sync.
+    fn store_batch(&mut self, read: u64, response: BlobBatchResponse) {
+        let Some((e3, expected)) = self.fetcher.expected(read) else {
             self.fetcher.failed(read);
             self.start_reads();
             return;
         };
         let (blobs, stored) = (self.blobs.clone(), self.stored_writer.clone());
         tokio::task::spawn_blocking(move || {
-            let outcome = if BlobRef::of(&bytes) != blob {
-                Stored::Wrong
+            if response.items.len() != expected.len() {
+                let _ = stored.send((
+                    read,
+                    BatchStored::Done {
+                        kept: 0,
+                        retry: expected,
+                    },
+                ));
+                return;
+            }
+            let mut valid: Vec<(BlobRef, Arc<[u8]>)> = Vec::with_capacity(expected.len());
+            let mut retry: Vec<BlobRef> = Vec::new();
+            for (want, got) in expected.into_iter().zip(response.items) {
+                match got {
+                    Some(bytes) if BlobRef::of(&bytes) == want => valid.push((want, bytes)),
+                    _ => retry.push(want),
+                }
+            }
+            let kept = valid.len();
+            let outcome = if valid.is_empty() {
+                BatchStored::Done { kept: 0, retry }
             } else {
-                match blobs.put(e3, &bytes) {
-                    Ok(_) => Stored::Kept,
-                    Err(error) => Stored::Failed(error.to_string()),
+                let slices: Vec<(&BlobRef, &[u8])> = valid
+                    .iter()
+                    .map(|(reference, bytes)| (reference, &bytes[..]))
+                    .collect();
+                match blobs.put_verified_batch(e3, &slices) {
+                    Ok(_) => BatchStored::Done { kept, retry },
+                    Err(error) => BatchStored::Failed(error.to_string()),
                 }
             };
             let _ = stored.send((read, outcome));
         });
     }
 
-    fn on_stored(&mut self, read: u64, stored: Stored) {
+    fn on_stored(&mut self, read: u64, stored: BatchStored) {
         match stored {
-            Stored::Kept => self.fetcher.stored(read),
-            Stored::Wrong => self.fetcher.failed(read),
-            Stored::Failed(error) => self.fetcher.abort(read, NetworkError::Store(error)),
+            BatchStored::Done { kept, retry } => self.fetcher.batch_done(read, kept, retry),
+            BatchStored::Failed(error) => self.fetcher.abort(read, NetworkError::Store(error)),
         }
         self.start_reads();
     }
 
     /// Drops `peer`, and does not dial or keep it for a while.
     fn refuse(&mut self, peer: PeerId) {
+        self.forget_verified_peer(&peer);
         let behaviour = self.swarm.behaviour_mut();
         behaviour.peers.reject(peer, Instant::now());
         behaviour.kademlia.remove_peer(&peer);

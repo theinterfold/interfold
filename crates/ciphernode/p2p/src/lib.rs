@@ -8,6 +8,7 @@
 //! fetches from the message's publisher once its machine admits the message.
 
 mod behaviour;
+mod blob_codec;
 mod driver;
 mod fetcher;
 mod inbound_ip_limits;
@@ -26,6 +27,15 @@ use e3_protocol::{
 };
 use std::future::Future;
 
+/// Lightweight operational counters for the network adapter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NetworkStats {
+    pub direct_sent: u64,
+    pub gossip_sent: u64,
+    pub blob_batches_fetched: u64,
+    pub blob_batches_served: u64,
+}
+
 /// What the node needs from the network. Inbound, an adapter delivers each peer message whose
 /// envelope opens and that is for this node, before it fetches any blob the message names.
 pub trait Network: Send + Sync + 'static {
@@ -41,6 +51,11 @@ pub trait Network: Send + Sync + 'static {
 
     /// How many peers are connected now.
     fn connected(&self) -> usize;
+
+    /// Operational counters for metrics reporting.
+    fn stats(&self) -> NetworkStats {
+        NetworkStats::default()
+    }
 
     /// Says goodbye to the peers, so they do not have to time out.
     fn close(&self) -> impl Future<Output = ()> + Send;

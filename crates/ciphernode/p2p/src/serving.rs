@@ -12,26 +12,16 @@
 //! read.
 
 use crate::fetcher::MAX_ACTIVE_PER_PEER;
-use alloy_primitives::{Address, B256};
-use e3_protocol::{wire::PeerProof, E3Id};
-use serde::{Deserialize, Serialize};
+use alloy_primitives::Address;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
 };
 
-/// The blobs served at once, from the disk read until the peer has them. It is more than the most
-/// faulty members a committee can tolerate. A member that stops reading holds its place only until
-/// the request times out.
+/// The blob batches served at once, from the disk read until the peer has them. It is more than
+/// the most faulty members a committee can tolerate. A member that stops reading holds its place
+/// only until the request times out.
 const MAX_SERVING: usize = 8;
-
-/// A request for one public blob of an E3, and the requester's word for who it is.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BlobRequest {
-    pub(crate) e3: E3Id,
-    pub(crate) hash: B256,
-    pub(crate) requester: PeerProof,
-}
 
 struct Waiting<Id, Job> {
     id: Id,

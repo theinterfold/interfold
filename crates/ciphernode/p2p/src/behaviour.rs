@@ -7,7 +7,10 @@
 //! Every libp2p setting of the node, in one place, each with its reason.
 
 use crate::{
-    inbound_ip_limits::InboundIpLimits, peers::PeerBook, protocols::Protocols, serving::BlobRequest,
+    blob_codec::{BlobBatchCodec, DirectCodec},
+    inbound_ip_limits::InboundIpLimits,
+    peers::PeerBook,
+    protocols::Protocols,
 };
 use libp2p::{
     connection_limits::{self, ConnectionLimits},
@@ -15,10 +18,9 @@ use libp2p::{
     identify,
     identity::Keypair,
     kad::{self, store::MemoryStore, StoreInserts},
-    request_response::{self, cbor, ProtocolSupport},
+    request_response::{self, ProtocolSupport},
     swarm::NetworkBehaviour,
 };
-use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, time::Duration};
 
@@ -26,16 +28,14 @@ use std::{collections::HashSet, time::Duration};
 pub(crate) const MAX_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 /// The largest blob a peer may send, above the old document limit of 26 MiB.
 pub(crate) const MAX_BLOB_BYTES: u64 = 32 * 1024 * 1024;
-/// A blob's response carries CBOR framing on top of its bytes.
-const RESPONSE_FRAMING: u64 = 64 * 1024;
-/// A request names an E3, a hash and a proof. Anyone can open a stream and send this much before
-/// the node knows who it is.
-const MAX_BLOB_REQUEST_BYTES: u64 = 1024;
 /// How long a blob request may take, its wait for a place included: long enough for a dealer on
 /// the slowest supported uplink to reach the last of a large committee.
 const BLOB_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// The blob requests that may run at once on one connection.
 const BLOB_STREAMS: usize = 8;
+/// Direct pairwise messages are small envelopes and fall back to gossipsub quickly on timeout.
+const DIRECT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const DIRECT_STREAMS: usize = 16;
 /// The library's tick-based defaults (history, gossip windows) assume one second.
 const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
 /// Often enough to see a peer's new addresses, rarely enough not to cost anything.
@@ -57,8 +57,10 @@ pub(crate) struct Behaviour {
     pub(crate) gossipsub: Gossipsub,
     pub(crate) identify: identify::Behaviour,
     pub(crate) kademlia: kad::Behaviour<MemoryStore>,
-    /// A request names the blob's E3 and hash: each E3 keeps its own copy of its blobs.
-    pub(crate) blobs: cbor::Behaviour<BlobRequest, Option<ByteBuf>>,
+    /// Batched binary blob transfers: each E3 keeps its own copy of its blobs.
+    pub(crate) blobs: request_response::Behaviour<BlobBatchCodec>,
+    /// Direct pairwise delivery for recipient-targeted messages (e.g. DKG shares).
+    pub(crate) direct: request_response::Behaviour<DirectCodec>,
 }
 
 impl Behaviour {
@@ -94,6 +96,7 @@ impl Behaviour {
             ),
             kademlia: kademlia(key, protocols),
             blobs: blobs(protocols, messages),
+            direct: direct(protocols, messages),
         })
     }
 }
@@ -154,19 +157,30 @@ fn kademlia(key: &Keypair, protocols: &Protocols) -> kad::Behaviour<MemoryStore>
     kademlia
 }
 
-fn blobs(protocols: &Protocols, messages: bool) -> cbor::Behaviour<BlobRequest, Option<ByteBuf>> {
-    let codec = cbor::codec::Codec::default()
-        .set_request_size_maximum(MAX_BLOB_REQUEST_BYTES)
-        .set_response_size_maximum(MAX_BLOB_BYTES + RESPONSE_FRAMING);
+fn blobs(protocols: &Protocols, messages: bool) -> request_response::Behaviour<BlobBatchCodec> {
     let support = match messages {
         true => ProtocolSupport::Full,
         false => ProtocolSupport::Outbound,
     };
-    cbor::Behaviour::with_codec(
-        codec,
+    request_response::Behaviour::with_codec(
+        BlobBatchCodec,
         [(protocols.blobs.clone(), support)],
         request_response::Config::default()
             .with_request_timeout(BLOB_REQUEST_TIMEOUT)
             .with_max_concurrent_streams(BLOB_STREAMS),
+    )
+}
+
+fn direct(protocols: &Protocols, messages: bool) -> request_response::Behaviour<DirectCodec> {
+    let support = match messages {
+        true => ProtocolSupport::Full,
+        false => ProtocolSupport::Outbound,
+    };
+    request_response::Behaviour::with_codec(
+        DirectCodec,
+        [(protocols.direct.clone(), support)],
+        request_response::Config::default()
+            .with_request_timeout(DIRECT_REQUEST_TIMEOUT)
+            .with_max_concurrent_streams(DIRECT_STREAMS),
     )
 }

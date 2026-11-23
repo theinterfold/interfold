@@ -4,11 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Which blob to ask which peer for next. Reads run a few at a time: no peer gets more than its
-//! share of them, and the sender with the fewest running goes next, so one member's message cannot
-//! starve another's. A blob's bytes count only while its read runs.
+//! Which blobs to ask which peer for next. Reads run a few batched streams at a time: no peer gets
+//! more than its share of them, and the sender with the fewest running goes next, so one member's
+//! message cannot starve another's. A batch's bytes count only while its read runs.
 
-use crate::NetworkError;
+use crate::{
+    blob_codec::{MAX_BATCH_BLOBS, MAX_BATCH_BYTES},
+    NetworkError,
+};
 use alloy_primitives::{Address, B256};
 use e3_protocol::{
     node::{PeerMessage, MAX_MESSAGE_BLOBS},
@@ -34,12 +37,12 @@ const MAX_MESSAGE_BYTES: u64 = 512 * 1024 * 1024;
 /// A fetch that long in the queue ends, and the sender's re-send starts another.
 const LONGEST_FETCH: Duration = Duration::from_secs(10 * 60);
 
-/// One read to start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One batched read to start against a single peer.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Read<P> {
     pub(crate) ticket: u64,
     pub(crate) e3: E3Id,
-    pub(crate) hash: B256,
+    pub(crate) blobs: Vec<BlobRef>,
     pub(crate) peer: P,
 }
 
@@ -66,7 +69,8 @@ struct Fetch<P> {
 struct Ticket<P> {
     fetch: u64,
     sender: Address,
-    blob: BlobRef,
+    blobs: Vec<BlobRef>,
+    bytes: u64,
     peer_index: usize,
     peer: P,
 }
@@ -143,7 +147,8 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
         );
     }
 
-    /// The reads to start now. Each is running until `stored` or `failed` names its ticket.
+    /// The batched reads to start now. Each is running until `batch_done`, `failed`, or `abort`
+    /// names its ticket.
     pub(crate) fn next_reads(&mut self) -> Vec<Read<P>> {
         let mut reads = Vec::new();
         while self.tickets.len() < MAX_ACTIVE {
@@ -151,18 +156,39 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
                 break;
             };
             let state = self.fetches.get_mut(&fetch).expect("just chosen");
-            let (blob, peer_index) = state.waiting.pop_front().expect("it has a waiting blob");
+            let (first_blob, peer_index) =
+                state.waiting.pop_front().expect("it has a waiting blob");
             let peer = state.peers[peer_index];
             let (e3, sender) = (state.e3, state.sender);
+            let mut batch = vec![first_blob];
+            let mut batch_bytes = first_blob.len;
+            while batch.len() < MAX_BATCH_BLOBS {
+                let Some(&(next_blob, next_peer_index)) = state.waiting.front() else {
+                    break;
+                };
+                if next_peer_index != peer_index {
+                    break;
+                }
+                let next_batch_bytes = batch_bytes.saturating_add(next_blob.len);
+                if next_batch_bytes > MAX_BATCH_BYTES
+                    || self.active_bytes.saturating_add(next_batch_bytes) > MAX_ACTIVE_BYTES
+                {
+                    break;
+                }
+                state.waiting.pop_front();
+                batch.push(next_blob);
+                batch_bytes = next_batch_bytes;
+            }
             let ticket = self.next_ticket;
             self.next_ticket += 1;
-            self.active_bytes += blob.len;
+            self.active_bytes += batch_bytes;
             *self.per_peer.entry(peer).or_default() += 1;
             *self.per_sender.entry(sender).or_default() += 1;
             let running = Ticket {
                 fetch,
                 sender,
-                blob,
+                blobs: batch.clone(),
+                bytes: batch_bytes,
                 peer_index,
                 peer,
             };
@@ -170,7 +196,7 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
             reads.push(Read {
                 ticket,
                 e3,
-                hash: blob.hash,
+                blobs: batch,
                 peer,
             });
         }
@@ -196,15 +222,15 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
             .map(|(number, _)| *number)
     }
 
-    /// The blob a running read asks for, while its fetch is on its way.
-    pub(crate) fn expected(&self, ticket: u64) -> Option<(E3Id, BlobRef)> {
+    /// The blobs a running batched read asks for, while its fetch is on its way.
+    pub(crate) fn expected(&self, ticket: u64) -> Option<(E3Id, Vec<BlobRef>)> {
         let running = self.tickets.get(&ticket)?;
-        Some((self.fetches.get(&running.fetch)?.e3, running.blob))
+        Some((self.fetches.get(&running.fetch)?.e3, running.blobs.clone()))
     }
 
     fn release(&mut self, ticket: u64) -> Option<Ticket<P>> {
         let running = self.tickets.remove(&ticket)?;
-        self.active_bytes -= running.blob.len;
+        self.active_bytes -= running.bytes;
         if let Some(count) = self.per_peer.get_mut(&running.peer) {
             *count -= 1;
             if *count == 0 {
@@ -220,21 +246,44 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
         Some(running)
     }
 
-    /// The read's blob is in the store.
-    pub(crate) fn stored(&mut self, ticket: u64) {
+    /// Finishes a batched read: `kept` blobs were stored, and each blob in `retry` must be
+    /// requested from the next peer (or ends the fetch if no peer remains).
+    pub(crate) fn batch_done(&mut self, ticket: u64, kept: usize, retry: Vec<BlobRef>) {
         let Some(running) = self.release(ticket) else {
             return;
         };
         let Some(fetch) = self.fetches.get_mut(&running.fetch) else {
             return;
         };
-        fetch.outstanding -= 1;
+        fetch.outstanding = fetch.outstanding.saturating_sub(kept);
+        if !retry.is_empty() {
+            let next = running.peer_index + 1;
+            if next < fetch.peers.len() {
+                for blob in retry.into_iter().rev() {
+                    fetch.waiting.push_front((blob, next));
+                }
+            } else {
+                self.finish(running.fetch, Err(NetworkError::Unavailable));
+                return;
+            }
+        }
         if fetch.outstanding == 0 {
             self.finish(running.fetch, Ok(()));
         }
     }
 
-    /// The read's peer could not give the blob: the next one gets its turn, or the fetch ends.
+    /// Every blob in the read's batch was stored.
+    #[cfg(test)]
+    pub(crate) fn stored(&mut self, ticket: u64) {
+        let count = self
+            .tickets
+            .get(&ticket)
+            .map_or(0, |running| running.blobs.len());
+        self.batch_done(ticket, count, Vec::new());
+    }
+
+    /// The read's peer could not give any blob in the batch: the next peer gets its turn, or the
+    /// fetch ends.
     pub(crate) fn failed(&mut self, ticket: u64) {
         let Some(running) = self.release(ticket) else {
             return;
@@ -244,7 +293,9 @@ impl<P: Copy + Eq + Hash> Fetcher<P> {
         };
         let next = running.peer_index + 1;
         if next < fetch.peers.len() {
-            fetch.waiting.push_front((running.blob, next));
+            for blob in running.blobs.into_iter().rev() {
+                fetch.waiting.push_front((blob, next));
+            }
         } else {
             self.finish(running.fetch, Err(NetworkError::Unavailable));
         }
@@ -372,6 +423,16 @@ mod tests {
     }
 
     #[test]
+    fn multiple_blobs_for_same_peer_are_batched_into_one_read() {
+        let mut fetcher = Fetcher::default();
+        add(&mut fetcher, 1, 1, blobs(0, 8), vec![5]);
+        let reads = fetcher.next_reads();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].blobs.len(), 8);
+        assert_eq!(reads[0].peer, 5);
+    }
+
+    #[test]
     fn bytes_count_only_while_a_read_runs() {
         let mut fetcher: Fetcher<u8> = Fetcher::default();
         let big = MAX_ACTIVE_BYTES / 2 + 1;
@@ -436,7 +497,7 @@ mod tests {
             Err(NetworkError::Unavailable)
         ));
         fetcher.stored(reads[0].ticket);
-        add(&mut fetcher, 2, 2, blobs(10, 8), vec![1, 2, 3, 4]);
+        add(&mut fetcher, 2, 2, blobs(10, 20), vec![1, 2, 3, 4]);
         assert_eq!(fetcher.next_reads().len(), MAX_ACTIVE_PER_PEER);
     }
 
