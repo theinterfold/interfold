@@ -3117,8 +3117,9 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(replicas.owned_by(&dealer), 160);
-        assert_eq!(store.records().count(), 160);
+        let all = crate::ingress_limits::REPLICAS_PER_PEER;
+        assert_eq!(replicas.owned_by(&dealer), all);
+        assert_eq!(store.records().count(), all);
     }
 
     /// The store holds a document of exactly the largest size, and refuses one byte more.
