@@ -8,6 +8,8 @@ use e3_committee_hash::decryption_domain_limbs;
 pub(super) struct Publication {
     ready: bool,
     output: Option<(B256, [u8; 32])>,
+    // Only populated after opening the exact confirmed bytes. Retiring the publication drops it.
+    plan: Arc<std::sync::OnceLock<SynchronizedDecryptionPlan>>,
 }
 
 /// Read-only Minimum C6 definition derived from confirmed facts. Never deserialize a plan
@@ -129,30 +131,30 @@ impl CanonicalPublicKeys {
         let [bytes] = ciphertexts else {
             anyhow::bail!("expected exactly one synchronized ciphertext")
         };
-        let (key, output) = {
+        let (key, (hash, commitment), cached) = {
             let keys = self.0.read().expect("canonical key lock");
             let Some(key) = keys.authority.get(id) else {
                 return Ok(None);
             };
             ensure!(key.params_profile == profile, "request profile mismatch");
-            let Some(output) = keys
-                .synchronized_outputs
-                .get(id)
-                .filter(|p| p.ready)
-                .and_then(|p| p.output)
-            else {
+            let Some(publication) = keys.synchronized_outputs.get(id).filter(|p| p.ready) else {
                 return Ok(None);
             };
-            (key.clone(), output)
+            let Some(output) = publication.output else {
+                return Ok(None);
+            };
+            (key.clone(), output, publication.plan.clone())
         };
         let CanonicalDkgAnchors::Synchronized(a) = &key.dkg_anchors else {
             anyhow::bail!("expected synchronized DKG authority")
         };
-        let (hash, commitment) = output;
         ensure!(
             keccak256(&bytes[..]) == hash,
             "ciphertext differs from confirmed publication"
         );
+        if let Some(plan) = cached.get() {
+            return Ok(Some(plan.clone()));
+        }
         let params = BfvParamSet::from(profile.threshold_preset()).build_arc();
         let c0_commitment =
             e3_bfv_client::client::validate_synchronized_ciphertext(bytes, &params, commitment)?;
@@ -162,16 +164,20 @@ impl CanonicalPublicKeys {
             key.domain(key.interfold_address),
             hash,
         );
-        Ok(Some(SynchronizedDecryptionPlan {
-            e3_id: id.clone(),
-            profile,
-            committee: key.committee_size,
-            authority: a.clone(),
-            owners: key.honest_committee,
-            ciphertext_hash: hash,
-            ciphertext_commitment: commitment,
-            c0_commitment,
-            domain: [domain.hi, domain.lo],
-        }))
+        Ok(Some(
+            cached
+                .get_or_init(|| SynchronizedDecryptionPlan {
+                    e3_id: id.clone(),
+                    profile,
+                    committee: key.committee_size,
+                    authority: a.clone(),
+                    owners: key.honest_committee,
+                    ciphertext_hash: hash,
+                    ciphertext_commitment: commitment,
+                    c0_commitment,
+                    domain: [domain.hi, domain.lo],
+                })
+                .clone(),
+        ))
     }
 }
