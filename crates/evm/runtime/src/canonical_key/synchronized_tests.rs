@@ -21,6 +21,47 @@ struct Fixture {
 }
 
 #[test]
+fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_peer_e3() -> Result<()>
+{
+    let f = Fixture::new()?;
+    let id = &f.request.e3_id;
+    let (keys, mut projection) = f.projection();
+    let candidate = |seq| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            e3_events::DecryptionshareCreated {
+                e3_id: id.clone(),
+                party_id: 2,
+                node: String::new(),
+                decryption_share: vec![],
+                signed_decryption_proofs: vec![],
+            }
+            .into(),
+            None,
+            seq as u128,
+            None,
+            EventSource::Net,
+        )
+        .into_sequenced(seq)
+    };
+    projection.observe(&candidate(20))?;
+    assert!(keys.synchronized_candidates(id).is_none());
+    projection.observe(
+        &InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            f.request.clone().into(),
+            None,
+            22,
+            Some(1),
+            EventSource::Evm,
+        )
+        .into_sequenced(22),
+    )?;
+    projection.observe(&candidate(45))?;
+    assert_eq!(keys.synchronized_candidates(id), Some((20, 45)));
+    assert!(keys.get(id).is_none());
+    Ok(())
+}
+
+#[test]
 fn synchronized_contribution_requires_confirmed_phase_and_both_ciphertext_bindings() -> Result<()> {
     let f = Fixture::new()?;
     let id = &f.request.e3_id;

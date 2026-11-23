@@ -168,7 +168,12 @@ impl CanonicalKeyProjection {
         match event.get_data() {
             InterfoldEventData::DecryptionshareCreated(share) => {
                 let id = &share.e3_id;
-                if self.synchronized_request(id) || self.hydrating_contexts.contains(id) {
+                if event.aggregate_id() != AggregateId::from_chain_id(Some(id.chain_id())) {
+                    return Ok(());
+                }
+                if self.synchronized_request(id)
+                    || (!self.requests.contains_key(id) && self.hydrating_contexts.contains(id))
+                {
                     self.keys.note_synchronized_candidate(id, event.seq());
                 } else if !self.requests.contains_key(id)
                     && self.interfold_addresses.contains_key(&id.chain_id())

@@ -365,14 +365,17 @@ impl ThresholdPlaintextAggregatorExtension {
     }
 
     fn start_synchronized(&self, ctx: &mut E3Context) {
-        if ctx.get_event_recipient("plaintext").is_some()
-            || ctx.get_event_recipient("threshold_keyshare").is_none()
-        {
-            return;
-        }
-        if !ctx
+        if ctx
             .get_dependency(META_KEY)
             .is_some_and(|m| m.params_profile.admission_enabled())
+        {
+            self.attach_synchronized_recipient(ctx);
+        }
+    }
+
+    pub(crate) fn attach_synchronized_recipient(&self, ctx: &mut E3Context) {
+        if ctx.get_event_recipient("plaintext").is_some()
+            || ctx.get_event_recipient("threshold_keyshare").is_none()
         {
             return;
         }
