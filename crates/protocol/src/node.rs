@@ -11,7 +11,8 @@ pub use crate::e3::E3;
 
 use crate::{
     accusation::{
-        AccusationMessage, AccusationWork, AccusationWorkResult, Ballot, SignedVote, Slashing,
+        AccusationMessage, AccusationWork, AccusationWorkResult, Ballot, Fault, SignedVote,
+        Slashing,
     },
     decryption::{
         DecryptionMessage, DecryptionSignature, DecryptionWork, DecryptionWorkResult,
@@ -21,6 +22,7 @@ use crate::{
         AttestationContext, DkgFailure, DkgMessage, DkgSignature, DkgTiming, DkgWork,
         DkgWorkResult, KeyAnchor, KeyPublication,
     },
+    hold::{Ended, Hold},
     proof::{ProofType, ZkProof},
     registry::Registry,
     selection::{candidate_owners, candidates, Eligible},
@@ -29,15 +31,16 @@ use crate::{
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A failed E3 that may still see accusations keeps its work for this long after the failure,
 /// plus the chain's maximum vote validity: longer than the DKG and decryption windows in which
 /// peers can still accuse, plus five minutes for votes.
 const SLASHABLE_FAILURE_GRACE: UnixSecs = 24 * 60 * 60 + 5 * 60;
 
-/// How many ended E3s the node remembers, to drop late peer messages for them.
-const ENDED_MEMORY: usize = 1_024;
+/// Retention window for historical registry points once a chain's histories grow large.
+const REGISTRY_PRUNE_LAG: UnixSecs = 24 * 60 * 60;
+const REGISTRY_PRUNE_MIN_LEN: usize = 64;
 
 /// Where a chain fact sits in its chain's confirmed log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -286,16 +289,17 @@ pub enum Kind {
 impl Body {
     pub fn kind(&self) -> Kind {
         match self {
-            Body::Dkg(DkgMessage::EncryptionKey(_)) => Kind::EncryptionKey,
-            Body::Dkg(DkgMessage::Shares(_)) => Kind::Shares,
-            Body::Dkg(DkgMessage::Ready(_)) => Kind::Ready,
-            Body::Dkg(DkgMessage::Roster(_)) => Kind::Roster,
-            Body::Dkg(DkgMessage::DecryptionKey(_)) => Kind::DecryptionKey,
-            Body::Dkg(DkgMessage::Keyshare(_)) => Kind::Keyshare,
-            Body::Dkg(DkgMessage::NodeFold(_)) => Kind::NodeFold,
-            Body::Decryption(DecryptionMessage::Shares(_)) => Kind::DecryptionShares,
-            Body::Accusation(AccusationMessage::Accuse { .. }) => Kind::Accusation,
-            Body::Accusation(AccusationMessage::Vote(_)) => Kind::Vote,
+            Body::Dkg(message) => message.kind(),
+            Body::Decryption(message) => message.kind(),
+            Body::Accusation(message) => message.kind(),
+        }
+    }
+
+    /// Direct recipient for pairwise messages (such as DKG shares), or `None` for broadcasts.
+    pub fn recipient(&self) -> Option<Address> {
+        match self {
+            Body::Dkg(message) => message.recipient(),
+            Body::Decryption(_) | Body::Accusation(_) => None,
         }
     }
 }
@@ -305,12 +309,14 @@ impl Body {
 pub const MAX_MESSAGE_BLOBS: usize = 128;
 
 impl PeerMessage {
+    /// Direct recipient for pairwise messages, or `None` for committee broadcasts.
+    pub fn recipient(&self) -> Option<Address> {
+        self.body.recipient()
+    }
+
     /// Whether `node` uses this message: a share message only reaches its recipient's DKG.
     pub fn is_for(&self, node: Address) -> bool {
-        match &self.body {
-            Body::Dkg(DkgMessage::Shares(shares)) => shares.recipient == node,
-            _ => true,
-        }
+        self.recipient().is_none_or(|target| target == node)
     }
 
     /// The blobs a node that uses this message needs in its store.
@@ -322,17 +328,33 @@ impl PeerMessage {
         }
     }
 
+    /// Number of blobs named by this message without allocating a `Vec`.
+    pub(crate) fn blob_count(&self) -> usize {
+        match &self.body {
+            Body::Dkg(message) => message.blob_count(),
+            Body::Decryption(message) => message.blob_count(),
+            Body::Accusation(message) => message.blob_count(),
+        }
+    }
+
+    /// Total byte length of blobs named by this message without allocating a `Vec`.
+    pub(crate) fn blob_bytes(&self) -> u64 {
+        match &self.body {
+            Body::Dkg(message) => message.blob_bytes(),
+            Body::Decryption(message) => message.blob_bytes(),
+            Body::Accusation(message) => message.blob_bytes(),
+        }
+    }
+
     /// The same for every copy and re-send of the message.
     pub fn id(&self) -> B256 {
         keccak256(bincode::serialize(self).expect("a peer message encodes"))
     }
 
     /// Its encoded bytes and the bytes of the blobs it would bring.
-    fn size(&self) -> u64 {
+    pub(crate) fn size(&self) -> u64 {
         let encoded = bincode::serialized_size(self).unwrap_or(u64::MAX);
-        self.blobs()
-            .iter()
-            .fold(encoded, |size, blob| size.saturating_add(blob.len))
+        encoded.saturating_add(self.blob_bytes())
     }
 }
 
@@ -356,50 +378,28 @@ impl Work {
     /// Whether the job makes proofs, which can hold the machine for hours. The checks that a
     /// deadline waits on must not queue behind them.
     pub fn proves(&self) -> bool {
-        matches!(
-            self,
-            Work::Dkg(
-                DkgWork::MakeEncryptionKey
-                    | DkgWork::MakeShares { .. }
-                    | DkgWork::MakeDecryptionKey { .. }
-                    | DkgWork::FoldProofs { .. }
-                    | DkgWork::FoldRoster { .. }
-                    | DkgWork::AggregateKey { .. }
-            ) | Work::Decryption(
-                DecryptionWork::MakeShares { .. } | DecryptionWork::AggregatePlaintext { .. }
-            )
-        )
+        match self {
+            Work::Dkg(work) => work.proves(),
+            Work::Decryption(work) => work.proves(),
+            Work::Accusation(_) => false,
+        }
     }
 
     /// Whether the job checks a proof a member signed, which can end in an accusation.
     fn checks_a_member(&self) -> bool {
-        matches!(
-            self,
-            Work::Dkg(
-                DkgWork::CheckEncryptionKey { .. }
-                    | DkgWork::CheckShares { .. }
-                    | DkgWork::CheckDecryptionKey { .. }
-                    | DkgWork::CheckKeyshare { .. }
-            ) | Work::Decryption(DecryptionWork::CheckShares { .. })
-                | Work::Accusation(_)
-        )
+        match self {
+            Work::Dkg(work) => work.checks_a_member(),
+            Work::Decryption(work) => work.checks_a_member(),
+            Work::Accusation(_) => true,
+        }
     }
 
     /// The kind of work, for logs.
     pub fn name(&self) -> &'static str {
         match self {
-            Work::Dkg(DkgWork::MakeEncryptionKey) => "dkg: make the encryption key",
-            Work::Dkg(DkgWork::CheckEncryptionKey { .. }) => "dkg: check an encryption key",
-            Work::Dkg(DkgWork::MakeShares { .. }) => "dkg: deal shares",
-            Work::Dkg(DkgWork::CheckShares { .. }) => "dkg: check a dealer's shares",
-            Work::Dkg(DkgWork::MakeDecryptionKey { .. }) => "dkg: make the decryption key",
-            Work::Dkg(DkgWork::CheckDecryptionKey { .. }) => "dkg: check a decryption key",
-            Work::Dkg(DkgWork::FoldProofs { .. }) => "dkg: fold this node's proofs",
-            Work::Dkg(DkgWork::CheckKeyshare { .. }) => "dkg: check a keyshare",
-            Work::Dkg(DkgWork::FoldRoster { .. }) => "dkg: fold a roster member's proof",
-            Work::Dkg(DkgWork::AggregateKey { .. }) => "dkg: aggregate the committee key",
-            Work::Decryption(_) => "decryption",
-            Work::Accusation(_) => "accusation: verify a proof",
+            Work::Dkg(work) => work.name(),
+            Work::Decryption(work) => work.name(),
+            Work::Accusation(work) => work.name(),
         }
     }
 }
@@ -420,16 +420,20 @@ pub enum WorkResult {
 impl WorkResult {
     /// Whether this answers a job for which [`Work::checks_a_member`] holds.
     pub(crate) fn answers_a_check(&self) -> bool {
-        matches!(
-            self,
-            Self::Dkg(
-                DkgWorkResult::EncryptionKeyChecked { .. }
-                    | DkgWorkResult::SharesChecked { .. }
-                    | DkgWorkResult::DecryptionKeyChecked { .. }
-                    | DkgWorkResult::KeyshareChecked { .. }
-            ) | Self::Decryption(DecryptionWorkResult::SharesChecked { .. })
-                | Self::Accusation(_)
-        )
+        match self {
+            Self::Dkg(result) => result.answers_a_check(),
+            Self::Decryption(result) => result.answers_a_check(),
+            Self::Accusation(_) => true,
+        }
+    }
+
+    /// The member and failing proof that a check found, if any.
+    pub(crate) fn fault(&self) -> Option<(Address, Fault)> {
+        match self {
+            Self::Dkg(result) => result.fault(),
+            Self::Decryption(result) => result.fault(),
+            Self::Accusation(_) => None,
+        }
     }
 }
 
@@ -746,14 +750,14 @@ pub struct Admission {
     pub committees: BTreeMap<E3Id, BTreeSet<Address>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize)]
 pub struct Node {
     me: Address,
     e3s: BTreeMap<E3Id, E3>,
     /// Each chain's operator registry over time.
     registries: BTreeMap<u64, Registry>,
     held: Hold,
-    ended: VecDeque<E3Id>,
+    ended: Ended,
     applied: BTreeMap<u64, LogPosition>,
     vote_validity: BTreeMap<u64, u64>,
     /// Each chain's randomness providers and slashing managers, so the chain adapter reads their
@@ -764,6 +768,25 @@ pub struct Node {
     slashing: BTreeMap<u64, Address>,
     /// The node takes no new E3: it submits no ticket, and the E3s it holds go on to their end.
     draining: bool,
+    /// Monotonic counter bumped whenever [`Self::admission`] may have changed; not persisted.
+    #[serde(skip)]
+    admission_epoch: u64,
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.me == other.me
+            && self.e3s == other.e3s
+            && self.registries == other.registries
+            && self.held == other.held
+            && self.ended == other.ended
+            && self.applied == other.applied
+            && self.vote_validity == other.vote_validity
+            && self.providers == other.providers
+            && self.managers == other.managers
+            && self.slashing == other.slashing
+            && self.draining == other.draining
+    }
 }
 
 impl Node {
@@ -773,14 +796,25 @@ impl Node {
             e3s: BTreeMap::new(),
             registries: BTreeMap::new(),
             held: Hold::default(),
-            ended: VecDeque::new(),
+            ended: Ended::default(),
             applied: BTreeMap::new(),
             vote_validity: BTreeMap::new(),
             providers: BTreeMap::new(),
             managers: BTreeMap::new(),
             slashing: BTreeMap::new(),
             draining: false,
+            admission_epoch: 0,
         }
+    }
+
+    /// Monotonic revision of [`Self::admission`]; callers can skip rebuilding and publishing
+    /// admission updates while this value is unchanged.
+    pub fn admission_epoch(&self) -> u64 {
+        self.admission_epoch
+    }
+
+    fn touch_admission(&mut self) {
+        self.admission_epoch = self.admission_epoch.wrapping_add(1);
     }
 
     pub fn randomness_providers(&self, chain_id: u64) -> impl Iterator<Item = &Address> {
@@ -859,6 +893,11 @@ impl Node {
         })
     }
 
+    /// Whether this node might still run `FoldProofs` for `e3`.
+    pub fn might_fold(&self, e3: &E3Id) -> bool {
+        self.e3s.get(e3).is_some_and(E3::dkg_might_fold)
+    }
+
     /// The position of the last fact this node applied from chain `chain_id`.
     pub fn applied(&self, chain_id: u64) -> Option<LogPosition> {
         self.applied.get(&chain_id).copied()
@@ -927,14 +966,17 @@ impl Node {
             ChainFact::SeedReady { e3, seed } => self.select(now, e3, seed),
             ChainFact::OperatorActive { operator, active } => {
                 registry.set_active(time, operator, active);
+                self.touch_admission();
                 self.select_again_if_me(now, operator)
             }
             ChainFact::TicketBalance { operator, balance } => {
                 registry.set_balance(time, operator, balance);
+                self.touch_admission();
                 Vec::new()
             }
             ChainFact::BondOwner { operator, owner } => {
                 registry.set_owner(time, operator, owner);
+                self.touch_admission();
                 Vec::new()
             }
             ChainFact::EligibilityReset => {
@@ -943,6 +985,7 @@ impl Node {
             }
             ChainFact::OperatorEnabled { operator, enabled } => {
                 registry.set_enabled(operator, enabled);
+                self.touch_admission();
                 self.select_again_if_me(now, operator)
             }
             ChainFact::CommitteeFinalized {
@@ -960,6 +1003,7 @@ impl Node {
                     return Vec::new();
                 };
                 let mut effects = state.finalize(now, members, dkg);
+                self.touch_admission();
                 effects.extend(self.release_held(now, e3));
                 effects
             }
@@ -1025,7 +1069,11 @@ impl Node {
                 Vec::new()
             }
             ChainFact::MemberExpelled { e3, member } => match self.e3s.get_mut(&e3) {
-                Some(state) => state.expel(now, member),
+                Some(state) => {
+                    let effects = state.expel(now, member);
+                    self.touch_admission();
+                    effects
+                }
                 None => Vec::new(),
             },
             ChainFact::VoteValidity { secs } => {
@@ -1133,14 +1181,17 @@ impl Node {
         if let Some(confirmed) = confirmed {
             eligible.retain(|operator| confirmed.contains(&operator.operator));
         }
-        let owner_cap = request.owner_cap && confirmed.is_some();
-        let committee = state.params.committee_size.values();
-        let owners = candidate_owners(committee.n, committee.threshold);
-        let ranked = candidates(e3, seed, &eligible, owner_cap, owners);
         let tickets = eligible
             .iter()
             .find(|operator| operator.operator == self.me)
             .map_or(0, |operator| operator.tickets);
+        if tickets == 0 || active_jobs >= tickets {
+            return Vec::new();
+        }
+        let owner_cap = request.owner_cap && confirmed.is_some();
+        let committee = state.params.committee_size.values();
+        let owners = candidate_owners(committee.n, committee.threshold);
+        let ranked = candidates(e3, seed, &eligible, owner_cap, owners);
         let Some((rank, mine)) = ranked
             .iter()
             .enumerate()
@@ -1148,9 +1199,6 @@ impl Node {
         else {
             return Vec::new();
         };
-        if active_jobs >= tickets {
-            return Vec::new();
-        }
         let ticket = mine.ticket;
         match self.e3s.get_mut(&e3) {
             Some(state) => state.submit_ticket(ticket, rank, committee_deadline),
@@ -1159,13 +1207,27 @@ impl Node {
     }
 
     fn end(&mut self, e3: E3Id) {
-        if self.e3s.remove(&e3).is_none() {
+        let Some(removed) = self.e3s.remove(&e3) else {
             return;
+        };
+        if !removed.committee().is_empty() {
+            self.touch_admission();
         }
         self.held.take(&e3);
-        self.ended.push_back(e3);
-        if self.ended.len() > ENDED_MEMORY {
-            self.ended.pop_front();
+        self.ended.record(e3);
+        // Bound registry history growth once E3s complete, keeping all timestamps still needed by
+        // any open request on this chain.
+        if let Some(cutoff) = self
+            .e3s
+            .iter()
+            .filter(|(id, state)| id.chain_id == e3.chain_id && state.stage == Stage::Requested)
+            .map(|(_, state)| state.request.time.saturating_sub(1))
+            .min()
+            .or_else(|| removed.request.time.checked_sub(REGISTRY_PRUNE_LAG))
+        {
+            if let Some(registry) = self.registries.get_mut(&e3.chain_id) {
+                registry.prune_before(cutoff, REGISTRY_PRUNE_MIN_LEN);
+            }
         }
     }
 
@@ -1177,7 +1239,7 @@ impl Node {
     pub fn classify(&self, now: UnixSecs, message: &PeerMessage) -> Classified {
         if self.ended.contains(&message.e3)
             || !message.is_for(self.me)
-            || message.blobs().len() > MAX_MESSAGE_BLOBS
+            || message.blob_count() > MAX_MESSAGE_BLOBS
         {
             return Classified::Drop;
         }
@@ -1199,7 +1261,7 @@ impl Node {
             Classified::Deliver => self
                 .e3s
                 .get_mut(&message.e3)
-                .map_or_else(Vec::new, |state| state.receive(now, message)),
+                .map_or_else(Vec::new, |state| state.receive(now, message, true)),
             Classified::Fetch => self
                 .e3s
                 .get_mut(&message.e3)
@@ -1212,7 +1274,7 @@ impl Node {
             return Vec::new();
         }
         match self.e3s.get_mut(&message.e3) {
-            Some(state) if state.routes(&message.body) => state.receive(now, message),
+            Some(state) if state.routes(&message.body) => state.receive(now, message, false),
             _ => Vec::new(),
         }
     }
@@ -1353,99 +1415,20 @@ impl Machine for Node {
         let e3s = self.e3s.values().filter_map(E3::next_deadline);
         e3s.chain(self.held.next_deadline()).min()
     }
-}
 
-/// Peer messages that wait for a chain fact, in arrival order. A message that would pass its
-/// sender's, its E3's, or the node's share is refused, so no sender can push out another's: the
-/// sender's re-send brings it again. A message that waits too long goes, so stale ones cannot
-/// hold the room.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct Hold {
-    messages: VecDeque<Held>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Held {
-    message: PeerMessage,
-    expires: UnixSecs,
-}
-
-const HOLD_FOR: UnixSecs = 10 * 60;
-const HOLD_PER_SENDER_MESSAGES: usize = 64;
-const HOLD_PER_SENDER_BYTES: u64 = 128 * 1024 * 1024;
-const HOLD_PER_E3_MESSAGES: usize = 512;
-const HOLD_PER_E3_BYTES: u64 = 128 * 1024 * 1024;
-const HOLD_TOTAL_MESSAGES: usize = 1_024;
-const HOLD_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
-
-impl Hold {
-    /// Whether a copy of `message` waits here already: its re-sends cost nothing.
-    fn holds(&self, message: &PeerMessage) -> bool {
-        self.messages.iter().any(|held| held.message == *message)
-    }
-
-    /// Whether every share `message` would count against has room for it.
-    fn has_room(&self, message: &PeerMessage) -> bool {
-        let size = message.size();
-        let sender = self.usage(|held| held.sender == message.sender);
-        let e3 = self.usage(|held| held.e3 == message.e3);
-        let total = self.usage(|_| true);
-        sender.fits(HOLD_PER_SENDER_MESSAGES, HOLD_PER_SENDER_BYTES, size)
-            && e3.fits(HOLD_PER_E3_MESSAGES, HOLD_PER_E3_BYTES, size)
-            && total.fits(HOLD_TOTAL_MESSAGES, HOLD_TOTAL_BYTES, size)
-    }
-
-    fn hold(&mut self, now: UnixSecs, message: PeerMessage) {
-        self.messages.push_back(Held {
-            message,
-            expires: now.saturating_add(HOLD_FOR),
-        });
-    }
-
-    fn take(&mut self, e3: &E3Id) -> Vec<PeerMessage> {
-        let (taken, kept): (VecDeque<_>, VecDeque<_>) = self
-            .messages
-            .drain(..)
-            .partition(|held| &held.message.e3 == e3);
-        self.messages = kept;
-        taken.into_iter().map(|held| held.message).collect()
-    }
-
-    fn pass_deadlines(&mut self, now: UnixSecs) {
-        self.messages.retain(|held| now < held.expires);
-    }
-
-    fn next_deadline(&self) -> Option<UnixSecs> {
-        self.messages.iter().map(|held| held.expires).min()
-    }
-
-    fn usage(&self, counts: impl Fn(&PeerMessage) -> bool) -> Usage {
-        self.messages
-            .iter()
-            .filter(|held| counts(&held.message))
-            .fold(Usage::default(), |usage, held| Usage {
-                messages: usage.messages + 1,
-                bytes: usage.bytes + held.message.size(),
-            })
-    }
-}
-
-#[derive(Default)]
-struct Usage {
-    messages: usize,
-    bytes: u64,
-}
-
-impl Usage {
-    fn fits(&self, max_messages: usize, max_bytes: u64, incoming: u64) -> bool {
-        self.messages < max_messages && self.bytes.saturating_add(incoming) <= max_bytes
+    fn is_durable_effect(effect: &Effect) -> bool {
+        !matches!(effect, Effect::Note(_))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{dkg::DkgProofs, testing::*};
+    use crate::{
+        dkg::DkgProofs,
+        hold::{HOLD_FOR, HOLD_PER_SENDER_MESSAGES},
+        testing::*,
+    };
 
     fn node() -> Node {
         Node::new(address(ME))

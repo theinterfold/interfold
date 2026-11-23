@@ -7,7 +7,7 @@
 //! The v2 node's durable store: the journal, the latest snapshot, and the outbox in one redb file.
 //! Every commit is one fsynced redb transaction.
 
-use e3_engine::{EffectKey, Step, Store, StoreError, Stored};
+use e3_engine::{BatchCommit, EffectKey, Step, Store, StoreError, Stored};
 use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction,
 };
@@ -82,6 +82,38 @@ impl Journal {
         txn.commit()?;
         Ok(())
     }
+
+    fn commit_batch_tx(&self, batch: BatchCommit) -> Result<(), redb::Error> {
+        if batch.steps.is_empty() && batch.acks.is_empty() && batch.snapshot.is_none() {
+            return Ok(());
+        }
+        let snapshot_seq = batch.snapshot.as_ref().map(|(seq, _)| *seq);
+        let txn = self.db.begin_write()?;
+        {
+            let mut journal = txn.open_table(JOURNAL)?;
+            let mut outbox = txn.open_table(OUTBOX)?;
+            for step in &batch.steps {
+                // Skip writing journal entries already subsumed by this batch's snapshot.
+                if snapshot_seq.is_none_or(|snap| step.seq > snap) {
+                    journal.insert(step.seq, step.entry.as_slice())?;
+                }
+                for (key, bytes) in &step.effects {
+                    outbox.insert((key.seq, key.index), bytes.as_slice())?;
+                }
+                if let Some(key) = step.answers {
+                    outbox.remove((key.seq, key.index))?;
+                }
+            }
+            for key in &batch.acks {
+                outbox.remove((key.seq, key.index))?;
+            }
+        }
+        if let Some((seq, snapshot)) = &batch.snapshot {
+            keep_snapshot(&txn, *seq, snapshot)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
 }
 
 /// Keeps `snapshot`, the state after step `seq`, as the only one. It holds every step up to it, so
@@ -140,6 +172,10 @@ impl Store for Journal {
 
     fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError> {
         self.checkpoint_at(seq, &snapshot).map_err(store_error)
+    }
+
+    fn commit_batch(&mut self, batch: BatchCommit) -> Result<(), StoreError> {
+        self.commit_batch_tx(batch).map_err(store_error)
     }
 }
 
@@ -255,5 +291,40 @@ mod tests {
             .map(|entry| entry.unwrap().0.value())
             .collect();
         assert_eq!(kept, [4, 5]);
+    }
+
+    #[test]
+    fn commit_batch_persists_steps_acks_and_prunes_covered_journal_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.redb");
+        let mut journal = Journal::open(&path).unwrap();
+        journal
+            .commit_batch(BatchCommit {
+                steps: vec![
+                    Step {
+                        seq: 1,
+                        entry: b"a".to_vec(),
+                        effects: vec![(key(1, 0), b"e1".to_vec())],
+                        snapshot: None,
+                        answers: None,
+                    },
+                    Step {
+                        seq: 2,
+                        entry: b"b".to_vec(),
+                        effects: vec![(key(2, 0), b"e2".to_vec())],
+                        snapshot: None,
+                        answers: None,
+                    },
+                ],
+                acks: vec![key(1, 0)],
+                snapshot: Some((2, b"snap2".to_vec())),
+            })
+            .unwrap();
+        drop(journal);
+
+        let stored = Journal::open(&path).unwrap().read().unwrap();
+        assert_eq!(stored.snapshot, Some((2, b"snap2".to_vec())));
+        assert!(stored.journal.is_empty());
+        assert_eq!(stored.outbox, vec![(key(2, 0), b"e2".to_vec())]);
     }
 }

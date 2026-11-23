@@ -8,9 +8,9 @@
 //! from the key's publication.
 
 use crate::{
-    accusation::{Accusations, Fault, Slashing, Verdict},
-    decryption::{Decryption, DecryptionWorkResult, Handover, PublishedKey},
-    dkg::{AttestationContext, Dkg, DkgTiming, DkgWorkResult, KeyAnchor},
+    accusation::{Accusations, Fault, Slashing},
+    decryption::{Decryption, Handover, PublishedKey},
+    dkg::{AttestationContext, Dkg, DkgTiming, KeyAnchor},
     node::{
         BlobFetch, Body, Classified, CommitteeRequest, CommitteeSeed, CryptoParams, DataRef,
         Effect, FetchFailed, Kind, Note, Noted, PeerMessage, Purpose, Stage, Submission,
@@ -568,13 +568,13 @@ impl E3 {
         if !self.admits(now, message) {
             return Classified::Drop;
         }
-        if message.blobs().is_empty() {
+        if message.blob_count() == 0 {
             return Classified::Deliver;
         }
         let slot = (message.sender, message.body.kind());
         match self.fetching.get(&slot) {
             None => Classified::Fetch,
-            Some(fetching) if fetching.id == message.id() && !fetching.running => Classified::Fetch,
+            Some(fetching) if !fetching.running && fetching.id == message.id() => Classified::Fetch,
             Some(_) => Classified::Drop,
         }
     }
@@ -608,22 +608,36 @@ impl E3 {
         }
     }
 
-    pub(crate) fn receive(&mut self, now: UnixSecs, message: PeerMessage) -> Vec<Effect> {
+    pub(crate) fn receive(
+        &mut self,
+        now: UnixSecs,
+        message: PeerMessage,
+        signatures_already_verified: bool,
+    ) -> Vec<Effect> {
         let slot = (message.sender, message.body.kind());
-        if self
-            .fetching
-            .get(&slot)
-            .is_some_and(|fetching| fetching.id == message.id())
-        {
-            self.fetching.remove(&slot);
-        }
+        let fetched_verified = if self.fetching.contains_key(&slot) {
+            let id = message.id();
+            if self
+                .fetching
+                .get(&slot)
+                .is_some_and(|fetching| fetching.id == id)
+            {
+                self.fetching.remove(&slot);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let verified = signatures_already_verified || fetched_verified;
         let mut effects = match message.body {
             Body::Dkg(body) => match self.dkg_mut() {
-                Some(dkg) => dkg.receive(now, message.sender, body),
+                Some(dkg) => dkg.receive(now, message.sender, body, verified),
                 None => Vec::new(),
             },
             Body::Decryption(body) => match self.decryption_mut() {
-                Some(decryption) => decryption.receive(now, message.sender, body),
+                Some(decryption) => decryption.receive(now, message.sender, body, verified),
                 None => Vec::new(),
             },
             Body::Accusation(body) => match &mut self.accusations {
@@ -639,7 +653,7 @@ impl E3 {
         if result.answers_a_check() {
             self.checks = self.checks.saturating_sub(1);
         }
-        let fault = fault_of(&result);
+        let fault = result.fault();
         let mut effects = match result {
             WorkResult::Dkg(result) => match self.dkg_mut() {
                 Some(dkg) => dkg.job_done(now, result),
@@ -713,10 +727,13 @@ impl E3 {
     /// A member that H members found sending a failing proof aggregates no phase of the E3, so it
     /// cannot hold a phase for its budget; the chain's expulsion follows the slash later.
     fn hand_over_from_convicted(&mut self, now: UnixSecs) -> Vec<Effect> {
-        let convicted: Vec<Address> = match &self.accusations {
-            Some(accusations) => accusations.convicted().iter().copied().collect(),
-            None => return Vec::new(),
+        let Some(accusations) = &self.accusations else {
+            return Vec::new();
         };
+        if accusations.convicted().is_empty() {
+            return Vec::new();
+        }
+        let convicted: Vec<Address> = accusations.convicted().iter().copied().collect();
         let mut effects = Vec::new();
         for member in convicted {
             if let Some(dkg) = self.dkg_mut() {
@@ -908,6 +925,11 @@ impl E3 {
         self.dkg.as_ref().is_some_and(Dkg::running)
     }
 
+    /// Whether this node's DKG might still run `FoldProofs`.
+    pub(crate) fn dkg_might_fold(&self) -> bool {
+        self.running() && self.dkg.as_ref().is_some_and(Dkg::might_fold)
+    }
+
     fn dkg_mut(&mut self) -> Option<&mut Dkg> {
         let running = self.running();
         self.dkg.as_mut().filter(|_| running)
@@ -916,25 +938,5 @@ impl E3 {
     fn decryption_mut(&mut self) -> Option<&mut Decryption> {
         let running = self.running();
         self.decryption.as_mut().filter(|_| running)
-    }
-}
-
-/// The member and the failing proof that a check found, if any.
-fn fault_of(result: &WorkResult) -> Option<(Address, Fault)> {
-    let (member, verdict) = match result {
-        WorkResult::Dkg(DkgWorkResult::EncryptionKeyChecked { sender, verdict }) => {
-            (sender, verdict)
-        }
-        WorkResult::Dkg(DkgWorkResult::SharesChecked { dealer, verdict }) => (dealer, verdict),
-        WorkResult::Dkg(DkgWorkResult::DecryptionKeyChecked { member, verdict })
-        | WorkResult::Dkg(DkgWorkResult::KeyshareChecked { member, verdict })
-        | WorkResult::Decryption(DecryptionWorkResult::SharesChecked { member, verdict }) => {
-            (member, verdict)
-        }
-        _ => return None,
-    };
-    match verdict {
-        Verdict::Fails(fault) => Some((*member, fault.clone())),
-        Verdict::Valid | Verdict::Invalid => None,
     }
 }

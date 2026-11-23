@@ -25,11 +25,15 @@ pub(super) struct Keys {
 }
 
 impl Dkg {
-    pub(super) fn admits_key(&self, sender: Address, message: &KeyMessage) -> bool {
+    pub(super) fn admits_key_state(&self, sender: Address) -> bool {
         self.collecting_keys()
             && sender != self.me
             && self.is_member(sender)
             && !self.keys.received.contains_key(&sender)
+    }
+
+    pub(super) fn admits_key(&self, sender: Address, message: &KeyMessage) -> bool {
+        self.admits_key_state(sender)
             && message
                 .proof
                 .is_signed_by(sender, self.e3, ProofType::C0PkBfv)

@@ -57,6 +57,18 @@ impl<T: Copy> History<T> {
     fn latest(&self) -> Option<T> {
         self.points.last().map(|(_, value)| *value)
     }
+
+    /// Drops history points older than `cutoff`, keeping the latest point at or before `cutoff`
+    /// so every lookup at `time >= cutoff` returns the exact same value.
+    fn prune_before(&mut self, cutoff: UnixSecs) {
+        let keep_from = self
+            .points
+            .partition_point(|(at, _)| *at <= cutoff)
+            .saturating_sub(1);
+        if keep_from > 0 {
+            self.points.drain(..keep_from);
+        }
+    }
 }
 
 impl Registry {
@@ -124,6 +136,22 @@ impl Registry {
     /// Every operator the registry's logs named.
     pub(crate) fn operators(&self) -> impl Iterator<Item = Address> + '_ {
         self.operators.keys().copied()
+    }
+
+    /// Drops historical points strictly superseded before `cutoff` across all operators once a
+    /// history grows past `min_len`, preserving exact `at(time)` answers for all `time >= cutoff`.
+    pub(crate) fn prune_before(&mut self, cutoff: UnixSecs, min_len: usize) {
+        for operator in self.operators.values_mut() {
+            if operator.active.points.len() > min_len {
+                operator.active.prune_before(cutoff);
+            }
+            if operator.balance.points.len() > min_len {
+                operator.balance.prune_before(cutoff);
+            }
+            if operator.owner.points.len() > min_len {
+                operator.owner.prune_before(cutoff);
+            }
+        }
     }
 
     /// Every operator active at `time` with at least one ticket at `price`, and its owner then.
@@ -231,5 +259,24 @@ mod tests {
         registry.set_enabled(operator(1), false);
         assert!(!registry.can_submit(operator(1)));
         assert!(!registry.can_submit(operator(2)));
+    }
+
+    #[test]
+    fn pruning_before_cutoff_preserves_lookups_at_and_after_cutoff() {
+        let mut registry = Registry::default();
+        for t in 1..=10 {
+            registry.set_active(t * 10, operator(1), t % 2 == 1);
+            registry.set_balance(t * 10, operator(1), U256::from(t * 100));
+            registry.set_owner(t * 10, operator(1), operator(t as u8));
+        }
+        let before: Vec<_> = (50..=120)
+            .map(|t| registry.eligible_at(t, U256::from(10)))
+            .collect();
+        registry.prune_before(50, 2);
+        let after: Vec<_> = (50..=120)
+            .map(|t| registry.eligible_at(t, U256::from(10)))
+            .collect();
+        assert_eq!(before, after);
+        assert!(registry.operators[&operator(1)].balance.points.len() <= 6);
     }
 }

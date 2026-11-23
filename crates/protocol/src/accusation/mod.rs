@@ -69,10 +69,31 @@ pub enum AccusationMessage {
 }
 
 impl AccusationMessage {
+    pub(crate) fn kind(&self) -> crate::node::Kind {
+        match self {
+            Self::Accuse { .. } => crate::node::Kind::Accusation,
+            Self::Vote(_) => crate::node::Kind::Vote,
+        }
+    }
+
     pub(crate) fn blobs(&self) -> Vec<crate::BlobRef> {
         match self {
             Self::Accuse { proof, .. } => vec![proof.proof.data],
             Self::Vote(_) => Vec::new(),
+        }
+    }
+
+    pub(crate) fn blob_count(&self) -> usize {
+        match self {
+            Self::Accuse { .. } => 1,
+            Self::Vote(_) => 0,
+        }
+    }
+
+    pub(crate) fn blob_bytes(&self) -> u64 {
+        match self {
+            Self::Accuse { proof, .. } => proof.proof.data.len,
+            Self::Vote(_) => 0,
         }
     }
 }
@@ -84,6 +105,14 @@ pub enum AccusationWork {
         proof_type: ProofType,
         proof: ZkProof,
     },
+}
+
+impl AccusationWork {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::Verify { .. } => "accusation: verify a proof",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

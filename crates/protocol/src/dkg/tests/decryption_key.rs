@@ -70,10 +70,12 @@ fn a_roster_member_sums_the_other_roster_dealers_shares_and_binds_every_roster_c
 fn a_member_outside_the_roster_makes_no_decryption_key_but_checks_the_roster_s() {
     let [first, second, third] = ordered();
     let mut node = verified_all(third);
+    assert!(node.might_fold(&e3(1)));
     node.step(NOW, ready(first, &[first, second, third], third));
     node.step(NOW, ready(second, &[first, second, third], third));
     let effects = node.step(NOW, roster(first, &[first, second], third));
     assert_eq!(accepted(&node), Some(members(&[first, second])));
+    assert!(!node.might_fold(&e3(1)));
     assert!(decryption_key_jobs(&effects).is_empty());
     let effects = node.step(NOW, decryption_key(e3(1), first, first));
     assert_eq!(checks_of_decryption_keys(&effects), members(&[first]));

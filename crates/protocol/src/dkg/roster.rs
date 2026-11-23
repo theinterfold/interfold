@@ -174,7 +174,7 @@ impl Dkg {
         let contains = |member: &Address| {
             self.ready
                 .get(member)
-                .is_some_and(|ready| roster.iter().all(|dealer| ready.contains(dealer)))
+                .is_some_and(|ready| roster.iter().all(|dealer| ready_contains(ready, dealer)))
         };
         self.is_live(&proposer)
             && roster.iter().all(|dealer| self.is_live(&dealer.member))
@@ -190,29 +190,121 @@ impl Dkg {
     /// receives only by chain facts: nodes that count votes at different times must not refuse
     /// each other's rosters and stop the same DKG.
     fn select_ready_roster(&self) -> Option<Vec<Dealer>> {
-        let reports: BTreeMap<Address, &[Dealer]> = self
+        let h = self.h();
+        if h == 0 {
+            return Some(Vec::new());
+        }
+        let mut entries: Vec<(Dealer, &[Dealer])> = self
             .ready
             .iter()
             .filter(|(reporter, _)| {
                 self.is_live(reporter) && !self.rosters.failover.is_convicted(reporter)
             })
-            .map(|(reporter, report)| (*reporter, report.as_slice()))
-            .collect();
-        let candidates: Vec<Dealer> = reports
-            .iter()
             .filter_map(|(reporter, report)| {
-                report
-                    .iter()
-                    .find(|dealer| dealer.member == *reporter)
-                    .copied()
+                let slice = report.as_slice();
+                let own = slice
+                    .binary_search_by_key(reporter, |d| d.member)
+                    .ok()
+                    .map(|idx| slice[idx])?;
+                Some((own, slice))
             })
             .collect();
-        let mut selected = Vec::with_capacity(self.h());
-        select(&reports, &candidates, self.h(), &mut selected).then_some(selected)
+        if entries.len() < h {
+            return None;
+        }
+        // `self.ready` is a BTreeMap keyed by Address, so `entries` is strictly ascending by member.
+        if entries.len() <= 128 {
+            select_bitmask(&entries, h)
+        } else {
+            let reports: BTreeMap<Address, &[Dealer]> = entries
+                .iter()
+                .map(|(dealer, report)| (dealer.member, *report))
+                .collect();
+            let candidates: Vec<Dealer> = entries.drain(..).map(|(dealer, _)| dealer).collect();
+            let mut selected = Vec::with_capacity(h);
+            select_fallback(&reports, &candidates, h, &mut selected).then_some(selected)
+        }
     }
 }
 
-fn select(
+/// Ready reports are strictly ascending by `dealer.member`, so membership is O(log N).
+fn ready_contains(ready: &[Dealer], dealer: &Dealer) -> bool {
+    ready
+        .binary_search_by_key(&dealer.member, |d| d.member)
+        .is_ok_and(|idx| ready[idx] == *dealer)
+}
+
+/// Finds the lexicographically-first H-clique using bitmask adjacency and iterative (H-1)-core
+/// pruning. Guarantees the exact same committee-order output as backtracking over sorted slices.
+fn select_bitmask(entries: &[(Dealer, &[Dealer])], h: usize) -> Option<Vec<Dealer>> {
+    let n = entries.len();
+    let mut adj = vec![0u128; n];
+    for i in 0..n {
+        let (di, ri) = entries[i];
+        for j in (i + 1)..n {
+            let (dj, rj) = entries[j];
+            if ready_contains(ri, &dj) && ready_contains(rj, &di) {
+                adj[i] |= 1u128 << j;
+                adj[j] |= 1u128 << i;
+            }
+        }
+    }
+
+    let min_deg = (h - 1) as u32;
+    let mut active: u128 = if n == 128 {
+        u128::MAX
+    } else {
+        (1u128 << n) - 1
+    };
+    loop {
+        let mut removed = 0u128;
+        let mut scan = active;
+        while scan != 0 {
+            let v = scan.trailing_zeros() as usize;
+            scan &= scan - 1;
+            if (adj[v] & active).count_ones() < min_deg {
+                removed |= 1u128 << v;
+            }
+        }
+        if removed == 0 {
+            break;
+        }
+        active &= !removed;
+        if (active.count_ones() as usize) < h {
+            return None;
+        }
+    }
+
+    let mut chosen = Vec::with_capacity(h);
+    if search_clique(&adj, active, h, &mut chosen) {
+        Some(chosen.into_iter().map(|idx| entries[idx].0).collect())
+    } else {
+        None
+    }
+}
+
+fn search_clique(adj: &[u128], mut candidates: u128, h: usize, chosen: &mut Vec<usize>) -> bool {
+    let need = h - chosen.len();
+    if need == 0 {
+        return true;
+    }
+    while (candidates.count_ones() as usize) >= need {
+        let v = candidates.trailing_zeros() as usize;
+        candidates &= candidates - 1;
+        let next = candidates & adj[v];
+        if (next.count_ones() as usize) + 1 < need {
+            continue;
+        }
+        chosen.push(v);
+        if search_clique(adj, next, h, chosen) {
+            return true;
+        }
+        chosen.pop();
+    }
+    false
+}
+
+fn select_fallback(
     reports: &BTreeMap<Address, &[Dealer]>,
     candidates: &[Dealer],
     h: usize,
@@ -226,17 +318,75 @@ fn select(
             return false;
         }
         let mutual = selected.iter().all(|dealer| {
-            reports[&candidate.member].contains(dealer)
-                && reports[&dealer.member].contains(candidate)
+            ready_contains(reports[&candidate.member], dealer)
+                && ready_contains(reports[&dealer.member], candidate)
         });
         if !mutual {
             continue;
         }
         selected.push(*candidate);
-        if select(reports, &candidates[index + 1..], h, selected) {
+        if select_fallback(reports, &candidates[index + 1..], h, selected) {
             return true;
         }
         selected.pop();
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+
+    #[test]
+    fn bitmask_roster_selection_matches_fallback_on_adversarial_graphs() {
+        let n = 19usize;
+        let h = 14usize;
+        let dealers: Vec<Dealer> = (1..=n as u8)
+            .map(|i| Dealer {
+                member: Address::repeat_byte(i),
+                contribution: B256::repeat_byte(i),
+            })
+            .collect();
+
+        // Near-clique with a planted clique at indices [1, 3, 5..17] and tricky missing edges.
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        for trial in 0..64 {
+            let mut lists: Vec<Vec<Dealer>> = vec![Vec::new(); n];
+            let plant = trial % 2 == 0;
+            for (i, list) in lists.iter_mut().enumerate() {
+                list.push(dealers[i]);
+                for (j, &dealer) in dealers.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    let edge =
+                        (plant && i >= 2 && j >= 2 && i < 16 && j < 16) || (next_u64() % 100) < 78;
+                    if edge {
+                        list.push(dealer);
+                    }
+                }
+                list.sort_by_key(|d| d.member);
+            }
+            let entries: Vec<(Dealer, &[Dealer])> = dealers
+                .iter()
+                .zip(lists.iter())
+                .map(|(d, l)| (*d, l.as_slice()))
+                .collect();
+            let reports: BTreeMap<Address, &[Dealer]> =
+                entries.iter().map(|(d, l)| (d.member, *l)).collect();
+            let mut expected = Vec::new();
+            let expected =
+                select_fallback(&reports, &dealers, h, &mut expected).then_some(expected);
+            let actual = select_bitmask(&entries, h);
+            assert_eq!(actual, expected, "mismatch on trial {trial}");
+        }
+    }
 }

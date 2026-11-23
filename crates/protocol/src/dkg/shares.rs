@@ -216,14 +216,17 @@ impl Dkg {
         effects
     }
 
-    /// Shares can only be for a key this node has sent, so they count from then on.
-    /// Shares need this node's key to open.
-    pub(super) fn admits_shares(&self, dealer: Address, message: &SharesMessage) -> bool {
+    pub(super) fn admits_shares_state(&self, dealer: Address) -> bool {
         self.own_key().is_some()
             && dealer != self.me
             && self.is_member(dealer)
             && !self.shares.received.contains_key(&dealer)
-            && message.is_signed_by(dealer, self.e3)
+    }
+
+    /// Shares can only be for a key this node has sent, so they count from then on.
+    /// Shares need this node's key to open.
+    pub(super) fn admits_shares(&self, dealer: Address, message: &SharesMessage) -> bool {
+        self.admits_shares_state(dealer) && message.is_signed_by(dealer, self.e3)
     }
 
     pub(super) fn receive_shares(

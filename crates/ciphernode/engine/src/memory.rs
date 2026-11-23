@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{EffectKey, Step, Store, StoreError, Stored};
+use crate::{BatchCommit, EffectKey, Step, Store, StoreError, Stored};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -65,6 +65,27 @@ impl Store for MemoryStore {
 
     fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError> {
         self.inner().snapshot = Some((seq, snapshot));
+        Ok(())
+    }
+
+    fn commit_batch(&mut self, batch: BatchCommit) -> Result<(), StoreError> {
+        let mut inner = self.inner();
+        for step in batch.steps {
+            inner.journal.insert(step.seq, step.entry);
+            inner.outbox.extend(step.effects);
+            if let Some(key) = step.answers {
+                inner.outbox.remove(&key);
+            }
+            if let Some(snapshot) = step.snapshot {
+                inner.snapshot = Some((step.seq, snapshot));
+            }
+        }
+        for key in batch.acks {
+            inner.outbox.remove(&key);
+        }
+        if let Some((seq, snapshot)) = batch.snapshot {
+            inner.snapshot = Some((seq, snapshot));
+        }
         Ok(())
     }
 }

@@ -14,6 +14,7 @@ pub mod decryption;
 pub mod dkg;
 mod e3;
 mod failover;
+mod hold;
 mod ids;
 mod machine;
 pub mod node;

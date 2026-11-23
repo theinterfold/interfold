@@ -77,7 +77,7 @@ fn deliver(decryption: &mut Decryption, now: UnixSecs, input: Input) -> Vec<Effe
             sender,
             body: Body::Decryption(message),
             ..
-        }) => decryption.receive(now, sender, message),
+        }) => decryption.receive(now, sender, message, false),
         Input::Job(JobDone {
             result: WorkResult::Decryption(result),
             ..

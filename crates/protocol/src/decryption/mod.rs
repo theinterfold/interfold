@@ -48,10 +48,30 @@ pub struct SharesMessage {
 }
 
 impl DecryptionMessage {
+    pub(crate) fn kind(&self) -> crate::node::Kind {
+        let Self::Shares(_) = self;
+        crate::node::Kind::DecryptionShares
+    }
+
     pub(crate) fn blobs(&self) -> Vec<BlobRef> {
         let Self::Shares(message) = self;
         let proofs = message.c6.iter().map(|signed| signed.proof.data);
         message.shares.iter().copied().chain(proofs).collect()
+    }
+
+    pub(crate) fn blob_count(&self) -> usize {
+        let Self::Shares(message) = self;
+        message.shares.len() + message.c6.len()
+    }
+
+    pub(crate) fn blob_bytes(&self) -> u64 {
+        let Self::Shares(message) = self;
+        message
+            .shares
+            .iter()
+            .map(|b| b.len)
+            .chain(message.c6.iter().map(|s| s.proof.data.len))
+            .fold(0u64, u64::saturating_add)
     }
 }
 
@@ -84,11 +104,44 @@ pub enum DecryptionWork {
     },
 }
 
+impl DecryptionWork {
+    pub(crate) fn proves(&self) -> bool {
+        matches!(
+            self,
+            Self::MakeShares { .. } | Self::AggregatePlaintext { .. }
+        )
+    }
+
+    pub(crate) fn checks_a_member(&self) -> bool {
+        matches!(self, Self::CheckShares { .. })
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "decryption"
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecryptionWorkResult {
     SharesMade(OwnShares),
     SharesChecked { member: Address, verdict: Verdict },
     PlaintextMade(PlaintextPublication),
+}
+
+impl DecryptionWorkResult {
+    pub(crate) fn answers_a_check(&self) -> bool {
+        matches!(self, Self::SharesChecked { .. })
+    }
+
+    pub(crate) fn fault(&self) -> Option<(Address, crate::accusation::Fault)> {
+        match self {
+            Self::SharesChecked {
+                member,
+                verdict: Verdict::Fails(fault),
+            } => Some((*member, fault.clone())),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,8 +339,14 @@ impl Decryption {
         now: UnixSecs,
         sender: Address,
         message: DecryptionMessage,
+        signatures_verified: bool,
     ) -> Vec<Effect> {
-        if !self.admits(sender, &message) {
+        let admitted = if signatures_verified {
+            self.admits_state(sender, &message)
+        } else {
+            self.admits(sender, &message)
+        };
+        if !admitted {
             return Vec::new();
         }
         let DecryptionMessage::Shares(shares) = message;
@@ -295,9 +354,7 @@ impl Decryption {
         self.advance(now)
     }
 
-    /// Whether this node takes `message` from `sender` now; it can tell before it fetches any blob
-    /// the message names.
-    pub(crate) fn admits(&self, sender: Address, message: &DecryptionMessage) -> bool {
+    fn admits_state(&self, sender: Address, message: &DecryptionMessage) -> bool {
         let DecryptionMessage::Shares(shares) = message;
         self.failure.is_none()
             && sender != self.me
@@ -305,6 +362,13 @@ impl Decryption {
             && !self.shares.contains_key(&sender)
             && !shares.shares.is_empty()
             && shares.shares.len() == shares.c6.len()
+    }
+
+    /// Whether this node takes `message` from `sender` now; it can tell before it fetches any blob
+    /// the message names.
+    pub(crate) fn admits(&self, sender: Address, message: &DecryptionMessage) -> bool {
+        let DecryptionMessage::Shares(shares) = message;
+        self.admits_state(sender, message)
             && shares.c6.iter().all(|proof| {
                 proof.is_signed_by(sender, self.e3, ProofType::C6ThresholdShareDecryption)
             })

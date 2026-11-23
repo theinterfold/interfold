@@ -111,11 +111,7 @@ impl Dkg {
         effects
     }
 
-    pub(super) fn admits_decryption_key(
-        &self,
-        member: Address,
-        message: &DecryptionKeyMessage,
-    ) -> bool {
+    pub(super) fn admits_decryption_key_state(&self, member: Address) -> bool {
         let in_roster = self
             .roster_members()
             .is_none_or(|roster| roster.contains(&member));
@@ -123,7 +119,14 @@ impl Dkg {
             && member != self.me
             && self.is_member(member)
             && !self.decryption_keys.received.contains_key(&member)
-            && message.is_signed_by(member, self.e3)
+    }
+
+    pub(super) fn admits_decryption_key(
+        &self,
+        member: Address,
+        message: &DecryptionKeyMessage,
+    ) -> bool {
+        self.admits_decryption_key_state(member) && message.is_signed_by(member, self.e3)
     }
 
     pub(super) fn receive_decryption_key(

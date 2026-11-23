@@ -40,6 +40,27 @@ pub struct Step {
     pub answers: Option<EffectKey>,
 }
 
+/// One operation inside [`Engine::apply_batch`].
+pub enum BatchOp<I> {
+    /// Step the machine with `input`, optionally answering a prior effect in the same commit.
+    Step {
+        now: UnixSecs,
+        input: I,
+        answers: Option<EffectKey>,
+    },
+    /// Acknowledge a previously emitted durable effect without stepping the machine.
+    Ack(EffectKey),
+}
+
+/// A batch of steps, acknowledgments, and optional final snapshot committed in one transaction.
+#[derive(Default)]
+pub struct BatchCommit {
+    pub steps: Vec<Step>,
+    pub acks: Vec<EffectKey>,
+    /// When present, captures the state after step `seq` (typically the final step in `steps`).
+    pub snapshot: Option<(u64, Vec<u8>)>,
+}
+
 /// What a store holds when the engine opens it.
 #[derive(Clone, Debug, Default)]
 pub struct Stored {
@@ -57,6 +78,19 @@ pub trait Store {
     fn acknowledge(&mut self, key: EffectKey) -> Result<(), StoreError>;
     /// Keeps `snapshot` as the state after step `seq`, the last one committed.
     fn checkpoint(&mut self, seq: u64, snapshot: Vec<u8>) -> Result<(), StoreError>;
+    /// Commits a batch of steps and acknowledgments atomically (one transaction / one fsync).
+    fn commit_batch(&mut self, batch: BatchCommit) -> Result<(), StoreError> {
+        for step in batch.steps {
+            self.commit(step)?;
+        }
+        for key in batch.acks {
+            self.acknowledge(key)?;
+        }
+        if let Some((seq, snapshot)) = batch.snapshot {
+            self.checkpoint(seq, snapshot)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -177,6 +211,76 @@ impl<M: Machine, S: Store> Engine<M, S> {
         self.step(now, input, Some(key))
     }
 
+    /// Apply a batch of steps and acknowledgments in a single durable store commit.
+    ///
+    /// On error the engine is consumed because in-memory state may be ahead of the store, matching
+    /// [`Self::apply`].
+    pub fn apply_batch<I>(mut self, ops: I) -> Result<Running<M, S>, Error>
+    where
+        I: IntoIterator<Item = BatchOp<M::Input>>,
+    {
+        let mut batch = BatchCommit::default();
+        let mut all_pending = Vec::new();
+        let mut seq = self.next_seq;
+        let mut steps_applied = 0u64;
+
+        for op in ops {
+            match op {
+                BatchOp::Step {
+                    now,
+                    input,
+                    answers,
+                } => {
+                    let entry = bincode::serialize(&Entry { now, input: &input })?;
+                    let effects = self.machine.step(now, input);
+                    let mut encoded = Vec::new();
+                    for (index, effect) in effects.into_iter().enumerate() {
+                        let key = EffectKey {
+                            seq,
+                            index: index as u32,
+                        };
+                        if M::is_durable_effect(&effect) {
+                            encoded.push((key, bincode::serialize(&effect)?));
+                        }
+                        all_pending.push(Pending { key, effect });
+                    }
+                    batch.steps.push(Step {
+                        seq,
+                        entry,
+                        effects: encoded,
+                        snapshot: None,
+                        answers,
+                    });
+                    seq += 1;
+                    steps_applied += 1;
+                }
+                BatchOp::Ack(key) => {
+                    batch.acks.push(key);
+                }
+            }
+        }
+
+        if batch.steps.is_empty() && batch.acks.is_empty() {
+            return Ok((self, all_pending));
+        }
+
+        let snapshot_due =
+            steps_applied > 0 && self.steps_since_snapshot + steps_applied >= self.snapshot_every;
+        if snapshot_due {
+            let last_seq = seq - 1;
+            batch.snapshot = Some((last_seq, bincode::serialize(&self.machine)?));
+        }
+
+        self.store.commit_batch(batch)?;
+        self.next_seq = seq;
+        self.steps_since_snapshot = if snapshot_due {
+            0
+        } else {
+            self.steps_since_snapshot + steps_applied
+        };
+        Ok((self, all_pending))
+    }
+
     fn step(
         mut self,
         now: UnixSecs,
@@ -199,6 +303,7 @@ impl<M: Machine, S: Store> Engine<M, S> {
             .collect();
         let encoded = pending
             .iter()
+            .filter(|p| M::is_durable_effect(&p.effect))
             .map(|p| Ok((p.key, bincode::serialize(&p.effect)?)))
             .collect::<Result<_, Error>>()?;
         let snapshot_due = self.steps_since_snapshot + 1 >= self.snapshot_every;
@@ -435,5 +540,37 @@ mod tests {
         let (restarted, pending) = Engine::open(memory, Tally::default(), 100).unwrap();
         assert_eq!(restarted.machine().total, 1);
         assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn apply_batch_commits_steps_acks_and_snapshot_atomically() {
+        let store = MemoryStore::default();
+        let (engine, _) = Engine::open(store.clone(), Tally::default(), 3).unwrap();
+        let (engine, first) = engine.apply(1, TallyInput::Add(1)).unwrap();
+        let (engine, batched) = engine
+            .apply_batch([
+                BatchOp::Ack(first[0].key),
+                BatchOp::Step {
+                    now: 2,
+                    input: TallyInput::Add(2),
+                    answers: None,
+                },
+                BatchOp::Step {
+                    now: 3,
+                    input: TallyInput::Add(3),
+                    answers: None,
+                },
+            ])
+            .unwrap();
+        assert_eq!(batched.len(), 2);
+        drop(engine);
+
+        let stored = store.read().unwrap();
+        assert_eq!(stored.snapshot.as_ref().map(|(seq, _)| *seq), Some(3));
+        assert!(stored.journal.is_empty());
+        let (restarted, pending) = Engine::open(store, Tally::default(), 3).unwrap();
+        assert_eq!(restarted.machine().total, 6);
+        let values: Vec<u64> = pending.into_iter().map(|p| p.effect).collect();
+        assert_eq!(values, vec![3, 6]);
     }
 }

@@ -161,6 +161,25 @@ impl Dealer {
 }
 
 impl DkgMessage {
+    pub(crate) fn kind(&self) -> crate::node::Kind {
+        match self {
+            Self::EncryptionKey(_) => crate::node::Kind::EncryptionKey,
+            Self::Shares(_) => crate::node::Kind::Shares,
+            Self::Ready(_) => crate::node::Kind::Ready,
+            Self::Roster(_) => crate::node::Kind::Roster,
+            Self::DecryptionKey(_) => crate::node::Kind::DecryptionKey,
+            Self::Keyshare(_) => crate::node::Kind::Keyshare,
+            Self::NodeFold(_) => crate::node::Kind::NodeFold,
+        }
+    }
+
+    pub(crate) fn recipient(&self) -> Option<Address> {
+        match self {
+            Self::Shares(shares) => Some(shares.recipient),
+            _ => None,
+        }
+    }
+
     pub(crate) fn blobs(&self) -> Vec<BlobRef> {
         match self {
             Self::EncryptionKey(message) => vec![message.key, message.proof.proof.data],
@@ -183,6 +202,38 @@ impl DkgMessage {
                 .collect(),
             Self::Keyshare(message) => vec![message.pk_share, message.c1.proof.data],
             Self::NodeFold(message) => vec![message.fold.proof.data],
+        }
+    }
+
+    pub(crate) fn blob_count(&self) -> usize {
+        match self {
+            Self::EncryptionKey(_) | Self::Keyshare(_) => 2,
+            Self::Shares(message) => 4 + message.c3a.len() + message.c3b.len(),
+            Self::Ready(_) | Self::Roster(_) => 0,
+            Self::DecryptionKey(message) => 1 + message.c4b.len(),
+            Self::NodeFold(_) => 1,
+        }
+    }
+
+    pub(crate) fn blob_bytes(&self) -> u64 {
+        match self {
+            Self::EncryptionKey(m) => m.key.len.saturating_add(m.proof.proof.data.len),
+            Self::Shares(m) => [
+                m.pk_share.len,
+                m.shares.len,
+                m.c2a.proof.data.len,
+                m.c2b.proof.data.len,
+            ]
+            .into_iter()
+            .chain(m.c3a.iter().map(|s| s.proof.data.len))
+            .chain(m.c3b.iter().map(|s| s.proof.data.len))
+            .fold(0u64, u64::saturating_add),
+            Self::Ready(_) | Self::Roster(_) => 0,
+            Self::DecryptionKey(m) => std::iter::once(m.c4a.proof.data.len)
+                .chain(m.c4b.iter().map(|s| s.proof.data.len))
+                .fold(0u64, u64::saturating_add),
+            Self::Keyshare(m) => m.pk_share.len.saturating_add(m.c1.proof.data.len),
+            Self::NodeFold(m) => m.fold.proof.data.len,
         }
     }
 }
@@ -269,6 +320,45 @@ pub enum DkgWork {
     },
 }
 
+impl DkgWork {
+    pub(crate) fn proves(&self) -> bool {
+        matches!(
+            self,
+            Self::MakeEncryptionKey
+                | Self::MakeShares { .. }
+                | Self::MakeDecryptionKey { .. }
+                | Self::FoldProofs { .. }
+                | Self::FoldRoster { .. }
+                | Self::AggregateKey { .. }
+        )
+    }
+
+    pub(crate) fn checks_a_member(&self) -> bool {
+        matches!(
+            self,
+            Self::CheckEncryptionKey { .. }
+                | Self::CheckShares { .. }
+                | Self::CheckDecryptionKey { .. }
+                | Self::CheckKeyshare { .. }
+        )
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::MakeEncryptionKey => "dkg: make the encryption key",
+            Self::CheckEncryptionKey { .. } => "dkg: check an encryption key",
+            Self::MakeShares { .. } => "dkg: deal shares",
+            Self::CheckShares { .. } => "dkg: check a dealer's shares",
+            Self::MakeDecryptionKey { .. } => "dkg: make the decryption key",
+            Self::CheckDecryptionKey { .. } => "dkg: check a decryption key",
+            Self::FoldProofs { .. } => "dkg: fold this node's proofs",
+            Self::CheckKeyshare { .. } => "dkg: check a keyshare",
+            Self::FoldRoster { .. } => "dkg: fold a roster member's proof",
+            Self::AggregateKey { .. } => "dkg: aggregate the committee key",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DkgWorkResult {
     EncryptionKeyMade(OwnKey),
@@ -281,6 +371,32 @@ pub enum DkgWorkResult {
     KeyshareChecked { member: Address, verdict: Verdict },
     RosterFolded { slot: u32, accumulator: ZkProof },
     KeyAggregated(AggregatedKey),
+}
+
+impl DkgWorkResult {
+    pub(crate) fn answers_a_check(&self) -> bool {
+        matches!(
+            self,
+            Self::EncryptionKeyChecked { .. }
+                | Self::SharesChecked { .. }
+                | Self::DecryptionKeyChecked { .. }
+                | Self::KeyshareChecked { .. }
+        )
+    }
+
+    pub(crate) fn fault(&self) -> Option<(Address, crate::accusation::Fault)> {
+        let (member, verdict) = match self {
+            Self::EncryptionKeyChecked { sender, verdict } => (sender, verdict),
+            Self::SharesChecked { dealer, verdict } => (dealer, verdict),
+            Self::DecryptionKeyChecked { member, verdict }
+            | Self::KeyshareChecked { member, verdict } => (member, verdict),
+            _ => return None,
+        };
+        match verdict {
+            Verdict::Fails(fault) => Some((*member, fault.clone())),
+            Verdict::Valid | Verdict::Invalid => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,11 +617,16 @@ impl Dkg {
         now: UnixSecs,
         sender: Address,
         message: DkgMessage,
+        signatures_verified: bool,
     ) -> Vec<Effect> {
         if !self.running() {
             return Vec::new();
         }
-        let admitted = self.admits(sender, &message);
+        let admitted = if signatures_verified {
+            self.admits_state(sender, &message)
+        } else {
+            self.admits(sender, &message)
+        };
         let mut effects = match message {
             _ if !admitted => Vec::new(),
             DkgMessage::EncryptionKey(message) => self.receive_key(sender, message),
@@ -527,6 +648,21 @@ impl Dkg {
         };
         effects.extend(self.advance(now));
         effects
+    }
+
+    /// State-only admission check (without re-verifying inner ECDSA proof signatures), used when
+    /// `E3::receive` matches an exact message ID whose signatures already passed in `start_fetch`.
+    fn admits_state(&self, sender: Address, message: &DkgMessage) -> bool {
+        self.running()
+            && match message {
+                DkgMessage::EncryptionKey(_) => self.admits_key_state(sender),
+                DkgMessage::Shares(_) => self.admits_shares_state(sender),
+                DkgMessage::Ready(dealers) => self.admits_ready(sender, dealers),
+                DkgMessage::Roster(dealers) => self.admits_roster(sender, dealers),
+                DkgMessage::DecryptionKey(_) => self.admits_decryption_key_state(sender),
+                DkgMessage::Keyshare(_) => self.admits_keyshare_state(sender),
+                DkgMessage::NodeFold(_) => self.admits_fold_state(sender),
+            }
     }
 
     /// Whether this node takes `message` from `sender` now; it can tell before it fetches any blob
@@ -685,6 +821,12 @@ impl Dkg {
     /// Until the DKG fails or the chain publishes the key.
     pub(crate) fn running(&self) -> bool {
         !self.published && !matches!(self.phase, Phase::Failed(_))
+    }
+
+    /// Whether this node might still run `FoldProofs`: false once excluded from the roster as an
+    /// observer, failed, or once the committee key is published.
+    pub fn might_fold(&self) -> bool {
+        self.running() && !matches!(self.phase, Phase::Observing)
     }
 
     /// Every input ends here, since any of them can complete a roster or an aggregation.

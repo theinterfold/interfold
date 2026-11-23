@@ -23,4 +23,11 @@ pub trait Machine: Serialize + DeserializeOwned {
 
     /// When the machine next needs a [`Tick`], if ever.
     fn next_deadline(&self) -> Option<UnixSecs>;
+
+    /// Whether `effect` must be written to the durable outbox and explicitly acknowledged.
+    /// Ephemeral effects (such as operator log notes) are returned to the caller without
+    /// incurring outbox persistence or acknowledgment fsyncs.
+    fn is_durable_effect(_effect: &Self::Effect) -> bool {
+        true
+    }
 }

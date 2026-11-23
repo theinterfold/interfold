@@ -10,13 +10,20 @@
 
 use crate::E3Id;
 use alloy_primitives::{keccak256, Address, U256};
-use alloy_sol_types::SolValue;
 use std::collections::BTreeMap;
+
+/// Packed layout of `abi.encodePacked(address operator, uint256 ticketNumber, uint256 e3Id, uint256 seed)`:
+/// 20 + 32 + 32 + 32 = 116 bytes.
+const PACKED_TICKET_LEN: usize = 20 + 32 + 32 + 32;
 
 /// An operator's ticket score, as the registry computes it: `keccak256(abi.encodePacked(operator,
 /// ticketNumber, e3Id, seed))`. Lower is better.
 pub fn ticket_score(operator: Address, ticket: u64, e3: E3Id, seed: U256) -> U256 {
-    let packed = (operator, U256::from(ticket), e3.number, seed).abi_encode_packed();
+    let mut packed = [0u8; PACKED_TICKET_LEN];
+    packed[0..20].copy_from_slice(operator.as_slice());
+    packed[44..52].copy_from_slice(&ticket.to_be_bytes());
+    packed[52..84].copy_from_slice(&e3.number.to_be_bytes::<32>());
+    packed[84..116].copy_from_slice(&seed.to_be_bytes::<32>());
     U256::from_be_bytes(keccak256(packed).0)
 }
 
@@ -93,14 +100,29 @@ pub(crate) fn candidates(
 }
 
 fn best_ticket(e3: E3Id, seed: U256, operator: &Eligible) -> Candidate {
-    (1..=operator.tickets)
-        .map(|ticket| Candidate {
-            operator: operator.operator,
-            ticket,
-            score: ticket_score(operator.operator, ticket, e3, seed),
-        })
-        .min_by_key(|candidate| (candidate.score, candidate.ticket))
-        .expect("an operator with tickets has a best one")
+    // Pre-fill the invariant 108 bytes once so each ticket only overwrites its 8-byte counter.
+    let mut packed = [0u8; PACKED_TICKET_LEN];
+    packed[0..20].copy_from_slice(operator.operator.as_slice());
+    packed[52..84].copy_from_slice(&e3.number.to_be_bytes::<32>());
+    packed[84..116].copy_from_slice(&seed.to_be_bytes::<32>());
+
+    let mut best_ticket_num = 1u64;
+    packed[44..52].copy_from_slice(&1u64.to_be_bytes());
+    let mut best_score = U256::from_be_bytes(keccak256(packed).0);
+
+    for ticket in 2..=operator.tickets {
+        packed[44..52].copy_from_slice(&ticket.to_be_bytes());
+        let score = U256::from_be_bytes(keccak256(packed).0);
+        if score < best_score {
+            best_score = score;
+            best_ticket_num = ticket;
+        }
+    }
+    Candidate {
+        operator: operator.operator,
+        ticket: best_ticket_num,
+        score: best_score,
+    }
 }
 
 #[cfg(test)]
