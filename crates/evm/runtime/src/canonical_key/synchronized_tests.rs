@@ -26,7 +26,7 @@ fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_pee
     let f = Fixture::new()?;
     let id = &f.request.e3_id;
     let (keys, mut projection) = f.projection();
-    let candidate = |seq| {
+    let candidate = |id: &E3id, seq| {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             e3_events::DecryptionshareCreated {
                 e3_id: id.clone(),
@@ -43,21 +43,45 @@ fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_pee
         )
         .into_sequenced(seq)
     };
-    projection.observe(&candidate(20))?;
-    assert!(keys.synchronized_candidates(id).is_none());
-    projection.observe(
-        &InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            f.request.clone().into(),
+    let request = |id: &E3id, seq| {
+        let mut request = f.request.clone();
+        request.e3_id = id.clone();
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
             None,
-            22,
+            seq as u128,
             Some(1),
             EventSource::Evm,
         )
-        .into_sequenced(22),
-    )?;
-    projection.observe(&candidate(45))?;
+        .into_sequenced(seq)
+    };
+    projection.observe(&candidate(id, 20))?;
+    assert!(keys.synchronized_candidates(id).is_none());
+    let other = E3id::new("346", id.chain_id());
+    projection.observe(&request(&other, 21))?;
+    assert_eq!(keys.synchronized_candidates(&other), None);
+    projection.observe(&request(id, 22))?;
+    assert_eq!(keys.synchronized_candidates(id), Some((20, 20)));
+    projection.observe(&candidate(id, 45))?;
     assert_eq!(keys.synchronized_candidates(id), Some((20, 45)));
+    projection.observe(&candidate(&other, 46))?;
+    assert_eq!(keys.synchronized_candidates(&other), Some((46, 46)));
     assert!(keys.get(id).is_none());
+
+    // More unauthenticated IDs than there are hint slots. Every matching journal row
+    // must still be discoverable, even after a colliding request consumed its hint.
+    for n in 1..=512 {
+        projection.observe(&candidate(&E3id::new((1000 + n).to_string(), 1), 100 + n))?;
+    }
+    let later = E3id::new("2025", 1);
+    projection.observe(&request(&later, 699))?;
+    assert_eq!(keys.synchronized_candidates(&later), None);
+    for (seq, n) in (700..).zip([1, 512, 257, 256]) {
+        let id = E3id::new((1000 + n).to_string(), 1);
+        projection.observe(&request(&id, seq))?;
+        let (first, last) = keys.synchronized_candidates(&id).unwrap();
+        assert!((first..=last).contains(&(100 + n)) && last <= 612);
+    }
     Ok(())
 }
 

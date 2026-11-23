@@ -21,7 +21,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{actors::data_availability::KeyAssembly, ICiphernodeRegistry};
 
+mod early_shares;
 mod synchronized;
+use early_shares::EarlyShares;
 use synchronized::SynchronizedPublicationObservation;
 
 type Candidate = (E3id, String, [u8; 32]);
@@ -36,9 +38,7 @@ pub struct CanonicalKeyProjection {
     candidates: HashMap<E3id, Vec<PublicKeyAggregated>>,
     closed: HashMap<E3id, bool>,
     hydrating_contexts: HashSet<E3id>,
-    // A peer can beat our request observation. Keep a conservative scan floor per chain,
-    // rather than retaining a map keyed by unauthenticated E3 IDs.
-    early_share_floor: HashMap<u64, u64>,
+    early_shares: EarlyShares,
     synchronized_authorities:
         HashMap<E3id, crate::contracts::ISynchronizedDkgPublication::Authority>,
     synchronized_proofs: HashMap<E3id, SynchronizedPublicationObservation>,
@@ -56,7 +56,7 @@ impl CanonicalKeyProjection {
             candidates: HashMap::new(),
             closed: HashMap::new(),
             hydrating_contexts: HashSet::new(),
-            early_share_floor: HashMap::new(),
+            early_shares: EarlyShares::default(),
             synchronized_authorities: HashMap::new(),
             synchronized_proofs: HashMap::new(),
         }
@@ -140,6 +140,7 @@ impl CanonicalKeyProjection {
             _ => None,
         };
         if let Some(id) = terminal {
+            self.early_shares.take(&id);
             self.keys.retire_synchronized_output(&id);
             // An older context snapshot still needs its rosters to hydrate before terminal replay.
             if self.hydrating_contexts.contains(&id) {
@@ -178,11 +179,7 @@ impl CanonicalKeyProjection {
                 } else if !self.requests.contains_key(id)
                     && self.interfold_addresses.contains_key(&id.chain_id())
                 {
-                    let first = self
-                        .early_share_floor
-                        .entry(id.chain_id())
-                        .or_insert(event.seq());
-                    *first = (*first).min(event.seq());
+                    self.early_shares.note(id, event.seq());
                 }
             }
             InterfoldEventData::CiphertextOutputReferencePublished(output)
@@ -255,15 +252,12 @@ impl CanonicalKeyProjection {
                             );
                         }
                     }
-                    if dormant_setup
-                        && !self.requests.contains_key(&request.e3_id)
-                        && !self.hydrating_contexts.contains(&request.e3_id)
-                    {
-                        if let Some(&first) = self.early_share_floor.get(&request.e3_id.chain_id())
-                        {
-                            self.keys.note_synchronized_candidate(&request.e3_id, first);
-                            self.keys
-                                .note_synchronized_candidate(&request.e3_id, event.seq());
+                    if !self.requests.contains_key(&request.e3_id) {
+                        if let Some((first, last)) = self.early_shares.take(&request.e3_id) {
+                            if dormant_setup && !self.hydrating_contexts.contains(&request.e3_id) {
+                                self.keys.note_synchronized_candidate(&request.e3_id, first);
+                                self.keys.note_synchronized_candidate(&request.e3_id, last);
+                            }
                         }
                     }
                     self.requests
