@@ -319,6 +319,11 @@ export interface V19CutoverPlan {
   /** No contract that `prepare` deployed is older than this block. */
   deployFromBlock?: number;
   registryProxy: string;
+  registryProxyAdmin: string;
+  previousRegistryImplementation: string;
+  registryImplementation: string;
+  registrySortitionLibrary: string;
+  dkgPublicationLibrary: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
     version: string;

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
 // The v0.19 cutover. Requests are paused and every E3 and committee is drained. One governance
-// batch then upgrades Interfold (new libraries, because `ActiveCryptoConfig` changed), registers
-// the BFV parameter sets, installs the BFV verifier routers, wires the OpenVM CRISP program,
-// retires the earlier programs and raises the node-release policy. Requests stay paused until
-// `resume` builds the unpause batch.
+// batch then upgrades Interfold (new libraries, because `ActiveCryptoConfig` changed) and
+// CiphernodeRegistryOwnable (its linked `DkgPublicationLib` decodes the `E3` struct, whose
+// `CommitteeSize` gained `Large`), registers the BFV parameter sets, installs the BFV verifier
+// routers, wires the OpenVM CRISP program, retires the earlier programs and raises the node-release
+// policy. Requests stay paused until `resume` builds the unpause batch.
 //
 //   prepare   deploys the implementation and the BFV routes with the operator key, then writes
 //             the plan, the governance batch and the Aragon Safe batch.
@@ -87,6 +88,7 @@ import {
   validateBfvRoutes,
 } from "./bfvRouteChecks";
 import {
+  assertDkgPublicationLibraryLink,
   deployUpgradeImplementation,
   proxyImplementation,
 } from "./safeProxyUpgrade";
@@ -189,6 +191,9 @@ export interface V19CutoverDecisions {
   interfold: string;
   interfoldProxyAdmin: string;
   interfoldImplementation: string;
+  registry: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
   /** The chain's parameter sets that are not registered yet. */
   paramSets: Array<{ index: number; encoded: string }>;
   committeeThresholds: Array<{ size: bigint; quorum: bigint; total: bigint }>;
@@ -207,9 +212,11 @@ export interface V19CutoverDecisions {
 }
 
 /**
- * The cutover batch in execution order. The upgrade comes first, because the new implementation
- * checks the parameter set and the verifiers against its own `ActiveCryptoConfig`. CRISP is
- * registered before it is bound, and the release policy, which needs paused requests, comes last.
+ * The cutover batch in execution order. The Interfold upgrade comes first, because the new
+ * implementation checks the parameter set and the verifiers against its own `ActiveCryptoConfig`.
+ * The registry upgrade follows it and comes before every Large threshold: a registry that predates
+ * `Large` rejects a size-3 E3 when it decodes the `E3` struct. CRISP is registered before it is
+ * bound, and the release policy, which needs paused requests, comes last.
  */
 export function buildV19CutoverTransactions(
   decisions: V19CutoverDecisions,
@@ -220,6 +227,14 @@ export function buildV19CutoverTransactions(
       proxyAdminInterface.encodeFunctionData("upgradeAndCall", [
         decisions.interfold,
         decisions.interfoldImplementation,
+        "0x",
+      ]),
+    ),
+    safeTx(
+      decisions.registryProxyAdmin,
+      proxyAdminInterface.encodeFunctionData("upgradeAndCall", [
+        decisions.registry,
+        decisions.registryImplementation,
         "0x",
       ]),
     ),
@@ -593,6 +608,15 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     config.protocolOwner,
     "Interfold ProxyAdmin owner",
   );
+  const registryAdmin = await ethers.getContractAt(
+    "ProxyAdmin",
+    deployment.ciphernodeRegistryProxyAdmin,
+  );
+  equalAddress(
+    String(await registryAdmin.owner()),
+    config.protocolOwner,
+    "CiphernodeRegistry ProxyAdmin owner",
+  );
   await requireDrainedAndPaused(interfold, registry);
 
   // A stale record would make the plan describe a different upgrade than the one executed.
@@ -606,6 +630,18 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   ) {
     throw new Error(
       `Interfold deployment record is stale: recorded ${deployment.interfoldImplementation}, live ${liveImplementation}`,
+    );
+  }
+  const liveRegistryImplementation = await proxyImplementation(
+    ethers,
+    deployment.ciphernodeRegistry,
+  );
+  if (
+    liveRegistryImplementation.toLowerCase() !==
+    deployment.ciphernodeRegistryImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `CiphernodeRegistry deployment record is stale: recorded ${deployment.ciphernodeRegistryImplementation}, live ${liveRegistryImplementation}`,
     );
   }
 
@@ -706,6 +742,18 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   if (!upgrade.lifecycleLibrary || !upgrade.pricingLibrary) {
     throw new Error("Interfold libraries were not deployed");
   }
+  const registryUpgrade = await deployUpgradeImplementation(
+    ethers,
+    operator,
+    "ciphernodeRegistry",
+    deployment,
+  );
+  if (
+    !registryUpgrade.sortitionLibrary ||
+    !registryUpgrade.dkgPublicationLibrary
+  ) {
+    throw new Error("Registry libraries were not deployed");
+  }
   const routes = await deployBfvVerifierRoutes(
     ethers,
     deployment.ciphernodeRegistry,
@@ -720,6 +768,9 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     interfold: deployment.interfold,
     interfoldProxyAdmin: deployment.interfoldProxyAdmin,
     interfoldImplementation: upgrade.implementation,
+    registry: deployment.ciphernodeRegistry,
+    registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+    registryImplementation: registryUpgrade.implementation,
     paramSets: missingParamSets,
     committeeThresholds: thresholds,
     pkVerifier: routes.pkVerifier,
@@ -741,7 +792,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   const rawBatchFile = batchPath(config, "cutover");
   const title = `${config.name} v0.19 cutover`;
   const description =
-    "Upgrade Interfold, register the BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.";
+    "Upgrade Interfold and CiphernodeRegistryOwnable, register the BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.";
   const batch = governanceBatch(config, txs);
   batch.meta.name = title;
   batch.meta.description = description;
@@ -771,6 +822,11 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     lifecycleLibrary: upgrade.lifecycleLibrary,
     pricingLibrary: upgrade.pricingLibrary,
     registryProxy: deployment.ciphernodeRegistry,
+    registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+    previousRegistryImplementation: liveRegistryImplementation,
+    registryImplementation: registryUpgrade.implementation,
+    registrySortitionLibrary: registryUpgrade.sortitionLibrary,
+    dkgPublicationLibrary: registryUpgrade.dkgPublicationLibrary,
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
     nodeReleasePolicyUpdated,
@@ -839,6 +895,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   console.log(`
 v0.19 cutover prepared
   Interfold implementation: ${plan.interfoldImplementation} (was ${plan.previousInterfoldImplementation})
+  registry implementation:  ${plan.registryImplementation} (was ${plan.previousRegistryImplementation})
   PK verifier router:       ${plan.pkVerifier}
   decryption router:        ${plan.decryptionVerifier}
   BFV routes:               ${plan.bfvVerifierRoutes.length}
@@ -902,6 +959,30 @@ export function requireTimeoutConfig(
 }
 
 /**
+ * Require the live registry proxy to run the planned implementation, and that implementation to
+ * link the planned `DkgPublicationLib`. A registry that predates `Large` reverts in `publishCommittee`
+ * for every size-3 E3, so `validate` and `resume` must fail while it is in place.
+ */
+export async function requireV19RegistryUpgrade(
+  ethers: { provider: ethersLib.Provider },
+  plan: Pick<
+    V19CutoverPlan,
+    "registryProxy" | "registryImplementation" | "dkgPublicationLibrary"
+  >,
+): Promise<void> {
+  equalAddress(
+    await proxyImplementation(ethers, plan.registryProxy),
+    plan.registryImplementation,
+    "CiphernodeRegistry implementation",
+  );
+  await assertDkgPublicationLibraryLink(
+    ethers.provider,
+    plan.registryImplementation,
+    plan.dkgPublicationLibrary,
+  );
+}
+
+/**
  * Check the executed cutover against the plan. Reads only, so it can run before resume and again
  * after it. `--write-records` copies the new addresses into both deployment records.
  */
@@ -934,6 +1015,7 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
     plan.interfoldImplementation,
     "Interfold implementation",
   );
+  await requireV19RegistryUpgrade(ethers, plan);
   equalValue(
     await interfold.activeCryptoConfigId(),
     plan.cryptoConfigId,
@@ -1025,6 +1107,9 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
 
   if (hasFlag("write-records")) {
     deployment.interfoldImplementation = plan.interfoldImplementation;
+    deployment.ciphernodeRegistryImplementation = plan.registryImplementation;
+    deployment.registrySortitionLib = plan.registrySortitionLibrary;
+    deployment.dkgPublicationLib = plan.dkgPublicationLibrary;
     deployment.interfoldLifecycle = plan.lifecycleLibrary;
     deployment.interfoldPricing = plan.pricingLibrary;
     deployment.pkVerifier = plan.pkVerifier;
@@ -1048,6 +1133,7 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
   console.log(`
 v0.19 cutover validated
   Interfold implementation: ${plan.interfoldImplementation}
+  registry implementation:  ${plan.registryImplementation}
   BFV routes:               ${plan.bfvVerifierRoutes.length}
   CRISP program:            ${plan.crispProgram}
   node release:             protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration}
@@ -1087,6 +1173,22 @@ function writeDeployedContracts(network: string, plan: V19CutoverPlan): void {
       InterfoldPricing: plan.pricingLibrary,
     };
   }
+  const registry = chain.CiphernodeRegistryOwnable as
+    | {
+        proxyRecords?: { implementationAddress?: string };
+        libraries?: Record<string, string>;
+      }
+    | undefined;
+  if (registry?.proxyRecords) {
+    registry.proxyRecords.implementationAddress = plan.registryImplementation;
+    registry.libraries = {
+      ...registry.libraries,
+      RegistrySortitionLib: plan.registrySortitionLibrary,
+      DkgPublicationLib: plan.dkgPublicationLibrary,
+    };
+  }
+  chain.RegistrySortitionLib = deployed(plan.registrySortitionLibrary);
+  chain.DkgPublicationLib = deployed(plan.dkgPublicationLibrary);
   chain.InterfoldLifecycle = deployed(plan.lifecycleLibrary);
   chain.InterfoldPricing = deployed(plan.pricingLibrary);
   chain.BfvPkVerifierRouter = deployed(plan.pkVerifier);
