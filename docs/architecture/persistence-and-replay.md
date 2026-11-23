@@ -10,6 +10,29 @@ Here **durable** means flushed to disk. EventStore flushes appended events befor
 `Persistable::try_mutate` only enqueues a snapshot write; durability arrives when its batch flushes.
 An enqueued mutation is not a commit acknowledgment.
 
+## One-use synchronized decryption (disabled definition)
+
+Keyshare has one private `synchronized-contribution-v1` scope per local E3, **not** per ciphertext,
+set, coordinator or delivery ID. The first live authorization reserves a freshly seeded noise stream
+before sharing it with any calculation. V1 fixes ChaCha20 from a 32-byte CSPRNG seed, starting at
+offset zero for the pinned fhe.rs signed-integer sampler. This stream is exclusively for one noise
+polynomial. The range proof does not establish freshness.
+
+| Last acknowledged checkpoint | Permitted redrive after rechecking authority                                |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| None                         | Recovery stops. Only a known first live authorization may reserve a stream. |
+| Allocation                   | Calculate with the saved stream and confirmed setup.                        |
+| Generated share              | Prove the exact saved native bytes with the same noise.                     |
+| Signed bundle                | Retransmit that exact payload. Transport delivery IDs may change.           |
+
+Each checkpoint is immutable and locally authenticated/encrypted. It binds the C6 phase, plan,
+owner, and sealed predecessor. A visible insert whose flush failed must be flushed successfully
+before releasing its value. A conflict, corrupt record, missing predecessor or lost store is not
+authorization to resample. Never restore an older private store into an active E3: complete loss of
+local history cannot be detected from an empty database alone. Live dispatch, deadline enforcement
+and terminal cleanup must be wired before activation. See
+[threshold decryption](threshold-decryption.md).
+
 ## Contracts and actual boundaries
 
 The intended model is at-least-once delivery with stable identity, idempotent reducers, deduplicated

@@ -509,6 +509,19 @@ The cutover changes these request interfaces. Update their callers together with
 - In `@interfold/contracts/bfv`, `BFV_PRESETS[preset].configId` is removed. Use
   `bfvConfiguration(profile, committeeSize).configId`.
 
+### Synchronized local contribution checkpoints
+
+**#2460 private checkpoint compatibility (proposed for review).** The disabled Minimum C6 definition
+adds an exclusive v1 keyshare subtree, not a field in existing SS snapshots or a new journal/gossip
+variant. No admitted profile writes it. Keep existing schema, wire majors, `protocol_version`,
+`node_generation`, circuit pins and deployed verifiers for these two slices. No migration is needed
+for pre-existing SS records. The plan serialization, encryption envelope, predecessor binding and
+pinned sampler are part of the v1 private format. An older binary cannot resume a synchronized
+allocation. Revert the dormant code before activation; retain any qualification store with its
+matching binary/key. Changing the sampler or restoring older state for an in-flight request is not a
+compatible retry. The wider drain/reset cutover still applies. Activation, mixed-version policy and
+rollback need human review under #2461.
+
 ### Retiring a BFV profile
 
 A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3

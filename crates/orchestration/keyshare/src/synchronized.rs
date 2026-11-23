@@ -11,7 +11,9 @@ use e3_events::{CiphernodeSelected, E3id, SynchronizedProofContext};
 use e3_fhe_params::BfvDecryptionProtocol;
 use e3_trbfv::synchronized::SealedPrfKeys;
 
+mod contribution;
 mod publication;
+pub use contribution::{ContributionProgress, ContributionStore, NoiseAllocation};
 pub use publication::ConfirmedSynchronizedDkgSetup;
 mod setup;
 pub use setup::SynchronizedSetupIntent;
