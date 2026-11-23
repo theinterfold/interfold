@@ -3,11 +3,15 @@
 use super::*;
 use anyhow::Context;
 use e3_committee_hash::decryption_domain_limbs;
+use e3_events::{EventContext, Sequenced};
 
 #[derive(Default, Clone, Debug)]
 pub(super) struct Publication {
     ready: bool,
     output: Option<(B256, [u8; 32])>,
+    bytes: Option<(ArcBytes, EventContext<Sequenced>)>,
+    observed_live: bool,
+    reservations: std::collections::BTreeSet<u32>,
     // Only populated after opening the exact confirmed bytes. Retiring the publication drops it.
     plan: Arc<std::sync::OnceLock<SynchronizedDecryptionPlan>>,
 }
@@ -162,6 +166,72 @@ mod binding_tests {
 }
 
 impl CanonicalPublicKeys {
+    /// Keep one opening for both actors and the writer, including when the original delivery
+    /// precedes CiphertextReady or falls before the snapshot cursor. Never replace its cause.
+    pub fn remember_synchronized_opening(
+        &self,
+        id: &E3id,
+        bytes: &[ArcBytes],
+        ec: &EventContext<Sequenced>,
+        live: bool,
+    ) -> Result<()> {
+        let mut keys = self.0.write().expect("canonical key lock");
+        let Some(p) = keys.synchronized_outputs.get_mut(id) else {
+            return Ok(());
+        };
+        let Some((hash, _)) = p.output else {
+            return Ok(());
+        };
+        let [ct] = bytes else {
+            anyhow::bail!("expected one ciphertext opening")
+        };
+        ensure!(
+            keccak256(&ct[..]) == hash,
+            "opening differs from confirmed ciphertext"
+        );
+        if p.bytes.is_none() {
+            p.bytes = Some((ct.clone(), ec.clone()));
+            p.observed_live = live;
+        }
+        Ok(())
+    }
+
+    pub fn synchronized_opening(&self, id: &E3id) -> Option<(ArcBytes, EventContext<Sequenced>)> {
+        self.0
+            .read()
+            .expect("canonical key lock")
+            .synchronized_outputs
+            .get(id)
+            .filter(|p| p.ready)?
+            .bytes
+            .clone()
+    }
+
+    pub fn first_live_opening(&self, id: &E3id) -> Option<EventContext<Sequenced>> {
+        self.0
+            .read()
+            .expect("canonical key lock")
+            .synchronized_outputs
+            .get(id)
+            .filter(|p| p.observed_live)?
+            .bytes
+            .as_ref()
+            .map(|(_, ec)| ec.clone())
+    }
+    /// A replacement actor in this boot must not mint another first authorization. Recovery
+    /// restores the opening but never this capability, even if private storage is empty.
+    pub fn take_first_reservation(&self, plan: &SynchronizedDecryptionPlan, owner: u32) -> bool {
+        let mut keys = self.0.write().expect("canonical key lock");
+        keys.synchronized_outputs
+            .get_mut(plan.e3_id())
+            .is_some_and(|p| {
+                p.ready
+                    && p.observed_live
+                    && plan.designated().contains(&owner)
+                    && p.output == Some((plan.ciphertext_hash, plan.ciphertext_commitment))
+                    && p.reservations.insert(owner)
+            })
+    }
     /// Projection input only. Local DA hydration supplies bytes, never either binding.
     pub fn remember_synchronized_output(
         &self,

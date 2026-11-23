@@ -205,6 +205,10 @@ pub(crate) const MAX_DECRYPTION_REDELIVERIES: u32 = 6;
 pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
 
 pub struct ThresholdKeyshare {
+    decryption_runtime: Option<e3_zk_prover::synchronized::fixed_set::DecryptionRuntime>,
+    live_opening: bool,
+    contribution_running: Option<SpawnHandle>,
+    contribution_delivered: bool,
     synchronized_setup: Option<crate::synchronized::SynchronizedSetupIntent>,
     synchronized_setup_retry: Option<SpawnHandle>,
     synchronized_setup_blocked: bool,
@@ -286,6 +290,10 @@ impl ThresholdKeyshare {
         });
         Self {
             synchronized_setup: None,
+            decryption_runtime: None,
+            live_opening: false,
+            contribution_running: None,
+            contribution_delivered: false,
             synchronized_setup_retry: None,
             synchronized_setup_blocked: false,
             synchronized_setup_failures: 0,
@@ -326,6 +334,14 @@ impl ThresholdKeyshare {
 
     pub fn with_canonical_keys(mut self, keys: crate::canonical_key::CanonicalPublicKeys) -> Self {
         self.canonical_keys = keys;
+        self
+    }
+
+    pub(crate) fn with_decryption_runtime(
+        mut self,
+        runtime: Option<e3_zk_prover::synchronized::fixed_set::DecryptionRuntime>,
+    ) -> Self {
+        self.decryption_runtime = runtime;
         self
     }
 
@@ -400,15 +416,25 @@ impl Actor for ThresholdKeyshare {
                 }
             },
         ));
-        ctx.run_interval(DECRYPTION_REDELIVERY_DELAY / 5, |_, ctx| {
-            ctx.notify(RedeliverDecryptionWork(std::time::Instant::now()));
-        });
+        if self.effects_enabled
+            || self.params_profile.protocol() != e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        {
+            Self::start_decryption_redelivery(ctx);
+        }
     }
 
     fn stopped(&mut self, _: &mut Self::Context) {
         if let Err(error) = self.stop_threshold_share_collector() {
             error!(%error, "Could not stop threshold-share collection");
         }
+    }
+}
+
+impl ThresholdKeyshare {
+    fn start_decryption_redelivery(ctx: &mut actix::Context<Self>) {
+        ctx.run_interval(DECRYPTION_REDELIVERY_DELAY / 5, |_, ctx| {
+            ctx.notify(RedeliverDecryptionWork(std::time::Instant::now()));
+        });
     }
 }
 

@@ -9,16 +9,12 @@ use anyhow::{ensure, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::{DataStore, Repositories};
-use e3_events::{DecryptionshareCreated, ProofType};
+use e3_events::DecryptionshareCreated;
 use e3_fhe_params::BfvProfile;
-use e3_polynomial::CrtPolynomial;
-use e3_polynomial_fhe::FromFhePolynomial;
 use e3_request::canonical_key::SynchronizedDecryptionPlan;
 use e3_utils::ArcBytes;
-use e3_zk_config::{
-    synchronized::{public_signals::PublicSignals, Configs},
-    CircuitName,
-};
+use e3_zk_config::synchronized::Configs;
+use e3_zk_prover::synchronized::fixed_set;
 use rand::RngCore;
 use std::sync::Arc;
 use zeroize::Zeroizing;
@@ -59,6 +55,17 @@ pub struct ContributionStore {
 }
 
 impl ContributionStore {
+    const SCOPE: &'static str = "synchronized-contribution-v1";
+
+    pub(crate) async fn retire(repos: &Repositories, id: &e3_events::E3id) -> Result<()> {
+        let store = repos
+            .threshold_keyshare_recovery_payloads(id)
+            .scope(Self::SCOPE);
+        for slot in ["signed", "share", "allocation"] {
+            store.scope(slot).remove_sync().await?;
+        }
+        Ok(())
+    }
     /// Below-admission definition; the live caller must rederive the plan and `confirmed_setup`
     /// and check effects/terminal state before releasing work.
     pub fn for_definition(
@@ -80,7 +87,7 @@ impl ContributionStore {
         // must hit the same allocation, not create another namespace.
         let store = repos
             .threshold_keyshare_recovery_payloads(plan.e3_id())
-            .scope("synchronized-contribution-v1");
+            .scope(Self::SCOPE);
         let binding = plan.local_contribution_binding_v1(owner)?;
         Ok(Self {
             store,
@@ -257,43 +264,15 @@ impl ContributionStore {
     }
 
     fn validate_bundle(&self, bundle: &DecryptionshareCreated, share: &ArcBytes) -> Result<()> {
-        let signer = self.plan.signer(self.owner)?;
-        let [signed] = bundle.signed_decryption_proofs.as_slice() else {
-            anyhow::bail!("expected one signed C6")
-        };
         ensure!(
-            bundle.e3_id == *self.plan.e3_id()
-                && bundle.party_id == u64::from(self.owner)
-                && bundle.node.parse::<Address>()? == signer
-                && bundle.decryption_share.as_slice() == std::slice::from_ref(share)
-                && signed.payload.e3_id == bundle.e3_id
-                && signed.payload.proof_type == ProofType::C6ThresholdShareDecryption
-                && signed.payload.proof.circuit == CircuitName::ThresholdShareDecryption
-                && signed.verify_address(&signer)?,
+            bundle.party_id == u64::from(self.owner)
+                && bundle.decryption_share.as_slice() == std::slice::from_ref(share),
             "signed contribution differs from local owner, phase, or native share"
         );
-        let proof = &signed.payload.proof;
-        self.validate_proof_row(proof, share)
+        fixed_set::authenticate(&self.plan, bundle)
     }
 
     fn validate_proof_row(&self, proof: &e3_events::Proof, share: &ArcBytes) -> Result<()> {
-        ensure!(
-            proof.circuit == CircuitName::ThresholdShareDecryption,
-            "expected local C6"
-        );
-        let cfg = Configs::for_profile(self.plan.profile(), self.plan.committee())?;
-        let row = PublicSignals::decode(&cfg, proof.circuit, &proof.public_signals)?;
-        let poly = e3_trbfv::helpers::try_poly_pb_from_bytes(share, &cfg.threshold)?;
-        let commitment = e3_zk_witness::compute_threshold_decryption_share_commitment(
-            &CrtPolynomial::from_fhe_polynomial(&poly),
-            cfg.share_bit,
-            cfg.threshold.degree(),
-        );
-        ensure!(
-            self.plan.matches_c6(self.owner, &row)
-                && row.decryption_share_commitment() == Some(super::commitment_field(&commitment)?),
-            "C6 row differs from the confirmed plan or full native share"
-        );
-        Ok(())
+        fixed_set::validate_row(&self.plan, self.owner, proof, share)
     }
 }

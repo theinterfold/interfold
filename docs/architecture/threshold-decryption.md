@@ -80,18 +80,12 @@ Unlike SS, an unavailable designated member can prevent synchronized reconstruct
 roster members are online. A replacement set would require new matching shares and the separate
 protocol in [#2462](https://github.com/theinterfold/interfold/issues/2462).
 
-The initial synchronized design fixes `S` to the lowest T+1 canonical IDs of the **confirmed
+The initial synchronized runtime fixes `S` to the lowest T+1 canonical IDs of the **confirmed
 H-roster** for one ciphertext, before producing any shares. Aggregator failover retains `S`. This is
 the rule in the
 [isolated Minimum C6 and final verifier](proof-statements.md#synchronized-prf-and-draft-minimum-c6).
-`pnpm test:sync-decryption:contract` checks the final wrapper against the signed registry
-publication for the same request. The harness starts from a finalized committee and supplies the
-lifecycle call context; synchronized request admission, actor failover and plaintext publication
-through a live route remain pending. Activation requires durable idempotency: one native share and
-one noise draw per owner, ciphertext and designated set. Recovery and aggregator failover must reuse
-that retained share; retrying with a fresh noise draw is not a new decryption request. The C6
-witness JSON contains private openings and noise; it is not a log, transport payload or recovery
-record.
+The C6 witness contains private openings and noise; it is not a log, transport payload or recovery
+record. Its range checks do not prove sampling freshness.
 
 **Fixed-set runtime policy for review (#2460).** For a disabled insecure Minimum definition the node
 can derive a read-only C6 plan from confirmed `CiphertextReady`, the confirmed registry setup, and
@@ -102,22 +96,18 @@ the designated committee ID; the coordinator, arrival order, and retry correlati
 this choice. A second position or different publication is not a retry. Terminal history retires the
 plan even if key authority remains for hydration.
 
-The private Minimum worker consumes only a **previously flushed** allocation. It uses the saved
-summed SK and C4 directed keys to derive the native weighted share, checks the C4 openings, and
-flushes the exact share before proving it. On retry it compares bytes before proving or reusing a
-signed proof. Both paths verify C6 against the profile-specific VK, the confirmed row and the full
+Only the first matching opening observed live with effects enabled may reserve private noise.
+Projection replay restores the opening and its original cause, **not** permission to create another
+allocation. A restart with no allocation fails closed, even if the node crashed before the first
+write. The private Minimum worker consumes only a **previously flushed** allocation. It uses the
+saved summed SK and C4 directed keys to derive the native weighted share, checks the C4 openings,
+and flushes the exact share before proving it. On retry it compares bytes before proving or reusing
+a signed proof. Both paths verify C6 against the profile-specific VK, the confirmed row and the full
 native polynomial. Native work and proving use the shared node/E3 task group; retirement is checked
-again before returning a result. This is a below-admission worker, not a live trigger.
+again before signing and release. Keyshare flushes the signed bundle before broadcast.
 
-The proposed host policy is one private noise allocation per designated owner for that E3. Proof or
-network retries consume the same allocation and contribution. A missing designated owner waits only
-through the request's inclusive on-chain decryption deadline, including before the first complete
-batch; promotion must not renew it. After expiry use the canonical `DecryptionTimeout` path, not a
-substitute or a peer-invalid verdict. Effect dispatch must recheck admission, phase, deadline and
-the current plan after replay. Those live actors and the protocol-owner review remain pending.
-Secure Minimum needs the
-[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before the
-secure end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
+Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
+review.
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

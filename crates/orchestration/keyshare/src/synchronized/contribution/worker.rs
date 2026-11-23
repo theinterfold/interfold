@@ -28,9 +28,26 @@ impl ContributionWorker {
         ciphertext: &ArcBytes,
         sk_poly_sum: &SensitiveBytes,
     ) -> Result<LocalContribution> {
+        self.run_fenced(store, keys, ciphertext, sk_poly_sum, None)
+            .await
+    }
+
+    pub(crate) async fn run_fenced(
+        &self,
+        store: &ContributionStore,
+        keys: &CanonicalPublicKeys,
+        ciphertext: &ArcBytes,
+        sk_poly_sum: &SensitiveBytes,
+        deadline: Option<u64>,
+    ) -> Result<LocalContribution> {
         let current = {
             let (keys, plan, ct) = (keys.clone(), store.plan.clone(), ciphertext.clone());
-            move || plan.check_current(&keys, &ct)
+            move || {
+                if let Some(deadline) = deadline {
+                    e3_zk_prover::synchronized::fixed_set::before_expiry(deadline)?;
+                }
+                plan.check_current(&keys, &ct)
+            }
         };
         current()?;
         let group = scoped_task_group(&self.task_scope, store.plan.e3_id());
