@@ -4419,6 +4419,7 @@ dependencies = [
  "e3-utils",
  "e3-zk-config",
  "serde",
+ "serde_json",
  "tracing",
 ]
 

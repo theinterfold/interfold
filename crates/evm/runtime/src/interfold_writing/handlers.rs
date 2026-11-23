@@ -355,7 +355,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
 #[derive(Message)]
 #[rtype(result = "()")]
-struct SubmitPlaintext(PlaintextAggregated);
+pub(super) struct SubmitPlaintext(pub(super) PlaintextAggregated);
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
     for InterfoldSolWriter<P>

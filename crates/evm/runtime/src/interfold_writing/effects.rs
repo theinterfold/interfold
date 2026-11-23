@@ -287,8 +287,8 @@ pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvi
         PlaintextPublication::NotYet => anyhow::bail!("chain not yet at CiphertextReady"),
         PlaintextPublication::Publish => (),
     }
-    let deadline = crate::read_decryption_deadline(&provider, contract, id).await?;
-    if crate::get_current_timestamp_from_provider(provider.clone()).await? > deadline {
+    let (deadline, now) = crate::read_decryption_window(&provider, contract, id).await?;
+    if now > deadline {
         return Ok(None);
     }
     anyhow::ensure!(

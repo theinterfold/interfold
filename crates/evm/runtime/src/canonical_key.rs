@@ -576,3 +576,5 @@ impl Handler<InterfoldEvent> for CanonicalKeyProjection {
 #[cfg(test)]
 #[path = "canonical_key/tests.rs"]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::synchronized_writer_fixture;

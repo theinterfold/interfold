@@ -47,6 +47,17 @@ pub(crate) fn plaintext_has_canonical_domain(
         };
         // The same Minimum outer VK serves two profiles. Match both children of the
         // reviewed insecure candidate before taking the writer's one intent slot.
+        let expected = match e3_request::canonical_key::SynchronizedChildPins::insecure_minimum() {
+            Ok(pins) => pins,
+            Err(error) => {
+                tracing::error!(%error, "cannot validate synchronized plaintext");
+                return None;
+            }
+        };
+        if pins[..32] != expected.c6[..] || pins[32..] != expected.c7[..] {
+            tracing::warn!(e3_id=%intent.e3_id, "synchronized plaintext child VK pins differ from the request route");
+            return Some(false);
+        }
         let cfg =
             e3_zk_config::synchronized::Configs::for_profile(plan.profile(), plan.committee())
                 .ok()?;
@@ -58,7 +69,6 @@ pub(crate) fn plaintext_has_canonical_domain(
         return Some(
             proof.circuit == CircuitName::DecryptionAggregator
                 && !proof.data.is_empty()
-                && pins == insecure_child_pins()
                 && rows
                     .iter()
                     .zip(plan.designated())
@@ -86,33 +96,6 @@ pub(crate) fn plaintext_has_canonical_domain(
                             == Some(U256::from(domain.lo).to_be_bytes::<32>().as_slice())
                 }),
     )
-}
-
-fn insecure_child_pins() -> &'static [u8] {
-    static PINS: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
-        let manifest: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../circuits/qualification/sync-insecure-64/minimum/manifest.json"
-        ))
-        .expect("qualification manifest");
-        ["share_decryption", "decrypted_shares_aggregation"]
-            .into_iter()
-            .flat_map(|role| {
-                let item = manifest["circuits"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|c| c["role"] == role)
-                    .unwrap();
-                item["vkHash"]
-                    .as_str()
-                    .unwrap()
-                    .parse::<alloy::primitives::B256>()
-                    .unwrap()
-                    .0
-            })
-            .collect()
-    });
-    &PINS
 }
 
 pub(crate) fn has_writer_authority(keys: &CanonicalPublicKeys, id: &E3id) -> bool {

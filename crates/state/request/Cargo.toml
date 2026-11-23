@@ -19,6 +19,7 @@ e3-utils = { workspace = true}
 e3-zk-config = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json.workspace = true
 bincode = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }

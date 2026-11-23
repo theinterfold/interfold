@@ -115,6 +115,11 @@ pub fn verify_contribution(
     if authenticate(plan, bundle).is_err() {
         return Ok(false);
     }
+    super::decryption::child_key(
+        prover,
+        &Configs::for_profile(plan.profile(), plan.committee())?,
+        CircuitName::ThresholdShareDecryption,
+    )?;
     let namespace = plan
         .profile()
         .artifacts_dir_for_committee(plan.committee())?;
@@ -197,6 +202,8 @@ pub fn reconstruct(
         "incomplete or unordered designated set"
     );
     let cfg = Configs::for_profile(plan.profile(), plan.committee())?;
+    super::decryption::child_key(prover, &cfg, CircuitName::ThresholdShareDecryption)?;
+    super::decryption::child_key(prover, &cfg, CircuitName::DecryptedSharesAggregation)?;
     let ct = Ciphertext::from_bytes(bytes, &cfg.threshold)?;
     let coords: Vec<_> = plan.designated().iter().map(|&i| i as usize + 1).collect();
     let mut shares = Vec::new();
