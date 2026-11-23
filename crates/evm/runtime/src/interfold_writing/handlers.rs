@@ -22,6 +22,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         if self.terminal_e3s.contains(&intent.e3_id) {
             return true;
         }
+        if self
+            .canonical_keys
+            .get(&intent.e3_id)
+            .is_some_and(|key| !key.params_profile.admission_enabled())
+        {
+            return true;
+        }
         if let Err(error) = validate_plaintext_output(
             &intent.e3_id,
             &intent.decrypted_output,
@@ -63,9 +70,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
     }
 
     fn try_resume_deferred_plaintexts(&mut self, e3_id: &E3id, ctx: &mut Context<Self>) {
-        if self.terminal_e3s.contains(e3_id)
-            || self.canonical_keys.decryption_domains(e3_id).is_none()
-        {
+        if self.terminal_e3s.contains(e3_id) || !has_writer_authority(&self.canonical_keys, e3_id) {
             return;
         }
         let Some(range) = self.deferred_plaintexts.get(e3_id).cloned() else {
@@ -85,7 +90,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             .map(|(id, result), actor, ctx| {
                 actor.plaintext_reads.remove(&id);
                 if actor.terminal_e3s.contains(&id)
-                    || actor.canonical_keys.decryption_domains(&id).is_none()
+                    || !has_writer_authority(&actor.canonical_keys, &id)
                 {
                     return;
                 }
@@ -364,26 +369,36 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
             return Box::pin(async {}.into_actor(self));
         }
 
+        let e3_id = msg.e3_id.clone();
+        let contract_address = self.contract_address;
+        let provider = self.provider.clone();
+        let bus = self.bus.clone();
+        let keys = self.canonical_keys.clone();
         Box::pin(
-            {
-            let e3_id = msg.e3_id.clone();
-            let decrypted_output = msg.decrypted_output.clone();
-            let contract_address = self.contract_address;
-            let provider = self.provider.clone();
-            let bus = self.bus.clone();
             async move {
+                let Some(key) = keys.get(&e3_id) else {
+                    return (e3_id, false);
+                };
+                if key.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+                    let result = publish_synchronized_plaintext_definition(provider, &keys, contract_address, &msg).await;
+                    let settled = result.is_ok();
+                    if let Err(error) = result {
+                        bus.err(EType::Evm, error);
+                    }
+                    return (e3_id, settled);
+                }
                 // The event can represent multiple ciphertext outputs, but the contract accepts one
                 // plaintext output per E3. Validation rejects multi-output results before indexing.
                 if let Err(msg_err) = validate_plaintext_output(
                     &e3_id,
-                    &decrypted_output,
+                    &msg.decrypted_output,
                     &msg.decryption_aggregator_proofs,
                 ) {
                     bus.err(EType::Evm, anyhow::anyhow!(msg_err));
                     return (e3_id, true);
                 }
                 // Safe: `validate_plaintext_output` guarantees exactly one output.
-                let decrypted = &decrypted_output[0];
+                let decrypted = &msg.decrypted_output[0];
                 match should_publish_plaintext(provider.clone(), contract_address, e3_id.clone())
                     .await
                 {
@@ -433,7 +448,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
                     }
                 }
             }
-        }
             .into_actor(self)
             .map(|(e3_id, terminal), actor, ctx| {
                 actor.publication.finish(&e3_id, terminal);
@@ -471,6 +485,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3StageChanged>
             return;
         }
         self.failure_stage_discoveries.invalidate(&e3_id);
+        if msg.new_stage == E3Stage::CiphertextReady {
+            self.try_resume_deferred_plaintexts(&e3_id, ctx);
+        }
         match &msg.new_stage {
             E3Stage::Requested
             | E3Stage::CommitteeFinalized

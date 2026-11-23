@@ -117,7 +117,10 @@ sequence. A standby signals readiness only after all designated rows are durable
 and checkpoint reads, only the current active collector may record a new batch from those rows. Once
 the ordered sequence vector is flushed, demotion or restart can finish it. Native reconstruction
 sums the locally weighted shares and adds `c0` once. C7 opens those same polynomials; the outer
-proof binds their C6 statements and the plaintext.
+proof binds their C6 statements and the plaintext. The writer checks both profile-specific child VK
+pins and the confirmed request before submitting the local intent. The existing chain failure watch
+starts at `CiphertextReady`, independently of collector readiness. The decryption deadline is
+inclusive; a missing owner after expiry follows `DecryptionTimeout`.
 
 Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
 review. Collector failover and request-bound publication still need a joint runtime qualification.

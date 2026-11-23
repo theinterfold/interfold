@@ -6,6 +6,7 @@
 !Cargo.toml
 !Cargo.lock
 !crates/**/*
+!circuits/qualification/sync-insecure-64/minimum/manifest.json
 !packages/**/*
 !package.json
 !pnpm-workspace.yaml

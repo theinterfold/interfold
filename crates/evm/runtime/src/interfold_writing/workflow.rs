@@ -25,6 +25,50 @@ pub(crate) fn plaintext_has_canonical_domain(
     interfold_address: Address,
 ) -> Option<bool> {
     let key = keys.get(&intent.e3_id)?;
+    if key.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+        if key.interfold_address != interfold_address {
+            return Some(false);
+        }
+        let (ct, _) = keys.synchronized_opening(&intent.e3_id)?;
+        let plan =
+            match keys.synchronized_decryption_definition(&intent.e3_id, key.params_profile, &[ct])
+            {
+                Ok(plan) => plan?,
+                Err(_) => return Some(false),
+            };
+        let ([proof], [bytes]) = (
+            intent.decryption_aggregator_proofs.as_slice(),
+            intent.decrypted_output.as_slice(),
+        ) else {
+            return Some(false);
+        };
+        let Some((pins, public)) = proof.public_signals.split_at_checked(64) else {
+            return Some(false);
+        };
+        // The same Minimum outer VK serves two profiles. Match both children of the
+        // reviewed insecure candidate before taking the writer's one intent slot.
+        let cfg =
+            e3_zk_config::synchronized::Configs::for_profile(plan.profile(), plan.committee())
+                .ok()?;
+        let Ok((rows, message)) =
+            e3_zk_config::synchronized::public_signals::PublicSignals::decode_c7(&cfg, public)
+        else {
+            return Some(false);
+        };
+        return Some(
+            proof.circuit == CircuitName::DecryptionAggregator
+                && !proof.data.is_empty()
+                && pins == insecure_child_pins()
+                && rows
+                    .iter()
+                    .zip(plan.designated())
+                    .all(|(row, &id)| plan.matches_c6(id, row))
+                && message
+                    .iter()
+                    .flat_map(|n| n.to_le_bytes())
+                    .eq(bytes.iter().copied()),
+        );
+    }
     let domains = keys.decryption_domains(&intent.e3_id)?;
     Some(
         key.interfold_address == interfold_address
@@ -42,6 +86,43 @@ pub(crate) fn plaintext_has_canonical_domain(
                             == Some(U256::from(domain.lo).to_be_bytes::<32>().as_slice())
                 }),
     )
+}
+
+fn insecure_child_pins() -> &'static [u8] {
+    static PINS: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
+        let manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../circuits/qualification/sync-insecure-64/minimum/manifest.json"
+        ))
+        .expect("qualification manifest");
+        ["share_decryption", "decrypted_shares_aggregation"]
+            .into_iter()
+            .flat_map(|role| {
+                let item = manifest["circuits"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c["role"] == role)
+                    .unwrap();
+                item["vkHash"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<alloy::primitives::B256>()
+                    .unwrap()
+                    .0
+            })
+            .collect()
+    });
+    &PINS
+}
+
+pub(crate) fn has_writer_authority(keys: &CanonicalPublicKeys, id: &E3id) -> bool {
+    keys.get(id)
+        .is_some_and(|key| match key.params_profile.protocol() {
+            e3_fhe_params::BfvDecryptionProtocol::Synchronized => {
+                keys.synchronized_opening(id).is_some()
+            }
+            _ => keys.decryption_domains(id).is_some(),
+        })
 }
 
 /// Validate a decrypted result before it is written on-chain.

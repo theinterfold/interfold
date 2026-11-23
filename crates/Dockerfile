@@ -130,6 +130,7 @@ RUN mkdir -p ./zk/build/src && echo 'fn main() {}' > ./zk/build/src/main.rs
 RUN cargo build --locked --release
 
 COPY ./crates .
+COPY circuits/qualification/sync-insecure-64/minimum/manifest.json /build/circuits/qualification/sync-insecure-64/minimum/manifest.json
 
 RUN find . -name "*.rs" -exec touch {} +
 ARG E3_CIRCUITS_ARCHIVE_SHA256

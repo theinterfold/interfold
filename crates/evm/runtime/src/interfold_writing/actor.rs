@@ -12,7 +12,7 @@ use crate::domain::plaintext_publication::{
     failure_watch_delay, failure_watch_party_id, FailureRetryBackoff, FailureStageDiscoveryGate,
 };
 use crate::domain::plaintext_publication::{
-    plaintext_has_canonical_domain, validate_plaintext_output,
+    has_writer_authority, plaintext_has_canonical_domain, validate_plaintext_output,
 };
 use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{encode_zk_proof, send_with_next_nonce, EthProvider};
@@ -39,6 +39,7 @@ use tracing::info;
 
 #[path = "effects.rs"]
 mod effects;
+pub use effects::publish_synchronized_plaintext_definition;
 #[path = "handlers.rs"]
 mod handlers;
 

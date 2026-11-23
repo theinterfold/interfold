@@ -265,6 +265,48 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
     .await
 }
 
+/// Request-bound writer effect, callable below disabled admission for qualification. Returning
+/// None means the E3 is already terminal or past its frozen publication window.
+pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvider + Clone>(
+    provider: EthProvider<P>,
+    keys: &CanonicalPublicKeys,
+    contract: Address,
+    intent: &PlaintextAggregated,
+) -> Result<Option<TransactionReceipt>> {
+    let id = &intent.e3_id;
+    anyhow::ensure!(
+        provider.chain_id() == id.chain_id()
+            && keys
+                .get(id)
+                .is_some_and(|k| k.params_profile == e3_fhe_params::BfvProfile::SyncDecInsecure64)
+            && plaintext_has_canonical_domain(intent, keys, contract) == Some(true),
+        "synchronized plaintext differs from confirmed request"
+    );
+    match should_publish_plaintext(provider.clone(), contract, id.clone()).await? {
+        PlaintextPublication::Done => return Ok(None),
+        PlaintextPublication::NotYet => anyhow::bail!("chain not yet at CiphertextReady"),
+        PlaintextPublication::Publish => (),
+    }
+    let deadline = crate::read_decryption_deadline(&provider, contract, id).await?;
+    if crate::get_current_timestamp_from_provider(provider.clone()).await? > deadline {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        plaintext_has_canonical_domain(intent, keys, contract) == Some(true),
+        "synchronized plaintext authority retired"
+    );
+    Ok(Some(
+        publish_plaintext_output(
+            provider,
+            contract,
+            id.clone(),
+            intent.decrypted_output[0].to_vec(),
+            intent.decryption_aggregator_proofs.first(),
+        )
+        .await?,
+    ))
+}
+
 /// What the chain says about publishing an E3's plaintext now.
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::actors::interfold_sol_writer) enum PlaintextPublication {
