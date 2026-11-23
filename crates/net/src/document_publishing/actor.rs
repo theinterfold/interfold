@@ -54,7 +54,9 @@ const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
 /// unless its command queue is busy. The wait matches the put's.
 const DHT_STORE_LOCAL_TIMEOUT: Duration = KADEMLIA_PUT_TIMEOUT;
 const MAX_PENDING_PUBLICATIONS: usize = 256;
-const MAX_PENDING_PUBLICATION_BYTES: usize = 256 * 1024 * 1024;
+/// Live publication and restart recovery share this limit. Four concurrent secure-Large rounds hold
+/// 44 recipient documents each, about 299 MiB at the historical 1.78 MB per document.
+const MAX_PENDING_PUBLICATION_BYTES: usize = 512 * 1024 * 1024;
 /// DHT keys whose cleanup waits for room in the network command queue. A key is 32 bytes, so the
 /// queue holds well under 1 MiB.
 const MAX_QUEUED_CLEANUPS: usize = 4_096;
