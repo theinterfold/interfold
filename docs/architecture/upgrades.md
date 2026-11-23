@@ -304,22 +304,24 @@ Mainnet hold only threshold-only history, and replay between intermediate builds
 so that history is not preserved; a deployment that ran it must reset and resync.
 `crates/bfv/params/tests/fixtures/bfv_protocol.json` freezes these vectors.
 
-The Large committee slice routes `insecure-64/large` on Sepolia and local chains only; Mainnet
-routes and configuration are unchanged. `secure-8192/large` is built and released but not admitted:
-its public-key aggregation (C5) proof peaked at 24.4 GiB RSS against a node's 13 GiB per-job budget,
-so `ActiveCryptoConfig` rejects it at request time, `crypto-config.json` marks it
-`admissionEnabled: false`, and nodes refuse it. Enabling it needs C5 to fit a measured budget on
-supported hosts and the publication outbox (256 MiB) to hold concurrent secure-Large rounds: four
-rounds at about 1.78 MB per document need about 299 MiB. On Sepolia, `upgrade:v19` deploys the route
-and adds `setCommitteeThresholds(3, [34, 45])` from the configuration. The call follows the upgrade
-in the batch, because the earlier implementation reverts on size 3; `prepare` reads that revert as
-an unset threshold only for Large, the size this release adds. `upgrade:v19` does not change timeout
-windows. Live Sepolia holds `dkgWindow` 1800 s, and one Large node measured 1,213 s of DKG on 16
-cores / 32 threads, so a Sepolia batch must add `setTimeoutConfig` with the configured windows,
-which raise `dkgWindow` to 7200 s for every Sepolia committee size; node checkpoints scale with it.
-A fresh deployment sets them from the configuration. `upgrade:v19:validate`, which
-`upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with the configured windows and
-refuses while they differ. An owner that unpauses directly bypasses that check.
+The Large committee slice routes `insecure-64/large` and `secure-8192/large` on Sepolia and local
+chains only; Mainnet routes and configuration are unchanged. A secure-8192 public-key aggregation
+(C5) at Large peaks above one 13 GiB prover slot: 14.3 GiB at 16 threads on Linux (16 threads, 32
+GiB host, bb 6.0.0), and 15.3 GiB under the `--slow_low_memory` retry. The scheduler gives that job
+two slots, or the whole pool on a host with fewer, and the retry keeps them. bb 6.0.0 aborts on an
+allocator assertion with four threads or fewer on that circuit, so the job gets at least eight bb
+threads, time-sliced on a smaller host. Four concurrent secure-Large rounds hold about 299 MiB of
+publications, so the publication outbox and its recovery limit are 512 MiB. On Sepolia,
+`upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
+configuration. The call follows the upgrade in the batch, because the earlier implementation reverts
+on size 3; `prepare` reads that revert as an unset threshold only for Large, the size this release
+adds. `upgrade:v19` does not change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one
+Large node measured 1,213 s of DKG on 16 cores / 32 threads, so a Sepolia batch must add
+`setTimeoutConfig` with the configured windows, which raise `dkgWindow` to 7200 s for every Sepolia
+committee size; node checkpoints scale with it. A fresh deployment sets them from the configuration.
+`upgrade:v19:validate`, which `upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with
+the configured windows and refuses while they differ. An owner that unpauses directly bypasses that
+check.
 
 The v19 batch upgrades two proxies: Interfold first, then `CiphernodeRegistryOwnable` through its
 own `ProxyAdmin`, before it sets the Large threshold. The registry's linked `DkgPublicationLib`
